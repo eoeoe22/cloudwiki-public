@@ -81,3 +81,37 @@ Cloudflare Workers 대시보드에서 직접 주입하세요.
 CloudWiki에서 문서 작성 시 사용할 수 있는 마크다운 및 위키 확장 문법은 [[위키 문법 가이드]] 문서를 참고해 주시기 바랍니다.
 
 https://wiki.vialinks.xyz/wiki/%EC%9C%84%ED%82%A4%20%EB%AC%B8%EB%B2%95%20%EA%B0%80%EC%9D%B4%EB%93%9C
+
+
+## 시작하는법
+
+1. 레포지토리 복제
+```bash
+git clone https://github.com/eoeoe22/cloudwiki-public.git
+```
+git을 사용해 이 레포지토리를 복제하고, 깃허브에 프라이빗 레포지토리를 생성한 뒤 파일 전체를 업로드합니다.
+
+2. GCP Oauth 설정
+https://console.cloud.google.com 에 접속해 프로젝트를 생성하고, Google 인증 플랫폼 / 클라이언트에 접속해 Oauth 클라이언트를 생성합니다.
+**승인된 JavaScript 원본** 에는 `https://사용할 도메인/auth/google/callback`
+**승인된 리디렉션 URI** 에는 `https://사용할 도메인/auth/google/callback` 을 입력한 뒤, 저장 후 클라이언트 ID와 시크릿 키를 복사해둡니다.
+
+3. Cloudflare 및 wrangler.toml 설정
+https://dash.cloudflare.com 에 접속해 스토리지 및 데이터베이스를 클릭하고, R2 Object Storage, Workers KV, D1 SQL Database를 각각 하나씩 생성하고, 각 스토리지들의 UID와 이름을 wrangler.toml에 붙여넣습니다.
+wrangler.toml에 적힌 주석을 참고해 나머지 설정값들도 적절히 설정합니다.
+
+5. Cloudflare Workers 배포
+Cloudflare 대시보드에서 ompute > Workers 및 Pages > 응용 프로그램 생성을 클릭한 뒤, **Continue with GitHub**를 클릭해 깃허브 계정을 연동한 후, 만들어둔 프라이빗 레포지토리를 선택해 Workers에 배포합니다.
+
+6. Workers Secrets 주입
+생성된 Workers의 설정에 들어가 변수 및 암호 탭에서 **+추가** 버튼을 클릭한 뒤, 유형은 **비밀**, 이름은 **GOOGLE_CLIENT_SECRET**, 값은 조금 전 복사해둔 구글 Oauth 클라이언트 시크릿 키로 설정한 뒤 저장합니다.
+
+7. Workers 설정에서 도메인 및 경로 탭의 **+추가** 버튼, **사용자 설정 도메인** 버튼을 클릭한 뒤, Cloudflare 계정에 연결된 도메인을 입력후 저장합니다.
+
+8. D1 데이터베이스 설정
+앞서 생성했던 D1 데이터베이스의 설정으로 이동해 Explore Data 버튼을 클릭하고, **Query** 탭의 입력창에 **migrations/schema.sql** 파일의 내용을 붙여넣은 뒤, 실행 버튼의 **드롭다운 메뉴** 를 클릭하고 **Run all statement** 로 모든 설정 명령어를 실행합니다.
+
+
+
+
+
