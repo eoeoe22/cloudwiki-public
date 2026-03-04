@@ -1,5 +1,5 @@
 ⚠️ 위키 자체 문법이 포함되어 있습니다.
-https://wiki.vialinks.xyz/wiki/Cloud%20wiki
+[CloudWiki 소개 페이지](https://wiki.vialinks.xyz/wiki/Cloud%20wiki)
 에서 열람하시는것을 추천합니다.
 
 # CloudWiki
