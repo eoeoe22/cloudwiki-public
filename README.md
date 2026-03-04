@@ -101,7 +101,7 @@ https://dash.cloudflare.com 에 접속해 스토리지 및 데이터베이스를
 wrangler.toml에 적힌 주석을 참고해 나머지 설정값들도 적절히 설정합니다.
 
 5. Cloudflare Workers 배포
-Cloudflare 대시보드에서 ompute > Workers 및 Pages > 응용 프로그램 생성을 클릭한 뒤, **Continue with GitHub**를 클릭해 깃허브 계정을 연동한 후, 만들어둔 프라이빗 레포지토리를 선택해 Workers에 배포합니다.
+Cloudflare 대시보드에서 Compute > Workers 및 Pages > 응용 프로그램 생성을 클릭한 뒤, **Continue with GitHub**를 클릭해 깃허브 계정을 연동한 후, 만들어둔 프라이빗 레포지토리를 선택해 Workers에 배포합니다.
 
 6. Workers Secrets 주입
 생성된 Workers의 설정에 들어가 변수 및 암호 탭에서 **+추가** 버튼을 클릭한 뒤, 유형은 **비밀**, 이름은 **GOOGLE_CLIENT_SECRET**, 값은 조금 전 복사해둔 구글 Oauth 클라이언트 시크릿 키로 설정한 뒤 저장합니다.
