@@ -98,12 +98,6 @@ CREATE TABLE redirects (
 CREATE INDEX idx_redirects_source ON redirects(source_slug);
 CREATE INDEX idx_redirects_target ON redirects(target_page_id);
 
-CREATE TABLE rate_limit_events (
-  id INTEGER PRIMARY KEY,
-  user_id INTEGER NOT NULL,
-  created_at INTEGER DEFAULT (unixepoch())
-);
-
 CREATE INDEX idx_rate_limit_user_time ON rate_limit_events(user_id, created_at);
 
 -- 토론 스레드 (문서에 종속)
