@@ -138,7 +138,15 @@ media.get('/media/*', async (c) => {
     }
 
     const headers = new Headers();
-    headers.set('Content-Type', object.httpMetadata?.contentType || 'application/octet-stream');
+    // Content-Type 강제: 허용된 MIME 타입만 원래 타입으로 서빙
+    const rawType = object.httpMetadata?.contentType || '';
+    const contentType = ALLOWED_TYPES.has(rawType) ? rawType : 'application/octet-stream';
+    headers.set('Content-Type', contentType);
+    headers.set('X-Content-Type-Options', 'nosniff');
+    // 허용되지 않는 타입은 다운로드 강제
+    if (!ALLOWED_TYPES.has(rawType)) {
+        headers.set('Content-Disposition', 'attachment');
+    }
     headers.set('Cache-Control', 'public, max-age=31536000, immutable');
 
     return new Response(object.body, { headers });

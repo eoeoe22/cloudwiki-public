@@ -895,5 +895,54 @@ wiki.delete('/wiki/:slug/redirects', requireAuth, async (c) => {
 });
 
 
+/**
+ * POST /wiki/:slug/editing
+ * 편집 하트비트 전송 (로그인 필수)
+ * - KV에 편집 중 상태를 기록 (TTL 60초)
+ */
+wiki.post('/wiki/:slug/editing', requireAuth, async (c) => {
+    const slug = c.req.param('slug');
+    const user = c.get('user')!;
+    const kv = c.env.KV;
+
+    const key = `editing:${slug}:${user.id}`;
+    const value = JSON.stringify({ name: user.name, picture: user.picture || '' });
+
+    await kv.put(key, value, { expirationTtl: 60 });
+
+    return c.json({ ok: true });
+});
+
+/**
+ * GET /wiki/:slug/editors
+ * 현재 편집 중인 사용자 목록 (로그인 필수)
+ * - 자기 자신은 제외
+ */
+wiki.get('/wiki/:slug/editors', requireAuth, async (c) => {
+    const slug = c.req.param('slug');
+    const user = c.get('user')!;
+    const kv = c.env.KV;
+
+    const prefix = `editing:${slug}:`;
+    const list = await kv.list({ prefix });
+
+    const editors: { name: string; picture: string }[] = [];
+
+    for (const key of list.keys) {
+        // 자기 자신 제외
+        const userId = key.name.replace(prefix, '');
+        if (userId === String(user.id)) continue;
+
+        const value = await kv.get(key.name);
+        if (value) {
+            try {
+                editors.push(JSON.parse(value));
+            } catch { }
+        }
+    }
+
+    return c.json({ editors });
+});
+
 
 export default wiki;

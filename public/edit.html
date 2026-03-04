@@ -91,6 +91,36 @@
         #conflict-local-editor .toastui-editor {
             height: 440px !important;
         }
+
+        /* 동시편집 경고 배너 */
+        #concurrent-edit-banner {
+            display: none;
+            background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%);
+            border: 1px solid #ffc107;
+            border-radius: 8px;
+            padding: 12px 16px;
+            margin-bottom: 16px;
+            font-size: 0.95rem;
+            align-items: center;
+            gap: 10px;
+            box-shadow: 0 2px 8px rgba(255, 193, 7, 0.15);
+        }
+
+        #concurrent-edit-banner .editor-avatar {
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            vertical-align: middle;
+            margin-right: 4px;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            #concurrent-edit-banner {
+                background: linear-gradient(135deg, #3d3200 0%, #4a3d00 100%);
+                border-color: #b38600;
+                color: #ffe082;
+            }
+        }
     </style>
 </head>
 
@@ -154,6 +184,12 @@
 
     <div class="wiki-container" id="main-editor-container" style="max-width: 1200px;">
         <div class="wiki-article">
+
+            <!-- 동시편집 경고 배너 -->
+            <div id="concurrent-edit-banner">
+                <i class="mdi mdi-account-alert" style="font-size: 1.2rem;"></i>
+                <span id="concurrent-edit-text"></span>
+            </div>
 
             <h2 class="mb-4" id="editPageTitle">
                 <i class="mdi mdi-pencil-box-multiple"></i> 문서 편집
@@ -616,6 +652,10 @@
                     }
                 });
             }
+
+            // 동시편집 감지: 하트비트 전송 + 편집자 체크 시작
+            startEditingHeartbeat();
+            checkConcurrentEditors();
         });
 
         // ── 변경 사항 (내 수정본) 렌더링 ──
@@ -1107,6 +1147,63 @@
                 });
             } else {
                 window.location.href = slug ? `/wiki/${encodeURIComponent(slug)}` : '/';
+            }
+        }
+
+        // ── 동시편집 감지 ──
+        let heartbeatInterval = null;
+        let editorCheckInterval = null;
+
+        function startEditingHeartbeat() {
+            if (!slug) return;
+
+            // 즉시 첫 하트비트 전송
+            sendHeartbeat();
+
+            // 30초마다 하트비트 전송
+            heartbeatInterval = setInterval(sendHeartbeat, 30000);
+
+            // 30초마다 편집자 목록 확인
+            editorCheckInterval = setInterval(checkConcurrentEditors, 30000);
+        }
+
+        async function sendHeartbeat() {
+            if (!slug) return;
+            try {
+                await fetch(`/api/wiki/${encodeURIComponent(slug)}/editing`, {
+                    method: 'POST',
+                });
+            } catch (e) {
+                // 하트비트 실패는 무시
+            }
+        }
+
+        async function checkConcurrentEditors() {
+            if (!slug) return;
+            try {
+                const res = await fetch(`/api/wiki/${encodeURIComponent(slug)}/editors`);
+                if (!res.ok) return;
+                const data = await res.json();
+
+                const banner = document.getElementById('concurrent-edit-banner');
+                const textEl = document.getElementById('concurrent-edit-text');
+                if (!banner || !textEl) return;
+
+                if (data.editors && data.editors.length > 0) {
+                    const editorNames = data.editors.map(e => {
+                        const avatar = e.picture
+                            ? `<img src="${escapeHtml(e.picture)}" class="editor-avatar" alt="">`
+                            : '';
+                        return `${avatar}<strong>${escapeHtml(e.name)}</strong>`;
+                    }).join(', ');
+
+                    textEl.innerHTML = `이 문서를 ${editorNames}님이 동시에 편집 중입니다. 편집 충돌이 발생할 수 있습니다.`;
+                    banner.style.display = 'flex';
+                } else {
+                    banner.style.display = 'none';
+                }
+            } catch (e) {
+                // 조회 실패는 무시
             }
         }
 

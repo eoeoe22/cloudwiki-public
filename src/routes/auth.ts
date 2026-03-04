@@ -8,7 +8,11 @@ const auth = new Hono<Env>();
  * GET /auth/google
  * Google OAuth 2.0 인증 페이지로 리다이렉트
  */
-auth.get('/auth/google', (c) => {
+auth.get('/auth/google', async (c) => {
+    // CSRF 방지: 랜덤 state 생성 후 KV에 저장 (TTL 5분)
+    const state = crypto.randomUUID();
+    await c.env.KV.put(`oauth_state:${state}`, '1', { expirationTtl: 300 });
+
     const params = new URLSearchParams({
         client_id: c.env.GOOGLE_CLIENT_ID,
         redirect_uri: c.env.GOOGLE_REDIRECT_URI,
@@ -16,6 +20,7 @@ auth.get('/auth/google', (c) => {
         scope: 'openid email profile',
         access_type: 'offline',
         prompt: 'consent',
+        state,
     });
     return c.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`);
 });
@@ -27,6 +32,19 @@ auth.get('/auth/google', (c) => {
  */
 auth.get('/auth/google/callback', async (c) => {
     const code = c.req.query('code');
+    const state = c.req.query('state');
+
+    // CSRF 검증: state 파라미터 확인
+    if (!state) {
+        return c.json({ error: 'Missing state parameter' }, 403);
+    }
+    const storedState = await c.env.KV.get(`oauth_state:${state}`);
+    if (!storedState) {
+        return c.json({ error: 'Invalid or expired state parameter' }, 403);
+    }
+    // 사용한 state 삭제 (replay 방지)
+    await c.env.KV.delete(`oauth_state:${state}`);
+
     if (!code) {
         return c.json({ error: 'Missing code parameter' }, 400);
     }
