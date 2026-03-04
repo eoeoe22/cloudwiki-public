@@ -1,0 +1,48 @@
+name = "cloudwiki" #원하는 Workers 프로그램 이름으로 수정하세요
+main = "src/index.ts"
+compatibility_date = "2024-06-01"
+
+[assets]
+directory = "public"
+binding = "ASSETS"
+run_worker_first = ["/", "/wiki/*", "/mypage", "/profile/*", "/search", "/admin-media"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = ""
+database_id = ""
+# 셍성한 D1 데이터베이스의 이름과 id를 정확히 입력하세요
+
+
+[[r2_buckets]]
+binding = "MEDIA" #수정금지
+bucket_name = "" # 셍상힌 R2 버킷의 이름만 정확히 작성하세요. R2 버킷의 외부 접근 권한 설정은 필요 없습니다. Cloudflare 생태계 내부에서 Workers와 자체 바인딩으로 작동합니다.
+
+[[kv_namespaces]]
+binding = "KV" #수정금지
+id = "" # 생성한 KV 스토리지의 아이디만 붙여넣으세요.
+
+[observability]
+enabled = true 
+head_sampling_rate = 1.0 # 규모가 커진다면 0.1 정도로 줄이는것을 추천합니다.
+# 1.0은 개발/디버깅 또는 소규모 환경에서 모든 작업을 기록하고, 0.1은 10%만 로깅합니다. (자유롭게 수정 가능)
+
+[vars]
+GOOGLE_CLIENT_ID = "" #GCP 콘솔에서 복사한 구글 클라이언트 id를 붙여넣으세요
+GOOGLE_REDIRECT_URI = "https://사용할 도메인/auth/google/callback"
+MEDIA_PUBLIC_URL = "https://사용할 도메인/media"
+MAX_UPLOAD_SIZE = "15728640" # 15MB입니다. 그대로 두어도 되며, 원하는 경우 적절히 조절하세요.
+WIKI_NAME = "CloudWiki" # 본인의 위키 이름으로 수정하세요. 이 이름은 위키 전체에 적용되며, 위키의 홈페이지 문서의 제목이 됩니다. 알파벳, 숫자,한글, 스페이스바 공백만으로 작성하는것을 권장하며, 이외의 문자에 대해서는 문제가 발생할 수 있습니다.
+WIKI_LOGO_URL = "/favicon.jpg"
+WIKI_FAVICON_URL = "/favicon.jpg"
+SUPER_ADMIN_EMAILS = "example1@example.com, example2@example.com" # 콤마로 구분하여 여러 명 지정이 가능합니다. 이 이메일과 일치하는 사용자는 위키 내 모든 권한을 가지게 됩니다. 언제든 변경이 가능합니다.
+CUSTOM_HEADER = """
+
+"""
+# 구글 애널리스틱스, 애드센스등 외부 스크립트 삽입용입니다. 
+
+[triggers]
+crons = ["0 0 * * *"] # 매일 자정 (UTC 기준)에 실행
+
+
+# GOOGLE_CLIENT_SECRET은 `wrangler secret put GOOGLE_CLIENT_SECRET` 으로 주입
