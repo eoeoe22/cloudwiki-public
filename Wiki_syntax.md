@@ -7,23 +7,24 @@ https://wiki.vialinks.xyz/wiki/%EC%9C%84%ED%82%A4%20%EB%AC%B8%EB%B2%95%20%EA%B0%
 
 CloudWiki에서 지원하는 기본 마크다운 문법과 확장 문법(위키 고유 문법)에 대한 안내입니다.
 각 항목은 [실제 렌더링 형태]와 [작성 코드]로 나뉘어 있습니다.
+대부분의 문법은 문서 편집기에서 편리하게 사용 가능한 버튼으로 구현되어 있습니다.
 
 ---
 
 ## 1. 텍스트 꾸미기
 
 **굵게**
-```markdown
+```
 **굵게**
 ```
 
 *기울임*
-```markdown
+```
 *기울임* 혹은 _기울임_
 ```
 
 ~~취소선~~
-```markdown
+```
 ~~취소선~~
 ```
 
@@ -31,15 +32,18 @@ CloudWiki에서 지원하는 기본 마크다운 문법과 확장 문법(위키 
 
 ## 2. 링크 및 이미지
 
-[일반 링크](https://github.com)
-```markdown
-[일반 링크](https://github.com)
+[일반 링크](https://youtu.be/jQmYZWjLwzw)
 ```
+[일반 링크](https://youtu.be/jQmYZWjLwzw)
+```
+https://youtu.be/jQmYZWjLwzw
 
+마크다운 문법 없이 평문으로 링크를 적어도 정상 작동합니다.
 
-```markdown
+```
 ![대체 텍스트](이미지주소 "타이틀")
 ```
+이미지의 경우, 문서 편집기의 이미지 업로드 기능 사용시 자동으로 작성됩니다.
 
 ---
 
@@ -52,11 +56,13 @@ CloudWiki는 기본적인 마크다운 표뿐만 아니라 표의 각 셀 배경
 | --- | --- | --- |
 | 내용 | {bg: yellow} 노란 배경 | {color: blue} 파란 글씨 |
 
-```markdown
+```
 | 기본 셀 | {bg:#ffcccc} 빨간 배경 | {bg:#000} {color:#fff} 검정 배경 흰 글씨 |
 | --- | --- | --- |
 | 내용 | {bg: yellow} 노란 배경 | {color: blue} 파란 글씨 |
 ```
+
+표 생성은 기본적으로 문서 편집기 툴바의 버튼으로 사용 가능하지만, 색상 설정은 직접 작성이 필요합니다.
 
 ---
 
@@ -65,7 +71,7 @@ CloudWiki는 기본적인 마크다운 표뿐만 아니라 표의 각 셀 배경
 위키 내의 다른 문서로 이동할 수 있는 링크를 편리하게 생성합니다.
 
 [[문서제목]]
-```markdown
+```
 [[문서제목]]
 ```
 
@@ -87,12 +93,12 @@ CloudWiki는 기본적인 마크다운 표뿐만 아니라 표의 각 셀 배경
 CloudWiki는 부트스트랩 아이콘(Bootstrap Icons)과 MDI(Material Design Icons)를 지원합니다.
 
 {bi:card-text}
-```markdown
+```
 {bi:card-text}
 ```
 
 {mdi:dots-vertical}
-```markdown
+```
 {mdi:dots-vertical}
 ```
 *(주의: 아이콘 코드는 공식 가이드 문서의 아이콘 이름을 그대로 사용합니다)*
@@ -108,7 +114,7 @@ CloudWiki는 부트스트랩 아이콘(Bootstrap Icons)과 MDI(Material Design I
 문서 내에 부연 설명을 추가할 때 사용합니다.
 
 부연설명을 추가할 텍스트[* 여기에 각주 내용이 들어갑니다]
-```markdown
+```
 부연설명을 추가할 텍스트[* 여기에 각주 내용이 들어갑니다]
 ```
 
@@ -118,17 +124,17 @@ CloudWiki는 부트스트랩 아이콘(Bootstrap Icons)과 MDI(Material Design I
 
 > 인용문 예시입니다.
 >> 중첩 인용문입니다.
-```markdown
+```
 > 인용문 예시입니다.
 >> 중첩 인용문입니다.
 ```
 
 `인라인 코드`
-```markdown
+```
 `인라인 코드`
 ```
 
-```javascript
+```
 // 여러 줄 코드블럭
 console.log("Hello Wiki!");
 ```
