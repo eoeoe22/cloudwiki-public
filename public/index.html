@@ -1,0 +1,1410 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="CloudWiki - 오픈 커뮤니티 위키">
+  <meta property="og:title" content="CloudWiki">
+  <meta property="og:description" content="CloudWiki - 오픈 커뮤니티 위키">
+  <meta property="og:site_name" content="CloudWiki">
+  <meta property="og:type" content="website">
+  <title class="app-wiki-name">CloudWiki</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <!-- Bootstrap Icons -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+  <!-- Material Design Icons -->
+  <link href="https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css" rel="stylesheet">
+  <!-- SweetAlert2 -->
+  <link href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css" rel="stylesheet">
+  <!-- Google Fonts: Noto Sans KR -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;600;700;800;900&display=swap"
+    rel="stylesheet">
+  <!-- 커스텀 스타일 -->
+  <link rel="stylesheet" href="/style.css">
+</head>
+
+<body>
+
+
+  <!-- ── 네비게이션 바 Placeholder ── -->
+  <div id="app-header-placeholder"></div>
+
+  <!-- ── 메인 레이아웃 ── -->
+  <div class="wiki-layout">
+    <!-- 메인 콘텐츠 -->
+    <div class="wiki-container">
+      <!-- 로딩 -->
+      <div id="loading" class="wiki-loading">
+        <div class="spinner-border text-primary" role="status"></div>
+        <span>불러오는 중...</span>
+      </div>
+
+      <!-- 홈(환영 페이지) -->
+      <div id="homePage" class="d-none">
+        <div class="wiki-welcome">
+          <h1><span class="app-wiki-name">CloudWiki</span></h1>
+          <p>누구나 열람하고 함께 편집하는 오픈 위키입니다.</p>
+          <button class="btn btn-wiki" onclick="goNewPage()">
+            <i class="bi bi-pencil-square"></i> 첫 문서 만들기
+          </button>
+        </div>
+        <div class="recent-pages-section" id="recentPages"></div>
+      </div>
+
+      <!-- 문서 보기 페이지 -->
+      <div id="articlePage" class="d-none">
+        <div class="wiki-article">
+          <h1 class="wiki-article-title" id="articleTitle"></h1>
+          <div id="redirectMessage"></div>
+          <div class="wiki-article-meta" id="articleMeta"></div>
+
+          <!-- 문서 도구 (드롭다운) -->
+          <div class="d-flex justify-content-end mb-2">
+            <div class="dropdown">
+              <button class="btn btn-secondary dropdown-toggle" type="button" id="docToolsDropdown"
+                data-bs-toggle="dropdown" aria-expanded="false">
+                <i class="mdi mdi-dots-vertical"></i> 문서 도구
+              </button>
+              <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="docToolsDropdown" id="articleActions">
+                <!-- 자바스크립트로 채워짐 -->
+              </ul>
+            </div>
+          </div>
+
+          <!-- 목차 아코디언 -->
+          <div class="accordion mb-4" id="wikiAccordion">
+            <!-- 목차 -->
+            <div class="accordion-item">
+              <h2 class="accordion-header" id="headingTOC">
+                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse"
+                  data-bs-target="#collapseTOC" aria-expanded="false" aria-controls="collapseTOC">
+                  <i class="bi bi-list-columns-reverse me-2"></i> 목차
+                </button>
+              </h2>
+              <div id="collapseTOC" class="accordion-collapse collapse" aria-labelledby="headingTOC"
+                data-bs-parent="#wikiAccordion">
+                <div class="accordion-body">
+                  <div id="tocContainer" class="d-none">
+                    <nav id="tocNav"></nav>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 본문 -->
+          <div class="wiki-content" id="articleContent"></div>
+
+          <!-- 백링크 -->
+          <div class="backlinks-section d-none" id="backlinksSection">
+            <h5><i class="bi bi-link-45deg"></i> 이 문서를 참조하는 문서</h5>
+            <div class="list-group" id="backlinksList"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 문서 없음 -->
+      <div id="notFoundPage" class="d-none">
+        <div class="wiki-not-found">
+          <h2>📄 문서가 없습니다</h2>
+          <p id="notFoundSlug"></p>
+          <button class="btn btn-wiki" id="createPageBtn">
+            <i class="bi bi-plus-lg"></i> 이 문서 만들기
+          </button>
+        </div>
+      </div>
+
+      <!-- 카테고리 문서 목록 -->
+      <div id="categoryPage" class="d-none">
+        <div class="wiki-article">
+          <h2><i class="bi bi-folder2-open"></i> 카테고리: <span id="catPageTitle"></span></h2>
+          <div class="list-group mt-4" id="categoryDocsList"></div>
+        </div>
+      </div>
+      <!-- 모바일 전용 최근 변경 (문서 하단) -->
+      <div class="recent-changes-mobile d-lg-none" id="recentChangesMobile">
+        <div class="sidebar-section">
+          <h6 class="sidebar-title"><i class="bi bi-clock-history"></i> 최근 변경</h6>
+          <div id="recentChangesListMobile" class="recent-changes-list"></div>
+        </div>
+      </div>
+    </div> <!-- wiki-container end -->
+
+    <!-- 오른쪽 사이드바 (PC 전용 오프캔버스 컨테이너 및 최근 변경) -->
+    <aside class="wiki-sidebar" id="wikiSidebar">
+      <!-- 사이드바 네비게이션 (모바일 오프캔버스 렌더링 영역 공유) -->
+      <div id="app-sidebar-placeholder"></div>
+
+      <!-- 최근 변경 -->
+      <div class="sidebar-section mt-3 d-none d-lg-block">
+        <h6 class="sidebar-title"><i class="bi bi-clock-history"></i> 최근 변경</h6>
+        <div id="recentChangesList" class="recent-changes-list"></div>
+      </div>
+    </aside>
+  </div> <!-- wiki-layout end -->
+
+  <!-- ── Scripts ── -->
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
+
+  <script src="/js/common.js"></script>
+  <script>
+    // ── SSR 데이터 로드 ──
+    let ssrData = null;
+    (function () {
+      const el = document.getElementById('ssr-data');
+      if (el) {
+        try { ssrData = JSON.parse(el.textContent); } catch (e) { }
+      }
+    })();
+
+    // ── 전역 상태 ──
+    let currentSlug = null;
+    let currentPage = null;
+
+    // ── Marked 설정 (1회 초기화) ──
+    marked.use({
+      renderer: {
+        html(token) {
+          const htmlStr = typeof token === 'string' ? token : (token.text || token.raw || '');
+          return escapeHtml(htmlStr);
+        }
+      }
+    });
+    marked.setOptions({
+      gfm: true,
+      breaks: true,
+      headerIds: true,
+    });
+
+    // ── 초기화 ──
+    document.addEventListener('DOMContentLoaded', async () => {
+      await Promise.all([loadConfig(), checkAuth()]);
+      route();
+      loadRecentChanges();
+    });
+
+    // ── 라우팅 ──
+    function route() {
+      const path = window.location.pathname;
+      hideAllPages();
+
+      if (path === '/' || path === '') {
+        showHome();
+      } else if (path.match(/^\/wiki\/([^/]+)\/discussions/)) {
+        // 토론 페이지 → 별도 HTML로 이동
+        window.location.href = path;
+        return;
+      } else if (path.match(/^\/wiki\/([^/]+)\/revisions$/)) {
+        // 리비전 페이지 → 별도 HTML로 이동
+        window.location.href = path;
+        return;
+      } else if (path.match(/^\/wiki\/([^/]+)$/)) {
+        const slug = decodeURIComponent(path.match(/^\/wiki\/([^/]+)$/)[1]);
+        showArticle(slug);
+      } else if (path === '/search') {
+        window.location.href = '/search.html' + window.location.search;
+      }
+    }
+
+    function hideAllPages() {
+      document.getElementById('loading').classList.add('d-none');
+      document.getElementById('homePage').classList.add('d-none');
+      document.getElementById('articlePage').classList.add('d-none');
+      document.getElementById('notFoundPage').classList.add('d-none');
+      document.getElementById('categoryPage').classList.add('d-none');
+    }
+
+    function showLoading() {
+      hideAllPages();
+      document.getElementById('loading').classList.remove('d-none');
+    }
+
+    // ── 홈(환영 페이지 대신 /wiki/[WIKI_NAME] 으로 이동) ──
+    async function showHome() {
+      const wikiName = typeof appConfig !== 'undefined' && appConfig.wikiName ? appConfig.wikiName : 'CloudWiki';
+      navigateTo(`/wiki/${encodeURIComponent(wikiName)}`);
+    }
+
+    // ── 문서 보기 ──
+    async function scrollToBacklinks() {
+      const section = document.getElementById('backlinksSection');
+      const list = document.getElementById('backlinksList');
+
+      if (!section.classList.contains('d-none')) {
+        section.scrollIntoView({ behavior: 'smooth' });
+        return;
+      }
+
+      list.innerHTML = '<div class="text-center py-3"><div class="spinner-border spinner-border-sm text-primary" role="status"></div> 역링크 조회 중...</div>';
+      section.classList.remove('d-none');
+
+      const loaded = await loadBacklinks(currentSlug);
+      if (loaded) {
+        section.scrollIntoView({ behavior: 'smooth' });
+      }
+    }
+
+    async function showArticle(slug) {
+      showLoading();
+      currentSlug = slug;
+
+      try {
+        let page;
+
+        // SSR 데이터가 있고, 현재 slug와 일치하면 API 호출 없이 사용
+        if (ssrData && ssrData._ssrSlug === slug) {
+          if (ssrData._ssrForbidden) {
+            hideAllPages();
+            Swal.fire('접근 불가', '이 문서는 비공개 상태입니다.', 'error');
+            return;
+          }
+          if (ssrData._ssrNotFound) {
+            // 카테고리 문서 체크
+            const decodedSlug = decodeURIComponent(slug);
+            if (decodedSlug.startsWith('카테고리:')) {
+              await showCategoryArticle(slug, decodedSlug);
+              return;
+            }
+
+            hideAllPages();
+            document.getElementById('notFoundPage').classList.remove('d-none');
+            document.getElementById('notFoundSlug').textContent =
+              `"${decodeURIComponent(slug)}" 문서가 아직 존재하지 않습니다.`;
+            document.getElementById('createPageBtn').onclick = () => {
+              window.location.href = `/edit.html?slug=${encodeURIComponent(slug)}`;
+            };
+            document.title = `문서 없음 - ${appConfig.wikiName}`;
+            return;
+          }
+          page = ssrData;
+          // SSR 데이터는 한 번만 사용 (이후 클라이언트 네비게이션 시에는 API 호출)
+          ssrData = null;
+        } else {
+          // 클라이언트 사이드 네비게이션 — API로 문서 로드
+          const search = window.location.search;
+          const res = await fetch(`/api/wiki/${encodeURIComponent(slug)}${search}`);
+
+          if (res.status === 404) {
+            const decodedSlug = decodeURIComponent(slug);
+            if (decodedSlug.startsWith('카테고리:')) {
+              await showCategoryArticle(slug, decodedSlug);
+              return;
+            }
+
+            hideAllPages();
+            document.getElementById('notFoundPage').classList.remove('d-none');
+            document.getElementById('notFoundSlug').textContent =
+              `"${decodeURIComponent(slug)}" 문서가 아직 존재하지 않습니다.`;
+            document.getElementById('createPageBtn').onclick = () => {
+              window.location.href = `/edit.html?slug=${encodeURIComponent(slug)}`;
+            };
+            document.title = `문서 없음 - ${appConfig.wikiName}`;
+            return;
+          }
+
+          if (res.status === 403) {
+            hideAllPages();
+            Swal.fire('접근 불가', '이 문서는 비공개 상태입니다.', 'error');
+            return;
+          }
+
+          if (!res.ok) throw new Error('문서 로딩 실패');
+          page = await res.json();
+        }
+
+        currentPage = page;
+
+        document.title = `${page.title} - ${appConfig.wikiName}`;
+
+        // 제목
+        document.getElementById('articleTitle').textContent = page.title;
+
+        // 리다이렉트 안내
+        const redirectMsgEl = document.getElementById('redirectMessage');
+        redirectMsgEl.innerHTML = '';
+        if (page.redirected_from) {
+          redirectMsgEl.innerHTML = `
+            <div class="alert alert-info py-1 px-2 mb-2 d-inline-block small">
+            <i class="bi bi-arrow-return-right"></i>
+            "${escapeHtml(page.redirected_from)}" 문서에서 넘어옴
+            (<a href="/wiki/${encodeURIComponent(page.redirected_from)}?redirect=no" class="alert-link" onclick="navigateTo(this.getAttribute('href')); return false;">편집</a>)
+            </div>
+          `;
+        }
+
+        // 메타 정보
+        const updatedDate = new Date(page.updated_at * 1000).toLocaleString('ko-KR');
+        const authorName = page.author?.name || '알 수 없음';
+
+        let badgesHtml = '';
+        if (page.category) {
+          const cats = page.category.split(',').map(c => c.trim()).filter(c => c);
+          cats.forEach(cat => {
+            badgesHtml += `<a href="#" data-cat="${escapeHtml(cat)}" onclick="showCategory(this.dataset.cat); return false;" class="badge bg-secondary text-decoration-none ms-2"><i class="bi bi-folder"></i> ${escapeHtml(cat)}</a>`;
+          });
+        }
+        if (page.is_locked) {
+          badgesHtml += `<span class="badge bg-danger ms-2"><i class="bi bi-lock-fill"></i> 관리자 전용</span>`;
+        }
+        if (page.deleted_at) {
+          badgesHtml += `<span class="badge bg-danger ms-2"><i class="bi bi-trash"></i> 삭제됨</span>`;
+        }
+
+        document.getElementById('articleMeta').innerHTML = `
+      <span class="meta-item"><i class="bi bi-person"></i> ${escapeHtml(authorName)}</span>
+      <span class="meta-item"><i class="bi bi-clock"></i> ${updatedDate}</span>
+      <span class="meta-item"><i class="bi bi-hash"></i> v${page.version}</span>
+      ${badgesHtml}
+    `;
+
+        // redirect를 통해 문서를 조회한 경우, 액션 버튼에 실제 문서의 slug를 사용
+        const actionSlug = page.slug || slug;
+
+        // 액션 버튼
+        let actionsHtml = `
+      <li><a href="/wiki/${encodeURIComponent(actionSlug)}/revisions" class="dropdown-item">
+        <i class="bi bi-clock-history"></i> 이력
+      </a></li>
+      <li><a href="/wiki/${encodeURIComponent(actionSlug)}/discussions" class="dropdown-item">
+        <i class="bi bi-chat-dots"></i> 토론
+      </a></li>
+      <li><button class="dropdown-item" onclick="scrollToBacklinks(); return false;">
+        <i class="bi bi-link-45deg"></i> 역링크
+      </button></li>
+    `;
+        if (currentUser) {
+          const isAdmin = currentUser.role === 'admin' || currentUser.role === 'super_admin';
+          const isLocked = page.is_locked === 1;
+          const canEdit = isAdmin || !isLocked;
+
+          actionsHtml = `
+          <li><a href="/edit.html?slug=${encodeURIComponent(actionSlug)}"
+             class="dropdown-item ${canEdit ? '' : 'disabled'}"
+             ${canEdit ? '' : 'tabindex="-1" aria-disabled="true"'}
+             title="${canEdit ? '이 문서 편집' : '이 문서는 관리자만 편집할 수 있습니다'}">
+            <i class="bi bi-pencil"></i> 편집
+          </a></li>
+          <li><hr class="dropdown-divider"></li>
+        ` + actionsHtml;
+
+          if (canEdit) {
+            if (page.deleted_at && isAdmin) {
+              actionsHtml += `
+              <li><button class="dropdown-item text-success" data-slug="${escapeHtml(actionSlug)}" onclick="restorePage(this.dataset.slug); return false;">
+                <i class="bi bi-arrow-counterclockwise"></i> 문서 복원
+              </button></li>
+              <li><button class="dropdown-item text-danger" data-slug="${escapeHtml(actionSlug)}" onclick="confirmHardDelete(this.dataset.slug); return false;">
+                <i class="bi bi-trash-fill"></i> 영구 삭제 (최고 관리자)
+              </button></li>
+              `;
+            } else {
+              actionsHtml += `
+              <li><button class="dropdown-item" data-slug="${escapeHtml(actionSlug)}" onclick="promptMove(this.dataset.slug); return false;">
+                <i class="bi bi-arrows-move"></i> 이동/이름 변경
+              </button></li>
+              <li><button class="dropdown-item" data-slug="${escapeHtml(actionSlug)}" onclick="manageRedirects(this.dataset.slug); return false;">
+                <i class="bi bi-signpost-split"></i> 넘겨주기 관리
+              </button></li>
+              <li><hr class="dropdown-divider"></li>
+              <li><button class="dropdown-item text-danger" data-slug="${escapeHtml(actionSlug)}" onclick="confirmDelete(this.dataset.slug); return false;">
+                <i class="bi bi-trash"></i> 삭제
+              </button></li>
+              `;
+            }
+          }
+        }
+        document.getElementById('articleActions').innerHTML = actionsHtml;
+
+        // Markdown → HTML 렌더링 (marked 설정은 초기화 시 1회만 적용됨)
+
+        // ── Transclusion Resolution ──
+        const resolvedContent = await resolveTransclusions(page.content || '');
+
+        // ── Folding Block ([+ 제목] ... [-]) 전처리 ──
+        // marked는 HTML 블록 내부의 마크다운을 파싱하지 않으므로,
+        // content를 별도로 파싱한 뒤 placeholder를 교체하는 방식 사용
+
+        // 코드블럭 보호: fold 파싱 전에 코드블럭을 placeholder로 대체
+        // ※ DOMPurify가 null byte(\x00)를 제거하고, marked가 ___...___ 패턴을 이탈릭체로 변환하므로
+        //    특수문자 없는 고유 식별자 패턴(알파벳+숫자) 사용: WIKICODEFPHnXEND, WIKIFOLDPHnXEND
+        const codeBlocksForFold = [];
+        let foldInput = resolvedContent.replace(/(`{3,})[\s\S]*?\1|`[^`\n]+`/g, (m) => {
+          const idx = codeBlocksForFold.length;
+          codeBlocksForFold.push(m);
+          return `WIKICODEFPH${idx}XEND`;
+        });
+
+        const foldRegex = /^\[\+\s*(.*?)\s*\](?:(?:\r?\n)+)([\s\S]*?)(?:\r?\n)+\[-\]$/gm;
+        const foldBlocks = [];
+        let preprocessed = foldInput.replace(foldRegex, (match, titleLine, content) => {
+          let summaryText = titleLine;
+          let bgOpt = '';
+          let colorOpt = '';
+
+          let replaced = true;
+          while (replaced) {
+            replaced = false;
+            let bgMatch = summaryText.match(/\{bg:\s*([^}]+)\}/);
+            if (bgMatch) { bgOpt = escapeHtml(bgMatch[1].trim()); summaryText = summaryText.replace(bgMatch[0], ''); replaced = true; }
+            let colorMatch = summaryText.match(/\{color:\s*([^}]+)\}/);
+            if (colorMatch) { colorOpt = escapeHtml(colorMatch[1].trim()); summaryText = summaryText.replace(colorMatch[0], ''); replaced = true; }
+          }
+
+          summaryText = escapeHtml(summaryText.trim());
+
+          let bgAttr = bgOpt ? ` data-bg="${bgOpt}"` : '';
+          let colorAttr = colorOpt ? ` data-color="${colorOpt}"` : '';
+
+          const idx = foldBlocks.length;
+
+          // 코드블럭 복원 후 fold 내용물의 마크다운 렌더링
+          const restoredContent = content.replace(/WIKICODEFPH(\d+)XEND/g, (_, i) => codeBlocksForFold[parseInt(i)]);
+          let rawContentHtml = marked.parse(restoredContent);
+          const contentHtml = DOMPurify.sanitize(rawContentHtml, { ADD_TAGS: ['i', 'span', 'details', 'summary'], ADD_ATTR: ['class', 'style', 'data-bg', 'data-color'] });
+
+          foldBlocks.push({ summaryText, bgAttr, colorAttr, contentHtml });
+          return `\n\nWIKIFOLDPH${idx}XEND\n\n`;
+        });
+
+        // 코드블럭 복원 (fold 바깥 영역)
+        preprocessed = preprocessed.replace(/WIKICODEFPH(\d+)XEND/g, (_, idx) => codeBlocksForFold[parseInt(idx)]);
+
+        let rawHtml = marked.parse(preprocessed);
+
+        // Fold placeholder를 실제 HTML로 교체 (DOMPurify sanitize 전에 교체)
+        rawHtml = rawHtml.replace(/(?:<p>)?WIKIFOLDPH(\d+)XEND(?:<\/p>)?/g, (m, idx) => {
+          const block = foldBlocks[parseInt(idx)];
+          if (!block) return '';
+          return `<details class="wiki-fold border rounded mb-3"${block.bgAttr}${block.colorAttr}>` +
+            `<summary class="fw-bold p-2" style="cursor: pointer;">${block.summaryText}</summary>` +
+            `<div class="wiki-fold-content p-3 border-top">${block.contentHtml}</div>` +
+            `</details>`;
+        });
+
+        let html = DOMPurify.sanitize(rawHtml, { ADD_TAGS: ['i', 'span', 'details', 'summary'], ADD_ATTR: ['class', 'style', 'data-bg', 'data-color'] });
+
+        // 카테고리 목록 추가 (문서가 존재하는 경우)
+        const decodedSlug = decodeURIComponent(slug);
+        if (decodedSlug.startsWith('카테고리:')) {
+          const categoryName = decodedSlug.replace(/^카테고리:/, '');
+          const listHtml = await fetchCategoryList(categoryName);
+          html += listHtml;
+        }
+
+        document.getElementById('articleContent').innerHTML = html;
+
+        // 테이블 셀 색상 적용 ({bg:...}, {color:...})
+        document.querySelectorAll('#articleContent td, #articleContent th').forEach(cell => {
+          let walker = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT, null, false);
+          let firstTextNode = walker.nextNode();
+          if (firstTextNode) {
+            let val = firstTextNode.nodeValue;
+            let replaced = true;
+            // 허용되는 CSS 색상 형식: #hex (3,4,6,8자리), rgb/rgba, hsl/hsla, 혹은 영문 색상명
+            const colorRegex = /^(#[0-9a-fA-F]{3,8}|(rgb|hsl)a?\([^)]+\)|[a-zA-Z]+)$/;
+
+            while (replaced) {
+              replaced = false;
+              let bgMatch = val.match(/^([\s]*)\{bg:\s*([^}]+)\}/);
+              if (bgMatch) {
+                const colorValue = bgMatch[2].trim();
+                if (colorRegex.test(colorValue)) {
+                  cell.style.backgroundColor = colorValue;
+                }
+                val = val.replace(bgMatch[0], '');
+                replaced = true;
+              }
+              let colorMatch = val.match(/^([\s]*)\{color:\s*([^}]+)\}/);
+              if (colorMatch) {
+                const colorValue = colorMatch[2].trim();
+                if (colorRegex.test(colorValue)) {
+                  cell.style.color = colorValue;
+                }
+                val = val.replace(colorMatch[0], '');
+                replaced = true;
+              }
+            }
+            firstTextNode.nodeValue = val;
+          }
+        });
+
+        // Folding Block 스타일 색상 적용 (Post-processing)
+        document.querySelectorAll('.wiki-fold').forEach(fold => {
+          const bg = fold.getAttribute('data-bg');
+          const color = fold.getAttribute('data-color');
+          const colorRegex = /^(#[0-9a-fA-F]{3,8}|(rgb|hsl)a?\([^)]+\)|[a-zA-Z]+)$/;
+          if (bg && colorRegex.test(bg)) fold.style.backgroundColor = bg;
+
+          if (color && colorRegex.test(color)) {
+            const summary = fold.querySelector('summary');
+            if (summary) summary.style.color = color;
+          }
+        });
+
+        // 내부 위키 링크 [[text]] 변환 (이미 렌더 후)
+        processWikiLinks();
+
+        // 각주 [* 내용] 처리
+        processFootnotes();
+
+        // 각주 팝오버 초기화
+        const popoverTriggerList = [].slice.call(document.querySelectorAll('#articleContent [data-bs-toggle="popover"]'));
+        popoverTriggerList.map(function (popoverTriggerEl) {
+          return new bootstrap.Popover(popoverTriggerEl, { html: true });
+        });
+
+        // 외부 링크 경고 처리
+        document.getElementById('articleContent').querySelectorAll('a').forEach(a => {
+          const href = a.getAttribute('href');
+          if (href && (href.startsWith('http://') || href.startsWith('https://'))) {
+            try {
+              const url = new URL(href, window.location.origin);
+              if (url.origin !== window.location.origin) {
+                a.onclick = (e) => {
+                  e.preventDefault();
+                  Swal.fire({
+                    title: '외부 링크 이동',
+                    html: `외부 링크 <b>${escapeHtml(href)}</b> 로 이동합니다.<br>계속하시겠습니까?`,
+                    icon: 'warning',
+                    showCancelButton: true,
+                    confirmButtonText: '예',
+                    cancelButtonText: '아니오'
+                  }).then((result) => {
+                    if (result.isConfirmed) {
+                      window.open(href, '_blank');
+                    }
+                  });
+                };
+              }
+            } catch (urlErr) {
+              // 잘못된 URL 형식 — 무시
+            }
+          }
+        });
+
+        // YouTube / Niconico Embed Processing
+        document.getElementById('articleContent').querySelectorAll('a').forEach(a => {
+            const href = a.getAttribute('href');
+            if (!href) return;
+
+            // Must be the only text inside a block level element, specifically a paragraph
+            const parent = a.parentElement;
+            if (!parent || parent.tagName !== 'P') return;
+            if (parent.textContent.trim() !== a.textContent.trim()) return;
+
+            // Must not be a custom markdown link. If text exactly matches href or its domain, we allow it.
+            // Also ignore if it is inside a blockquote, a code block, or a footnote
+            if (a.closest('blockquote') || a.closest('code, pre') || a.closest('.wiki-fn-ref')) return;
+
+            // Checking if the link display text looks like a URL instead of custom text
+            const textContent = a.textContent.trim();
+            if (!textContent.includes('youtube.com') && !textContent.includes('youtu.be') && !textContent.includes('nicovideo.jp')) return;
+
+            const ytMatch = href.match(/^https?:\/\/(?:www\.)?youtube\.com\/watch\?v=([a-zA-Z0-9_-]+)(.*)$|^https?:\/\/youtu\.be\/([a-zA-Z0-9_-]+)(.*)$/);
+            if (ytMatch) {
+                const videoId = ytMatch[1] || ytMatch[3];
+                let params = ytMatch[2] || ytMatch[4] || '';
+                // convert ?t= or &t= to start=
+                const timeMatch = params.match(/[?&]t=(\d+)s?/);
+                let query = '';
+                if (timeMatch) {
+                    query = `?start=${timeMatch[1]}`;
+                }
+                const iframeWrapper = document.createElement('div');
+                iframeWrapper.className = 'ratio ratio-16x9 my-3';
+                iframeWrapper.style.maxWidth = '100%';
+                iframeWrapper.innerHTML = `<iframe src="https://www.youtube.com/embed/${videoId}${query}" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>`;
+                parent.replaceWith(iframeWrapper);
+                return;
+            }
+
+            const nicoMatch = href.match(/^https?:\/\/(?:www\.)?nicovideo\.jp\/watch\/([a-zA-Z0-9_-]+)(.*)$/);
+            if (nicoMatch) {
+                const videoId = nicoMatch[1];
+                const params = nicoMatch[2] || '';
+                // convert ?from= or &from= to from=
+                const timeMatch = params.match(/[?&]from=(\d+)/);
+                let query = '';
+                if (timeMatch) {
+                    query = `?from=${timeMatch[1]}`;
+                }
+                const iframeWrapper = document.createElement('div');
+                iframeWrapper.className = 'ratio ratio-16x9 my-3';
+                iframeWrapper.style.maxWidth = '100%';
+                iframeWrapper.innerHTML = `<iframe src="https://embed.nicovideo.jp/watch/${videoId}${query}" frameborder="0" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>`;
+                parent.replaceWith(iframeWrapper);
+                return;
+            }
+        });
+
+        // 테이블에 Bootstrap 클래스 적용 및 반응형 래퍼 추가
+        document.querySelectorAll('#articleContent table').forEach(t => {
+          t.classList.add('table', 'table-bordered', 'table-hover');
+          const wrapper = document.createElement('div');
+          wrapper.className = 'table-responsive';
+          t.parentNode.insertBefore(wrapper, t);
+          wrapper.appendChild(t);
+        });
+
+        // 이미지 반응형
+        document.querySelectorAll('#articleContent img').forEach(img => {
+          img.classList.add('img-fluid');
+        });
+
+        // 코드블럭 복사 버튼 추가
+        document.querySelectorAll('#articleContent pre').forEach(pre => {
+          if (pre.parentNode.classList.contains('wiki-code-wrapper')) return;
+
+          const wrapper = document.createElement('div');
+          wrapper.className = 'wiki-code-wrapper';
+          pre.parentNode.insertBefore(wrapper, pre);
+          wrapper.appendChild(pre);
+
+          const copyBtn = document.createElement('button');
+          copyBtn.className = 'btn-copy-code';
+          copyBtn.title = '코드 복사';
+          copyBtn.innerHTML = '<i class="bi bi-copy"></i>';
+
+          copyBtn.onclick = async () => {
+            try {
+              const textToCopy = pre.innerText || pre.textContent;
+              await navigator.clipboard.writeText(textToCopy);
+              copyBtn.innerHTML = '<i class="bi bi-check-lg"></i>';
+              setTimeout(() => {
+                copyBtn.innerHTML = '<i class="bi bi-copy"></i>';
+              }, 2000);
+            } catch (err) {
+              console.error('복사 실패:', err);
+              // Fallback
+              const textarea = document.createElement('textarea');
+              textarea.value = pre.innerText || pre.textContent;
+              document.body.appendChild(textarea);
+              textarea.select();
+              try {
+                document.execCommand('copy');
+                copyBtn.innerHTML = '<i class="bi bi-check-lg"></i>';
+                setTimeout(() => {
+                  copyBtn.innerHTML = '<i class="bi bi-copy"></i>';
+                }, 2000);
+              } catch (e) {
+                console.error('Fallback 복사 실패:', e);
+              }
+              document.body.removeChild(textarea);
+            }
+          };
+
+          wrapper.appendChild(copyBtn);
+        });
+
+        // TOC 생성
+        generateTOC();
+
+        // 틀(Template) 문서인 경우 자동으로 역링크 로드
+        const templatePrefixes = ['틀:', 'template:', '템플릿:'];
+        const isTemplate = templatePrefixes.some(p => decodedSlug.startsWith(p));
+        if (isTemplate) {
+          document.querySelector('#backlinksSection h5').innerHTML = '<i class="bi bi-link-45deg"></i> 이 틀을 사용하는 문서';
+          await loadBacklinks(slug);
+        } else {
+          document.querySelector('#backlinksSection h5').innerHTML = '<i class="bi bi-link-45deg"></i> 이 문서를 참조하는 문서';
+          document.getElementById('backlinksSection').classList.add('d-none');
+          document.getElementById('backlinksList').innerHTML = '';
+        }
+
+        hideAllPages();
+        document.getElementById('articlePage').classList.remove('d-none');
+
+      } catch (err) {
+        console.error(err);
+        Swal.fire('오류', '문서를 불러오는 데 실패했습니다.', 'error');
+        hideAllPages();
+      }
+    }
+
+    // ── 카테고리 문서 (문서가 없는 경우) ──
+    async function showCategoryArticle(slug, decodedSlug) {
+      const categoryName = decodedSlug.replace(/^카테고리:/, '');
+      const listHtml = await fetchCategoryList(categoryName);
+
+      document.title = `${decodedSlug} - ${appConfig.wikiName}`;
+      document.getElementById('articleTitle').textContent = decodedSlug;
+      document.getElementById('articleMeta').innerHTML = '<span class="text-muted">아직 작성되지 않은 카테고리 문서입니다.</span>';
+
+      let actions = `
+        <li><button class="dropdown-item" onclick="window.location.href='/edit.html?slug=${encodeURIComponent(slug).replace(/'/g, "%27")}'">
+          <i class="bi bi-pencil-square"></i> 카테고리 설명 생성
+        </button></li>
+      `;
+      document.getElementById('articleActions').innerHTML = actions;
+      document.getElementById('articleContent').innerHTML = listHtml;
+      document.getElementById('tocContainer').classList.add('d-none');
+      document.getElementById('backlinksSection').classList.add('d-none');
+
+      hideAllPages();
+      document.getElementById('articlePage').classList.remove('d-none');
+    }
+
+    // ── TOC 생성 ──
+    function generateTOC() {
+      const content = document.getElementById('articleContent');
+      const headings = content.querySelectorAll('h1, h2, h3, h4');
+
+      if (headings.length < 1) {
+        document.getElementById('tocContainer').classList.add('d-none');
+        return;
+      }
+
+      const tocNav = document.getElementById('tocNav');
+      let html = '<ol>';
+      let prevLevel = 0;
+
+      headings.forEach((h, i) => {
+        const level = parseInt(h.tagName[1]);
+        const id = `heading-${i}`;
+        h.id = id;
+        const text = h.textContent;
+
+        if (level > prevLevel) {
+          for (let j = prevLevel; j < level; j++) html += '<ol>';
+        } else if (level < prevLevel) {
+          for (let j = level; j < prevLevel; j++) html += '</ol>';
+        }
+
+        html += `<li><a href="#${id}">${escapeHtml(text)}</a></li>`;
+        prevLevel = level;
+      });
+
+      for (let j = 0; j < prevLevel; j++) html += '</ol>';
+
+      tocNav.innerHTML = html;
+      document.getElementById('tocContainer').classList.remove('d-none');
+    }
+
+    // ── 확장 문법(위키링크, 아이콘 등) 처리 ──
+    function processWikiLinks() {
+      const content = document.getElementById('articleContent');
+      const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT, null, false);
+      const textNodes = [];
+
+      while (walker.nextNode()) {
+        const parentTag = walker.currentNode.parentNode.tagName;
+        if (parentTag === 'CODE' || parentTag === 'PRE') continue;
+
+        const val = walker.currentNode.nodeValue;
+        if (val.includes('[[') || val.includes('{bi:') || val.includes('{mdi:')) {
+          textNodes.push(walker.currentNode);
+        }
+      }
+
+      textNodes.forEach(node => {
+        const frag = document.createDocumentFragment();
+        const parts = node.nodeValue.split(/(\[\[[^\]]+\]\]|(?<!\{)\{bi:[\w-]+\}(?!\})|(?<!\{)\{mdi:[\w-]+\}(?!\}))/g).filter(Boolean);
+
+        parts.forEach(part => {
+          if (part.startsWith('[[') && part.endsWith(']]')) {
+            const linkText = part.slice(2, -2).trim();
+            const a = document.createElement('a');
+            a.href = `/wiki/${encodeURIComponent(linkText)}`;
+            a.textContent = linkText;
+            a.onclick = (e) => { e.preventDefault(); navigateTo(a.href); };
+            frag.appendChild(a);
+          } else if (part.startsWith('{bi:') && part.endsWith('}')) {
+            const iconName = part.slice(4, -1);
+            const i = document.createElement('i');
+            i.className = `bi bi-${iconName}`;
+            frag.appendChild(i);
+          } else if (part.startsWith('{mdi:') && part.endsWith('}')) {
+            const iconName = part.slice(5, -1);
+            const span = document.createElement('span');
+            span.className = `mdi mdi-${iconName}`;
+            frag.appendChild(span);
+          } else if (part) {
+            frag.appendChild(document.createTextNode(part));
+          }
+        });
+
+        node.parentNode.replaceChild(frag, node);
+      });
+    }
+
+    // ── 각주 처리 ──
+    function processFootnotes() {
+      const content = document.getElementById('articleContent');
+      const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT, null, false);
+      const textNodes = [];
+
+      while (walker.nextNode()) {
+        const parentTag = walker.currentNode.parentNode.tagName;
+        if (parentTag === 'CODE' || parentTag === 'PRE') continue;
+
+        const val = walker.currentNode.nodeValue;
+        if (/\[\*\s/.test(val)) {
+          textNodes.push(walker.currentNode);
+        }
+      }
+
+      if (textNodes.length === 0) return;
+
+      let footnoteIndex = 0;
+      const footnotes = [];
+
+      textNodes.forEach(node => {
+        const frag = document.createDocumentFragment();
+        const parts = node.nodeValue.split(/(\[\*\s[^\]]+\])/g);
+
+        parts.forEach(part => {
+          const fnMatch = part.match(/^\[\*\s(.+)\]$/);
+          if (fnMatch) {
+            footnoteIndex++;
+            const fnContent = fnMatch[1];
+            const fnId = `fn-${footnoteIndex}`;
+            const refId = `fn-ref-${footnoteIndex}`;
+
+            footnotes.push({ id: fnId, refId: refId, num: footnoteIndex, content: fnContent });
+
+            const sup = document.createElement('sup');
+            sup.className = 'wiki-fn-ref';
+            const a = document.createElement('a');
+            a.href = `#${fnId}`;
+            a.id = refId;
+            a.textContent = `[${footnoteIndex}]`;
+
+            a.setAttribute('data-bs-toggle', 'popover');
+            a.setAttribute('data-bs-trigger', 'hover focus');
+            a.setAttribute('data-bs-placement', 'top');
+            a.setAttribute('data-bs-content', escapeHtml(fnContent || ''));
+
+            a.onclick = (e) => {
+              e.preventDefault();
+              if (window.innerWidth >= 992) {
+                document.getElementById(fnId)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              }
+            };
+            sup.appendChild(a);
+            frag.appendChild(sup);
+          } else if (part) {
+            frag.appendChild(document.createTextNode(part));
+          }
+        });
+
+        node.parentNode.replaceChild(frag, node);
+      });
+
+      if (footnotes.length > 0) {
+        const fnSection = document.createElement('div');
+        fnSection.className = 'wiki-footnotes';
+        fnSection.innerHTML = `<hr><h4><i class="bi bi-card-text"></i> 각주</h4>`;
+
+        const ol = document.createElement('ol');
+        footnotes.forEach(fn => {
+          const li = document.createElement('li');
+          li.id = fn.id;
+
+          const backLink = document.createElement('a');
+          backLink.href = `#${fn.refId}`;
+          backLink.className = 'wiki-fn-back';
+          backLink.innerHTML = '<i class="bi bi-arrow-return-left"></i>';
+          backLink.title = '본문으로 돌아가기';
+          backLink.onclick = (e) => {
+            e.preventDefault();
+            document.getElementById(fn.refId)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          };
+
+          const span = document.createElement('span');
+          span.textContent = ' ' + fn.content;
+
+          li.appendChild(backLink);
+          li.appendChild(span);
+          ol.appendChild(li);
+        });
+
+        fnSection.appendChild(ol);
+        content.appendChild(fnSection);
+      }
+    }
+
+    // ── 백링크 로드 ──
+    async function loadBacklinks(slug) {
+      const section = document.getElementById('backlinksSection');
+      const list = document.getElementById('backlinksList');
+
+      try {
+        const res = await fetch(`/api/wiki/${encodeURIComponent(slug)}/backlinks`);
+        if (!res.ok) {
+          section.classList.add('d-none');
+          return false;
+        }
+
+        const data = await res.json();
+
+        if (data.backlinks && data.backlinks.length > 0) {
+          list.innerHTML = data.backlinks.map(bl => {
+            const date = bl.updated_at ? new Date(bl.updated_at * 1000).toLocaleString('ko-KR') : '';
+            const lockIcon = bl.is_locked ? ' <i class="bi bi-lock-fill text-danger" title="관리자 전용"></i>' : '';
+            return `
+              <a href="/wiki/${encodeURIComponent(bl.slug)}" onclick="navigateTo(this.href); return false;" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center">
+                  <div>
+                      <span class="fw-bold">${escapeHtml(bl.title || bl.slug)}</span>
+                      ${lockIcon}
+                  </div>
+                  <small class="text-muted">${date}</small>
+              </a>
+            `;
+          }).join('');
+          section.classList.remove('d-none');
+          return true;
+        } else {
+          list.innerHTML = '<div class="text-muted text-center py-3">이 문서를 참조하는 문서가 없습니다.</div>';
+          section.classList.remove('d-none');
+          return false;
+        }
+      } catch (e) {
+        section.classList.add('d-none');
+        return false;
+      }
+    }
+
+    // ── 카테고리 보기 (문서로 이동) ──
+    function showCategory(category) {
+      navigateTo(`/wiki/카테고리:${category}`);
+    }
+
+    // ── 카테고리 목록 렌더링 ──
+    async function fetchCategoryList(category) {
+      try {
+        const res = await fetch(`/api/wiki/category/${encodeURIComponent(category)}`);
+        if (!res.ok) return '';
+
+        const data = await res.json();
+        if (data.pages.length === 0) {
+          return '<div class="alert alert-light border text-center my-4">이 카테고리에 속한 문서가 없습니다.</div>';
+        }
+
+        const listHtml = data.pages.map(page => {
+          const date = new Date(page.updated_at * 1000).toLocaleString('ko-KR');
+          const lockIcon = page.is_locked ? ' <i class="bi bi-lock-fill text-danger" title="관리자 전용"></i>' : '';
+          return `
+            <a href="/wiki/${encodeURIComponent(page.slug)}" onclick="navigateTo(this.href); return false;" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center">
+                <div>
+                    <span class="fw-bold">${escapeHtml(page.title)}</span>
+                    ${lockIcon}
+                </div>
+                <small class="text-muted">${date}</small>
+            </a>
+        `;
+        }).join('');
+
+        return `
+            <div class="category-list mt-5">
+                <h4><i class="bi bi-folder2-open"></i> "${escapeHtml(category)}" 카테고리에 속한 문서</h4>
+                <div class="list-group mt-3">${listHtml}</div>
+            </div>
+        `;
+      } catch (e) {
+        console.error(e);
+        return '<div class="alert alert-danger">카테고리 목록을 불러오는 데 실패했습니다.</div>';
+      }
+    }
+
+    // ── 문서 이동/이름 변경 ──
+    async function promptMove(slug) {
+      const { value: newSlug } = await Swal.fire({
+        title: '문서 이동/이름 변경',
+        input: 'text',
+        inputLabel: '새로운 문서 이름 (슬러그)',
+        inputValue: slug,
+        showCancelButton: true,
+        confirmButtonText: '이동',
+        cancelButtonText: '취소',
+        inputValidator: (value) => {
+          if (!value) return '새 이름을 입력해주세요.';
+          if (value === slug) return '현재 이름과 동일합니다.';
+        }
+      });
+
+      if (newSlug) {
+        try {
+          const res = await fetch(`/api/wiki/${encodeURIComponent(slug)}/move`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ new_slug: newSlug })
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || '이동 실패');
+
+          Swal.fire('성공', '문서가 이동되었습니다.', 'success').then(() => {
+            navigateTo(`/wiki/${encodeURIComponent(newSlug)}`);
+          });
+        } catch (err) {
+          Swal.fire('오류', err.message, 'error');
+        }
+      }
+    }
+
+    // ── 넘겨주기 관리 ──
+    async function manageRedirects(slug) {
+      try {
+        const res = await fetch(`/api/wiki/${encodeURIComponent(slug)}/redirects`);
+        if (!res.ok) throw new Error('불러오기 실패');
+        const data = await res.json();
+
+        const redirectsHtml = data.redirects.length > 0
+          ? `<ul class="list-group text-start mb-3">
+              ${data.redirects.map(r => `
+                <li class="list-group-item d-flex justify-content-between align-items-center">
+                  <span>${escapeHtml(r.source_slug)}</span>
+                  <button class="btn btn-sm btn-outline-danger" data-slug="${escapeHtml(slug)}" data-source="${escapeHtml(r.source_slug)}" onclick="deleteRedirect(this.dataset.slug, this.dataset.source)">
+                    <i class="bi bi-x-lg"></i>
+                  </button>
+                </li>`).join('')}
+             </ul>`
+          : '<p class="text-muted mb-3">등록된 넘겨주기(별칭)가 없습니다.</p>';
+
+        Swal.fire({
+          title: '넘겨주기(Alias) 관리',
+          html: `
+            <p class="small text-muted">이 문서를 가리키는 다른 이름들을 관리합니다.</p>
+            ${redirectsHtml}
+            <div class="input-group">
+              <input type="text" id="newRedirectInput" class="form-control" placeholder="새 별칭 입력">
+              <button class="btn btn-primary" data-slug="${escapeHtml(slug)}" onclick="addRedirect(this.dataset.slug)">추가</button>
+            </div>
+          `,
+          showConfirmButton: false,
+          showCloseButton: true
+        });
+
+      } catch (err) {
+        Swal.fire('오류', err.message, 'error');
+      }
+    }
+
+    async function addRedirect(slug) {
+      const input = document.getElementById('newRedirectInput');
+      const sourceSlug = input.value.trim();
+      if (!sourceSlug) return;
+
+      try {
+        const res = await fetch(`/api/wiki/${encodeURIComponent(slug)}/redirects`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ source_slug: sourceSlug })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '추가 실패');
+
+        manageRedirects(slug);
+      } catch (err) {
+        Swal.showValidationMessage(err.message);
+      }
+    }
+
+    async function deleteRedirect(slug, sourceSlug) {
+      try {
+        const res = await fetch(`/api/wiki/${encodeURIComponent(slug)}/redirects?source=${encodeURIComponent(sourceSlug)}`, {
+          method: 'DELETE'
+        });
+        if (!res.ok) throw new Error('삭제 실패');
+
+        manageRedirects(slug);
+      } catch (err) {
+        Swal.fire('오류', err.message, 'error');
+      }
+    }
+
+    // ── 문서 삭제 ──
+    async function confirmDelete(slug) {
+      const isAdmin = currentUser && (currentUser.role === 'admin' || currentUser.role === 'super_admin');
+      const isSuperAdmin = currentUser && currentUser.role === 'super_admin';
+
+      const { value: formValues } = await Swal.fire({
+        title: '문서 삭제',
+        html: `
+          <p>정말 "${escapeHtml(slug)}" 문서를 삭제하시겠습니까?</p>
+          ${isSuperAdmin ? `
+            <div class="form-check text-start d-inline-block">
+              <input class="form-check-input" type="checkbox" id="hardDeleteCheck">
+              <label class="form-check-label text-danger fw-bold" for="hardDeleteCheck">
+                영구 삭제 (복구 불가)
+              </label>
+            </div>
+          ` : ''}
+        `,
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#d33',
+        confirmButtonText: '삭제',
+        cancelButtonText: '취소',
+        preConfirm: () => {
+          return {
+            hard: isSuperAdmin ? document.getElementById('hardDeleteCheck').checked : false
+          };
+        }
+      });
+
+      if (formValues) {
+        try {
+          const query = formValues.hard ? '?hard=true' : '';
+          const res = await fetch(`/api/wiki/${encodeURIComponent(slug)}${query}`, {
+            method: 'DELETE'
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || '삭제 실패');
+
+          Swal.fire('삭제됨', data.message, 'success').then(() => {
+            window.location.href = '/';
+          });
+        } catch (err) {
+          Swal.fire('오류', err.message, 'error');
+        }
+      }
+    }
+
+    // ── 문서 영구 삭제 (최고 관리자) ──
+    async function confirmHardDelete(slug) {
+      const isSuperAdmin = currentUser && currentUser.role === 'super_admin';
+      if (!isSuperAdmin) {
+        Swal.fire('권한 없음', '영구 삭제는 최고 관리자만 가능합니다.', 'error');
+        return;
+      }
+
+      const { isConfirmed } = await Swal.fire({
+        title: '문서 영구 삭제',
+        html: `<p>정말 "${escapeHtml(slug)}" 문서를 <b>영구 삭제</b>하시겠습니까?</p><p class="text-danger small">이 작업은 복구할 수 없습니다.</p>`,
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#d33',
+        confirmButtonText: '영구 삭제',
+        cancelButtonText: '취소'
+      });
+
+      if (isConfirmed) {
+        try {
+          const res = await fetch(`/api/wiki/${encodeURIComponent(slug)}?hard=true`, {
+            method: 'DELETE'
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || '삭제 실패');
+
+          Swal.fire('영구 삭제됨', data.message, 'success').then(() => {
+            window.location.href = '/';
+          });
+        } catch (err) {
+          Swal.fire('오류', err.message, 'error');
+        }
+      }
+    }
+
+    // ── 문서 복원 (관리자) ──
+    async function restorePage(slug) {
+      const isAdmin = currentUser && (currentUser.role === 'admin' || currentUser.role === 'super_admin');
+      if (!isAdmin) {
+        Swal.fire('권한 없음', '복구는 관리자만 가능합니다.', 'error');
+        return;
+      }
+
+      const { isConfirmed } = await Swal.fire({
+        title: '문서 복원',
+        text: `"${escapeHtml(slug)}" 문서를 복원하시겠습니까?`,
+        icon: 'question',
+        showCancelButton: true,
+        confirmButtonText: '복원',
+        cancelButtonText: '취소'
+      });
+
+      if (isConfirmed) {
+        try {
+          const res = await fetch(`/api/wiki/${encodeURIComponent(slug)}/restore`, {
+            method: 'POST'
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || '복원 실패');
+
+          Swal.fire('복원됨', data.message, 'success').then(() => {
+            window.location.href = `/wiki/${encodeURIComponent(slug)}`;
+          });
+        } catch (err) {
+          Swal.fire('오류', err.message, 'error');
+        }
+      }
+    }
+
+    // ── 네비게이션 ──
+    function navigateTo(url) {
+      // 토론/리비전은 별도 호환용
+      if (url.match(/\/wiki\/[^/]+\/discussions/) || url.match(/\/wiki\/[^/]+\/revisions$/)) {
+        window.location.href = url;
+        return;
+      }
+      history.pushState(null, '', url);
+      route();
+    }
+
+
+
+    function goNewPage() {
+      if (!currentUser) {
+        Swal.fire({
+          icon: 'info',
+          title: '로그인 필요',
+          text: '문서를 만들려면 먼저 로그인해주세요.',
+          confirmButtonText: '로그인',
+        }).then(result => {
+          if (result.isConfirmed) window.location.href = '/auth/google';
+        });
+        return;
+      }
+
+      Swal.fire({
+        title: '새 문서 만들기',
+        input: 'text',
+        inputLabel: '문서 슬러그 (URL 경로)',
+        inputPlaceholder: '예: my-first-page',
+        showCancelButton: true,
+        confirmButtonText: '만들기',
+        cancelButtonText: '취소',
+        inputValidator: (value) => {
+          if (!value) return '슬러그를 입력해주세요.';
+          if (!/^[a-zA-Z0-9가-힣\-_ :]+$/.test(value)) return '영문, 한글, 숫자, -, _, 공백, 콜론(:) 만 사용 가능합니다.';
+        }
+      }).then(result => {
+        if (result.isConfirmed) {
+          window.location.href = `/edit.html?slug=${encodeURIComponent(result.value)}`;
+        }
+      });
+    }
+
+    // ── 유틸리티 ──
+
+    function formatDate(ts) {
+      return new Date(ts * 1000).toLocaleString('ko-KR');
+    }
+
+    // ── 틀(Transclusion) 처리 ──
+    async function resolveTransclusions(content) {
+      const MAX_DEPTH = 3;
+      const cache = new Map();
+
+      async function resolve(text, depth) {
+        if (depth > MAX_DEPTH) return text;
+
+        const codeBlocks = [];
+        let protectedText = text;
+        const tokens = marked.lexer(protectedText);
+
+        // marked.lexer를 이용해 정확하게 코드블럭(인라인, 멀티라인) 내용 보호
+        marked.walkTokens(tokens, token => {
+          if (token.type === 'code' || token.type === 'codespan') {
+            const raw = token.raw;
+            if (protectedText.includes(raw)) {
+              const idx = codeBlocks.length;
+              codeBlocks.push(raw);
+              protectedText = protectedText.replace(raw, `\x00CODEBLOCK_${idx}\x00`);
+            }
+          }
+        });
+
+        const regex = /\{\{\s*([^\}]+?)\s*\}\}/g;
+        const matches = [...protectedText.matchAll(regex)];
+
+        if (matches.length === 0) return text;
+
+        const slugsToFetch = new Set();
+        matches.forEach(m => {
+          const name = m[1].trim();
+          let slug = name;
+          if (!slug.startsWith('template:') && !slug.startsWith('틀:') && !slug.startsWith('템플릿:')) {
+            slug = '틀:' + slug;
+          }
+          slugsToFetch.add(slug);
+        });
+
+        const fetchPromises = [];
+        for (const slug of slugsToFetch) {
+          if (!cache.has(slug)) {
+            fetchPromises.push(
+              fetch(`/api/wiki/${encodeURIComponent(slug)}`)
+                .then(res => res.ok ? res.json() : null)
+                .then(data => {
+                  cache.set(slug, data ? data.content : `⚠️ [틀을 찾을 수 없음: ${slug}]`);
+                })
+                .catch(() => {
+                  cache.set(slug, `⚠️ [틀 로딩 실패: ${slug}]`);
+                })
+            );
+          }
+        }
+        await Promise.all(fetchPromises);
+
+        let newText = protectedText.replace(regex, (match, name) => {
+          let slug = name.trim();
+          if (!slug.startsWith('template:') && !slug.startsWith('틀:') && !slug.startsWith('템플릿:')) {
+            slug = '틀:' + slug;
+          }
+          return cache.get(slug) || match;
+        });
+
+        newText = newText.replace(/\x00CODEBLOCK_(\d+)\x00/g, (_, idx) => codeBlocks[parseInt(idx)]);
+
+        if (newText !== text) {
+          return await resolve(newText, depth + 1);
+        }
+        return newText;
+      }
+
+      return await resolve(content, 0);
+    }
+
+    // ── 최근 변경 내역 로드 ──
+    async function loadRecentChanges() {
+      try {
+        const res = await fetch('/api/wiki/recent-changes');
+        if (!res.ok) return;
+        const data = await res.json();
+
+        const html = data.changes.map(item => {
+          const timeAgo = getRelativeTime(item.updated_at);
+          return `
+            <a href="/wiki/${encodeURIComponent(item.slug)}" class="recent-change-item"
+               onclick="navigateTo(this.href); return false;">
+              <div class="rc-title">${escapeHtml(item.title)}</div>
+              <div class="rc-meta">
+                <span class="rc-time">${timeAgo}</span>
+                <span class="rc-author">${escapeHtml(item.author_name || '알 수 없음')}</span>
+              </div>
+            </a>
+          `;
+        }).join('');
+
+        const emptyMsg = '<div class="text-muted small p-2">변경 내역이 없습니다.</div>';
+        const content = data.changes.length > 0 ? html : emptyMsg;
+
+        const sidebar = document.getElementById('recentChangesList');
+        const mobile = document.getElementById('recentChangesListMobile');
+        if (sidebar) sidebar.innerHTML = content;
+        if (mobile) mobile.innerHTML = content;
+      } catch (e) {
+        // 무시
+      }
+    }
+
+    function getRelativeTime(unixTs) {
+      const now = Math.floor(Date.now() / 1000);
+      const diff = now - unixTs;
+      if (diff < 60) return '방금 전';
+      if (diff < 3600) return `${Math.floor(diff / 60)}분 전`;
+      if (diff < 86400) return `${Math.floor(diff / 3600)}시간 전`;
+      if (diff < 604800) return `${Math.floor(diff / 86400)}일 전`;
+      return new Date(unixTs * 1000).toLocaleDateString('ko-KR');
+    }
+  </script>
+
+</body>
+
+</html>

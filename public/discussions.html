@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title class="app-wiki-name">토론 - CloudWiki</title>
+  <link rel="icon" id="wiki-favicon" href="/favicon.ico">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css" rel="stylesheet">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;600;700;800;900&display=swap"
+    rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+</head>
+
+<body>
+
+  <!-- ── 네비게이션 바 Placeholder ── -->
+  <div id="app-header-placeholder"></div>
+
+  <!-- ── 메인 레이아웃 ── -->
+  <div class="wiki-layout">
+    <div class="wiki-container">
+      <!-- 로딩 -->
+      <div id="loading" class="wiki-loading">
+        <div class="spinner-border text-primary" role="status"></div>
+        <span>불러오는 중...</span>
+      </div>
+
+      <!-- 토론 목록 페이지 -->
+      <div id="discussionListPage" class="d-none">
+        <div class="wiki-article">
+          <div class="d-flex justify-content-between align-items-center mb-3">
+            <h2><i class="bi bi-chat-dots"></i> 토론: <span id="discussionPageTitle"></span></h2>
+            <div class="d-flex gap-2">
+              <a id="discussionBackLink" href="#" class="btn btn-wiki-outline btn-sm">
+                <i class="bi bi-arrow-left"></i> 문서로
+              </a>
+              <button class="btn btn-wiki btn-sm d-none" id="newDiscussionBtn" onclick="showNewDiscussionForm()">
+                <i class="bi bi-plus-lg"></i> 새 토론
+              </button>
+            </div>
+          </div>
+
+          <!-- 상태 필터 -->
+          <div class="btn-group btn-group-sm mb-3" role="group">
+            <button type="button" class="btn btn-outline-secondary active" onclick="filterDiscussions(this, '')">
+              전체
+            </button>
+            <button type="button" class="btn btn-outline-success" onclick="filterDiscussions(this, 'open')">
+              <i class="bi bi-circle-fill text-success" style="font-size:0.5em"></i> 열림
+            </button>
+            <button type="button" class="btn btn-outline-danger" onclick="filterDiscussions(this, 'closed')">
+              <i class="bi bi-circle-fill text-danger" style="font-size:0.5em"></i> 닫힘
+            </button>
+          </div>
+
+          <!-- 새 토론 폼 -->
+          <div id="newDiscussionForm" class="d-none mb-4">
+            <div class="card">
+              <div class="card-body">
+                <h5 class="card-title">새 토론 시작</h5>
+                <div class="mb-3">
+                  <input type="text" class="form-control" id="newDiscussionTitle" placeholder="토론 제목">
+                </div>
+                <div class="mb-3">
+                  <textarea class="form-control" id="newDiscussionContent" rows="4"
+                    placeholder="토론 내용을 입력하세요"></textarea>
+                </div>
+                <div class="d-flex gap-2">
+                  <button class="btn btn-wiki btn-sm" onclick="submitNewDiscussion()">작성</button>
+                  <button class="btn btn-secondary btn-sm"
+                    onclick="document.getElementById('newDiscussionForm').classList.add('d-none')">취소</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div id="discussionsList"></div>
+        </div>
+      </div>
+
+      <!-- 토론 스레드 상세 페이지 -->
+      <div id="discussionThreadPage" class="d-none">
+        <div class="wiki-article">
+          <div class="d-flex justify-content-between align-items-center mb-3">
+            <h2 id="threadTitle"></h2>
+            <div class="d-flex gap-2">
+              <a id="threadBackLink" href="#" class="btn btn-wiki-outline btn-sm">
+                <i class="bi bi-arrow-left"></i> 토론 목록
+              </a>
+            </div>
+          </div>
+          <div class="d-flex align-items-center gap-2 mb-3" id="threadMeta"></div>
+          <div class="d-flex gap-2 mb-4" id="threadActions"></div>
+
+          <div id="commentsList"></div>
+
+          <!-- 댓글 작성 폼 -->
+          <div id="commentForm" class="mt-4">
+            <div class="card">
+              <div class="card-body">
+                <h6 class="card-title">댓글 작성</h6>
+                <div id="replyQuote" class="d-none mb-2"></div>
+                <input type="hidden" id="replyParentId" value="">
+                <div class="mb-2">
+                  <textarea class="form-control" id="commentContent" rows="3" placeholder="댓글을 입력하세요"></textarea>
+                </div>
+                <div class="d-flex gap-2">
+                  <button class="btn btn-wiki btn-sm" onclick="submitComment()">작성</button>
+                  <button class="btn btn-secondary btn-sm d-none" id="cancelReplyBtn" onclick="cancelReply()">답글
+                    취소</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 오른쪽 사이드바 (PC 전용 오프캔버스 컨테이너) -->
+    <aside class="wiki-sidebar" id="wikiSidebar">
+      <div id="app-sidebar-placeholder"></div>
+    </aside>
+  </div>
+
+  <!-- ── Scripts ── -->
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <script src="/js/common.js"></script>
+  <script>
+    // ── 전역 상태 ──
+    let currentSlug = null;
+    let currentDiscussionPageId = null;
+    let currentThreadId = null;
+    let currentDiscussionFilter = '';
+
+    // ── URL 파싱 ──
+    function parseUrl() {
+      const path = window.location.pathname;
+      // /wiki/:slug/discussions/:id
+      let m = path.match(/^\/wiki\/(.+)\/discussions\/([0-9]+)$/);
+      if (m) {
+        return { slug: decodeURIComponent(m[1]), threadId: Number(m[2]) };
+      }
+      // /wiki/:slug/discussions
+      m = path.match(/^\/wiki\/(.+)\/discussions$/);
+      if (m) {
+        return { slug: decodeURIComponent(m[1]), threadId: null };
+      }
+      return null;
+    }
+
+    // ── 초기화 ──
+    document.addEventListener('DOMContentLoaded', async () => {
+      await loadConfig();
+      await checkAuth();
+
+      const parsed = parseUrl();
+      if (!parsed) {
+        document.getElementById('loading').classList.add('d-none');
+        Swal.fire('오류', '잘못된 URL입니다.', 'error');
+        return;
+      }
+
+      currentSlug = parsed.slug;
+
+      if (parsed.threadId) {
+        showDiscussionThread(parsed.slug, parsed.threadId);
+      } else {
+        showDiscussionList(parsed.slug);
+      }
+    });
+
+    // ── 유틸리티 ──
+
+    function getRelativeTime(unixTs) {
+      const now = Math.floor(Date.now() / 1000);
+      const diff = now - unixTs;
+      if (diff < 60) return '방금 전';
+      if (diff < 3600) return `${Math.floor(diff / 60)}분 전`;
+      if (diff < 86400) return `${Math.floor(diff / 3600)}시간 전`;
+      if (diff < 604800) return `${Math.floor(diff / 86400)}일 전`;
+      return new Date(unixTs * 1000).toLocaleDateString('ko-KR');
+    }
+
+
+
+    function hideAllPages() {
+      document.getElementById('loading').classList.add('d-none');
+      document.getElementById('discussionListPage').classList.add('d-none');
+      document.getElementById('discussionThreadPage').classList.add('d-none');
+    }
+
+    // ══════════════════════════════════════════
+    // ── 토론 목록 ──
+    // ══════════════════════════════════════════
+    async function showDiscussionList(slug, filter) {
+      currentDiscussionFilter = filter || '';
+
+      try {
+        const pageRes = await fetch(`/api/wiki/${encodeURIComponent(slug)}`);
+        if (!pageRes.ok) throw new Error('문서를 찾을 수 없습니다.');
+        const pageData = await pageRes.json();
+        currentDiscussionPageId = pageData.id;
+
+        document.getElementById('discussionPageTitle').textContent = pageData.title;
+        document.getElementById('discussionBackLink').href = `/wiki/${encodeURIComponent(slug)}`;
+
+        // 로그인 여부에 따라 새 토론 버튼 표시
+        if (currentUser && currentUser.role !== 'banned') {
+          document.getElementById('newDiscussionBtn').classList.remove('d-none');
+        }
+
+        // 토론 목록 가져오기
+        let url = `/api/discussions/${pageData.id}`;
+        if (currentDiscussionFilter) url += `?status=${currentDiscussionFilter}`;
+        const res = await fetch(url);
+        if (!res.ok) throw new Error('토론 목록 로딩 실패');
+        const data = await res.json();
+
+        const listEl = document.getElementById('discussionsList');
+        if (!data.discussions || data.discussions.length === 0) {
+          listEl.innerHTML = '<div class="text-muted text-center py-5">토론이 없습니다. 새 토론을 시작해보세요!</div>';
+        } else {
+          listEl.innerHTML = data.discussions.map(d => {
+            const statusBadge = d.status === 'open'
+              ? '<span class="badge bg-success">열림</span>'
+              : '<span class="badge bg-secondary">닫힘</span>';
+            const date = getRelativeTime(d.created_at);
+            return `
+              <a href="/wiki/${encodeURIComponent(slug)}/discussions/${d.id}"
+                 class="discussion-item">
+                <div class="d-flex justify-content-between align-items-start">
+                  <div class="discussion-item-main">
+                    <div class="discussion-item-title">
+                      ${statusBadge}
+                      <span>${escapeHtml(d.title)}</span>
+                    </div>
+                    <div class="discussion-item-meta">
+                      <span><i class="bi bi-person"></i> ${escapeHtml(d.author_name || '알 수 없음')}</span>
+                      <span><i class="bi bi-clock"></i> ${date}</span>
+                      <span><i class="bi bi-chat"></i> ${d.comment_count || 0}개 댓글</span>
+                    </div>
+                  </div>
+                </div>
+              </a>
+            `;
+          }).join('');
+        }
+
+        hideAllPages();
+        document.getElementById('newDiscussionForm').classList.add('d-none');
+        document.getElementById('discussionListPage').classList.remove('d-none');
+        document.title = `토론 - ${pageData.title} - ${appConfig.wikiName}`;
+
+      } catch (err) {
+        console.error(err);
+        hideAllPages();
+        Swal.fire('오류', err.message, 'error');
+      }
+    }
+
+    function filterDiscussions(btn, status) {
+      btn.closest('.btn-group').querySelectorAll('.btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      showDiscussionList(currentSlug, status);
+    }
+
+    function showNewDiscussionForm() {
+      if (!currentUser) {
+        Swal.fire('로그인 필요', '토론을 시작하려면 로그인해주세요.', 'info');
+        return;
+      }
+      document.getElementById('newDiscussionForm').classList.remove('d-none');
+      document.getElementById('newDiscussionTitle').value = '';
+      document.getElementById('newDiscussionContent').value = '';
+      document.getElementById('newDiscussionTitle').focus();
+    }
+
+    async function submitNewDiscussion() {
+      const title = document.getElementById('newDiscussionTitle').value.trim();
+      const content = document.getElementById('newDiscussionContent').value.trim();
+
+      if (!title) { Swal.fire('알림', '토론 제목을 입력하세요.', 'warning'); return; }
+      if (!content) { Swal.fire('알림', '토론 내용을 입력하세요.', 'warning'); return; }
+
+      try {
+        const res = await fetch(`/api/discussions/${currentDiscussionPageId}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title, content })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '토론 생성 실패');
+
+        Swal.fire('성공', '새 토론이 생성되었습니다.', 'success').then(() => {
+          window.location.href = `/wiki/${encodeURIComponent(currentSlug)}/discussions/${data.id}`;
+        });
+      } catch (err) {
+        Swal.fire('오류', err.message, 'error');
+      }
+    }
+
+    // ══════════════════════════════════════════
+    // ── 토론 스레드 상세 ──
+    // ══════════════════════════════════════════
+    async function showDiscussionThread(slug, threadId) {
+      currentThreadId = threadId;
+
+      try {
+        const res = await fetch(`/api/discussions/thread/${threadId}`);
+        if (!res.ok) throw new Error('토론을 불러올 수 없습니다.');
+        const data = await res.json();
+        const discussion = data.discussion;
+        const comments = data.comments;
+
+        // 제목
+        document.getElementById('threadTitle').innerHTML =
+          `<i class="bi bi-chat-dots"></i> ${escapeHtml(discussion.title)}`;
+
+        // 뒤로가기
+        document.getElementById('threadBackLink').href = `/wiki/${encodeURIComponent(slug)}/discussions`;
+
+        // 메타 정보
+        const statusBadge = discussion.status === 'open'
+          ? '<span class="badge bg-success">열림</span>'
+          : '<span class="badge bg-secondary">닫힘</span>';
+        const date = new Date(discussion.created_at * 1000).toLocaleString('ko-KR');
+        document.getElementById('threadMeta').innerHTML = `
+          ${statusBadge}
+          <span class="text-muted small">작성자: ${escapeHtml(discussion.author_name || '알 수 없음')}</span>
+          <span class="text-muted small">${date}</span>
+        `;
+
+        // 액션 버튼들
+        let actionsHtml = '';
+        if (currentUser) {
+          const userRole = currentUser.role;
+          const isAuthor = discussion.author_id === currentUser.id;
+          const isDiscManager = ['discussion_manager', 'admin', 'super_admin'].includes(userRole);
+          const isAdmin = ['admin', 'super_admin'].includes(userRole);
+          const isSuperAdmin = userRole === 'super_admin';
+
+          if (isAuthor || isDiscManager) {
+            if (discussion.status === 'open') {
+              actionsHtml += `<button class="btn btn-outline-danger btn-sm" onclick="changeDiscussionStatus(${threadId}, 'closed')">
+                <i class="bi bi-x-circle"></i> 토론 닫기</button>`;
+            } else {
+              actionsHtml += `<button class="btn btn-outline-success btn-sm" onclick="changeDiscussionStatus(${threadId}, 'open')">
+                <i class="bi bi-arrow-counterclockwise"></i> 토론 다시 열기</button>`;
+            }
+          }
+
+          if (isAdmin && !discussion.deleted_at) {
+            actionsHtml += `<button class="btn btn-outline-danger btn-sm" onclick="deleteDiscussion(${threadId}, false)">
+              <i class="bi bi-trash"></i> 삭제</button>`;
+          }
+
+          if (isSuperAdmin) {
+            actionsHtml += `<button class="btn btn-danger btn-sm" onclick="deleteDiscussion(${threadId}, true)">
+              <i class="bi bi-trash-fill"></i> 완전 삭제</button>`;
+          }
+        }
+        document.getElementById('threadActions').innerHTML = actionsHtml;
+
+        // 댓글 렌더링
+        const commentsEl = document.getElementById('commentsList');
+        commentsEl.innerHTML = comments.map(c => renderComment(c, discussion)).join('');
+
+        // 댓글 폼 표시 여부
+        const commentFormEl = document.getElementById('commentForm');
+        if (discussion.status === 'closed' || !currentUser || currentUser.role === 'banned') {
+          commentFormEl.classList.add('d-none');
+        } else {
+          commentFormEl.classList.remove('d-none');
+        }
+        cancelReply();
+
+        hideAllPages();
+        document.getElementById('discussionThreadPage').classList.remove('d-none');
+        document.title = `${discussion.title} - 토론 - ${appConfig.wikiName}`;
+
+      } catch (err) {
+        console.error(err);
+        hideAllPages();
+        Swal.fire('오류', err.message, 'error');
+      }
+    }
+
+    function renderComment(c, discussion) {
+      const isDeleted = !!c.deleted_at;
+      const date = new Date(c.created_at * 1000).toLocaleString('ko-KR');
+
+      let quoteHtml = '';
+      if (c.parent_id && c.quoted_content) {
+        quoteHtml = `
+          <div class="discussion-quote">
+            <div class="discussion-quote-author"><i class="bi bi-reply"></i> ${escapeHtml(c.quoted_author_name || '알 수 없음')}:</div>
+            <div class="discussion-quote-text">${escapeHtml(c.quoted_content || '')}</div>
+          </div>
+        `;
+      }
+
+      let contentHtml;
+      if (isDeleted) {
+        contentHtml = '<span class="text-muted fst-italic">삭제된 댓글입니다.</span>';
+      } else {
+        contentHtml = escapeHtml(c.content).replace(/\n/g, '<br>');
+      }
+
+      let commentActions = '';
+      if (!isDeleted && currentUser && currentUser.role !== 'banned' && discussion.status === 'open') {
+        commentActions += `<button class="btn btn-sm btn-link text-muted" data-id="${c.id}" data-author="${escapeHtml(c.author_name || '알 수 없음')}" data-content="${escapeHtml((c.content || '').substring(0, 100))}" onclick="startReply(+this.dataset.id, this.dataset.author, this.dataset.content)">
+          <i class="bi bi-reply"></i> 답글
+        </button>`;
+      }
+      if (!isDeleted && currentUser) {
+        const isAdmin = ['admin', 'super_admin'].includes(currentUser.role);
+        const isSuperAdmin = currentUser.role === 'super_admin';
+        if (isAdmin) {
+          commentActions += `<button class="btn btn-sm btn-link text-danger" onclick="deleteComment(${c.id}, false)">
+            <i class="bi bi-trash"></i>
+          </button>`;
+        }
+        if (isSuperAdmin) {
+          commentActions += `<button class="btn btn-sm btn-link text-danger" onclick="deleteComment(${c.id}, true)">
+            <i class="bi bi-trash-fill"></i>
+          </button>`;
+        }
+      }
+
+      return `
+        <div class="discussion-comment ${isDeleted ? 'discussion-comment-deleted' : ''}" id="comment-${c.id}">
+          <div class="discussion-comment-header">
+            <span class="discussion-comment-author">
+              ${c.author_picture ? `<img src="${c.author_picture}" class="discussion-comment-avatar" alt="">` : ''}
+              ${escapeHtml(c.author_name || '알 수 없음')}
+            </span>
+            <span class="discussion-comment-date text-muted small">${date}</span>
+          </div>
+          ${quoteHtml}
+          <div class="discussion-comment-body">${contentHtml}</div>
+          <div class="discussion-comment-actions">${commentActions}</div>
+        </div>
+      `;
+    }
+
+    // ── 답글 ──
+    function startReply(parentId, authorName, preview) {
+      document.getElementById('replyParentId').value = parentId;
+      const quoteEl = document.getElementById('replyQuote');
+      quoteEl.innerHTML = `
+        <div class="discussion-quote">
+          <div class="discussion-quote-author"><i class="bi bi-reply"></i> ${escapeHtml(authorName)}에게 답글:</div>
+          <div class="discussion-quote-text">${escapeHtml(preview)}${preview.length >= 100 ? '...' : ''}</div>
+        </div>
+      `;
+      quoteEl.classList.remove('d-none');
+      document.getElementById('cancelReplyBtn').classList.remove('d-none');
+      document.getElementById('commentContent').focus();
+      document.getElementById('commentForm').scrollIntoView({ behavior: 'smooth' });
+    }
+
+    function cancelReply() {
+      document.getElementById('replyParentId').value = '';
+      document.getElementById('replyQuote').classList.add('d-none');
+      document.getElementById('cancelReplyBtn').classList.add('d-none');
+    }
+
+    async function submitComment() {
+      const content = document.getElementById('commentContent').value.trim();
+      const parentId = document.getElementById('replyParentId').value;
+
+      if (!content) { Swal.fire('알림', '댓글 내용을 입력하세요.', 'warning'); return; }
+
+      try {
+        const body = { content };
+        if (parentId) body.parent_id = Number(parentId);
+
+        const res = await fetch(`/api/discussions/thread/${currentThreadId}/comments`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '댓글 작성 실패');
+
+        document.getElementById('commentContent').value = '';
+        cancelReply();
+        // 스레드 새로고침
+        showDiscussionThread(currentSlug, currentThreadId);
+      } catch (err) {
+        Swal.fire('오류', err.message, 'error');
+      }
+    }
+
+    // ── 토론 상태 변경 ──
+    async function changeDiscussionStatus(threadId, status) {
+      const label = status === 'closed' ? '닫기' : '다시 열기';
+      const result = await Swal.fire({
+        title: `토론 ${label}`,
+        text: `정말 이 토론을 ${label}하시겠습니까?`,
+        icon: 'question',
+        showCancelButton: true,
+        confirmButtonText: label,
+        cancelButtonText: '취소'
+      });
+
+      if (!result.isConfirmed) return;
+
+      try {
+        const res = await fetch(`/api/discussions/thread/${threadId}/status`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '상태 변경 실패');
+
+        showDiscussionThread(currentSlug, threadId);
+      } catch (err) {
+        Swal.fire('오류', err.message, 'error');
+      }
+    }
+
+    // ── 토론 삭제 ──
+    async function deleteDiscussion(threadId, hard) {
+      const label = hard ? '완전 삭제 (복구 불가)' : '삭제';
+      const result = await Swal.fire({
+        title: `토론 ${label}`,
+        text: hard ? '이 토론과 모든 댓글이 영구적으로 삭제됩니다.' : '이 토론을 삭제하시겠습니까?',
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#d33',
+        confirmButtonText: label,
+        cancelButtonText: '취소'
+      });
+
+      if (!result.isConfirmed) return;
+
+      try {
+        const url = hard
+          ? `/api/discussions/thread/${threadId}/hard`
+          : `/api/discussions/thread/${threadId}`;
+        const res = await fetch(url, { method: 'DELETE' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '삭제 실패');
+
+        Swal.fire('삭제됨', '토론이 삭제되었습니다.', 'success').then(() => {
+          window.location.href = `/wiki/${encodeURIComponent(currentSlug)}/discussions`;
+        });
+      } catch (err) {
+        Swal.fire('오류', err.message, 'error');
+      }
+    }
+
+    // ── 댓글 삭제 ──
+    async function deleteComment(commentId, hard) {
+      const label = hard ? '완전 삭제' : '삭제';
+      const result = await Swal.fire({
+        title: `댓글 ${label}`,
+        text: hard ? '이 댓글이 영구적으로 삭제됩니다.' : '이 댓글을 삭제하시겠습니까?',
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#d33',
+        confirmButtonText: label,
+        cancelButtonText: '취소'
+      });
+
+      if (!result.isConfirmed) return;
+
+      try {
+        const url = hard
+          ? `/api/discussions/comment/${commentId}/hard`
+          : `/api/discussions/comment/${commentId}`;
+        const res = await fetch(url, { method: 'DELETE' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '삭제 실패');
+
+        showDiscussionThread(currentSlug, currentThreadId);
+      } catch (err) {
+        Swal.fire('오류', err.message, 'error');
+      }
+    }
+  </script>
+
+</body>
+
+</html>

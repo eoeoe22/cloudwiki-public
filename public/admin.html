@@ -1,0 +1,794 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title class="app-wiki-name">관리자 콘솔 - CloudWiki</title>
+    <link rel="icon" id="wiki-favicon" href="/favicon.ico">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css" rel="stylesheet">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;600;700;800;900&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="/style.css">
+    <style>
+        .admin-container {
+            max-width: 1000px;
+            margin: 40px auto;
+            padding: 0 20px;
+        }
+
+        .user-table td {
+            vertical-align: middle;
+        }
+
+        .media-item {
+            border: 1px solid var(--wiki-border);
+            border-radius: 10px;
+            padding: 12px;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            background: var(--wiki-card-bg, #fff);
+        }
+
+        .media-item img,
+        .media-item video {
+            width: 80px;
+            height: 80px;
+            object-fit: cover;
+            border-radius: 8px;
+            flex-shrink: 0;
+        }
+
+        .media-item-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .media-item-info .filename {
+            font-weight: 600;
+            word-break: break-all;
+        }
+
+        .media-item-info .meta {
+            font-size: 0.85em;
+            color: var(--wiki-text-muted, #888);
+        }
+    </style>
+</head>
+
+<body>
+
+    <!-- ── 네비게이션 바 Placeholder ── -->
+    <div id="app-header-placeholder"></div>
+
+    <div class="wiki-layout justify-content-center">
+        <div class="wiki-container">
+            <div class="admin-container">
+                <h2 class="mb-4"><i class="mdi mdi-shield-account"></i> 관리자 콘솔 - 유저 관리</h2>
+
+                <div class="card shadow-sm border-0">
+                    <div class="card-header py-3">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <h5 class="mb-0">유저 목록</h5>
+                            <div class="d-flex gap-2">
+                                <input type="text" id="userSearchInput" class="form-control form-control-sm"
+                                    placeholder="이름 또는 이메일 검색..." style="width: 250px;">
+                                <button class="btn btn-sm btn-primary" onclick="searchUsers()">검색</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card-body p-0">
+                        <div class="table-responsive">
+                            <table class="table table-hover user-table mb-0 text-nowrap">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>프로필</th>
+                                        <th>이름</th>
+                                        <th>이메일</th>
+                                        <th>권한</th>
+                                        <th>차단 상태</th>
+                                        <th>가입일</th>
+                                        <th>속도 제한</th>
+                                        <th>관리 액션</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="userTableBody">
+                                    <tr>
+                                        <td colspan="8" class="text-center py-4">유저 목록을 불러오는 중...</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <div class="card-footer">
+                        <nav aria-label="Page navigation" id="paginationNav">
+                            <!-- Pagination will be rendered here -->
+                        </nav>
+                    </div>
+                </div>
+
+                <!-- 관리자 전용 카테고리 관리 -->
+                <h3 class="mt-5 mb-3"><i class="mdi mdi-folder-check"></i> 관리자 전용 카테고리 관리</h3>
+                <p class="text-muted mb-3">아래에 등록된 카테고리는 관리자만 문서에 적용할 수 있습니다.</p>
+
+                <div class="card shadow-sm border-0 mb-4">
+                    <div class="card-body">
+                        <div class="d-flex gap-2 mb-3">
+                            <input type="text" id="newCategoryInput" class="form-control" placeholder="새 카테고리 이름">
+                            <button class="btn btn-wiki" onclick="addCategory()" style="white-space: nowrap;">
+                                <i class="mdi mdi-plus"></i> 추가
+                            </button>
+                        </div>
+                        <div id="categoriesList">
+                            <div class="text-center text-muted py-3">불러오는 중...</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 이미지(미디어) 관리 -->
+                <h3 class="mt-5 mb-3"><i class="mdi mdi-image-multiple"></i> 이미지 관리</h3>
+                <p class="text-muted mb-3">업로드된 이미지를 전용 페이지에서 관리할 수 있습니다.</p>
+
+                <div class="card shadow-sm border-0 mb-4">
+                    <div class="card-body text-center py-4">
+                        <a href="/admin-media" class="btn btn-primary">
+                            <i class="mdi mdi-arrow-right-bold-circle-outline"></i> 이미지 관리 페이지로 이동
+                        </a>
+                    </div>
+                </div>
+
+                <!-- 사이드바 커스터마이징 관리 -->
+                <h3 class="mt-5 mb-3"><i class="mdi mdi-view-list"></i> 사이드바 커스터마이징</h3>
+                <p class="text-muted mb-3">사이드바에 항목을 추가하거나 순서를 변경할 수 있습니다. 각 항목은 클릭하여 수정할 수 있습니다.</p>
+
+                <div class="card shadow-sm border-0 mb-5">
+                    <div class="card-header py-3 bg-light">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <h5 class="mb-0 fs-6 fw-bold text-secondary">
+                                <i class="mdi mdi-menu"></i> 항목 미리보기 및 순서
+                            </h5>
+                            <div class="dropdown">
+                                <button class="btn btn-sm btn-outline-primary dropdown-toggle" type="button"
+                                    data-bs-toggle="dropdown" aria-expanded="false">
+                                    <i class="mdi mdi-plus"></i> 항목 추가
+                                </button>
+                                <ul class="dropdown-menu dropdown-menu-end">
+                                    <li><a class="dropdown-item" href="#"
+                                            onclick="addSidebarItem('link'); return false;"><i
+                                                class="mdi mdi-link text-primary me-2"></i> 링크 (Link)</a></li>
+                                    <li><a class="dropdown-item" href="#"
+                                            onclick="addSidebarItem('header'); return false;"><i
+                                                class="mdi mdi-format-header-1 text-success me-2"></i> 제목 (Header)</a>
+                                    </li>
+                                    <li><a class="dropdown-item" href="#"
+                                            onclick="addSidebarItem('text'); return false;"><i
+                                                class="mdi mdi-format-text text-secondary me-2"></i> 일반 텍스트 (Text)</a>
+                                    </li>
+                                    <li>
+                                        <hr class="dropdown-divider">
+                                    </li>
+                                    <li><a class="dropdown-item" href="#"
+                                            onclick="addSidebarItem('divider'); return false;"><i
+                                                class="mdi mdi-minus text-muted me-2"></i> 구분선 (Divider)</a></li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card-body p-0">
+                        <ul class="list-group list-group-flush" id="sidebarItemsList" style="min-height: 100px;">
+                            <li class="list-group-item text-center text-muted py-4">불러오는 중...</li>
+                        </ul>
+                    </div>
+                    <div class="card-footer bg-white py-3">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <small class="text-muted">항목의 위/아래 화살표를 눌러 순서를 변경하세요.</small>
+                            <button class="btn btn-primary" onclick="saveSidebarConfig()">
+                                <i class="mdi mdi-content-save"></i> 설정 저장
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <aside class="wiki-sidebar" id="wikiSidebar">
+                <div id="app-sidebar-placeholder"></div>
+            </aside>
+        </div>
+
+        <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+
+        <script src="/js/common.js"></script>
+        <script>
+
+            document.addEventListener('DOMContentLoaded', async () => {
+                await loadConfig();
+                try {
+                    const res = await fetch('/api/me');
+                    if (!res.ok) throw new Error();
+                    currentUser = await res.json();
+
+                    if (currentUser.role !== 'admin' && currentUser.role !== 'super_admin') {
+                        Swal.fire('접근 제한', '관리자만 접근할 수 있습니다.', 'error').then(() => {
+                            window.location.href = '/';
+                        });
+                        return;
+                    }
+
+                    document.querySelectorAll('#userAvatar').forEach(el => el.src = currentUser.picture || '');
+                    document.querySelectorAll('#userName').forEach(el => el.textContent = currentUser.name);
+
+                    loadUsers();
+                    loadCategories();
+                    loadSidebarConfig();
+                } catch (e) {
+                    window.location.href = '/auth/google';
+                }
+            });
+
+
+
+            var currentPage = 1;
+            var currentSearch = '';
+
+            async function loadUsers(page = 1, search = '') {
+                try {
+                    currentPage = page;
+                    currentSearch = search;
+
+                    const params = new URLSearchParams({
+                        page: page,
+                        limit: 10
+                    });
+                    if (search) {
+                        params.append('search', search);
+                    }
+
+                    const res = await fetch(`/api/admin/users?${params.toString()}`);
+                    if (!res.ok) {
+                        const data = await res.json();
+                        throw new Error(data.error || '유저 목록 로딩 실패');
+                    }
+                    const data = await res.json();
+                    renderUsers(data.users);
+                    renderPagination(data);
+                } catch (err) {
+                    Swal.fire('오류', err.message, 'error');
+                }
+            }
+
+            function searchUsers() {
+                const query = document.getElementById('userSearchInput').value.trim();
+                loadUsers(1, query);
+            }
+
+            document.getElementById('userSearchInput').addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    searchUsers();
+                }
+            });
+
+            function renderUsers(users) {
+                const tbody = document.getElementById('userTableBody');
+
+                if (!users || users.length === 0) {
+                    tbody.innerHTML = `<tr><td colspan="8" class="text-center py-4 text-muted">검색 결과가 없습니다.</td></tr>`;
+                    return;
+                }
+
+                tbody.innerHTML = users.map(u => {
+                    const profile = u.picture
+                        ? `<img src="${u.picture}" class="rounded-circle" width="32" height="32" alt="프로필">`
+                        : `<i class="mdi mdi-account-circle fs-3 text-secondary"></i>`;
+
+                    const joinDate = new Date(u.created_at * 1000).toLocaleDateString('ko-KR');
+                    let banStatus = '<span class="badge bg-success">정상</span>';
+                    if (u.banned_until) {
+                        const banEnd = new Date(u.banned_until * 1000).toLocaleString('ko-KR');
+                        banStatus = `<span class="badge bg-danger" title="차단 해제일: ${banEnd}">차단됨 (${banEnd}까지)</span>`;
+                    }
+
+                    const rateLimitText = u.rate_limit ? `${u.rate_limit}회/분` : '<span class="text-muted">기본값</span>';
+
+                    let roleBadge = '';
+                    if (u.role === 'super_admin') roleBadge = '<span class="badge bg-dark">최고 관리자</span>';
+                    else if (u.role === 'admin') roleBadge = '<span class="badge bg-primary">관리자</span>';
+                    else if (u.role === 'discussion_manager') roleBadge = '<span class="badge bg-info">토론 관리자</span>';
+                    else if (u.role === 'banned') roleBadge = '<span class="badge bg-danger">차단됨</span>';
+                    else roleBadge = '<span class="badge bg-secondary">일반 유저</span>';
+
+                    const disableRoleChange = currentUser.role !== 'super_admin' || u.role === 'super_admin' ? 'disabled' : '';
+                    const disableBan = u.role === 'super_admin' || (currentUser.role === 'admin' && u.role === 'admin') ? 'disabled' : '';
+
+                    let currentRoleVal = u.role === 'admin' ? 'admin' : 'user';
+
+                    let roleSelectHtml = '';
+                    if (currentUser.role === 'super_admin' && u.role !== 'super_admin') {
+                        roleSelectHtml = `
+                    <select class="form-select form-select-sm d-inline-block w-auto" onchange="changeRole(${u.id}, this.value)">
+                        <option value="user" ${u.role === 'user' ? 'selected' : ''}>일반 유저</option>
+                        <option value="discussion_manager" ${u.role === 'discussion_manager' ? 'selected' : ''}>토론 관리자</option>
+                        <option value="admin" ${u.role === 'admin' ? 'selected' : ''}>관리자</option>
+                    </select>
+               `;
+                    } else {
+                        roleSelectHtml = roleBadge;
+                    }
+
+                    return `
+                <tr>
+                    <td>${profile}</td>
+                    <td class="fw-bold">${escapeHtml(u.name)}</td>
+                    <td>${escapeHtml(u.email)}</td>
+                    <td>${roleSelectHtml}</td>
+                    <td>${banStatus}</td>
+                    <td>${joinDate}</td>
+                    <td>${rateLimitText}</td>
+                    <td>
+                        <button class="btn btn-sm btn-outline-danger mb-1" data-id="${u.id}" data-name="${escapeHtml(u.name)}" onclick="promptBan(+this.dataset.id, this.dataset.name)" ${disableBan}>
+                            ${u.banned_until ? '<i class="mdi mdi-lock-open-variant"></i> 해제' : '<i class="mdi mdi-block-helper"></i> 차단'}
+                        </button>
+                        <button class="btn btn-sm btn-outline-secondary mb-1" data-id="${u.id}" data-name="${escapeHtml(u.name)}" data-rate="${u.rate_limit || 0}" onclick="promptRateLimit(+this.dataset.id, this.dataset.name, +this.dataset.rate)">
+                            <i class="mdi mdi-speedometer"></i> 제한 설정
+                        </button>
+                    </td>
+                </tr>
+            `;
+                }).join('');
+            }
+
+            function renderPagination(data) {
+                const nav = document.getElementById('paginationNav');
+                const { page, totalPages } = data;
+
+                if (totalPages <= 1) {
+                    nav.innerHTML = '';
+                    return;
+                }
+
+                let paginationHtml = '<ul class="pagination justify-content-center mb-0">';
+
+                // Previous
+                paginationHtml += `
+                <li class="page-item ${page === 1 ? 'disabled' : ''}">
+                    <a class="page-link" href="#" onclick="loadUsers(${page - 1}, currentSearch); return false;">이전</a>
+                </li>
+            `;
+
+                // Page numbers (simple range for now)
+                const startPage = Math.max(1, page - 2);
+                const endPage = Math.min(totalPages, page + 2);
+
+                if (startPage > 1) {
+                    paginationHtml += `<li class="page-item"><a class="page-link" href="#" onclick="loadUsers(1, currentSearch); return false;">1</a></li>`;
+                    if (startPage > 2) {
+                        paginationHtml += `<li class="page-item disabled"><span class="page-link">...</span></li>`;
+                    }
+                }
+
+                for (let i = startPage; i <= endPage; i++) {
+                    paginationHtml += `
+                    <li class="page-item ${i === page ? 'active' : ''}">
+                        <a class="page-link" href="#" onclick="loadUsers(${i}, currentSearch); return false;">${i}</a>
+                    </li>
+                `;
+                }
+
+                if (endPage < totalPages) {
+                    if (endPage < totalPages - 1) {
+                        paginationHtml += `<li class="page-item disabled"><span class="page-link">...</span></li>`;
+                    }
+                    paginationHtml += `<li class="page-item"><a class="page-link" href="#" onclick="loadUsers(${totalPages}, currentSearch); return false;">${totalPages}</a></li>`;
+                }
+
+                // Next
+                paginationHtml += `
+                <li class="page-item ${page === totalPages ? 'disabled' : ''}">
+                    <a class="page-link" href="#" onclick="loadUsers(${page + 1}, currentSearch); return false;">다음</a>
+                </li>
+            `;
+
+                paginationHtml += '</ul>';
+                nav.innerHTML = paginationHtml;
+            }
+
+            async function changeRole(userId, newRole) {
+                try {
+                    const res = await fetch(`/api/admin/users/${userId}/role`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ role: newRole })
+                    });
+                    const data = await res.json();
+                    if (!res.ok) throw new Error(data.error || '권한 변경 실패');
+
+                    Swal.fire({
+                        icon: 'success', title: '권한 변경 완료', showConfirmButton: false, timer: 1000
+                    });
+                    loadUsers();
+                } catch (err) {
+                    Swal.fire('오류', err.message, 'error');
+                    loadUsers();
+                }
+            }
+
+            async function promptBan(userId, userName) {
+                const { value: days, isDismissed } = await Swal.fire({
+                    title: `유저 차단 - ${userName}`,
+                    input: 'number',
+                    inputLabel: '차단 일수 (0을 입력하면 차단 해제)',
+                    inputValue: 0,
+                    showCancelButton: true,
+                    confirmButtonText: '적용',
+                    cancelButtonText: '취소',
+                    inputValidator: (val) => {
+                        if (val === '' || isNaN(val) || Number(val) < 0) return '0 이상의 숫자를 입력하세요.';
+                    }
+                });
+
+                if (!isDismissed) {
+                    try {
+                        const res = await fetch(`/api/admin/users/${userId}/ban`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ days: Number(days) })
+                        });
+                        const data = await res.json();
+                        if (!res.ok) throw new Error(data.error || '차단 설정 실패');
+
+                        Swal.fire({
+                            icon: 'success',
+                            title: Number(days) === 0 ? '차단 해제 완료' : '차단 적용 완료',
+                            showConfirmButton: false,
+                            timer: 1000
+                        });
+                        loadUsers();
+                    } catch (err) {
+                        Swal.fire('오류', err.message, 'error');
+                    }
+                }
+            }
+
+            async function promptRateLimit(userId, userName, currentLimit) {
+                const { value: limit, isDismissed } = await Swal.fire({
+                    title: `레이트 리밋 설정 - ${userName}`,
+                    input: 'number',
+                    inputLabel: '분당 요청 제한 (0 입력 시 기본값 사용)',
+                    inputValue: currentLimit,
+                    showCancelButton: true,
+                    confirmButtonText: '저장',
+                    cancelButtonText: '취소',
+                    inputValidator: (val) => {
+                        if (val === '' || isNaN(val) || Number(val) < 0) return '0 이상의 숫자를 입력하세요.';
+                    }
+                });
+
+                if (!isDismissed) {
+                    try {
+                        const res = await fetch(`/api/admin/users/${userId}/rate-limit`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ limit: Number(limit) })
+                        });
+                        const data = await res.json();
+                        if (!res.ok) throw new Error(data.error || '설정 실패');
+
+                        Swal.fire({
+                            icon: 'success',
+                            title: '설정 완료',
+                            showConfirmButton: false,
+                            timer: 1000
+                        });
+                        loadUsers();
+                    } catch (err) {
+                        Swal.fire('오류', err.message, 'error');
+                    }
+                }
+            }
+
+            // ── 관리자 전용 카테고리 관리 ──
+            async function loadCategories() {
+                try {
+                    const res = await fetch('/api/admin/categories');
+                    if (!res.ok) throw new Error();
+                    const categories = await res.json();
+                    renderCategories(categories);
+                } catch (e) {
+                    document.getElementById('categoriesList').innerHTML =
+                        '<div class="text-center text-muted py-3">카테고리 목록 불러오기 실패</div>';
+                }
+            }
+
+            function renderCategories(categories) {
+                const listEl = document.getElementById('categoriesList');
+                if (!categories || categories.length === 0) {
+                    listEl.innerHTML = '<div class="text-center text-muted py-3">등록된 관리자 전용 카테고리가 없습니다.</div>';
+                    return;
+                }
+                listEl.innerHTML = categories.map(cat => `
+                <div class="d-flex justify-content-between align-items-center py-2 px-2 border-bottom">
+                    <span><i class="mdi mdi-folder text-warning me-2"></i> <strong>${escapeHtml(cat.name)}</strong></span>
+                    <button class="btn btn-sm btn-outline-danger" data-id="${cat.id}" data-name="${escapeHtml(cat.name)}" onclick="deleteCategory(+this.dataset.id, this.dataset.name)">
+                        <i class="mdi mdi-delete"></i> 삭제
+                    </button>
+                </div>
+            `).join('');
+            }
+
+            async function addCategory() {
+                const input = document.getElementById('newCategoryInput');
+                const name = input.value.trim();
+                if (!name) {
+                    Swal.fire('오류', '카테고리 이름을 입력해주세요.', 'warning');
+                    return;
+                }
+
+                try {
+                    const res = await fetch('/api/admin/categories', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ name })
+                    });
+                    const data = await res.json();
+                    if (!res.ok) throw new Error(data.error || '카테고리 추가 실패');
+
+                    input.value = '';
+                    Swal.fire({ icon: 'success', title: '카테고리 추가됨', showConfirmButton: false, timer: 1000 });
+                    loadCategories();
+                } catch (err) {
+                    Swal.fire('오류', err.message, 'error');
+                }
+            }
+
+            async function deleteCategory(id, name) {
+                const result = await Swal.fire({
+                    title: '카테고리 삭제',
+                    text: `"${name}" 카테고리를 삭제하시겠습니까? 기존 문서의 카테고리는 변경되지 않습니다.`,
+                    icon: 'warning',
+                    showCancelButton: true,
+                    confirmButtonText: '삭제',
+                    cancelButtonText: '취소'
+                });
+
+                if (result.isConfirmed) {
+                    try {
+                        const res = await fetch(`/api/admin/categories/${id}`, { method: 'DELETE' });
+                        const data = await res.json();
+                        if (!res.ok) throw new Error(data.error || '삭제 실패');
+
+                        Swal.fire({ icon: 'success', title: '삭제됨', showConfirmButton: false, timer: 1000 });
+                        loadCategories();
+                    } catch (err) {
+                        Swal.fire('오류', err.message, 'error');
+                    }
+                }
+            }
+
+            let sidebarConfigData = [];
+
+            async function loadSidebarConfig() {
+                try {
+                    const res = await fetch('/api/admin/sidebar-config');
+                    if (res.ok) {
+                        sidebarConfigData = await res.json();
+                        if (!Array.isArray(sidebarConfigData)) sidebarConfigData = [];
+                        renderSidebarConfig();
+                    } else {
+                        document.getElementById('sidebarItemsList').innerHTML = '<li class="list-group-item text-center text-danger py-4">설정을 불러오는데 실패했습니다.</li>';
+                    }
+                } catch (e) {
+                    console.error('사이드바 설정 로드 실패', e);
+                    document.getElementById('sidebarItemsList').innerHTML = '<li class="list-group-item text-center text-danger py-4">설정을 불러오는데 실패했습니다.</li>';
+                }
+            }
+
+            function renderSidebarConfig() {
+                const listEl = document.getElementById('sidebarItemsList');
+                if (sidebarConfigData.length === 0) {
+                    listEl.innerHTML = '<li class="list-group-item text-center text-muted py-5 border-bottom-0"><i class="mdi mdi-information-outline fs-3 d-block mb-2"></i>추가된 사이드바 항목이 없습니다.</li>';
+                    return;
+                }
+
+                listEl.innerHTML = sidebarConfigData.map((item, index) => {
+                    let iconDisplay = item.icon ? `<i class="${item.icon} fs-5 me-2 text-muted"></i>` : `<i class="mdi mdi-circle-small fs-5 me-2 text-transparent" style="opacity: 0"></i>`;
+                    let contentHtml = '';
+                    let typeBadge = '';
+
+                    if (item.type === 'header') {
+                        typeBadge = '<span class="badge bg-success-subtle text-success border border-success-subtle me-2">제목</span>';
+                        contentHtml = `<span class="fw-bold">${escapeHtml(item.text || '(제목 없음)')}</span>`;
+                    } else if (item.type === 'link') {
+                        typeBadge = '<span class="badge bg-primary-subtle text-primary border border-primary-subtle me-2">링크</span>';
+                        contentHtml = `
+                        <div class="d-flex flex-column">
+                            <span class="fw-bold">${escapeHtml(item.text || '(링크 이름 없음)')}</span>
+                            <small class="text-muted text-break">${escapeHtml(item.url || '')}</small>
+                        </div>
+                    `;
+                    } else if (item.type === 'text') {
+                        typeBadge = '<span class="badge bg-secondary-subtle text-secondary border border-secondary-subtle me-2">텍스트</span>';
+                        contentHtml = `<span class="text-muted">${escapeHtml(item.text || '(내용 없음)')}</span>`;
+                    } else if (item.type === 'divider') {
+                        contentHtml = `<hr class="w-100 my-1 text-muted">`;
+                        iconDisplay = '';
+                    }
+
+                    return `
+                    <li class="list-group-item d-flex align-items-center py-3">
+                        <div class="d-flex flex-column gap-1 me-3">
+                            <button class="btn btn-sm btn-light py-0 px-1 border" onclick="moveSidebarItem(${index}, -1)" ${index === 0 ? 'disabled' : ''} title="위로"><i class="mdi mdi-chevron-up"></i></button>
+                            <button class="btn btn-sm btn-light py-0 px-1 border" onclick="moveSidebarItem(${index}, 1)" ${index === sidebarConfigData.length - 1 ? 'disabled' : ''} title="아래로"><i class="mdi mdi-chevron-down"></i></button>
+                        </div>
+                        
+                        <div class="d-flex align-items-center me-3" style="width: 40px; justify-content: center;">
+                            ${item.type !== 'divider' ? typeBadge : '<span class="badge bg-light text-secondary border me-2">구분선</span>'}
+                        </div>
+                        
+                        <div class="d-flex align-items-center flex-grow-1" style="cursor: pointer;" onclick="editSidebarItem(${index})" title="클릭하여 수정">
+                            ${iconDisplay}
+                            ${contentHtml}
+                        </div>
+                        
+                        <div class="ms-auto ps-3 border-start">
+                            <button class="btn btn-sm btn-outline-secondary me-1" onclick="editSidebarItem(${index})" title="수정"><i class="mdi mdi-pencil"></i></button>
+                            <button class="btn btn-sm btn-outline-danger" onclick="deleteSidebarItem(${index})" title="삭제"><i class="mdi mdi-delete"></i></button>
+                        </div>
+                    </li>
+                `;
+                }).join('');
+            }
+
+            async function editSidebarItem(index) {
+                const item = sidebarConfigData[index];
+                showSidebarItemModal(item, index);
+            }
+
+            function addSidebarItem(type) {
+                const newItem = { type: type };
+                if (type === 'link') {
+                    newItem.text = '';
+                    newItem.url = '';
+                    newItem.icon = '';
+                } else if (type === 'header' || type === 'text') {
+                    newItem.text = '';
+                    if (type === 'text') newItem.icon = '';
+                }
+
+                if (type === 'divider') {
+                    sidebarConfigData.push(newItem);
+                    renderSidebarConfig();
+                } else {
+                    showSidebarItemModal(newItem, -1);
+                }
+            }
+
+            function moveSidebarItem(index, direction) {
+                if (index + direction < 0 || index + direction >= sidebarConfigData.length) return;
+                const temp = sidebarConfigData[index];
+                sidebarConfigData[index] = sidebarConfigData[index + direction];
+                sidebarConfigData[index + direction] = temp;
+                renderSidebarConfig();
+            }
+
+            function deleteSidebarItem(index) {
+                Swal.fire({
+                    title: '항목 삭제',
+                    text: '이 항목을 삭제하시겠습니까?',
+                    icon: 'warning',
+                    showCancelButton: true,
+                    confirmButtonText: '삭제',
+                    confirmButtonColor: '#d33'
+                }).then((result) => {
+                    if (result.isConfirmed) {
+                        sidebarConfigData.splice(index, 1);
+                        renderSidebarConfig();
+                    }
+                });
+            }
+
+            async function showSidebarItemModal(item, index) {
+                let html = '';
+
+                if (item.type === 'link') {
+                    html = `
+                    <div class="mb-3 text-start">
+                        <label class="form-label fw-bold small">표시 텍스트</label>
+                        <input id="swal-input-text" class="form-control" value="${escapeHtml(item.text || '')}" placeholder="예: 구글 로 이동">
+                    </div>
+                    <div class="mb-3 text-start">
+                        <label class="form-label fw-bold small">연결할 URL</label>
+                        <input id="swal-input-url" class="form-control" value="${escapeHtml(item.url || '')}" placeholder="https://...">
+                        <div class="form-text">내부 문서 링크는 <code>/wiki/...</code> 형식으로 적어주세요.</div>
+                    </div>
+                    <div class="mb-3 text-start">
+                        <label class="form-label fw-bold small">아이콘 클래스 (선택)</label>
+                        <input id="swal-input-icon" class="form-control" value="${escapeHtml(item.icon || '')}" placeholder="예: mdi mdi-home">
+                        <div class="form-text">MDI(<code>mdi mdi-이름</code>) 또는 Bootstrap(<code>bi bi-이름</code>) 클래스를 입력하세요.</div>
+                    </div>
+                `;
+                } else if (item.type === 'header') {
+                    html = `
+                    <div class="mb-3 text-start">
+                        <label class="form-label fw-bold small">제목 텍스트</label>
+                        <input id="swal-input-text" class="form-control" value="${escapeHtml(item.text || '')}" placeholder="예: 외부 링크">
+                    </div>
+                `;
+                } else if (item.type === 'text') {
+                    html = `
+                    <div class="mb-3 text-start">
+                        <label class="form-label fw-bold small">내용 텍스트</label>
+                        <input id="swal-input-text" class="form-control" value="${escapeHtml(item.text || '')}" placeholder="표시할 텍스트 입력">
+                    </div>
+                    <div class="mb-3 text-start">
+                        <label class="form-label fw-bold small">아이콘 클래스 (선택)</label>
+                        <input id="swal-input-icon" class="form-control" value="${escapeHtml(item.icon || '')}" placeholder="예: mdi mdi-information">
+                    </div>
+                `;
+                }
+
+                const { value: formValues } = await Swal.fire({
+                    title: '사이드바 항목 수정',
+                    html: html,
+                    focusConfirm: false,
+                    showCancelButton: true,
+                    confirmButtonText: '확인',
+                    cancelButtonText: '취소',
+                    preConfirm: () => {
+                        const res = { ...item };
+                        const textEl = document.getElementById('swal-input-text');
+                        const urlEl = document.getElementById('swal-input-url');
+                        const iconEl = document.getElementById('swal-input-icon');
+
+                        if (textEl) res.text = textEl.value;
+                        if (urlEl) res.url = urlEl.value;
+                        if (iconEl) res.icon = iconEl.value;
+
+                        if (item.type !== 'divider' && !res.text) {
+                            Swal.showValidationMessage('텍스트를 입력해주세요.');
+                            return null;
+                        }
+                        if (item.type === 'link' && !res.url) {
+                            Swal.showValidationMessage('URL을 입력해주세요.');
+                            return null;
+                        }
+                        return res;
+                    }
+                });
+
+                if (formValues) {
+                    if (index === -1) {
+                        sidebarConfigData.push(formValues);
+                    } else {
+                        sidebarConfigData[index] = formValues;
+                    }
+                    renderSidebarConfig();
+                }
+            }
+
+            async function saveSidebarConfig() {
+                try {
+                    const res = await fetch('/api/admin/sidebar-config', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(sidebarConfigData)
+                    });
+                    const data = await res.json();
+                    if (!res.ok) throw new Error(data.error || '저장 실패');
+
+                    Swal.fire({ icon: 'success', title: '설정 저장됨', showConfirmButton: false, timer: 1000 });
+                } catch (err) {
+                    Swal.fire('오류', err.message, 'error');
+                }
+            }
+
+        </script>
+</body>
+
+</html>

@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title class="app-wiki-name">편집 이력 - CloudWiki</title>
+  <link rel="icon" id="wiki-favicon" href="/favicon.ico">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css" rel="stylesheet">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;600;700;800;900&display=swap"
+    rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+</head>
+
+<body>
+
+  <!-- ── 네비게이션 바 Placeholder ── -->
+  <div id="app-header-placeholder"></div>
+
+  <!-- ── 메인 레이아웃 ── -->
+  <div class="wiki-layout">
+    <div class="wiki-container">
+      <!-- 로딩 -->
+      <div id="loading" class="wiki-loading">
+        <div class="spinner-border text-primary" role="status"></div>
+        <span>불러오는 중...</span>
+      </div>
+
+      <!-- 리비전 목록 -->
+      <div id="revisionsPage" class="d-none">
+        <div class="wiki-article">
+          <h2><i class="bi bi-clock-history"></i> 편집 이력: <span id="revPageTitle"></span></h2>
+          <div class="table-responsive">
+            <div class="revision-list" id="revisionsList" style="min-width: 800px;"></div>
+          </div>
+          <a id="revBackLink" href="#" class="btn btn-wiki-outline mt-3">
+            <i class="bi bi-arrow-left"></i> 문서로 돌아가기
+          </a>
+        </div>
+      </div>
+    </div>
+
+    <!-- 오른쪽 사이드바 (PC 전용 오프캔버스 컨테이너) -->
+    <aside class="wiki-sidebar" id="wikiSidebar">
+      <div id="app-sidebar-placeholder"></div>
+    </aside>
+  </div>
+
+  <!-- ── Scripts ── -->
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+
+  <script src="/js/common.js"></script>
+  <script>
+    // ── 전역 상태 ──
+    let currentSlug = null;
+
+    // ── URL에서 slug 추출 ──
+    function extractSlug() {
+      const path = window.location.pathname;
+      const m = path.match(/^\/wiki\/(.+)\/revisions$/);
+      return m ? decodeURIComponent(m[1]) : null;
+    }
+
+    // ── 초기화 ──
+    document.addEventListener('DOMContentLoaded', async () => {
+      await loadConfig();
+      await checkAuth();
+      currentSlug = extractSlug();
+      if (currentSlug) {
+        showRevisions(currentSlug);
+      } else {
+        document.getElementById('loading').classList.add('d-none');
+        Swal.fire('오류', '문서를 찾을 수 없습니다.', 'error');
+      }
+    });
+
+    // ── 리비전 목록 ──
+    async function showRevisions(slug) {
+      try {
+        const res = await fetch(`/api/wiki/${encodeURIComponent(slug)}/revisions`);
+        if (!res.ok) throw new Error('리비전 로딩 실패');
+
+        const data = await res.json();
+
+        const pageRes = await fetch(`/api/wiki/${encodeURIComponent(slug)}`);
+        const pageData = pageRes.ok ? await pageRes.json() : null;
+
+        document.getElementById('revPageTitle').textContent = pageData?.title || slug;
+        document.getElementById('revBackLink').href = `/wiki/${encodeURIComponent(slug)}`;
+
+        document.title = `편집 이력 - ${pageData?.title || slug} - ${appConfig.wikiName}`;
+
+
+        const listEl = document.getElementById('revisionsList');
+        listEl.innerHTML = data.revisions.map(rev => {
+          const date = new Date(rev.created_at * 1000).toLocaleString('ko-KR');
+          return `
+            <div class="revision-item d-flex align-items-center justify-content-between border-bottom py-2">
+              <div class="d-flex align-items-center gap-3 flex-grow-1 overflow-hidden">
+                <span class="revision-date text-muted small" style="min-width: 160px;">${date}</span>
+                ${rev.author_id ? `<a href="/profile/${rev.author_id}" class="revision-author badge bg-light text-dark border text-decoration-none">${escapeHtml(rev.author_name || '알 수 없음')}</a>` : `<span class="revision-author badge bg-light text-dark border">${escapeHtml(rev.author_name || '알 수 없음')}</span>`}
+                <span class="revision-summary text-truncate">${escapeHtml(rev.summary || '(요약 없음)')}</span>
+              </div>
+              <div class="d-flex gap-2 ms-2" style="white-space: nowrap;">
+                <button class="btn btn-sm btn-outline-primary" data-slug="${escapeHtml(slug)}" data-id="${rev.id}" onclick="viewRevision(this.dataset.slug, +this.dataset.id)">
+                  <i class="bi bi-file-text"></i> 보기
+                </button>
+                <button class="btn btn-sm btn-outline-info" data-slug="${escapeHtml(slug)}" data-id="${rev.id}" onclick="showDiff(this.dataset.slug, +this.dataset.id)">
+                  <i class="bi bi-file-diff"></i> 비교
+                </button>
+                <button class="btn btn-sm btn-outline-danger" data-slug="${escapeHtml(slug)}" data-id="${rev.id}" onclick="confirmRevert(this.dataset.slug, +this.dataset.id)">
+                  <i class="bi bi-arrow-counterclockwise"></i> 되돌리기
+                </button>
+              </div>
+            </div>
+          `;
+        }).join('');
+
+        document.getElementById('loading').classList.add('d-none');
+        document.getElementById('revisionsPage').classList.remove('d-none');
+
+      } catch (err) {
+        console.error(err);
+        document.getElementById('loading').classList.add('d-none');
+        Swal.fire('오류', '리비전 목록을 불러오는 데 실패했습니다.', 'error');
+      }
+    }
+
+    // ── 리비전 보기 ──
+    async function viewRevision(slug, revId) {
+      try {
+        const res = await fetch(`/api/wiki/${encodeURIComponent(slug)}/revisions/${revId}`);
+        if (!res.ok) throw new Error('리비전 불러오기 실패');
+        const rev = await res.json();
+
+        Swal.fire({
+          title: `리비전 #${rev.id} 내용`,
+          html: `<div style="text-align: left; max-height: 500px; overflow-y: auto; background: #f8f9fa; padding: 10px; border: 1px solid #dee2e6; border-radius: 5px;"><pre style="margin: 0; white-space: pre-wrap; word-break: break-all;">${escapeHtml(rev.content)}</pre></div>`,
+          width: '800px',
+          showCloseButton: true,
+          confirmButtonText: '닫기'
+        });
+      } catch (err) {
+        Swal.fire('오류', err.message, 'error');
+      }
+    }
+
+    // ── 리비전 Diff 보기 ──
+    async function showDiff(slug, revId) {
+      try {
+        const res = await fetch(`/api/wiki/${encodeURIComponent(slug)}/revisions/${revId}/diff`);
+        if (!res.ok) throw new Error('Diff 불러오기 실패');
+        const data = await res.json();
+
+        const diffHtml = computeLineDiff(data.old_content || '', data.new_content || '');
+        const oldLabel = data.old_revision_id ? `#${data.old_revision_id}` : '(없음)';
+
+        Swal.fire({
+          title: `리비전 비교: ${oldLabel} → #${data.new_revision_id}`,
+          html: `<div class="diff-container">${diffHtml}</div>`,
+          width: '900px',
+          showCloseButton: true,
+          confirmButtonText: '닫기'
+        });
+      } catch (err) {
+        Swal.fire('오류', err.message, 'error');
+      }
+    }
+
+    // ── Line-by-line Diff 알고리즘 (LCS 기반) ──
+    function computeLineDiff(oldText, newText) {
+      const oldLines = oldText.split('\n');
+      const newLines = newText.split('\n');
+
+      const m = oldLines.length, n = newLines.length;
+      const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+      for (let i = 1; i <= m; i++) {
+        for (let j = 1; j <= n; j++) {
+          if (oldLines[i - 1] === newLines[j - 1]) {
+            dp[i][j] = dp[i - 1][j - 1] + 1;
+          } else {
+            dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
+          }
+        }
+      }
+
+      const result = [];
+      let i = m, j = n;
+      while (i > 0 || j > 0) {
+        if (i > 0 && j > 0 && oldLines[i - 1] === newLines[j - 1]) {
+          result.unshift({ type: 'same', text: oldLines[i - 1] });
+          i--; j--;
+        } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
+          result.unshift({ type: 'add', text: newLines[j - 1] });
+          j--;
+        } else {
+          result.unshift({ type: 'del', text: oldLines[i - 1] });
+          i--;
+        }
+      }
+
+      if (result.length === 0) {
+        return '<div class="diff-empty">변경된 내용이 없습니다.</div>';
+      }
+
+      let lineNum = 0;
+      return '<table class="diff-table">' + result.map(r => {
+        const cls = r.type === 'add' ? 'diff-add' : r.type === 'del' ? 'diff-del' : 'diff-same';
+        const prefix = r.type === 'add' ? '+' : r.type === 'del' ? '-' : ' ';
+        if (r.type !== 'del') lineNum++;
+        return `<tr class="${cls}"><td class="diff-prefix">${prefix}</td><td class="diff-line">${escapeHtml(r.text || '')}</td></tr>`;
+      }).join('') + '</table>';
+    }
+
+    // ── 되돌리기 확인 ──
+    async function confirmRevert(slug, revId) {
+      if (!currentUser) {
+        Swal.fire('로그인 필요', '되돌리기를 하려면 로그인해주세요.', 'info');
+        return;
+      }
+
+      const result = await Swal.fire({
+        title: '문서 되돌리기',
+        text: `정말 리비전 #${revId} 상태로 문서를 되돌리시겠습니까? 현재 내용은 새로운 리비전으로 저장됩니다.`,
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonText: '되돌리기',
+        cancelButtonText: '취소'
+      });
+
+      if (result.isConfirmed) {
+        try {
+          const res = await fetch(`/api/wiki/${encodeURIComponent(slug)}/revert`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ revision_id: revId })
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || '되돌리기 실패');
+
+          Swal.fire('성공', '문서가 되돌려졌습니다.', 'success').then(() => {
+            window.location.href = `/wiki/${encodeURIComponent(slug)}`;
+          });
+        } catch (err) {
+          Swal.fire('오류', err.message, 'error');
+        }
+      }
+    }
+
+  </script>
+
+</body>
+
+</html>
