@@ -809,6 +809,16 @@ div:where(.swal2-container) .swal2-html-container {
   border: 1px solid var(--wiki-border);
 }
 
+.wiki-content pre code {
+  background: transparent;
+  padding: 0;
+  border: none;
+  color: inherit;
+  font-size: inherit;
+  word-break: inherit;
+  overflow-wrap: inherit;
+}
+
 /* 코드 복사 버튼 */
 .btn-copy-code {
   position: absolute;

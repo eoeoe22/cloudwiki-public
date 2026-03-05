@@ -108,7 +108,7 @@ async function loadNotificationCount() {
         const badge = document.getElementById('notificationBadge');
         if (badge) {
             if (data.count > 0) {
-                badge.innerHTML = data.count > 99 ? '99+' : data.count;
+                badge.innerHTML = '';
                 badge.classList.remove('d-none');
             } else {
                 badge.classList.add('d-none');

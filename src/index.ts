@@ -317,6 +317,70 @@ app.get('/profile/:id', async (c) => {
     return renderHtml(c, '/user-profile.html');
 });
 
+// ── 사이트맵 ──
+app.get('/sitemap.xml', async (c) => {
+    const db = c.env.DB;
+    const baseUrl = new URL(c.req.url).origin;
+
+    const { results: pages } = await db
+        .prepare('SELECT slug, updated_at FROM pages WHERE deleted_at IS NULL AND is_private = 0 AND redirect_to IS NULL')
+        .all<{ slug: string; updated_at: number }>();
+
+    let xml = '<?xml version="1.0" encoding="UTF-8"?>\n';
+    xml += '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n';
+
+    // 메인 페이지
+    xml += '  <url>\n';
+    xml += `    <loc>${baseUrl}/</loc>\n`;
+    xml += '    <changefreq>daily</changefreq>\n';
+    xml += '    <priority>1.0</priority>\n';
+    xml += '  </url>\n';
+
+    for (const page of pages || []) {
+        const lastmod = new Date(page.updated_at * 1000).toISOString().split('T')[0];
+        xml += '  <url>\n';
+        xml += `    <loc>${baseUrl}/wiki/${encodeURIComponent(page.slug)}</loc>\n`;
+        xml += `    <lastmod>${lastmod}</lastmod>\n`;
+        xml += '    <changefreq>weekly</changefreq>\n';
+        xml += '    <priority>0.8</priority>\n';
+        xml += '  </url>\n';
+    }
+
+    xml += '</urlset>';
+
+    return new Response(xml, {
+        headers: { 'Content-Type': 'application/xml; charset=utf-8' },
+    });
+});
+
+// ── Robots.txt ──
+app.get('/robots.txt', (c) => {
+    const baseUrl = new URL(c.req.url).origin;
+
+    const robotsTxt = [
+        'User-agent: Googlebot',
+        'Allow: /',
+        '',
+        'User-agent: ClaudeBot',
+        'Allow: /',
+        '',
+        'User-agent: GPTBot',
+        'Allow: /',
+        '',
+        'User-agent: Grok',
+        'Allow: /',
+        '',
+        'User-agent: *',
+        'Disallow: /',
+        '',
+        `Sitemap: ${baseUrl}/sitemap.xml`,
+    ].join('\n');
+
+    return new Response(robotsTxt, {
+        headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+    });
+});
+
 // ── 404 핸들러 ──
 app.notFound((c) => {
     return c.json({ error: 'Not Found' }, 404);
