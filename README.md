@@ -116,6 +116,7 @@ Cloudflare 대시보드에서 Compute > Workers 및 Pages > 응용 프로그램 
 
 9. 기타
 유저를 위한 문법 가이드 문서를 생성하려면 Wiki_syntax.md의 내용을 그대로 복사해서 사용하세요.
+MIT 라이센스에 따라 자유로운 사용이 가능하지만, 사용하실때 eoe@vialinks.xyz로 쓴다고 한마디만 보내주시면 감사하겠습니다.
 
 
 # 운영 비용
