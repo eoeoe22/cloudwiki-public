@@ -25,6 +25,8 @@ function roleLevel(role: string): number {
 notificationRoutes.get('/notifications', requireAuth, async (c) => {
     const user = c.get('user')!;
     const db = c.env.DB;
+    const offset = Number(c.req.query('offset')) || 0;
+    const limit = Number(c.req.query('limit')) || 10;
 
     const { results } = await db.prepare(`
         SELECT n.*
@@ -33,10 +35,13 @@ notificationRoutes.get('/notifications', requireAuth, async (c) => {
         WHERE n.user_id = ?
           AND (n.type != 'message' OR (m.id IS NOT NULL AND m.deleted = 0))
         ORDER BY n.created_at DESC
-        LIMIT 50
-    `).bind(user.id).all();
+        LIMIT ? OFFSET ?
+    `).bind(user.id, limit + 1, offset).all();
 
-    return c.json(safeJSON({ notifications: results }));
+    const has_more = results.length > limit;
+    const notifications = results.slice(0, limit);
+
+    return c.json(safeJSON({ notifications, has_more }));
 });
 
 /**

@@ -97,6 +97,8 @@ async function checkAuth() {
 
 // ── 알림 시스템 ──
 var _notifPanelOpen = false;
+var _notifOffset = 0;
+const _notifLimit = 10;
 
 async function loadNotificationCount() {
     try {
@@ -106,6 +108,7 @@ async function loadNotificationCount() {
         const badge = document.getElementById('notificationBadge');
         if (badge) {
             if (data.count > 0) {
+                badge.innerHTML = data.count > 99 ? '99+' : data.count;
                 badge.classList.remove('d-none');
             } else {
                 badge.classList.add('d-none');
@@ -120,7 +123,7 @@ function toggleNotificationPanel() {
     _notifPanelOpen = !_notifPanelOpen;
     if (_notifPanelOpen) {
         panel.classList.remove('d-none');
-        loadNotifications();
+        loadNotifications(false);
         // 외부 클릭 시 닫기
         setTimeout(() => {
             document.addEventListener('click', _closeNotifOnOutsideClick);
@@ -140,23 +143,60 @@ function _closeNotifOnOutsideClick(e) {
     }
 }
 
-async function loadNotifications() {
+async function handleNotificationClick(event, id, type, refId, link) {
+    if (event) {
+        event.stopPropagation();
+        event.preventDefault();
+    }
+
+    // 삭제 API 호출 (백그라운드 처리)
+    fetch(`/api/notifications/${id}`, { method: 'DELETE' }).then(() => {
+        // 알림 카운트 업데이트
+        loadNotificationCount();
+    }).catch(console.error);
+
+    // 즉시 이동 또는 팝업 표시
+    const isMessage = type === 'message';
+    if (isMessage && refId) {
+        viewMessage(refId);
+    } else if (link && link !== 'null') {
+        if (typeof navigateTo === 'function') {
+            navigateTo(link);
+            toggleNotificationPanel(); // 알림 패널 닫기 (SPA 이동 시)
+        } else {
+            window.location.href = link;
+        }
+    }
+}
+
+async function loadNotifications(append = false) {
     const body = document.getElementById('notificationPanelBody');
     if (!body) return;
-    body.innerHTML = '<div class="text-center text-muted py-4"><div class="spinner-border spinner-border-sm"></div></div>';
+
+    if (!append) {
+        _notifOffset = 0;
+        body.innerHTML = '<div class="text-center text-muted py-4"><div class="spinner-border spinner-border-sm"></div></div>';
+    } else {
+        const loadMoreBtn = document.getElementById('notifLoadMoreBtn');
+        if (loadMoreBtn) {
+            loadMoreBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 로딩 중...';
+            loadMoreBtn.disabled = true;
+        }
+    }
 
     try {
-        const res = await fetch('/api/notifications');
+        const res = await fetch(`/api/notifications?limit=${_notifLimit}&offset=${_notifOffset}`);
         if (!res.ok) throw new Error();
         const data = await res.json();
         const notifs = data.notifications || [];
+        const has_more = data.has_more || false;
 
-        if (notifs.length === 0) {
+        if (notifs.length === 0 && !append) {
             body.innerHTML = '<div class="notification-empty"><i class="mdi mdi-inbox-outline fs-1 d-block mb-2"></i>알림이 없습니다.</div>';
             return;
         }
 
-        body.innerHTML = notifs.map(n => {
+        const notifsHtml = notifs.map(n => {
             const iconMap = {
                 'discussion_comment': 'mdi mdi-comment-text-outline',
                 'banned': 'mdi mdi-block-helper',
@@ -164,9 +204,9 @@ async function loadNotifications() {
             };
             const icon = iconMap[n.type] || 'mdi mdi-bell';
             const timeAgo = _formatTimeAgo(n.created_at);
-            const isMessage = n.type === 'message';
+            const linkParam = n.link ? `'${escapeHtml(n.link).replace(/'/g, "\\'")}'` : 'null';
 
-            return `<div class="notification-item" ${isMessage && n.ref_id ? `onclick="viewMessage(${n.ref_id})"` : (n.link ? `onclick="window.location.href='${escapeHtml(n.link)}'"` : '')}>
+            return `<div class="notification-item" onclick="handleNotificationClick(event, ${n.id}, '${escapeHtml(n.type)}', ${n.ref_id || 'null'}, ${linkParam})">
                 <i class="notif-icon ${icon} type-${escapeHtml(n.type)}"></i>
                 <div class="notif-content">
                     <div class="notif-text">${escapeHtml(n.content)}</div>
@@ -177,8 +217,35 @@ async function loadNotifications() {
                 </button>
             </div>`;
         }).join('');
+
+        if (append) {
+            const loadMoreWrapper = document.getElementById('notifLoadMoreWrapper');
+            if (loadMoreWrapper) loadMoreWrapper.remove();
+            body.insertAdjacentHTML('beforeend', notifsHtml);
+        } else {
+            body.innerHTML = notifsHtml;
+        }
+
+        if (has_more) {
+            _notifOffset += _notifLimit;
+            body.insertAdjacentHTML('beforeend', `
+                <div id="notifLoadMoreWrapper" class="text-center p-2 border-top">
+                    <button id="notifLoadMoreBtn" class="btn btn-sm btn-link text-decoration-none w-100" onclick="loadNotifications(true)">
+                        더보기 <i class="mdi mdi-chevron-down"></i>
+                    </button>
+                </div>
+            `);
+        }
     } catch (e) {
-        body.innerHTML = '<div class="notification-empty text-danger">알림 로드 실패</div>';
+        if (!append) {
+            body.innerHTML = '<div class="notification-empty text-danger">알림 로드 실패</div>';
+        } else {
+            const loadMoreBtn = document.getElementById('notifLoadMoreBtn');
+            if (loadMoreBtn) {
+                loadMoreBtn.innerHTML = '로드 실패. 다시 시도';
+                loadMoreBtn.disabled = false;
+            }
+        }
     }
 }
 
