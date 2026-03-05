@@ -14,7 +14,7 @@ adminRoutes.get('/users', async (c) => {
     const search = c.req.query('search')?.trim() || '';
     const offset = (page - 1) * limit;
 
-    let queryStr = `SELECT id, google_id, email, name, picture, role, banned_until, rate_limit, created_at FROM users`;
+    let queryStr = `SELECT id, google_id, email, name, picture, role, banned_until, created_at FROM users`;
     let countQueryStr = `SELECT COUNT(*) as count FROM users`;
     const params: any[] = [];
 
@@ -118,32 +118,67 @@ adminRoutes.put('/users/:id/ban', async (c) => {
     const bannedUntil = days === 0 ? null : now + (days * 24 * 60 * 60);
 
     await db.prepare(`UPDATE users SET banned_until = ? WHERE id = ?`).bind(bannedUntil, targetUserId).run();
+
+    // 차단 시 알림 생성
+    if (days > 0) {
+        try {
+            await db.prepare(
+                'INSERT INTO notifications (user_id, type, content) VALUES (?, ?, ?)'
+            ).bind(
+                Number(targetUserId),
+                'banned',
+                `관리자에 의해 ${days}일간 차단되었습니다.`
+            ).run();
+        } catch (e) {
+            console.error('Failed to create ban notification:', e);
+        }
+    }
+
     return c.json({ success: true, banned_until: bannedUntil });
 });
 
+
+// ── 위키 전역 설정 관리 ──
+
 /**
- * PUT /users/:id/rate-limit
- * 유저별 레이트 리밋 조정 (관리자 전용)
+ * GET /settings
+ * 전역 설정 조회
  */
-adminRoutes.put('/users/:id/rate-limit', async (c) => {
+adminRoutes.get('/settings', async (c) => {
     const db = c.env.DB;
-    const targetUserId = c.req.param('id');
-    const { limit } = await c.req.json<{ limit: number }>();
+    const row = await db.prepare('SELECT * FROM settings WHERE id = 1').first();
+    if (!row) {
+        return c.json({ namechange_ratelimit: 0, allow_direct_message: 0 });
+    }
+    return c.json(row);
+});
 
-    if (typeof limit !== 'number' || limit < 0) {
-        return c.json({ error: '올바른 제한 횟수를 입력하세요.' }, 400);
+/**
+ * PUT /settings
+ * 전역 설정 저장
+ */
+adminRoutes.put('/settings', async (c) => {
+    const db = c.env.DB;
+    const body = await c.req.json<{ namechange_ratelimit?: number; allow_direct_message?: number }>();
+
+    if (body.namechange_ratelimit !== undefined) {
+        const val = Number(body.namechange_ratelimit);
+        if (isNaN(val) || (val < -1)) {
+            return c.json({ error: '-1 이상의 정수를 입력하세요.' }, 400);
+        }
+        await db.prepare('UPDATE settings SET namechange_ratelimit = ? WHERE id = 1')
+            .bind(val)
+            .run();
     }
 
-    const targetUser = await db.prepare(`SELECT id FROM users WHERE id = ?`).bind(targetUserId).first<User>();
-    if (!targetUser) {
-        return c.json({ error: '유저를 찾을 수 없습니다.' }, 404);
+    if (body.allow_direct_message !== undefined) {
+        const val = body.allow_direct_message ? 1 : 0;
+        await db.prepare('UPDATE settings SET allow_direct_message = ? WHERE id = 1')
+            .bind(val)
+            .run();
     }
 
-    await db.prepare('UPDATE users SET rate_limit = ? WHERE id = ?')
-        .bind(limit, targetUserId)
-        .run();
-
-    return c.json({ success: true, rate_limit: limit });
+    return c.json({ success: true });
 });
 
 

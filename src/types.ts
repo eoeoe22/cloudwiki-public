@@ -32,7 +32,7 @@ export interface User {
     picture: string | null;
     role: 'user' | 'discussion_manager' | 'admin' | 'super_admin' | 'banned';
     banned_until: number | null;
-    rate_limit: number;
+    last_namechange: number | null;
     created_at: number;
 }
 
@@ -104,6 +104,26 @@ export interface DiscussionComment {
     parent_id: number | null;
     created_at: number;
     deleted_at: number | null;
+}
+
+export interface Notification {
+    id: number;
+    user_id: number;
+    type: 'discussion_comment' | 'banned' | 'message';
+    content: string;
+    link: string | null;
+    ref_id: number | null;
+    created_at: number;
+}
+
+export interface Message {
+    id: number;
+    sender_id: number;
+    receiver_id: number;
+    content: string;
+    reply_to: number | null;
+    created_at: number;
+    deleted: number;
 }
 
 export type AppContext = Context<Env>;

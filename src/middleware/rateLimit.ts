@@ -22,7 +22,7 @@ export const rateLimitMiddleware = createMiddleware<Env>(async (c, next) => {
 
     const kv = c.env.KV;
     const key = `rl:${user.id}`;
-    const limit = user.rate_limit ?? 10; // Default 10 if null
+    const limit = 10;
 
     // 4. KV에서 현재 카운트 조회
     const current = parseInt(await kv.get(key) || '0', 10);

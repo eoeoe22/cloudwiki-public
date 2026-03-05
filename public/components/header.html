@@ -19,6 +19,24 @@
             </div>
         </form>
 
+        <!-- 알림 버튼 (로그인 시에만 표시) -->
+        <div class="position-relative ms-2 d-none" id="notificationBtnWrapper">
+            <button class="btn border-0 px-1 position-relative" id="notificationBtn" onclick="toggleNotificationPanel()"
+                type="button" title="알림">
+                <i class="mdi mdi-inbox fs-4 text-body"></i>
+                <span class="notification-badge d-none" id="notificationBadge"></span>
+            </button>
+            <!-- 알림 드롭다운 패널 -->
+            <div class="notification-panel d-none" id="notificationPanel">
+                <div class="notification-panel-header">
+                    <strong><i class="mdi mdi-inbox"></i> 알림</strong>
+                </div>
+                <div class="notification-panel-body" id="notificationPanelBody">
+                    <div class="text-center text-muted py-4">불러오는 중...</div>
+                </div>
+            </div>
+        </div>
+
         <!-- 햄버거 버튼 (사이드바 토글) -->
         <button class="navbar-toggler border-0 px-1 ms-2" type="button" data-bs-toggle="offcanvas"
             data-bs-target="#mobileSidebar" aria-controls="mobileSidebar">

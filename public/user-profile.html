@@ -237,7 +237,7 @@
                         ]);
 
                         if (authRes && authRes.ok) {
-                            const currentUser = await authRes.json();
+                            currentUser = await authRes.json();
                             document.querySelectorAll('#navLogin').forEach(el => el.classList.add('d-none'));
                             document.querySelectorAll('#navUser').forEach(el => el.classList.remove('d-none'));
                             document.querySelectorAll('#userAvatar').forEach(el => el.src = currentUser.picture || '');
@@ -246,6 +246,10 @@
                             if (currentUser.role === 'admin' || currentUser.role === 'super_admin') {
                                 document.querySelectorAll('#navAdminConsole, #navAdminDivider').forEach(el => el.classList.remove('d-none'));
                             }
+
+                            // 알림 버튼 표시
+                            document.querySelectorAll('#notificationBtnWrapper').forEach(el => el.classList.remove('d-none'));
+                            loadNotificationCount();
                         }
 
                         if (!res.ok) {
@@ -261,7 +265,7 @@
                     }
                 });
 
-                function renderProfile() {
+                async function renderProfile() {
                     const header = document.getElementById('profileHeader');
 
                     const joinDate = profileUser.created_at
@@ -274,11 +278,26 @@
                         ? `<img src="${profileUser.picture}" class="profile-avatar" alt="프로필">`
                         : `<div class="profile-avatar-placeholder">${escapeHtml(profileUser.name.charAt(0))}</div>`;
 
+                    // 쪽지 보내기 버튼 표시 여부
+                    let sendMsgBtn = '';
+                    if (currentUser && currentUser.id !== profileUser.id) {
+                        try {
+                            const dmRes = await fetch('/api/settings/dm');
+                            const dmData = dmRes.ok ? await dmRes.json() : { allow_direct_message: 0 };
+                            const isAdmin = currentUser.role === 'admin' || currentUser.role === 'super_admin';
+
+                            if (dmData.allow_direct_message === 1 || isAdmin) {
+                                sendMsgBtn = `<button class="btn btn-sm btn-outline-primary mt-2" onclick="sendMessage(${profileUser.id}, '${escapeHtml(profileUser.name)}')"><i class="mdi mdi-email-plus-outline"></i> 쪽지 보내기</button>`;
+                            }
+                        } catch (e) { }
+                    }
+
                     header.innerHTML = `
                 ${avatarHtml}
                 <div class="profile-info">
                     <h2>${escapeHtml(profileUser.name)}</h2>
                     <div class="text-muted"><i class="mdi mdi-calendar"></i> ${joinDate} 가입</div>
+                    ${sendMsgBtn}
                 </div>
             `;
 

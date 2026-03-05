@@ -170,6 +170,35 @@ discussionRoutes.post('/discussions/thread/:id/comments', requireAuth, async (c)
         'UPDATE discussions SET updated_at = unixepoch() WHERE id = ?'
     ).bind(discussionId).run();
 
+    // 토론 참여자에게 알림 생성 (작성자 본인 제외)
+    try {
+        const discussionInfo = await db.prepare(
+            'SELECT d.title, d.page_id, p.slug FROM discussions d LEFT JOIN pages p ON d.page_id = p.id WHERE d.id = ?'
+        ).bind(discussionId).first<{ title: string; page_id: number; slug: string }>();
+
+        if (discussionInfo) {
+            // 이 토론에 댓글을 달았던 모든 유저 (작성자 + 댓글 작성자, 중복 제거, 본인 제외)
+            const { results: participants } = await db.prepare(`
+                SELECT DISTINCT author_id FROM (
+                    SELECT author_id FROM discussions WHERE id = ? AND author_id IS NOT NULL
+                    UNION
+                    SELECT author_id FROM discussion_comments WHERE discussion_id = ? AND author_id IS NOT NULL AND deleted_at IS NULL
+                ) WHERE author_id != ?
+            `).bind(discussionId, discussionId, user.id).all<{ author_id: number }>();
+
+            const link = `/wiki/${encodeURIComponent(discussionInfo.slug)}/discussions/${discussionId}`;
+            const notifContent = `'${discussionInfo.title}' 토론에 새 댓글이 달렸습니다.`;
+
+            for (const p of participants) {
+                await db.prepare(
+                    'INSERT INTO notifications (user_id, type, content, link) VALUES (?, ?, ?, ?)'
+                ).bind(p.author_id, 'discussion_comment', notifContent, link).run();
+            }
+        }
+    } catch (e) {
+        console.error('Failed to create discussion notifications:', e);
+    }
+
     return c.json(safeJSON({ id: result.meta.last_row_id }), 201);
 });
 

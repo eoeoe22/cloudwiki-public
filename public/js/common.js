@@ -83,9 +83,262 @@ async function checkAuth() {
             if (currentUser.role === 'admin' || currentUser.role === 'super_admin') {
                 document.querySelectorAll('#navAdminConsole, #navAdminDivider').forEach(el => el.classList.remove('d-none'));
             }
+
+            // 알림 버튼 표시 및 카운트 로드
+            document.querySelectorAll('#notificationBtnWrapper').forEach(el => el.classList.remove('d-none'));
+            loadNotificationCount();
+            // 60초마다 알림 폴링
+            setInterval(loadNotificationCount, 60000);
         }
     } catch (e) {
         // 로그인 안 됨
+    }
+}
+
+// ── 알림 시스템 ──
+var _notifPanelOpen = false;
+
+async function loadNotificationCount() {
+    try {
+        const res = await fetch('/api/notifications/count');
+        if (!res.ok) return;
+        const data = await res.json();
+        const badge = document.getElementById('notificationBadge');
+        if (badge) {
+            if (data.count > 0) {
+                badge.classList.remove('d-none');
+            } else {
+                badge.classList.add('d-none');
+            }
+        }
+    } catch (e) { }
+}
+
+function toggleNotificationPanel() {
+    const panel = document.getElementById('notificationPanel');
+    if (!panel) return;
+    _notifPanelOpen = !_notifPanelOpen;
+    if (_notifPanelOpen) {
+        panel.classList.remove('d-none');
+        loadNotifications();
+        // 외부 클릭 시 닫기
+        setTimeout(() => {
+            document.addEventListener('click', _closeNotifOnOutsideClick);
+        }, 0);
+    } else {
+        panel.classList.add('d-none');
+        document.removeEventListener('click', _closeNotifOnOutsideClick);
+    }
+}
+
+function _closeNotifOnOutsideClick(e) {
+    const wrapper = document.getElementById('notificationBtnWrapper');
+    if (wrapper && !wrapper.contains(e.target)) {
+        _notifPanelOpen = false;
+        document.getElementById('notificationPanel')?.classList.add('d-none');
+        document.removeEventListener('click', _closeNotifOnOutsideClick);
+    }
+}
+
+async function loadNotifications() {
+    const body = document.getElementById('notificationPanelBody');
+    if (!body) return;
+    body.innerHTML = '<div class="text-center text-muted py-4"><div class="spinner-border spinner-border-sm"></div></div>';
+
+    try {
+        const res = await fetch('/api/notifications');
+        if (!res.ok) throw new Error();
+        const data = await res.json();
+        const notifs = data.notifications || [];
+
+        if (notifs.length === 0) {
+            body.innerHTML = '<div class="notification-empty"><i class="mdi mdi-inbox-outline fs-1 d-block mb-2"></i>알림이 없습니다.</div>';
+            return;
+        }
+
+        body.innerHTML = notifs.map(n => {
+            const iconMap = {
+                'discussion_comment': 'mdi mdi-comment-text-outline',
+                'banned': 'mdi mdi-block-helper',
+                'message': 'mdi mdi-email-outline'
+            };
+            const icon = iconMap[n.type] || 'mdi mdi-bell';
+            const timeAgo = _formatTimeAgo(n.created_at);
+            const isMessage = n.type === 'message';
+
+            return `<div class="notification-item" ${isMessage && n.ref_id ? `onclick="viewMessage(${n.ref_id})"` : (n.link ? `onclick="window.location.href='${escapeHtml(n.link)}'"` : '')}>
+                <i class="notif-icon ${icon} type-${escapeHtml(n.type)}"></i>
+                <div class="notif-content">
+                    <div class="notif-text">${escapeHtml(n.content)}</div>
+                    <div class="notif-time">${timeAgo}</div>
+                </div>
+                <button class="notif-delete" onclick="event.stopPropagation(); deleteNotification(${n.id})" title="삭제">
+                    <i class="mdi mdi-close"></i>
+                </button>
+            </div>`;
+        }).join('');
+    } catch (e) {
+        body.innerHTML = '<div class="notification-empty text-danger">알림 로드 실패</div>';
+    }
+}
+
+function _formatTimeAgo(unixTimestamp) {
+    const now = Math.floor(Date.now() / 1000);
+    const diff = now - unixTimestamp;
+    if (diff < 60) return '방금 전';
+    if (diff < 3600) return Math.floor(diff / 60) + '분 전';
+    if (diff < 86400) return Math.floor(diff / 3600) + '시간 전';
+    if (diff < 604800) return Math.floor(diff / 86400) + '일 전';
+    return new Date(unixTimestamp * 1000).toLocaleDateString('ko-KR');
+}
+
+async function deleteNotification(id) {
+    try {
+        const res = await fetch(`/api/notifications/${id}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error();
+        loadNotifications();
+        loadNotificationCount();
+    } catch (e) {
+        if (typeof Swal !== 'undefined') {
+            Swal.fire('오류', '알림 삭제에 실패했습니다.', 'error');
+        }
+    }
+}
+
+async function viewMessage(messageId) {
+    try {
+        const res = await fetch(`/api/messages/${messageId}`);
+        if (!res.ok) throw new Error();
+        const msg = await res.json();
+
+        const date = new Date(msg.created_at * 1000).toLocaleString('ko-KR');
+        const senderName = msg.sender_name || '알 수 없음';
+        const senderPic = msg.sender_picture
+            ? `<img src="${msg.sender_picture}" class="rounded-circle me-2" width="28" height="28">`
+            : '<i class="mdi mdi-account-circle fs-4 me-2 text-muted"></i>';
+
+        // DM 설정 확인 (답장 가능 여부)
+        let canReply = false;
+        if (currentUser) {
+            const dmRes = await fetch('/api/settings/dm');
+            const dmData = dmRes.ok ? await dmRes.json() : { allow_direct_message: 0 };
+            const isAdmin = currentUser.role === 'admin' || currentUser.role === 'super_admin';
+
+            if (dmData.allow_direct_message === 1 || isAdmin) {
+                canReply = true;
+            } else if (msg.receiver_id === currentUser.id) {
+                // DM 비활성화 상태에서 관리자가 보낸 쪽지에 답장 가능
+                const senderRole = msg.sender_role || '';
+                canReply = (senderRole === 'admin' || senderRole === 'super_admin');
+            }
+        }
+
+        const replyBtnHtml = canReply && currentUser && msg.sender_id !== currentUser.id
+            ? `<button class="btn btn-sm btn-outline-primary mt-2" onclick="replyToMessage(${msg.id}, ${msg.sender_id}, '${escapeHtml(senderName)}')"><i class="mdi mdi-reply"></i> 답장</button>`
+            : '';
+
+        if (typeof Swal !== 'undefined') {
+            Swal.fire({
+                title: '<i class="mdi mdi-email-outline text-primary"></i> 쪽지',
+                html: `
+                    <div class="text-start">
+                        <div class="d-flex align-items-center mb-3 pb-2 border-bottom">
+                            ${senderPic}
+                            <div>
+                                <strong>${escapeHtml(senderName)}</strong>
+                                <div class="text-muted small">${date}</div>
+                            </div>
+                        </div>
+                        <div style="white-space: pre-wrap; word-break: break-word;">${escapeHtml(msg.content)}</div>
+                        ${replyBtnHtml}
+                    </div>
+                `,
+                showConfirmButton: true,
+                confirmButtonText: '닫기',
+                width: 480
+            });
+        }
+
+        // 알림 패널 닫기
+        _notifPanelOpen = false;
+        document.getElementById('notificationPanel')?.classList.add('d-none');
+        document.removeEventListener('click', _closeNotifOnOutsideClick);
+
+    } catch (e) {
+        if (typeof Swal !== 'undefined') {
+            Swal.fire('오류', '쪽지를 불러올 수 없습니다.', 'error');
+        }
+    }
+}
+
+async function replyToMessage(originalMsgId, receiverId, receiverName) {
+    if (typeof Swal === 'undefined') return;
+
+    // 기존 Swal 닫기
+    Swal.close();
+
+    const { value: content, isConfirmed } = await Swal.fire({
+        title: `<i class="mdi mdi-reply text-primary"></i> ${escapeHtml(receiverName)}님에게 답장`,
+        input: 'textarea',
+        inputPlaceholder: '답장 내용을 입력하세요...',
+        inputAttributes: { maxlength: 2000 },
+        showCancelButton: true,
+        confirmButtonText: '보내기',
+        cancelButtonText: '취소',
+        width: 480,
+        inputValidator: (val) => {
+            if (!val || !val.trim()) return '내용을 입력해주세요.';
+        }
+    });
+
+    if (isConfirmed && content) {
+        try {
+            const res = await fetch('/api/messages', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ receiver_id: receiverId, content: content.trim(), reply_to: originalMsgId })
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || '발송 실패');
+
+            Swal.fire({ icon: 'success', title: '쪽지 발송 완료', showConfirmButton: false, timer: 1200 });
+        } catch (e) {
+            Swal.fire('오류', e.message, 'error');
+        }
+    }
+}
+
+async function sendMessage(receiverId, receiverName) {
+    if (typeof Swal === 'undefined') return;
+
+    const { value: content, isConfirmed } = await Swal.fire({
+        title: `<i class="mdi mdi-email-plus-outline text-primary"></i> ${escapeHtml(receiverName)}님에게 쪽지`,
+        input: 'textarea',
+        inputPlaceholder: '쪽지 내용을 입력하세요...',
+        inputAttributes: { maxlength: 2000 },
+        showCancelButton: true,
+        confirmButtonText: '보내기',
+        cancelButtonText: '취소',
+        width: 480,
+        inputValidator: (val) => {
+            if (!val || !val.trim()) return '내용을 입력해주세요.';
+        }
+    });
+
+    if (isConfirmed && content) {
+        try {
+            const res = await fetch('/api/messages', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ receiver_id: receiverId, content: content.trim() })
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || '발송 실패');
+
+            Swal.fire({ icon: 'success', title: '쪽지 발송 완료', showConfirmButton: false, timer: 1200 });
+        } catch (e) {
+            Swal.fire('오류', e.message, 'error');
+        }
     }
 }
 

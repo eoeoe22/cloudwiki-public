@@ -94,18 +94,52 @@ auth.get('/auth/google/callback', async (c) => {
 
     const db = c.env.DB;
 
-    // 3. users 테이블 upsert
-    await db
-        .prepare(
-            `INSERT INTO users (google_id, email, name, picture)
-       VALUES (?, ?, ?, ?)
-       ON CONFLICT(google_id)
-       DO UPDATE SET email = excluded.email,
-                     name = excluded.name,
-                     picture = excluded.picture`
-        )
-        .bind(userInfo.id, userInfo.email, userInfo.name, userInfo.picture)
-        .run();
+    // 3. 기존 유저 확인
+    const existingUser = await db
+        .prepare('SELECT id FROM users WHERE google_id = ?')
+        .bind(userInfo.id)
+        .first<{ id: number }>();
+
+    if (existingUser) {
+        // 기존 유저: 이름은 유지 (수동으로 변경한 이름이 로그인마다 초기화되지 않도록)
+        await db
+            .prepare(
+                `UPDATE users SET email = ?, picture = ? WHERE google_id = ?`
+            )
+            .bind(userInfo.email, userInfo.picture, userInfo.id)
+            .run();
+    } else {
+        // 신규 유저: 중복 이름 확인 후 접미사 부여
+        let finalName = userInfo.name;
+        const nameExists = await db
+            .prepare('SELECT COUNT(*) as cnt FROM users WHERE name = ?')
+            .bind(finalName)
+            .first<{ cnt: number }>();
+
+        if (nameExists && nameExists.cnt > 0) {
+            // 이미 같은 이름이 있으면 접미사를 붙여서 고유한 이름 생성
+            let suffix = 2;
+            while (true) {
+                const candidateName = `${userInfo.name} ${suffix}`;
+                const dupCheck = await db
+                    .prepare('SELECT COUNT(*) as cnt FROM users WHERE name = ?')
+                    .bind(candidateName)
+                    .first<{ cnt: number }>();
+                if (!dupCheck || dupCheck.cnt === 0) {
+                    finalName = candidateName;
+                    break;
+                }
+                suffix++;
+            }
+        }
+
+        await db
+            .prepare(
+                `INSERT INTO users (google_id, email, name, picture) VALUES (?, ?, ?, ?)`
+            )
+            .bind(userInfo.id, userInfo.email, finalName, userInfo.picture)
+            .run();
+    }
 
     // 4. user id 조회
     const user = await db
@@ -186,11 +220,101 @@ auth.put('/api/me/profile', requireAuth, async (c) => {
         return c.json({ error: '이름은 50자 이내로 입력해주세요.' }, 400);
     }
 
-    await c.env.DB.prepare('UPDATE users SET name = ? WHERE id = ?')
-        .bind(name.trim(), user.id)
+    const trimmedName = name.trim();
+    const db = c.env.DB;
+
+    // 1. 중복 이름 확인 (본인 제외)
+    const dupCheck = await db
+        .prepare('SELECT COUNT(*) as cnt FROM users WHERE name = ? AND id != ?')
+        .bind(trimmedName, user.id)
+        .first<{ cnt: number }>();
+
+    if (dupCheck && dupCheck.cnt > 0) {
+        return c.json({ error: '이미 사용 중인 이름입니다. 다른 이름을 입력해주세요.' }, 409);
+    }
+
+    // 2. 쿨다운 확인
+    const settingsRow = await db
+        .prepare('SELECT namechange_ratelimit FROM settings WHERE id = 1')
+        .first<{ namechange_ratelimit: number }>();
+
+    const cooldownDays = settingsRow?.namechange_ratelimit ?? 0;
+
+    // -1 이면 변경 완전 불허 (최초 변경도 불가)
+    if (cooldownDays === -1) {
+        return c.json({ error: '표시명 변경이 비활성화되어 있습니다.' }, 403);
+    }
+
+    // 양수인 경우 쿨다운 적용 (단, last_namechange가 NULL이면 최초 변경이므로 면제)
+    if (cooldownDays > 0 && user.last_namechange !== null) {
+        const now = Math.floor(Date.now() / 1000);
+        const cooldownSeconds = cooldownDays * 86400;
+        const nextChangeAt = user.last_namechange + cooldownSeconds;
+
+        if (now < nextChangeAt) {
+            const remainDays = Math.ceil((nextChangeAt - now) / 86400);
+            return c.json({ error: `표시명 변경 쿨다운 중입니다. ${remainDays}일 후에 다시 시도해주세요.` }, 429);
+        }
+    }
+
+    // 3. 이름과 last_namechange 업데이트
+    const now = Math.floor(Date.now() / 1000);
+    await db.prepare('UPDATE users SET name = ?, last_namechange = ? WHERE id = ?')
+        .bind(trimmedName, now, user.id)
         .run();
 
-    return c.json({ success: true, name: name.trim() });
+    return c.json({ success: true, name: trimmedName });
+});
+
+/**
+ * GET /api/me/namechange-status
+ * 표시명 변경 가능 여부 및 남은 쿨다운 반환
+ */
+auth.get('/api/me/namechange-status', requireAuth, async (c) => {
+    const user = c.get('user')!;
+    const db = c.env.DB;
+
+    const settingsRow = await db
+        .prepare('SELECT namechange_ratelimit FROM settings WHERE id = 1')
+        .first<{ namechange_ratelimit: number }>();
+
+    const cooldownDays = settingsRow?.namechange_ratelimit ?? 0;
+
+    // -1: 변경 완전 불허
+    if (cooldownDays === -1) {
+        return c.json({ allowed: false, reason: 'disabled', message: '표시명 변경이 비활성화되어 있습니다.' });
+    }
+
+    // 0: 무제한 허용
+    if (cooldownDays === 0) {
+        return c.json({ allowed: true, reason: 'unlimited' });
+    }
+
+    // 양수: 쿨다운 확인
+    // last_namechange가 NULL이면 최초 변경 → 면제
+    if (user.last_namechange === null) {
+        return c.json({ allowed: true, reason: 'first_change' });
+    }
+
+    const now = Math.floor(Date.now() / 1000);
+    const cooldownSeconds = cooldownDays * 86400;
+    const nextChangeAt = user.last_namechange + cooldownSeconds;
+
+    if (now >= nextChangeAt) {
+        return c.json({ allowed: true, reason: 'cooldown_passed' });
+    }
+
+    const remainSeconds = nextChangeAt - now;
+    const remainDays = Math.ceil(remainSeconds / 86400);
+
+    return c.json({
+        allowed: false,
+        reason: 'cooldown',
+        remain_seconds: remainSeconds,
+        remain_days: remainDays,
+        next_change_at: nextChangeAt,
+        message: `${remainDays}일 후에 표시명을 변경할 수 있습니다.`
+    });
 });
 
 /**

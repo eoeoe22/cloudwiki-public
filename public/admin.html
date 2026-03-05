@@ -71,7 +71,7 @@
     <div class="wiki-layout justify-content-center">
         <div class="wiki-container">
             <div class="admin-container">
-                <h2 class="mb-4"><i class="mdi mdi-shield-account"></i> 관리자 콘솔 - 유저 관리</h2>
+                <h2 class="mb-4"><i class="mdi mdi-shield-account"></i> 관리자 콘솔</h2>
 
                 <div class="card shadow-sm border-0">
                     <div class="card-header py-3">
@@ -95,13 +95,12 @@
                                         <th>권한</th>
                                         <th>차단 상태</th>
                                         <th>가입일</th>
-                                        <th>속도 제한</th>
                                         <th>관리 액션</th>
                                     </tr>
                                 </thead>
                                 <tbody id="userTableBody">
                                     <tr>
-                                        <td colspan="8" class="text-center py-4">유저 목록을 불러오는 중...</td>
+                                        <td colspan="7" class="text-center py-4">유저 목록을 불러오는 중...</td>
                                     </tr>
                                 </tbody>
                             </table>
@@ -111,6 +110,63 @@
                         <nav aria-label="Page navigation" id="paginationNav">
                             <!-- Pagination will be rendered here -->
                         </nav>
+                    </div>
+                </div>
+
+                <!-- 위키 전역 설정 -->
+                <h3 class="mt-5 mb-3"><i class="mdi mdi-cog"></i> 위키 전역 설정</h3>
+                <p class="text-muted mb-3">위키 전체에 적용되는 설정을 변경할 수 있습니다.</p>
+
+                <div class="card shadow-sm border-0 mb-4">
+                    <div class="card-body">
+                        <h6 class="fw-bold mb-3"><i class="mdi mdi-account-edit text-primary"></i> 표시명 변경 정책</h6>
+                        <div class="mb-3">
+                            <div class="form-check mb-2">
+                                <input class="form-check-input" type="radio" name="namechangePolicy"
+                                    id="namechangeUnlimited" value="0">
+                                <label class="form-check-label" for="namechangeUnlimited">
+                                    <strong>무제한 허용</strong> — 사용자가 언제든 표시명을 변경할 수 있습니다.
+                                </label>
+                            </div>
+                            <div class="form-check mb-2">
+                                <input class="form-check-input" type="radio" name="namechangePolicy"
+                                    id="namechangeDisabled" value="-1">
+                                <label class="form-check-label" for="namechangeDisabled">
+                                    <strong>변경 불허</strong> — 표시명 변경을 완전히 차단합니다. (최초 변경도 불가)
+                                </label>
+                            </div>
+                            <div class="form-check mb-2">
+                                <input class="form-check-input" type="radio" name="namechangePolicy"
+                                    id="namechangeCooldown" value="custom">
+                                <label class="form-check-label" for="namechangeCooldown">
+                                    <strong>일 단위 제한</strong> — 지정한 일수마다 1회 변경 가능 (최초 변경은 제한 없음)
+                                </label>
+                            </div>
+                            <div class="ms-4 mt-2" id="cooldownDaysWrapper" style="display:none;">
+                                <div class="input-group" style="max-width: 200px;">
+                                    <input type="number" class="form-control" id="cooldownDaysInput" min="1" value="30"
+                                        placeholder="일수">
+                                    <span class="input-group-text">일</span>
+                                </div>
+                            </div>
+                        </div>
+                        <hr class="my-4">
+                        <h6 class="fw-bold mb-3"><i class="mdi mdi-email-outline text-primary"></i> 개인 쪽지 정책</h6>
+                        <div class="mb-3">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="allowDmSwitch">
+                                <label class="form-check-label" for="allowDmSwitch">
+                                    <strong>개인 쪽지 허용</strong> — 활성화 시 모든 사용자가 쪽지를 보낼 수 있습니다.
+                                </label>
+                            </div>
+                            <div class="form-text mt-1">
+                                비활성화 시 관리자만 쪽지를 발송할 수 있으며, 일반 사용자는 관리자 쪽지에 답장만 가능합니다.
+                            </div>
+                        </div>
+
+                        <button class="btn btn-primary" onclick="saveWikiSettings()">
+                            <i class="mdi mdi-content-save"></i> 설정 저장
+                        </button>
                     </div>
                 </div>
 
@@ -225,9 +281,14 @@
                     document.querySelectorAll('#userAvatar').forEach(el => el.src = currentUser.picture || '');
                     document.querySelectorAll('#userName').forEach(el => el.textContent = currentUser.name);
 
+                    // 알림 버튼 표시
+                    document.querySelectorAll('#notificationBtnWrapper').forEach(el => el.classList.remove('d-none'));
+                    loadNotificationCount();
+
                     loadUsers();
                     loadCategories();
                     loadSidebarConfig();
+                    loadWikiSettings();
                 } catch (e) {
                     window.location.href = '/auth/google';
                 }
@@ -279,7 +340,7 @@
                 const tbody = document.getElementById('userTableBody');
 
                 if (!users || users.length === 0) {
-                    tbody.innerHTML = `<tr><td colspan="8" class="text-center py-4 text-muted">검색 결과가 없습니다.</td></tr>`;
+                    tbody.innerHTML = `<tr><td colspan="7" class="text-center py-4 text-muted">검색 결과가 없습니다.</td></tr>`;
                     return;
                 }
 
@@ -294,8 +355,6 @@
                         const banEnd = new Date(u.banned_until * 1000).toLocaleString('ko-KR');
                         banStatus = `<span class="badge bg-danger" title="차단 해제일: ${banEnd}">차단됨 (${banEnd}까지)</span>`;
                     }
-
-                    const rateLimitText = u.rate_limit ? `${u.rate_limit}회/분` : '<span class="text-muted">기본값</span>';
 
                     let roleBadge = '';
                     if (u.role === 'super_admin') roleBadge = '<span class="badge bg-dark">최고 관리자</span>';
@@ -330,13 +389,9 @@
                     <td>${roleSelectHtml}</td>
                     <td>${banStatus}</td>
                     <td>${joinDate}</td>
-                    <td>${rateLimitText}</td>
                     <td>
                         <button class="btn btn-sm btn-outline-danger mb-1" data-id="${u.id}" data-name="${escapeHtml(u.name)}" onclick="promptBan(+this.dataset.id, this.dataset.name)" ${disableBan}>
                             ${u.banned_until ? '<i class="mdi mdi-lock-open-variant"></i> 해제' : '<i class="mdi mdi-block-helper"></i> 차단'}
-                        </button>
-                        <button class="btn btn-sm btn-outline-secondary mb-1" data-id="${u.id}" data-name="${escapeHtml(u.name)}" data-rate="${u.rate_limit || 0}" onclick="promptRateLimit(+this.dataset.id, this.dataset.name, +this.dataset.rate)">
-                            <i class="mdi mdi-speedometer"></i> 제한 설정
                         </button>
                     </td>
                 </tr>
@@ -456,40 +511,83 @@
                 }
             }
 
-            async function promptRateLimit(userId, userName, currentLimit) {
-                const { value: limit, isDismissed } = await Swal.fire({
-                    title: `레이트 리밋 설정 - ${userName}`,
-                    input: 'number',
-                    inputLabel: '분당 요청 제한 (0 입력 시 기본값 사용)',
-                    inputValue: currentLimit,
-                    showCancelButton: true,
-                    confirmButtonText: '저장',
-                    cancelButtonText: '취소',
-                    inputValidator: (val) => {
-                        if (val === '' || isNaN(val) || Number(val) < 0) return '0 이상의 숫자를 입력하세요.';
-                    }
-                });
+            // ── 위키 전역 설정 ──
+            async function loadWikiSettings() {
+                try {
+                    const res = await fetch('/api/admin/settings');
+                    if (!res.ok) return;
+                    const settings = await res.json();
 
-                if (!isDismissed) {
-                    try {
-                        const res = await fetch(`/api/admin/users/${userId}/rate-limit`, {
-                            method: 'PUT',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ limit: Number(limit) })
-                        });
-                        const data = await res.json();
-                        if (!res.ok) throw new Error(data.error || '설정 실패');
+                    const cooldownDays = settings.namechange_ratelimit !== undefined
+                        ? parseInt(settings.namechange_ratelimit, 10)
+                        : 0;
 
-                        Swal.fire({
-                            icon: 'success',
-                            title: '설정 완료',
-                            showConfirmButton: false,
-                            timer: 1000
-                        });
-                        loadUsers();
-                    } catch (err) {
-                        Swal.fire('오류', err.message, 'error');
+                    if (cooldownDays === 0) {
+                        document.getElementById('namechangeUnlimited').checked = true;
+                        document.getElementById('cooldownDaysWrapper').style.display = 'none';
+                    } else if (cooldownDays === -1) {
+                        document.getElementById('namechangeDisabled').checked = true;
+                        document.getElementById('cooldownDaysWrapper').style.display = 'none';
+                    } else {
+                        document.getElementById('namechangeCooldown').checked = true;
+                        document.getElementById('cooldownDaysInput').value = cooldownDays;
+                        document.getElementById('cooldownDaysWrapper').style.display = '';
                     }
+
+                    // DM 설정 로드
+                    const dmSwitch = document.getElementById('allowDmSwitch');
+                    if (dmSwitch) {
+                        dmSwitch.checked = settings.allow_direct_message === 1;
+                    }
+                } catch (e) {
+                    console.error('설정 로드 실패', e);
+                }
+            }
+
+            // 라디오 버튼 변경 시 입력란 토글
+            document.addEventListener('change', (e) => {
+                if (e.target.name === 'namechangePolicy') {
+                    document.getElementById('cooldownDaysWrapper').style.display =
+                        e.target.value === 'custom' ? '' : 'none';
+                }
+            });
+
+            async function saveWikiSettings() {
+                const selected = document.querySelector('input[name="namechangePolicy"]:checked');
+                if (!selected) {
+                    Swal.fire('오류', '정책을 선택해주세요.', 'warning');
+                    return;
+                }
+
+                let cooldownDays;
+                if (selected.value === '0') {
+                    cooldownDays = '0';
+                } else if (selected.value === '-1') {
+                    cooldownDays = '-1';
+                } else {
+                    const days = parseInt(document.getElementById('cooldownDaysInput').value, 10);
+                    if (isNaN(days) || days < 1) {
+                        Swal.fire('오류', '1일 이상의 숫자를 입력해주세요.', 'warning');
+                        return;
+                    }
+                    cooldownDays = String(days);
+                }
+
+                // DM 설정
+                const allowDm = document.getElementById('allowDmSwitch')?.checked ? 1 : 0;
+
+                try {
+                    const res = await fetch('/api/admin/settings', {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ namechange_ratelimit: Number(cooldownDays), allow_direct_message: allowDm })
+                    });
+                    const data = await res.json();
+                    if (!res.ok) throw new Error(data.error || '저장 실패');
+
+                    Swal.fire({ icon: 'success', title: '설정 저장됨', showConfirmButton: false, timer: 1000 });
+                } catch (err) {
+                    Swal.fire('오류', err.message, 'error');
                 }
             }
 

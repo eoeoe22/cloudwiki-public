@@ -9,7 +9,7 @@ CREATE TABLE users (
   created_at INTEGER DEFAULT (unixepoch()),
   role TEXT DEFAULT 'user',
   banned_until INTEGER,
-  rate_limit INTEGER DEFAULT 10
+  last_namechange INTEGER
 );
 
 CREATE TABLE sessions (
@@ -98,7 +98,41 @@ CREATE TABLE redirects (
 CREATE INDEX idx_redirects_source ON redirects(source_slug);
 CREATE INDEX idx_redirects_target ON redirects(target_page_id);
 
-CREATE INDEX idx_rate_limit_user_time ON rate_limit_events(user_id, created_at);
+CREATE TABLE settings (
+  id                    INTEGER PRIMARY KEY CHECK (id = 1),
+  namechange_ratelimit  INTEGER DEFAULT 0,
+  allow_direct_message  INTEGER DEFAULT 0
+);
+
+INSERT INTO settings (id) VALUES (1);
+
+-- 알림 테이블
+CREATE TABLE notifications (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id     INTEGER NOT NULL,
+  type        TEXT NOT NULL,
+  content     TEXT NOT NULL,
+  link        TEXT,
+  ref_id      INTEGER,
+  created_at  INTEGER DEFAULT (unixepoch()),
+  FOREIGN KEY (user_id) REFERENCES users(id)
+);
+CREATE INDEX idx_notifications_user ON notifications(user_id);
+
+-- 쪽지 테이블
+CREATE TABLE messages (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  sender_id   INTEGER NOT NULL,
+  receiver_id INTEGER NOT NULL,
+  content     TEXT NOT NULL,
+  reply_to    INTEGER,
+  created_at  INTEGER DEFAULT (unixepoch()),
+  deleted     INTEGER DEFAULT 0,
+  FOREIGN KEY (sender_id) REFERENCES users(id),
+  FOREIGN KEY (receiver_id) REFERENCES users(id),
+  FOREIGN KEY (reply_to) REFERENCES messages(id)
+);
+CREATE INDEX idx_messages_receiver ON messages(receiver_id);
 
 -- 토론 스레드 (문서에 종속)
 CREATE TABLE discussions (

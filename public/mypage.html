@@ -194,18 +194,31 @@
                         <label class="form-label fw-bold">표시 이름 변경</label>
                         <div class="edit-name-form">
                             <input type="text" id="nameInput" placeholder="새 표시 이름">
-                            <button class="btn btn-wiki btn-sm" onclick="updateName()">
+                            <button class="btn btn-wiki btn-sm" id="nameChangeBtn" onclick="updateName()">
                                 <i class="mdi mdi-check"></i> 저장
                             </button>
                         </div>
-                        <small class="text-muted mt-1 d-block">다른 유저에게 보이는 이름입니다.</small>
+                        <small class="text-muted mt-1 d-block" id="nameChangeHint">다른 유저에게 보이는 이름입니다.</small>
+                        <div id="nameChangeStatus" class="mt-2" style="display:none;"></div>
                     </div>
                 </div>
 
-                <!-- 통계 -->
+                <!-- 활동 통계 -->
                 <div class="profile-section" id="statsSection" style="display:none;">
                     <h4><i class="mdi mdi-chart-bar"></i> 활동 통계</h4>
                     <div class="stat-cards" id="statCards"></div>
+                </div>
+
+                <!-- 받은 쪽지함 -->
+                <div class="profile-section" id="messagesSection" style="display:none;">
+                    <h4><i class="mdi mdi-email-receive"></i> 받은 쪽지함</h4>
+                    <div id="messagesList">
+                        <div class="text-center text-muted py-3">불러오는 중...</div>
+                    </div>
+                    <button class="btn btn-sm btn-outline-secondary w-100 mt-2 d-none" id="loadMoreMessagesBtn"
+                        onclick="loadMoreMessages()">
+                        더보기 <i class="mdi mdi-chevron-down"></i>
+                    </button>
                 </div>
 
                 <!-- 내가 편집한 문서 -->
@@ -230,16 +243,15 @@
     <script>
 
         document.addEventListener('DOMContentLoaded', async () => {
-            await loadConfig();
-            try {
-                const res = await fetch('/api/me');
-                if (!res.ok) throw new Error();
-                currentUser = await res.json();
-                renderProfile();
-                loadContributions();
-            } catch (e) {
+            await Promise.all([loadConfig(), checkAuth()]);
+            if (!currentUser) {
                 window.location.href = '/auth/google';
+                return;
             }
+            renderProfile();
+            loadContributions();
+            loadMessages();
+            checkNameChangeStatus();
         });
 
         function renderProfile() {
@@ -348,6 +360,7 @@
 
                 currentUser.name = data.name;
                 renderProfile();
+                checkNameChangeStatus();
 
                 Swal.fire({
                     icon: 'success',
@@ -358,6 +371,149 @@
             } catch (err) {
                 Swal.fire('오류', err.message, 'error');
             }
+        }
+
+        async function checkNameChangeStatus() {
+            try {
+                const res = await fetch('/api/me/namechange-status');
+                if (!res.ok) return;
+                const data = await res.json();
+
+                const btn = document.getElementById('nameChangeBtn');
+                const input = document.getElementById('nameInput');
+                const statusEl = document.getElementById('nameChangeStatus');
+                const hintEl = document.getElementById('nameChangeHint');
+
+                if (!data.allowed) {
+                    btn.disabled = true;
+                    input.disabled = true;
+
+                    if (data.reason === 'disabled') {
+                        statusEl.innerHTML = '<div class="alert alert-secondary py-2 mb-0"><i class="mdi mdi-lock"></i> 표시명 변경이 비활성화되어 있습니다.</div>';
+                        hintEl.style.display = 'none';
+                    } else if (data.reason === 'cooldown') {
+                        statusEl.innerHTML = `<div class="alert alert-warning py-2 mb-0"><i class="mdi mdi-clock-outline"></i> ${escapeHtml(data.message)}</div>`;
+                    }
+                    statusEl.style.display = '';
+                } else {
+                    btn.disabled = false;
+                    input.disabled = false;
+                    statusEl.style.display = 'none';
+                    hintEl.style.display = '';
+
+                    if (data.reason === 'first_change') {
+                        hintEl.textContent = '최초 1회 변경은 제한 없이 가능합니다.';
+                    } else {
+                        hintEl.textContent = '다른 유저에게 보이는 이름입니다.';
+                    }
+                }
+            } catch (e) {
+                // 조회 실패 시 기본 상태 유지
+            }
+        }
+
+        let currentMessageOffset = 0;
+        const MESSAGE_LIMIT = 10;
+
+        async function loadMessages(isLoadMore = false) {
+            if (!isLoadMore) {
+                currentMessageOffset = 0;
+            }
+
+            try {
+                const res = await fetch(`/api/messages?offset=${currentMessageOffset}&limit=${MESSAGE_LIMIT}`);
+                if (!res.ok) throw new Error();
+                const data = await res.json();
+                const messages = data.messages || [];
+
+                const section = document.getElementById('messagesSection');
+                section.style.display = '';
+                const listEl = document.getElementById('messagesList');
+                const loadMoreBtn = document.getElementById('loadMoreMessagesBtn');
+
+                if (!isLoadMore && messages.length === 0) {
+                    listEl.innerHTML = '<div class="text-center text-muted py-3">받은 쪽지가 없습니다.</div>';
+                    loadMoreBtn.classList.add('d-none');
+                    return;
+                }
+
+                if (!isLoadMore) {
+                    listEl.innerHTML = '';
+                }
+
+                listEl.insertAdjacentHTML('beforeend', messages.map(m => {
+                    const date = new Date(m.created_at * 1000).toLocaleString('ko-KR');
+                    // title 형식으로 조금 잘라서 보여주기
+                    const preview = m.content.length > 50 ? escapeHtml(m.content.substring(0, 50)) + '...' : escapeHtml(m.content);
+                    const senderName = m.sender_name || '알 수 없음';
+
+                    return `
+                        <div class="contribution-item" style="cursor:pointer;" onclick="viewMessage(${m.id})">
+                            <div class="flex-grow-1">
+                                <span class="fw-bold"><i class="mdi mdi-account-circle text-muted"></i> ${escapeHtml(senderName)}</span>
+                                <span class="text-muted ms-2">${preview}</span>
+                            </div>
+                            <div class="d-flex align-items-center gap-3">
+                                <span class="meta">${date}</span>
+                                <button class="btn btn-sm btn-outline-danger border-0 p-1" onclick="event.stopPropagation(); deleteDirectMessage(${m.id})" title="보관함에서 삭제">
+                                    <i class="mdi mdi-delete"></i>
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                }).join(''));
+
+                currentMessageOffset += messages.length;
+
+                if (data.has_more) {
+                    loadMoreBtn.classList.remove('d-none');
+                } else {
+                    loadMoreBtn.classList.add('d-none');
+                }
+
+            } catch (e) {
+                if (!isLoadMore) {
+                    document.getElementById('messagesList').innerHTML = '<div class="text-center text-danger py-3">쪽지를 불러오지 못했습니다.</div>';
+                }
+            }
+        }
+
+        async function loadMoreMessages() {
+            const btn = document.getElementById('loadMoreMessagesBtn');
+            btn.disabled = true;
+            btn.innerHTML = '<div class="spinner-border spinner-border-sm"></div> 불러오는 중...';
+            await loadMessages(true);
+            btn.disabled = false;
+            btn.innerHTML = '더보기 <i class="mdi mdi-chevron-down"></i>';
+        }
+
+        async function deleteDirectMessage(id) {
+            Swal.fire({
+                title: '쪽지 삭제',
+                text: "이 쪽지를 보관함에서 지우시겠습니까?",
+                icon: 'warning',
+                showCancelButton: true,
+                confirmButtonColor: '#cf222e',
+                confirmButtonText: '삭제',
+                cancelButtonText: '취소'
+            }).then(async (result) => {
+                if (result.isConfirmed) {
+                    try {
+                        const res = await fetch(`/api/messages/${id}`, { method: 'DELETE' });
+                        if (!res.ok) throw new Error();
+
+                        Swal.fire({ icon: 'success', title: '삭제됨', showConfirmButton: false, timer: 1000 });
+                        // 목록 리로드
+                        loadMessages(false);
+                        // 헤더 알림 뱃지도 갱신 가능성 있음
+                        if (typeof loadNotificationCount === 'function') {
+                            loadNotificationCount();
+                        }
+                    } catch (e) {
+                        Swal.fire('오류', '쪽지 삭제에 실패했습니다.', 'error');
+                    }
+                }
+            });
         }
 
     </script>

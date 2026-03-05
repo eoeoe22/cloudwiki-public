@@ -12,6 +12,7 @@ import searchRoutes from './routes/search';
 import mediaRoutes from './routes/media';
 import adminRoutes from './routes/admin';
 import discussionRoutes from './routes/discussion';
+import notificationRoutes from './routes/notification';
 
 const app = new Hono<Env>();
 
@@ -36,6 +37,7 @@ app.route('/api', searchRoutes);
 app.route('/', mediaRoutes);
 app.route('/api/admin', adminRoutes);
 app.route('/api', discussionRoutes);
+app.route('/api', notificationRoutes);
 
 // ── 헬퍼: ASSETS에서 HTML 가져오기 ──
 async function fetchAssetHtml(c: any, htmlPath: string): Promise<Response> {
