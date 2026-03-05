@@ -204,7 +204,7 @@
             <div class="mb-3 row">
                 <div class="col-md-6">
                     <label for="categoryInput" class="form-label fw-bold">카테고리 (분류)</label>
-                    <input type="text" id="categoryInput" class="form-control">
+                    <input type="text" id="categoryInput" class="form-control" placeholder="카테고리를 입력하세요 (선택)">
                 </div>
                 <div class="col-md-6 d-flex align-items-end" id="adminLockContainer" style="display: none !important;">
                     <div class="form-check mb-2">
@@ -407,7 +407,7 @@
             if (slug) AUTO_SAVE_KEY = 'wiki_autosave_' + slug;
 
             if (!slug) {
-                Swal.fire('오류', '문서 슬러그가 지정되지 않았습니다.', 'error').then(() => {
+                Swal.fire('오류', '문서 제목이 지정되지 않았습니다.', 'error').then(() => {
                     window.location.href = '/';
                 });
                 return;
@@ -450,8 +450,8 @@
                 const { value: iconName } = await Swal.fire({
                     title: 'MDI 아이콘 삽입',
                     input: 'text',
-                    inputLabel: '아이콘 이름 (예: dots-vertical)',
-                    inputPlaceholder: 'dots-vertical',
+                    inputLabel: '아이콘 이름 (예: information-outline)',
+                    inputPlaceholder: 'information-outline',
                     showCancelButton: true
                 });
                 if (iconName) {
@@ -463,8 +463,8 @@
                 const { value: iconName } = await Swal.fire({
                     title: 'Bootstrap Icon 삽입',
                     input: 'text',
-                    inputLabel: '아이콘 이름 (예: three-dots-vertical)',
-                    inputPlaceholder: 'three-dots-vertical',
+                    inputLabel: '아이콘 이름 (예: info-circle)',
+                    inputPlaceholder: 'info-circle',
                     showCancelButton: true
                 });
                 if (iconName) {
@@ -555,10 +555,6 @@
             window.addEventListener('resize', () => {
                 if (!editor) return;
                 const isMobileNow = window.innerWidth <= 768;
-                // 현재 스타일 확인은 어려우니 그냥 조건에 맞춰 변경 시도 (내부적으로 체크하길 기대하거나, 상태 변수를 둠)
-                // Toast UI Editor API: changePreviewStyle(style)
-                // 불필요한 호출 방지를 위해 상태 추적
-                // 하지만 editor 인스턴스에서 현재 style을 바로 알기 어려울 수 있으니 간단히 적용.
                 const targetStyle = isMobileNow ? 'tab' : 'vertical';
                 editor.changePreviewStyle(targetStyle);
             });
