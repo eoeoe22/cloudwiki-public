@@ -385,6 +385,18 @@
         document.getElementById('discussionThreadPage').classList.remove('d-none');
         document.title = `${discussion.title} - 토론 - ${appConfig.wikiName}`;
 
+        // 해당 토론 관련 알림 일괄 삭제 (로그인 유저만, 백그라운드 처리)
+        if (currentUser) {
+          const notifLink = `/wiki/${encodeURIComponent(slug)}/discussions/${threadId}`;
+          fetch('/api/notifications/by-link', {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ link: notifLink })
+          }).then(res => {
+            if (res.ok) loadNotificationCount();
+          }).catch(() => { /* 무시 */ });
+        }
+
       } catch (err) {
         console.error(err);
         hideAllPages();

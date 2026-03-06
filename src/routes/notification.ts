@@ -64,6 +64,27 @@ notificationRoutes.get('/notifications/count', requireAuth, async (c) => {
 });
 
 /**
+ * DELETE /api/notifications/by-link
+ * 특정 link와 일치하는 알림 일괄 삭제 (쪽지 제외)
+ * 토론 페이지 접속 시 해당 토론 관련 알림을 모두 정리하기 위해 사용
+ */
+notificationRoutes.delete('/notifications/by-link', requireAuth, async (c) => {
+    const user = c.get('user')!;
+    const db = c.env.DB;
+    const { link } = await c.req.json<{ link: string }>();
+
+    if (!link || !link.trim()) {
+        return c.json({ error: 'link 파라미터가 필요합니다.' }, 400);
+    }
+
+    const result = await db.prepare(
+        "DELETE FROM notifications WHERE user_id = ? AND link = ? AND type != 'message'"
+    ).bind(user.id, link.trim()).run();
+
+    return c.json({ success: true, deleted: result.meta.changes });
+});
+
+/**
  * DELETE /api/notifications/:id
  * 알림 삭제 — 쪽지(type=message)는 soft delete, 나머지는 hard delete
  */
