@@ -77,6 +77,37 @@ wiki.get('/wiki/templates', async (c) => {
 });
 
 /**
+ * GET /wiki/random
+ * 단일 랜덤 문서 반환 (접근 가능한 문서 중)
+ */
+wiki.get('/wiki/random', async (c) => {
+    const db = c.env.DB;
+    const user = c.get('user');
+    const isAdmin = user && (user.role === 'admin' || user.role === 'super_admin');
+
+    let query = `
+        SELECT slug, title
+        FROM pages
+        WHERE deleted_at IS NULL
+    `;
+    if (!isAdmin) {
+        query += ' AND is_private = 0';
+    }
+    // 관리자 페이지, 틀, 이미지, 카테고리 등 배제
+    query += " AND slug NOT LIKE '이미지:%' AND slug NOT LIKE '틀:%' AND slug NOT LIKE 'template:%' AND slug NOT LIKE '템플릿:%' AND slug NOT LIKE '카테고리:%'";
+    
+    query += ' ORDER BY RANDOM() LIMIT 1';
+
+    const page = await db.prepare(query).first<{ slug: string, title: string }>();
+
+    if (!page) {
+        return c.json({ error: '랜덤 문서를 찾을 수 없습니다.' }, 404);
+    }
+
+    return c.json(safeJSON({ slug: page.slug, title: page.title }));
+});
+
+/**
  * GET /wiki/:slug
  * 문서 조회 (공개)
  * - 리다이렉트 처리: 문서가 없고 리다이렉트가 존재하면 대상 문서 반환 (redirected_from 포함)

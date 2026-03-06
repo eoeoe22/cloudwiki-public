@@ -346,7 +346,7 @@
 
                 tbody.innerHTML = users.map(u => {
                     const profile = u.picture
-                        ? `<img src="${u.picture}" class="rounded-circle" width="32" height="32" alt="프로필">`
+                        ? `<img src="${u.picture}" class="rounded-circle" width="32" height="32" alt="프로필" loading="lazy">`
                         : `<i class="mdi mdi-account-circle fs-3 text-secondary"></i>`;
 
                     const joinDate = new Date(u.created_at * 1000).toLocaleDateString('ko-KR');

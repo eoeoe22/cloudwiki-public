@@ -302,8 +302,21 @@ app.get('/search', async (c) => {
     return renderHtml(c, '/search.html');
 });
 
-// /admin-media 접근 시 admin-media.html 서빙 (SSR 브랜딩)
+// /admin 접근 시 서버사이드 권한 체크 후 admin.html 서빙
+app.get('/admin', async (c) => {
+    const user = c.get('user');
+    if (!user || (user.role !== 'admin' && user.role !== 'super_admin')) {
+        return c.redirect('/');
+    }
+    return renderHtml(c, '/admin.html');
+});
+
+// /admin-media 접근 시 서버사이드 권한 체크 후 admin-media.html 서빙
 app.get('/admin-media', async (c) => {
+    const user = c.get('user');
+    if (!user || (user.role !== 'admin' && user.role !== 'super_admin')) {
+        return c.redirect('/');
+    }
     return renderHtml(c, '/admin-media.html');
 });
 

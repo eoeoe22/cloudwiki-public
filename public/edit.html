@@ -1188,7 +1188,7 @@
                 if (data.editors && data.editors.length > 0) {
                     const editorNames = data.editors.map(e => {
                         const avatar = e.picture
-                            ? `<img src="${escapeHtml(e.picture)}" class="editor-avatar" alt="">`
+                            ? `<img src="${escapeHtml(e.picture)}" class="editor-avatar" alt="" loading="lazy">`
                             : '';
                         return `${avatar}<strong>${escapeHtml(e.name)}</strong>`;
                     }).join(', ');

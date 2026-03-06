@@ -275,7 +275,7 @@
                         : '알 수 없음';
 
                     const avatarHtml = profileUser.picture
-                        ? `<img src="${profileUser.picture}" class="profile-avatar" alt="프로필">`
+                        ? `<img src="${profileUser.picture}" class="profile-avatar" alt="프로필" loading="lazy">`
                         : `<div class="profile-avatar-placeholder">${escapeHtml(profileUser.name.charAt(0))}</div>`;
 
                     // 쪽지 보내기 버튼 표시 여부

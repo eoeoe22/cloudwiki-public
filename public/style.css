@@ -1570,6 +1570,7 @@ div:where(.swal2-container) .swal2-html-container {
   color: var(--wiki-text);
   list-style: none;
   user-select: none;
+  cursor: pointer;
 }
 
 .wiki-fold>summary::-webkit-details-marker {

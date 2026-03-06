@@ -7,6 +7,15 @@
 var appConfig = { wikiName: 'CloudWiki' };
 var currentUser = null;
 
+// ── URL 스킴 검증 (XSS 방지) ──
+function isSafeUrl(url) {
+    if (!url) return false;
+    try {
+        const parsed = new URL(url, window.location.origin);
+        return ['http:', 'https:'].includes(parsed.protocol);
+    } catch { return false; }
+}
+
 // ── HTML 이스케이프 ──
 function escapeHtml(str) {
     if (!str) return '';
@@ -24,6 +33,32 @@ function doSearch(e) {
     const q = document.getElementById('searchInput').value.trim();
     if (q) {
         window.location.href = `/search?q=${encodeURIComponent(q)}&mode=content`;
+    }
+}
+
+// ── 랜덤 문서 ──
+async function goRandomPage() {
+    try {
+        const res = await fetch('/api/wiki/random');
+        if (!res.ok) throw new Error();
+        const data = await res.json();
+        if (data.slug) {
+            const url = `/wiki/${encodeURIComponent(data.slug)}`;
+            if (typeof navigateTo === 'function') {
+                navigateTo(url);
+                const sidebar = document.getElementById('mobileSidebar');
+                if (sidebar) {
+                    const bsOffcanvas = bootstrap?.Offcanvas?.getInstance(sidebar);
+                    if (bsOffcanvas) bsOffcanvas.hide();
+                }
+            } else {
+                window.location.href = url;
+            }
+        }
+    } catch (e) {
+        if (typeof Swal !== 'undefined') {
+            Swal.fire('오류', '랜덤 문서를 불러올 수 없습니다.', 'error');
+        }
     }
 }
 
@@ -46,19 +81,20 @@ async function loadConfig() {
             });
 
             // 파비콘 적용
-            if (appConfig.wikiFaviconUrl) {
+            if (isSafeUrl(appConfig.wikiFaviconUrl)) {
                 const favicon = document.getElementById('wiki-favicon');
                 if (favicon) favicon.href = appConfig.wikiFaviconUrl;
             }
 
             // 로고 적용
             document.querySelectorAll('.wiki-logo-container').forEach(logoContainer => {
-                if (appConfig.wikiLogoUrl) {
+                if (isSafeUrl(appConfig.wikiLogoUrl)) {
                     const img = document.createElement('img');
                     img.src = appConfig.wikiLogoUrl;
                     img.alt = 'Logo';
                     img.className = 'brand-logo';
                     img.style.cssText = 'height: 32px; vertical-align: middle; margin-right: 8px;';
+                    img.loading = 'lazy';
                     logoContainer.innerHTML = '';
                     logoContainer.appendChild(img);
                 }
@@ -77,7 +113,7 @@ async function checkAuth() {
             currentUser = await res.json();
             document.querySelectorAll('#navLogin').forEach(el => el.classList.add('d-none'));
             document.querySelectorAll('#navUser').forEach(el => el.classList.remove('d-none'));
-            document.querySelectorAll('#userAvatar').forEach(el => el.src = currentUser.picture || '');
+            document.querySelectorAll('#userAvatar').forEach(el => el.src = isSafeUrl(currentUser.picture) ? currentUser.picture : '');
             document.querySelectorAll('#userName').forEach(el => el.textContent = currentUser.name);
 
             if (currentUser.role === 'admin' || currentUser.role === 'super_admin') {
@@ -87,8 +123,8 @@ async function checkAuth() {
             // 알림 버튼 표시 및 카운트 로드
             document.querySelectorAll('#notificationBtnWrapper').forEach(el => el.classList.remove('d-none'));
             loadNotificationCount();
-            // 60초마다 알림 폴링
-            setInterval(loadNotificationCount, 60000);
+            // 60초마다 알림 폴링 (탭 비활성 시 자동 중단)
+            startNotifPolling();
         }
     } catch (e) {
         // 로그인 안 됨
@@ -99,6 +135,24 @@ async function checkAuth() {
 var _notifPanelOpen = false;
 var _notifOffset = 0;
 const _notifLimit = 10;
+var _notifIntervalId = null;
+
+function startNotifPolling() {
+    stopNotifPolling();
+    _notifIntervalId = setInterval(loadNotificationCount, 60000);
+}
+function stopNotifPolling() {
+    if (_notifIntervalId) { clearInterval(_notifIntervalId); _notifIntervalId = null; }
+}
+document.addEventListener('visibilitychange', () => {
+    if (!currentUser) return;
+    if (document.hidden) {
+        stopNotifPolling();
+    } else {
+        loadNotificationCount();
+        startNotifPolling();
+    }
+});
 
 async function loadNotificationCount() {
     try {
@@ -159,7 +213,7 @@ async function handleNotificationClick(event, id, type, refId, link) {
     const isMessage = type === 'message';
     if (isMessage && refId) {
         viewMessage(refId);
-    } else if (link && link !== 'null') {
+    } else if (link && link !== 'null' && isSafeUrl(link)) {
         if (typeof navigateTo === 'function') {
             navigateTo(link);
             toggleNotificationPanel(); // 알림 패널 닫기 (SPA 이동 시)
@@ -204,15 +258,14 @@ async function loadNotifications(append = false) {
             };
             const icon = iconMap[n.type] || 'mdi mdi-bell';
             const timeAgo = _formatTimeAgo(n.created_at);
-            const linkParam = n.link ? `'${escapeHtml(n.link).replace(/'/g, "\\'")}'` : 'null';
 
-            return `<div class="notification-item" onclick="handleNotificationClick(event, ${n.id}, '${escapeHtml(n.type)}', ${n.ref_id || 'null'}, ${linkParam})">
+            return `<div class="notification-item" data-notif-id="${escapeHtml(String(n.id))}" data-notif-type="${escapeHtml(n.type)}" data-notif-ref="${escapeHtml(String(n.ref_id || ''))}" data-notif-link="${escapeHtml(n.link || '')}">
                 <i class="notif-icon ${icon} type-${escapeHtml(n.type)}"></i>
                 <div class="notif-content">
                     <div class="notif-text">${escapeHtml(n.content)}</div>
                     <div class="notif-time">${timeAgo}</div>
                 </div>
-                <button class="notif-delete" onclick="event.stopPropagation(); deleteNotification(${n.id})" title="삭제">
+                <button class="notif-delete" data-delete-id="${escapeHtml(String(n.id))}" title="삭제">
                     <i class="mdi mdi-close"></i>
                 </button>
             </div>`;
@@ -230,11 +283,40 @@ async function loadNotifications(append = false) {
             _notifOffset += _notifLimit;
             body.insertAdjacentHTML('beforeend', `
                 <div id="notifLoadMoreWrapper" class="text-center p-2 border-top">
-                    <button id="notifLoadMoreBtn" class="btn btn-sm btn-link text-decoration-none w-100" onclick="loadNotifications(true)">
+                    <button id="notifLoadMoreBtn" class="btn btn-sm btn-link text-decoration-none w-100" data-load-more="true">
                         더보기 <i class="mdi mdi-chevron-down"></i>
                     </button>
                 </div>
             `);
+        }
+
+        // 이벤트 델리게이션 (한 번만 등록)
+        if (!body._notifDelegated) {
+            body._notifDelegated = true;
+            body.addEventListener('click', (e) => {
+                // 삭제 버튼
+                const deleteBtn = e.target.closest('[data-delete-id]');
+                if (deleteBtn) {
+                    e.stopPropagation();
+                    deleteNotification(parseInt(deleteBtn.dataset.deleteId, 10));
+                    return;
+                }
+                // 더보기 버튼
+                const loadMoreBtn = e.target.closest('[data-load-more]');
+                if (loadMoreBtn) {
+                    loadNotifications(true);
+                    return;
+                }
+                // 알림 아이템 클릭
+                const item = e.target.closest('[data-notif-id]');
+                if (item) {
+                    const id = parseInt(item.dataset.notifId, 10);
+                    const type = item.dataset.notifType;
+                    const refId = item.dataset.notifRef ? parseInt(item.dataset.notifRef, 10) : null;
+                    const link = item.dataset.notifLink || null;
+                    handleNotificationClick(e, id, type, refId, link);
+                }
+            });
         }
     } catch (e) {
         if (!append) {
@@ -260,8 +342,10 @@ function _formatTimeAgo(unixTimestamp) {
 }
 
 async function deleteNotification(id) {
+    const numId = parseInt(id, 10);
+    if (isNaN(numId)) return;
     try {
-        const res = await fetch(`/api/notifications/${id}`, { method: 'DELETE' });
+        const res = await fetch(`/api/notifications/${numId}`, { method: 'DELETE' });
         if (!res.ok) throw new Error();
         loadNotifications();
         loadNotificationCount();
@@ -280,8 +364,8 @@ async function viewMessage(messageId) {
 
         const date = new Date(msg.created_at * 1000).toLocaleString('ko-KR');
         const senderName = msg.sender_name || '알 수 없음';
-        const senderPic = msg.sender_picture
-            ? `<img src="${msg.sender_picture}" class="rounded-circle me-2" width="28" height="28">`
+        const senderPic = isSafeUrl(msg.sender_picture)
+            ? `<img src="${escapeHtml(msg.sender_picture)}" class="rounded-circle me-2" width="28" height="28" loading="lazy">`
             : '<i class="mdi mdi-account-circle fs-4 me-2 text-muted"></i>';
 
         // DM 설정 확인 (답장 가능 여부)
@@ -300,8 +384,9 @@ async function viewMessage(messageId) {
             }
         }
 
-        const replyBtnHtml = canReply && currentUser && msg.sender_id !== currentUser.id
-            ? `<button class="btn btn-sm btn-outline-primary mt-2" onclick="replyToMessage(${msg.id}, ${msg.sender_id}, '${escapeHtml(senderName)}')"><i class="mdi mdi-reply"></i> 답장</button>`
+        const showReplyBtn = canReply && currentUser && msg.sender_id !== currentUser.id;
+        const replyBtnHtml = showReplyBtn
+            ? `<button class="btn btn-sm btn-outline-primary mt-2" id="swal-reply-btn"><i class="mdi mdi-reply"></i> 답장</button>`
             : '';
 
         if (typeof Swal !== 'undefined') {
@@ -322,7 +407,15 @@ async function viewMessage(messageId) {
                 `,
                 showConfirmButton: true,
                 confirmButtonText: '닫기',
-                width: 480
+                width: 480,
+                didOpen: () => {
+                    const replyBtn = document.getElementById('swal-reply-btn');
+                    if (replyBtn) {
+                        replyBtn.addEventListener('click', () => {
+                            replyToMessage(msg.id, msg.sender_id, senderName);
+                        });
+                    }
+                }
             });
         }
 
@@ -365,12 +458,14 @@ async function replyToMessage(originalMsgId, receiverId, receiverName) {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ receiver_id: receiverId, content: content.trim(), reply_to: originalMsgId })
             });
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.error || '발송 실패');
+            if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                throw new Error(data.error || '발송 실패');
+            }
 
             Swal.fire({ icon: 'success', title: '쪽지 발송 완료', showConfirmButton: false, timer: 1200 });
         } catch (e) {
-            Swal.fire('오류', e.message, 'error');
+            Swal.fire('오류', '쪽지 발송에 실패했습니다.', 'error');
         }
     }
 }
@@ -399,12 +494,14 @@ async function sendMessage(receiverId, receiverName) {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ receiver_id: receiverId, content: content.trim() })
             });
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.error || '발송 실패');
+            if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                throw new Error(data.error || '발송 실패');
+            }
 
             Swal.fire({ icon: 'success', title: '쪽지 발송 완료', showConfirmButton: false, timer: 1200 });
         } catch (e) {
-            Swal.fire('오류', e.message, 'error');
+            Swal.fire('오류', '쪽지 발송에 실패했습니다.', 'error');
         }
     }
 }
@@ -472,7 +569,7 @@ async function resolveTransclusions(content) {
             return cache.get(slug) || match;
         });
 
-        newText = newText.replace(/\x00CODEBLOCK_(\d+)\x00/g, (_, idx) => codeBlocks[parseInt(idx)]);
+        newText = newText.replace(/\x00CODEBLOCK_(\d+)\x00/g, (_, idx) => codeBlocks[parseInt(idx, 10)]);
 
         if (newText !== text) {
             return await resolve(newText, depth + 1);
@@ -498,7 +595,7 @@ async function fetchCategoryList(category) {
             const date = new Date(page.updated_at * 1000).toLocaleString('ko-KR');
             const lockIcon = page.is_locked ? ' <i class="bi bi-lock-fill text-danger" title="관리자 전용"></i>' : '';
             return `
-        <a href="/wiki/${encodeURIComponent(page.slug)}" onclick="if(typeof navigateTo === 'function') { navigateTo(this.href); return false; }" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center">
+        <a href="/wiki/${encodeURIComponent(page.slug)}" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center wiki-spa-link">
             <div>
                 <span class="fw-bold">${escapeHtml(page.title)}</span>
                 ${lockIcon}
@@ -539,7 +636,7 @@ function generateTOC(contentEl, tocContainerId, tocNavId) {
     let prevLevel = 0;
 
     headings.forEach((h, i) => {
-        const level = parseInt(h.tagName[1]);
+        const level = parseInt(h.tagName[1], 10);
         const id = `heading-${i}`;
         h.id = id;
         const text = h.textContent;
@@ -615,6 +712,7 @@ function processWikiLinks(contentEl) {
 }
 
 // ── 각주 처리 ──
+var _fnUniqueCounter = 0;
 function processFootnotes(contentEl) {
     if (!contentEl) return;
     const walker = document.createTreeWalker(contentEl, NodeFilter.SHOW_TEXT, null, false);
@@ -644,7 +742,7 @@ function processFootnotes(contentEl) {
             if (fnMatch) {
                 footnoteIndex++;
                 const fnContent = fnMatch[1];
-                const uniqueId = Math.floor(Math.random() * 1000000);
+                const uniqueId = ++_fnUniqueCounter;
                 const fnId = `fn-${footnoteIndex}-${uniqueId}`;
                 const refId = `fn-ref-${footnoteIndex}-${uniqueId}`;
 
@@ -713,6 +811,20 @@ function processFootnotes(contentEl) {
     }
 }
 
+// ── CSS 색상 값 검증 ──
+function _isSafeCssColor(value) {
+    if (!value || typeof value !== 'string') return false;
+    // 위험 키워드 차단
+    const lower = value.toLowerCase().replace(/\s/g, '');
+    if (lower.includes('url(') || lower.includes('expression(') || lower.includes('var(') || lower.includes('env(')) return false;
+    // CSS.supports가 있으면 브라우저 네이티브 검증
+    if (typeof CSS !== 'undefined' && CSS.supports) {
+        return CSS.supports('color', value);
+    }
+    // 폴백: 안전한 패턴만 허용
+    return /^(#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})|(rgb|hsl)a?\([0-9,.\s/%]+\))$/.test(value);
+}
+
 // ── 문서 렌더링 통합 (index.html, edit.html 공통) ──
 async function renderWikiContent(content, slug, containerId, options = {}) {
     const containerEl = document.getElementById(containerId);
@@ -751,28 +863,28 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
 
             const idx = foldBlocks.length;
 
-            const restoredContent = foldContent.replace(/WIKICODEFPH(\d+)XEND/g, (_, i) => codeBlocksForFold[parseInt(i)]);
+            const restoredContent = foldContent.replace(/WIKICODEFPH(\d+)XEND/g, (_, i) => codeBlocksForFold[parseInt(i, 10)]);
             let rawContentHtml = (typeof marked !== 'undefined') ? marked.parse(restoredContent) : restoredContent;
-            let contentHtml = (typeof DOMPurify !== 'undefined') ? DOMPurify.sanitize(rawContentHtml, { ADD_TAGS: ['i', 'span', 'details', 'summary'], ADD_ATTR: ['class', 'style', 'data-bg', 'data-color'] }) : rawContentHtml;
+            let contentHtml = (typeof DOMPurify !== 'undefined') ? DOMPurify.sanitize(rawContentHtml, { ADD_TAGS: ['i', 'span', 'details', 'summary'], ADD_ATTR: ['class', 'data-bg', 'data-color'], FORBID_ATTR: ['id', 'name'] }) : escapeHtml(rawContentHtml);
 
             foldBlocks.push({ summaryText, bgAttr, colorAttr, contentHtml });
             return `\n\nWIKIFOLDPH${idx}XEND\n\n`;
         });
 
-        preprocessed = preprocessed.replace(/WIKICODEFPH(\d+)XEND/g, (_, idx) => codeBlocksForFold[parseInt(idx)]);
+        preprocessed = preprocessed.replace(/WIKICODEFPH(\d+)XEND/g, (_, idx) => codeBlocksForFold[parseInt(idx, 10)]);
 
         let rawHtml = (typeof marked !== 'undefined') ? marked.parse(preprocessed) : preprocessed;
 
         rawHtml = rawHtml.replace(/(?:<p>)?WIKIFOLDPH(\d+)XEND(?:<\/p>)?/g, (m, idx) => {
-            const block = foldBlocks[parseInt(idx)];
+            const block = foldBlocks[parseInt(idx, 10)];
             if (!block) return '';
             return `<details class="wiki-fold border rounded mb-3"${block.bgAttr}${block.colorAttr}>` +
-                `<summary class="fw-bold p-2" style="cursor: pointer;">${block.summaryText}</summary>` +
+                `<summary class="fw-bold p-2 wiki-fold-summary">${block.summaryText}</summary>` +
                 `<div class="wiki-fold-content p-3 border-top">${block.contentHtml}</div>` +
                 `</details>`;
         });
 
-        let html = (typeof DOMPurify !== 'undefined') ? DOMPurify.sanitize(rawHtml, { ADD_TAGS: ['i', 'span', 'details', 'summary'], ADD_ATTR: ['class', 'style', 'data-bg', 'data-color'] }) : rawHtml;
+        let html = (typeof DOMPurify !== 'undefined') ? DOMPurify.sanitize(rawHtml, { ADD_TAGS: ['i', 'span', 'details', 'summary'], ADD_ATTR: ['class', 'data-bg', 'data-color'], FORBID_ATTR: ['id', 'name'] }) : escapeHtml(rawHtml);
 
         if (options.showCategory && slug) {
             const decodedSlug = decodeURIComponent(slug);
@@ -780,7 +892,7 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
                 const categoryName = decodedSlug.replace(/^카테고리:/, '');
                 const listHtml = await fetchCategoryList(categoryName);
                 if (listHtml) {
-                    html += listHtml;
+                    html += (typeof DOMPurify !== 'undefined') ? DOMPurify.sanitize(listHtml, { ADD_TAGS: ['i', 'span'], ADD_ATTR: ['class', 'title'] }) : escapeHtml(listHtml);
                 }
             }
         }
@@ -794,21 +906,20 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
             if (firstTextNode) {
                 let val = firstTextNode.nodeValue;
                 let replaced = true;
-                const colorRegex = /^(#[0-9a-fA-F]{3,8}|(rgb|hsl)a?\([^)]+\)|[a-zA-Z]+)$/;
 
                 while (replaced) {
                     replaced = false;
                     let bgMatch = val.match(/^([\s]*)\{bg:\s*([^}]+)\}/);
                     if (bgMatch) {
                         const colorValue = bgMatch[2].trim();
-                        if (colorRegex.test(colorValue)) cell.style.backgroundColor = colorValue;
+                        if (_isSafeCssColor(colorValue)) cell.style.backgroundColor = colorValue;
                         val = val.replace(bgMatch[0], '');
                         replaced = true;
                     }
                     let colorMatch = val.match(/^([\s]*)\{color:\s*([^}]+)\}/);
                     if (colorMatch) {
                         const colorValue = colorMatch[2].trim();
-                        if (colorRegex.test(colorValue)) cell.style.color = colorValue;
+                        if (_isSafeCssColor(colorValue)) cell.style.color = colorValue;
                         val = val.replace(colorMatch[0], '');
                         replaced = true;
                     }
@@ -821,9 +932,8 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
         containerEl.querySelectorAll('.wiki-fold').forEach(fold => {
             const bg = fold.getAttribute('data-bg');
             const color = fold.getAttribute('data-color');
-            const colorRegex = /^(#[0-9a-fA-F]{3,8}|(rgb|hsl)a?\([^)]+\)|[a-zA-Z]+)$/;
-            if (bg && colorRegex.test(bg)) fold.style.backgroundColor = bg;
-            if (color && colorRegex.test(color)) {
+            if (bg && _isSafeCssColor(bg)) fold.style.backgroundColor = bg;
+            if (color && _isSafeCssColor(color)) {
                 const summary = fold.querySelector('summary');
                 if (summary) summary.style.color = color;
             }
@@ -831,6 +941,16 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
 
         processWikiLinks(containerEl);
         processFootnotes(containerEl);
+
+        // 카테고리 링크 SPA 내비게이션 (인라인 onclick 대체)
+        if (typeof navigateTo === 'function') {
+            containerEl.querySelectorAll('.wiki-spa-link').forEach(a => {
+                a.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    navigateTo(a.href);
+                });
+            });
+        }
 
         // YouTube / Niconico Embed Processing
         containerEl.querySelectorAll('a').forEach(a => {
@@ -858,12 +978,19 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
                 const timeMatch = params.match(/[?&]t=(\d+)s?/);
                 let query = '';
                 if (timeMatch) {
-                    query = `?start=${timeMatch[1]}`;
+                    query = `?start=${parseInt(timeMatch[1], 10)}`;
                 }
                 const iframeWrapper = document.createElement('div');
                 iframeWrapper.className = 'ratio ratio-16x9 my-3';
                 iframeWrapper.style.maxWidth = '100%';
-                iframeWrapper.innerHTML = `<iframe src="https://www.youtube.com/embed/${videoId}${query}" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>`;
+                const ytIframe = document.createElement('iframe');
+                ytIframe.setAttribute('src', `https://www.youtube.com/embed/${encodeURIComponent(videoId)}${query}`);
+                ytIframe.setAttribute('title', 'YouTube video player');
+                ytIframe.setAttribute('frameborder', '0');
+                ytIframe.setAttribute('allow', 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture');
+                ytIframe.setAttribute('referrerpolicy', 'strict-origin-when-cross-origin');
+                ytIframe.setAttribute('allowfullscreen', '');
+                iframeWrapper.appendChild(ytIframe);
                 parent.replaceWith(iframeWrapper);
                 return;
             }
@@ -876,12 +1003,17 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
                 const timeMatch = params.match(/[?&]from=(\d+)/);
                 let query = '';
                 if (timeMatch) {
-                    query = `?from=${timeMatch[1]}`;
+                    query = `?from=${parseInt(timeMatch[1], 10)}`;
                 }
                 const iframeWrapper = document.createElement('div');
                 iframeWrapper.className = 'ratio ratio-16x9 my-3';
                 iframeWrapper.style.maxWidth = '100%';
-                iframeWrapper.innerHTML = `<iframe src="https://embed.nicovideo.jp/watch/${videoId}${query}" frameborder="0" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>`;
+                const nicoIframe = document.createElement('iframe');
+                nicoIframe.setAttribute('src', `https://embed.nicovideo.jp/watch/${encodeURIComponent(videoId)}${query}`);
+                nicoIframe.setAttribute('frameborder', '0');
+                nicoIframe.setAttribute('referrerpolicy', 'strict-origin-when-cross-origin');
+                nicoIframe.setAttribute('allowfullscreen', '');
+                iframeWrapper.appendChild(nicoIframe);
                 parent.replaceWith(iframeWrapper);
                 return;
             }
@@ -890,37 +1022,32 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
         const popoverTriggerList = [].slice.call(containerEl.querySelectorAll('[data-bs-toggle="popover"]'));
         if (typeof bootstrap !== 'undefined') {
             popoverTriggerList.map(function (popoverTriggerEl) {
-                return new bootstrap.Popover(popoverTriggerEl, { html: true });
+                return new bootstrap.Popover(popoverTriggerEl, { html: false });
             });
         }
 
         containerEl.querySelectorAll('a').forEach(a => {
             const href = a.getAttribute('href');
-            if (href && (href.startsWith('http://') || href.startsWith('https://'))) {
-                try {
-                    const url = new URL(href, window.location.origin);
-                    if (url.origin !== window.location.origin) {
-                        a.onclick = (e) => {
-                            e.preventDefault();
-                            if (typeof Swal !== 'undefined') {
-                                Swal.fire({
-                                    title: '외부 링크 이동',
-                                    html: `외부 링크 <b>${escapeHtml(href)}</b> 로 이동합니다.<br>계속하시겠습니까?`,
-                                    icon: 'warning',
-                                    showCancelButton: true,
-                                    confirmButtonText: '예',
-                                    cancelButtonText: '아니오'
-                                }).then((result) => {
-                                    if (result.isConfirmed) window.open(href, '_blank');
-                                });
-                            } else {
-                                if (confirm(`외부 링크 ${href} 로 이동하시겠습니까?`)) {
-                                    window.open(href, '_blank');
-                                }
-                            }
-                        };
+            if (href && (href.startsWith('http://') || href.startsWith('https://')) && a.hostname && a.hostname !== window.location.hostname) {
+                a.onclick = (e) => {
+                    e.preventDefault();
+                    if (typeof Swal !== 'undefined') {
+                        Swal.fire({
+                            title: '외부 링크 이동',
+                            html: `외부 링크 <b>${escapeHtml(href)}</b> 로 이동합니다.<br>계속하시겠습니까?`,
+                            icon: 'warning',
+                            showCancelButton: true,
+                            confirmButtonText: '예',
+                            cancelButtonText: '아니오'
+                        }).then((result) => {
+                            if (result.isConfirmed) window.open(href, '_blank');
+                        });
+                    } else {
+                        if (confirm(`외부 링크 ${href} 로 이동하시겠습니까?`)) {
+                            window.open(href, '_blank');
+                        }
                     }
-                } catch (urlErr) { }
+                };
             }
         });
 
@@ -934,6 +1061,9 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
 
         containerEl.querySelectorAll('img').forEach(img => {
             img.classList.add('img-fluid');
+            if (!img.hasAttribute('loading')) {
+                img.setAttribute('loading', 'lazy');
+            }
         });
 
         if (options.tocContainerId && options.tocNavId) {

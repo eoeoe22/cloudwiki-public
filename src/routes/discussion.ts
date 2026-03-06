@@ -189,10 +189,13 @@ discussionRoutes.post('/discussions/thread/:id/comments', requireAuth, async (c)
             const link = `/wiki/${encodeURIComponent(discussionInfo.slug)}/discussions/${discussionId}`;
             const notifContent = `'${discussionInfo.title}' 토론에 새 댓글이 달렸습니다.`;
 
-            for (const p of participants) {
-                await db.prepare(
-                    'INSERT INTO notifications (user_id, type, content, link) VALUES (?, ?, ?, ?)'
-                ).bind(p.author_id, 'discussion_comment', notifContent, link).run();
+            const batchStmts = participants.map(p => 
+                db.prepare('INSERT INTO notifications (user_id, type, content, link) VALUES (?, ?, ?, ?)')
+                  .bind(p.author_id, 'discussion_comment', notifContent, link)
+            );
+
+            if (batchStmts.length > 0) {
+                await db.batch(batchStmts);
             }
         }
     } catch (e) {
