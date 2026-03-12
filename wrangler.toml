@@ -1,0 +1,45 @@
+name = "cloudwiki" # 변경가능
+main = "src/index.ts"
+compatibility_date = "2024-06-01"
+
+[assets]
+directory = "public"
+binding = "ASSETS"
+run_worker_first = ["/", "/wiki/*", "/mypage", "/profile/*", "/search", "/admin-media", "/sitemap.xml", "/robots.txt"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = ""
+database_id = ""
+
+[[r2_buckets]]
+binding = "MEDIA"
+bucket_name = ""
+
+[[kv_namespaces]]
+binding = "KV"
+id = ""
+
+[observability]
+enabled = true
+head_sampling_rate = 1.0
+
+[vars]
+GOOGLE_CLIENT_ID = ""
+GOOGLE_REDIRECT_URI = "https://도메인/auth/google/callback"
+MEDIA_PUBLIC_URL = "https://도메인/media"
+MAX_UPLOAD_SIZE = "15728640" # 15MB, 변경 가능
+WIKI_NAME = "Testwiki" # 변경 가능, 사이트 전역에 적용되는 위키 이름
+WIKI_LOGO_URL = "/favicon.jpg"
+WIKI_FAVICON_URL = "/favicon.jpg" # public 폴더에 있는 favicon.jpg를 본인의 로고로 교체하세요.
+SUPER_ADMIN_EMAILS = "test@example.com, test2@example.com" # 콤마로 구분하여 여러 명 지정 가능
+CUSTOM_HEADER = """
+
+"""
+# 구글 애널리스틱스, 애드센스등 외부 스크립트 삽입용
+
+[triggers]
+crons = ["0 0 * * *"] # 매일 자정 (UTC 기준)에 실행
+
+
+# GOOGLE_CLIENT_SECRET은 Cloudflare Workers 대시보드 설정에서 직접 입력하세요
