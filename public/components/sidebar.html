@@ -1,0 +1,61 @@
+<!-- ── 사이드바 (Offcanvas) ── -->
+<div class="offcanvas-lg offcanvas-end border-0" tabindex="-1" id="mobileSidebar" aria-labelledby="mobileSidebarLabel">
+    <div class="offcanvas-header border-bottom d-lg-none">
+        <h5 class="offcanvas-title fw-bold" id="mobileSidebarLabel">
+            <span class="wiki-logo-container">
+                <i class="mdi mdi-book-open-page-variant text-primary"></i>
+            </span> <span class="app-wiki-name">CloudWiki</span>
+        </h5>
+        <button type="button" class="btn-close text-reset" data-bs-dismiss="offcanvas" aria-label="Close"
+            data-bs-target="#mobileSidebar"></button>
+    </div>
+    <div class="offcanvas-body d-flex flex-column p-0 p-lg-3 sidebar-section-pc-only" style="background: inherit;">
+        <ul class="navbar-nav mb-auto w-100" id="sidebar-nav-list">
+            <li class="nav-item mb-2" id="navLogin">
+                <a class="nav-link btn btn-outline-primary text-primary w-100 text-center fw-bold" href="/auth/google">
+                    <i class="mdi mdi-google"></i> 구글 로그인
+                </a>
+            </li>
+            <li class="nav-item d-none" id="navUser">
+                <div class="user-dropdown-toggle d-flex align-items-center mb-2 p-2 rounded border"
+                    data-bs-toggle="collapse" href="#userMenuCollapse" role="button" aria-expanded="false"
+                    aria-controls="userMenuCollapse" style="background-color: var(--wiki-card-bg);">
+                    <img id="userAvatar" class="user-avatar mb-0" src="" alt="">
+                    <span id="userName" class="fw-bold ms-2 flex-grow-1 text-truncate"
+                        style="color: var(--wiki-text);"></span>
+                    <i class="bi bi-caret-left-fill ms-auto text-muted user-dropdown-icon"></i>
+                </div>
+                <div class="collapse" id="userMenuCollapse">
+                    <ul class="list-unstyled w-100 mb-0 ps-2 border-start border-2 ms-2 py-1">
+                        <li class="mb-1"><a class="nav-link px-3 py-2 rounded text-body" href="/mypage"><i
+                                    class="mdi mdi-account-circle me-2 text-primary"></i> 마이페이지</a></li>
+                        <li id="navAdminConsole" class="d-none mb-1"><a class="nav-link px-3 py-2 rounded text-body"
+                                href="/admin.html"><i class="mdi mdi-shield-account me-2 text-danger"></i> 관리자 콘솔</a>
+                        </li>
+                        <li>
+                            <hr class="dropdown-divider my-2 border-secondary">
+                        </li>
+                        <li><a class="nav-link px-3 py-2 rounded text-body" href="/auth/logout"><i
+                                    class="mdi mdi-logout me-2 text-secondary"></i> 로그아웃</a></li>
+                    </ul>
+                </div>
+            </li>
+
+            <hr class="w-100 my-2" style="border-color: var(--wiki-border); opacity: 1;">
+
+            <li class="nav-item mb-1">
+                <a class="nav-link px-3 py-2 rounded text-body fw-bold" href="#" onclick="goRandomPage(); return false;">
+                    <i class="mdi mdi-dice-multiple-outline me-2 text-primary"></i> 랜덤 문서
+                </a>
+            </li>
+
+            <hr class="w-100 my-2" style="border-color: var(--wiki-border); opacity: 1;">
+
+            <!-- ── 커스텀 사이드바 항목 표시 영역 ── -->
+            <div id="custom-sidebar-content" style="display: contents;"></div>
+        </ul>
+        <div class="mt-auto pt-3 border-top text-center text-muted small d-lg-none">
+            &copy; <span class="app-wiki-name">CloudWiki</span>
+        </div>
+    </div>
+</div>

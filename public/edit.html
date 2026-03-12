@@ -1,0 +1,2026 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title class="app-wiki-name">문서 편집 - CloudWiki</title>
+    <link rel="icon" id="wiki-favicon" href="/favicon.ico">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css" rel="stylesheet">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;600;700;800;900&display=swap"
+        rel="stylesheet">
+
+    <!-- Toast UI Editor -->
+    <link rel="stylesheet" href="https://uicdn.toast.com/editor/latest/toastui-editor.min.css" />
+    <link rel="stylesheet" href="https://uicdn.toast.com/editor/latest/theme/toastui-editor-dark.min.css" />
+
+    <link rel="stylesheet" href="/style.css">
+    <!-- Diff -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jsdiff/5.1.0/diff.min.js"></script>
+    <style>
+        .diff-added {
+            background-color: var(--wiki-diff-add-bg);
+            color: var(--wiki-diff-add-text);
+        }
+
+        .diff-removed {
+            background-color: var(--wiki-diff-del-bg);
+            color: var(--wiki-diff-del-text);
+            text-decoration: line-through;
+        }
+
+        .diff-container {
+            max-height: 400px;
+            overflow-y: auto;
+            text-align: left;
+            font-family: monospace;
+            white-space: pre-wrap;
+            background: var(--wiki-code-bg);
+            padding: 10px;
+            border: 1px solid var(--wiki-border);
+            border-radius: 6px;
+        }
+
+        /* Toast UI Editor Customization */
+        .toastui-editor-defaultUI {
+            border: 2px solid var(--wiki-border) !important;
+            border-radius: 10px;
+        }
+
+        .toastui-editor-toolbar {
+            border-radius: 8px 8px 0 0 !important;
+            background-color: var(--wiki-toc-bg);
+        }
+
+        /* Mobile Optimization for Toast UI Editor Toolbar */
+        @media (max-width: 768px) {
+            .toastui-editor-popup {
+                max-width: 90vw !important;
+                left: 5% !important;
+                margin-left: 0 !important;
+            }
+
+            /* Fix toolbar dropdown (More button) overflow */
+            .toastui-editor-dropdown-toolbar {
+                flex-wrap: wrap;
+                height: auto !important;
+                overflow: visible !important;
+            }
+        }
+
+        .conflict-textarea {
+            height: 500px;
+            font-family: monospace;
+            font-size: 0.9rem;
+            overflow-y: auto;
+            resize: none;
+        }
+
+        /* 에디터 내부 높이를 conflict-textarea와 맞춤 */
+        #conflict-local-editor .toastui-editor-defaultUI {
+            border: 2px solid var(--wiki-border) !important;
+            border-radius: 10px;
+        }
+
+        #conflict-local-editor .ProseMirror,
+        #conflict-local-editor .toastui-editor {
+            height: 440px !important;
+        }
+
+        /* 동시편집 경고 배너 */
+        #concurrent-edit-banner {
+            display: none;
+            background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%);
+            border: 1px solid #ffc107;
+            border-radius: 8px;
+            padding: 12px 16px;
+            margin-bottom: 16px;
+            font-size: 0.95rem;
+            align-items: center;
+            gap: 10px;
+            box-shadow: 0 2px 8px rgba(255, 193, 7, 0.15);
+        }
+
+        #concurrent-edit-banner .editor-avatar {
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            vertical-align: middle;
+            margin-right: 4px;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            #concurrent-edit-banner {
+                background: linear-gradient(135deg, #3d3200 0%, #4a3d00 100%);
+                border-color: #b38600;
+                color: #ffe082;
+            }
+        }
+
+        /* Wiki Autocomplete Dropdown */
+        #wiki-autocomplete {
+            position: absolute;
+            z-index: 2100;
+            background: var(--wiki-card-bg);
+            border: 1px solid var(--wiki-border);
+            border-radius: 8px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.15);
+            min-width: 250px;
+            max-width: 400px;
+            display: none;
+            overflow: hidden;
+        }
+
+        #wiki-autocomplete .list-group-item {
+            background: transparent;
+            color: var(--wiki-text);
+            border: none;
+            border-bottom: 1px solid var(--wiki-border);
+            padding: 10px 15px;
+            cursor: pointer;
+            transition: background 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 0.95rem;
+        }
+
+        #wiki-autocomplete .list-group-item:last-child {
+            border-bottom: none;
+        }
+
+        #wiki-autocomplete .list-group-item:hover,
+        #wiki-autocomplete .list-group-item.active {
+            background-color: var(--wiki-bg);
+            border-left: 3px solid var(--wiki-primary);
+            padding-left: 12px; /* 15px - 3px */
+        }
+
+        #wiki-autocomplete .item-title {
+            font-weight: 500;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        #wiki-autocomplete .item-type {
+            font-size: 0.75rem;
+            padding: 2px 6px;
+            border-radius: 4px;
+            background: var(--wiki-border);
+            color: var(--wiki-text-muted);
+            margin-left: auto;
+        }
+
+        /* ── 아이콘 피커 모달 그리드 ── */
+        .icon-grid-modal {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+            gap: 6px;
+            max-height: 420px;
+            overflow-y: auto;
+            padding: 4px;
+        }
+
+        .icon-grid-modal-item {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 8px 4px;
+            cursor: pointer;
+            border-radius: 6px;
+            border: 1px solid var(--wiki-border);
+            transition: all 0.15s;
+            font-size: 0.68rem;
+            text-align: center;
+            overflow: hidden;
+            color: var(--wiki-text);
+            background: transparent;
+            line-height: 1.3;
+        }
+
+        .icon-grid-modal-item:hover {
+            background: var(--wiki-bg);
+            border-color: var(--wiki-primary);
+            color: var(--wiki-primary);
+        }
+
+        .icon-grid-modal-item i {
+            font-size: 1.4rem;
+            margin-bottom: 4px;
+            display: block;
+        }
+
+        .icon-grid-modal-item span {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            max-width: 74px;
+            display: block;
+        }
+
+        /* ── 아이콘 인라인 자동완성 드롭다운 ── */
+        #icon-autocomplete {
+            position: absolute;
+            z-index: 2100;
+            background: var(--wiki-card-bg);
+            border: 1px solid var(--wiki-border);
+            border-radius: 8px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.15);
+            width: 330px;
+            display: none;
+            overflow: hidden;
+        }
+
+        #icon-autocomplete .icon-ac-header {
+            padding: 6px 10px;
+            border-bottom: 1px solid var(--wiki-border);
+            font-size: 0.8rem;
+            color: var(--wiki-text-muted);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            background: var(--wiki-toc-bg);
+        }
+
+        #icon-autocomplete .icon-ac-grid {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 4px;
+            padding: 8px;
+            max-height: 250px;
+            overflow-y: auto;
+        }
+
+        #icon-autocomplete .icon-ac-item {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 6px 3px;
+            cursor: pointer;
+            border-radius: 4px;
+            border: 1px solid transparent;
+            font-size: 0.6rem;
+            text-align: center;
+            color: var(--wiki-text);
+            transition: all 0.15s;
+            overflow: hidden;
+        }
+
+        #icon-autocomplete .icon-ac-item:hover,
+        #icon-autocomplete .icon-ac-item.active {
+            background: var(--wiki-bg);
+            border-color: var(--wiki-primary);
+            color: var(--wiki-primary);
+        }
+
+        #icon-autocomplete .icon-ac-item i {
+            font-size: 1.2rem;
+            margin-bottom: 2px;
+            display: block;
+        }
+
+        #icon-autocomplete .icon-ac-item span {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            max-width: 56px;
+            display: block;
+        }
+
+        #icon-autocomplete .icon-ac-empty,
+        #icon-autocomplete .icon-ac-loading {
+            padding: 14px;
+            text-align: center;
+            font-size: 0.85rem;
+            color: var(--wiki-text-muted);
+        }
+    </style>
+</head>
+
+<body>
+
+    <!-- Wiki Autocomplete Dropdown -->
+    <div id="wiki-autocomplete" class="list-group"></div>
+
+    <!-- Icon Inline Autocomplete Dropdown -->
+    <div id="icon-autocomplete">
+        <div class="icon-ac-header">
+            <i id="iconAcTypeIcon"></i>
+            <span id="iconAcTypeLabel">아이콘</span>
+        </div>
+        <div id="iconAcGrid" class="icon-ac-grid"></div>
+        <div id="iconAcEmpty" class="icon-ac-empty" style="display:none;">결과 없음</div>
+        <div id="iconAcLoading" class="icon-ac-loading" style="display:none;">
+            <span class="spinner-border spinner-border-sm text-primary" role="status"></span> 로딩 중...
+        </div>
+    </div>
+
+    <!-- Icon Picker Modal -->
+    <div class="modal fade" id="iconPickerModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-xl modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i id="iconPickerTypeIcon" class="mdi mdi-bootstrap me-2"></i>
+                        <span id="iconPickerTitle">아이콘 선택</span>
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="text" id="iconSearchInput" class="form-control mb-3"
+                        placeholder="아이콘 이름 검색... (예: home, user, card)">
+                    <div id="iconLoadingSpinner" class="text-center py-4" style="display:none;">
+                        <span class="spinner-border text-primary" role="status"></span>
+                        <p class="mt-2 text-muted small">아이콘 목록 로딩 중...</p>
+                    </div>
+                    <div id="iconPickerGrid" class="icon-grid-modal"></div>
+                    <div id="iconPickerEmpty" class="text-center text-muted py-3" style="display:none;">
+                        <i class="mdi mdi-magnify-close" style="font-size:2rem;"></i>
+                        <p class="mt-1">검색 결과가 없습니다.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── 사이드바 Placeholder (편집기는 모바일에서만 노출) ── -->
+    <div id="app-sidebar-placeholder" class="d-lg-none"></div>
+
+    <!-- ── 네비게이션 바 Placeholder ── -->
+    <div id="app-header-placeholder"></div>
+
+    <!-- Conflict Resolution UI -->
+    <div id="conflict-ui" class="container mt-4" style="display: none;">
+        <div class="alert alert-danger" role="alert">
+            <h4 class="alert-heading"><i class="mdi mdi-alert-circle"></i> 편집 충돌 발생!</h4>
+            <p>다른 사용자가 문서를 먼저 저장했습니다. 아래의 내용을 비교하여 충돌을 해결하세요.</p>
+            <hr>
+            <p class="mb-0">
+                <strong>해결 방법:</strong> '최신본' 내용을 참고하여 '내 수정본'을 알맞게 수정한 뒤, [해결 및 저장] 버튼을 누르세요.
+            </p>
+        </div>
+
+        <div class="row">
+            <div class="col-md-4">
+                <div class="d-flex justify-content-between align-items-center mb-1">
+                    <h5 class="text-center text-muted mb-0">최신본</h5>
+                    <button id="serverViewToggle" class="btn btn-sm btn-outline-secondary" onclick="toggleServerView()">
+                        <i class="mdi mdi-eye"></i> 프리뷰 보기
+                    </button>
+                </div>
+                <!-- raw -->
+                <div id="conflict-server-raw" class="form-control conflict-textarea"
+                    style="overflow-y:auto; white-space:pre-wrap; font-family:monospace;"></div>
+                <!-- preview (lazy init) -->
+                <div id="conflict-server-preview" style="display:none; max-height:500px; overflow-y:auto;"></div>
+            </div>
+            <div class="col-md-4">
+                <h5 class="text-center text-primary">내 수정본</h5>
+                <div id="conflict-local-editor"></div> <!-- 에디터 마운트 포인트 -->
+            </div>
+            <div class="col-md-4">
+                <div class="d-flex justify-content-between align-items-center mb-1">
+                    <h5 class="text-center text-info mb-0">변경 사항</h5>
+                    <button id="diffViewToggle" class="btn btn-sm btn-outline-secondary" onclick="toggleDiffView()">
+                        <i class="mdi mdi-filter-variant"></i> 전체 보기
+                    </button>
+                </div>
+                <div id="conflict-diff-view" class="diff-container conflict-textarea"></div>
+            </div>
+        </div>
+
+        <div class="d-flex justify-content-end mt-3 gap-2">
+            <button class="btn btn-secondary" onclick="cancelConflict()">
+                <i class="mdi mdi-close"></i> 취소
+            </button>
+            <button class="btn btn-success" onclick="resolveConflict()">
+                <i class="mdi mdi-content-save-check"></i> 해결 및 저장
+            </button>
+        </div>
+    </div>
+
+    <div class="wiki-container" id="main-editor-container" style="max-width: 1200px;">
+        <div class="wiki-article">
+
+            <!-- 동시편집 경고 배너 -->
+            <div id="concurrent-edit-banner">
+                <i class="mdi mdi-account-alert" style="font-size: 1.2rem;"></i>
+                <span id="concurrent-edit-text"></span>
+            </div>
+
+            <h2 class="mb-4" id="editPageTitle">
+                <i class="mdi mdi-pencil-box-multiple"></i> 문서 편집
+            </h2>
+
+            <!-- 제목 입력 -->
+            <div class="mb-3">
+                <label for="titleInput" class="form-label fw-bold">제목</label>
+                <input type="text" id="titleInput" class="edit-title-input" placeholder="문서 제목을 입력하세요">
+            </div>
+
+            <div class="mb-3 row">
+                <div class="col-md-6">
+                    <label for="categoryInput" class="form-label fw-bold">카테고리 (분류)</label>
+                    <input type="text" id="categoryInput" class="form-control" placeholder="카테고리를 입력하세요 (선택)">
+                </div>
+                <div class="col-md-6 d-flex align-items-end" id="adminLockContainer" style="display: none !important;">
+                    <div class="form-check mb-2">
+                        <input class="form-check-input" type="checkbox" id="isLockedCheck">
+                        <label class="form-check-label text-danger fw-bold" for="isLockedCheck">
+                            <i class="mdi mdi-lock"></i> 편집 잠금 (관리자 전용 문서로 설정)
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            <div class="mb-3">
+                <label for="redirectInput" class="form-label fw-bold">문서 넘겨주기 (Redirect)</label>
+                <input type="text" id="redirectInput" class="form-control"
+                    placeholder="이 문서 접속 시 자동으로 이동할 문서의 제목을 입력하세요">
+                <div class="form-text text-muted">이 문서의 내용을 유지하면서 다른 문서로 방문자를 보냅니다.</div>
+            </div>
+
+            <!-- Markdown 에디터 -->
+            <div class="mb-3">
+                <label class="form-label fw-bold">내용</label>
+                <div id="editor"></div>
+            </div>
+
+            <!-- 변경 사항 미리보기 (접기/펼치기) -->
+            <div class="mb-3" id="diffPreviewSection" style="display: none;">
+                <details id="diffPreviewDetails">
+                    <summary class="fw-bold text-primary" style="cursor: pointer; user-select: none;">
+                        <i class="mdi mdi-information-outline"></i> 변경 사항 미리보기
+                    </summary>
+                    <div id="diffPreviewContainer" class="diff-container mt-2" style="font-size: 0.9em;">
+                        <!-- Diff 내용이 여기에 렌더링 됩니다 -->
+                    </div>
+                </details>
+            </div>
+
+            <!-- 편집 요약 -->
+            <div class="mb-3">
+                <label for="summaryInput" class="form-label fw-bold">편집 요약</label>
+                <input type="text" id="summaryInput" class="edit-summary-input" placeholder="변경 내용을 간단히 설명해주세요">
+            </div>
+
+            <!-- 버튼 -->
+            <div class="edit-actions">
+                <button class="btn btn-wiki" id="saveBtn" onclick="savePage()">
+                    <i class="mdi mdi-check"></i> 저장
+                </button>
+                <button class="btn btn-wiki-outline" onclick="cancelEdit()">
+                    <i class="mdi mdi-close"></i> 취소
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
+    <!-- Toast UI Editor -->
+    <script src="https://uicdn.toast.com/editor/latest/toastui-editor-all.min.js"></script>
+    <script src="https://uicdn.toast.com/editor/latest/i18n/ko-kr.min.js"></script>
+
+    <script src="/js/common.js"></script>
+    <script>
+        let slug = null;
+        let pageVersion = null;
+        let originalContent = ''; // 기존 문서 내용 보관
+        let editor = null;
+        let AUTO_SAVE_KEY = '';
+        let conflictEditor = null;   // 내 수정본 Toast UI 인스턴스
+        let serverViewMode = 'raw';  // 최신본 뷰 상태
+        let serverViewer = null;     // 최신본 Viewer 인스턴스 (lazy)
+        let cachedDiffData = null;   // Diff 연산 결과
+        let diffViewMode = 'summary';// Diff 보기 상태 ('summary' 또는 'all')
+
+        // ── 아이콘 피커 변수 ──
+        let biIconList = null;       // Bootstrap Icons 목록 (lazy loaded)
+        let mdiIconList = null;      // MDI 목록 (lazy loaded)
+        let iconPickerSavedSelection = null; // 모달 열기 전 에디터 선택 위치
+        let pendingIconInsertion = null;     // 모달에서 선택된 아이콘 삽입 대기
+        let iconPickerToken = 0;             // 아이콘 피커 호출 토큰 (경쟁 조건 방지)
+
+        // ── 아이콘 인라인 자동완성 변수 ──
+        let iconAcVisible = false;
+        let iconAcType = 'bi';       // 'bi' or 'mdi'
+        let iconAcQuery = '';
+        let iconAcResults = [];
+        let iconAcSelectedIndex = -1;
+        let iconAcLastKey = null;
+        let iconAcDebounceTimer = null;
+        const iconAcDiv = document.getElementById('icon-autocomplete');
+        const ICON_AC_COLS = 5;      // 인라인 자동완성 그리드 열 수
+
+        // ── Bootstrap Icons 목록 로딩 (lazy, cached) ──
+        async function loadBiIcons() {
+            if (biIconList) return biIconList;
+            try {
+                const res = await fetch('https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.json');
+                const data = await res.json();
+                biIconList = Object.keys(data).sort();
+            } catch (e) {
+                console.error('BI icon list load failed:', e);
+                biIconList = [];
+            }
+            return biIconList;
+        }
+
+        // ── MDI 목록 로딩 (lazy, cached) - CSS에서 아이콘명 추출 ──
+        async function loadMdiIcons() {
+            if (mdiIconList) return mdiIconList;
+            try {
+                const res = await fetch('https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css');
+                const css = await res.text();
+                const matches = [...css.matchAll(/\.mdi-([\w-]+)::before/g)];
+                mdiIconList = [...new Set(matches.map(m => m[1]))].sort();
+            } catch (e) {
+                console.error('MDI icon list load failed:', e);
+                mdiIconList = [];
+            }
+            return mdiIconList;
+        }
+
+        // ── 아이콘 필터링 (우선순위: 정확일치 → startsWith → contains) ──
+        function filterIcons(iconList, query, limit = 200) {
+            if (!iconList || iconList.length === 0) return [];
+            if (!query || !query.trim()) return iconList.slice(0, limit);
+            const q = query.toLowerCase().trim();
+            const exact = iconList.filter(n => n === q);
+            const sw = iconList.filter(n => n !== q && n.startsWith(q));
+            const inc = iconList.filter(n => !n.startsWith(q) && n.includes(q));
+            return [...exact, ...sw, ...inc].slice(0, limit);
+        }
+
+        // ── 아이콘 피커 모달 열기 ──
+        async function openIconPicker(type) {
+            if (editor) {
+                iconPickerSavedSelection = editor.getSelection();
+            }
+            pendingIconInsertion = null;
+            const myToken = ++iconPickerToken;
+
+            const titleEl = document.getElementById('iconPickerTitle');
+            const typeIconEl = document.getElementById('iconPickerTypeIcon');
+            const gridEl = document.getElementById('iconPickerGrid');
+            const spinner = document.getElementById('iconLoadingSpinner');
+            const searchInput = document.getElementById('iconSearchInput');
+            const emptyEl = document.getElementById('iconPickerEmpty');
+
+            if (type === 'bi') {
+                titleEl.textContent = 'Bootstrap Icons 선택';
+                typeIconEl.className = 'bi bi-bootstrap me-2';
+            } else {
+                titleEl.textContent = 'Material Design Icons 선택';
+                typeIconEl.className = 'mdi mdi-material-design me-2';
+            }
+
+            // 모달 표시
+            const modalEl = document.getElementById('iconPickerModal');
+            const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+            modal.show();
+
+            // 상태 초기화
+            searchInput.value = '';
+            gridEl.innerHTML = '';
+            emptyEl.style.display = 'none';
+            spinner.style.display = 'block';
+
+            // 아이콘 목록 로딩
+            const icons = type === 'bi' ? await loadBiIcons() : await loadMdiIcons();
+            if (myToken !== iconPickerToken) return;
+            spinner.style.display = 'none';
+            renderIconPickerGrid(gridEl, emptyEl, icons, '', type);
+
+            // 검색 핸들러
+            let searchTimer;
+            searchInput.oninput = () => {
+                clearTimeout(searchTimer);
+                searchTimer = setTimeout(() => {
+                    renderIconPickerGrid(gridEl, emptyEl, icons, searchInput.value, type);
+                }, 200);
+            };
+            searchInput.onkeydown = (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    renderIconPickerGrid(gridEl, emptyEl, icons, searchInput.value, type);
+                }
+            };
+
+            // 검색창 자동 포커스
+            setTimeout(() => searchInput.focus(), 300);
+        }
+
+        // ── 아이콘 피커 그리드 렌더링 ──
+        function renderIconPickerGrid(gridEl, emptyEl, iconList, query, type) {
+            const filtered = filterIcons(iconList, query, 200);
+            gridEl.innerHTML = '';
+
+            if (filtered.length === 0) {
+                emptyEl.style.display = 'block';
+                return;
+            }
+            emptyEl.style.display = 'none';
+
+            const prefix = type === 'bi' ? 'bi bi-' : 'mdi mdi-';
+            filtered.forEach(iconName => {
+                const item = document.createElement('button');
+                item.type = 'button';
+                item.className = 'icon-grid-modal-item';
+                item.title = iconName;
+                item.innerHTML = `<i class="${prefix}${iconName}"></i><span>${escapeHtml(iconName)}</span>`;
+                item.addEventListener('click', () => {
+                    pendingIconInsertion = `{${type}:${iconName}}`;
+                    bootstrap.Modal.getOrCreateInstance(document.getElementById('iconPickerModal')).hide();
+                });
+                gridEl.appendChild(item);
+            });
+        }
+
+        // ── 아이콘 인라인 자동완성: 숨기기 ──
+        function hideIconAutocomplete() {
+            iconAcVisible = false;
+            iconAcResults = [];
+            iconAcSelectedIndex = -1;
+            iconAcLastKey = null;
+            if (iconAcDiv) iconAcDiv.style.display = 'none';
+        }
+
+        // ── 아이콘 인라인 자동완성: 표시 ──
+        function showIconAutocomplete(query, type) {
+            iconAcQuery = query;
+            iconAcType = type;
+            iconAcVisible = true;
+
+            const typeIconEl = document.getElementById('iconAcTypeIcon');
+            const typeLabelEl = document.getElementById('iconAcTypeLabel');
+            if (typeIconEl) {
+                typeIconEl.className = type === 'bi' ? 'bi bi-bootstrap' : 'mdi mdi-material-design';
+            }
+            if (typeLabelEl) {
+                typeLabelEl.textContent = type === 'bi' ? 'Bootstrap Icons' : 'Material Design Icons';
+            }
+
+            // 커서 위치에 드롭다운 표시
+            if (iconAcDiv) {
+                let positioned = false;
+                const sel = window.getSelection();
+                if (sel && sel.rangeCount > 0) {
+                    const range = sel.getRangeAt(0).cloneRange();
+                    range.collapse(true);
+                    const rect = range.getBoundingClientRect();
+                    if (rect.height > 0) {
+                        let left = rect.left + window.scrollX;
+                        let top = rect.bottom + window.scrollY + 4;
+                        if (left + 340 > window.innerWidth) left = window.innerWidth - 345;
+                        if (left < 0) left = 4;
+                        iconAcDiv.style.left = `${left}px`;
+                        iconAcDiv.style.top = `${top}px`;
+                        iconAcDiv.style.display = 'block';
+                        positioned = true;
+                    }
+                }
+                if (!positioned) {
+                    const editorEl = document.querySelector('#editor');
+                    if (editorEl) {
+                        const rect = editorEl.getBoundingClientRect();
+                        iconAcDiv.style.left = `${rect.left + 50 + window.scrollX}px`;
+                        iconAcDiv.style.top = `${rect.top + 80 + window.scrollY}px`;
+                        iconAcDiv.style.display = 'block';
+                    }
+                }
+            }
+
+            const iconAcKey = `${type}:${query}`;
+            if (iconAcKey === iconAcLastKey) return;
+            iconAcLastKey = iconAcKey;
+
+            // 로딩 표시
+            const gridEl = document.getElementById('iconAcGrid');
+            const emptyEl = document.getElementById('iconAcEmpty');
+            const loadingEl = document.getElementById('iconAcLoading');
+            if (gridEl) gridEl.innerHTML = '';
+            if (emptyEl) emptyEl.style.display = 'none';
+            if (loadingEl) loadingEl.style.display = 'block';
+
+            clearTimeout(iconAcDebounceTimer);
+            iconAcDebounceTimer = setTimeout(async () => {
+                const requestedType = type;
+                const requestedQuery = query;
+                if (!iconAcVisible) return;
+
+                const icons = requestedType === 'bi' ? await loadBiIcons() : await loadMdiIcons();
+
+                if (!iconAcVisible) return;
+                if (iconAcType !== requestedType || iconAcQuery !== requestedQuery) return;
+                if (loadingEl) loadingEl.style.display = 'none';
+                iconAcResults = filterIcons(icons, requestedQuery, 30);
+                renderIconAcResults();
+            }, 150);
+        }
+
+        // ── 아이콘 인라인 자동완성: 결과 렌더링 ──
+        function renderIconAcResults() {
+            const gridEl = document.getElementById('iconAcGrid');
+            const emptyEl = document.getElementById('iconAcEmpty');
+            if (!gridEl) return;
+
+            if (iconAcResults.length === 0) {
+                gridEl.innerHTML = '';
+                if (emptyEl) emptyEl.style.display = 'block';
+                return;
+            }
+            if (emptyEl) emptyEl.style.display = 'none';
+
+            const prefix = iconAcType === 'bi' ? 'bi bi-' : 'mdi mdi-';
+            gridEl.innerHTML = iconAcResults.map((iconName, index) => `
+                <div class="icon-ac-item" data-index="${index}" onclick="selectIconAutocomplete(${index})">
+                    <i class="${prefix}${escapeHtml(iconName)}"></i>
+                    <span>${escapeHtml(iconName)}</span>
+                </div>
+            `).join('');
+
+            iconAcSelectedIndex = 0;
+            highlightIconAcItem();
+        }
+
+        // ── 아이콘 인라인 자동완성: 선택 항목 하이라이트 ──
+        function highlightIconAcItem() {
+            if (!iconAcDiv) return;
+            const items = iconAcDiv.querySelectorAll('.icon-ac-item');
+            items.forEach((item, idx) => {
+                if (idx === iconAcSelectedIndex) {
+                    item.classList.add('active');
+                    item.scrollIntoView({ block: 'nearest' });
+                } else {
+                    item.classList.remove('active');
+                }
+            });
+        }
+
+        // ── 아이콘 인라인 자동완성: 선택 ──
+        function selectIconAutocomplete(index) {
+            const iconName = iconAcResults[index];
+            if (!iconName || !editor) return;
+
+            const selection = editor.getSelection();
+            if (!selection) { hideIconAutocomplete(); return; }
+
+            const [from] = selection;
+            const line = from[0];
+            const col = from[1];
+
+            const md = editor.getMarkdown();
+            const lines = md.split('\n');
+            const lineText = lines[line - 1] || '';
+            const textBefore = lineText.substring(0, col - 1);
+
+            const prefix = iconAcType === 'bi' ? '{bi:' : '{mdi:';
+            const lastTriggerIndex = textBefore.lastIndexOf(prefix);
+
+            if (lastTriggerIndex !== -1) {
+                editor.setSelection([line, lastTriggerIndex + 1], [line, col]);
+                editor.insertText(`${prefix}${iconName}}`);
+            }
+
+            hideIconAutocomplete();
+            editor.focus();
+        }
+
+        function startAutoSave() {
+            setInterval(() => {
+                if (editor && slug && AUTO_SAVE_KEY) {
+                    const content = editor.getMarkdown();
+                    if (content && content.trim().length > 0) {
+                        localStorage.setItem(AUTO_SAVE_KEY, content);
+                    }
+                }
+            }, 10000); // 10 seconds
+        }
+
+        async function checkAutoSave() {
+            if (!AUTO_SAVE_KEY) return;
+
+            const savedContent = localStorage.getItem(AUTO_SAVE_KEY);
+            if (savedContent) {
+                const currentContent = editor.getMarkdown();
+                // If identical to what we just loaded, no need to ask, just clear it.
+                if (savedContent.trim() === currentContent.trim()) {
+                    localStorage.removeItem(AUTO_SAVE_KEY);
+                    return;
+                }
+
+                const result = await Swal.fire({
+                    title: '작성 중인 내용이 있습니다',
+                    text: '이전에 작성하던 내용을 불러오시겠습니까?',
+                    icon: 'info',
+                    showCancelButton: true,
+                    confirmButtonText: '예, 불러오기',
+                    cancelButtonText: '아니오, 삭제'
+                });
+
+                if (result.isConfirmed) {
+                    editor.setMarkdown(savedContent);
+                    Swal.fire({
+                        icon: 'success',
+                        title: '불러옴',
+                        text: '저장된 내용을 불러왔습니다.',
+                        timer: 1000,
+                        showConfirmButton: false
+                    });
+                } else {
+                    localStorage.removeItem(AUTO_SAVE_KEY);
+                }
+            }
+        }
+
+        // ── Marked 설정 ──
+        marked.use({
+            renderer: {
+                html(token) {
+                    const htmlStr = typeof token === 'string' ? token : (token.text || token.raw || '');
+                    return escapeHtml(htmlStr);
+                }
+            }
+        });
+        marked.setOptions({
+            gfm: true,
+            breaks: true,
+            headerIds: true,
+        });
+
+        // ── 커스텀 프리뷰 렌더링 ──
+        let previewDebounce;
+        async function updateCustomPreview() {
+            if (!editor) return;
+            // 마크다운 프리뷰 영역만 대상으로 함 (위지윅 편집 영역은 건드리지 않음)
+            const mdPreview = document.querySelector('#editor .toastui-editor-md-preview');
+            if (!mdPreview) return;
+
+            const defaultContents = mdPreview.querySelectorAll('.toastui-editor-contents:not(#custom-wiki-preview)');
+            defaultContents.forEach(el => el.style.display = 'none');
+
+            let customPreview = document.getElementById('custom-wiki-preview');
+            if (!customPreview) {
+                customPreview = document.createElement('div');
+                customPreview.id = 'custom-wiki-preview';
+                customPreview.className = 'toastui-editor-contents wiki-content';
+                customPreview.style.padding = '18px';
+
+                if (defaultContents.length > 0) {
+                    defaultContents[0].parentNode.appendChild(customPreview);
+                } else {
+                    mdPreview.appendChild(customPreview);
+                }
+            }
+
+            const md = editor.getMarkdown();
+            await renderWikiContent(md, slug, 'custom-wiki-preview');
+        }
+
+        document.addEventListener('DOMContentLoaded', async () => {
+            await loadConfig();
+            // 인증 확인
+            try {
+                const res = await fetch('/api/me');
+                if (res.ok) {
+                    currentUser = await res.json();
+                    document.querySelectorAll('#navUserName, #userName').forEach(el => el.textContent = currentUser.name);
+                    document.querySelectorAll('#userAvatar').forEach(el => el.src = currentUser.picture || '');
+                    document.querySelectorAll('#navLogin').forEach(el => el.classList.add('d-none'));
+                    document.querySelectorAll('#navUser').forEach(el => el.classList.remove('d-none'));
+                    if (currentUser.role === 'admin' || currentUser.role === 'super_admin') {
+                        document.querySelectorAll('#navAdminConsole').forEach(el => el.classList.remove('d-none'));
+                    }
+                } else {
+                    Swal.fire({
+                        icon: 'warning',
+                        title: '로그인 필요',
+                        text: '문서를 편집하려면 로그인이 필요합니다.',
+                        confirmButtonText: '로그인',
+                    }).then(() => {
+                        window.location.href = '/auth/google';
+                    });
+                    return;
+                }
+            } catch (e) {
+                window.location.href = '/auth/google';
+                return;
+            }
+
+            // slug 파싱
+            const params = new URLSearchParams(window.location.search);
+            slug = params.get('slug');
+            if (slug) AUTO_SAVE_KEY = 'wiki_autosave_' + slug;
+
+            if (!slug) {
+                Swal.fire('오류', '문서 제목이 지정되지 않았습니다.', 'error').then(() => {
+                    window.location.href = '/';
+                });
+                return;
+            }
+
+            // Toast UI Editor 초기화
+            const isMobile = window.innerWidth <= 768;
+
+            // 커스텀 툴바 버튼 생성
+            function createCustomButton(text, tooltip, onClick) {
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'toastui-editor-toolbar-icons';
+                btn.style.backgroundImage = 'none';
+                btn.style.margin = '0';
+                btn.style.fontSize = '12px';
+                btn.style.fontWeight = '700';
+                btn.style.color = 'var(--wiki-text)';
+                btn.style.width = '32px';
+                btn.style.padding = '0';
+                btn.style.lineHeight = '24px';
+                btn.style.display = 'inline-flex';
+                btn.style.alignItems = 'center';
+                btn.style.justifyContent = 'center';
+                btn.innerHTML = text;
+                btn.setAttribute('aria-label', tooltip);
+                btn.addEventListener('click', onClick);
+                return btn;
+            }
+
+            const wikiLinkBtn = createCustomButton('[[ ]]', '위키 링크 삽입', () => {
+                editor.insertText('[[문서제목]]');
+            });
+
+            const transclusionBtn = createCustomButton('{{ }}', '틀 삽입', () => {
+                editor.insertText('{{틀제목}}');
+            });
+
+            const mdiBtn = createCustomButton('MDI', 'MDI 아이콘 삽입', () => {
+                openIconPicker('mdi');
+            });
+
+            const biBtn = createCustomButton('<i class="bi bi-bootstrap" style="font-size:16px"></i>', 'Bootstrap Icon 삽입', () => {
+                openIconPicker('bi');
+            });
+
+            const footnoteBtn = createCustomButton('[*]', '각주 삽입', () => {
+                editor.insertText('[* 각주 내용]');
+            });
+
+            // 커스텀 이미지 업로드 버튼
+            const imageUploadBtn = createCustomButton('<i class="mdi mdi-image-plus" style="font-size:16px"></i>', '이미지 업로드', () => {
+                const fileInput = document.createElement('input');
+                fileInput.type = 'file';
+                fileInput.accept = 'image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm,video/ogg';
+                fileInput.onchange = async (e) => {
+                    const file = e.target.files[0];
+                    if (!file) return;
+                    await handleImageUpload(file, (url, alt) => {
+                        editor.insertText(`![${alt}](${url})`);
+                    });
+                };
+                fileInput.click();
+            });
+
+            const isDarkMode = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+
+            editor = new toastui.Editor({
+                el: document.querySelector('#editor'),
+                height: '600px',
+                initialEditType: 'markdown',
+                previewStyle: isMobile ? 'tab' : 'vertical',
+                language: 'ko-KR',
+                theme: isDarkMode ? 'dark' : 'light',
+                usageStatistics: false,
+                hideModeSwitch: true,
+                toolbarItems: [
+                    ['heading', 'bold', 'italic', 'strike'],
+                    ['hr', 'quote'],
+                    ['ul', 'ol', 'task'],
+                    ['table', 'link'],
+                    [
+                        { name: 'wikiLink', tooltip: '위키 링크 삽입', el: wikiLinkBtn },
+                        { name: 'transclusion', tooltip: '틀 삽입', el: transclusionBtn },
+                        { name: 'mdiIcon', tooltip: 'MDI 아이콘', el: mdiBtn },
+                        { name: 'biIcon', tooltip: 'Bootstrap 아이콘', el: biBtn },
+                        { name: 'footnote', tooltip: '각주 삽입', el: footnoteBtn },
+                        { name: 'imageUpload', tooltip: '이미지 업로드', el: imageUploadBtn }
+                    ],
+                    ['code', 'codeblock'],
+                    ['scrollSync']
+                ],
+                hooks: {
+                    addImageBlobHook: async (blob, callback) => {
+                        await handleImageUpload(blob, callback);
+                    }
+                }
+            });
+
+            // ── 아이콘 피커 모달 닫힘 후 아이콘 삽입 ──
+            document.getElementById('iconPickerModal').addEventListener('hidden.bs.modal', () => {
+                if (pendingIconInsertion && editor) {
+                    editor.focus();
+                    if (iconPickerSavedSelection) {
+                        editor.setSelection(iconPickerSavedSelection[0], iconPickerSavedSelection[1]);
+                    }
+                    editor.insertText(pendingIconInsertion);
+                    pendingIconInsertion = null;
+                }
+            });
+
+            // ── 실시간 프리뷰 ──
+            editor.on('change', () => {
+                clearTimeout(previewDebounce);
+                previewDebounce = setTimeout(() => {
+                    updateCustomPreview();
+                }, 300);
+            });
+            setTimeout(updateCustomPreview, 300);
+
+            startAutoSave();
+
+            // Dark Mode Theme Toggle
+            if (window.matchMedia) {
+                window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
+                    if (!editor) return;
+                    const el = document.querySelector('.toastui-editor-defaultUI');
+                    if (el) {
+                        if (e.matches) {
+                            el.classList.add('toastui-editor-dark');
+                        } else {
+                            el.classList.remove('toastui-editor-dark');
+                        }
+                    }
+                });
+            }
+
+            // 반응형 Preview Style 변경
+            window.addEventListener('resize', () => {
+                if (!editor) return;
+                const isMobileNow = window.innerWidth <= 768;
+                const targetStyle = isMobileNow ? 'tab' : 'vertical';
+                editor.changePreviewStyle(targetStyle);
+            });
+
+            // 관리자면 Lock ui 노출
+            if (currentUser.role === 'admin' || currentUser.role === 'super_admin') {
+                document.getElementById('adminLockContainer').style.display = 'block';
+            }
+
+            // 관리자 전용 카테고리 목록 불러오기
+            let adminCategories = [];
+            try {
+                const catRes = await fetch('/api/wiki/admin-categories');
+                if (catRes.ok) {
+                    const catData = await catRes.json();
+                    adminCategories = catData.categories || [];
+                }
+            } catch (e) { }
+
+            // 카테고리 입력 시 관리자 전용 여부 경고
+            const catInput = document.getElementById('categoryInput');
+            const catWarning = document.createElement('div');
+            catWarning.className = 'text-danger small mt-1 d-none';
+            catWarning.id = 'categoryWarning';
+            catWarning.innerHTML = '<i class="mdi mdi-alert"></i> 이 카테고리는 관리자만 적용할 수 있습니다.';
+            catInput.parentNode.appendChild(catWarning);
+
+            catInput.addEventListener('input', () => {
+                const isAdmin = currentUser.role === 'admin' || currentUser.role === 'super_admin';
+                const cats = catInput.value.split(',').map(c => c.trim()).filter(c => c);
+                const blockedCat = !isAdmin && cats.find(c => adminCategories.includes(c));
+                if (blockedCat) {
+                    catWarning.innerHTML = `<i class="mdi mdi-alert"></i> "${blockedCat}" 카테고리는 관리자만 적용할 수 있습니다.`;
+                    catWarning.classList.remove('d-none');
+                } else {
+                    catWarning.classList.add('d-none');
+                }
+            });
+            // 기존 문서 불러오기
+            try {
+                const res = await fetch(`/api/wiki/${encodeURIComponent(slug)}`);
+                if (res.ok) {
+                    const page = await res.json();
+                    document.getElementById('titleInput').value = page.title;
+                    if (page.category) document.getElementById('categoryInput').value = page.category;
+                    if (page.redirect_to) document.getElementById('redirectInput').value = page.redirect_to;
+                    if (page.is_locked) document.getElementById('isLockedCheck').checked = true;
+
+                    originalContent = page.content;
+                    editor.setMarkdown(page.content);
+
+                    // redirect를 통해 조회된 경우, 실제 문서의 slug로 교체 (저장 시 올바른 slug 사용)
+                    if (page.slug && page.slug !== slug) {
+                        slug = page.slug;
+                        AUTO_SAVE_KEY = 'wiki_autosave_' + slug;
+                    }
+
+                    pageVersion = page.version;
+                    document.getElementById('editPageTitle').innerHTML =
+                        `<i class="mdi mdi-pencil-box-multiple"></i> 편집: ${escapeHtml(page.title)}`;
+                    document.title = `편집: ${page.title} - ${appConfig.wikiName}`;
+                    document.getElementById('diffPreviewSection').style.display = 'block'; // 편집일 때만 노출
+                    checkAutoSave();
+                } else {
+                    // 새 문서
+                    originalContent = '';
+                    document.getElementById('titleInput').value = decodeURIComponent(slug).replace(/-/g, ' ');
+                    document.getElementById('editPageTitle').innerHTML =
+                        `<i class="mdi mdi-plus-circle"></i> 새 문서 만들기`;
+                    document.title = `새 문서 - ${appConfig.wikiName}`;
+
+                    // 템플릿 불러오기 버튼 추가
+                    const templateBtn = document.createElement('button');
+                    templateBtn.className = 'btn btn-sm btn-outline-primary ms-3';
+                    templateBtn.innerHTML = '<i class="mdi mdi-content-copy"></i> 템플릿으로 시작하기';
+                    templateBtn.onclick = openTemplateModal;
+                    document.getElementById('editPageTitle').appendChild(templateBtn);
+                    checkAutoSave();
+                }
+            } catch (e) {
+                // 새 문서로 취급
+                originalContent = '';
+            }
+
+            // 변경 사항 미리보기 이벤트 연동
+            const diffDetails = document.getElementById('diffPreviewDetails');
+            if (diffDetails) {
+                diffDetails.addEventListener('toggle', (e) => {
+                    if (diffDetails.open) {
+                        renderLocalDiff();
+                    }
+                });
+            }
+
+            // 동시편집 감지: 하트비트 전송 + 편집자 체크 시작
+            startEditingHeartbeat();
+            checkConcurrentEditors();
+        });
+
+        // ── 변경 사항 (내 수정본) 렌더링 ──
+        function renderLocalDiff() {
+            const container = document.getElementById('diffPreviewContainer');
+            if (!container) return;
+
+            const currentContent = editor ? editor.getMarkdown() : '';
+            if (originalContent === currentContent) {
+                container.innerHTML = '<span class="text-muted">변경 사항이 없습니다.</span>';
+                return;
+            }
+
+            const diffData = Diff.diffLines(originalContent, currentContent);
+
+            let diffHtml = '';
+            const contextLines = 3; // 주변 3줄 보여주기
+
+            diffData.forEach((part, i) => {
+                if (part.added || part.removed) {
+                    const cls = part.added ? 'diff-added' : 'diff-removed';
+                    diffHtml += `<span class="${cls}">${escapeHtml(part.value)}</span>`;
+                } else {
+                    let lines = part.value.split('\n');
+                    let hasTrailingNewline = false;
+                    if (lines[lines.length - 1] === '') {
+                        lines.pop(); // remove trailing empty string
+                        hasTrailingNewline = true;
+                    }
+
+                    let showTop = (i !== 0); // Not first block
+                    let showBottom = (i !== diffData.length - 1); // Not last block
+
+                    if (!showTop && !showBottom) {
+                        diffHtml += `<span>${escapeHtml(part.value)}</span>`;
+                    } else if (lines.length <= contextLines * 2 + 1) {
+                        diffHtml += `<span>${escapeHtml(part.value)}</span>`;
+                    } else {
+                        let topTxt = '';
+                        let bottomTxt = '';
+                        if (showTop) {
+                            topTxt = lines.slice(0, contextLines).join('\n') + '\n';
+                        }
+                        if (showBottom) {
+                            bottomTxt = lines.slice(-contextLines).join('\n') + (hasTrailingNewline ? '\n' : '');
+                        }
+
+                        if (showTop) diffHtml += `<span>${escapeHtml(topTxt)}</span>`;
+                        diffHtml += `<span style="color: grey; font-style: italic; background: #e9ecef; border-radius: 4px; padding: 0 4px;">... (생략됨) ...</span>\n`;
+                        if (showBottom) diffHtml += `<span>${escapeHtml(bottomTxt)}</span>`;
+                    }
+                }
+            });
+
+            container.innerHTML = diffHtml;
+        }
+
+        // ── 템플릿 모달 ──
+        async function openTemplateModal() {
+            try {
+                Swal.fire({
+                    title: '템플릿 불러오기',
+                    html: `
+                        <div class="input-group mb-3">
+                            <input type="text" id="templateSearchInput" class="form-control" placeholder="템플릿 검색어 입력">
+                            <button class="btn btn-primary" id="templateSearchBtn" type="button"><i class="mdi mdi-magnify"></i> 검색</button>
+                        </div>
+                        <div id="templateList" class="list-group text-start" style="max-height: 300px; overflow-y: auto;">
+                            <!-- Templates will be rendered here -->
+                        </div>
+                    `,
+                    showConfirmButton: false,
+                    showCloseButton: true,
+                    didOpen: async () => {
+                        const searchInput = document.getElementById('templateSearchInput');
+                        const searchBtn = document.getElementById('templateSearchBtn');
+                        const listContainer = document.getElementById('templateList');
+
+                        const renderTemplates = (templates) => {
+                            listContainer.innerHTML = '';
+                            if (!templates || templates.length === 0) {
+                                listContainer.innerHTML = '<div class="p-3 text-center text-muted">검색 결과가 없습니다.</div>';
+                                return;
+                            }
+
+                            templates.forEach(t => {
+                                // 템플릿: 틀: template: 등의 접두사를 제외한 제목 표시
+                                const displayTitle = t.title.replace(/^(틀|template|템플릿):/i, '');
+                                const btn = document.createElement('button');
+                                btn.className = 'list-group-item list-group-item-action';
+                                btn.textContent = displayTitle;
+                                btn.onclick = async () => {
+                                    Swal.close();
+                                    await applyTemplate(t.slug);
+                                };
+                                listContainer.appendChild(btn);
+                            });
+                        };
+
+                        const fetchTemplates = async (query = '') => {
+                            listContainer.innerHTML = '<div class="p-3 text-center"><span class="spinner-border spinner-border-sm text-primary" role="status"></span> 불러오는 중...</div>';
+                            try {
+                                const res = await fetch(`/api/wiki/templates${query ? `?q=${encodeURIComponent(query)}` : ''}`);
+                                if (!res.ok) throw new Error('템플릿 목록을 불러올 수 없습니다.');
+                                const data = await res.json();
+                                renderTemplates(data.templates);
+                            } catch (err) {
+                                listContainer.innerHTML = `<div class="p-3 text-center text-danger">${err.message}</div>`;
+                            }
+                        };
+
+                        // Initial fetch (10 latest templates)
+                        await fetchTemplates();
+
+                        // Search events
+                        searchBtn.onclick = () => fetchTemplates(searchInput.value.trim());
+                        searchInput.onkeypress = (e) => {
+                            if (e.key === 'Enter') {
+                                e.preventDefault();
+                                fetchTemplates(searchInput.value.trim());
+                            }
+                        };
+                    }
+                });
+
+                async function applyTemplate(selectedSlug) {
+                    try {
+                        const tRes = await fetch(`/api/wiki/${encodeURIComponent(selectedSlug)}`);
+                        if (!tRes.ok) throw new Error('템플릿 내용을 불러올 수 없습니다.');
+                        const tPage = await tRes.json();
+
+                        if (editor.getMarkdown().trim()) {
+                            const confirm = await Swal.fire({
+                                title: '내용 덮어쓰기',
+                                text: '현재 작성 중인 내용이 사라집니다. 계속하시겠습니까?',
+                                icon: 'warning',
+                                showCancelButton: true,
+                                confirmButtonText: '예, 덮어씁니다',
+                                cancelButtonText: '아니오'
+                            });
+                            if (!confirm.isConfirmed) return;
+                        }
+
+                        editor.setMarkdown(tPage.content);
+                        Swal.fire('완료', '템플릿을 불러왔습니다.', 'success');
+                    } catch (err) {
+                        Swal.fire('오류', err.message, 'error');
+                    }
+                }
+            } catch (err) {
+                Swal.fire('오류', err.message, 'error');
+            }
+        }
+
+        // ── 저장 ──
+        async function savePage() {
+            const title = document.getElementById('titleInput').value.trim();
+            const category = document.getElementById('categoryInput').value.trim();
+            const redirect_to = document.getElementById('redirectInput').value.trim();
+            const is_locked = document.getElementById('isLockedCheck').checked ? 1 : 0;
+            const content = editor.getMarkdown();
+            const summary = document.getElementById('summaryInput').value.trim();
+
+            if (!title) {
+                Swal.fire('오류', '제목을 입력해주세요.', 'warning');
+                return;
+            }
+
+            const saveBtn = document.getElementById('saveBtn');
+            saveBtn.disabled = true;
+            saveBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 저장 중...';
+
+            let isSuccess = false;
+
+            try {
+                const body = {
+                    title,
+                    content,
+                    category: category || undefined,
+                    redirect_to: redirect_to || undefined,
+                    is_locked,
+                    summary: summary || undefined,
+                };
+
+                if (pageVersion !== null) {
+                    body.expected_version = pageVersion;
+                }
+
+                const res = await fetch(`/api/wiki/${encodeURIComponent(slug)}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body),
+                });
+
+                if (res.status === 409) {
+                    const data = await res.json();
+
+                    // 버전 충돌 (Optimistic Locking Failure)
+                    showConflictModal(data);
+
+                    saveBtn.disabled = false;
+                    saveBtn.innerHTML = '<i class="mdi mdi-check"></i> 저장';
+                    return;
+                }
+
+                if (!res.ok) {
+                    const data = await res.json();
+                    throw new Error(data.error || '저장 실패');
+                }
+
+                if (AUTO_SAVE_KEY) localStorage.removeItem(AUTO_SAVE_KEY);
+
+                isSuccess = true;
+                Swal.fire({
+                    icon: 'success',
+                    title: '저장 완료!',
+                    text: '문서가 성공적으로 저장되었습니다.',
+                    timer: 1500,
+                    showConfirmButton: false,
+                }).then(() => {
+                    window.location.href = `/wiki/${encodeURIComponent(slug)}`;
+                });
+
+            } catch (err) {
+                Swal.fire('오류', err.message, 'error');
+            } finally {
+                if (!isSuccess) {
+                    saveBtn.disabled = false;
+                    saveBtn.innerHTML = '<i class="mdi mdi-check"></i> 저장';
+                }
+            }
+        }
+
+        // ── 충돌 해결 UI ──
+        function showConflictModal(data) {
+            pageVersion = data.current_version;
+            const serverContent = data.content || '';
+            const localContent = editor.getMarkdown();
+
+            // ── 최신본: raw div에 텍스트 세팅 ──
+            document.getElementById('conflict-server-raw').textContent = serverContent;
+            // 뷰 상태 초기화 (raw로 리셋)
+            document.getElementById('conflict-server-raw').style.display = 'block';
+            document.getElementById('conflict-server-preview').style.display = 'none';
+            document.getElementById('serverViewToggle').innerHTML = '<i class="mdi mdi-eye"></i> 프리뷰 보기';
+            serverViewMode = 'raw';
+            // viewer가 이미 있으면 내용만 갱신
+            if (serverViewer) {
+                serverViewer.setMarkdown(serverContent);
+            }
+
+            // ── 내 수정본: conflict-ui가 block된 후 에디터 초기화 ──
+            document.getElementById('conflict-ui').style.display = 'block';
+            document.getElementById('main-editor-container').style.display = 'none';
+            window.scrollTo(0, 0);
+
+            if (!conflictEditor) {
+                const isDarkMode = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+                conflictEditor = new toastui.Editor({
+                    el: document.querySelector('#conflict-local-editor'),
+                    height: '500px',
+                    initialEditType: 'markdown',
+                    previewStyle: 'tab',          // 충돌 UI는 공간 절약을 위해 tab
+                    initialValue: localContent,
+                    language: 'ko-KR',
+                    theme: isDarkMode ? 'dark' : 'light',
+                    usageStatistics: false,
+                    hideModeSwitch: true,
+                    toolbarItems: [               // 최소한의 툴바만
+                        ['heading', 'bold', 'italic', 'strike'],
+                        ['ul', 'ol', 'task'],
+                        ['table', 'link'],
+                        ['code', 'codeblock'],
+                    ],
+                });
+            } else {
+                conflictEditor.setMarkdown(localContent);
+            }
+
+            // ── Diff 렌더링 (요약/전체 보기를 위해 데이터 보관 후 렌더링 호출) ──
+            cachedDiffData = Diff.diffLines(serverContent, localContent);
+
+            // 토글 버튼 상태 초기화
+            diffViewMode = 'summary';
+            document.getElementById('diffViewToggle').innerHTML = '<i class="mdi mdi-filter-variant"></i> 전체 보기';
+
+            renderDiffView();
+        }
+
+        function toggleDiffView() {
+            diffViewMode = (diffViewMode === 'summary') ? 'all' : 'summary';
+            const btn = document.getElementById('diffViewToggle');
+            if (diffViewMode === 'all') {
+                btn.innerHTML = '<i class="mdi mdi-filter"></i> 요약 보기';
+            } else {
+                btn.innerHTML = '<i class="mdi mdi-filter-variant"></i> 전체 보기';
+            }
+            renderDiffView();
+        }
+
+        function renderDiffView() {
+            if (!cachedDiffData) return;
+            let diffHtml = '';
+
+            if (diffViewMode === 'all') {
+                cachedDiffData.forEach(part => {
+                    const cls = part.added ? 'diff-added' : part.removed ? 'diff-removed' : '';
+                    diffHtml += `<span class="${cls}">${escapeHtml(part.value)}</span>`;
+                });
+            } else {
+                const contextLines = 2; // 보여줄 위/아래 줄 수
+
+                cachedDiffData.forEach((part, i) => {
+                    if (part.added || part.removed) {
+                        const cls = part.added ? 'diff-added' : 'diff-removed';
+                        diffHtml += `<span class="${cls}">${escapeHtml(part.value)}</span>`;
+                    } else {
+                        // 변경되지 않은 텍스트
+                        let lines = part.value.split('\n');
+                        let hasTrailingNewline = false;
+                        if (lines[lines.length - 1] === '') {
+                            lines.pop(); // 맨 끝 빈 요소 제거
+                            hasTrailingNewline = true;
+                        }
+
+                        let showTop = (i !== 0); // 이전 요소가 수정사항이면 앞부분 노출
+                        let showBottom = (i !== cachedDiffData.length - 1); // 다음 요소가 수정사항이면 뒷부분 노출
+
+                        if (!showTop && !showBottom) {
+                            // 수정사항 전혀 없을 때
+                            diffHtml += `<span>${escapeHtml(part.value)}</span>`;
+                        } else if (lines.length <= contextLines * 2 + 1) {
+                            // 줄 수가 적으면 모두 표시
+                            diffHtml += `<span>${escapeHtml(part.value)}</span>`;
+                        } else {
+                            let topTxt = '';
+                            let bottomTxt = '';
+                            if (showTop) {
+                                topTxt = lines.slice(0, contextLines).join('\n') + '\n';
+                            }
+                            if (showBottom) {
+                                bottomTxt = lines.slice(-contextLines).join('\n') + (hasTrailingNewline ? '\n' : '');
+                            }
+
+                            if (showTop) diffHtml += `<span>${escapeHtml(topTxt)}</span>`;
+                            diffHtml += `<span style="color: grey; font-style: italic; background: #e9ecef; border-radius: 4px; padding: 0 4px;">... (생략됨) ...</span>\n`;
+                            if (showBottom) diffHtml += `<span>${escapeHtml(bottomTxt)}</span>`;
+                        }
+                    }
+                });
+            }
+            document.getElementById('conflict-diff-view').innerHTML = diffHtml;
+        }
+
+        function toggleServerView() {
+            const raw = document.getElementById('conflict-server-raw');
+            const preview = document.getElementById('conflict-server-preview');
+            const btn = document.getElementById('serverViewToggle');
+
+            if (serverViewMode === 'raw') {
+                if (!serverViewer) {
+                    const isDarkMode = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+                    serverViewer = toastui.Editor.factory({
+                        el: preview,
+                        viewer: true,
+                        initialValue: raw.textContent,
+                        language: 'ko-KR',
+                        theme: isDarkMode ? 'dark' : 'light',
+                    });
+                } else {
+                    serverViewer.setMarkdown(raw.textContent); // 최신 값 반영
+                }
+                raw.style.display = 'none';
+                preview.style.display = 'block';
+                btn.innerHTML = '<i class="mdi mdi-code-tags"></i> Raw 보기';
+                serverViewMode = 'preview';
+            } else {
+                raw.style.display = 'block';
+                preview.style.display = 'none';
+                btn.innerHTML = '<i class="mdi mdi-eye"></i> 프리뷰 보기';
+                serverViewMode = 'raw';
+            }
+        }
+
+        function resolveConflict() {
+            // textarea 대신 conflictEditor에서 값 읽기
+            const finalContent = conflictEditor ? conflictEditor.getMarkdown() : '';
+
+            // Update main editor
+            editor.setMarkdown(finalContent);
+
+            // Hide Conflict UI
+            document.getElementById('conflict-ui').style.display = 'none';
+            document.getElementById('main-editor-container').style.display = 'block';
+
+            // Retry Save
+            savePage();
+        }
+
+        function cancelConflict() {
+            Swal.fire({
+                title: '충돌 해결 취소',
+                text: '편집 내용을 버리고 최신 버전으로 새로고침 하시겠습니까?',
+                icon: 'warning',
+                showCancelButton: true,
+                confirmButtonText: '새로고침 (내용 버림)',
+                cancelButtonText: '계속 해결하기'
+            }).then((result) => {
+                if (result.isConfirmed) {
+                    window.location.reload();
+                }
+            });
+        }
+
+
+        // ── 미디어 업로드 처리 (Toast UI Hook) ──
+        async function handleImageUpload(blob, callback) {
+            if (!blob) return;
+
+            if (blob.size > 15 * 1024 * 1024) {
+                Swal.fire('오류', '파일 크기는 15MB 이하만 허용됩니다.', 'warning');
+                return;
+            }
+
+            // 사용자에게 파일명 입력 요청
+            const originalName = blob.name || 'image';
+            const nameWithoutExt = originalName.replace(/\.[^.]+$/, '');
+            const { value: customFilename, isConfirmed } = await Swal.fire({
+                title: '이미지 파일명 입력',
+                input: 'text',
+                inputLabel: '파일명 (확장자 제외)',
+                inputValue: nameWithoutExt,
+                inputPlaceholder: '파일명을 입력하세요',
+                showCancelButton: true,
+                confirmButtonText: '업로드',
+                cancelButtonText: '취소',
+                inputValidator: (value) => {
+                    if (!value || !value.trim()) {
+                        return '파일명을 입력해주세요.';
+                    }
+                }
+            });
+
+            if (!isConfirmed || !customFilename) return;
+
+            const formData = new FormData();
+            formData.append('file', blob);
+            formData.append('filename', customFilename.trim());
+
+            try {
+                const res = await fetch('/api/media', {
+                    method: 'POST',
+                    body: formData,
+                });
+
+                if (!res.ok) {
+                    const data = await res.json();
+                    throw new Error(data.error || '업로드 실패');
+                }
+
+                const data = await res.json();
+
+                // callback(url, altText)
+                callback(data.url, data.filename);
+
+            } catch (err) {
+                console.error(err);
+                Swal.fire('오류', err.message, 'error');
+            }
+        }
+
+        // ── 취소 ──
+        function cancelEdit() {
+            if (editor && editor.getMarkdown().trim()) {
+                // Check if content changed?
+                // Toast UI doesn't track dirty state easily.
+                // Just ask if there is content.
+                Swal.fire({
+                    title: '편집을 취소하시겠습니까?',
+                    text: '저장하지 않은 변경사항이 사라집니다.',
+                    icon: 'question',
+                    showCancelButton: true,
+                    confirmButtonText: '나가기',
+                    cancelButtonText: '계속 편집',
+                }).then(result => {
+                    if (result.isConfirmed) {
+                        window.location.href = slug ? `/wiki/${encodeURIComponent(slug)}` : '/';
+                    }
+                });
+            } else {
+                window.location.href = slug ? `/wiki/${encodeURIComponent(slug)}` : '/';
+            }
+        }
+
+        // ── 동시편집 감지 ──
+        let heartbeatInterval = null;
+        let editorCheckInterval = null;
+
+        function startEditingHeartbeat() {
+            if (!slug) return;
+
+            // 즉시 첫 하트비트 전송
+            sendHeartbeat();
+
+            // 30초마다 하트비트 전송
+            heartbeatInterval = setInterval(sendHeartbeat, 30000);
+
+            // 30초마다 편집자 목록 확인
+            editorCheckInterval = setInterval(checkConcurrentEditors, 30000);
+        }
+
+        async function sendHeartbeat() {
+            if (!slug) return;
+            try {
+                await fetch(`/api/wiki/${encodeURIComponent(slug)}/editing`, {
+                    method: 'POST',
+                });
+            } catch (e) {
+                // 하트비트 실패는 무시
+            }
+        }
+
+        async function checkConcurrentEditors() {
+            if (!slug) return;
+            try {
+                const res = await fetch(`/api/wiki/${encodeURIComponent(slug)}/editors`);
+                if (!res.ok) return;
+                const data = await res.json();
+
+                const banner = document.getElementById('concurrent-edit-banner');
+                const textEl = document.getElementById('concurrent-edit-text');
+                if (!banner || !textEl) return;
+
+                if (data.editors && data.editors.length > 0) {
+                    const editorNames = data.editors.map(e => {
+                        const avatar = e.picture
+                            ? `<img src="${escapeHtml(e.picture)}" class="editor-avatar" alt="" loading="lazy">`
+                            : '';
+                        return `${avatar}<strong>${escapeHtml(e.name)}</strong>`;
+                    }).join(', ');
+
+                    textEl.innerHTML = `이 문서를 ${editorNames}님이 동시에 편집 중입니다. 편집 충돌이 발생할 수 있습니다.`;
+                    banner.style.display = 'flex';
+                } else {
+                    banner.style.display = 'none';
+                }
+            } catch (e) {
+                // 조회 실패는 무시
+            }
+        }
+
+        // ── 위키 자동완성 (Autocomplete) ──
+        let acVisible = false;
+        let acType = 'link'; // 'link' or 'template'
+        let acResults = [];
+        let acSelectedIndex = -1;
+        let acQuery = '';
+        let acLastQuery = null;
+        let acDebounceTimer = null;
+        const acDiv = document.getElementById('wiki-autocomplete');
+
+        function hideAutocomplete() {
+            acVisible = false;
+            acResults = [];
+            acSelectedIndex = -1;
+            acLastQuery = null;
+            if (acDiv) acDiv.style.display = 'none';
+        }
+
+        function showAutocomplete(query, type) {
+            acQuery = query;
+            acType = type;
+            acVisible = true;
+
+            // window.getSelection()으로 실제 커서 위치 획득 (에디터 내부 구조에 무관)
+            if (acDiv) {
+                let positioned = false;
+                const sel = window.getSelection();
+                if (sel && sel.rangeCount > 0) {
+                    const range = sel.getRangeAt(0).cloneRange();
+                    range.collapse(true);
+                    const rect = range.getBoundingClientRect();
+                    if (rect.height > 0) {
+                        let left = rect.left + window.scrollX;
+                        let top = rect.bottom + window.scrollY + 4;
+                        if (left + 260 > window.innerWidth) left = window.innerWidth - 270;
+                        acDiv.style.left = `${left}px`;
+                        acDiv.style.top = `${top}px`;
+                        acDiv.style.display = 'block';
+                        positioned = true;
+                    }
+                }
+                if (!positioned) {
+                    // fallback: 에디터 기준
+                    const editorEl = document.querySelector('#editor');
+                    if (editorEl) {
+                        const rect = editorEl.getBoundingClientRect();
+                        acDiv.style.left = `${rect.left + 50 + window.scrollX}px`;
+                        acDiv.style.top = `${rect.top + 80 + window.scrollY}px`;
+                        acDiv.style.display = 'block';
+                    }
+                }
+            }
+
+            if (acQuery === acLastQuery) return;
+            acLastQuery = acQuery;
+
+            clearTimeout(acDebounceTimer);
+            acDebounceTimer = setTimeout(async () => {
+                if (!acVisible) return;
+                try {
+                    // 쿼리가 비어있어도 API 호출 (최신순 등 반환 가능)
+                    const res = await fetch(`/api/wiki/search-titles?q=${encodeURIComponent(acQuery)}&type=${acType}`);
+                    if (!res.ok) return;
+                    const data = await res.json();
+                    acResults = data.results || [];
+                    renderAutocompleteResults();
+                } catch (e) {
+                    console.error('Autocomplete fetch error:', e);
+                }
+            }, 300);
+        }
+
+        function renderAutocompleteResults() {
+            if (!acDiv) return;
+
+            if (acResults.length === 0) {
+                acDiv.innerHTML = '<div class="list-group-item text-muted" style="font-size:0.85rem">결과 없음</div>';
+                return;
+            }
+
+            acDiv.innerHTML = acResults.map((item, index) => `
+                <div class="list-group-item autocomplete-item" data-index="${index}" onclick="selectAutocomplete(${index})">
+                    <i class="mdi ${acType === 'template' ? 'mdi-toy-brick-outline' : 'mdi-file-document-outline'}"></i>
+                    <span class="item-title">${escapeHtml(item.title)}</span>
+                    <span class="item-type">${acType === 'template' ? '틀' : '문서'}</span>
+                </div>
+            `).join('');
+
+            acSelectedIndex = 0;
+            highlightAutocompleteItem();
+        }
+
+        function highlightAutocompleteItem() {
+            const items = acDiv.querySelectorAll('.autocomplete-item');
+            items.forEach((item, idx) => {
+                if (idx === acSelectedIndex) {
+                    item.classList.add('active');
+                    item.scrollIntoView({ block: 'nearest' });
+                } else {
+                    item.classList.remove('active');
+                }
+            });
+        }
+
+        function selectAutocomplete(index) {
+            const item = acResults[index];
+            if (!item || !editor) return;
+
+            const selection = editor.getSelection();
+            if (!selection) { hideAutocomplete(); return; }
+
+            const [from] = selection;
+            const line = from[0];
+            const col = from[1];
+
+            const md = editor.getMarkdown();
+            const lines = md.split('\n');
+            const lineText = lines[line - 1] || '';
+            const textBefore = lineText.substring(0, col - 1);
+
+            const trigger = acType === 'template' ? '{{' : '[[';
+            const close = acType === 'template' ? '}}' : ']]';
+            const lastTriggerIndex = textBefore.lastIndexOf(trigger);
+
+            if (lastTriggerIndex !== -1) {
+                // [[query 부분을 선택 후 교체 (setMarkdown 전체 교체 방지)
+                editor.setSelection([line, lastTriggerIndex + 1], [line, col]);
+                editor.insertText(`${trigger}${item.title}${close}`);
+            }
+
+            hideAutocomplete();
+        }
+
+        // 키보드 네비게이션 (Capturing 모드 사용)
+        window.addEventListener('keydown', (e) => {
+            if (!acVisible) return;
+
+            // 한글 IME 등에서 Process 키가 들어올 때 무시
+            if (e.key === 'Process') return;
+
+            if (e.key === 'ArrowDown' || e.keyCode === 40) {
+                if (acResults.length > 0) {
+                    e.preventDefault();
+                    e.stopPropagation(); // 에디터 커서 이동 방지
+                    acSelectedIndex = (acSelectedIndex + 1) % acResults.length;
+                    highlightAutocompleteItem();
+                } else {
+                    hideAutocomplete();
+                }
+            } else if (e.key === 'ArrowUp' || e.keyCode === 38) {
+                if (acResults.length > 0) {
+                    e.preventDefault();
+                    e.stopPropagation(); // 에디터 커서 이동 방지
+                    acSelectedIndex = (acSelectedIndex - 1 + acResults.length) % acResults.length;
+                    highlightAutocompleteItem();
+                } else {
+                    hideAutocomplete();
+                }
+            } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.keyCode === 37 || e.keyCode === 39) {
+                hideAutocomplete();
+            } else if (e.key === 'Enter' || e.keyCode === 13) {
+                if (acResults.length > 0 && acSelectedIndex >= 0) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    selectAutocomplete(acSelectedIndex);
+                } else {
+                    hideAutocomplete();
+                }
+            } else if (e.key === 'Escape' || e.keyCode === 27) {
+                e.preventDefault();
+                e.stopPropagation();
+                hideAutocomplete();
+            }
+        }, true);
+
+        // ── 아이콘 자동완성 키보드 네비게이션 (Capturing 모드) ──
+        window.addEventListener('keydown', (e) => {
+            if (!iconAcVisible) return;
+            if (e.key === 'Process') return;
+
+            if (e.key === 'ArrowDown' || e.keyCode === 40) {
+                if (iconAcResults.length > 0) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    // 아래 행으로 이동 (ICON_AC_COLS 칸씩)
+                    iconAcSelectedIndex = Math.min(iconAcSelectedIndex + ICON_AC_COLS, iconAcResults.length - 1);
+                    highlightIconAcItem();
+                } else {
+                    hideIconAutocomplete();
+                }
+            } else if (e.key === 'ArrowUp' || e.keyCode === 38) {
+                if (iconAcResults.length > 0) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    iconAcSelectedIndex = Math.max(iconAcSelectedIndex - ICON_AC_COLS, 0);
+                    highlightIconAcItem();
+                } else {
+                    hideIconAutocomplete();
+                }
+            } else if (e.key === 'ArrowRight' || e.keyCode === 39) {
+                if (iconAcResults.length > 0) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    iconAcSelectedIndex = (iconAcSelectedIndex + 1) % iconAcResults.length;
+                    highlightIconAcItem();
+                }
+            } else if (e.key === 'ArrowLeft' || e.keyCode === 37) {
+                if (iconAcResults.length > 0) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    iconAcSelectedIndex = (iconAcSelectedIndex - 1 + iconAcResults.length) % iconAcResults.length;
+                    highlightIconAcItem();
+                }
+            } else if (e.key === 'Enter' || e.keyCode === 13) {
+                if (iconAcResults.length > 0 && iconAcSelectedIndex >= 0) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    selectIconAutocomplete(iconAcSelectedIndex);
+                } else {
+                    hideIconAutocomplete();
+                }
+            } else if (e.key === 'Escape' || e.keyCode === 27) {
+                e.preventDefault();
+                e.stopPropagation();
+                hideIconAutocomplete();
+            }
+        }, true);
+
+        // 전역 클릭 시 자동완성 닫기
+        document.addEventListener('mousedown', (e) => {
+            if (acDiv && !acDiv.contains(e.target)) {
+                setTimeout(hideAutocomplete, 100);
+            }
+            if (iconAcDiv && !iconAcDiv.contains(e.target)) {
+                setTimeout(hideIconAutocomplete, 100);
+            }
+        });
+
+        // 에디터 변경 감지 및 트리거 실행
+        function attachAutocomplete() {
+            if (!editor) {
+                setTimeout(attachAutocomplete, 100);
+                return;
+            }
+
+            editor.on('change', () => {
+                // change 이벤트 직후 selection이 확정되도록 한 프레임 뒤에 처리
+                requestAnimationFrame(() => {
+                    const selection = editor.getSelection();
+                    if (!selection) { hideAutocomplete(); return; }
+
+                    // 커서(드래그 없음)인지 확인
+                    const [from, to] = selection;
+                    if (from[0] !== to[0] || from[1] !== to[1]) {
+                        hideAutocomplete();
+                        return;
+                    }
+
+                    const md = editor.getMarkdown();
+                    const lines = md.split('\n');
+                    const lineText = lines[from[0] - 1] || '';
+                    const textBefore = lineText.substring(0, from[1] - 1);
+
+                    const linkMatch = textBefore.match(/\[\[([^\]\[]*)$/);
+                    const templateMatch = textBefore.match(/\{\{([^\}\{]*)$/);
+                    const biIconMatch = textBefore.match(/\{bi:([^}]*)$/);
+                    const mdiIconMatch = textBefore.match(/\{mdi:([^}]*)$/);
+
+                    if (linkMatch) {
+                        hideIconAutocomplete();
+                        showAutocomplete(linkMatch[1], 'link');
+                    } else if (templateMatch) {
+                        hideIconAutocomplete();
+                        showAutocomplete(templateMatch[1], 'template');
+                    } else if (biIconMatch) {
+                        hideAutocomplete();
+                        showIconAutocomplete(biIconMatch[1], 'bi');
+                    } else if (mdiIconMatch) {
+                        hideAutocomplete();
+                        showIconAutocomplete(mdiIconMatch[1], 'mdi');
+                    } else {
+                        hideAutocomplete();
+                        hideIconAutocomplete();
+                    }
+                });
+            });
+
+            // 포커스 잃으면 닫기
+            editor.on('blur', () => {
+                setTimeout(() => {
+                    if (!document.activeElement.closest('#wiki-autocomplete')) {
+                        hideAutocomplete();
+                    }
+                    if (!document.activeElement.closest('#icon-autocomplete')) {
+                        hideIconAutocomplete();
+                    }
+                }, 200);
+            });
+        }
+
+        // 에디터 초기화 대기 후 연결
+        setTimeout(attachAutocomplete, 500);
+
+    </script>
+
+    <!-- ── 푸터 Placeholder ── -->
+    <div id="app-footer-placeholder"></div>
+
+</body>
+
+</html>

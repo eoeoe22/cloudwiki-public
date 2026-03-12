@@ -1,0 +1,1824 @@
+/* ── Custom Wiki Styles (Light/Dark Auto) ── */
+
+:root {
+  /* ☀️ Light Mode (GitHub/Notion Style) */
+  --wiki-bg: #ffffff;
+  --wiki-card-bg: #f6f8fa;
+  --wiki-text: #24292f;
+  --wiki-text-muted: #57606a;
+
+  --wiki-border: #d0d7de;
+  --wiki-border-focus: #0969da;
+
+  --wiki-primary: #0969da;
+  --wiki-primary-hover: #0550ae;
+  --wiki-accent: #8250df;
+  --wiki-success: #1a7f37;
+  --wiki-warning: #9a6700;
+  --wiki-danger: #cf222e;
+
+  /* Misc */
+  --wiki-code-bg: #f6f8fa;
+  --wiki-toc-bg: #f6f8fa;
+  --wiki-sidebar-width: 260px;
+
+  --wiki-btn-text: #ffffff;
+
+  /* Diff Colors */
+  --wiki-diff-add-bg: #e6ffec;
+  --wiki-diff-add-text: #24292f;
+  --wiki-diff-del-bg: #ffebe9;
+  --wiki-diff-del-text: #24292f;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* 🌑 Pro Dark Palette (계측 장비 / 터미널 감성) */
+    --wiki-bg: #0d1117;
+    /* Very Deep Gray (거의 검은색) */
+    --wiki-card-bg: #161b22;
+    /* Slightly lighter for cards */
+    --wiki-text: #c9d1d9;
+    /* Off-white (눈이 편안한 텍스트) */
+    --wiki-text-muted: #8b949e;
+    /* Muted Text */
+
+    /* 📏 Hairline Borders (뉴모피즘의 그림자를 대체할 1px 윤곽선) */
+    --wiki-border: #30363d;
+    --wiki-border-focus: #58a6ff;
+
+    /* 💎 Accents (다크모드에 맞춰 채도와 명도 조정) */
+    --wiki-primary: #58a6ff;
+    /* 기존 딥블루보다 가독성 좋은 라이트 블루 */
+    --wiki-primary-hover: #79c0ff;
+    --wiki-accent: #bc8cff;
+    --wiki-success: #56d364;
+    --wiki-warning: #e3b341;
+    --wiki-danger: #f85149;
+
+    /* Misc */
+    --wiki-code-bg: #1f242c;
+    --wiki-toc-bg: #161b22;
+
+    --wiki-btn-text: #000000;
+
+    /* Diff Colors */
+    --wiki-diff-add-bg: rgba(46, 160, 67, 0.3);
+    --wiki-diff-add-text: #c9d1d9;
+    --wiki-diff-del-bg: rgba(248, 81, 73, 0.3);
+    --wiki-diff-del-text: #c9d1d9;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Pretendard', 'Montserrat', 'Noto Sans KR', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background-color: var(--wiki-bg);
+  color: var(--wiki-text);
+  line-height: 1.7;
+  min-height: 100vh;
+  /* 안티앨리어싱 강화로 글씨를 더 또렷하게 */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+
+/* ── Bootstrap Overrides for Theme Consistency ── */
+.text-muted {
+  color: var(--wiki-text-muted) !important;
+}
+
+.text-body {
+  color: var(--wiki-text) !important;
+}
+
+.table {
+  color: var(--wiki-text);
+  border-color: var(--wiki-border);
+}
+
+.table> :not(caption)>*>* {
+  color: var(--wiki-text);
+  background-color: transparent;
+  border-bottom-color: var(--wiki-border);
+}
+
+.table-hover>tbody>tr:hover>* {
+  color: var(--wiki-text);
+  background-color: var(--wiki-card-bg);
+  box-shadow: inset 0 0 0 9999px var(--wiki-card-bg);
+}
+
+.table-light {
+  background-color: var(--wiki-card-bg);
+  color: var(--wiki-text);
+  border-color: var(--wiki-border);
+}
+
+.table-light th,
+.table-light td {
+  background-color: var(--wiki-card-bg);
+  color: var(--wiki-text);
+  border-color: var(--wiki-border);
+}
+
+.card,
+.card-header,
+.card-footer {
+  background-color: var(--wiki-card-bg) !important;
+  color: var(--wiki-text) !important;
+  border-color: var(--wiki-border) !important;
+}
+
+/* ── SweetAlert2 Overrides ── */
+div:where(.swal2-container) div:where(.swal2-popup) {
+  background: var(--wiki-card-bg) !important;
+  color: var(--wiki-text) !important;
+  border: 1px solid var(--wiki-border);
+}
+
+div:where(.swal2-container) input:where(.swal2-input),
+div:where(.swal2-container) textarea:where(.swal2-textarea) {
+  background: var(--wiki-bg) !important;
+  color: var(--wiki-text) !important;
+  border: 1px solid var(--wiki-border) !important;
+  box-shadow: none !important;
+}
+
+div:where(.swal2-container) input:where(.swal2-input):focus,
+div:where(.swal2-container) textarea:where(.swal2-textarea):focus {
+  border-color: var(--wiki-primary) !important;
+  box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.15) !important;
+}
+
+div:where(.swal2-container) .swal2-title,
+div:where(.swal2-container) .swal2-html-container {
+  color: var(--wiki-text) !important;
+}
+
+/* ── Toast UI Editor Overrides ── */
+.toastui-editor-defaultUI {
+  background-color: var(--wiki-bg) !important;
+  border-color: var(--wiki-border) !important;
+}
+
+.toastui-editor-md-container,
+.toastui-editor-ww-container {
+  background-color: var(--wiki-bg) !important;
+}
+
+.toastui-editor-contents,
+.ProseMirror {
+  font-family: 'Pretendard', 'Noto Sans KR', sans-serif;
+}
+
+.toastui-editor-defaultUI .toastui-editor-toolbar {
+  background-color: var(--wiki-toc-bg) !important;
+  border-bottom-color: var(--wiki-border) !important;
+}
+
+.toastui-editor-mode-switch {
+  background-color: var(--wiki-bg) !important;
+  border-top-color: var(--wiki-border) !important;
+}
+
+.toastui-editor-mode-switch .tab-item {
+  color: var(--wiki-text-muted) !important;
+  background-color: var(--wiki-bg) !important;
+  border: 1px solid transparent;
+}
+
+.toastui-editor-mode-switch .tab-item.active {
+  color: var(--wiki-primary) !important;
+  background-color: var(--wiki-bg) !important;
+  border: 1px solid var(--wiki-border);
+  border-bottom: none;
+}
+
+/* Editor Icons Filter removed to preserve ToastUI default white icons in dark mode */
+
+
+/* ── Legacy Neumorphism Classes (Converted to Flat UI) ── */
+/* 기존 HTML 수정 없이도 플랫하게 보이도록 속성 덮어쓰기 */
+.neu-raised,
+.neu-inset,
+.neu-pressed {
+  background: var(--wiki-card-bg);
+  box-shadow: none !important;
+  border: 1px solid var(--wiki-border);
+  border-radius: 8px;
+  /* 곡률을 20px -> 8px로 줄여서 정밀한 느낌 강조 */
+}
+
+/* ── Navbar ── */
+.navbar {
+  background: var(--wiki-bg) !important;
+  border-bottom: 1px solid var(--wiki-border);
+  box-shadow: none;
+  /* 그림자 제거 */
+  padding: 0.8rem 1.5rem;
+  margin-bottom: 2rem;
+}
+
+.navbar-toggler:focus,
+.btn-close:focus {
+  outline: none !important;
+  box-shadow: 0 0 0 1px var(--wiki-border-focus) !important;
+}
+
+.navbar-brand {
+  font-weight: 800;
+  font-size: 1.4rem;
+  letter-spacing: -0.5px;
+  color: var(--wiki-text) !important;
+  /* 브랜드를 하얗게, 포인트는 아이콘에만 */
+}
+
+.navbar-brand .brand-icon {
+  width: 28px;
+  height: 28px;
+  margin-right: 8px;
+  vertical-align: -4px;
+  color: var(--wiki-primary);
+}
+
+.brand-logo {
+  border-radius: 6px;
+  object-fit: cover;
+}
+
+/* Navbar Links */
+.nav-link {
+  color: var(--wiki-text-muted) !important;
+  font-weight: 600;
+  transition: all 0.2s ease;
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+}
+
+.nav-link:hover,
+.nav-link:focus {
+  color: var(--wiki-text) !important;
+  background: var(--wiki-card-bg);
+  /* 마우스 오버 시 은은한 배경만 */
+  box-shadow: none;
+}
+
+/* Search Input */
+.nav-search-form {
+  max-width: 400px;
+  flex: 1;
+}
+
+.nav-search-form .form-control {
+  border-radius: 6px 0 0 6px;
+  border: 1px solid var(--wiki-border);
+  background: var(--wiki-bg);
+  color: var(--wiki-text);
+  padding: 0.5rem 1rem;
+  box-shadow: none;
+  transition: all 0.2s ease;
+}
+
+.nav-search-form .form-control::placeholder {
+  color: var(--wiki-text-muted);
+}
+
+.nav-search-form .form-control:focus {
+  outline: none;
+  border-color: var(--wiki-primary);
+  box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.15);
+}
+
+/* Search Mode Dropdown Button */
+.nav-search-form .search-mode-btn {
+  border: 1px solid var(--wiki-border);
+  border-left: none;
+  background: var(--wiki-card-bg);
+  color: var(--wiki-text-muted);
+  font-size: 0.8rem;
+  white-space: nowrap;
+  border-radius: 0 6px 6px 0;
+  padding: 0.5rem 0.6rem;
+  transition: all 0.2s ease;
+}
+
+.nav-search-form .search-mode-btn:hover,
+.nav-search-form .search-mode-btn:focus {
+  background: var(--wiki-border);
+  color: var(--wiki-text);
+  box-shadow: none;
+}
+
+.nav-search-form .search-mode-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.15);
+}
+
+.nav-search-form .dropdown-menu {
+  background: var(--wiki-card-bg);
+  border: 1px solid var(--wiki-border);
+  border-radius: 6px;
+  min-width: 120px;
+}
+
+.nav-search-form .dropdown-item {
+  color: var(--wiki-text);
+  font-size: 0.875rem;
+}
+
+.nav-search-form .dropdown-item:hover {
+  background: var(--wiki-border);
+  color: var(--wiki-text);
+}
+
+.nav-search-form .dropdown-item.active {
+  background: var(--wiki-primary);
+  color: var(--wiki-btn-text);
+}
+
+@media (max-width: 991px) {
+  .nav-search-form {
+    margin-top: 1rem;
+    margin-bottom: 0.5rem;
+    max-width: 100%;
+  }
+
+  .nav-search-form .input-group {
+    flex-wrap: nowrap;
+  }
+}
+
+/* New Page Button */
+.btn-new-page {
+  background: var(--wiki-primary);
+  /* 명확한 CTA 버튼 */
+  color: var(--wiki-btn-text);
+  /* Primary Color 위에 흰 글씨 (Light/Dark 공통으로 가독성 확보) */
+  border: none;
+  border-radius: 6px;
+  padding: 0.5rem 1.2rem;
+  font-weight: 700;
+  font-size: 0.9rem;
+  box-shadow: none;
+  transition: all 0.2s ease;
+}
+
+.btn-new-page:hover {
+  background: var(--wiki-primary-hover);
+  transform: translateY(-1px);
+  color: var(--wiki-btn-text);
+}
+
+.btn-new-page:active {
+  transform: translateY(0);
+}
+
+/* ── Offcanvas Sidebar Styling ── */
+.offcanvas,
+.offcanvas-lg {
+  background-color: var(--wiki-bg);
+  color: var(--wiki-text);
+}
+
+@media (max-width: 991.98px) {
+
+  .offcanvas,
+  .offcanvas-lg {
+    box-shadow: 2px 0 8px rgba(0, 0, 0, 0.1);
+    max-width: 85vw !important;
+    /* 모바일에서 화면 전체를 덮지 않고 빈 공간을 남김 */
+  }
+}
+
+.offcanvas-header {
+  border-bottom: 1px solid var(--wiki-border) !important;
+}
+
+.offcanvas-title {
+  color: var(--wiki-text);
+}
+
+.offcanvas .nav-link,
+.offcanvas-lg .nav-link {
+  color: var(--wiki-text) !important;
+  border-radius: 8px;
+  transition: all 0.2s;
+}
+
+.offcanvas .nav-link:hover,
+.offcanvas-lg .nav-link:hover {
+  background-color: var(--wiki-toc-bg);
+}
+
+.offcanvas .btn-outline-primary,
+.offcanvas-lg .btn-outline-primary {
+  border-color: var(--wiki-primary);
+  color: var(--wiki-primary) !important;
+}
+
+.offcanvas .btn-outline-primary:hover,
+.offcanvas-lg .btn-outline-primary:hover {
+  background-color: var(--wiki-primary);
+  color: #fff !important;
+}
+
+.offcanvas .dropdown-menu,
+.offcanvas-lg .dropdown-menu {
+  background-color: var(--wiki-card-bg);
+  border: 1px solid var(--wiki-border);
+}
+
+.offcanvas .dropdown-item,
+.offcanvas-lg .dropdown-item {
+  color: var(--wiki-text);
+}
+
+.offcanvas .dropdown-item:hover,
+.offcanvas-lg .dropdown-item:hover {
+  background-color: var(--wiki-toc-bg);
+}
+
+@media (min-width: 992px) {
+  .sidebar-section-pc-only {
+    background: var(--wiki-card-bg) !important;
+    border: 1px solid var(--wiki-border);
+    border-radius: 10px;
+  }
+}
+
+/* User Profile Collapsible Menu */
+.user-dropdown-toggle {
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.user-dropdown-toggle:hover {
+  background-color: var(--wiki-toc-bg) !important;
+}
+
+.user-dropdown-icon {
+  transition: transform 0.3s ease;
+}
+
+.user-dropdown-toggle[aria-expanded="true"] .user-dropdown-icon {
+  transform: rotate(-90deg);
+}
+
+@media (prefers-color-scheme: dark) {
+  .user-dropdown-toggle {
+    border-color: rgba(48, 54, 61, 0.4) !important;
+  }
+}
+
+/* ── 검색바 스타일 ── */
+.nav-search-form {
+  position: relative;
+  transition: all 0.3s ease;
+}
+
+.nav-search-form .input-group {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+  border-radius: 20px;
+  overflow: hidden;
+  background: var(--wiki-bg);
+  border: 1px solid var(--wiki-border);
+}
+
+.nav-search-form .form-control {
+  border: none;
+  background: transparent;
+  color: var(--wiki-text);
+  padding-left: 1rem;
+}
+
+.nav-search-form .form-control:focus {
+  box-shadow: none;
+}
+
+.nav-search-form .search-mode-btn {
+  border: none;
+  background: var(--wiki-toc-bg);
+  color: var(--wiki-text);
+  font-weight: 500;
+  border-left: 1px solid var(--wiki-border);
+  border-radius: 0;
+}
+
+.nav-search-form .search-mode-btn:hover,
+.nav-search-form .search-mode-btn:focus {
+  background: var(--wiki-border);
+  color: var(--wiki-text);
+}
+
+/* 반응형 검색바 - 작은 화면에서는 앱 이름 숨기기(HTML 클래스로 처리됨) 및 여백 줄이기 */
+@media (max-width: 576px) {
+  .nav-search-form {
+    max-width: none !important;
+    width: auto;
+  }
+}
+
+.user-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1px solid var(--wiki-border);
+  box-shadow: none;
+  margin-right: 8px;
+}
+
+/* ── Main Layout (Sidebar + Content) ── */
+.wiki-layout {
+  display: flex;
+  max-width: 1340px;
+  margin: 0 auto;
+  padding: 0 1rem;
+  gap: 1.5rem;
+}
+
+/* ── Sidebar ── */
+.wiki-sidebar {
+  width: 260px;
+  flex-shrink: 0;
+  position: sticky;
+  top: 1rem;
+  align-self: flex-start;
+  max-height: calc(100vh - 5rem);
+  overflow-y: auto;
+  z-index: 1045;
+}
+
+.sidebar-section {
+  background: var(--wiki-card-bg);
+  border: 1px solid var(--wiki-border);
+  border-radius: 10px;
+  padding: 1rem;
+}
+
+.sidebar-title {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--wiki-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--wiki-border);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sidebar-title i {
+  color: var(--wiki-primary);
+}
+
+.recent-changes-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.recent-change-item {
+  display: block;
+  padding: 0.5rem 0.6rem;
+  border-radius: 6px;
+  text-decoration: none !important;
+  color: var(--wiki-text);
+  transition: background 0.15s ease;
+}
+
+.recent-change-item:hover {
+  background: var(--wiki-bg);
+  color: var(--wiki-text);
+}
+
+.rc-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--wiki-primary);
+}
+
+.recent-change-item:hover .rc-title {
+  color: var(--wiki-primary-hover);
+}
+
+.rc-meta {
+  font-size: 0.75rem;
+  color: var(--wiki-text-muted);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 2px;
+}
+
+.rc-time {
+  white-space: nowrap;
+}
+
+.rc-author {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rc-author::before {
+  content: '·';
+  margin-right: 0.25rem;
+}
+
+/* ── Mobile Recent Changes ── */
+.recent-changes-mobile {
+  margin-top: 2rem;
+  margin-bottom: 1rem;
+}
+
+/* ── Main Container ── */
+.wiki-container {
+  flex: 1;
+  min-width: 0;
+  max-width: 1024px;
+  margin: 0 auto;
+  padding: 0 0.5rem 3rem;
+}
+
+/* ── Wiki Article Card ── */
+.wiki-article {
+  background: var(--wiki-card-bg);
+  border-radius: 12px;
+  /* 20px -> 12px로 정돈 */
+  padding: 3rem;
+  border: 1px solid var(--wiki-border);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+  /* 공간 분리용 미세한 드롭 섀도우만 */
+  margin-bottom: 2rem;
+}
+
+@media (max-width: 767.98px) {
+  .wiki-article {
+    padding: 1.5rem;
+    border-radius: 8px;
+  }
+}
+
+.wiki-article-title {
+  font-size: 2.2rem;
+  font-weight: 800;
+  margin-bottom: 0.75rem;
+  color: var(--wiki-text);
+  letter-spacing: -0.5px;
+  word-break: break-all;
+  overflow-wrap: break-word;
+}
+
+.wiki-article-meta {
+  font-size: 0.9rem;
+  color: var(--wiki-text-muted);
+  margin-bottom: 2rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--wiki-border);
+  /* 명확한 선으로 구분 */
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+}
+
+.wiki-article-actions {
+  display: flex;
+  gap: 0.5rem;
+  /* 버튼 간격 타이트하게 */
+  margin-bottom: 2rem;
+  flex-wrap: wrap;
+}
+
+/* ── TOC (Table of Contents) ── */
+.wiki-toc {
+  background: var(--wiki-card-bg);
+  border: 1px solid var(--wiki-border);
+  border-radius: 8px;
+  padding: 1.5rem;
+  box-shadow: none;
+  margin-bottom: 2rem;
+}
+
+/* Accordion Override (Flat UI) */
+.accordion-item {
+  background-color: var(--wiki-bg);
+  border: 1px solid var(--wiki-border) !important;
+  /* 윤곽선 강제 적용 */
+  margin-bottom: 0.5rem;
+  border-radius: 6px !important;
+  box-shadow: none;
+  overflow: hidden;
+}
+
+.accordion-button {
+  background-color: var(--wiki-bg);
+  color: var(--wiki-text);
+  font-weight: 600;
+  box-shadow: none !important;
+  padding: 1rem 1.5rem;
+}
+
+.accordion-button:not(.collapsed) {
+  color: var(--wiki-primary);
+  background-color: var(--wiki-card-bg);
+  /* 열렸을 때 배경색 살짝 변경 */
+  box-shadow: none !important;
+  border-bottom: 1px solid var(--wiki-border);
+  /* 본문과 구분선 */
+}
+
+.accordion-body {
+  padding: 1.5rem;
+  background-color: var(--wiki-bg);
+  color: var(--wiki-text);
+}
+
+/* ── Typography & Content ── */
+.wiki-content {
+  color: var(--wiki-text);
+  word-break: break-all;
+  overflow-wrap: break-word;
+}
+
+.wiki-content h1,
+.wiki-content h2,
+.wiki-content h3 {
+  margin-top: 2.5rem;
+  margin-bottom: 1rem;
+  font-weight: 700;
+  color: var(--wiki-text);
+}
+
+.wiki-content h2 {
+  font-size: 1.6rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--wiki-border);
+  /* 얇고 뚜렷한 선 */
+}
+
+.wiki-content p {
+  margin-bottom: 1.2rem;
+  line-height: 1.8;
+}
+
+.wiki-content img {
+  border-radius: 8px;
+  margin: 1.5rem 0;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  /* 이미지만 살짝 띄우기 */
+  max-width: 100%;
+  border: 1px solid var(--wiki-border);
+  /* 이미지 테두리 처리 */
+}
+
+/* 인라인 코드 블록 */
+.wiki-content code {
+  background: var(--wiki-code-bg);
+  padding: 0.2rem 0.4rem;
+  border-radius: 4px;
+  font-size: 0.9em;
+  color: var(--wiki-primary);
+  border: 1px solid var(--wiki-border);
+  box-shadow: none;
+  word-break: break-all;
+  overflow-wrap: break-word;
+}
+
+/* 큰 코드 블록 (Wrapper로 마진 이동) */
+.wiki-code-wrapper {
+  position: relative;
+  margin: 1.5rem 0;
+}
+
+.wiki-content pre {
+  background: var(--wiki-code-bg);
+  color: var(--wiki-text);
+  padding: 1.2rem;
+  border-radius: 8px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  overflow-wrap: break-word;
+  margin: 0;
+  box-shadow: none;
+  border: 1px solid var(--wiki-border);
+}
+
+.wiki-content pre code {
+  background: transparent;
+  padding: 0;
+  border: none;
+  color: inherit;
+  font-size: inherit;
+  word-break: inherit;
+  overflow-wrap: inherit;
+}
+
+/* 코드 복사 버튼 */
+.btn-copy-code {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--wiki-text-muted);
+  border-radius: 6px;
+  padding: 0.3rem 0.5rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.7;
+  font-size: 1rem;
+}
+
+.btn-copy-code:hover,
+.btn-copy-code:focus {
+  background: var(--wiki-card-bg);
+  border-color: var(--wiki-border);
+  color: var(--wiki-text);
+  opacity: 1;
+}
+
+.btn-copy-code:active {
+  transform: translateY(1px);
+}
+
+/* 인용구 - 위키백과/나무위키 정석 스타일 */
+.wiki-content blockquote {
+  border-left: 4px solid var(--wiki-primary);
+  /* 왼쪽 강조선 */
+  padding: 1rem 1.5rem;
+  margin: 1.5rem 0;
+  background: var(--wiki-card-bg);
+  border-radius: 0 8px 8px 0;
+  color: var(--wiki-text-muted);
+  box-shadow: none;
+}
+
+/* Tables - 데이터가 잘 보이는 구조 */
+.wiki-content table {
+  width: 100%;
+  margin: 1.5rem 0;
+  border-collapse: collapse;
+  /* separate 대신 collapse */
+  border-radius: 8px;
+  overflow: hidden;
+  /* 모바일에서 표가 화면을 벗어나지 않도록 감싸기 */
+  display: block;
+  /* 가로 스크롤 허용용 */
+  overflow-x: auto;
+  white-space: nowrap;
+  /* 셀 내용이 강제 개행되지 않도록 설정해 가로 스크롤 작동 */
+  box-shadow: none;
+  background: var(--wiki-bg);
+  border: 1px solid var(--wiki-border);
+  /* 테이블 외곽선 */
+}
+
+@media (min-width: 768px) {
+  .wiki-content table {
+    display: table;
+    white-space: normal;
+  }
+}
+
+.wiki-content table th,
+.wiki-content table td {
+  padding: 0.8rem 1rem;
+  border: 1px solid var(--wiki-border);
+  /* 셀 간 격자선 (데이터 보기에 필수) */
+}
+
+.wiki-content table th {
+  background: var(--wiki-card-bg);
+  font-weight: 700;
+  color: var(--wiki-text);
+}
+
+.wiki-content a {
+  color: var(--wiki-primary);
+  text-decoration: none;
+  font-weight: 500;
+  transition: all 0.2s;
+}
+
+.wiki-content a:hover {
+  color: var(--wiki-primary-hover);
+  text-decoration: underline;
+  /* 글로우 효과 대신 정석적인 밑줄 */
+}
+
+/* ── Buttons (Flat & Professional) ── */
+.btn-wiki {
+  background: var(--wiki-card-bg);
+  color: var(--wiki-text);
+  border: 1px solid var(--wiki-border);
+  border-radius: 6px;
+  padding: 0.5rem 1rem;
+  font-weight: 600;
+  font-size: 0.9rem;
+  box-shadow: none;
+  transition: all 0.2s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn-wiki:hover {
+  background: var(--wiki-border);
+  /* 마우스 오버 시 배경만 살짝 밝게 */
+  color: var(--wiki-text);
+  transform: none;
+}
+
+.btn-wiki-outline {
+  background: transparent;
+  color: var(--wiki-text-muted);
+  border: 1px solid var(--wiki-border);
+  border-radius: 6px;
+  padding: 0.5rem 1rem;
+  font-weight: 600;
+  box-shadow: none;
+  transition: all 0.2s;
+}
+
+.btn-wiki-outline:hover {
+  color: var(--wiki-text);
+  border-color: var(--wiki-text-muted);
+}
+
+.btn-wiki-danger {
+  color: var(--wiki-danger);
+  border-color: rgba(248, 81, 73, 0.4);
+}
+
+.btn-wiki-danger:hover {
+  background: rgba(248, 81, 73, 0.1);
+  color: var(--wiki-danger);
+  border-color: var(--wiki-danger);
+}
+
+/* ── Forms ── */
+.form-control {
+  background: var(--wiki-bg);
+  border: 1px solid var(--wiki-border);
+  border-radius: 6px;
+  padding: 0.7rem 1rem;
+  color: var(--wiki-text);
+  box-shadow: none;
+}
+
+.form-control:focus {
+  background: var(--wiki-bg);
+  color: var(--wiki-text);
+  border-color: var(--wiki-primary);
+  box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.15);
+  /* 윤곽선 포커스 링 */
+  outline: none;
+}
+
+.form-select {
+  background-color: var(--wiki-bg);
+  border: 1px solid var(--wiki-border);
+  color: var(--wiki-text);
+}
+
+.form-select:focus {
+  background-color: var(--wiki-bg);
+  color: var(--wiki-text);
+  border-color: var(--wiki-primary);
+  box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.15);
+  outline: none;
+}
+
+.form-control::placeholder,
+.edit-title-input::placeholder,
+.edit-summary-input::placeholder {
+  color: var(--wiki-text-muted);
+  opacity: 1;
+}
+
+.form-select option {
+  background-color: var(--wiki-bg);
+  color: var(--wiki-text);
+}
+
+/* ── Edit Page Inputs ── */
+.edit-title-input {
+  width: 100%;
+  background: var(--wiki-bg);
+  border: 1px solid var(--wiki-border);
+  border-radius: 8px;
+  padding: 1rem 1.2rem;
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--wiki-text);
+  box-shadow: none;
+  margin-bottom: 1rem;
+}
+
+.edit-title-input:focus {
+  outline: none;
+  border-color: var(--wiki-primary);
+  box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.15);
+}
+
+.edit-summary-input {
+  width: 100%;
+  background: var(--wiki-bg);
+  border: 1px solid var(--wiki-border);
+  border-radius: 6px;
+  padding: 0.7rem 1rem;
+  color: var(--wiki-text);
+  box-shadow: none;
+}
+
+.edit-summary-input:focus {
+  outline: none;
+  border-color: var(--wiki-primary);
+  box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.15);
+}
+
+/* ── Profile Input Custom ── */
+.edit-name-form input {
+  background: var(--wiki-bg);
+  color: var(--wiki-text);
+  border: 1px solid var(--wiki-border);
+}
+
+/* ── Search Results ── */
+.search-result-item {
+  background: var(--wiki-card-bg);
+  border-radius: 8px;
+  padding: 1.5rem;
+  margin-bottom: 1rem;
+  box-shadow: none;
+  border: 1px solid var(--wiki-border);
+  transition: border-color 0.2s;
+}
+
+.search-result-item:hover {
+  transform: none;
+  border-color: var(--wiki-text-muted);
+  /* hover 시 테두리만 밝아짐 */
+}
+
+.search-result-item h4 a {
+  color: var(--wiki-primary);
+  font-weight: 700;
+}
+
+/* ── Revision List ── */
+.revision-item {
+  background: var(--wiki-card-bg);
+  margin-bottom: 0.5rem;
+  padding: 1rem;
+  border-radius: 8px;
+  box-shadow: none;
+  border: 1px solid var(--wiki-border);
+}
+
+/* ── Diff View ── */
+.diff-container {
+  text-align: left;
+  max-height: 500px;
+  overflow-y: auto;
+  border: 1px solid var(--wiki-border);
+  border-radius: 6px;
+  background: var(--wiki-bg);
+}
+
+.diff-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.diff-table tr.diff-add {
+  background: var(--wiki-diff-add-bg);
+  color: var(--wiki-diff-add-text);
+}
+
+.diff-table tr.diff-del {
+  background: var(--wiki-diff-del-bg);
+  color: var(--wiki-diff-del-text);
+}
+
+.diff-table tr.diff-same {
+  background: transparent;
+  color: var(--wiki-text-muted);
+}
+
+.diff-table td {
+  padding: 1px 8px;
+  border: none;
+  vertical-align: top;
+}
+
+.diff-table td.diff-prefix {
+  width: 20px;
+  text-align: center;
+  user-select: none;
+  color: var(--wiki-text-muted);
+  font-weight: 700;
+  opacity: 0.7;
+}
+
+.diff-table tr.diff-add td.diff-prefix {
+  color: var(--wiki-success);
+  opacity: 1;
+}
+
+.diff-table tr.diff-del td.diff-prefix {
+  color: var(--wiki-danger);
+  opacity: 1;
+}
+
+.diff-table td.diff-line {
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.diff-empty {
+  padding: 2rem;
+  text-align: center;
+  color: var(--wiki-text-muted);
+  font-style: italic;
+}
+
+/* ── Home Page / Welcome ── */
+.wiki-welcome h1 {
+  color: var(--wiki-text);
+  text-shadow: none;
+  /* Embossed Text 제거, 깔끔한 플랫 */
+  font-weight: 800;
+}
+
+.recent-page-card {
+  background: var(--wiki-card-bg);
+  border-radius: 8px;
+  padding: 1.25rem;
+  box-shadow: none;
+  border: 1px solid var(--wiki-border);
+  color: var(--wiki-text);
+  margin-bottom: 1rem;
+  transition: all 0.2s ease;
+}
+
+.recent-page-card:hover {
+  transform: translateY(-2px);
+  /* 미세한 떠오름 유지 */
+  border-color: var(--wiki-primary);
+}
+
+/* ── Badges & Alerts ── */
+.badge {
+  color: var(--wiki-primary) !important;
+  background-color: rgba(88, 166, 255, 0.1) !important;
+  /* 투명도 있는 배경 트렌드 */
+  box-shadow: none;
+  border: 1px solid rgba(88, 166, 255, 0.2) !important;
+  border-radius: 4px;
+  /* 더 각진 느낌 */
+  padding: 0.3em 0.6em;
+  font-weight: 600;
+}
+
+.badge.bg-secondary {
+  color: var(--wiki-text-muted) !important;
+  background-color: rgba(139, 148, 158, 0.1) !important;
+  border-color: rgba(139, 148, 158, 0.2) !important;
+}
+
+.badge.bg-danger {
+  color: var(--wiki-danger) !important;
+  background-color: rgba(248, 81, 73, 0.1) !important;
+  border-color: rgba(248, 81, 73, 0.2) !important;
+  box-shadow: none;
+}
+
+.alert {
+  background-color: var(--wiki-card-bg);
+  border: 1px solid var(--wiki-border);
+  border-radius: 8px;
+  box-shadow: none;
+  color: var(--wiki-text);
+}
+
+.alert-info {
+  border-left: 4px solid var(--wiki-primary);
+  background-color: rgba(88, 166, 255, 0.05);
+  /* 투명한 블루 배경 */
+}
+
+/* ── Mobile Optimization ── */
+@media (max-width: 991px) {
+  .wiki-layout {
+    flex-direction: column;
+    padding: 0;
+  }
+
+  .recent-changes-mobile {
+    padding: 0 0.5rem;
+  }
+}
+
+@media (max-width: 768px) {
+  .wiki-article {
+    padding: 1.2rem;
+    overflow-wrap: break-word;
+    word-break: break-word;
+  }
+
+  .navbar {
+    padding: 0.8rem 1rem;
+  }
+
+  .wiki-container {
+    padding: 0 0.5rem;
+  }
+
+  .recent-changes-mobile {
+    padding: 0;
+  }
+}
+
+/* ── Scrollbar Customization (Dark Theme) ── */
+::-webkit-scrollbar {
+  width: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--wiki-bg);
+}
+
+::-webkit-scrollbar-thumb {
+  background: #30363d;
+  border-radius: 5px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #484f58;
+}
+
+/* ── Dropdown Animation ── */
+.dropdown-menu {
+  display: block;
+  /* Force block to allow transition */
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-10px);
+  transition: opacity 0.2s ease, transform 0.2s ease, visibility 0.2s;
+  pointer-events: none;
+  /* Prevent clicking when hidden */
+}
+
+.dropdown-menu.show {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+/* ── Footnotes ── */
+.wiki-fn-ref a {
+  color: var(--wiki-primary);
+  font-weight: 700;
+  font-size: 0.75em;
+  text-decoration: none;
+  cursor: pointer;
+  transition: color 0.2s ease;
+}
+
+.wiki-fn-ref a:hover {
+  color: var(--wiki-accent);
+  text-decoration: underline;
+}
+
+.wiki-footnotes {
+  margin-top: 2rem;
+  padding-top: 0;
+}
+
+.wiki-footnotes hr {
+  border-color: var(--wiki-border);
+  margin-bottom: 1rem;
+}
+
+.wiki-footnotes h4 {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--wiki-text-muted);
+  margin-bottom: 0.75rem;
+}
+
+.wiki-footnotes h4 i {
+  color: var(--wiki-primary);
+}
+
+.wiki-footnotes ol {
+  padding-left: 1.5rem;
+  margin: 0;
+}
+
+.wiki-footnotes ol li {
+  font-size: 0.9rem;
+  color: var(--wiki-text);
+  padding: 0.3rem 0;
+  line-height: 1.6;
+  border-bottom: 1px solid var(--wiki-border);
+  scroll-margin-top: 80px;
+}
+
+.wiki-footnotes ol li:last-child {
+  border-bottom: none;
+}
+
+.wiki-fn-back {
+  color: var(--wiki-primary);
+  text-decoration: none;
+  font-size: 0.85em;
+  margin-right: 0.3rem;
+  cursor: pointer;
+  transition: color 0.2s ease;
+}
+
+.wiki-fn-back:hover {
+  color: var(--wiki-accent);
+}
+
+/* Highlight animation when navigating to a footnote */
+.wiki-footnotes ol li:target {
+  background-color: rgba(88, 166, 255, 0.1);
+  border-radius: 4px;
+  transition: background-color 0.3s ease;
+}
+
+/* ── Discussion UI ── */
+.discussion-item {
+  display: block;
+  padding: 1rem 1.2rem;
+  border: 1px solid var(--wiki-border);
+  border-radius: 8px;
+  margin-bottom: 0.5rem;
+  text-decoration: none !important;
+  color: var(--wiki-text);
+  background: var(--wiki-bg);
+  transition: border-color 0.2s ease, background 0.15s ease;
+}
+
+.discussion-item:hover {
+  border-color: var(--wiki-primary);
+  background: var(--wiki-card-bg);
+  color: var(--wiki-text);
+}
+
+.discussion-item-title {
+  font-weight: 600;
+  font-size: 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.3rem;
+}
+
+.discussion-item-meta {
+  font-size: 0.8rem;
+  color: var(--wiki-text-muted);
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.discussion-item-meta i {
+  margin-right: 0.2rem;
+}
+
+/* Discussion Comments */
+.discussion-comment {
+  background: var(--wiki-bg);
+  border: 1px solid var(--wiki-border);
+  border-radius: 8px;
+  padding: 1rem 1.2rem;
+  margin-bottom: 0.75rem;
+  transition: border-color 0.2s ease;
+}
+
+.discussion-comment:hover {
+  border-color: var(--wiki-text-muted);
+}
+
+.discussion-comment-deleted {
+  opacity: 0.5;
+  background: var(--wiki-card-bg);
+}
+
+.discussion-comment-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.discussion-comment-author {
+  font-weight: 600;
+  font-size: 0.9rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.discussion-comment-avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 1px solid var(--wiki-border);
+}
+
+.discussion-comment-body {
+  font-size: 0.95rem;
+  line-height: 1.7;
+  margin-bottom: 0.5rem;
+  white-space: pre-line;
+}
+
+.discussion-comment-actions {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.discussion-comment-actions .btn-link {
+  font-size: 0.8rem;
+  padding: 0.15rem 0.4rem;
+  text-decoration: none;
+}
+
+/* Discussion Quote (reply quoting) */
+.discussion-quote {
+  border-left: 3px solid var(--wiki-primary);
+  background: var(--wiki-card-bg);
+  border-radius: 0 6px 6px 0;
+  padding: 0.6rem 1rem;
+  margin-bottom: 0.5rem;
+  font-size: 0.85rem;
+}
+
+.discussion-quote-author {
+  font-weight: 600;
+  color: var(--wiki-primary);
+  margin-bottom: 0.2rem;
+  font-size: 0.8rem;
+}
+
+.discussion-quote-author i {
+  margin-right: 0.2rem;
+}
+
+.discussion-quote-text {
+  color: var(--wiki-text-muted);
+  white-space: pre-line;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+
+/* Comment target highlight */
+.discussion-comment:target {
+  border-color: var(--wiki-primary);
+  box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.15);
+}
+
+/* ── Bootstrap list-group Override (Dark Mode) ── */
+.list-group-item {
+  background-color: var(--wiki-bg);
+  color: var(--wiki-text);
+  border-color: var(--wiki-border);
+}
+
+.list-group-item-action {
+  color: var(--wiki-text);
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.list-group-item-action:hover,
+.list-group-item-action:focus {
+  background-color: var(--wiki-card-bg);
+  color: var(--wiki-text);
+  border-color: var(--wiki-primary);
+}
+
+.list-group-item-action:active {
+  background-color: var(--wiki-card-bg);
+  color: var(--wiki-text);
+}
+
+.list-group-item .fw-bold {
+  color: var(--wiki-text);
+}
+
+.list-group-item small.text-muted {
+  color: var(--wiki-text-muted) !important;
+}
+
+/* ── Backlinks Section ── */
+.backlinks-section {
+  margin-top: 2rem;
+  padding-top: 1rem;
+}
+
+.backlinks-section h5 {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--wiki-text-muted);
+  margin-bottom: 0.75rem;
+}
+
+.backlinks-section h5 i {
+  color: var(--wiki-primary);
+}
+
+/* Category list heading inside article (for inline category lists) */
+.category-list h4 {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--wiki-text-muted);
+}
+
+.category-list h4 i {
+  color: var(--wiki-primary);
+}
+
+/* ── Folding Block (펼치기/접기) ── */
+.wiki-fold {
+  background-color: var(--wiki-card-bg);
+  border-color: var(--wiki-border) !important;
+}
+
+.wiki-fold>summary {
+  color: var(--wiki-text);
+  list-style: none;
+  user-select: none;
+  cursor: pointer;
+}
+
+.wiki-fold>summary::-webkit-details-marker {
+  display: none;
+}
+
+.wiki-fold>summary::before {
+  content: '▶ ';
+  font-size: 0.75em;
+  margin-right: 0.3em;
+  transition: transform 0.2s;
+  display: inline-block;
+}
+
+.wiki-fold[open]>summary::before {
+  transform: rotate(90deg);
+}
+
+.wiki-fold-content {
+  background-color: var(--wiki-bg);
+  color: var(--wiki-text);
+  border-color: var(--wiki-border) !important;
+}
+
+/* ── 펼치기/접기 (Folding) 내용물 애니메이션 ── */
+/* 기본 폴백: 열릴 때 부드럽게 나타나는 애니메이션 (모든 브라우저 지원) */
+.wiki-fold[open] .wiki-fold-content {
+  animation: fold-show 0.3s ease-out;
+}
+
+@keyframes fold-show {
+  0% {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* 최신 브라우저(Chrome 129+ 등)용 네이티브 펼치고 접기 양방향 애니메이션 지원 */
+@supports (interpolate-size: allow-keywords) {
+  :root {
+    interpolate-size: allow-keywords;
+  }
+
+  .wiki-fold::details-content {
+    transition: height 0.3s ease-out, opacity 0.3s ease-out, content-visibility 0.3s allow-discrete;
+    height: 0;
+    opacity: 0;
+    overflow: hidden;
+  }
+
+  .wiki-fold[open]::details-content {
+    height: auto;
+    opacity: 1;
+  }
+
+  .wiki-fold[open] .wiki-fold-content {
+    /* Fallback 애니메이션 무효화 */
+    animation: none;
+  }
+}
+
+/* ── Notification System ── */
+.notification-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 10px;
+  height: 10px;
+  background: var(--wiki-primary);
+  border-radius: 50%;
+  border: 2px solid var(--wiki-bg);
+}
+
+.notification-panel {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  width: 360px;
+  max-height: 480px;
+  background: var(--wiki-card-bg);
+  border: 1px solid var(--wiki-border);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  z-index: 9999;
+  overflow: hidden;
+}
+
+@media (max-width: 576px) {
+  .notification-panel {
+    position: fixed;
+    top: 60px;
+    right: 8px;
+    left: 8px;
+    width: auto;
+  }
+}
+
+.notification-panel-header {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--wiki-border);
+  color: var(--wiki-text);
+  font-size: 0.9rem;
+}
+
+.notification-panel-body {
+  overflow-y: auto;
+  max-height: 420px;
+}
+
+.notification-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--wiki-border);
+  transition: background 0.15s;
+  cursor: pointer;
+  text-decoration: none;
+  color: var(--wiki-text);
+}
+
+.notification-item:hover {
+  background: var(--wiki-toc-bg);
+  color: var(--wiki-text);
+}
+
+.notification-item:last-child {
+  border-bottom: none;
+}
+
+.notification-item .notif-icon {
+  font-size: 1.3rem;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.notification-item .notif-icon.type-discussion_comment {
+  color: var(--wiki-primary);
+}
+
+.notification-item .notif-icon.type-banned {
+  color: var(--wiki-danger);
+}
+
+.notification-item .notif-icon.type-message {
+  color: var(--wiki-accent);
+}
+
+.notification-item .notif-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.notification-item .notif-text {
+  font-size: 0.85rem;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.notification-item .notif-time {
+  font-size: 0.75rem;
+  color: var(--wiki-text-muted);
+  margin-top: 2px;
+}
+
+.notification-item .notif-delete {
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: var(--wiki-text-muted);
+  padding: 2px 4px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  transition: all 0.15s;
+}
+
+.notification-item .notif-delete:hover {
+  color: var(--wiki-danger);
+  background: rgba(248, 81, 73, 0.1);
+}
+
+.notification-empty {
+  padding: 2rem;
+  text-align: center;
+  color: var(--wiki-text-muted);
+  font-size: 0.85rem;
+}
+
+/* ── 푸터 ── */
+.wiki-footer {
+  border-top: 1px solid var(--wiki-border);
+  background-color: var(--wiki-card-bg);
+  color: var(--wiki-text-muted);
+  font-size: 0.85rem;
+  padding: 1rem 1.5rem;
+  margin-top: auto;
+}
+
+.wiki-footer-inner {
+  max-width: 1400px;
+  margin: 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem 1rem;
+}
+
+.footer-copyright {
+  flex-shrink: 0;
+}
+
+.footer-custom-items {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem 0.75rem;
+}
+
+.footer-link {
+  color: var(--wiki-text-muted);
+  text-decoration: none;
+  transition: color 0.15s;
+}
+
+.footer-link:hover {
+  color: var(--wiki-primary);
+  text-decoration: underline;
+}
+
+.footer-text {
+  color: var(--wiki-text-muted);
+}
+
+.footer-divider {
+  color: var(--wiki-border);
+  user-select: none;
+}
