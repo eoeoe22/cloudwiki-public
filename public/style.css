@@ -971,6 +971,39 @@ div:where(.swal2-container) .swal2-html-container {
   border-color: var(--wiki-danger);
 }
 
+/* ── Bootstrap Modal Dark Mode ── */
+.modal-content {
+  background-color: var(--wiki-card-bg);
+  color: var(--wiki-text);
+  border-color: var(--wiki-border);
+}
+
+.modal-header {
+  background-color: var(--wiki-toc-bg);
+  border-bottom-color: var(--wiki-border);
+  color: var(--wiki-text);
+}
+
+.modal-body {
+  background-color: var(--wiki-card-bg);
+  color: var(--wiki-text);
+}
+
+.modal-footer {
+  background-color: var(--wiki-toc-bg);
+  border-top-color: var(--wiki-border);
+}
+
+.modal-title {
+  color: var(--wiki-text);
+}
+
+@media (prefers-color-scheme: dark) {
+  .btn-close {
+    filter: invert(1) grayscale(100%) brightness(200%);
+  }
+}
+
 /* ── Forms ── */
 .form-control {
   background: var(--wiki-bg);
