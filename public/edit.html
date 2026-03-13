@@ -1000,6 +1000,7 @@
                 theme: isDarkMode ? 'dark' : 'light',
                 usageStatistics: false,
                 hideModeSwitch: true,
+                scrollSync: false,
                 toolbarItems: [
                     ['heading', 'bold', 'italic', 'strike'],
                     ['hr', 'quote'],
@@ -1013,8 +1014,7 @@
                         { name: 'footnote', tooltip: '각주 삽입', el: footnoteBtn },
                         { name: 'imageUpload', tooltip: '이미지 업로드', el: imageUploadBtn }
                     ],
-                    ['code', 'codeblock'],
-                    ['scrollSync']
+                    ['code', 'codeblock']
                 ],
                 hooks: {
                     addImageBlobHook: async (blob, callback) => {

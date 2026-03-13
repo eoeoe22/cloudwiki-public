@@ -9,6 +9,7 @@
 
   --wiki-border: #d0d7de;
   --wiki-border-focus: #0969da;
+  --wiki-hr-color: #8c959f;
 
   --wiki-primary: #0969da;
   --wiki-primary-hover: #0550ae;
@@ -46,6 +47,7 @@
     /* 📏 Hairline Borders (뉴모피즘의 그림자를 대체할 1px 윤곽선) */
     --wiki-border: #30363d;
     --wiki-border-focus: #58a6ff;
+    --wiki-hr-color: #484f58;
 
     /* 💎 Accents (다크모드에 맞춰 채도와 명도 조정) */
     --wiki-primary: #58a6ff;
@@ -919,6 +921,14 @@ div:where(.swal2-container) .swal2-html-container {
   color: var(--wiki-primary-hover);
   text-decoration: underline;
   /* 글로우 효과 대신 정석적인 밑줄 */
+}
+
+/* 마크다운 구분선 (---) */
+.wiki-content hr {
+  border: none;
+  border-top: 2px solid var(--wiki-hr-color);
+  margin: 2rem 0;
+  opacity: 1;
 }
 
 /* ── Buttons (Flat & Professional) ── */
