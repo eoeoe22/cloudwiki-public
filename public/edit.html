@@ -343,6 +343,8 @@
             border: 2px solid transparent;
             transition: border-color 0.15s, transform 0.1s;
             flex-shrink: 0;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
         }
 
         #color-autocomplete .color-swatch:hover,
@@ -792,6 +794,14 @@
                     e.stopPropagation();
                     const idx = parseInt(el.dataset.index);
                     selectColorSwatch(idx);
+                    applyColorAutocomplete();
+                });
+                el.addEventListener('touchend', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const idx = parseInt(el.dataset.index);
+                    selectColorSwatch(idx);
+                    applyColorAutocomplete();
                 });
             });
         }
