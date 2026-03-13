@@ -123,17 +123,17 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                     {
                         name: 'get_toc',
                         description: '위키 문서의 목차(section)만 불러옵니다. 긴 문서를 전부 읽기보다 get_toc 도구로 목차를 추출한 뒤 read_section 도구를 이용해 부분적으로 읽는 것을 권장합니다.',
-                        inputSchema: { type: 'object', properties: { slug: { type: 'string', description: '문서 제목 (slug)' } }, required: ['slug'] }
+                        inputSchema: { type: 'object', properties: { title: { type: 'string', description: '문서 제목' } }, required: ['title'] }
                     },
                     {
                         name: 'read_document',
                         description: '위키 문서의 전체 본문을 읽어옵니다.',
-                        inputSchema: { type: 'object', properties: { slug: { type: 'string', description: '문서 제목 (slug)' } }, required: ['slug'] }
+                        inputSchema: { type: 'object', properties: { title: { type: 'string', description: '문서 제목' } }, required: ['title'] }
                     },
                     {
                         name: 'read_section',
                         description: '위키 문서에서 특정 목차의 내용만 읽어옵니다.',
-                        inputSchema: { type: 'object', properties: { slug: { type: 'string', description: '문서 제목' }, section_name: { type: 'string', description: '목차 명' } }, required: ['slug', 'section_name'] }
+                        inputSchema: { type: 'object', properties: { title: { type: 'string', description: '문서 제목' }, section_name: { type: 'string', description: '목차 명' } }, required: ['title', 'section_name'] }
                     }
                 ]
             }
@@ -145,23 +145,21 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
         const args = params?.arguments || {};
         try {
             if (toolName === 'search_title') {
-                const results = await db.prepare('SELECT slug, title FROM pages WHERE title LIKE ? AND deleted_at IS NULL AND is_private = 0 LIMIT 15')
+                const results = await db.prepare('SELECT title FROM pages WHERE title LIKE ? AND deleted_at IS NULL AND is_private = 0 LIMIT 15')
                     .bind(`%${args.query}%`).all();
                 return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(results.results, null, 2) }] } };
             }
             if (toolName === 'search_fts') {
-                const query = `SELECT p.slug, p.title, p.content, snippet(pages_fts, -1, '<b>', '</b>', '...', 20) as snippet FROM pages_fts f JOIN pages p ON f.rowid = p.id WHERE pages_fts MATCH ? AND p.deleted_at IS NULL AND p.is_private = 0 LIMIT 10`;
-                const results = await db.prepare(query).bind(`"${args.query}"*`).all<{ slug: string; title: string; content: string; snippet: string }>();
-                const output = results.results.map(({ slug, title, content, snippet }) => ({
-                    slug,
+                const query = `SELECT p.title, p.content, snippet(pages_fts, -1, '<b>', '</b>', '...', 20) as snippet FROM pages_fts f JOIN pages p ON f.rowid = p.id WHERE pages_fts MATCH ? AND p.deleted_at IS NULL AND p.is_private = 0 LIMIT 10`;
+                const results = await db.prepare(query).bind(`"${args.query}"*`).all<{ title: string; content: string; snippet: string }>();
+                const output = results.results.map(({ title, content, snippet }) => ({
                     title,
-                    snippet,
                     section: findSectionForSnippet(content, snippet),
                 }));
                 return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(output, null, 2) }] } };
             }
             if (toolName === 'get_toc' || toolName === 'read_document' || toolName === 'read_section') {
-                const slug = normalizeSlug(args.slug || '');
+                const slug = normalizeSlug(args.title || '');
                 const page = await db.prepare('SELECT content FROM pages WHERE slug = ? AND deleted_at IS NULL AND is_private = 0').bind(slug).first<{content: string}>();
                 if (!page) return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: 'Error: 문서를 찾을 수 없거나 비공개/삭제 상태입니다.' }], isError: true } };
                 if (toolName === 'get_toc') return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: extractTOC(page.content) || '목차가 존재하지 않습니다.' }] } };
