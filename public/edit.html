@@ -300,6 +300,121 @@
             font-size: 0.85rem;
             color: var(--wiki-text-muted);
         }
+
+        /* ── 색상 선택 인라인 자동완성 드롭다운 ── */
+        #color-autocomplete {
+            position: absolute;
+            z-index: 2100;
+            background: var(--wiki-card-bg);
+            border: 1px solid var(--wiki-border);
+            border-radius: 8px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.15);
+            width: 280px;
+            display: none;
+            overflow: hidden;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        #color-autocomplete .color-ac-header {
+            padding: 6px 10px;
+            border-bottom: 1px solid var(--wiki-border);
+            font-size: 0.8rem;
+            color: var(--wiki-text-muted);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            background: var(--wiki-toc-bg);
+        }
+
+        #color-autocomplete .color-ac-swatches {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+            padding: 8px;
+            border-bottom: 1px solid var(--wiki-border);
+        }
+
+        #color-autocomplete .color-swatch {
+            width: 28px;
+            height: 28px;
+            border-radius: 4px;
+            cursor: pointer;
+            border: 2px solid transparent;
+            transition: border-color 0.15s, transform 0.1s;
+            flex-shrink: 0;
+        }
+
+        #color-autocomplete .color-swatch:hover,
+        #color-autocomplete .color-swatch.active {
+            border-color: var(--wiki-primary);
+            transform: scale(1.15);
+        }
+
+        #color-autocomplete .color-palette-area {
+            padding: 8px;
+        }
+
+        #color-autocomplete .color-palette-canvas {
+            width: 100%;
+            height: 120px;
+            border-radius: 4px;
+            cursor: crosshair;
+            border: 1px solid var(--wiki-border);
+            touch-action: none;
+        }
+
+        #color-autocomplete .color-hue-slider {
+            width: 100%;
+            height: 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            border: 1px solid var(--wiki-border);
+            margin-top: 6px;
+            touch-action: none;
+        }
+
+        #color-autocomplete .color-preview-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 6px;
+        }
+
+        #color-autocomplete .color-preview-box {
+            width: 32px;
+            height: 32px;
+            border-radius: 4px;
+            border: 1px solid var(--wiki-border);
+            flex-shrink: 0;
+        }
+
+        #color-autocomplete .color-hex-input {
+            flex: 1;
+            font-size: 0.85rem;
+            padding: 4px 8px;
+            border: 1px solid var(--wiki-border);
+            border-radius: 4px;
+            background: var(--wiki-bg);
+            color: var(--wiki-text);
+            font-family: monospace;
+        }
+
+        #color-autocomplete .color-apply-btn {
+            padding: 4px 12px;
+            font-size: 0.8rem;
+            border: none;
+            border-radius: 4px;
+            background: var(--wiki-primary);
+            color: #fff;
+            cursor: pointer;
+            font-weight: 600;
+            transition: opacity 0.15s;
+        }
+
+        #color-autocomplete .color-apply-btn:hover {
+            opacity: 0.85;
+        }
     </style>
 </head>
 
@@ -318,6 +433,24 @@
         <div id="iconAcEmpty" class="icon-ac-empty" style="display:none;">결과 없음</div>
         <div id="iconAcLoading" class="icon-ac-loading" style="display:none;">
             <span class="spinner-border spinner-border-sm text-primary" role="status"></span> 로딩 중...
+        </div>
+    </div>
+
+    <!-- Color Picker Inline Autocomplete Dropdown -->
+    <div id="color-autocomplete">
+        <div class="color-ac-header">
+            <i class="mdi mdi-palette"></i>
+            <span id="colorAcTypeLabel">색상 선택</span>
+        </div>
+        <div id="colorAcSwatches" class="color-ac-swatches"></div>
+        <div class="color-palette-area">
+            <canvas id="colorPaletteCanvas" class="color-palette-canvas" width="264" height="120"></canvas>
+            <canvas id="colorHueSlider" class="color-hue-slider" width="264" height="16"></canvas>
+            <div class="color-preview-row">
+                <div id="colorPreviewBox" class="color-preview-box"></div>
+                <input type="text" id="colorHexInput" class="color-hex-input" maxlength="7" placeholder="#000000">
+                <button type="button" id="colorApplyBtn" class="color-apply-btn">적용</button>
+            </div>
         </div>
     </div>
 
@@ -520,6 +653,369 @@
         let iconAcDebounceTimer = null;
         const iconAcDiv = document.getElementById('icon-autocomplete');
         const ICON_AC_COLS = 5;      // 인라인 자동완성 그리드 열 수
+
+        // ── 색상 피커 인라인 자동완성 변수 ──
+        let colorAcVisible = false;
+        let colorAcTrigger = 'bg';   // 'bg' or 'color'
+        let colorAcHue = 0;
+        let colorAcSaturation = 1;
+        let colorAcBrightness = 1;
+        let colorAcSelectedSwatchIndex = -1;
+        let colorAcDragging = null; // 'palette' or 'hue' or null
+        const colorAcDiv = document.getElementById('color-autocomplete');
+        const COLOR_SWATCHES = [
+            '#000000', '#FFFFFF', '#FF0000', '#FF8000', '#FFFF00',
+            '#00FF00', '#00FFFF', '#0080FF', '#0000FF', '#8000FF',
+            '#FF00FF', '#FF0080', '#808080', '#C0C0C0', '#800000',
+            '#808000', '#008000', '#008080', '#000080', '#800080'
+        ];
+
+        // ── 색상 유틸리티 함수 ──
+        function hsvToHex(h, s, v) {
+            let r, g, b;
+            const i = Math.floor(h / 60) % 6;
+            const f = h / 60 - Math.floor(h / 60);
+            const p = v * (1 - s);
+            const q = v * (1 - f * s);
+            const t = v * (1 - (1 - f) * s);
+            switch (i) {
+                case 0: r = v; g = t; b = p; break;
+                case 1: r = q; g = v; b = p; break;
+                case 2: r = p; g = v; b = t; break;
+                case 3: r = p; g = q; b = v; break;
+                case 4: r = t; g = p; b = v; break;
+                case 5: r = v; g = p; b = q; break;
+            }
+            const toHex = (c) => {
+                const hex = Math.round(c * 255).toString(16);
+                return hex.length === 1 ? '0' + hex : hex;
+            };
+            return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+        }
+
+        function hexToHsv(hex) {
+            hex = hex.replace('#', '');
+            const r = parseInt(hex.substring(0, 2), 16) / 255;
+            const g = parseInt(hex.substring(2, 4), 16) / 255;
+            const b = parseInt(hex.substring(4, 6), 16) / 255;
+            const max = Math.max(r, g, b), min = Math.min(r, g, b);
+            const d = max - min;
+            let h = 0, s = max === 0 ? 0 : d / max, v = max;
+            if (d !== 0) {
+                switch (max) {
+                    case r: h = ((g - b) / d + (g < b ? 6 : 0)) * 60; break;
+                    case g: h = ((b - r) / d + 2) * 60; break;
+                    case b: h = ((r - g) / d + 4) * 60; break;
+                }
+            }
+            return { h, s, v };
+        }
+
+        // ── 색상 팔레트 캔버스 그리기 ──
+        function drawColorPalette() {
+            const canvas = document.getElementById('colorPaletteCanvas');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            const w = canvas.width, h = canvas.height;
+
+            // 배경: 왼→오 = 흰색→순색 (채도), 위→아래 = 밝음→검정 (명도)
+            for (let x = 0; x < w; x++) {
+                const s = x / w;
+                for (let y = 0; y < h; y++) {
+                    const v = 1 - y / h;
+                    ctx.fillStyle = hsvToHex(colorAcHue, s, v);
+                    ctx.fillRect(x, y, 1, 1);
+                }
+            }
+
+            // 선택 위치 표시
+            const cx = colorAcSaturation * w;
+            const cy = (1 - colorAcBrightness) * h;
+            ctx.beginPath();
+            ctx.arc(cx, cy, 6, 0, Math.PI * 2);
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.arc(cx, cy, 7, 0, Math.PI * 2);
+            ctx.strokeStyle = '#000';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+        }
+
+        function drawHueSlider() {
+            const canvas = document.getElementById('colorHueSlider');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            const w = canvas.width, h = canvas.height;
+
+            const gradient = ctx.createLinearGradient(0, 0, w, 0);
+            for (let i = 0; i <= 6; i++) {
+                gradient.addColorStop(i / 6, hsvToHex(i * 60, 1, 1));
+            }
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, w, h);
+
+            // 선택 위치 표시
+            const cx = (colorAcHue / 360) * w;
+            ctx.beginPath();
+            ctx.rect(cx - 3, 0, 6, h);
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.rect(cx - 4, -1, 8, h + 2);
+            ctx.strokeStyle = '#000';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+        }
+
+        function updateColorPreview() {
+            const hex = hsvToHex(colorAcHue, colorAcSaturation, colorAcBrightness);
+            const previewBox = document.getElementById('colorPreviewBox');
+            const hexInput = document.getElementById('colorHexInput');
+            if (previewBox) previewBox.style.backgroundColor = hex;
+            if (hexInput) hexInput.value = hex.toUpperCase();
+        }
+
+        // ── 색상 스와치 렌더링 ──
+        function renderColorSwatches() {
+            const container = document.getElementById('colorAcSwatches');
+            if (!container) return;
+            container.innerHTML = COLOR_SWATCHES.map((color, i) =>
+                `<div class="color-swatch${i === colorAcSelectedSwatchIndex ? ' active' : ''}" data-index="${i}" style="background:${color};" title="${color}"></div>`
+            ).join('');
+
+            container.querySelectorAll('.color-swatch').forEach(el => {
+                el.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const idx = parseInt(el.dataset.index);
+                    selectColorSwatch(idx);
+                });
+            });
+        }
+
+        function selectColorSwatch(index) {
+            colorAcSelectedSwatchIndex = index;
+            const hex = COLOR_SWATCHES[index];
+            const hsv = hexToHsv(hex);
+            colorAcHue = hsv.h;
+            colorAcSaturation = hsv.s;
+            colorAcBrightness = hsv.v;
+            drawColorPalette();
+            drawHueSlider();
+            updateColorPreview();
+            renderColorSwatches();
+        }
+
+        // ── 캔버스 이벤트 처리 (마우스 + 터치) ──
+        function getCanvasPos(canvas, e) {
+            const rect = canvas.getBoundingClientRect();
+            let clientX, clientY;
+            if (e.touches && e.touches.length > 0) {
+                clientX = e.touches[0].clientX;
+                clientY = e.touches[0].clientY;
+            } else {
+                clientX = e.clientX;
+                clientY = e.clientY;
+            }
+            return {
+                x: Math.max(0, Math.min(1, (clientX - rect.left) / rect.width)),
+                y: Math.max(0, Math.min(1, (clientY - rect.top) / rect.height))
+            };
+        }
+
+        function initColorPickerCanvasEvents() {
+            const paletteCanvas = document.getElementById('colorPaletteCanvas');
+            const hueCanvas = document.getElementById('colorHueSlider');
+            if (!paletteCanvas || !hueCanvas) return;
+
+            function handlePaletteInteraction(e) {
+                const pos = getCanvasPos(paletteCanvas, e);
+                colorAcSaturation = pos.x;
+                colorAcBrightness = 1 - pos.y;
+                colorAcSelectedSwatchIndex = -1;
+                drawColorPalette();
+                updateColorPreview();
+                renderColorSwatches();
+            }
+
+            function handleHueInteraction(e) {
+                const pos = getCanvasPos(hueCanvas, e);
+                colorAcHue = pos.x * 360;
+                colorAcSelectedSwatchIndex = -1;
+                drawColorPalette();
+                drawHueSlider();
+                updateColorPreview();
+                renderColorSwatches();
+            }
+
+            // 마우스 이벤트
+            paletteCanvas.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                colorAcDragging = 'palette';
+                handlePaletteInteraction(e);
+            });
+            hueCanvas.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                colorAcDragging = 'hue';
+                handleHueInteraction(e);
+            });
+            document.addEventListener('mousemove', (e) => {
+                if (colorAcDragging === 'palette') handlePaletteInteraction(e);
+                else if (colorAcDragging === 'hue') handleHueInteraction(e);
+            });
+            document.addEventListener('mouseup', () => { colorAcDragging = null; });
+
+            // 터치 이벤트
+            paletteCanvas.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                colorAcDragging = 'palette';
+                handlePaletteInteraction(e);
+            }, { passive: false });
+            hueCanvas.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                colorAcDragging = 'hue';
+                handleHueInteraction(e);
+            }, { passive: false });
+            document.addEventListener('touchmove', (e) => {
+                if (colorAcDragging === 'palette') { e.preventDefault(); handlePaletteInteraction(e); }
+                else if (colorAcDragging === 'hue') { e.preventDefault(); handleHueInteraction(e); }
+            }, { passive: false });
+            document.addEventListener('touchend', () => { colorAcDragging = null; });
+
+            // Hex 입력 직접 수정
+            const hexInput = document.getElementById('colorHexInput');
+            if (hexInput) {
+                hexInput.addEventListener('input', () => {
+                    const val = hexInput.value.trim();
+                    if (/^#[0-9A-Fa-f]{6}$/.test(val)) {
+                        const hsv = hexToHsv(val);
+                        colorAcHue = hsv.h;
+                        colorAcSaturation = hsv.s;
+                        colorAcBrightness = hsv.v;
+                        colorAcSelectedSwatchIndex = -1;
+                        drawColorPalette();
+                        drawHueSlider();
+                        updateColorPreview();
+                        renderColorSwatches();
+                    }
+                });
+                hexInput.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        applyColorAutocomplete();
+                    }
+                });
+            }
+
+            // 적용 버튼
+            const applyBtn = document.getElementById('colorApplyBtn');
+            if (applyBtn) {
+                applyBtn.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    applyColorAutocomplete();
+                });
+            }
+        }
+
+        // ── 색상 자동완성: 숨기기 ──
+        function hideColorAutocomplete() {
+            colorAcVisible = false;
+            colorAcDragging = null;
+            colorAcSelectedSwatchIndex = -1;
+            if (colorAcDiv) colorAcDiv.style.display = 'none';
+        }
+
+        // ── 색상 자동완성: 표시 ──
+        function showColorAutocomplete(query, type) {
+            colorAcTrigger = type;
+            colorAcVisible = true;
+
+            const typeLabelEl = document.getElementById('colorAcTypeLabel');
+            if (typeLabelEl) {
+                typeLabelEl.textContent = type === 'bg' ? '배경색 선택' : '글자색 선택';
+            }
+
+            // 커서 위치에 드롭다운 표시
+            if (colorAcDiv) {
+                let positioned = false;
+                const sel = window.getSelection();
+                if (sel && sel.rangeCount > 0) {
+                    const range = sel.getRangeAt(0).cloneRange();
+                    range.collapse(true);
+                    const rect = range.getBoundingClientRect();
+                    if (rect.height > 0) {
+                        let left = rect.left + window.scrollX;
+                        let top = rect.bottom + window.scrollY + 4;
+                        if (left + 290 > window.innerWidth) left = window.innerWidth - 295;
+                        if (left < 0) left = 4;
+                        colorAcDiv.style.left = `${left}px`;
+                        colorAcDiv.style.top = `${top}px`;
+                        colorAcDiv.style.display = 'block';
+                        positioned = true;
+                    }
+                }
+                if (!positioned) {
+                    const editorEl = document.querySelector('#editor');
+                    if (editorEl) {
+                        const rect = editorEl.getBoundingClientRect();
+                        colorAcDiv.style.left = `${rect.left + 50 + window.scrollX}px`;
+                        colorAcDiv.style.top = `${rect.top + 80 + window.scrollY}px`;
+                        colorAcDiv.style.display = 'block';
+                    }
+                }
+            }
+
+            // 쿼리에 이미 색상값이 있으면 반영
+            if (query && /^#[0-9A-Fa-f]{6}$/.test(query.trim())) {
+                const hsv = hexToHsv(query.trim());
+                colorAcHue = hsv.h;
+                colorAcSaturation = hsv.s;
+                colorAcBrightness = hsv.v;
+                colorAcSelectedSwatchIndex = -1;
+            }
+
+            renderColorSwatches();
+            drawColorPalette();
+            drawHueSlider();
+            updateColorPreview();
+        }
+
+        // ── 색상 자동완성: 적용 ──
+        function applyColorAutocomplete() {
+            if (!editor) { hideColorAutocomplete(); return; }
+
+            const hex = hsvToHex(colorAcHue, colorAcSaturation, colorAcBrightness).toUpperCase();
+            const selection = editor.getSelection();
+            if (!selection) { hideColorAutocomplete(); return; }
+
+            const [from] = selection;
+            const line = from[0];
+            const col = from[1];
+
+            const md = editor.getMarkdown();
+            const lines = md.split('\n');
+            const lineText = lines[line - 1] || '';
+            const textBefore = lineText.substring(0, col - 1);
+
+            const prefix = colorAcTrigger === 'bg' ? '{bg:' : '{color:';
+            const lastTriggerIndex = textBefore.lastIndexOf(prefix);
+
+            if (lastTriggerIndex !== -1) {
+                editor.setSelection([line, lastTriggerIndex + 1], [line, col]);
+                editor.insertText(`${prefix}${hex}}`);
+            }
+
+            hideColorAutocomplete();
+            editor.focus();
+        }
+
+        // 캔버스 이벤트 초기화
+        initColorPickerCanvasEvents();
 
         // ── Bootstrap Icons 목록 로딩 (lazy, cached) ──
         async function loadBiIcons() {
@@ -974,6 +1470,10 @@
                 editor.insertText('[* 각주 내용]');
             });
 
+            const foldingBtn = createCustomButton('<i class="mdi mdi-form-dropdown" style="font-size:16px"></i>', '펼치기 접기 삽입', () => {
+                editor.insertText('[+ 펼치기/접기 제목]\n여기에 숨겨진 내용이 들어갑니다.\n[-]');
+            });
+
             // 커스텀 이미지 업로드 버튼
             const imageUploadBtn = createCustomButton('<i class="mdi mdi-image-plus" style="font-size:16px"></i>', '이미지 업로드', () => {
                 const fileInput = document.createElement('input');
@@ -1012,6 +1512,7 @@
                         { name: 'mdiIcon', tooltip: 'MDI 아이콘', el: mdiBtn },
                         { name: 'biIcon', tooltip: 'Bootstrap 아이콘', el: biBtn },
                         { name: 'footnote', tooltip: '각주 삽입', el: footnoteBtn },
+                        { name: 'folding', tooltip: '펼치기 접기 삽입', el: foldingBtn },
                         { name: 'imageUpload', tooltip: '이미지 업로드', el: imageUploadBtn }
                     ],
                     ['code', 'codeblock']
@@ -1043,6 +1544,33 @@
                 }, 300);
             });
             setTimeout(updateCustomPreview, 300);
+
+            // ── 스크롤 동기화 강제 제거 ──
+            // Toast UI Editor가 내부적으로 스크롤 동기화를 수행하므로,
+            // 에디터/프리뷰 패널의 scroll 이벤트를 가로채서 동기화 차단
+            setTimeout(() => {
+                const mdEditor = document.querySelector('#editor .toastui-editor-md-editor .ProseMirror');
+                const mdPreview = document.querySelector('#editor .toastui-editor-md-preview');
+                if (mdEditor) {
+                    mdEditor.addEventListener('scroll', (e) => { e.stopPropagation(); }, true);
+                }
+                if (mdPreview) {
+                    mdPreview.addEventListener('scroll', (e) => { e.stopPropagation(); }, true);
+                }
+                // 내부 scrollSync 객체가 있으면 비활성화
+                try {
+                    const editorInst = editor;
+                    if (editorInst.scrollSync) {
+                        editorInst.scrollSync.destroy && editorInst.scrollSync.destroy();
+                        editorInst.scrollSync = null;
+                    }
+                    // eventEmitter에서 scroll 관련 이벤트 제거 시도
+                    if (editorInst.eventEmitter) {
+                        editorInst.eventEmitter.removeEventHandler('scroll');
+                        editorInst.eventEmitter.removeEventHandler('previewScroll');
+                    }
+                } catch (e) { /* 무시 */ }
+            }, 500);
 
             startAutoSave();
 
@@ -1941,6 +2469,53 @@
             }
         }, true);
 
+        // ── 색상 자동완성 키보드 네비게이션 (Capturing 모드) ──
+        window.addEventListener('keydown', (e) => {
+            if (!colorAcVisible) return;
+            if (e.key === 'Process') return;
+
+            const swatchCount = COLOR_SWATCHES.length;
+            const SWATCH_COLS = 10; // 스와치 한 줄에 10개
+
+            if (e.key === 'ArrowRight' || e.keyCode === 39) {
+                if (swatchCount > 0) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    colorAcSelectedSwatchIndex = (colorAcSelectedSwatchIndex + 1) % swatchCount;
+                    selectColorSwatch(colorAcSelectedSwatchIndex);
+                }
+            } else if (e.key === 'ArrowLeft' || e.keyCode === 37) {
+                if (swatchCount > 0) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    colorAcSelectedSwatchIndex = (colorAcSelectedSwatchIndex - 1 + swatchCount) % swatchCount;
+                    selectColorSwatch(colorAcSelectedSwatchIndex);
+                }
+            } else if (e.key === 'ArrowDown' || e.keyCode === 40) {
+                if (swatchCount > 0) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    colorAcSelectedSwatchIndex = Math.min(colorAcSelectedSwatchIndex + SWATCH_COLS, swatchCount - 1);
+                    selectColorSwatch(colorAcSelectedSwatchIndex);
+                }
+            } else if (e.key === 'ArrowUp' || e.keyCode === 38) {
+                if (swatchCount > 0) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    colorAcSelectedSwatchIndex = Math.max(colorAcSelectedSwatchIndex - SWATCH_COLS, 0);
+                    selectColorSwatch(colorAcSelectedSwatchIndex);
+                }
+            } else if (e.key === 'Enter' || e.keyCode === 13) {
+                e.preventDefault();
+                e.stopPropagation();
+                applyColorAutocomplete();
+            } else if (e.key === 'Escape' || e.keyCode === 27) {
+                e.preventDefault();
+                e.stopPropagation();
+                hideColorAutocomplete();
+            }
+        }, true);
+
         // 전역 클릭 시 자동완성 닫기
         document.addEventListener('mousedown', (e) => {
             if (acDiv && !acDiv.contains(e.target)) {
@@ -1948,6 +2523,9 @@
             }
             if (iconAcDiv && !iconAcDiv.contains(e.target)) {
                 setTimeout(hideIconAutocomplete, 100);
+            }
+            if (colorAcDiv && !colorAcDiv.contains(e.target)) {
+                setTimeout(hideColorAutocomplete, 100);
             }
         });
 
@@ -1980,22 +2558,37 @@
                     const templateMatch = textBefore.match(/\{\{([^\}\{]*)$/);
                     const biIconMatch = textBefore.match(/\{bi:([^}]*)$/);
                     const mdiIconMatch = textBefore.match(/\{mdi:([^}]*)$/);
+                    const bgColorMatch = textBefore.match(/\{bg:([^}]*)$/);
+                    const textColorMatch = textBefore.match(/\{color:([^}]*)$/);
 
                     if (linkMatch) {
                         hideIconAutocomplete();
+                        hideColorAutocomplete();
                         showAutocomplete(linkMatch[1], 'link');
                     } else if (templateMatch) {
                         hideIconAutocomplete();
+                        hideColorAutocomplete();
                         showAutocomplete(templateMatch[1], 'template');
                     } else if (biIconMatch) {
                         hideAutocomplete();
+                        hideColorAutocomplete();
                         showIconAutocomplete(biIconMatch[1], 'bi');
                     } else if (mdiIconMatch) {
                         hideAutocomplete();
+                        hideColorAutocomplete();
                         showIconAutocomplete(mdiIconMatch[1], 'mdi');
+                    } else if (bgColorMatch) {
+                        hideAutocomplete();
+                        hideIconAutocomplete();
+                        showColorAutocomplete(bgColorMatch[1], 'bg');
+                    } else if (textColorMatch) {
+                        hideAutocomplete();
+                        hideIconAutocomplete();
+                        showColorAutocomplete(textColorMatch[1], 'color');
                     } else {
                         hideAutocomplete();
                         hideIconAutocomplete();
+                        hideColorAutocomplete();
                     }
                 });
             });
@@ -2008,6 +2601,9 @@
                     }
                     if (!document.activeElement.closest('#icon-autocomplete')) {
                         hideIconAutocomplete();
+                    }
+                    if (!document.activeElement.closest('#color-autocomplete')) {
+                        hideColorAutocomplete();
                     }
                 }, 200);
             });
