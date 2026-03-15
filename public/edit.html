@@ -638,6 +638,10 @@
         let cachedDiffData = null;   // Diff 연산 결과
         let diffViewMode = 'summary';// Diff 보기 상태 ('summary' 또는 'all')
 
+        // ── 아이콘 설정 변수 ──
+        let selectedIconsOnly = false; // SELECTED_ICONS_ONLY 환경변수 (true: icons.json만 허용)
+        let selectedIconsList = null;  // icons.json에서 로드된 아이콘 목록
+
         // ── 아이콘 피커 변수 ──
         let biIconList = null;       // Bootstrap Icons 목록 (lazy loaded)
         let mdiIconList = null;      // MDI 목록 (lazy loaded)
@@ -1056,6 +1060,19 @@
             return mdiIconList;
         }
 
+        // ── 선택된 아이콘 목록 로딩 (icons.json) ──
+        async function loadSelectedIcons() {
+            if (selectedIconsList) return selectedIconsList;
+            try {
+                const res = await fetch('/icons.json');
+                selectedIconsList = await res.json();
+            } catch (e) {
+                console.error('icons.json load failed:', e);
+                selectedIconsList = [];
+            }
+            return selectedIconsList;
+        }
+
         // ── 아이콘 필터링 (우선순위: 정확일치 → startsWith → contains) ──
         function filterIcons(iconList, query, limit = 200) {
             if (!iconList || iconList.length === 0) return [];
@@ -1065,6 +1082,92 @@
             const sw = iconList.filter(n => n !== q && n.startsWith(q));
             const inc = iconList.filter(n => !n.startsWith(q) && n.includes(q));
             return [...exact, ...sw, ...inc].slice(0, limit);
+        }
+
+        // ── 선택된 아이콘 전체 피커 열기 (icons.json의 mdi+bi 모두 표시) ──
+        async function openSelectedIconsPicker() {
+            if (editor) {
+                iconPickerSavedSelection = editor.getSelection();
+            }
+            pendingIconInsertion = null;
+            const myToken = ++iconPickerToken;
+
+            const titleEl = document.getElementById('iconPickerTitle');
+            const typeIconEl = document.getElementById('iconPickerTypeIcon');
+            const gridEl = document.getElementById('iconPickerGrid');
+            const spinner = document.getElementById('iconLoadingSpinner');
+            const searchInput = document.getElementById('iconSearchInput');
+            const emptyEl = document.getElementById('iconPickerEmpty');
+
+            titleEl.textContent = '아이콘 선택';
+            typeIconEl.className = 'mdi mdi-vector-square me-2';
+
+            const modalEl = document.getElementById('iconPickerModal');
+            const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+            modal.show();
+
+            searchInput.value = '';
+            gridEl.innerHTML = '';
+            emptyEl.style.display = 'none';
+            spinner.style.display = 'block';
+
+            const allIcons = await loadSelectedIcons();
+            if (myToken !== iconPickerToken) return;
+            spinner.style.display = 'none';
+            renderMixedIconGrid(gridEl, emptyEl, allIcons, '');
+
+            let searchTimer;
+            searchInput.oninput = () => {
+                clearTimeout(searchTimer);
+                searchTimer = setTimeout(() => {
+                    renderMixedIconGrid(gridEl, emptyEl, allIcons, searchInput.value);
+                }, 200);
+            };
+            searchInput.onkeydown = (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    renderMixedIconGrid(gridEl, emptyEl, allIcons, searchInput.value);
+                }
+            };
+
+            setTimeout(() => searchInput.focus(), 300);
+        }
+
+        // ── 혼합 아이콘 그리드 렌더링 (mdi + bi) ──
+        function renderMixedIconGrid(gridEl, emptyEl, iconList, query) {
+            const filtered = filterIcons(iconList, query, 200);
+            gridEl.innerHTML = '';
+
+            if (filtered.length === 0) {
+                emptyEl.style.display = 'block';
+                return;
+            }
+            emptyEl.style.display = 'none';
+
+            filtered.forEach(fullName => {
+                let cssClass, type, iconName;
+                if (fullName.startsWith('bi-')) {
+                    type = 'bi';
+                    iconName = fullName.slice(3);
+                    cssClass = 'bi bi-' + iconName;
+                } else if (fullName.startsWith('mdi-')) {
+                    type = 'mdi';
+                    iconName = fullName.slice(4);
+                    cssClass = 'mdi mdi-' + iconName;
+                } else {
+                    return;
+                }
+                const item = document.createElement('button');
+                item.type = 'button';
+                item.className = 'icon-grid-modal-item';
+                item.title = fullName;
+                item.innerHTML = `<i class="${cssClass}"></i><span>${escapeHtml(fullName)}</span>`;
+                item.addEventListener('click', () => {
+                    pendingIconInsertion = `{${type}:${iconName}}`;
+                    bootstrap.Modal.getOrCreateInstance(document.getElementById('iconPickerModal')).hide();
+                });
+                gridEl.appendChild(item);
+            });
         }
 
         // ── 아이콘 피커 모달 열기 ──
@@ -1102,7 +1205,14 @@
             spinner.style.display = 'block';
 
             // 아이콘 목록 로딩
-            const icons = type === 'bi' ? await loadBiIcons() : await loadMdiIcons();
+            let icons;
+            if (selectedIconsOnly) {
+                const all = await loadSelectedIcons();
+                const prefix = type === 'bi' ? 'bi-' : 'mdi-';
+                icons = all.filter(n => n.startsWith(prefix)).map(n => n.slice(prefix.length));
+            } else {
+                icons = type === 'bi' ? await loadBiIcons() : await loadMdiIcons();
+            }
             if (myToken !== iconPickerToken) return;
             spinner.style.display = 'none';
             renderIconPickerGrid(gridEl, emptyEl, icons, '', type);
@@ -1170,10 +1280,10 @@
             const typeIconEl = document.getElementById('iconAcTypeIcon');
             const typeLabelEl = document.getElementById('iconAcTypeLabel');
             if (typeIconEl) {
-                typeIconEl.className = type === 'bi' ? 'bi bi-bootstrap' : 'mdi mdi-material-design';
+                typeIconEl.className = type === 'icon' ? 'bi bi-search' : (type === 'bi' ? 'bi bi-bootstrap' : 'mdi mdi-material-design');
             }
             if (typeLabelEl) {
-                typeLabelEl.textContent = type === 'bi' ? 'Bootstrap Icons' : 'Material Design Icons';
+                typeLabelEl.textContent = type === 'icon' ? '아이콘 검색' : (type === 'bi' ? 'Bootstrap Icons' : 'Material Design Icons');
             }
 
             // 커서 위치에 드롭다운 표시
@@ -1224,7 +1334,18 @@
                 const requestedQuery = query;
                 if (!iconAcVisible) return;
 
-                const icons = requestedType === 'bi' ? await loadBiIcons() : await loadMdiIcons();
+                let icons;
+                if (requestedType === 'icon') {
+                    // {icon:} 자동완성 - icons.json에서 로드
+                    icons = await loadSelectedIcons();
+                } else if (selectedIconsOnly) {
+                    // selectedIconsOnly 모드에서 {bi:}, {mdi:} 자동완성도 icons.json 기반
+                    const all = await loadSelectedIcons();
+                    const prefix = requestedType === 'bi' ? 'bi-' : 'mdi-';
+                    icons = all.filter(n => n.startsWith(prefix)).map(n => n.slice(prefix.length));
+                } else {
+                    icons = requestedType === 'bi' ? await loadBiIcons() : await loadMdiIcons();
+                }
 
                 if (!iconAcVisible) return;
                 if (iconAcType !== requestedType || iconAcQuery !== requestedQuery) return;
@@ -1247,10 +1368,18 @@
             }
             if (emptyEl) emptyEl.style.display = 'none';
 
-            const prefix = iconAcType === 'bi' ? 'bi bi-' : 'mdi mdi-';
+            const getIconClass = (iconName) => {
+                if (iconAcType === 'icon') {
+                    // {icon:} 타입: 아이콘코드에 bi- 또는 mdi- 접두사 포함
+                    if (iconName.startsWith('bi-')) return `bi ${iconName}`;
+                    if (iconName.startsWith('mdi-')) return `mdi ${iconName}`;
+                    return iconName;
+                }
+                return iconAcType === 'bi' ? `bi bi-${iconName}` : `mdi mdi-${iconName}`;
+            };
             gridEl.innerHTML = iconAcResults.map((iconName, index) => `
                 <div class="icon-ac-item" data-index="${index}" onclick="selectIconAutocomplete(${index})">
-                    <i class="${prefix}${escapeHtml(iconName)}"></i>
+                    <i class="${getIconClass(escapeHtml(iconName))}"></i>
                     <span>${escapeHtml(iconName)}</span>
                 </div>
             `).join('');
@@ -1290,7 +1419,7 @@
             const lineText = lines[line - 1] || '';
             const textBefore = lineText.substring(0, col - 1);
 
-            const prefix = iconAcType === 'bi' ? '{bi:' : '{mdi:';
+            const prefix = iconAcType === 'icon' ? '{icon:' : (iconAcType === 'bi' ? '{bi:' : '{mdi:');
             const lastTriggerIndex = textBefore.lastIndexOf(prefix);
 
             if (lastTriggerIndex !== -1) {
@@ -1395,6 +1524,7 @@
 
         document.addEventListener('DOMContentLoaded', async () => {
             await loadConfig();
+            selectedIconsOnly = !!(appConfig && appConfig.selectedIconsOnly);
             // 인증 확인
             try {
                 const res = await fetch('/api/me');
@@ -1476,6 +1606,10 @@
                 openIconPicker('bi');
             });
 
+            const selectedIconsBtn = createCustomButton('<i class="mdi mdi-vector-square" style="font-size:16px"></i>', '아이콘 삽입', () => {
+                openSelectedIconsPicker();
+            });
+
             const footnoteBtn = createCustomButton('[*]', '각주 삽입', () => {
                 editor.insertText('[* 각주 내용]');
             });
@@ -1519,8 +1653,12 @@
                     [
                         { name: 'wikiLink', tooltip: '위키 링크 삽입', el: wikiLinkBtn },
                         { name: 'transclusion', tooltip: '틀 삽입', el: transclusionBtn },
-                        { name: 'mdiIcon', tooltip: 'MDI 아이콘', el: mdiBtn },
-                        { name: 'biIcon', tooltip: 'Bootstrap 아이콘', el: biBtn },
+                        ...(selectedIconsOnly
+                            ? [{ name: 'selectedIcons', tooltip: '아이콘 삽입', el: selectedIconsBtn }]
+                            : [
+                                { name: 'mdiIcon', tooltip: 'MDI 아이콘', el: mdiBtn },
+                                { name: 'biIcon', tooltip: 'Bootstrap 아이콘', el: biBtn },
+                            ]),
                         { name: 'footnote', tooltip: '각주 삽입', el: footnoteBtn },
                         { name: 'folding', tooltip: '펼치기 접기 삽입', el: foldingBtn },
                         { name: 'imageUpload', tooltip: '이미지 업로드', el: imageUploadBtn }
@@ -2568,6 +2706,7 @@
                     const templateMatch = textBefore.match(/\{\{([^\}\{]*)$/);
                     const biIconMatch = textBefore.match(/\{bi:([^}]*)$/);
                     const mdiIconMatch = textBefore.match(/\{mdi:([^}]*)$/);
+                    const iconMatch = textBefore.match(/\{icon:([^}]*)$/);
                     const bgColorMatch = textBefore.match(/\{bg:([^}]*)$/);
                     const textColorMatch = textBefore.match(/\{color:([^}]*)$/);
 
@@ -2579,6 +2718,10 @@
                         hideIconAutocomplete();
                         hideColorAutocomplete();
                         showAutocomplete(templateMatch[1], 'template');
+                    } else if (iconMatch) {
+                        hideAutocomplete();
+                        hideColorAutocomplete();
+                        showIconAutocomplete(iconMatch[1], 'icon');
                     } else if (biIconMatch) {
                         hideAutocomplete();
                         hideColorAutocomplete();

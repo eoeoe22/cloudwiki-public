@@ -82,6 +82,8 @@ CloudWiki는 기본적인 마크다운 표뿐만 아니라 표의 각 셀 배경
 
 CloudWiki는 부트스트랩 아이콘(Bootstrap Icons)과 MDI(Material Design Icons)를 지원합니다.
 
+### 기본 문법
+
 {bi:card-text}
 ```markdown
 {bi:card-text}
@@ -91,6 +93,24 @@ CloudWiki는 부트스트랩 아이콘(Bootstrap Icons)과 MDI(Material Design I
 ```markdown
 {mdi:dots-vertical}
 ```
+
+### 통합 아이콘 문법
+
+`{icon:아이콘코드}` 형식으로도 아이콘을 삽입할 수 있습니다. 이 경우 `bi-` 또는 `mdi-` 접두사를 포함하여 입력해야 합니다.
+
+{icon:bi-card-text}
+```markdown
+{icon:bi-card-text}
+```
+
+{icon:mdi-dots-vertical}
+```markdown
+{icon:mdi-dots-vertical}
+```
+
+파싱 시 `bi-`로 시작하면 Bootstrap Icons로, `mdi-`로 시작하면 Material Design Icons로 자동 변환됩니다.
+`bi-` 또는 `mdi-`로 시작하지 않는 아이콘 코드는 오류로 표시됩니다.
+
 *(주의: 아이콘 코드는 공식 가이드 문서의 아이콘 이름을 그대로 사용합니다)*
 
 - 아이콘 목록은 아래 링크에서 확인할 수 있습니다.

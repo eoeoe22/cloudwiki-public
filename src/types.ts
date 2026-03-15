@@ -17,6 +17,7 @@ export type Env = {
         WIKI_LOGO_URL: string;
         WIKI_FAVICON_URL: string;
         CUSTOM_HEADER: string;
+        SELECTED_ICONS_ONLY: string;
     };
     Variables: {
         user: User | null;

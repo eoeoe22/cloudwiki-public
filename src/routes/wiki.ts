@@ -15,6 +15,7 @@ wiki.get('/config', (c) => {
         wikiName: c.env.WIKI_NAME || 'CloudWiki',
         wikiLogoUrl: c.env.WIKI_LOGO_URL || '',
         wikiFaviconUrl: c.env.WIKI_FAVICON_URL || '',
+        selectedIconsOnly: c.env.SELECTED_ICONS_ONLY === 'true',
     });
 });
 

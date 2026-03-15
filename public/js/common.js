@@ -668,14 +668,14 @@ function processWikiLinks(contentEl) {
         if (parentTag === 'CODE' || parentTag === 'PRE') continue;
 
         const val = walker.currentNode.nodeValue;
-        if (val.includes('[[') || val.includes('{bi:') || val.includes('{mdi:')) {
+        if (val.includes('[[') || val.includes('{bi:') || val.includes('{mdi:') || val.includes('{icon:')) {
             textNodes.push(walker.currentNode);
         }
     }
 
     textNodes.forEach(node => {
         const frag = document.createDocumentFragment();
-        const parts = node.nodeValue.split(/(\[\[[^\]]+\]\]|(?<!\{)\{bi:[\w-]+\}(?!\})|(?<!\{)\{mdi:[\w-]+\}(?!\}))/g).filter(Boolean);
+        const parts = node.nodeValue.split(/(\[\[[^\]]+\]\]|(?<!\{)\{bi:[\w-]+\}(?!\})|(?<!\{)\{mdi:[\w-]+\}(?!\})|(?<!\{)\{icon:[\w-]+\}(?!\}))/g).filter(Boolean);
 
         parts.forEach(part => {
             if (part.startsWith('[[') && part.endsWith(']]')) {
@@ -702,6 +702,23 @@ function processWikiLinks(contentEl) {
                 const span = document.createElement('span');
                 span.className = `mdi mdi-${iconName}`;
                 frag.appendChild(span);
+            } else if (part.startsWith('{icon:') && part.endsWith('}')) {
+                const iconCode = part.slice(6, -1);
+                if (iconCode.startsWith('bi-')) {
+                    const el = document.createElement('i');
+                    el.className = `bi ${iconCode}`;
+                    frag.appendChild(el);
+                } else if (iconCode.startsWith('mdi-')) {
+                    const el = document.createElement('span');
+                    el.className = `mdi ${iconCode}`;
+                    frag.appendChild(el);
+                } else {
+                    const errSpan = document.createElement('span');
+                    errSpan.className = 'text-danger';
+                    errSpan.title = '알 수 없는 아이콘 접두사: bi- 또는 mdi-로 시작해야 합니다';
+                    errSpan.textContent = part;
+                    frag.appendChild(errSpan);
+                }
             } else if (part) {
                 frag.appendChild(document.createTextNode(part));
             }
