@@ -33,7 +33,8 @@ WIKI_NAME = "Testwiki" # 변경 가능, 사이트 전역에 적용되는 위키 
 WIKI_LOGO_URL = "/favicon.jpg"
 WIKI_FAVICON_URL = "/favicon.jpg" # public 폴더에 있는 favicon.jpg를 본인의 로고로 교체하세요.
 SUPER_ADMIN_EMAILS = "test@example.com, test2@example.com" # 콤마로 구분하여 여러 명 지정 가능
-SELECTED_ICONS_ONLY = "false" # false 권장, true시 public/icons.json에 있는 아이콘만 자동완성에 들어감, 아이콘 선택 json 추출기 : https://vialinks.xyz/icons
+SELECTED_ICONS_ONLY = "false" # false 권장, true시 public/icons.json에 있는 아이콘만 자동완성에 들어감. (성능 개선 용도가 아님)
+# 아이콘 선택 json 추출기 : https://vialinks.xyz/icons
 CUSTOM_HEADER = """
 
 """
