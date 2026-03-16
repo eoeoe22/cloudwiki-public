@@ -254,7 +254,9 @@ async function loadNotifications(append = false) {
             const iconMap = {
                 'discussion_comment': 'mdi mdi-comment-text-outline',
                 'banned': 'mdi mdi-block-helper',
-                'message': 'mdi mdi-email-outline'
+                'message': 'mdi mdi-email-outline',
+                'ticket_created': 'mdi mdi-ticket-outline',
+                'ticket_comment': 'mdi mdi-ticket-confirmation-outline'
             };
             const icon = iconMap[n.type] || 'mdi mdi-bell';
             const timeAgo = _formatTimeAgo(n.created_at);
@@ -339,6 +341,35 @@ function _formatTimeAgo(unixTimestamp) {
     if (diff < 86400) return Math.floor(diff / 3600) + '시간 전';
     if (diff < 604800) return Math.floor(diff / 86400) + '일 전';
     return new Date(unixTimestamp * 1000).toLocaleDateString('ko-KR');
+}
+
+// ── 사용자 역할 아이콘 렌더링 ──
+function renderUserRoleIcon(role) {
+    const roleMap = {
+        super_admin: { icon: 'bi-shield-fill-check', color: '#f97316', label: '최고 관리자' },
+        admin:       { icon: 'bi-shield-fill-check', color: '#3b82f6', label: '관리자' },
+        discussion_manager: { icon: 'bi-shield-fill-check', color: '#22c55e', label: '토론 관리자' },
+        banned:      { icon: 'bi-ban',               color: '#ef4444', label: '차단' },
+    };
+    const cfg = roleMap[role];
+    const icon  = cfg ? cfg.icon  : 'bi-person-fill';
+    const color = cfg ? cfg.color : '#9ca3af';
+    const label = cfg ? cfg.label : '일반 유저';
+    return `<i class="bi ${escapeHtml(icon)} user-role-icon ms-1" tabindex="0" data-bs-toggle="popover" data-bs-content="${escapeHtml(label)}" data-bs-trigger="hover focus" data-bs-placement="top" style="color:${color};font-size:0.8em;cursor:pointer;" aria-label="${escapeHtml(label)}"></i>`;
+}
+
+// ── 역할 아이콘 팝오버 초기화 (동적 렌더링 후 호출) ──
+function initRoleIconPopovers(container) {
+    if (!container || typeof bootstrap === 'undefined') return;
+    container.querySelectorAll('.user-role-icon[data-bs-toggle="popover"]').forEach(el => {
+        if (!el._rolePopover) {
+            el._rolePopover = new bootstrap.Popover(el, {
+                trigger: 'hover focus',
+                container: 'body',
+                animation: false,
+            });
+        }
+    });
 }
 
 async function deleteNotification(id) {

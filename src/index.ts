@@ -6,6 +6,7 @@ import { sessionMiddleware } from './middleware/session';
 import { rateLimitMiddleware } from './middleware/rateLimit';
 import { applyPageSSR } from './middleware/ssr';
 import { safeJSON } from './utils/json';
+import { escapeHtml, sanitizeUrl } from './utils/html';
 import authRoutes from './routes/auth';
 import wikiRoutes from './routes/wiki';
 import searchRoutes from './routes/search';
@@ -13,6 +14,7 @@ import mediaRoutes from './routes/media';
 import adminRoutes from './routes/admin';
 import discussionRoutes from './routes/discussion';
 import notificationRoutes from './routes/notification';
+import ticketRoutes from './routes/ticket';
 import mcpRoutes from './routes/mcp';
 
 const app = new Hono<Env>();
@@ -45,6 +47,7 @@ app.route('/', mediaRoutes);
 app.route('/api/admin', adminRoutes);
 app.route('/api', discussionRoutes);
 app.route('/api', notificationRoutes);
+app.route('/api', ticketRoutes);
 app.route('/api/mcp', mcpRoutes);
 
 // ── 헬퍼: ASSETS에서 HTML 가져오기 ──
@@ -63,22 +66,61 @@ async function fetchAssetHtml(c: any, htmlPath: string): Promise<Response> {
     return new Response(fallbackResponse.body, fallbackResponse);
 }
 
-// ── 헬퍼: HTML 특수문자 이스케이프 (서버사이드) ──
-function escapeHtml(str: string | undefined | null): string {
-    if (!str) return '';
-    return String(str)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#039;');
+// ── 컴포넌트 HTML 메모리 캐시 (Worker 인스턴스 수명 동안 유지) ──
+let componentCache: { header: string; sidebar: string; footer: string; timestamp: number } | null = null;
+const COMPONENT_CACHE_TTL = 60_000; // 60초
+
+// ── 헬퍼: 사이드바/푸터 커스텀 HTML 생성 ──
+function buildCustomSidebarHtml(configStr: string | null): string {
+    if (!configStr) return '';
+    try {
+        const config = JSON.parse(configStr);
+        if (!Array.isArray(config)) return '';
+        let html = '';
+        for (const item of config) {
+            if (item.type === 'header') {
+                html += `<li class="nav-item mt-3 mb-1 px-3 fw-bold text-muted small">${escapeHtml(item.text)}</li>`;
+            } else if (item.type === 'link') {
+                const iconHtml = item.icon ? `<i class="${escapeHtml(item.icon)} me-2"></i>` : '';
+                const safeUrl = sanitizeUrl(item.url);
+                const target = item.url?.startsWith('/') ? '' : ' target="_blank" rel="noopener noreferrer"';
+                html += `<li class="nav-item mb-1"><a class="nav-link px-3 py-2 rounded text-dark" href="${safeUrl}"${target}>${iconHtml}${escapeHtml(item.text)}</a></li>`;
+            } else if (item.type === 'text') {
+                const iconHtml = item.icon ? `<i class="${escapeHtml(item.icon)} me-2"></i>` : '';
+                html += `<li class="nav-item mb-1 px-3 py-2 text-body small">${iconHtml}${escapeHtml(item.text)}</li>`;
+            } else if (item.type === 'divider') {
+                html += `<li><hr class="w-100 my-2" style="border-color: var(--wiki-border); opacity: 1;"></li>`;
+            }
+        }
+        return html;
+    } catch {
+        return '';
+    }
 }
 
-// ── 헬퍼: 사이드바/푸터 URL 안전성 검사 (javascript: 스킴 차단) ──
-function sanitizeSidebarUrl(url: string | undefined | null): string {
-    if (!url) return '#';
-    if (/^javascript:/i.test(url.trim())) return '#';
-    return escapeHtml(url);
+function buildCustomFooterHtml(configStr: string | null): string {
+    if (!configStr) return '';
+    try {
+        const config = JSON.parse(configStr);
+        if (!Array.isArray(config)) return '';
+        let html = '';
+        for (const item of config) {
+            if (item.type === 'link') {
+                const iconHtml = item.icon ? `<i class="${escapeHtml(item.icon)} me-1"></i>` : '';
+                const safeUrl = sanitizeUrl(item.url);
+                const target = item.url?.startsWith('/') ? '' : ' target="_blank" rel="noopener noreferrer"';
+                html += `<a class="footer-link" href="${safeUrl}"${target}>${iconHtml}${escapeHtml(item.text)}</a>`;
+            } else if (item.type === 'text') {
+                const iconHtml = item.icon ? `<i class="${escapeHtml(item.icon)} me-1"></i>` : '';
+                html += `<span class="footer-text">${iconHtml}${escapeHtml(item.text)}</span>`;
+            } else if (item.type === 'divider') {
+                html += `<span class="footer-divider">|</span>`;
+            }
+        }
+        return html;
+    } catch {
+        return '';
+    }
 }
 
 // ── 헬퍼: 공통 컴포넌트를 주입하여 HTML 렌더링 ──
@@ -89,57 +131,18 @@ async function renderHtml(c: Context<Env>, targetHtmlPath: string, pageData: Rec
     const wikiLogoUrl = c.env.WIKI_LOGO_URL || '';
     const wikiFaviconUrl = c.env.WIKI_FAVICON_URL || '/favicon.ico';
 
-    let customSidebarHtml = '';
-    try {
-        const configStr = await c.env.KV.get('sidebar_config');
-        if (configStr) {
-            const config = JSON.parse(configStr);
-            if (Array.isArray(config)) {
-                for (const item of config) {
-                    if (item.type === 'header') {
-                        customSidebarHtml += `<li class="nav-item mt-3 mb-1 px-3 fw-bold text-muted small">${escapeHtml(item.text)}</li>`;
-                    } else if (item.type === 'link') {
-                        const iconHtml = item.icon ? `<i class="${escapeHtml(item.icon)} me-2"></i>` : '';
-                        const safeUrl = sanitizeSidebarUrl(item.url);
-                        const target = item.url?.startsWith('/') ? '' : ' target="_blank" rel="noopener noreferrer"';
-                        customSidebarHtml += `<li class="nav-item mb-1"><a class="nav-link px-3 py-2 rounded text-dark" href="${safeUrl}"${target}>${iconHtml}${escapeHtml(item.text)}</a></li>`;
-                    } else if (item.type === 'text') {
-                        const iconHtml = item.icon ? `<i class="${escapeHtml(item.icon)} me-2"></i>` : '';
-                        customSidebarHtml += `<li class="nav-item mb-1 px-3 py-2 text-body small">${iconHtml}${escapeHtml(item.text)}</li>`;
-                    } else if (item.type === 'divider') {
-                        customSidebarHtml += `<li><hr class="w-100 my-2" style="border-color: var(--wiki-border); opacity: 1;"></li>`;
-                    }
-                }
-            }
-        }
-    } catch (e) {
-        console.error('Failed to load sidebar config:', e);
-    }
+    // 사이드바/푸터 커스텀 HTML 및 컴포넌트를 병렬로 로드
+    const now = Date.now();
+    const cacheValid = componentCache && (now - componentCache.timestamp < COMPONENT_CACHE_TTL);
 
-    let customFooterHtml = '';
-    try {
-        const footerConfigStr = await c.env.KV.get('footer_config');
-        if (footerConfigStr) {
-            const footerConfig = JSON.parse(footerConfigStr);
-            if (Array.isArray(footerConfig)) {
-                for (const item of footerConfig) {
-                    if (item.type === 'link') {
-                        const iconHtml = item.icon ? `<i class="${escapeHtml(item.icon)} me-1"></i>` : '';
-                        const safeUrl = sanitizeSidebarUrl(item.url);
-                        const target = item.url?.startsWith('/') ? '' : ' target="_blank" rel="noopener noreferrer"';
-                        customFooterHtml += `<a class="footer-link" href="${safeUrl}"${target}>${iconHtml}${escapeHtml(item.text)}</a>`;
-                    } else if (item.type === 'text') {
-                        const iconHtml = item.icon ? `<i class="${escapeHtml(item.icon)} me-1"></i>` : '';
-                        customFooterHtml += `<span class="footer-text">${iconHtml}${escapeHtml(item.text)}</span>`;
-                    } else if (item.type === 'divider') {
-                        customFooterHtml += `<span class="footer-divider">|</span>`;
-                    }
-                }
-            }
-        }
-    } catch (e) {
-        console.error('Failed to load footer config:', e);
-    }
+    // KV에서 커스텀 사이드바/푸터 설정을 병렬로 로드
+    const [sidebarConfigStr, footerConfigStr] = await Promise.all([
+        c.env.KV.get('sidebar_config'),
+        c.env.KV.get('footer_config'),
+    ]);
+
+    const customSidebarHtml = buildCustomSidebarHtml(sidebarConfigStr);
+    const customFooterHtml = buildCustomFooterHtml(footerConfigStr);
 
     const getRewriter = () => new HTMLRewriter()
         .on('.app-wiki-name', {
@@ -184,30 +187,35 @@ async function renderHtml(c: Context<Env>, targetHtmlPath: string, pageData: Rec
             }
         });
 
-    // Header, Sidebar, Footer HTML 로드 및 브랜딩 적용
     let headerHtml = '';
     let sidebarHtml = '';
     let footerHtml = '';
 
-    try {
-        const headerRes = await fetchAssetHtml(c, '/components/header.html');
-        if (headerRes.ok) headerHtml = await getRewriter().transform(headerRes).text();
-    } catch (e) {
-        console.error('Failed to load header component:', e);
-    }
+    if (cacheValid) {
+        // 캐시된 컴포넌트 HTML 사용
+        headerHtml = componentCache!.header;
+        sidebarHtml = componentCache!.sidebar;
+        footerHtml = componentCache!.footer;
+    } else {
+        // 3개 컴포넌트를 병렬로 로드 및 브랜딩 적용
+        const [headerRes, sidebarRes, footerRes] = await Promise.all([
+            fetchAssetHtml(c, '/components/header.html').catch(() => null),
+            fetchAssetHtml(c, '/components/sidebar.html').catch(() => null),
+            fetchAssetHtml(c, '/components/footer.html').catch(() => null),
+        ]);
 
-    try {
-        const sidebarRes = await fetchAssetHtml(c, '/components/sidebar.html');
-        if (sidebarRes.ok) sidebarHtml = await getRewriter().transform(sidebarRes).text();
-    } catch (e) {
-        console.error('Failed to load sidebar component:', e);
-    }
+        const [h, s, f] = await Promise.all([
+            headerRes?.ok ? getRewriter().transform(headerRes).text() : Promise.resolve(''),
+            sidebarRes?.ok ? getRewriter().transform(sidebarRes).text() : Promise.resolve(''),
+            footerRes?.ok ? getRewriter().transform(footerRes).text() : Promise.resolve(''),
+        ]);
 
-    try {
-        const footerRes = await fetchAssetHtml(c, '/components/footer.html');
-        if (footerRes.ok) footerHtml = await getRewriter().transform(footerRes).text();
-    } catch (e) {
-        console.error('Failed to load footer component:', e);
+        headerHtml = h;
+        sidebarHtml = s;
+        footerHtml = f;
+
+        // 메모리 캐시 업데이트
+        componentCache = { header: headerHtml, sidebar: sidebarHtml, footer: footerHtml, timestamp: now };
     }
 
     return applyPageSSR(htmlResponse, pageData, {
@@ -219,6 +227,16 @@ async function renderHtml(c: Context<Env>, targetHtmlPath: string, pageData: Rec
 }
 
 // ── 프론트엔드 라우팅 ──
+
+// /tickets/:id → tickets.html 서빙 (SSR 브랜딩 적용)
+app.get('/tickets/:id', async (c) => {
+    return renderHtml(c, '/tickets.html');
+});
+
+// /tickets → tickets.html 서빙 (SSR 브랜딩 적용)
+app.get('/tickets', async (c) => {
+    return renderHtml(c, '/tickets.html');
+});
 
 // /wiki/:slug/discussions/* → discussions.html 서빙 (SSR 브랜딩 적용)
 app.get('/wiki/:slug/discussions/:id', async (c) => {

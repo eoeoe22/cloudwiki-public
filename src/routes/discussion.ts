@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import type { Env, Discussion, DiscussionComment } from '../types';
 import { requireAuth } from '../middleware/session';
 import { safeJSON } from '../utils/json';
+import { ROLE_CASE_SQL, enrichRoles, enrichRole } from '../utils/role';
 
 const discussionRoutes = new Hono<Env>();
 
@@ -27,6 +28,8 @@ discussionRoutes.get('/discussions/:pageId', async (c) => {
 
     let query = `
         SELECT d.*, u.name as author_name, u.picture as author_picture,
+               ${ROLE_CASE_SQL} as author_role,
+               u.email as _author_email,
                (SELECT COUNT(*) FROM discussion_comments dc WHERE dc.discussion_id = d.id AND dc.deleted_at IS NULL) as comment_count
         FROM discussions d
         LEFT JOIN users u ON d.author_id = u.id
@@ -42,6 +45,7 @@ discussionRoutes.get('/discussions/:pageId', async (c) => {
     query += ' ORDER BY d.updated_at DESC';
 
     const { results } = await db.prepare(query).bind(...params).all();
+    enrichRoles(results, 'author_role', '_author_email', c.env);
     return c.json(safeJSON({ discussions: results }));
 });
 
@@ -94,7 +98,9 @@ discussionRoutes.get('/discussions/thread/:id', async (c) => {
 
     // 토론 정보
     const discussion = await db.prepare(`
-        SELECT d.*, u.name as author_name, u.picture as author_picture
+        SELECT d.*, u.name as author_name, u.picture as author_picture,
+               ${ROLE_CASE_SQL} as author_role,
+               u.email as _author_email
         FROM discussions d
         LEFT JOIN users u ON d.author_id = u.id
         WHERE d.id = ?
@@ -109,10 +115,22 @@ discussionRoutes.get('/discussions/thread/:id', async (c) => {
         return c.json({ error: '삭제된 토론입니다.' }, 404);
     }
 
+    enrichRole(discussion, 'author_role', '_author_email', c.env);
+
     // 댓글 목록 (soft deleted 포함하되 표시 처리)
     const { results: comments } = await db.prepare(`
         SELECT dc.*, u.name as author_name, u.picture as author_picture,
-               parent.content as quoted_content, pu.name as quoted_author_name
+               CASE
+                   WHEN u.banned_until IS NOT NULL AND u.banned_until > unixepoch() THEN 'banned'
+                   WHEN u.role = 'banned' AND (u.banned_until IS NULL OR u.banned_until <= unixepoch()) THEN 'user'
+                   ELSE u.role END as author_role,
+               u.email as _author_email,
+               parent.content as quoted_content, pu.name as quoted_author_name,
+               CASE
+                   WHEN pu.banned_until IS NOT NULL AND pu.banned_until > unixepoch() THEN 'banned'
+                   WHEN pu.role = 'banned' AND (pu.banned_until IS NULL OR pu.banned_until <= unixepoch()) THEN 'user'
+                   ELSE pu.role END as quoted_author_role,
+               pu.email as _quoted_author_email
         FROM discussion_comments dc
         LEFT JOIN users u ON dc.author_id = u.id
         LEFT JOIN discussion_comments parent ON dc.parent_id = parent.id
@@ -120,6 +138,9 @@ discussionRoutes.get('/discussions/thread/:id', async (c) => {
         WHERE dc.discussion_id = ?
         ORDER BY dc.created_at ASC
     `).bind(discussionId).all();
+
+    enrichRoles(comments, 'author_role', '_author_email', c.env);
+    enrichRoles(comments, 'quoted_author_role', '_quoted_author_email', c.env);
 
     return c.json(safeJSON({ discussion, comments }));
 });
@@ -177,14 +198,16 @@ discussionRoutes.post('/discussions/thread/:id/comments', requireAuth, async (c)
         ).bind(discussionId).first<{ title: string; page_id: number; slug: string }>();
 
         if (discussionInfo) {
-            // 이 토론에 댓글을 달았던 모든 유저 (작성자 + 댓글 작성자, 중복 제거, 본인 제외)
+            // 이 토론에 댓글을 달았던 모든 유저 (작성자 + 댓글 작성자, 중복 제거, 본인 제외, 개별 토론 뮤트 유저 제외)
             const { results: participants } = await db.prepare(`
-                SELECT DISTINCT author_id FROM (
+                SELECT DISTINCT p.author_id FROM (
                     SELECT author_id FROM discussions WHERE id = ? AND author_id IS NOT NULL
                     UNION
                     SELECT author_id FROM discussion_comments WHERE discussion_id = ? AND author_id IS NOT NULL AND deleted_at IS NULL
-                ) WHERE author_id != ?
-            `).bind(discussionId, discussionId, user.id).all<{ author_id: number }>();
+                ) p
+                WHERE p.author_id != ?
+                  AND p.author_id NOT IN (SELECT user_id FROM discussion_mutes WHERE discussion_id = ?)
+            `).bind(discussionId, discussionId, user.id, discussionId).all<{ author_id: number }>();
 
             const link = `/wiki/${encodeURIComponent(discussionInfo.slug)}/discussions/${discussionId}`;
             const notifContent = `'${discussionInfo.title}' 토론에 새 댓글이 달렸습니다.`;
@@ -240,6 +263,21 @@ discussionRoutes.put('/discussions/thread/:id/status', requireAuth, async (c) =>
         'UPDATE discussions SET status = ?, updated_at = unixepoch() WHERE id = ?'
     ).bind(status, discussionId).run();
 
+    // 토론 닫힐 때 관련 알림 정리
+    if (status === 'closed') {
+        try {
+            const info = await db.prepare(
+                'SELECT p.slug FROM discussions d LEFT JOIN pages p ON d.page_id = p.id WHERE d.id = ?'
+            ).bind(discussionId).first<{ slug: string | null }>();
+            if (info?.slug) {
+                const link = `/wiki/${encodeURIComponent(info.slug)}/discussions/${discussionId}`;
+                await db.prepare("DELETE FROM notifications WHERE link = ? AND type != 'message'").bind(link).run();
+            }
+        } catch (e) {
+            console.error('Failed to clear discussion notifications on close:', e);
+        }
+    }
+
     return c.json({ success: true, status });
 });
 
@@ -272,6 +310,19 @@ discussionRoutes.delete('/discussions/thread/:id', requireAuth, async (c) => {
         'UPDATE discussions SET deleted_at = unixepoch() WHERE id = ?'
     ).bind(discussionId).run();
 
+    // 토론 삭제 시 관련 알림 정리
+    try {
+        const info = await db.prepare(
+            'SELECT p.slug FROM discussions d LEFT JOIN pages p ON d.page_id = p.id WHERE d.id = ?'
+        ).bind(discussionId).first<{ slug: string | null }>();
+        if (info?.slug) {
+            const link = `/wiki/${encodeURIComponent(info.slug)}/discussions/${discussionId}`;
+            await db.prepare("DELETE FROM notifications WHERE link = ? AND type != 'message'").bind(link).run();
+        }
+    } catch (e) {
+        console.error('Failed to clear discussion notifications on delete:', e);
+    }
+
     return c.json({ success: true });
 });
 
@@ -288,12 +339,27 @@ discussionRoutes.delete('/discussions/thread/:id/hard', requireAuth, async (c) =
         return c.json({ error: '최고 관리자만 완전 삭제할 수 있습니다.' }, 403);
     }
 
+    // 삭제 전 알림 링크 확보 (삭제 후에는 조회 불가)
+    const discussionPageInfo = await db.prepare(
+        'SELECT p.slug FROM discussions d LEFT JOIN pages p ON d.page_id = p.id WHERE d.id = ?'
+    ).bind(discussionId).first<{ slug: string | null }>();
+
     // 댓글 먼저 삭제 후 토론 삭제
     await db.prepare('DELETE FROM discussion_comments WHERE discussion_id = ?').bind(discussionId).run();
     const result = await db.prepare('DELETE FROM discussions WHERE id = ?').bind(discussionId).run();
 
     if (result.meta.changes === 0) {
         return c.json({ error: '토론을 찾을 수 없습니다.' }, 404);
+    }
+
+    // 관련 알림 정리
+    if (discussionPageInfo?.slug) {
+        try {
+            const link = `/wiki/${encodeURIComponent(discussionPageInfo.slug)}/discussions/${discussionId}`;
+            await db.prepare("DELETE FROM notifications WHERE link = ? AND type != 'message'").bind(link).run();
+        } catch (e) {
+            console.error('Failed to clear discussion notifications on hard delete:', e);
+        }
     }
 
     return c.json({ success: true });
@@ -351,6 +417,48 @@ discussionRoutes.delete('/discussions/comment/:id/hard', requireAuth, async (c) 
     }
 
     return c.json({ success: true });
+});
+
+/**
+ * GET /api/discussions/thread/:id/mute
+ * 현재 유저의 해당 토론 알림 뮤트 상태 조회
+ */
+discussionRoutes.get('/discussions/thread/:id/mute', requireAuth, async (c) => {
+    const discussionId = Number(c.req.param('id'));
+    const user = c.get('user')!;
+    const db = c.env.DB;
+
+    const row = await db.prepare(
+        'SELECT 1 FROM discussion_mutes WHERE user_id = ? AND discussion_id = ?'
+    ).bind(user.id, discussionId).first();
+
+    return c.json({ muted: !!row });
+});
+
+/**
+ * POST /api/discussions/thread/:id/mute
+ * 해당 토론의 알림 뮤트 토글
+ */
+discussionRoutes.post('/discussions/thread/:id/mute', requireAuth, async (c) => {
+    const discussionId = Number(c.req.param('id'));
+    const user = c.get('user')!;
+    const db = c.env.DB;
+
+    const existing = await db.prepare(
+        'SELECT 1 FROM discussion_mutes WHERE user_id = ? AND discussion_id = ?'
+    ).bind(user.id, discussionId).first();
+
+    if (existing) {
+        await db.prepare(
+            'DELETE FROM discussion_mutes WHERE user_id = ? AND discussion_id = ?'
+        ).bind(user.id, discussionId).run();
+        return c.json({ muted: false });
+    } else {
+        await db.prepare(
+            'INSERT INTO discussion_mutes (user_id, discussion_id) VALUES (?, ?)'
+        ).bind(user.id, discussionId).run();
+        return c.json({ muted: true });
+    }
 });
 
 export default discussionRoutes;

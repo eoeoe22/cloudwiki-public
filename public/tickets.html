@@ -1,0 +1,705 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title class="app-wiki-name">티켓 문의 - CloudWiki</title>
+  <link rel="icon" id="wiki-favicon" href="/favicon.ico">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.13.1/font/bootstrap-icons.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css" rel="stylesheet">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;600;700;800;900&display=swap"
+    rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+</head>
+
+<body>
+
+  <!-- ── 네비게이션 바 Placeholder ── -->
+  <div id="app-header-placeholder"></div>
+
+  <!-- ── 메인 레이아웃 ── -->
+  <div class="wiki-layout">
+    <div class="wiki-container">
+      <!-- 로딩 -->
+      <div id="loading" class="wiki-loading">
+        <div class="spinner-border text-primary" role="status"></div>
+        <span>불러오는 중...</span>
+      </div>
+
+      <!-- 티켓 목록 페이지 -->
+      <div id="ticketListPage" class="d-none">
+        <div class="wiki-article">
+          <div class="d-flex justify-content-between align-items-center mb-3">
+            <h2><i class="bi bi-ticket-detailed"></i> 티켓 문의</h2>
+            <div class="d-flex gap-2">
+              <button class="btn btn-wiki btn-sm d-none" id="newTicketBtn" onclick="showNewTicketForm()">
+                <i class="bi bi-plus-lg"></i> 새 문의
+              </button>
+            </div>
+          </div>
+
+          <!-- 필터 영역 -->
+          <div class="d-flex flex-wrap gap-2 mb-3 align-items-center">
+            <!-- 상태 필터 -->
+            <div class="btn-group btn-group-sm" role="group">
+              <button type="button" class="btn btn-outline-secondary active" onclick="filterTickets(this, 'status', '')">
+                전체
+              </button>
+              <button type="button" class="btn btn-outline-success" onclick="filterTickets(this, 'status', 'open')">
+                <i class="bi bi-circle-fill text-success" style="font-size:0.5em"></i> 열림
+              </button>
+              <button type="button" class="btn btn-outline-danger" onclick="filterTickets(this, 'status', 'closed')">
+                <i class="bi bi-circle-fill text-danger" style="font-size:0.5em"></i> 닫힘
+              </button>
+            </div>
+
+            <!-- 유형 필터 (관리자용) -->
+            <select class="form-select form-select-sm d-none" id="typeFilter" style="width: auto; min-width: 120px;" onchange="applyTypeFilter()">
+              <option value="">유형: 전체</option>
+              <option value="general">일반</option>
+              <option value="document">문서</option>
+              <option value="discussion">토론</option>
+              <option value="account">계정</option>
+            </select>
+          </div>
+
+          <!-- 새 티켓 폼 -->
+          <div id="newTicketForm" class="d-none mb-4">
+            <div class="card">
+              <div class="card-body">
+                <h5 class="card-title">새 문의 작성</h5>
+                <div class="mb-3">
+                  <label class="form-label">문의 유형</label>
+                  <select class="form-select" id="newTicketType">
+                    <option value="general">일반</option>
+                    <option value="document">문서</option>
+                    <option value="discussion">토론</option>
+                    <option value="account">계정</option>
+                  </select>
+                </div>
+                <div class="mb-3">
+                  <input type="text" class="form-control" id="newTicketTitle" placeholder="문의 제목">
+                </div>
+                <div class="mb-3">
+                  <textarea class="form-control" id="newTicketContent" rows="4"
+                    placeholder="문의 내용을 입력하세요"></textarea>
+                </div>
+                <div class="d-flex gap-2">
+                  <button class="btn btn-wiki btn-sm" onclick="submitNewTicket()">작성</button>
+                  <button class="btn btn-secondary btn-sm"
+                    onclick="document.getElementById('newTicketForm').classList.add('d-none')">취소</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div id="ticketsList"></div>
+
+          <!-- 페이지네이션 -->
+          <div id="ticketPagination" class="d-none text-center py-3">
+            <button class="btn btn-outline-secondary btn-sm" id="loadMoreBtn" onclick="loadMoreTickets()">
+              <i class="mdi mdi-arrow-down"></i> 더 불러오기
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 티켓 상세 페이지 -->
+      <div id="ticketDetailPage" class="d-none">
+        <div class="wiki-article">
+          <div class="d-flex justify-content-between align-items-center mb-3">
+            <h2 id="ticketTitle"></h2>
+            <div class="d-flex gap-2">
+              <a href="/tickets" class="btn btn-wiki-outline btn-sm">
+                <i class="bi bi-arrow-left"></i> 목록
+              </a>
+            </div>
+          </div>
+          <div class="d-flex align-items-center gap-2 mb-3" id="ticketMeta"></div>
+          <div class="d-flex gap-2 mb-4" id="ticketActions"></div>
+
+          <div id="commentsList"></div>
+
+          <!-- 댓글 작성 폼 -->
+          <div id="commentForm" class="mt-4">
+            <div class="card">
+              <div class="card-body">
+                <h6 class="card-title">댓글 작성</h6>
+                <div id="replyQuote" class="d-none mb-2"></div>
+                <input type="hidden" id="replyParentId" value="">
+                <div class="mb-2">
+                  <textarea class="form-control" id="commentContent" rows="3" placeholder="댓글을 입력하세요"></textarea>
+                </div>
+                <div class="d-flex gap-2">
+                  <button class="btn btn-wiki btn-sm" onclick="submitComment()">작성</button>
+                  <button class="btn btn-secondary btn-sm d-none" id="cancelReplyBtn" onclick="cancelReply()">답글
+                    취소</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 오른쪽 사이드바 (PC 전용 오프캔버스 컨테이너) -->
+    <aside class="wiki-sidebar" id="wikiSidebar">
+      <div id="app-sidebar-placeholder"></div>
+    </aside>
+  </div>
+
+  <!-- ── 푸터 Placeholder ── -->
+  <div id="app-footer-placeholder"></div>
+
+  <!-- ── Scripts ── -->
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <script src="/js/common.js"></script>
+  <script>
+    // ── 전역 상태 ──
+    let currentTicketId = null;
+    let currentStatusFilter = '';
+    let currentTypeFilter = '';
+    let currentPage = 1;
+    let allTickets = [];
+
+    const typeLabels = {
+      general: '일반',
+      document: '문서',
+      discussion: '토론',
+      account: '계정'
+    };
+
+    const typeBadgeClasses = {
+      general: 'bg-primary',
+      document: 'bg-info',
+      discussion: 'bg-warning text-dark',
+      account: 'bg-dark'
+    };
+
+    // ── URL 파싱 ──
+    function parseUrl() {
+      const path = window.location.pathname;
+      // /tickets/:id
+      let m = path.match(/^\/tickets\/([0-9]+)$/);
+      if (m) return { ticketId: Number(m[1]) };
+      // /tickets
+      if (path === '/tickets') return { ticketId: null };
+      return null;
+    }
+
+    // ── 초기화 ──
+    document.addEventListener('DOMContentLoaded', async () => {
+      await loadConfig();
+      await checkAuth();
+
+      if (!currentUser) {
+        document.getElementById('loading').classList.add('d-none');
+        Swal.fire('로그인 필요', '티켓 문의를 이용하려면 로그인해주세요.', 'info').then(() => {
+          window.location.href = '/';
+        });
+        return;
+      }
+
+      const parsed = parseUrl();
+      if (!parsed) {
+        document.getElementById('loading').classList.add('d-none');
+        Swal.fire('오류', '잘못된 URL입니다.', 'error');
+        return;
+      }
+
+      if (parsed.ticketId) {
+        showTicketDetail(parsed.ticketId);
+      } else {
+        showTicketList();
+      }
+    });
+
+    // ── 유틸리티 ──
+    function getRelativeTime(unixTs) {
+      const now = Math.floor(Date.now() / 1000);
+      const diff = now - unixTs;
+      if (diff < 60) return '방금 전';
+      if (diff < 3600) return `${Math.floor(diff / 60)}분 전`;
+      if (diff < 86400) return `${Math.floor(diff / 3600)}시간 전`;
+      if (diff < 604800) return `${Math.floor(diff / 86400)}일 전`;
+      return new Date(unixTs * 1000).toLocaleDateString('ko-KR');
+    }
+
+    function hideAllPages() {
+      document.getElementById('loading').classList.add('d-none');
+      document.getElementById('ticketListPage').classList.add('d-none');
+      document.getElementById('ticketDetailPage').classList.add('d-none');
+    }
+
+    function isAdmin() {
+      return currentUser && ['admin', 'super_admin'].includes(currentUser.role);
+    }
+
+    function isManagerOrAbove() {
+      return currentUser && ['discussion_manager', 'admin', 'super_admin'].includes(currentUser.role);
+    }
+
+    // ══════════════════════════════════════════
+    // ── 티켓 목록 ──
+    // ══════════════════════════════════════════
+    async function showTicketList() {
+      currentPage = 1;
+      allTickets = [];
+
+      // 새 문의 버튼 표시
+      if (currentUser && currentUser.role !== 'banned') {
+        document.getElementById('newTicketBtn').classList.remove('d-none');
+      }
+
+      // 관리자에게만 유형 필터 표시
+      if (isManagerOrAbove()) {
+        document.getElementById('typeFilter').classList.remove('d-none');
+      }
+
+      await loadTickets(false);
+
+      hideAllPages();
+      document.getElementById('newTicketForm').classList.add('d-none');
+      document.getElementById('ticketListPage').classList.remove('d-none');
+      document.title = `티켓 문의 - ${appConfig.wikiName}`;
+    }
+
+    async function loadTickets(append) {
+      try {
+        let url = `/api/tickets?page=${currentPage}`;
+        if (currentStatusFilter) url += `&status=${currentStatusFilter}`;
+        if (currentTypeFilter) url += `&type=${currentTypeFilter}`;
+
+        const res = await fetch(url);
+        if (!res.ok) throw new Error('티켓 목록 로딩 실패');
+        const data = await res.json();
+
+        if (append) {
+          allTickets = allTickets.concat(data.tickets);
+        } else {
+          allTickets = data.tickets;
+        }
+
+        renderTicketList();
+
+        // 페이지네이션
+        const paginationEl = document.getElementById('ticketPagination');
+        if (data.hasMore) {
+          paginationEl.classList.remove('d-none');
+        } else {
+          paginationEl.classList.add('d-none');
+        }
+
+      } catch (err) {
+        console.error(err);
+        Swal.fire('오류', err.message, 'error');
+      }
+    }
+
+    function renderTicketList() {
+      const listEl = document.getElementById('ticketsList');
+      if (!allTickets || allTickets.length === 0) {
+        listEl.innerHTML = '<div class="text-muted text-center py-5">티켓이 없습니다.</div>';
+        return;
+      }
+
+      listEl.innerHTML = allTickets.map(t => {
+        const statusBadge = t.status === 'open'
+          ? '<span class="badge bg-success">열림</span>'
+          : '<span class="badge bg-secondary">닫힘</span>';
+        const typeBadge = `<span class="badge ${typeBadgeClasses[t.type] || 'bg-primary'}">${typeLabels[t.type] || t.type}</span>`;
+        const date = getRelativeTime(t.created_at);
+        const deletedBadge = t.deleted_at ? '<span class="badge bg-danger">삭제됨</span>' : '';
+
+        return `
+          <a href="/tickets/${t.id}" class="discussion-item">
+            <div class="d-flex justify-content-between align-items-start">
+              <div class="discussion-item-main">
+                <div class="discussion-item-title">
+                  ${statusBadge} ${typeBadge} ${deletedBadge}
+                  <span class="text-muted small">#${t.id}</span>
+                  <span>${escapeHtml(t.title)}</span>
+                </div>
+                <div class="discussion-item-meta">
+                  <span><i class="bi bi-person"></i> ${escapeHtml(t.user_name || '알 수 없음')}${renderUserRoleIcon(t.user_role)}</span>
+                  <span><i class="bi bi-clock"></i> ${date}</span>
+                  <span><i class="bi bi-chat"></i> ${t.comment_count || 0}개 댓글</span>
+                </div>
+              </div>
+            </div>
+          </a>
+        `;
+      }).join('');
+      initRoleIconPopovers(listEl);
+    }
+
+    function filterTickets(btn, filterType, value) {
+      if (filterType === 'status') {
+        btn.closest('.btn-group').querySelectorAll('.btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentStatusFilter = value;
+      }
+      currentPage = 1;
+      allTickets = [];
+      loadTickets(false);
+    }
+
+    function applyTypeFilter() {
+      currentTypeFilter = document.getElementById('typeFilter').value;
+      currentPage = 1;
+      allTickets = [];
+      loadTickets(false);
+    }
+
+    function loadMoreTickets() {
+      currentPage++;
+      loadTickets(true);
+    }
+
+    // ── 새 티켓 작성 ──
+    function showNewTicketForm() {
+      if (!currentUser) {
+        Swal.fire('로그인 필요', '문의를 작성하려면 로그인해주세요.', 'info');
+        return;
+      }
+      document.getElementById('newTicketForm').classList.remove('d-none');
+      document.getElementById('newTicketTitle').value = '';
+      document.getElementById('newTicketContent').value = '';
+      document.getElementById('newTicketType').value = 'general';
+      document.getElementById('newTicketTitle').focus();
+    }
+
+    async function submitNewTicket() {
+      const title = document.getElementById('newTicketTitle').value.trim();
+      const content = document.getElementById('newTicketContent').value.trim();
+      const type = document.getElementById('newTicketType').value;
+
+      if (!title) { Swal.fire('알림', '문의 제목을 입력하세요.', 'warning'); return; }
+      if (!content) { Swal.fire('알림', '문의 내용을 입력하세요.', 'warning'); return; }
+
+      try {
+        const res = await fetch('/api/tickets', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title, content, type })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '티켓 생성 실패');
+
+        Swal.fire('성공', '문의가 접수되었습니다.', 'success').then(() => {
+          window.location.href = `/tickets/${data.id}`;
+        });
+      } catch (err) {
+        Swal.fire('오류', err.message, 'error');
+      }
+    }
+
+    // ══════════════════════════════════════════
+    // ── 티켓 상세 ──
+    // ══════════════════════════════════════════
+    async function showTicketDetail(ticketId) {
+      currentTicketId = ticketId;
+
+      try {
+        const res = await fetch(`/api/tickets/${ticketId}`);
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.error || '티켓을 불러올 수 없습니다.');
+        }
+        const data = await res.json();
+        const ticket = data.ticket;
+        const comments = data.comments;
+
+        // 제목
+        document.getElementById('ticketTitle').innerHTML =
+          `<i class="bi bi-ticket-detailed"></i> #${ticket.id} ${escapeHtml(ticket.title)}`;
+
+        // 메타 정보
+        const statusBadge = ticket.status === 'open'
+          ? '<span class="badge bg-success">열림</span>'
+          : '<span class="badge bg-secondary">닫힘</span>';
+        const typeBadge = `<span class="badge ${typeBadgeClasses[ticket.type] || 'bg-primary'}">${typeLabels[ticket.type] || ticket.type}</span>`;
+        const date = new Date(ticket.created_at * 1000).toLocaleString('ko-KR');
+        const deletedBadge = ticket.deleted_at ? '<span class="badge bg-danger">삭제됨</span>' : '';
+
+        document.getElementById('ticketMeta').innerHTML = `
+          ${statusBadge} ${typeBadge} ${deletedBadge}
+          <span class="text-muted small">작성자: ${escapeHtml(ticket.user_name || '알 수 없음')}${renderUserRoleIcon(ticket.user_role)}</span>
+          <span class="text-muted small">${date}</span>
+        `;
+        initRoleIconPopovers(document.getElementById('ticketMeta'));
+
+        // 액션 버튼들
+        let actionsHtml = '';
+        if (currentUser) {
+          const isAuthor = ticket.user_id === currentUser.id;
+          const userIsAdmin = isAdmin();
+          const isSuperAdmin = currentUser.role === 'super_admin';
+
+          if (isAuthor || userIsAdmin) {
+            if (ticket.status === 'open') {
+              actionsHtml += `<button class="btn btn-outline-danger btn-sm" onclick="changeTicketStatus(${ticketId}, 'closed')">
+                <i class="bi bi-x-circle"></i> 문의 닫기</button>`;
+            } else {
+              actionsHtml += `<button class="btn btn-outline-success btn-sm" onclick="changeTicketStatus(${ticketId}, 'open')">
+                <i class="bi bi-arrow-counterclockwise"></i> 문의 다시 열기</button>`;
+            }
+          }
+
+          if (userIsAdmin && !ticket.deleted_at) {
+            actionsHtml += `<button class="btn btn-outline-danger btn-sm" onclick="deleteTicket(${ticketId}, false)">
+              <i class="bi bi-trash"></i> 삭제</button>`;
+          }
+
+          if (isSuperAdmin) {
+            actionsHtml += `<button class="btn btn-danger btn-sm" onclick="deleteTicket(${ticketId}, true)">
+              <i class="bi bi-trash-fill"></i> 완전 삭제</button>`;
+          }
+        }
+        document.getElementById('ticketActions').innerHTML = actionsHtml;
+
+        // 댓글 렌더링
+        const commentsEl = document.getElementById('commentsList');
+        commentsEl.innerHTML = comments.map(c => renderComment(c, ticket)).join('');
+        initRoleIconPopovers(commentsEl);
+
+        // 댓글 폼 표시 여부
+        const commentFormEl = document.getElementById('commentForm');
+        if (ticket.status === 'closed' || ticket.deleted_at || !currentUser || currentUser.role === 'banned') {
+          commentFormEl.classList.add('d-none');
+        } else {
+          commentFormEl.classList.remove('d-none');
+        }
+        cancelReply();
+
+        hideAllPages();
+        document.getElementById('ticketDetailPage').classList.remove('d-none');
+        document.title = `#${ticket.id} ${ticket.title} - 티켓 - ${appConfig.wikiName}`;
+
+        // 해당 티켓 관련 알림 일괄 삭제
+        if (currentUser) {
+          const notifLink = `/tickets/${ticketId}`;
+          fetch('/api/notifications/by-link', {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ link: notifLink })
+          }).then(res => {
+            if (res.ok) loadNotificationCount();
+          }).catch(() => { });
+        }
+
+      } catch (err) {
+        console.error(err);
+        hideAllPages();
+        Swal.fire('오류', err.message, 'error');
+      }
+    }
+
+    function renderComment(c, ticket) {
+      const isDeleted = !!c.deleted_at;
+      const date = new Date(c.created_at * 1000).toLocaleString('ko-KR');
+
+      // 역할 아이콘
+      const authorRoleIcon = renderUserRoleIcon(c.author_role);
+
+      let quoteHtml = '';
+      if (c.parent_id && c.quoted_content) {
+        quoteHtml = `
+          <div class="discussion-quote">
+            <div class="discussion-quote-author"><i class="bi bi-reply"></i> ${escapeHtml(c.quoted_author_name || '알 수 없음')}:</div>
+            <div class="discussion-quote-text">${escapeHtml(c.quoted_content || '')}</div>
+          </div>
+        `;
+      }
+
+      let contentHtml;
+      if (isDeleted) {
+        contentHtml = '<span class="text-muted fst-italic">삭제된 댓글입니다.</span>';
+      } else {
+        contentHtml = escapeHtml(c.content).replace(/\n/g, '<br>');
+      }
+
+      let commentActions = '';
+      if (!isDeleted && currentUser && currentUser.role !== 'banned' && ticket.status === 'open' && !ticket.deleted_at) {
+        commentActions += `<button class="btn btn-sm btn-link text-muted" data-id="${c.id}" data-author="${escapeHtml(c.author_name || '알 수 없음')}" data-content="${escapeHtml((c.content || '').substring(0, 100))}" onclick="startReply(+this.dataset.id, this.dataset.author, this.dataset.content)">
+          <i class="bi bi-reply"></i> 답글
+        </button>`;
+      }
+      if (!isDeleted && currentUser) {
+        const userIsAdmin = isAdmin();
+        const isSuperAdmin = currentUser.role === 'super_admin';
+        if (userIsAdmin) {
+          commentActions += `<button class="btn btn-sm btn-link text-danger" onclick="deleteComment(${c.id}, false)">
+            <i class="bi bi-trash"></i>
+          </button>`;
+        }
+        if (isSuperAdmin) {
+          commentActions += `<button class="btn btn-sm btn-link text-danger" onclick="deleteComment(${c.id}, true)">
+            <i class="bi bi-trash-fill"></i>
+          </button>`;
+        }
+      }
+
+      return `
+        <div class="discussion-comment ${isDeleted ? 'discussion-comment-deleted' : ''}" id="comment-${c.id}">
+          <div class="discussion-comment-header">
+            <span class="discussion-comment-author">
+              ${c.author_picture ? `<img src="${c.author_picture}" class="discussion-comment-avatar" alt="" loading="lazy">` : ''}
+              ${escapeHtml(c.author_name || '알 수 없음')}${authorRoleIcon}
+            </span>
+            <span class="discussion-comment-date text-muted small">${date}</span>
+          </div>
+          ${quoteHtml}
+          <div class="discussion-comment-body">${contentHtml}</div>
+          <div class="discussion-comment-actions">${commentActions}</div>
+        </div>
+      `;
+    }
+
+    // ── 답글 ──
+    function startReply(parentId, authorName, preview) {
+      document.getElementById('replyParentId').value = parentId;
+      const quoteEl = document.getElementById('replyQuote');
+      quoteEl.innerHTML = `
+        <div class="discussion-quote">
+          <div class="discussion-quote-author"><i class="bi bi-reply"></i> ${escapeHtml(authorName)}에게 답글:</div>
+          <div class="discussion-quote-text">${escapeHtml(preview)}${preview.length >= 100 ? '...' : ''}</div>
+        </div>
+      `;
+      quoteEl.classList.remove('d-none');
+      document.getElementById('cancelReplyBtn').classList.remove('d-none');
+      document.getElementById('commentContent').focus();
+      document.getElementById('commentForm').scrollIntoView({ behavior: 'smooth' });
+    }
+
+    function cancelReply() {
+      document.getElementById('replyParentId').value = '';
+      document.getElementById('replyQuote').classList.add('d-none');
+      document.getElementById('cancelReplyBtn').classList.add('d-none');
+    }
+
+    async function submitComment() {
+      const content = document.getElementById('commentContent').value.trim();
+      const parentId = document.getElementById('replyParentId').value;
+
+      if (!content) { Swal.fire('알림', '댓글 내용을 입력하세요.', 'warning'); return; }
+
+      try {
+        const body = { content };
+        if (parentId) body.parent_id = Number(parentId);
+
+        const res = await fetch(`/api/tickets/${currentTicketId}/comments`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '댓글 작성 실패');
+
+        document.getElementById('commentContent').value = '';
+        cancelReply();
+        showTicketDetail(currentTicketId);
+      } catch (err) {
+        Swal.fire('오류', err.message, 'error');
+      }
+    }
+
+    // ── 티켓 상태 변경 ──
+    async function changeTicketStatus(ticketId, status) {
+      const label = status === 'closed' ? '닫기' : '다시 열기';
+      const result = await Swal.fire({
+        title: `문의 ${label}`,
+        text: `정말 이 문의를 ${label}하시겠습니까?`,
+        icon: 'question',
+        showCancelButton: true,
+        confirmButtonText: label,
+        cancelButtonText: '취소'
+      });
+
+      if (!result.isConfirmed) return;
+
+      try {
+        const res = await fetch(`/api/tickets/${ticketId}/status`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '상태 변경 실패');
+
+        showTicketDetail(ticketId);
+      } catch (err) {
+        Swal.fire('오류', err.message, 'error');
+      }
+    }
+
+    // ── 티켓 삭제 ──
+    async function deleteTicket(ticketId, hard) {
+      const label = hard ? '완전 삭제 (복구 불가)' : '삭제';
+      const result = await Swal.fire({
+        title: `문의 ${label}`,
+        text: hard ? '이 문의와 모든 댓글이 영구적으로 삭제됩니다.' : '이 문의를 삭제하시겠습니까?',
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#d33',
+        confirmButtonText: label,
+        cancelButtonText: '취소'
+      });
+
+      if (!result.isConfirmed) return;
+
+      try {
+        const url = hard
+          ? `/api/tickets/${ticketId}/hard`
+          : `/api/tickets/${ticketId}`;
+        const res = await fetch(url, { method: 'DELETE' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '삭제 실패');
+
+        Swal.fire('삭제됨', '문의가 삭제되었습니다.', 'success').then(() => {
+          window.location.href = '/tickets';
+        });
+      } catch (err) {
+        Swal.fire('오류', err.message, 'error');
+      }
+    }
+
+    // ── 댓글 삭제 ──
+    async function deleteComment(commentId, hard) {
+      const label = hard ? '완전 삭제' : '삭제';
+      const result = await Swal.fire({
+        title: `댓글 ${label}`,
+        text: hard ? '이 댓글이 영구적으로 삭제됩니다.' : '이 댓글을 삭제하시겠습니까?',
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#d33',
+        confirmButtonText: label,
+        cancelButtonText: '취소'
+      });
+
+      if (!result.isConfirmed) return;
+
+      try {
+        const url = hard
+          ? `/api/tickets/comment/${commentId}/hard`
+          : `/api/tickets/comment/${commentId}`;
+        const res = await fetch(url, { method: 'DELETE' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '삭제 실패');
+
+        showTicketDetail(currentTicketId);
+      } catch (err) {
+        Swal.fire('오류', err.message, 'error');
+      }
+    }
+  </script>
+
+</body>
+
+</html>

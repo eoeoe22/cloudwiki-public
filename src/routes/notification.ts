@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import type { Env, Message } from '../types';
-import { requireAuth } from '../middleware/session';
+import { requireAuth, requireAuthAllowBanned } from '../middleware/session';
 import { safeJSON } from '../utils/json';
 import { isSuperAdmin } from '../utils/auth';
 
@@ -22,7 +22,7 @@ function roleLevel(role: string): number {
  * 현재 유저의 알림 목록 (최신순)
  * 쪽지 알림은 deleted=0인 것만 포함
  */
-notificationRoutes.get('/notifications', requireAuth, async (c) => {
+notificationRoutes.get('/notifications', requireAuthAllowBanned, async (c) => {
     const user = c.get('user')!;
     const db = c.env.DB;
     const offset = Number(c.req.query('offset')) || 0;
@@ -48,7 +48,7 @@ notificationRoutes.get('/notifications', requireAuth, async (c) => {
  * GET /api/notifications/count
  * 읽지 않은(삭제되지 않은) 알림 수
  */
-notificationRoutes.get('/notifications/count', requireAuth, async (c) => {
+notificationRoutes.get('/notifications/count', requireAuthAllowBanned, async (c) => {
     const user = c.get('user')!;
     const db = c.env.DB;
 
@@ -68,7 +68,7 @@ notificationRoutes.get('/notifications/count', requireAuth, async (c) => {
  * 특정 link와 일치하는 알림 일괄 삭제 (쪽지 제외)
  * 토론 페이지 접속 시 해당 토론 관련 알림을 모두 정리하기 위해 사용
  */
-notificationRoutes.delete('/notifications/by-link', requireAuth, async (c) => {
+notificationRoutes.delete('/notifications/by-link', requireAuthAllowBanned, async (c) => {
     const user = c.get('user')!;
     const db = c.env.DB;
     const { link } = await c.req.json<{ link: string }>();
@@ -88,7 +88,7 @@ notificationRoutes.delete('/notifications/by-link', requireAuth, async (c) => {
  * DELETE /api/notifications/:id
  * 알림 삭제 — 쪽지(type=message)는 soft delete, 나머지는 hard delete
  */
-notificationRoutes.delete('/notifications/:id', requireAuth, async (c) => {
+notificationRoutes.delete('/notifications/:id', requireAuthAllowBanned, async (c) => {
     const user = c.get('user')!;
     const db = c.env.DB;
     const notifId = Number(c.req.param('id'));
@@ -207,7 +207,7 @@ notificationRoutes.post('/messages', requireAuth, async (c) => {
  * GET /api/messages
  * 현재 유저가 받은 쪽지 목록 (최신순)
  */
-notificationRoutes.get('/messages', requireAuth, async (c) => {
+notificationRoutes.get('/messages', requireAuthAllowBanned, async (c) => {
     const user = c.get('user')!;
     const db = c.env.DB;
     const offset = Number(c.req.query('offset')) || 0;
@@ -232,7 +232,7 @@ notificationRoutes.get('/messages', requireAuth, async (c) => {
  * DELETE /api/messages/:id
  * 받은 쪽지 삭제 (Soft Delete)
  */
-notificationRoutes.delete('/messages/:id', requireAuth, async (c) => {
+notificationRoutes.delete('/messages/:id', requireAuthAllowBanned, async (c) => {
     const user = c.get('user')!;
     const db = c.env.DB;
     const messageId = Number(c.req.param('id'));
@@ -259,7 +259,7 @@ notificationRoutes.delete('/messages/:id', requireAuth, async (c) => {
  * GET /api/messages/:id
  * 쪽지 상세 조회
  */
-notificationRoutes.get('/messages/:id', requireAuth, async (c) => {
+notificationRoutes.get('/messages/:id', requireAuthAllowBanned, async (c) => {
     const user = c.get('user')!;
     const db = c.env.DB;
     const messageId = Number(c.req.param('id'));

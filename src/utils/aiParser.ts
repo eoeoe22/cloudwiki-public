@@ -43,42 +43,72 @@ export async function renderForAI(content: string, db: D1Database, depth = 0): P
     if (depth < MAX_TEMPLATE_DEPTH) {
         // 정규식: {{틀이름}} 또는 {{틀:틀이름}} 또는 {{문서이름}}
         const templateRegex = /\{\{([^}]+?)\}\}/g;
-        const replacements: { original: string; replacement: string }[] = [];
 
-        // 모든 매치를 먼저 순회하여 비동기 Fetch 작업을 모음
+        // 모든 매치를 먼저 순회하여 슬러그 목록을 모음
         const matches = Array.from(processed.matchAll(templateRegex));
 
-        for (const m of matches) {
-            const original = m[0];
-            let templateName = m[1].trim();
-
-            // '틀:' 접두사가 없으면 붙여서 검색하는게 기본 위키 동작
-            let targetSlug = templateName;
-
-            if (!targetSlug.startsWith('틀:') && !targetSlug.startsWith('template:') && !targetSlug.startsWith('템플릿:')) {
-                targetSlug = '틀:' + targetSlug;
+        if (matches.length > 0) {
+            // 1) 슬러그 목록 추출 (중복 제거)
+            const slugMap = new Map<string, string>(); // normalizedSlug -> original match text
+            for (const m of matches) {
+                let targetSlug = m[1].trim();
+                if (!targetSlug.startsWith('틀:') && !targetSlug.startsWith('template:') && !targetSlug.startsWith('템플릿:')) {
+                    targetSlug = '틀:' + targetSlug;
+                }
+                const normalized = normalizeSlug(targetSlug);
+                if (!slugMap.has(normalized)) {
+                    slugMap.set(normalized, targetSlug);
+                }
             }
+
+            // 2) IN 절을 사용하여 한 번의 쿼리로 모든 틀 내용을 배치 조회
+            const slugList = Array.from(slugMap.keys());
+            const templateContents = new Map<string, string>();
+
+            // D1은 단일 prepare에 IN절 바인딩이 제한적이므로 batch 사용
+            const batchStatements = slugList.map(slug =>
+                db.prepare('SELECT slug, content FROM pages WHERE slug = ? AND deleted_at IS NULL AND is_private = 0').bind(slug)
+            );
 
             try {
-                const page = await db.prepare('SELECT content FROM pages WHERE slug = ? AND deleted_at IS NULL AND is_private = 0')
-                    .bind(normalizeSlug(targetSlug))
-                    .first<{ content: string }>();
-
-                if (page && page.content) {
-                    // 찾은 틀 내용도 재귀적으로 파싱
-                    const parsedTemplate = await renderForAI(page.content, db, depth + 1);
-                    replacements.push({ original, replacement: parsedTemplate });
-                } else {
-                    replacements.push({ original, replacement: '' });
+                const batchResults = await db.batch<{ slug: string; content: string }>(batchStatements);
+                for (const result of batchResults) {
+                    if (result.results && result.results.length > 0) {
+                        const row = result.results[0];
+                        templateContents.set(row.slug, row.content);
+                    }
                 }
-            } catch (e) {
-                replacements.push({ original, replacement: '' });
+            } catch {
+                // 배치 실패 시 빈 결과로 처리
             }
-        }
 
-        // 수집된 치환 값들을 원본에서 교체
-        for (const { original, replacement } of replacements) {
-            processed = processed.replace(new RegExp(original.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&'), 'g'), replacement);
+            // 3) 조회된 틀 내용을 재귀적으로 파싱
+            const parsedTemplates = new Map<string, string>();
+            const parsePromises: Promise<void>[] = [];
+
+            for (const [normalized] of slugMap) {
+                const content = templateContents.get(normalized);
+                if (content) {
+                    parsePromises.push(
+                        renderForAI(content, db, depth + 1).then(parsed => {
+                            parsedTemplates.set(normalized, parsed);
+                        })
+                    );
+                }
+            }
+            await Promise.all(parsePromises);
+
+            // 4) 수집된 치환 값들을 원본에서 교체
+            for (const m of matches) {
+                const original = m[0];
+                let targetSlug = m[1].trim();
+                if (!targetSlug.startsWith('틀:') && !targetSlug.startsWith('template:') && !targetSlug.startsWith('템플릿:')) {
+                    targetSlug = '틀:' + targetSlug;
+                }
+                const normalized = normalizeSlug(targetSlug);
+                const replacement = parsedTemplates.get(normalized) || '';
+                processed = processed.replace(new RegExp(original.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&'), 'g'), replacement);
+            }
         }
     } else {
         // 최대 깊이를 초과하면 틀 문법 자체를 텍스트에서 삭제

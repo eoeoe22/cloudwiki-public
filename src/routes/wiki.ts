@@ -3,8 +3,83 @@ import type { Env, Page, Revision } from '../types';
 import { requireAuth } from '../middleware/session';
 import { normalizeSlug } from '../utils/slug';
 import { safeJSON } from '../utils/json';
+import { ROLE_CASE_SQL, enrichRoles } from '../utils/role';
 
 const wiki = new Hono<Env>();
+
+/**
+ * 문서 content에서 링크를 파싱하여 { target_slug, link_type } 배열을 반환
+ */
+function extractLinks(content: string): { target_slug: string; link_type: string }[] {
+    const links: { target_slug: string; link_type: string }[] = [];
+    const seen = new Set<string>();
+
+    // 코드블럭 내부 제외를 위해 코드블럭을 먼저 제거
+    const cleaned = content.replace(/```[\s\S]*?```/g, '').replace(/`[^`\n]+`/g, '');
+
+    // 1) [[위키링크]]
+    const wikiLinkRegex = /\[\[([^\]]+)\]\]/g;
+    for (const m of cleaned.matchAll(wikiLinkRegex)) {
+        const slug = m[1].trim();
+        const key = `wikilink:${slug}`;
+        if (!seen.has(key)) {
+            seen.add(key);
+            links.push({ target_slug: slug, link_type: 'wikilink' });
+        }
+    }
+
+    // 2) {{틀 트랜스클루전}}
+    const templateRegex = /\{\{([^}]+?)\}\}/g;
+    for (const m of cleaned.matchAll(templateRegex)) {
+        let slug = m[1].trim();
+        if (!slug.startsWith('틀:') && !slug.startsWith('template:') && !slug.startsWith('템플릿:')) {
+            slug = '틀:' + slug;
+        }
+        const key = `template:${slug}`;
+        if (!seen.has(key)) {
+            seen.add(key);
+            links.push({ target_slug: slug, link_type: 'template' });
+        }
+    }
+
+    return links;
+}
+
+/**
+ * page_links 및 page_categories 테이블을 갱신하는 D1 배치 문 생성
+ */
+function buildLinkAndCategoryStatements(
+    db: D1Database,
+    pageId: number,
+    content: string,
+    category: string | null
+): D1PreparedStatement[] {
+    const stmts: D1PreparedStatement[] = [];
+
+    // page_links 갱신: 기존 삭제 후 재삽입
+    stmts.push(db.prepare('DELETE FROM page_links WHERE source_page_id = ?').bind(pageId));
+    const links = extractLinks(content);
+    for (const link of links) {
+        stmts.push(
+            db.prepare('INSERT INTO page_links (source_page_id, target_slug, link_type) VALUES (?, ?, ?)')
+                .bind(pageId, link.target_slug, link.link_type)
+        );
+    }
+
+    // page_categories 갱신: 기존 삭제 후 재삽입
+    stmts.push(db.prepare('DELETE FROM page_categories WHERE page_id = ?').bind(pageId));
+    if (category) {
+        const cats = category.split(',').map(c => c.trim()).filter(c => c);
+        for (const cat of cats) {
+            stmts.push(
+                db.prepare('INSERT OR IGNORE INTO page_categories (page_id, category) VALUES (?, ?)')
+                    .bind(pageId, cat)
+            );
+        }
+    }
+
+    return stmts;
+}
 
 /**
  * GET /config
@@ -391,7 +466,9 @@ wiki.put('/wiki/:slug', requireAuth, async (c) => {
             .bind(body.title, body.content, body.category || null, finalIsLocked, finalIsPrivate, body.redirect_to || null, user.id, revisionId, newVersion, existing.id)
             .run();
 
-
+        // page_links, page_categories 갱신 (비동기)
+        const linkCatStmts = buildLinkAndCategoryStatements(db, existing.id, body.content, body.category || null);
+        c.executionCtx.waitUntil(db.batch(linkCatStmts).catch(e => console.error('Failed to update links/categories:', e)));
 
         // 캐시 무효화
         c.executionCtx.waitUntil(caches.default.delete(c.req.url));
@@ -427,6 +504,9 @@ wiki.put('/wiki/:slug', requireAuth, async (c) => {
             .bind(revisionId, pageId)
             .run();
 
+        // page_links, page_categories 갱신 (비동기)
+        const linkCatStmts = buildLinkAndCategoryStatements(db, pageId, body.content, body.category || null);
+        c.executionCtx.waitUntil(db.batch(linkCatStmts).catch(e => console.error('Failed to update links/categories:', e)));
 
         // 캐시 무효화
         c.executionCtx.waitUntil(caches.default.delete(c.req.url));
@@ -437,7 +517,7 @@ wiki.put('/wiki/:slug', requireAuth, async (c) => {
 
 /**
  * GET /wiki/category/:category
- * 카테고리별 문서 목록 (비공개 제외)
+ * 카테고리별 문서 목록 (page_categories 테이블 기반)
  */
 wiki.get('/wiki/category/:category', async (c) => {
     const category = c.req.param('category');
@@ -445,26 +525,21 @@ wiki.get('/wiki/category/:category', async (c) => {
     const user = c.get('user');
     const isAdmin = user && (user.role === 'admin' || user.role === 'super_admin');
 
-    // 쉼표 구분 카테고리를 지원하기 위해 여러 패턴으로 검색
-    // 정확히 일치하거나, 쉼표로 구분된 목록에 포함된 경우
-    let query = `SELECT slug, title, is_locked, updated_at FROM pages
-        WHERE deleted_at IS NULL
-        AND (
-            category = ?
-            OR category LIKE ? || ',%'
-            OR category LIKE '%,' || ? || ',%'
-            OR category LIKE '%, ' || ? || ',%'
-            OR category LIKE '%,' || ? 
-            OR category LIKE '%, ' || ?
-        )`;
+    let query = `
+        SELECT p.slug, p.title, p.is_locked, p.updated_at
+        FROM page_categories pc
+        JOIN pages p ON pc.page_id = p.id
+        WHERE p.deleted_at IS NULL
+          AND pc.category = ?
+    `;
     if (!isAdmin) {
-        query += ' AND is_private = 0';
+        query += ' AND p.is_private = 0';
     }
-    query += ' ORDER BY updated_at DESC';
+    query += ' ORDER BY p.updated_at DESC';
 
     const { results } = await db
         .prepare(query)
-        .bind(category, category, category, category, category, category)
+        .bind(category)
         .all();
 
     return c.json(safeJSON({ pages: results }));
@@ -476,6 +551,8 @@ wiki.get('/wiki/category/:category', async (c) => {
  */
 wiki.get('/wiki/:slug/revisions', async (c) => {
     const slug = c.req.param('slug');
+    const offset = parseInt(c.req.query('offset') || '0', 10);
+    const limit = 10;
     const db = c.env.DB;
     const user = c.get('user');
     const isAdmin = user && (user.role === 'admin' || user.role === 'super_admin');
@@ -495,16 +572,27 @@ wiki.get('/wiki/:slug/revisions', async (c) => {
 
     const revisions = await db
         .prepare(
-            `SELECT r.id, r.summary, r.created_at, u.id as author_id, u.name as author_name, u.picture as author_picture
+            `SELECT r.id, r.summary, r.created_at, u.id as author_id, u.name as author_name, u.picture as author_picture,
+                    ${ROLE_CASE_SQL} as author_role,
+                    u.email as _author_email
        FROM revisions r
        LEFT JOIN users u ON r.author_id = u.id
        WHERE r.page_id = ?
-       ORDER BY r.created_at DESC`
+       ORDER BY r.created_at DESC
+       LIMIT ? OFFSET ?`
         )
-        .bind(page.id)
+        .bind(page.id, limit + 1, offset)
         .all();
 
-    return c.json(safeJSON({ revisions: revisions.results }));
+    let has_more = false;
+    if (revisions.results.length > limit) {
+        has_more = true;
+        revisions.results.pop();
+    }
+
+    enrichRoles(revisions.results, 'author_role', '_author_email', c.env);
+
+    return c.json(safeJSON({ revisions: revisions.results, has_more }));
 });
 
 /**
@@ -606,10 +694,9 @@ wiki.get('/wiki/:slug/revisions/:id/diff', async (c) => {
 
 /**
  * GET /wiki/:slug/backlinks
- * 이 문서를 참조하는 문서 목록 (FTS/LIKE 기반)
- * - 문서 링크: [[slug]]
- * - 틀 트랜스클루전: {{slug}} 또는 {{틀:slug}} 등
- * - 이미지: 이미지: 접두사 문서인 경우 이미지 파일명으로 검색
+ * 이 문서를 참조하는 문서 목록 (page_links 테이블 기반)
+ * - 문서 링크: [[slug]] → link_type = 'wikilink'
+ * - 틀 트랜스클루전: {{slug}} → link_type = 'template'
  */
 wiki.get('/wiki/:slug/backlinks', async (c) => {
     const slug = c.req.param('slug');
@@ -617,41 +704,27 @@ wiki.get('/wiki/:slug/backlinks', async (c) => {
     const user = c.get('user');
     const isAdmin = user && (user.role === 'admin' || user.role === 'super_admin');
 
-    // LIKE 패턴 검색을 위한 조건 구성
-    const conditions: string[] = [];
-    const bindings: string[] = [];
+    // page_links 테이블에서 target_slug로 검색
+    const targetSlugs: string[] = [slug];
 
-    // 1) 문서 링크: [[slug]]
-    conditions.push('p.content LIKE ?');
-    bindings.push(`%[[${slug}]]%`);
-
-    // 2) 틀 트랜스클루전 (slug가 틀: / template: / 템플릿: 접두사인 경우)
+    // 틀 접두사인 경우 접두사 없는 이름으로도 검색
     const templatePrefixes = ['틀:', 'template:', '템플릿:'];
     for (const prefix of templatePrefixes) {
         if (slug.startsWith(prefix)) {
             const templateName = slug.substring(prefix.length);
-            // {{틀이름}} (접두사 없이) 또는 {{틀:틀이름}} (접두사 포함) 검색
-            conditions.push('p.content LIKE ?');
-            bindings.push(`%{{${templateName}}}%`);
-            conditions.push('p.content LIKE ?');
-            bindings.push(`%{{${slug}}}%`);
+            targetSlugs.push(templateName);
             break;
         }
     }
 
-    // 3) 이미지: 접두사인 경우, 이미지 파일명으로 검색
-    if (slug.startsWith('이미지:')) {
-        const imageFilename = slug.substring('이미지:'.length);
-        conditions.push('p.content LIKE ?');
-        bindings.push(`%${imageFilename}%`);
-    }
-
+    const placeholders = targetSlugs.map(() => '?').join(', ');
     let query = `
-        SELECT p.slug, p.title, p.updated_at, p.is_locked
-        FROM pages p
+        SELECT DISTINCT p.slug, p.title, p.updated_at, p.is_locked
+        FROM page_links pl
+        JOIN pages p ON pl.source_page_id = p.id
         WHERE p.deleted_at IS NULL
           AND p.slug != ?
-          AND (${conditions.join(' OR ')})
+          AND pl.target_slug IN (${placeholders})
     `;
     if (!isAdmin) {
         query += ' AND p.is_private = 0';
@@ -660,7 +733,7 @@ wiki.get('/wiki/:slug/backlinks', async (c) => {
 
     const backlinks = await db
         .prepare(query)
-        .bind(slug, ...bindings)
+        .bind(slug, ...targetSlugs)
         .all();
 
     return c.json(safeJSON({ backlinks: backlinks.results }));
@@ -713,6 +786,8 @@ wiki.delete('/wiki/:slug', requireAuth, async (c) => {
 
         // Hard Delete Transaction
         const batch = [
+            db.prepare('DELETE FROM page_links WHERE source_page_id = ?').bind(page.id),
+            db.prepare('DELETE FROM page_categories WHERE page_id = ?').bind(page.id),
             db.prepare('DELETE FROM revisions WHERE page_id = ?').bind(page.id),
             db.prepare('DELETE FROM redirects WHERE target_page_id = ?').bind(page.id),
             db.prepare('DELETE FROM pages WHERE id = ?').bind(page.id)

@@ -1,15 +1,6 @@
 import { Context, Next } from 'hono';
 import { Env } from '../types';
-
-function escapeHtml(str: string | undefined | null): string {
-    if (!str) return '';
-    return String(str)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#039;');
-}
+import { escapeHtml } from '../utils/html';
 
 /**
  * SSR 미들웨어: HTML 응답에 위키 브랜딩(이름, 로고, 파비콘) 치환

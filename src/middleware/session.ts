@@ -7,7 +7,11 @@ import type { Env, User } from '../types';
  * 세션 미들웨어: wiki_session 쿠키에서 세션 토큰을 읽고 DB에서 검증한다.
  * 세션이 유효하면 c.set('user', user)로 유저 정보를 주입한다.
  * 세션이 없거나 만료되었으면 user = null로 설정한다.
+ *
+ * 성능 최적화: KV에 세션 정보를 캐싱하여 D1 쿼리 횟수를 최소화한다.
  */
+const SESSION_CACHE_TTL = 300; // KV 캐시 TTL: 5분
+
 export const sessionMiddleware = createMiddleware<Env>(async (c, next) => {
     const sessionId = getCookie(c, 'wiki_session');
 
@@ -16,18 +20,52 @@ export const sessionMiddleware = createMiddleware<Env>(async (c, next) => {
         return next();
     }
 
+    const kv = c.env.KV;
     const db = c.env.DB;
     const now = Math.floor(Date.now() / 1000);
+    const cacheKey = `session:${sessionId}`;
 
-    const row = await db
-        .prepare(
-            `SELECT u.id, u.google_id, u.email, u.name, u.picture, u.role, u.banned_until, u.last_namechange, u.created_at
-       FROM sessions s
-       JOIN users u ON s.user_id = u.id
-       WHERE s.id = ? AND s.expires_at > ?`
-        )
-        .bind(sessionId, now)
-        .first<User>();
+    // 1) KV 캐시에서 먼저 확인
+    let row: User | null = null;
+    const cached = await kv.get(cacheKey);
+
+    if (cached) {
+        try {
+            const parsed = JSON.parse(cached) as { user: User; expires_at: number };
+            if (parsed.expires_at > now) {
+                row = parsed.user;
+            }
+        } catch {
+            // 캐시 파싱 실패 시 DB에서 조회
+        }
+    }
+
+    // 2) 캐시 미스 시 DB에서 조회 후 KV에 캐싱
+    if (!row) {
+        const dbRow = await db
+            .prepare(
+                `SELECT u.id, u.google_id, u.email, u.name, u.picture, u.role, u.banned_until, u.last_namechange, u.created_at, s.expires_at
+           FROM sessions s
+           JOIN users u ON s.user_id = u.id
+           WHERE s.id = ? AND s.expires_at > ?`
+            )
+            .bind(sessionId, now)
+            .first<User & { expires_at: number }>();
+
+        if (dbRow) {
+            const expiresAt = dbRow.expires_at;
+            const { expires_at: _, ...userData } = dbRow;
+            row = userData as User;
+
+            // KV에 캐싱 (세션 만료 시각 또는 TTL 중 짧은 것을 사용)
+            const ttl = Math.min(SESSION_CACHE_TTL, expiresAt - now);
+            if (ttl > 60) {
+                c.executionCtx.waitUntil(
+                    kv.put(cacheKey, JSON.stringify({ user: row, expires_at: expiresAt }), { expirationTtl: ttl })
+                );
+            }
+        }
+    }
 
     if (row) {
         // Super Admin 판별
@@ -58,6 +96,18 @@ export const requireAuth = createMiddleware<Env>(async (c, next) => {
     }
     if (user.role === 'banned') {
         return c.json({ error: '차단된 계정입니다. 이용하실 수 없습니다.' }, 403);
+    }
+    return next();
+});
+
+/**
+ * 인증 필수 미들웨어 (차단된 사용자 허용): 로그인만 확인하고 차단 여부는 확인하지 않음
+ * 차단된 사용자도 알림 조회 등 일부 기능은 사용할 수 있도록 허용
+ */
+export const requireAuthAllowBanned = createMiddleware<Env>(async (c, next) => {
+    const user = c.get('user');
+    if (!user) {
+        return c.json({ error: '로그인이 필요합니다.' }, 401);
     }
     return next();
 });

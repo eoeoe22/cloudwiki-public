@@ -158,7 +158,8 @@
         #wiki-autocomplete .list-group-item.active {
             background-color: var(--wiki-bg);
             border-left: 3px solid var(--wiki-primary);
-            padding-left: 12px; /* 15px - 3px */
+            padding-left: 12px;
+            /* 15px - 3px */
         }
 
         #wiki-autocomplete .item-title {
@@ -1598,11 +1599,11 @@
                 editor.insertText('{{틀제목}}');
             });
 
-            const mdiBtn = createCustomButton('MDI', 'MDI 아이콘 삽입', () => {
+            const mdiBtn = createCustomButton('<i class="mdi mdi-vector-square" style="font-size:16px"></i>', 'MDI 아이콘 삽입', () => {
                 openIconPicker('mdi');
             });
 
-            const biBtn = createCustomButton('<i class="bi bi-bootstrap" style="font-size:16px"></i>', 'Bootstrap Icon 삽입', () => {
+            const biBtn = createCustomButton('<i class="bi bi-bootstrap-fill" style="font-size:16px"></i>', 'Bootstrap Icon 삽입', () => {
                 openIconPicker('bi');
             });
 

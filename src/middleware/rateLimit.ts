@@ -21,8 +21,12 @@ export const rateLimitMiddleware = createMiddleware<Env>(async (c, next) => {
     }
 
     const kv = c.env.KV;
-    const key = `rl:${user.id}`;
     const limit = 10;
+
+    // 시간 버킷 기반 레이트 리밋 (60초 윈도우)
+    // 같은 버킷 키를 사용하여 경쟁 상태 영향을 최소화
+    const bucket = Math.floor(Date.now() / 60_000);
+    const key = `rl:${user.id}:${bucket}`;
 
     // 4. KV에서 현재 카운트 조회
     const current = parseInt(await kv.get(key) || '0', 10);
@@ -31,8 +35,11 @@ export const rateLimitMiddleware = createMiddleware<Env>(async (c, next) => {
         return c.json({ error: '요청 횟수가 너무 많습니다. 잠시 후 다시 시도해주세요.' }, 429);
     }
 
-    // 5. 카운트 증가 (TTL 60초로 자동 만료)
-    await kv.put(key, String(current + 1), { expirationTtl: 60 });
+    // 5. 카운트 증가 (TTL 120초로 자동 만료 - 버킷 전환 후에도 안전하게 정리)
+    // waitUntil로 비동기 처리하여 응답 지연을 줄임
+    c.executionCtx.waitUntil(
+        kv.put(key, String(current + 1), { expirationTtl: 120 })
+    );
 
     return next();
 });

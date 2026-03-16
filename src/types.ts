@@ -114,10 +114,31 @@ export interface DiscussionComment {
     deleted_at: number | null;
 }
 
+export interface Ticket {
+    id: number;
+    title: string;
+    type: 'general' | 'document' | 'discussion' | 'account';
+    status: 'open' | 'closed';
+    user_id: number;
+    created_at: number;
+    updated_at: number;
+    deleted_at: number | null;
+}
+
+export interface TicketComment {
+    id: number;
+    ticket_id: number;
+    author_id: number | null;
+    content: string;
+    parent_id: number | null;
+    created_at: number;
+    deleted_at: number | null;
+}
+
 export interface Notification {
     id: number;
     user_id: number;
-    type: 'discussion_comment' | 'banned' | 'message';
+    type: 'discussion_comment' | 'banned' | 'message' | 'ticket_comment' | 'ticket_created';
     content: string;
     link: string | null;
     ref_id: number | null;

@@ -201,6 +201,10 @@
                         <small class="text-muted mt-1 d-block" id="nameChangeHint">다른 유저에게 보이는 이름입니다.</small>
                         <div id="nameChangeStatus" class="mt-2" style="display:none;"></div>
                     </div>
+                    <div class="mb-0">
+                        <label class="form-label fw-bold">알림 설정</label>
+                        <small class="text-muted d-block">참여 중인 각 토론 페이지에서 개별적으로 알림을 끄거나 켤 수 있습니다.</small>
+                    </div>
                 </div>
 
                 <!-- 활동 통계 -->
@@ -227,6 +231,13 @@
                     <div id="contributionsList">
                         <div class="text-center text-muted py-3">불러오는 중...</div>
                     </div>
+                </div>
+
+                <!-- 문의하기 -->
+                <div class="text-center mb-4">
+                    <a href="/tickets" class="btn btn-wiki-outline">
+                        <i class="mdi mdi-help-circle-outline"></i> 문의하기
+                    </a>
                 </div>
             </div>
         </div>
@@ -267,6 +278,9 @@
                     break;
                 case 'admin':
                     roleBadge = '<span class="badge bg-primary role-badge">관리자</span>';
+                    break;
+                case 'banned':
+                    roleBadge = '<span class="badge bg-danger role-badge">차단됨</span>';
                     break;
                 default:
                     roleBadge = '<span class="badge bg-secondary role-badge">일반 유저</span>';

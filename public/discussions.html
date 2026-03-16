@@ -245,7 +245,7 @@
                       <span>${escapeHtml(d.title)}</span>
                     </div>
                     <div class="discussion-item-meta">
-                      <span><i class="bi bi-person"></i> ${escapeHtml(d.author_name || '알 수 없음')}</span>
+                      <span><i class="bi bi-person"></i> ${escapeHtml(d.author_name || '알 수 없음')}${renderUserRoleIcon(d.author_role)}</span>
                       <span><i class="bi bi-clock"></i> ${date}</span>
                       <span><i class="bi bi-chat"></i> ${d.comment_count || 0}개 댓글</span>
                     </div>
@@ -260,6 +260,7 @@
         document.getElementById('newDiscussionForm').classList.add('d-none');
         document.getElementById('discussionListPage').classList.remove('d-none');
         document.title = `토론 - ${pageData.title} - ${appConfig.wikiName}`;
+        initRoleIconPopovers(document.getElementById('discussionsList'));
 
       } catch (err) {
         console.error(err);
@@ -336,9 +337,10 @@
         const date = new Date(discussion.created_at * 1000).toLocaleString('ko-KR');
         document.getElementById('threadMeta').innerHTML = `
           ${statusBadge}
-          <span class="text-muted small">작성자: ${escapeHtml(discussion.author_name || '알 수 없음')}</span>
+          <span class="text-muted small">작성자: ${escapeHtml(discussion.author_name || '알 수 없음')}${renderUserRoleIcon(discussion.author_role)}</span>
           <span class="text-muted small">${date}</span>
         `;
+        initRoleIconPopovers(document.getElementById('threadMeta'));
 
         // 액션 버튼들
         let actionsHtml = '';
@@ -369,11 +371,24 @@
               <i class="bi bi-trash-fill"></i> 완전 삭제</button>`;
           }
         }
+        // 알림 뮤트 토글 버튼 (로그인 유저만)
+        if (currentUser && currentUser.role !== 'banned') {
+          actionsHtml += `<button class="btn btn-outline-secondary btn-sm" id="muteToggleBtn" onclick="toggleDiscussionMute(${threadId})">
+            <i class="bi bi-bell"></i> <span id="muteToggleLabel">알림 켜짐</span>
+          </button>`;
+        }
+
         document.getElementById('threadActions').innerHTML = actionsHtml;
+
+        // 뮤트 상태 로드
+        if (currentUser && currentUser.role !== 'banned') {
+          loadMuteStatus(threadId);
+        }
 
         // 댓글 렌더링
         const commentsEl = document.getElementById('commentsList');
         commentsEl.innerHTML = comments.map(c => renderComment(c, discussion)).join('');
+        initRoleIconPopovers(commentsEl);
 
         // 댓글 폼 표시 여부
         const commentFormEl = document.getElementById('commentForm');
@@ -454,7 +469,7 @@
           <div class="discussion-comment-header">
             <span class="discussion-comment-author">
               ${c.author_picture ? `<img src="${c.author_picture}" class="discussion-comment-avatar" alt="" loading="lazy">` : ''}
-              ${escapeHtml(c.author_name || '알 수 없음')}
+              ${escapeHtml(c.author_name || '알 수 없음')}${renderUserRoleIcon(c.author_role)}
             </span>
             <span class="discussion-comment-date text-muted small">${date}</span>
           </div>
@@ -571,6 +586,44 @@
         });
       } catch (err) {
         Swal.fire('오류', err.message, 'error');
+      }
+    }
+
+    // ── 토론 알림 뮤트 ──
+    async function loadMuteStatus(threadId) {
+      try {
+        const res = await fetch(`/api/discussions/thread/${threadId}/mute`);
+        if (!res.ok) return;
+        const data = await res.json();
+        updateMuteButton(data.muted);
+      } catch (e) { /* 무시 */ }
+    }
+
+    function updateMuteButton(muted) {
+      const btn = document.getElementById('muteToggleBtn');
+      const label = document.getElementById('muteToggleLabel');
+      if (!btn || !label) return;
+      if (muted) {
+        btn.classList.remove('btn-outline-secondary');
+        btn.classList.add('btn-outline-warning');
+        btn.querySelector('i').className = 'bi bi-bell-slash';
+        label.textContent = '알림 꺼짐';
+      } else {
+        btn.classList.remove('btn-outline-warning');
+        btn.classList.add('btn-outline-secondary');
+        btn.querySelector('i').className = 'bi bi-bell';
+        label.textContent = '알림 켜짐';
+      }
+    }
+
+    async function toggleDiscussionMute(threadId) {
+      try {
+        const res = await fetch(`/api/discussions/thread/${threadId}/mute`, { method: 'POST' });
+        if (!res.ok) throw new Error();
+        const data = await res.json();
+        updateMuteButton(data.muted);
+      } catch (e) {
+        Swal.fire('오류', '알림 설정 변경에 실패했습니다.', 'error');
       }
     }
 
