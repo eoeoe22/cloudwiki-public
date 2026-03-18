@@ -350,6 +350,7 @@ function renderUserRoleIcon(role) {
         admin:       { icon: 'bi-shield-fill-check', color: '#3b82f6', label: '관리자' },
         discussion_manager: { icon: 'bi-shield-fill-check', color: '#22c55e', label: '토론 관리자' },
         banned:      { icon: 'bi-ban',               color: '#ef4444', label: '차단' },
+        deleted:     { icon: 'bi-x-circle-fill',     color: '#9ca3af', label: '탈퇴' },
     };
     const cfg = roleMap[role];
     const icon  = cfg ? cfg.icon  : 'bi-person-fill';

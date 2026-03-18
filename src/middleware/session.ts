@@ -25,14 +25,21 @@ export const sessionMiddleware = createMiddleware<Env>(async (c, next) => {
     const now = Math.floor(Date.now() / 1000);
     const cacheKey = `session:${sessionId}`;
 
+    const requestUserAgent = c.req.header('User-Agent') || null;
+
     // 1) KV 캐시에서 먼저 확인
     let row: User | null = null;
     const cached = await kv.get(cacheKey);
 
     if (cached) {
         try {
-            const parsed = JSON.parse(cached) as { user: User; expires_at: number };
+            const parsed = JSON.parse(cached) as { user: User; expires_at: number; user_agent: string | null };
             if (parsed.expires_at > now) {
+                // User-Agent 불일치 시 세션 무효화
+                if (parsed.user_agent && parsed.user_agent !== requestUserAgent) {
+                    c.set('user', null);
+                    return next();
+                }
                 row = parsed.user;
             }
         } catch {
@@ -44,30 +51,42 @@ export const sessionMiddleware = createMiddleware<Env>(async (c, next) => {
     if (!row) {
         const dbRow = await db
             .prepare(
-                `SELECT u.id, u.google_id, u.email, u.name, u.picture, u.role, u.banned_until, u.last_namechange, u.created_at, s.expires_at
+                `SELECT u.id, u.google_id, u.email, u.name, u.picture, u.role, u.banned_until, u.last_namechange, u.created_at, s.expires_at, s.user_agent
            FROM sessions s
            JOIN users u ON s.user_id = u.id
            WHERE s.id = ? AND s.expires_at > ?`
             )
             .bind(sessionId, now)
-            .first<User & { expires_at: number }>();
+            .first<User & { expires_at: number; user_agent: string | null }>();
 
         if (dbRow) {
+            // User-Agent 불일치 시 세션 무효화
+            if (dbRow.user_agent && dbRow.user_agent !== requestUserAgent) {
+                c.set('user', null);
+                return next();
+            }
+
             const expiresAt = dbRow.expires_at;
-            const { expires_at: _, ...userData } = dbRow;
+            const sessionUserAgent = dbRow.user_agent;
+            const { expires_at: _, user_agent: __, ...userData } = dbRow;
             row = userData as User;
 
             // KV에 캐싱 (세션 만료 시각 또는 TTL 중 짧은 것을 사용)
             const ttl = Math.min(SESSION_CACHE_TTL, expiresAt - now);
             if (ttl > 60) {
                 c.executionCtx.waitUntil(
-                    kv.put(cacheKey, JSON.stringify({ user: row, expires_at: expiresAt }), { expirationTtl: ttl })
+                    kv.put(cacheKey, JSON.stringify({ user: row, expires_at: expiresAt, user_agent: sessionUserAgent }), { expirationTtl: ttl })
                 );
             }
         }
     }
 
     if (row) {
+        // 탈퇴한 유저는 세션 무효화
+        if (row.role === 'deleted') {
+            c.set('user', null);
+            return next();
+        }
         // Super Admin 판별
         if (isSuperAdmin(row.email, c.env)) {
             row.role = 'super_admin';

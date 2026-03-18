@@ -169,10 +169,26 @@
                     </div>
                     <div id="userListSection" style="display: none;">
                         <div class="card-body pb-2 pt-3">
-                            <div class="d-flex gap-2 mb-3">
+                            <div class="d-flex flex-wrap gap-2 mb-3">
                                 <input type="text" id="userSearchInput" class="form-control form-control-sm"
-                                    placeholder="이름 또는 이메일 검색..." style="max-width: 250px; width: 100%;">
-                                <button class="btn btn-sm btn-primary" onclick="searchUsers()">검색</button>
+                                    placeholder="이름 또는 이메일 검색..." style="max-width: 200px; width: 100%;">
+                                <select id="userRoleFilter" class="form-select form-select-sm" style="width: auto;">
+                                    <option value="all">모든 권한</option>
+                                    <option value="super_admin">최고 관리자</option>
+                                    <option value="admin">관리자</option>
+                                    <option value="discussion_manager">토론 관리자</option>
+                                    <option value="user">일반 유저</option>
+                                </select>
+                                <select id="userBanFilter" class="form-select form-select-sm" style="width: auto;">
+                                    <option value="all">모든 상태</option>
+                                    <option value="normal">정상</option>
+                                    <option value="banned">차단됨</option>
+                                </select>
+                                <select id="userSortFilter" class="form-select form-select-sm" style="width: auto;">
+                                    <option value="desc">가입일 (최신순)</option>
+                                    <option value="asc">가입일 (오래된순)</option>
+                                </select>
+                                <button class="btn btn-sm btn-primary" onclick="searchUsers()">검색 및 필터 적용</button>
                             </div>
                             <div class="table-responsive">
                                 <table class="table table-hover user-table mb-0 text-nowrap">
@@ -455,6 +471,26 @@
                 <div class="card shadow-sm border-0 mb-5">
                     <div class="card-body">
                         <div id="adminLogContainer" style="display: none;">
+                            <div class="d-flex flex-wrap gap-2 mb-3">
+                                <input type="text" id="adminLogSearchInput" class="form-control form-control-sm"
+                                    placeholder="관리자 이름 또는 로그 내용 검색..." style="max-width: 250px; width: 100%;">
+                                <select id="adminLogTypeFilter" class="form-select form-select-sm" style="width: auto;">
+                                    <option value="all">모든 유형</option>
+                                    <option value="role_change">권한 변경</option>
+                                    <option value="ban">유저 차단</option>
+                                    <option value="settings">설정 변경</option>
+                                    <option value="category_add">카테고리 추가</option>
+                                    <option value="category_delete">카테고리 삭제</option>
+                                    <option value="media_delete">미디어 삭제</option>
+                                    <option value="sidebar_config">사이드바 설정</option>
+                                    <option value="footer_config">푸터 설정</option>
+                                    <option value="hard_delete">문서 영구삭제</option>
+                                    <option value="soft_delete">문서 삭제</option>
+                                    <option value="doc_move">문서 이름변경</option>
+                                    <option value="restore">문서 복원</option>
+                                </select>
+                                <button class="btn btn-sm btn-primary" onclick="searchAdminLogs()">검색 및 필터 적용</button>
+                            </div>
                             <div class="table-responsive">
                                 <table class="table table-hover mb-0 text-nowrap">
                                     <thead class="table-light">
@@ -561,9 +597,16 @@
                     userCurrentPage = page;
                     currentSearch = search;
 
+                    const role = document.getElementById('userRoleFilter').value;
+                    const ban = document.getElementById('userBanFilter').value;
+                    const sort = document.getElementById('userSortFilter').value;
+
                     const params = new URLSearchParams({
                         page: page,
-                        limit: 15
+                        limit: 15,
+                        role: role,
+                        ban: ban,
+                        sort: sort
                     });
                     if (search) {
                         params.append('search', search);
@@ -598,6 +641,10 @@
                     searchUsers();
                 }
             });
+
+            document.getElementById('userRoleFilter').addEventListener('change', searchUsers);
+            document.getElementById('userBanFilter').addEventListener('change', searchUsers);
+            document.getElementById('userSortFilter').addEventListener('change', searchUsers);
 
             function renderUsers(users, append = false) {
                 const tbody = document.getElementById('userTableBody');
@@ -646,18 +693,23 @@
                         roleSelectHtml = roleBadge;
                     }
 
+                    const isDeleted = u.role === 'deleted';
+                    const nameCell = isDeleted
+                        ? `<a href="/profile/${u.id}" class="fw-bold text-decoration-none text-muted">${escapeHtml(u.name)}</a>`
+                        : `<a href="/profile/${u.id}" class="fw-bold text-decoration-none">${escapeHtml(u.name)}</a>`;
+
                     return `
                 <tr>
                     <td>${profile}</td>
-                    <td class="fw-bold">${escapeHtml(u.name)}</td>
+                    <td>${nameCell}</td>
                     <td>${escapeHtml(u.email)}</td>
-                    <td>${roleSelectHtml}</td>
-                    <td>${banStatus}</td>
+                    <td>${isDeleted ? '<span class="badge bg-secondary">탈퇴한 사용자</span>' : roleSelectHtml}</td>
+                    <td>${isDeleted ? '<span class="badge bg-secondary">해당 없음</span>' : banStatus}</td>
                     <td>${joinDate}</td>
                     <td>
-                        <button class="btn btn-sm btn-outline-danger mb-1" data-id="${u.id}" data-name="${escapeHtml(u.name)}" onclick="promptBan(+this.dataset.id, this.dataset.name)" ${disableBan}>
+                        ${isDeleted ? '' : `<button class="btn btn-sm btn-outline-danger mb-1" data-id="${u.id}" data-name="${escapeHtml(u.name)}" onclick="promptBan(+this.dataset.id, this.dataset.name)" ${disableBan}>
                             ${u.banned_until ? '<i class="mdi mdi-lock-open-variant"></i> 해제' : '<i class="mdi mdi-block-helper"></i> 차단'}
-                        </button>
+                        </button>`}
                     </td>
                 </tr>
             `;
@@ -1492,11 +1544,30 @@
             async function loadAdminLogs() {
                 adminLogOffset = 0;
                 adminLogLoaded = true;
+                const searchInput = document.getElementById('adminLogSearchInput');
+                const typeFilter = document.getElementById('adminLogTypeFilter');
+                if (searchInput) searchInput.value = '';
+                if (typeFilter) typeFilter.value = 'all';
+
                 document.getElementById('adminLogLoadBtn').style.display = 'none';
                 document.getElementById('adminLogContainer').style.display = '';
                 document.getElementById('adminLogBody').innerHTML = '';
                 await fetchAdminLogs();
             }
+
+            async function searchAdminLogs() {
+                adminLogOffset = 0;
+                document.getElementById('adminLogBody').innerHTML = '';
+                await fetchAdminLogs();
+            }
+
+            document.getElementById('adminLogSearchInput').addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    searchAdminLogs();
+                }
+            });
+
+            document.getElementById('adminLogTypeFilter').addEventListener('change', searchAdminLogs);
 
             async function loadMoreAdminLogs() {
                 await fetchAdminLogs();
@@ -1504,7 +1575,15 @@
 
             async function fetchAdminLogs() {
                 try {
-                    const res = await fetch(`/api/admin/logs?offset=${adminLogOffset}`);
+                    const search = document.getElementById('adminLogSearchInput').value.trim();
+                    const type = document.getElementById('adminLogTypeFilter').value;
+                    const params = new URLSearchParams({
+                        offset: adminLogOffset
+                    });
+                    if (search) params.append('search', search);
+                    if (type && type !== 'all') params.append('type', type);
+
+                    const res = await fetch(`/api/admin/logs?${params.toString()}`);
                     if (!res.ok) throw new Error('로그 로딩 실패');
                     const data = await res.json();
 

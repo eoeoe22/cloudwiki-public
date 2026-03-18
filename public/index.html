@@ -261,6 +261,80 @@
       }
     }
 
+    async function showSubdocs(slug) {
+      try {
+        const res = await fetch(`/api/wiki/${encodeURIComponent(slug)}/subdocs`);
+        const data = await res.json();
+        const subdocs = data.subdocs || [];
+
+        if (subdocs.length === 0) {
+          Swal.fire('하위 문서', '하위 문서가 없습니다.', 'info');
+          return;
+        }
+
+        // 트리 구조 빌드
+        const tree = {};
+        for (const doc of subdocs) {
+          // slug에서 현재 문서 prefix 제거
+          const relative = doc.slug.substring(slug.length + 1); // "스마트폰/갤럭시S"
+          const parts = relative.split('/');
+          let node = tree;
+          for (const part of parts) {
+            if (!node[part]) node[part] = { _children: {}, _doc: null };
+            node = node[part]._children;
+          }
+          // 마지막 노드에 문서 정보 저장
+          let target = tree;
+          for (let i = 0; i < parts.length; i++) {
+            if (i === parts.length - 1) {
+              target[parts[i]]._doc = doc;
+            } else {
+              target = target[parts[i]]._children;
+            }
+          }
+        }
+
+        function renderTree(nodes, parentPrefix) {
+          const entries = Object.keys(nodes).sort();
+          let html = '';
+          entries.forEach((key, idx) => {
+            const node = nodes[key];
+            const isLast = idx === entries.length - 1;
+            const hasChildren = Object.keys(node._children).length > 0;
+            const connector = isLast ? '└── ' : '├── ';
+            const childPrefix = parentPrefix + (isLast ? '    ' : '│   ');
+
+            if (node._doc) {
+              html += `<div style="font-family:monospace;white-space:pre;line-height:1.6;">${parentPrefix}${connector}` +
+                `<a href="/wiki/${encodeURIComponent(node._doc.slug)}" onclick="Swal.close();navigateTo(this.href);return false;" class="text-decoration-none">${escapeHtml(key)}</a></div>`;
+            } else {
+              html += `<div style="font-family:monospace;white-space:pre;line-height:1.6;">${parentPrefix}${connector}${escapeHtml(key)}</div>`;
+            }
+
+            if (hasChildren) {
+              html += renderTree(node._children, childPrefix);
+            }
+          });
+          return html;
+        }
+
+        // 루트 문서 포함
+        let treeHtml = `<div style="font-family:monospace;white-space:pre;line-height:1.6;"><a href="/wiki/${encodeURIComponent(slug)}" onclick="Swal.close();navigateTo(this.href);return false;" class="text-decoration-none fw-bold">${escapeHtml(decodeURIComponent(slug))}</a></div>`;
+        treeHtml += renderTree(tree, '');
+
+        Swal.fire({
+          title: '하위 문서',
+          html: `<div class="text-start">${treeHtml}</div>`,
+          width: 600,
+          confirmButtonText: '닫기',
+          customClass: { htmlContainer: 'text-start' }
+        });
+      } catch (err) {
+        console.error(err);
+        Swal.fire('오류', '하위 문서를 불러오는 데 실패했습니다.', 'error');
+      }
+    }
+
     async function showArticle(slug) {
       showLoading();
       currentSlug = slug;
@@ -387,6 +461,9 @@
       </a></li>
       <li><button class="dropdown-item" onclick="scrollToBacklinks(); return false;">
         <i class="bi bi-link-45deg"></i> 역링크
+      </button></li>
+      <li><button class="dropdown-item" data-slug="${escapeHtml(actionSlug)}" onclick="showSubdocs(this.dataset.slug); return false;">
+        <i class="bi bi-diagram-3"></i> 하위 문서 보기
       </button></li>
     `;
         if (currentUser) {

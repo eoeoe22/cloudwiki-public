@@ -120,7 +120,7 @@
             <div class="revision-item d-flex align-items-center justify-content-between border-bottom py-2">
               <div class="d-flex align-items-center gap-3 flex-grow-1 overflow-hidden">
                 <span class="revision-date text-muted small" style="min-width: 160px;">${date}</span>
-                ${rev.author_id ? `<a href="/profile/${rev.author_id}" class="revision-author badge bg-light text-dark border text-decoration-none">${escapeHtml(rev.author_name || '알 수 없음')}${renderUserRoleIcon(rev.author_role)}</a>` : `<span class="revision-author badge bg-light text-dark border">${escapeHtml(rev.author_name || '알 수 없음')}${renderUserRoleIcon(rev.author_role)}</span>`}
+                ${rev.author_id ? `<a href="${rev.author_role === 'deleted' ? '/404' : '/profile/' + rev.author_id}" class="revision-author badge bg-light text-dark border text-decoration-none">${escapeHtml(rev.author_name || '알 수 없음')}${renderUserRoleIcon(rev.author_role)}</a>` : `<span class="revision-author badge bg-light text-dark border">${escapeHtml(rev.author_name || '알 수 없음')}${renderUserRoleIcon(rev.author_role)}</span>`}
                 <span class="revision-summary text-truncate">${escapeHtml(rev.summary || '(요약 없음)')}</span>
               </div>
               <div class="d-flex gap-2 ms-2" style="white-space: nowrap;">

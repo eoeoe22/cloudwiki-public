@@ -28,15 +28,54 @@ adminRoutes.get('/users', async (c) => {
     let queryStr = `SELECT id, google_id, email, name, picture, role, banned_until, created_at FROM users`;
     let countQueryStr = `SELECT COUNT(*) as count FROM users`;
     const params: any[] = [];
+    const conditions: string[] = [];
 
     if (search) {
-        const searchCondition = ` WHERE name LIKE ? OR email LIKE ?`;
-        queryStr += searchCondition;
-        countQueryStr += searchCondition;
+        conditions.push(`(name LIKE ? OR email LIKE ?)`);
         params.push(`%${search}%`, `%${search}%`);
     }
 
-    queryStr += ` ORDER BY created_at DESC LIMIT ? OFFSET ?`;
+    const role = c.req.query('role');
+    if (role && role !== 'all') {
+        const superAdminsArr = Array.from(getSuperAdmins(c.env));
+        if (role === 'super_admin') {
+            if (superAdminsArr.length > 0) {
+                const placeholders = superAdminsArr.map(() => '?').join(',');
+                conditions.push(`email IN (${placeholders})`);
+                params.push(...superAdminsArr);
+            } else {
+                conditions.push(`1 = 0`); // No super admins
+            }
+        } else {
+            conditions.push(`role = ?`);
+            params.push(role);
+            if (superAdminsArr.length > 0) {
+                const placeholders = superAdminsArr.map(() => '?').join(',');
+                conditions.push(`email NOT IN (${placeholders})`);
+                params.push(...superAdminsArr);
+            }
+        }
+    }
+
+    const ban = c.req.query('ban');
+    const nowSecs = Math.floor(Date.now() / 1000);
+    if (ban === 'banned') {
+        conditions.push(`banned_until > ?`);
+        params.push(nowSecs);
+    } else if (ban === 'normal') {
+        conditions.push(`(banned_until IS NULL OR banned_until <= ?)`);
+        params.push(nowSecs);
+    }
+
+    if (conditions.length > 0) {
+        const whereClause = ` WHERE ` + conditions.join(' AND ');
+        queryStr += whereClause;
+        countQueryStr += whereClause;
+    }
+
+    const sort = c.req.query('sort') || 'desc';
+    const sortOrder = sort === 'asc' ? 'ASC' : 'DESC';
+    queryStr += ` ORDER BY created_at ${sortOrder} LIMIT ? OFFSET ?`;
     const queryParams = [...params, limit, offset];
 
     const [usersResult, countResult] = await Promise.all([
@@ -443,16 +482,38 @@ adminRoutes.get('/logs', async (c) => {
     const db = c.env.DB;
     const limit = 15;
     const offset = Math.max(0, Number(c.req.query('offset')) || 0);
+    const search = c.req.query('search')?.trim() || '';
+    const type = c.req.query('type') || 'all';
+
+    let queryStr = `SELECT al.id, al.type, al.log, al.user, al.created_at, u.name as user_name
+             FROM admin_log al
+             LEFT JOIN users u ON al.user = u.id`;
+    let countQueryStr = `SELECT COUNT(*) as count FROM admin_log al
+                         LEFT JOIN users u ON al.user = u.id`;
+    const params: any[] = [];
+    const conditions: string[] = [];
+
+    if (search) {
+        conditions.push(`(u.name LIKE ? OR al.log LIKE ?)`);
+        params.push(`%${search}%`, `%${search}%`);
+    }
+    if (type !== 'all') {
+        conditions.push(`al.type = ?`);
+        params.push(type);
+    }
+
+    if (conditions.length > 0) {
+        const whereClause = ` WHERE ` + conditions.join(' AND ');
+        queryStr += whereClause;
+        countQueryStr += whereClause;
+    }
+
+    queryStr += ` ORDER BY al.created_at DESC LIMIT ? OFFSET ?`;
+    const queryParams = [...params, limit, offset];
 
     const [logsResult, countResult] = await Promise.all([
-        db.prepare(
-            `SELECT al.id, al.type, al.log, al.user, al.created_at, u.name as user_name
-             FROM admin_log al
-             LEFT JOIN users u ON al.user = u.id
-             ORDER BY al.created_at DESC
-             LIMIT ? OFFSET ?`
-        ).bind(limit, offset).all(),
-        db.prepare('SELECT COUNT(*) as count FROM admin_log').first<{ count: number }>()
+        db.prepare(queryStr).bind(...queryParams).all(),
+        db.prepare(countQueryStr).bind(...params).first<{ count: number }>()
     ]);
 
     return c.json({

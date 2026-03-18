@@ -258,6 +258,19 @@ app.get('/wiki/:slug', async (c) => {
     const db = c.env.DB;
     const user = c.get('user');
     const redirectParam = c.req.query('redirect');
+    const isAdmin = user && (user.role === 'admin' || user.role === 'super_admin');
+
+    // ── 캐시 확인 (비관리자 + redirect=no가 아닌 일반 요청만) ──
+    const cache = caches.default;
+    const ssrCacheKey = new Request(c.req.url, { method: 'GET' });
+    const canUseCache = !isAdmin && redirectParam !== 'no';
+
+    if (canUseCache) {
+        const cached = await cache.match(ssrCacheKey);
+        if (cached) {
+            return new Response(cached.body, cached);
+        }
+    }
 
     // 1) DB에서 문서 데이터 조회
     let page = await db
@@ -265,8 +278,6 @@ app.get('/wiki/:slug', async (c) => {
         .bind(slug)
         .first<Page>();
 
-    // 관리자가 아닌데 삭제된 문서라면 문서가 없는 것으로 처리
-    const isAdmin = user && (user.role === 'admin' || user.role === 'super_admin');
     if (page && page.deleted_at && !isAdmin) {
         page = null;
     }
@@ -320,15 +331,20 @@ app.get('/wiki/:slug', async (c) => {
         _ssrNotFound: false,
     };
 
+    // 캐싱 가능 여부 (공개 문서가 정상 존재하는 경우만)
+    let shouldCache = canUseCache;
+
     if (!page) {
         ssrData._ssrNotFound = true;
         ssrData._ssrTitle = `문서 없음 - ${c.env.WIKI_NAME || 'CloudWiki'}`;
+        shouldCache = false; // 미존재 문서는 캐싱하지 않음
     } else {
         // 비공개 문서 접근 제어
         if (page.is_private && !isAdmin) {
             ssrData._ssrNotFound = true;
             ssrData._ssrForbidden = true;
             ssrData._ssrTitle = `비공개 문서 - ${c.env.WIKI_NAME || 'CloudWiki'}`;
+            shouldCache = false; // 비공개 문서는 캐싱하지 않음
         } else {
             // 작성자 정보
             const author = page.author_id
@@ -360,11 +376,24 @@ app.get('/wiki/:slug', async (c) => {
                 _ssrTitle: `${page.title} - ${c.env.WIKI_NAME || 'CloudWiki'}`,
                 _ssrDescription: desc,
             };
+
+            // 비공개 문서는 캐싱하지 않음
+            if (page.is_private) shouldCache = false;
         }
     }
 
     // 3) HTMLRewriter로 SSR 데이터 주입 + 브랜딩 및 컴포넌트 치환
-    return renderHtml(c, '/', ssrData);
+    const response = await renderHtml(c, '/', ssrData);
+
+    // 4) 공개 문서이면 Edge 캐시에 60초간 저장
+    if (shouldCache) {
+        const cachedResponse = new Response(response.body, response);
+        cachedResponse.headers.set('Cache-Control', 'public, max-age=60');
+        c.executionCtx.waitUntil(cache.put(ssrCacheKey, cachedResponse.clone()));
+        return cachedResponse;
+    }
+
+    return response;
 });
 
 // / (루트) 접근 시 index.html 서빙 (SSR 브랜딩 적용)

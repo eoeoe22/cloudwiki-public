@@ -144,18 +144,39 @@ wiki.get('/wiki/recent-changes', async (c) => {
     const user = c.get('user');
     const isAdmin = user && (user.role === 'admin' || user.role === 'super_admin');
 
-    let query = `
+    // 비관리자(공개 결과)는 Cache API로 60초 캐싱
+    if (!isAdmin) {
+        const cache = caches.default;
+        const cacheKey = c.req.url;
+        const cached = await cache.match(cacheKey);
+        if (cached) {
+            return new Response(cached.body, cached);
+        }
+
+        const { results } = await db.prepare(`
+            SELECT p.slug, p.title, p.updated_at, u.name as author_name
+            FROM pages p
+            LEFT JOIN users u ON p.author_id = u.id
+            WHERE p.deleted_at IS NULL AND p.is_private = 0
+            ORDER BY p.updated_at DESC LIMIT 10
+        `).all();
+
+        const response = c.json(safeJSON({ changes: results }), 200, {
+            'Cache-Control': 'public, max-age=60',
+        });
+        c.executionCtx.waitUntil(cache.put(cacheKey, response.clone()));
+        return response;
+    }
+
+    // 관리자: 비공개 문서 포함, 캐싱 없음
+    const { results } = await db.prepare(`
         SELECT p.slug, p.title, p.updated_at, u.name as author_name
         FROM pages p
         LEFT JOIN users u ON p.author_id = u.id
         WHERE p.deleted_at IS NULL
-    `;
-    if (!isAdmin) {
-        query += ' AND p.is_private = 0';
-    }
-    query += ' ORDER BY p.updated_at DESC LIMIT 10';
+        ORDER BY p.updated_at DESC LIMIT 10
+    `).all();
 
-    const { results } = await db.prepare(query).all();
     return c.json(safeJSON({ changes: results }));
 });
 
@@ -470,8 +491,13 @@ wiki.put('/wiki/:slug', requireAuth, async (c) => {
         const linkCatStmts = buildLinkAndCategoryStatements(db, existing.id, body.content, body.category || null);
         c.executionCtx.waitUntil(db.batch(linkCatStmts).catch(e => console.error('Failed to update links/categories:', e)));
 
-        // 캐시 무효화
-        c.executionCtx.waitUntil(caches.default.delete(c.req.url));
+        // 캐시 무효화 (API + SSR + 최근 변경)
+        const origin = new URL(c.req.url).origin;
+        c.executionCtx.waitUntil(Promise.all([
+            caches.default.delete(c.req.url),
+            caches.default.delete(`${origin}/wiki/${encodeURIComponent(slug)}`),
+            caches.default.delete(`${origin}/api/wiki/recent-changes`),
+        ]));
 
         return c.json(safeJSON({ slug, version: newVersion, revision_id: revisionId }));
     } else {
@@ -508,8 +534,13 @@ wiki.put('/wiki/:slug', requireAuth, async (c) => {
         const linkCatStmts = buildLinkAndCategoryStatements(db, pageId, body.content, body.category || null);
         c.executionCtx.waitUntil(db.batch(linkCatStmts).catch(e => console.error('Failed to update links/categories:', e)));
 
-        // 캐시 무효화
-        c.executionCtx.waitUntil(caches.default.delete(c.req.url));
+        // 캐시 무효화 (API + SSR + 최근 변경)
+        const origin = new URL(c.req.url).origin;
+        c.executionCtx.waitUntil(Promise.all([
+            caches.default.delete(c.req.url),
+            caches.default.delete(`${origin}/wiki/${encodeURIComponent(slug)}`),
+            caches.default.delete(`${origin}/api/wiki/recent-changes`),
+        ]));
 
         return c.json(safeJSON({ slug, version: 1, revision_id: revisionId }), 201);
     }
@@ -693,6 +724,35 @@ wiki.get('/wiki/:slug/revisions/:id/diff', async (c) => {
 });
 
 /**
+ * GET /wiki/:slug/subdocs
+ * 하위 문서 목록 (제목이 '{slug}/'로 시작하는 문서들)
+ */
+wiki.get('/wiki/:slug/subdocs', async (c) => {
+    const slug = c.req.param('slug');
+    const db = c.env.DB;
+    const user = c.get('user');
+    const isAdmin = user && (user.role === 'admin' || user.role === 'super_admin');
+
+    let query = `
+        SELECT slug, title, updated_at
+        FROM pages
+        WHERE deleted_at IS NULL
+          AND slug LIKE ?
+    `;
+    if (!isAdmin) {
+        query += ' AND is_private = 0';
+    }
+    query += ' ORDER BY slug ASC LIMIT 200';
+
+    const { results } = await db
+        .prepare(query)
+        .bind(slug + '/%')
+        .all();
+
+    return c.json(safeJSON({ subdocs: results }));
+});
+
+/**
  * GET /wiki/:slug/backlinks
  * 이 문서를 참조하는 문서 목록 (page_links 테이블 기반)
  * - 문서 링크: [[slug]] → link_type = 'wikilink'
@@ -794,8 +854,13 @@ wiki.delete('/wiki/:slug', requireAuth, async (c) => {
         ];
         await db.batch(batch);
 
-        // 캐시 무효화
-        c.executionCtx.waitUntil(caches.default.delete(c.req.url));
+        // 캐시 무효화 (API + SSR + 최근 변경)
+        const origin = new URL(c.req.url).origin;
+        c.executionCtx.waitUntil(Promise.all([
+            caches.default.delete(c.req.url),
+            caches.default.delete(`${origin}/wiki/${encodeURIComponent(slug)}`),
+            caches.default.delete(`${origin}/api/wiki/recent-changes`),
+        ]));
 
         // 관리자 로그 기록
         c.executionCtx.waitUntil(
@@ -830,8 +895,13 @@ wiki.delete('/wiki/:slug', requireAuth, async (c) => {
             .bind(page.id)
             .run();
 
-        // 캐시 무효화
-        c.executionCtx.waitUntil(caches.default.delete(c.req.url));
+        // 캐시 무효화 (API + SSR + 최근 변경)
+        const origin2 = new URL(c.req.url).origin;
+        c.executionCtx.waitUntil(Promise.all([
+            caches.default.delete(c.req.url),
+            caches.default.delete(`${origin2}/wiki/${encodeURIComponent(slug)}`),
+            caches.default.delete(`${origin2}/api/wiki/recent-changes`),
+        ]));
 
         // 관리자 로그 기록
         c.executionCtx.waitUntil(

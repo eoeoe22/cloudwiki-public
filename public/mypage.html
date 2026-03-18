@@ -233,11 +233,14 @@
                     </div>
                 </div>
 
-                <!-- 문의하기 -->
-                <div class="text-center mb-4">
+                <!-- 문의하기 / 회원탈퇴 -->
+                <div class="text-center mb-4 d-flex justify-content-center gap-2">
                     <a href="/tickets" class="btn btn-wiki-outline">
                         <i class="mdi mdi-help-circle-outline"></i> 문의하기
                     </a>
+                    <button class="btn btn-outline-danger" onclick="deleteAccount()">
+                        <i class="mdi mdi-account-remove"></i> 회원탈퇴
+                    </button>
                 </div>
             </div>
         </div>
@@ -502,6 +505,44 @@
             await loadMessages(true);
             btn.disabled = false;
             btn.innerHTML = '더보기 <i class="mdi mdi-chevron-down"></i>';
+        }
+
+        async function deleteAccount() {
+            const result = await Swal.fire({
+                title: '회원탈퇴',
+                html: '정말로 탈퇴하시겠습니까?<br><strong>탈퇴 후 동일 계정으로 재가입이 불가능합니다.</strong>',
+                icon: 'warning',
+                showCancelButton: true,
+                confirmButtonColor: '#cf222e',
+                confirmButtonText: '탈퇴',
+                cancelButtonText: '취소',
+                input: 'text',
+                inputPlaceholder: '확인을 위해 "탈퇴"를 입력해주세요',
+                inputValidator: (value) => {
+                    if (value !== '탈퇴') {
+                        return '"탈퇴"를 정확히 입력해주세요.';
+                    }
+                }
+            });
+
+            if (result.isConfirmed) {
+                try {
+                    const res = await fetch('/api/me/account', { method: 'DELETE' });
+                    if (!res.ok) {
+                        const data = await res.json();
+                        throw new Error(data.error || '탈퇴 처리에 실패했습니다.');
+                    }
+                    await Swal.fire({
+                        icon: 'success',
+                        title: '탈퇴가 완료되었습니다.',
+                        showConfirmButton: false,
+                        timer: 2000
+                    });
+                    window.location.href = '/';
+                } catch (err) {
+                    Swal.fire('오류', err.message, 'error');
+                }
+            }
         }
 
         async function deleteDirectMessage(id) {

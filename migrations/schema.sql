@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS users (
   name       TEXT NOT NULL,
   picture    TEXT,
   created_at INTEGER DEFAULT (unixepoch()),
-  role TEXT DEFAULT 'user',
+  role TEXT DEFAULT 'user',  -- 'user', 'discussion_manager', 'admin', 'super_admin', 'banned', 'deleted'
   banned_until INTEGER,
   last_namechange INTEGER
 );
@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   id         TEXT PRIMARY KEY,
   user_id    INTEGER NOT NULL,
   expires_at INTEGER NOT NULL,
+  user_agent TEXT,
   FOREIGN KEY (user_id) REFERENCES users(id)
 );
 

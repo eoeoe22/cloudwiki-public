@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { getCookie } from 'hono/cookie';
 import type { Env } from '../types';
 import { requireAuth } from '../middleware/session';
 
@@ -98,9 +99,13 @@ auth.get('/auth/google/callback', async (c) => {
 
     // 3. 기존 유저 확인
     const existingUser = await db
-        .prepare('SELECT id FROM users WHERE google_id = ?')
+        .prepare('SELECT id, role FROM users WHERE google_id = ?')
         .bind(userInfo.id)
-        .first<{ id: number }>();
+        .first<{ id: number; role: string }>();
+
+    if (existingUser && existingUser.role === 'deleted') {
+        return c.redirect('/?error=deleted_account');
+    }
 
     if (existingUser) {
         // 기존 유저: 이름은 유지 (수동으로 변경한 이름이 로그인마다 초기화되지 않도록)
@@ -154,13 +159,14 @@ auth.get('/auth/google/callback', async (c) => {
         return c.json({ error: 'User creation failed' }, 500);
     }
 
-    // 5. 세션 생성
+    // 5. 세션 생성 (User-Agent 기록)
     const sessionId = crypto.randomUUID();
     const expiresAt = Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 7; // 7일
+    const userAgent = c.req.header('User-Agent') || null;
 
     await db
-        .prepare('INSERT INTO sessions (id, user_id, expires_at) VALUES (?, ?, ?)')
-        .bind(sessionId, user.id, expiresAt)
+        .prepare('INSERT INTO sessions (id, user_id, expires_at, user_agent) VALUES (?, ?, ?, ?)')
+        .bind(sessionId, user.id, expiresAt, userAgent)
         .run();
 
     // 6. 세션 쿠키 발급 + 홈으로 리다이렉트
@@ -359,11 +365,11 @@ auth.get('/api/users/:id/profile', async (c) => {
 
     const db = c.env.DB;
     const user = await db
-        .prepare('SELECT id, name, picture, created_at FROM users WHERE id = ?')
+        .prepare('SELECT id, name, picture, role, created_at FROM users WHERE id = ?')
         .bind(userId)
-        .first<{ id: number; name: string; picture: string; created_at: number }>();
+        .first<{ id: number; name: string; picture: string; role: string; created_at: number }>();
 
-    if (!user) {
+    if (!user || user.role === 'deleted') {
         return c.json({ error: '사용자를 찾을 수 없습니다.' }, 404);
     }
 
@@ -421,6 +427,35 @@ auth.get('/api/users/:id/contributions', async (c) => {
         total: countResult?.total || 0,
         has_more: offset + limit < (countResult?.total || 0),
     });
+});
+
+/**
+ * DELETE /api/me/account
+ * 회원탈퇴: role을 'deleted'로, 표시명을 '탈퇴한 사용자'로 변경하고 세션 삭제
+ * google_id는 유지하여 재가입 차단
+ */
+auth.delete('/api/me/account', requireAuth, async (c) => {
+    const user = c.get('user')!;
+    const db = c.env.DB;
+
+    // 1. role을 'deleted'로, 이름을 '탈퇴한 사용자'로, picture 제거
+    await db.prepare(
+        `UPDATE users SET role = 'deleted', name = '탈퇴한 사용자', picture = NULL, email = '' WHERE id = ?`
+    ).bind(user.id).run();
+
+    // 2. 해당 유저의 모든 세션 삭제
+    await db.prepare('DELETE FROM sessions WHERE user_id = ?').bind(user.id).run();
+
+    // 3. KV 세션 캐시 무효화 (현재 세션)
+    const sessionId = getCookie(c, 'wiki_session');
+    if (sessionId) {
+        await c.env.KV.delete(`session:${sessionId}`);
+    }
+
+    // 4. 쿠키 제거
+    c.header('Set-Cookie', 'wiki_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0');
+
+    return c.json({ success: true });
 });
 
 export default auth;

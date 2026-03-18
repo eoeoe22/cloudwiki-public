@@ -38,7 +38,7 @@ export interface User {
     email: string;
     name: string;
     picture: string | null;
-    role: 'user' | 'discussion_manager' | 'admin' | 'super_admin' | 'banned';
+    role: 'user' | 'discussion_manager' | 'admin' | 'super_admin' | 'banned' | 'deleted';
     banned_until: number | null;
     last_namechange: number | null;
     created_at: number;
