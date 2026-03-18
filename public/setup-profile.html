@@ -108,13 +108,19 @@
 <body>
 
     <div class="setup-container">
-        <i class="mdi mdi-account-cog-outline setup-icon"></i>
-        <h2 class="setup-title">환영합니다!</h2>
-        <p class="setup-subtitle">CloudWiki에서 사용할 표시명을 설정해주세요.</p>
+        <i class="mdi mdi-account-cog-outline setup-icon" id="setupIcon"></i>
+        <h2 class="setup-title" id="setupTitle">환영합니다!</h2>
+        <p class="setup-subtitle" id="setupSubtitle">CloudWiki에서 사용할 표시명을 설정해주세요.</p>
 
         <div class="form-group">
             <input type="text" id="nameInput" class="name-input" placeholder="새 표시 이름" autocomplete="off">
             <div id="statusMessage" class="warning-text"></div>
+        </div>
+
+        <!-- 승인제 모드: 가입 메시지 입력 -->
+        <div class="form-group" id="signupMessageGroup" style="display: none;">
+            <label for="signupMessage" class="form-label fw-bold" style="color: var(--wiki-text);">가입 신청 메시지 <span class="text-muted fw-normal">(선택사항)</span></label>
+            <textarea id="signupMessage" class="name-input" rows="3" placeholder="관리자에게 전달할 메시지를 입력해주세요." style="resize: vertical; font-size: 1rem; padding: 0.8rem;"></textarea>
         </div>
 
         <button class="submit-btn" id="submitBtn" onclick="saveProfile()">시작하기</button>
@@ -124,35 +130,59 @@
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
     <script src="/js/common.js"></script>
     <script>
+        // 승인제 모드 여부 확인
+        const urlParams = new URLSearchParams(window.location.search);
+        const isApprovalMode = urlParams.get('mode') === 'approval';
+        const signupToken = urlParams.get('token') || '';
+
         document.addEventListener('DOMContentLoaded', async () => {
-            await Promise.all([loadConfig(), checkAuth()]);
+            await loadConfig();
 
-            if (!currentUser) {
-                window.location.href = '/auth/google';
-                return;
-            }
+            if (isApprovalMode) {
+                // 승인제 모드: 비인증 상태이므로 checkAuth 건너뛰기
+                if (!signupToken) {
+                    Swal.fire('오류', '유효하지 않은 접근입니다.', 'error').then(() => {
+                        window.location.href = '/';
+                    });
+                    return;
+                }
 
-            // 구글에서 받아온 기본 이름 세팅
-            document.getElementById('nameInput').value = currentUser.name;
+                // UI 변경
+                document.getElementById('setupIcon').className = 'mdi mdi-account-clock-outline setup-icon';
+                document.getElementById('setupTitle').textContent = '가입 신청';
+                document.getElementById('setupSubtitle').textContent = '사용할 표시명을 입력하고 가입을 신청해주세요. 관리자 승인 후 이용 가능합니다.';
+                document.getElementById('signupMessageGroup').style.display = '';
+                document.getElementById('submitBtn').textContent = '가입 신청하기';
+                document.getElementById('statusMessage').innerHTML = '<i class="mdi mdi-information-outline"></i> 관리자가 신청을 확인한 후 승인 또는 거절합니다.';
+            } else {
+                await checkAuth();
 
-            // 표시명 설정 상태(메시지) 확인
-            try {
-                const res = await fetch('/api/me/namechange-status');
-                if (res.ok) {
-                    const data = await res.json();
-                    if (data.message) {
-                        const statusEl = document.getElementById('statusMessage');
-                        
-                        // 변경 불가라는 말이 있으면 경고색으로
-                        if (data.message.includes('불가능')) {
-                            statusEl.innerHTML = '<i class="mdi mdi-alert-circle"></i> <span class="text-danger fw-bold">' + escapeHtml(data.message) + '</span>';
-                        } else {
-                            statusEl.innerHTML = '<i class="mdi mdi-information-outline"></i> ' + escapeHtml(data.message);
+                if (!currentUser) {
+                    window.location.href = '/auth/google';
+                    return;
+                }
+
+                // 구글에서 받아온 기본 이름 세팅
+                document.getElementById('nameInput').value = currentUser.name;
+
+                // 표시명 설정 상태(메시지) 확인
+                try {
+                    const res = await fetch('/api/me/namechange-status');
+                    if (res.ok) {
+                        const data = await res.json();
+                        if (data.message) {
+                            const statusEl = document.getElementById('statusMessage');
+
+                            if (data.message.includes('불가능')) {
+                                statusEl.innerHTML = '<i class="mdi mdi-alert-circle"></i> <span class="text-danger fw-bold">' + escapeHtml(data.message) + '</span>';
+                            } else {
+                                statusEl.innerHTML = '<i class="mdi mdi-information-outline"></i> ' + escapeHtml(data.message);
+                            }
                         }
                     }
+                } catch (e) {
+                    console.error(e);
                 }
-            } catch (e) {
-                console.error(e);
             }
         });
 
@@ -168,27 +198,50 @@
             btn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> 처리 중...';
 
             try {
-                const res = await fetch('/api/me/profile', {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name })
-                });
-                
-                const data = await res.json();
-                if (!res.ok) throw new Error(data.error || '저장에 실패했습니다.');
+                if (isApprovalMode) {
+                    // 승인제: 가입 신청 제출
+                    const message = document.getElementById('signupMessage').value.trim();
+                    const res = await fetch('/api/auth/signup-request', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ token: signupToken, name, message })
+                    });
 
-                Swal.fire({
-                    icon: 'success',
-                    title: '설정 완료!',
-                    text: 'CloudWiki에 오신 것을 환영합니다.',
-                    showConfirmButton: false,
-                    timer: 1500
-                }).then(() => {
-                    window.location.href = '/';
-                });
+                    const data = await res.json();
+                    if (!res.ok) throw new Error(data.error || '가입 신청에 실패했습니다.');
+
+                    Swal.fire({
+                        icon: 'success',
+                        title: '가입 신청 완료',
+                        text: '관리자 승인 후 이용 가능합니다.',
+                        confirmButtonText: '확인'
+                    }).then(() => {
+                        window.location.href = '/?info=signup_submitted';
+                    });
+                } else {
+                    // 일반 모드: 프로필 저장
+                    const res = await fetch('/api/me/profile', {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ name })
+                    });
+
+                    const data = await res.json();
+                    if (!res.ok) throw new Error(data.error || '저장에 실패했습니다.');
+
+                    Swal.fire({
+                        icon: 'success',
+                        title: '설정 완료!',
+                        text: 'CloudWiki에 오신 것을 환영합니다.',
+                        showConfirmButton: false,
+                        timer: 1500
+                    }).then(() => {
+                        window.location.href = '/';
+                    });
+                }
             } catch (err) {
                 btn.disabled = false;
-                btn.textContent = '시작하기';
+                btn.textContent = isApprovalMode ? '가입 신청하기' : '시작하기';
                 Swal.fire('오류', err.message, 'error');
             }
         }

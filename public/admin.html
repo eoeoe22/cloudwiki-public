@@ -161,6 +161,52 @@
                     </a>
                 </div>
 
+                <!-- 가입 신청 관리 (승인제) -->
+                <div id="signupRequestsCard" class="card shadow-sm border-0 mb-4" style="display: none;">
+                    <div class="card-header py-3" style="cursor: pointer;" onclick="toggleSignupRequests()">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <h5 class="mb-0"><i class="mdi mdi-chevron-right" id="signupRequestsChevron"></i> 가입 신청 관리 <span class="badge bg-warning text-dark ms-2" id="signupRequestsCount" style="display: none;">0</span></h5>
+                            <span class="badge bg-info">승인제</span>
+                        </div>
+                    </div>
+                    <div id="signupRequestsSection" style="display: none;">
+                        <div class="card-body">
+                            <div class="d-flex flex-wrap gap-2 mb-3">
+                                <select id="signupStatusFilter" class="form-select form-select-sm" style="width: auto;">
+                                    <option value="pending">대기 중</option>
+                                    <option value="approved">승인됨</option>
+                                    <option value="rejected">거절됨</option>
+                                    <option value="blocked">차단됨</option>
+                                    <option value="all">모두 보기</option>
+                                </select>
+                                <button class="btn btn-sm btn-primary" onclick="loadSignupRequests()">필터 적용</button>
+                            </div>
+                            <div class="table-responsive">
+                                <table class="table table-hover mb-0 text-nowrap">
+                                    <thead class="table-light">
+                                        <tr>
+                                            <th>프로필</th>
+                                            <th>표시명</th>
+                                            <th>이메일</th>
+                                            <th>가입 메시지</th>
+                                            <th>신청일시</th>
+                                            <th>상태</th>
+                                            <th>관리 액션</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="signupRequestsBody">
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div id="signupRequestsLoadMore" class="text-center py-3" style="display: none;">
+                                <button class="btn btn-outline-secondary btn-sm" onclick="loadMoreSignupRequests()">
+                                    <i class="mdi mdi-arrow-down"></i> 더 불러오기
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="card shadow-sm border-0">
                     <div class="card-header py-3" style="cursor: pointer;" onclick="toggleUserList()">
                         <div class="d-flex justify-content-between align-items-center">
@@ -290,6 +336,19 @@
                                         <i class="mdi mdi-content-copy"></i> 복사
                                     </button>
                                 </div>
+                            </div>
+                        </div>
+
+                        <hr class="my-4">
+                        <h6 class="fw-bold mb-3"><i class="mdi mdi-account-multiple-plus-outline text-primary"></i> 회원가입 정책</h6>
+                        <div class="mb-3">
+                            <div class="d-flex align-items-center gap-2">
+                                <span id="signupPolicyDisplay" class="badge bg-secondary">확인 중...</span>
+                                <span class="text-muted small">이 설정은 <code>wrangler.toml</code>의 <code>SIGNUP_POLICY</code> 환경변수로 관리됩니다.</span>
+                            </div>
+                            <div class="text-muted small mt-2">
+                                <strong>open</strong>: 모든 사용자가 자유롭게 가입 가능 (기본값)<br>
+                                <strong>approval</strong>: 관리자 승인 후 가입 가능 (승인제)
                             </div>
                         </div>
 
@@ -484,6 +543,9 @@
                                     <option value="media_delete">미디어 삭제</option>
                                     <option value="sidebar_config">사이드바 설정</option>
                                     <option value="footer_config">푸터 설정</option>
+                                    <option value="signup_approve">가입 승인</option>
+                                    <option value="signup_reject">가입 거절</option>
+                                    <option value="signup_block">가입 차단</option>
                                     <option value="hard_delete">문서 영구삭제</option>
                                     <option value="soft_delete">문서 삭제</option>
                                     <option value="doc_move">문서 이름변경</option>
@@ -561,6 +623,7 @@
                     loadSidebarConfig();
                     loadFooterConfig();
                     loadWikiSettings();
+                    loadSignupPolicy();
                 } catch (e) {
                     window.location.href = '/auth/google';
                 }
@@ -909,6 +972,229 @@
                     Swal.fire('오류', err.message, 'error');
                 }
             }
+
+            // ── 가입 신청 관리 (승인제) ──
+            var signupRequestsLoaded = false;
+            var signupRequestsOffset = 0;
+            var signupRequestsHasMore = false;
+
+            async function loadSignupPolicy() {
+                try {
+                    const res = await fetch('/api/auth/signup-policy');
+                    if (!res.ok) return;
+                    const data = await res.json();
+                    const policy = data.policy || 'open';
+
+                    const badge = document.getElementById('signupPolicyDisplay');
+                    if (policy === 'approval') {
+                        badge.className = 'badge bg-warning text-dark';
+                        badge.textContent = 'approval (승인제)';
+                        document.getElementById('signupRequestsCard').style.display = '';
+                        // 대기 중인 신청 수 로드
+                        loadSignupRequestsCount();
+                    } else {
+                        badge.className = 'badge bg-success';
+                        badge.textContent = 'open (모두 허용)';
+                    }
+                } catch (e) {
+                    console.error('가입 정책 로드 실패', e);
+                }
+            }
+
+            async function loadSignupRequestsCount() {
+                try {
+                    const res = await fetch('/api/admin/signup-requests?status=pending&limit=1&offset=0');
+                    if (!res.ok) return;
+                    const data = await res.json();
+                    const countBadge = document.getElementById('signupRequestsCount');
+                    if (data.total > 0) {
+                        countBadge.textContent = data.total;
+                        countBadge.style.display = '';
+                    } else {
+                        countBadge.style.display = 'none';
+                    }
+                } catch (e) {}
+            }
+
+            function toggleSignupRequests() {
+                const section = document.getElementById('signupRequestsSection');
+                const chevron = document.getElementById('signupRequestsChevron');
+                if (section.style.display === 'none') {
+                    section.style.display = '';
+                    chevron.className = 'mdi mdi-chevron-down';
+                    if (!signupRequestsLoaded) {
+                        signupRequestsLoaded = true;
+                        loadSignupRequests();
+                    }
+                } else {
+                    section.style.display = 'none';
+                    chevron.className = 'mdi mdi-chevron-right';
+                }
+            }
+
+            async function loadSignupRequests(append = false) {
+                try {
+                    if (!append) signupRequestsOffset = 0;
+                    const status = document.getElementById('signupStatusFilter').value;
+                    const res = await fetch(`/api/admin/signup-requests?status=${status}&limit=15&offset=${signupRequestsOffset}`);
+                    if (!res.ok) throw new Error('목록 조회 실패');
+                    const data = await res.json();
+
+                    renderSignupRequests(data.requests, append);
+                    signupRequestsHasMore = data.hasMore;
+                    document.getElementById('signupRequestsLoadMore').style.display = signupRequestsHasMore ? '' : 'none';
+                } catch (e) {
+                    document.getElementById('signupRequestsBody').innerHTML =
+                        `<tr><td colspan="7" class="text-center py-4 text-danger">목록을 불러오는 데 실패했습니다.</td></tr>`;
+                }
+            }
+
+            function loadMoreSignupRequests() {
+                signupRequestsOffset += 15;
+                loadSignupRequests(true);
+            }
+
+            function renderSignupRequests(requests, append = false) {
+                const tbody = document.getElementById('signupRequestsBody');
+                if (!requests || requests.length === 0) {
+                    if (!append) {
+                        tbody.innerHTML = `<tr><td colspan="7" class="text-center py-4 text-muted">가입 신청이 없습니다.</td></tr>`;
+                    }
+                    return;
+                }
+
+                const html = requests.map(r => {
+                    const profile = r.picture
+                        ? `<img src="${r.picture}" class="rounded-circle" width="32" height="32" alt="프로필" loading="lazy">`
+                        : `<i class="mdi mdi-account-circle fs-3 text-secondary"></i>`;
+                    const createdAt = new Date(r.created_at * 1000).toLocaleString('ko-KR');
+                    const msgPreview = r.message ? escapeHtml(r.message.length > 30 ? r.message.substring(0, 30) + '...' : r.message) : '<span class="text-muted">-</span>';
+
+                    let statusBadge = '';
+                    if (r.status === 'pending') statusBadge = '<span class="badge bg-warning text-dark">대기 중</span>';
+                    else if (r.status === 'approved') statusBadge = '<span class="badge bg-success">승인됨</span>';
+                    else if (r.status === 'rejected') statusBadge = '<span class="badge bg-danger">거절됨</span>';
+                    else if (r.status === 'blocked') statusBadge = '<span class="badge bg-dark">차단됨</span>';
+
+                    let reviewInfo = '';
+                    if (r.reviewed_at) {
+                        const reviewedAt = new Date(r.reviewed_at * 1000).toLocaleString('ko-KR');
+                        reviewInfo = `<br><small class="text-muted">처리: ${r.reviewer_name || '?'} (${reviewedAt})</small>`;
+                    }
+
+                    let actions = '';
+                    if (r.status === 'pending') {
+                        actions = `
+                            <button class="btn btn-sm btn-outline-success mb-1" onclick="approveSignupRequest(${r.id}, '${escapeHtml(r.name)}')">
+                                <i class="mdi mdi-check"></i> 승인
+                            </button>
+                            <button class="btn btn-sm btn-outline-warning mb-1" onclick="rejectSignupRequest(${r.id}, '${escapeHtml(r.name)}')">
+                                <i class="mdi mdi-close"></i> 거절
+                            </button>
+                            <button class="btn btn-sm btn-outline-danger mb-1" onclick="blockSignupRequest(${r.id}, '${escapeHtml(r.name)}')">
+                                <i class="mdi mdi-block-helper"></i> 차단
+                            </button>
+                        `;
+                    }
+
+                    return `
+                        <tr>
+                            <td>${profile}</td>
+                            <td class="fw-bold">${escapeHtml(r.name)}</td>
+                            <td>${escapeHtml(r.email)}</td>
+                            <td title="${r.message ? escapeHtml(r.message) : ''}">${msgPreview}</td>
+                            <td>${createdAt}</td>
+                            <td>${statusBadge}${reviewInfo}</td>
+                            <td>${actions}</td>
+                        </tr>
+                    `;
+                }).join('');
+
+                if (append) {
+                    tbody.insertAdjacentHTML('beforeend', html);
+                } else {
+                    tbody.innerHTML = html;
+                }
+            }
+
+            async function approveSignupRequest(id, name) {
+                const result = await Swal.fire({
+                    title: '가입 승인',
+                    text: `"${name}"님의 가입 신청을 승인하시겠습니까?`,
+                    icon: 'question',
+                    showCancelButton: true,
+                    confirmButtonText: '승인',
+                    cancelButtonText: '취소'
+                });
+                if (!result.isConfirmed) return;
+
+                try {
+                    const res = await fetch(`/api/admin/signup-requests/${id}/approve`, { method: 'PUT' });
+                    const data = await res.json();
+                    if (!res.ok) throw new Error(data.error || '승인 실패');
+
+                    Swal.fire({ icon: 'success', title: '승인 완료', showConfirmButton: false, timer: 1000 });
+                    loadSignupRequests();
+                    loadSignupRequestsCount();
+                } catch (err) {
+                    Swal.fire('오류', err.message, 'error');
+                }
+            }
+
+            async function rejectSignupRequest(id, name) {
+                const result = await Swal.fire({
+                    title: '가입 거절',
+                    html: `"${name}"님의 가입 신청을 <strong>거절</strong>하시겠습니까?<br><small class="text-muted">거절된 사용자는 재신청이 가능합니다.</small>`,
+                    icon: 'warning',
+                    showCancelButton: true,
+                    confirmButtonText: '거절',
+                    cancelButtonText: '취소',
+                    confirmButtonColor: '#dc3545'
+                });
+                if (!result.isConfirmed) return;
+
+                try {
+                    const res = await fetch(`/api/admin/signup-requests/${id}/reject`, { method: 'PUT' });
+                    const data = await res.json();
+                    if (!res.ok) throw new Error(data.error || '거절 실패');
+
+                    Swal.fire({ icon: 'success', title: '거절 완료', showConfirmButton: false, timer: 1000 });
+                    loadSignupRequests();
+                    loadSignupRequestsCount();
+                } catch (err) {
+                    Swal.fire('오류', err.message, 'error');
+                }
+            }
+
+            async function blockSignupRequest(id, name) {
+                const result = await Swal.fire({
+                    title: '가입 차단',
+                    html: `"${name}"님의 가입 신청을 <strong>차단</strong>하시겠습니까?<br><small class="text-danger">차단된 사용자는 재신청이 불가능합니다.</small>`,
+                    icon: 'warning',
+                    showCancelButton: true,
+                    confirmButtonText: '차단',
+                    cancelButtonText: '취소',
+                    confirmButtonColor: '#dc3545'
+                });
+                if (!result.isConfirmed) return;
+
+                try {
+                    const res = await fetch(`/api/admin/signup-requests/${id}/block`, { method: 'PUT' });
+                    const data = await res.json();
+                    if (!res.ok) throw new Error(data.error || '차단 실패');
+
+                    Swal.fire({ icon: 'success', title: '차단 완료', showConfirmButton: false, timer: 1000 });
+                    loadSignupRequests();
+                    loadSignupRequestsCount();
+                } catch (err) {
+                    Swal.fire('오류', err.message, 'error');
+                }
+            }
+
+            document.getElementById('signupStatusFilter').addEventListener('change', () => {
+                document.getElementById('signupRequestsBody').innerHTML = '';
+                loadSignupRequests();
+            });
 
             // ── 삭제된 문서 목록 관리 ──
             var deletedPagesLoaded = false;

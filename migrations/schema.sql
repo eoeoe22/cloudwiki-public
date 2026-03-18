@@ -235,6 +235,23 @@ CREATE TABLE IF NOT EXISTS page_categories (
 );
 CREATE INDEX IF NOT EXISTS idx_page_categories_category ON page_categories(category);
 
+-- 가입 신청 테이블 (승인제 회원가입용)
+CREATE TABLE IF NOT EXISTS signup_requests (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  google_id   TEXT NOT NULL,
+  email       TEXT NOT NULL,
+  name        TEXT NOT NULL,
+  picture     TEXT,
+  message     TEXT DEFAULT '',
+  status      TEXT NOT NULL DEFAULT 'pending',  -- 'pending', 'approved', 'rejected', 'blocked'
+  reviewed_by INTEGER,
+  created_at  INTEGER DEFAULT (unixepoch()),
+  reviewed_at INTEGER,
+  FOREIGN KEY (reviewed_by) REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS idx_signup_requests_status ON signup_requests(status);
+CREATE INDEX IF NOT EXISTS idx_signup_requests_google ON signup_requests(google_id);
+
 -- 개별 토론 알림 뮤트 테이블
 CREATE TABLE IF NOT EXISTS discussion_mutes (
     user_id       INTEGER NOT NULL,

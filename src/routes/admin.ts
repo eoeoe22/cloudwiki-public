@@ -248,6 +248,178 @@ adminRoutes.put('/settings', async (c) => {
 });
 
 
+// ── 가입 신청 관리 (승인제) ──
+
+/**
+ * GET /signup-requests
+ * 가입 신청 목록 조회
+ */
+adminRoutes.get('/signup-requests', async (c) => {
+    const db = c.env.DB;
+    const status = c.req.query('status') || 'pending';
+    const limit = Math.min(50, Math.max(1, Number(c.req.query('limit')) || 20));
+    const offset = Math.max(0, Number(c.req.query('offset')) || 0);
+
+    const validStatuses = ['pending', 'approved', 'rejected', 'blocked', 'all'];
+    if (!validStatuses.includes(status)) {
+        return c.json({ error: '잘못된 상태 값입니다.' }, 400);
+    }
+
+    let queryStr = `SELECT sr.*, u.name as reviewer_name FROM signup_requests sr LEFT JOIN users u ON sr.reviewed_by = u.id`;
+    let countQueryStr = `SELECT COUNT(*) as count FROM signup_requests`;
+    const params: any[] = [];
+
+    if (status !== 'all') {
+        queryStr += ` WHERE sr.status = ?`;
+        countQueryStr += ` WHERE status = ?`;
+        params.push(status);
+    }
+
+    queryStr += ` ORDER BY sr.created_at DESC LIMIT ? OFFSET ?`;
+
+    const [requestsResult, countResult] = await Promise.all([
+        db.prepare(queryStr).bind(...params, limit, offset).all(),
+        db.prepare(countQueryStr).bind(...params).first<{ count: number }>()
+    ]);
+
+    return c.json({
+        requests: requestsResult.results,
+        total: countResult?.count || 0,
+        hasMore: offset + limit < (countResult?.count || 0)
+    });
+});
+
+/**
+ * PUT /signup-requests/:id/approve
+ * 가입 신청 승인
+ */
+adminRoutes.put('/signup-requests/:id/approve', async (c) => {
+    const db = c.env.DB;
+    const requestId = Number(c.req.param('id'));
+    const currentUser = c.get('user')!;
+
+    const request = await db.prepare('SELECT * FROM signup_requests WHERE id = ?')
+        .bind(requestId)
+        .first<{ id: number; google_id: string; email: string; name: string; picture: string; status: string }>();
+
+    if (!request) {
+        return c.json({ error: '가입 신청을 찾을 수 없습니다.' }, 404);
+    }
+    if (request.status !== 'pending') {
+        return c.json({ error: '이미 처리된 신청입니다.' }, 400);
+    }
+
+    // 중복 이름 확인
+    let finalName = request.name;
+    const nameExists = await db
+        .prepare('SELECT COUNT(*) as cnt FROM users WHERE name = ?')
+        .bind(finalName)
+        .first<{ cnt: number }>();
+
+    if (nameExists && nameExists.cnt > 0) {
+        let suffix = 2;
+        while (true) {
+            const candidateName = `${request.name} ${suffix}`;
+            const dupCheck = await db
+                .prepare('SELECT COUNT(*) as cnt FROM users WHERE name = ?')
+                .bind(candidateName)
+                .first<{ cnt: number }>();
+            if (!dupCheck || dupCheck.cnt === 0) {
+                finalName = candidateName;
+                break;
+            }
+            suffix++;
+        }
+    }
+
+    // users 테이블에 유저 생성
+    await db.prepare(
+        'INSERT INTO users (google_id, email, name, picture) VALUES (?, ?, ?, ?)'
+    ).bind(request.google_id, request.email, finalName, request.picture).run();
+
+    // 신청 상태 업데이트
+    const now = Math.floor(Date.now() / 1000);
+    await db.prepare(
+        'UPDATE signup_requests SET status = ?, reviewed_by = ?, reviewed_at = ? WHERE id = ?'
+    ).bind('approved', currentUser.id, now, requestId).run();
+
+    // 해당 신청 관련 모든 관리자 알림 삭제
+    await db.prepare(
+        "DELETE FROM notifications WHERE type = 'signup_request' AND ref_id = ?"
+    ).bind(requestId).run();
+
+    writeAdminLog(c, 'signup_approve', `가입 신청 승인: ${request.name} (${request.email})`, currentUser.id);
+    return c.json({ success: true });
+});
+
+/**
+ * PUT /signup-requests/:id/reject
+ * 가입 신청 거절 (재신청 가능)
+ */
+adminRoutes.put('/signup-requests/:id/reject', async (c) => {
+    const db = c.env.DB;
+    const requestId = Number(c.req.param('id'));
+    const currentUser = c.get('user')!;
+
+    const request = await db.prepare('SELECT * FROM signup_requests WHERE id = ?')
+        .bind(requestId)
+        .first<{ id: number; name: string; email: string; status: string }>();
+
+    if (!request) {
+        return c.json({ error: '가입 신청을 찾을 수 없습니다.' }, 404);
+    }
+    if (request.status !== 'pending') {
+        return c.json({ error: '이미 처리된 신청입니다.' }, 400);
+    }
+
+    const now = Math.floor(Date.now() / 1000);
+    await db.prepare(
+        'UPDATE signup_requests SET status = ?, reviewed_by = ?, reviewed_at = ? WHERE id = ?'
+    ).bind('rejected', currentUser.id, now, requestId).run();
+
+    // 해당 신청 관련 모든 관리자 알림 삭제
+    await db.prepare(
+        "DELETE FROM notifications WHERE type = 'signup_request' AND ref_id = ?"
+    ).bind(requestId).run();
+
+    writeAdminLog(c, 'signup_reject', `가입 신청 거절: ${request.name} (${request.email})`, currentUser.id);
+    return c.json({ success: true });
+});
+
+/**
+ * PUT /signup-requests/:id/block
+ * 가입 신청 차단 (재신청 불가)
+ */
+adminRoutes.put('/signup-requests/:id/block', async (c) => {
+    const db = c.env.DB;
+    const requestId = Number(c.req.param('id'));
+    const currentUser = c.get('user')!;
+
+    const request = await db.prepare('SELECT * FROM signup_requests WHERE id = ?')
+        .bind(requestId)
+        .first<{ id: number; name: string; email: string; status: string }>();
+
+    if (!request) {
+        return c.json({ error: '가입 신청을 찾을 수 없습니다.' }, 404);
+    }
+    if (request.status !== 'pending') {
+        return c.json({ error: '이미 처리된 신청입니다.' }, 400);
+    }
+
+    const now = Math.floor(Date.now() / 1000);
+    await db.prepare(
+        'UPDATE signup_requests SET status = ?, reviewed_by = ?, reviewed_at = ? WHERE id = ?'
+    ).bind('blocked', currentUser.id, now, requestId).run();
+
+    // 해당 신청 관련 모든 관리자 알림 삭제
+    await db.prepare(
+        "DELETE FROM notifications WHERE type = 'signup_request' AND ref_id = ?"
+    ).bind(requestId).run();
+
+    writeAdminLog(c, 'signup_block', `가입 신청 차단: ${request.name} (${request.email})`, currentUser.id);
+    return c.json({ success: true });
+});
+
 // ── 관리자 전용 카테고리 관리 ──
 
 /**

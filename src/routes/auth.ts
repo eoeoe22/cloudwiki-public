@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { getCookie } from 'hono/cookie';
 import type { Env } from '../types';
 import { requireAuth } from '../middleware/session';
+import { isSuperAdmin, getSuperAdmins } from '../utils/auth';
 
 const auth = new Hono<Env>();
 
@@ -117,7 +118,39 @@ auth.get('/auth/google/callback', async (c) => {
             .run();
     } else {
         isNewUser = true;
-        // 신규 유저: 중복 이름 확인 후 접미사 부여
+        const signupPolicy = c.env.SIGNUP_POLICY || 'open';
+
+        // 승인제: 신규 유저는 바로 가입하지 않고 가입 신청 절차를 거침
+        if (signupPolicy === 'approval') {
+            // 기존 가입 신청 확인
+            const existingRequest = await db
+                .prepare('SELECT id, status FROM signup_requests WHERE google_id = ? ORDER BY created_at DESC LIMIT 1')
+                .bind(userInfo.id)
+                .first<{ id: number; status: string }>();
+
+            if (existingRequest) {
+                if (existingRequest.status === 'pending') {
+                    return c.redirect('/?error=signup_pending');
+                }
+                if (existingRequest.status === 'blocked') {
+                    return c.redirect('/?error=signup_blocked');
+                }
+                // rejected: 재신청 가능 → 아래로 진행
+            }
+
+            // 임시 토큰 발급하여 KV에 저장 (10분 TTL)
+            const signupToken = crypto.randomUUID();
+            await c.env.KV.put(`signup_token:${signupToken}`, JSON.stringify({
+                google_id: userInfo.id,
+                email: userInfo.email,
+                name: userInfo.name,
+                picture: userInfo.picture,
+            }), { expirationTtl: 600 });
+
+            return c.redirect(`/setup-profile?mode=approval&token=${signupToken}`);
+        }
+
+        // 모두 허용: 기존 로직대로 바로 유저 생성
         let finalName = userInfo.name;
         const nameExists = await db
             .prepare('SELECT COUNT(*) as cnt FROM users WHERE name = ?')
@@ -125,7 +158,6 @@ auth.get('/auth/google/callback', async (c) => {
             .first<{ cnt: number }>();
 
         if (nameExists && nameExists.cnt > 0) {
-            // 이미 같은 이름이 있으면 접미사를 붙여서 고유한 이름 생성
             let suffix = 2;
             while (true) {
                 const candidateName = `${userInfo.name} ${suffix}`;
@@ -180,6 +212,131 @@ auth.get('/auth/google/callback', async (c) => {
     }
 
     return c.redirect('/');
+});
+
+/**
+ * POST /api/auth/signup-request
+ * 승인제 회원가입 신청 제출 (비인증 상태에서 임시 토큰으로 처리)
+ */
+auth.post('/api/auth/signup-request', async (c) => {
+    const db = c.env.DB;
+    const { token, name, message } = await c.req.json<{
+        token: string;
+        name: string;
+        message?: string;
+    }>();
+
+    if (!token) {
+        return c.json({ error: '유효하지 않은 요청입니다.' }, 400);
+    }
+    if (!name || name.trim().length === 0) {
+        return c.json({ error: '표시명을 입력해주세요.' }, 400);
+    }
+    if (name.trim().length > 50) {
+        return c.json({ error: '표시명은 50자 이내로 입력해주세요.' }, 400);
+    }
+
+    // 토큰 검증
+    const tokenData = await c.env.KV.get(`signup_token:${token}`);
+    if (!tokenData) {
+        return c.json({ error: '토큰이 만료되었거나 유효하지 않습니다. 다시 로그인해주세요.' }, 400);
+    }
+
+    const userInfo = JSON.parse(tokenData) as {
+        google_id: string;
+        email: string;
+        name: string;
+        picture: string;
+    };
+
+    // 중복 이름 확인
+    const dupCheck = await db
+        .prepare('SELECT COUNT(*) as cnt FROM users WHERE name = ?')
+        .bind(name.trim())
+        .first<{ cnt: number }>();
+    if (dupCheck && dupCheck.cnt > 0) {
+        return c.json({ error: '이미 사용 중인 표시명입니다. 다른 이름을 입력해주세요.' }, 409);
+    }
+
+    // 이미 pending 신청이 있는지 확인
+    const existingPending = await db
+        .prepare("SELECT id FROM signup_requests WHERE google_id = ? AND status = 'pending'")
+        .bind(userInfo.google_id)
+        .first();
+    if (existingPending) {
+        await c.env.KV.delete(`signup_token:${token}`);
+        return c.json({ error: '이미 가입 신청이 대기 중입니다.' }, 409);
+    }
+
+    // 차단 상태 확인
+    const blockedRequest = await db
+        .prepare("SELECT id FROM signup_requests WHERE google_id = ? AND status = 'blocked'")
+        .bind(userInfo.google_id)
+        .first();
+    if (blockedRequest) {
+        await c.env.KV.delete(`signup_token:${token}`);
+        return c.json({ error: '가입이 차단된 계정입니다.' }, 403);
+    }
+
+    // 가입 신청 INSERT
+    const result = await db.prepare(
+        'INSERT INTO signup_requests (google_id, email, name, picture, message) VALUES (?, ?, ?, ?, ?)'
+    ).bind(
+        userInfo.google_id,
+        userInfo.email,
+        name.trim(),
+        userInfo.picture || null,
+        (message || '').trim()
+    ).run();
+
+    const requestId = result.meta.last_row_id;
+
+    // 모든 관리자에게 알림 발송
+    const admins = await db.prepare(
+        "SELECT id, email FROM users WHERE role = 'admin' AND role != 'deleted'"
+    ).all<{ id: number; email: string }>();
+
+    const superAdminEmails = getSuperAdmins(c.env);
+    const superAdminUsers = superAdminEmails.size > 0
+        ? await db.prepare(
+            `SELECT id, email FROM users WHERE email IN (${Array.from(superAdminEmails).map(() => '?').join(',')}) AND role != 'deleted'`
+        ).bind(...Array.from(superAdminEmails)).all<{ id: number; email: string }>()
+        : { results: [] };
+
+    // 중복 제거하여 알림 대상 수집
+    const notifyUserIds = new Set<number>();
+    for (const admin of admins.results || []) {
+        notifyUserIds.add(admin.id);
+    }
+    for (const sa of superAdminUsers.results || []) {
+        notifyUserIds.add(sa.id);
+    }
+
+    // 알림 발송
+    for (const userId of notifyUserIds) {
+        await db.prepare(
+            'INSERT INTO notifications (user_id, type, content, link, ref_id) VALUES (?, ?, ?, ?, ?)'
+        ).bind(
+            userId,
+            'signup_request',
+            `${name.trim()}님이 가입을 신청했습니다.`,
+            '/admin#signup-requests',
+            requestId
+        ).run();
+    }
+
+    // 토큰 삭제
+    await c.env.KV.delete(`signup_token:${token}`);
+
+    return c.json({ success: true, message: '가입 신청이 접수되었습니다.' });
+});
+
+/**
+ * GET /api/auth/signup-policy
+ * 현재 회원가입 정책 반환 (비인증 상태에서도 접근 가능)
+ */
+auth.get('/api/auth/signup-policy', (c) => {
+    return c.json({ policy: c.env.SIGNUP_POLICY || 'open' });
 });
 
 /**

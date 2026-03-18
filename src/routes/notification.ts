@@ -86,7 +86,7 @@ notificationRoutes.delete('/notifications/by-link', requireAuthAllowBanned, asyn
 
 /**
  * DELETE /api/notifications/:id
- * 알림 삭제 — 쪽지(type=message)는 soft delete, 나머지는 hard delete
+ * 알림 삭제 — 알림 레코드만 삭제 (쪽지는 받은 쪽지함에서 별도로 삭제)
  */
 notificationRoutes.delete('/notifications/:id', requireAuthAllowBanned, async (c) => {
     const user = c.get('user')!;
@@ -102,12 +102,7 @@ notificationRoutes.delete('/notifications/:id', requireAuthAllowBanned, async (c
         return c.json({ error: '알림을 찾을 수 없습니다.' }, 404);
     }
 
-    if (notif.type === 'message' && notif.ref_id) {
-        // 쪽지는 soft delete
-        await db.prepare('UPDATE messages SET deleted = 1 WHERE id = ?').bind(notif.ref_id).run();
-    }
-
-    // 알림 레코드 자체는 삭제
+    // 알림 레코드 삭제 (쪽지는 받은 쪽지함에 그대로 남음)
     await db.prepare('DELETE FROM notifications WHERE id = ?').bind(notifId).run();
 
     return c.json({ success: true });
@@ -148,10 +143,13 @@ notificationRoutes.post('/messages', requireAuth, async (c) => {
     }
 
     // 수신자 존재 확인
-    const receiver = await db.prepare('SELECT id, name FROM users WHERE id = ?')
-        .bind(receiver_id).first<{ id: number; name: string }>();
+    const receiver = await db.prepare('SELECT id, name, role FROM users WHERE id = ?')
+        .bind(receiver_id).first<{ id: number; name: string; role: string }>();
     if (!receiver) {
         return c.json({ error: '수신자를 찾을 수 없습니다.' }, 404);
+    }
+    if (receiver.role === 'deleted') {
+        return c.json({ error: '탈퇴한 사용자에게는 쪽지를 보낼 수 없습니다.' }, 400);
     }
 
     // DM 권한 확인

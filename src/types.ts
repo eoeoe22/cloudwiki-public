@@ -18,6 +18,7 @@ export type Env = {
         WIKI_FAVICON_URL: string;
         CUSTOM_HEADER: string;
         SELECTED_ICONS_ONLY: string;
+        SIGNUP_POLICY: string;
         TURNSTILE_SITE_KEY: string;
         TURNSTILE_SECRET_KEY: string;
     };
@@ -140,7 +141,7 @@ export interface TicketComment {
 export interface Notification {
     id: number;
     user_id: number;
-    type: 'discussion_comment' | 'banned' | 'message' | 'ticket_comment' | 'ticket_created';
+    type: 'discussion_comment' | 'banned' | 'message' | 'ticket_comment' | 'ticket_created' | 'signup_request';
     content: string;
     link: string | null;
     ref_id: number | null;
