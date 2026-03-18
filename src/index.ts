@@ -262,7 +262,10 @@ app.get('/wiki/:slug', async (c) => {
 
     // ── 캐시 확인 (비관리자 + redirect=no가 아닌 일반 요청만) ──
     const cache = caches.default;
-    const ssrCacheKey = new Request(c.req.url, { method: 'GET' });
+    // 쿼리 파라미터를 제거한 정규화된 URL을 캐시 키로 사용
+    const ssrCacheUrl = new URL(c.req.url);
+    ssrCacheUrl.search = '';
+    const ssrCacheKey = new Request(ssrCacheUrl.toString(), { method: 'GET' });
     const canUseCache = !isAdmin && redirectParam !== 'no';
 
     if (canUseCache) {

@@ -161,8 +161,13 @@ wiki.get('/wiki/recent-changes', async (c) => {
             ORDER BY p.updated_at DESC LIMIT 10
         `).all();
 
-        const response = c.json(safeJSON({ changes: results }), 200, {
-            'Cache-Control': 'public, max-age=60',
+        const body = JSON.stringify(safeJSON({ changes: results }));
+        const response = new Response(body, {
+            status: 200,
+            headers: {
+                'Content-Type': 'application/json; charset=UTF-8',
+                'Cache-Control': 'public, max-age=60',
+            },
         });
         c.executionCtx.waitUntil(cache.put(cacheKey, response.clone()));
         return response;
@@ -949,10 +954,13 @@ wiki.post('/wiki/:slug/restore', requireAuth, async (c) => {
             .run().catch((e: any) => console.error('Failed to write admin log:', e))
     );
 
-    // 캐시 무효화
-    const url = new URL(c.req.url);
-    url.pathname = url.pathname.replace(/\/restore$/, ''); // /wiki/:slug
-    c.executionCtx.waitUntil(caches.default.delete(url.toString()));
+    // 캐시 무효화 (API + SSR + 최근 변경)
+    const origin = new URL(c.req.url).origin;
+    c.executionCtx.waitUntil(Promise.all([
+        caches.default.delete(`${origin}/api/wiki/${encodeURIComponent(slug)}`),
+        caches.default.delete(`${origin}/wiki/${encodeURIComponent(slug)}`),
+        caches.default.delete(`${origin}/api/wiki/recent-changes`),
+    ]));
 
     return c.json({ message: '문서가 복원되었습니다.' });
 });
