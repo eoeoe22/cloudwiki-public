@@ -74,6 +74,33 @@
                 <h2 class="mb-4"><i class="mdi mdi-image-multiple"></i> 이미지 관리</h2>
                 <p class="text-muted mb-3">업로드된 이미지를 검색하고 관리할 수 있습니다.</p>
 
+                <!-- 쓰레기 수집기 카드 -->
+                <div class="card shadow-sm border-0 mb-4">
+                    <div class="card-header py-3">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <h5 class="mb-0"><i class="mdi mdi-delete-sweep"></i> 쓰레기 수집기</h5>
+                            <button class="btn btn-sm btn-outline-warning" onclick="runGarbageCollector()" id="gcRunBtn">
+                                <i class="mdi mdi-magnify-scan"></i> 미사용 이미지 검색
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body" id="gcBody" style="display: none;">
+                        <div id="gcStatus" class="text-muted text-center py-3"></div>
+                        <div id="gcList"></div>
+                        <div id="gcActions" class="text-center mt-3" style="display: none;">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div>
+                                    <button class="btn btn-sm btn-outline-secondary" onclick="gcSelectAll()">전체 선택</button>
+                                    <button class="btn btn-sm btn-outline-secondary" onclick="gcDeselectAll()">전체 해제</button>
+                                </div>
+                                <button class="btn btn-sm btn-danger" onclick="gcDeleteSelected()" id="gcDeleteBtn">
+                                    <i class="mdi mdi-delete-forever"></i> 선택 항목 삭제
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="card shadow-sm border-0 mb-4">
                     <div class="card-header py-3">
                         <div class="d-flex justify-content-between align-items-center">
@@ -270,6 +297,146 @@
                     } catch (err) {
                         Swal.fire('오류', err.message, 'error');
                     }
+                }
+            }
+
+            // ── 쓰레기 수집기 ──
+            var gcItems = [];
+
+            async function runGarbageCollector() {
+                const gcBody = document.getElementById('gcBody');
+                const gcStatus = document.getElementById('gcStatus');
+                const gcList = document.getElementById('gcList');
+                const gcActions = document.getElementById('gcActions');
+                const gcRunBtn = document.getElementById('gcRunBtn');
+
+                gcBody.style.display = 'block';
+                gcActions.style.display = 'none';
+                gcList.innerHTML = '';
+                gcStatus.innerHTML = '<div class="spinner-border spinner-border-sm text-warning" role="status"></div> 미사용 이미지를 검색하는 중... (시간이 걸릴 수 있습니다)';
+                gcRunBtn.disabled = true;
+
+                try {
+                    const res = await fetch('/api/admin/media/gc');
+                    if (!res.ok) throw new Error('검색 실패');
+                    const data = await res.json();
+
+                    gcItems = data.unused || [];
+
+                    if (gcItems.length === 0) {
+                        gcStatus.innerHTML = '<div class="alert alert-success mb-0"><i class="mdi mdi-check-circle"></i> 미사용 이미지가 없습니다. 모든 이미지가 문서에서 사용 중입니다.</div>';
+                        return;
+                    }
+
+                    gcStatus.innerHTML = `<div class="alert alert-warning mb-0"><i class="mdi mdi-alert"></i> 전체 ${data.total_media}개 이미지 중 <strong>${data.unused_count}개</strong>가 어떤 문서에서도 사용되지 않고 있습니다.</div>`;
+
+                    gcList.innerHTML = gcItems.map(m => {
+                        const isVideo = m.mime_type && m.mime_type.startsWith('video/');
+                        const publicUrl = m.r2_key ? `/media/${m.r2_key}` : '';
+                        const preview = isVideo
+                            ? `<video src="${publicUrl}" muted style="width:60px;height:60px;object-fit:cover;border-radius:6px;"></video>`
+                            : `<img src="${publicUrl}" alt="${escapeHtml(m.filename)}" loading="lazy" style="width:60px;height:60px;object-fit:cover;border-radius:6px;">`;
+
+                        const sizeStr = m.size < 1024 ? `${m.size} B`
+                            : m.size < 1024 * 1024 ? `${(m.size / 1024).toFixed(1)} KB`
+                                : `${(m.size / (1024 * 1024)).toFixed(1)} MB`;
+
+                        const uploadDate = m.created_at
+                            ? new Date(m.created_at * 1000).toLocaleString('ko-KR')
+                            : '알 수 없음';
+
+                        const uploaderName = m.uploader_name ? escapeHtml(m.uploader_name) : '알 수 없음';
+
+                        return `
+                            <div class="media-item" style="border-color: var(--bs-warning);">
+                                <input type="checkbox" class="form-check-input gc-check" data-id="${m.id}" checked style="flex-shrink:0;">
+                                ${preview}
+                                <div class="media-item-info">
+                                    <div class="filename">${escapeHtml(m.filename)}</div>
+                                    <div class="meta">${sizeStr} · ${uploadDate} · 업로더: ${uploaderName}</div>
+                                </div>
+                                <button class="btn btn-sm btn-outline-info" onclick="trackBacklinks(${m.id}, '${escapeHtml(m.filename)}')" title="역링크 확인">
+                                    <i class="mdi mdi-link-variant"></i>
+                                </button>
+                            </div>`;
+                    }).join('');
+
+                    gcActions.style.display = 'block';
+                } catch (err) {
+                    gcStatus.innerHTML = `<div class="alert alert-danger mb-0">오류: ${err.message}</div>`;
+                } finally {
+                    gcRunBtn.disabled = false;
+                }
+            }
+
+            function gcSelectAll() {
+                document.querySelectorAll('.gc-check').forEach(cb => cb.checked = true);
+            }
+
+            function gcDeselectAll() {
+                document.querySelectorAll('.gc-check').forEach(cb => cb.checked = false);
+            }
+
+            async function gcDeleteSelected() {
+                const selectedIds = Array.from(document.querySelectorAll('.gc-check:checked'))
+                    .map(cb => Number(cb.dataset.id));
+
+                if (selectedIds.length === 0) {
+                    Swal.fire('알림', '삭제할 이미지를 선택해주세요.', 'info');
+                    return;
+                }
+
+                const result = await Swal.fire({
+                    title: '미사용 이미지 삭제',
+                    html: `선택된 <strong>${selectedIds.length}개</strong> 이미지를 영구 삭제하시겠습니까?<br><small class="text-muted">이 작업은 되돌릴 수 없습니다.</small>`,
+                    icon: 'warning',
+                    showCancelButton: true,
+                    confirmButtonText: '삭제',
+                    cancelButtonText: '취소',
+                    confirmButtonColor: '#d33'
+                });
+
+                if (!result.isConfirmed) return;
+
+                const gcDeleteBtn = document.getElementById('gcDeleteBtn');
+                gcDeleteBtn.disabled = true;
+                gcDeleteBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 삭제 중...';
+
+                try {
+                    const res = await fetch('/api/admin/media/gc', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ ids: selectedIds })
+                    });
+                    const data = await res.json();
+                    if (!res.ok) throw new Error(data.error || '삭제 실패');
+
+                    let msg = `${data.deleted_count}개 이미지가 삭제되었습니다.`;
+                    if (data.errors && data.errors.length > 0) {
+                        msg += `\n\n경고:\n${data.errors.join('\n')}`;
+                    }
+
+                    Swal.fire({
+                        icon: data.deleted_count > 0 ? 'success' : 'warning',
+                        title: '쓰레기 수집 완료',
+                        text: msg,
+                        confirmButtonText: '확인'
+                    });
+
+                    // 삭제된 항목을 메인 목록에서도 제거
+                    const deletedSet = new Set(selectedIds.filter(id =>
+                        !data.errors?.some(e => e.includes(`ID ${id}`))));
+                    mediaItems = mediaItems.filter(m => !deletedSet.has(m.id));
+                    mediaTotal -= deletedSet.size;
+                    renderMedia();
+
+                    // GC 결과 다시 검색
+                    runGarbageCollector();
+                } catch (err) {
+                    Swal.fire('오류', err.message, 'error');
+                } finally {
+                    gcDeleteBtn.disabled = false;
+                    gcDeleteBtn.innerHTML = '<i class="mdi mdi-delete-forever"></i> 선택 항목 삭제';
                 }
             }
 

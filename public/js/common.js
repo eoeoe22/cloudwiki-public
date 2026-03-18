@@ -405,14 +405,14 @@ async function viewMessage(messageId) {
         if (currentUser) {
             const dmRes = await fetch('/api/settings/dm');
             const dmData = dmRes.ok ? await dmRes.json() : { allow_direct_message: 0 };
-            const isAdmin = currentUser.role === 'admin' || currentUser.role === 'super_admin';
+            const canBypassDm = ['admin', 'super_admin', 'discussion_manager'].includes(currentUser.role);
 
-            if (dmData.allow_direct_message === 1 || isAdmin) {
+            if (dmData.allow_direct_message === 1 || canBypassDm) {
                 canReply = true;
             } else if (msg.receiver_id === currentUser.id) {
-                // DM 비활성화 상태에서 관리자가 보낸 쪽지에 답장 가능
+                // DM 비활성화 상태에서 관리자/토론관리자가 보낸 쪽지에 답장 가능
                 const senderRole = msg.sender_role || '';
-                canReply = (senderRole === 'admin' || senderRole === 'super_admin');
+                canReply = ['admin', 'super_admin', 'discussion_manager'].includes(senderRole);
             }
         }
 

@@ -20,6 +20,7 @@
     <link rel="stylesheet" href="https://uicdn.toast.com/editor/latest/theme/toastui-editor-dark.min.css" />
 
     <link rel="stylesheet" href="/style.css">
+    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?onload=onTurnstileLoad" async defer></script>
     <!-- Diff -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jsdiff/5.1.0/diff.min.js"></script>
     <style>
@@ -607,13 +608,14 @@
             </div>
 
             <!-- 버튼 -->
-            <div class="edit-actions">
-                <button class="btn btn-wiki" id="saveBtn" onclick="savePage()">
+            <div class="edit-actions d-flex align-items-center flex-wrap gap-2">
+                <button class="btn btn-wiki" id="saveBtn" onclick="savePage()" disabled>
                     <i class="mdi mdi-check"></i> 저장
                 </button>
                 <button class="btn btn-wiki-outline" onclick="cancelEdit()">
                     <i class="mdi mdi-close"></i> 취소
                 </button>
+                <div id="turnstile-container" class="ms-2"></div>
             </div>
         </div>
     </div>
@@ -638,6 +640,53 @@
         let serverViewer = null;     // 최신본 Viewer 인스턴스 (lazy)
         let cachedDiffData = null;   // Diff 연산 결과
         let diffViewMode = 'summary';// Diff 보기 상태 ('summary' 또는 'all')
+
+        // ── Turnstile 변수 ──
+        let turnstileToken = null;
+        let turnstileWidgetId = null;
+        let turnstileReady = false;
+
+        function onTurnstileLoad() {
+            turnstileReady = true;
+            initTurnstile();
+        }
+
+        function initTurnstile() {
+            const siteKey = appConfig && appConfig.turnstileSiteKey;
+            if (!siteKey) {
+                // Turnstile 미설정 시 저장 버튼 활성화
+                const btn = document.getElementById('saveBtn');
+                if (btn) btn.disabled = false;
+                return;
+            }
+            if (!turnstileReady) return;
+            const container = document.getElementById('turnstile-container');
+            if (!container || turnstileWidgetId !== null) return;
+            turnstileWidgetId = turnstile.render(container, {
+                sitekey: siteKey,
+                callback: function (token) {
+                    turnstileToken = token;
+                    document.getElementById('saveBtn').disabled = false;
+                },
+                'expired-callback': function () {
+                    turnstileToken = null;
+                    document.getElementById('saveBtn').disabled = true;
+                    refreshTurnstile();
+                },
+                'error-callback': function () {
+                    turnstileToken = null;
+                    document.getElementById('saveBtn').disabled = true;
+                },
+            });
+        }
+
+        function refreshTurnstile() {
+            if (turnstileWidgetId !== null) {
+                turnstileToken = null;
+                document.getElementById('saveBtn').disabled = true;
+                turnstile.reset(turnstileWidgetId);
+            }
+        }
 
         // ── 아이콘 설정 변수 ──
         let selectedIconsOnly = false; // SELECTED_ICONS_ONLY 환경변수 (true: icons.json만 허용)
@@ -1526,6 +1575,7 @@
         document.addEventListener('DOMContentLoaded', async () => {
             await loadConfig();
             selectedIconsOnly = !!(appConfig && appConfig.selectedIconsOnly);
+            initTurnstile();
             // 인증 확인
             try {
                 const res = await fetch('/api/me');
@@ -2007,6 +2057,11 @@
                 return;
             }
 
+            if (appConfig.turnstileSiteKey && !turnstileToken) {
+                Swal.fire('오류', 'Turnstile 검증을 완료해주세요.', 'warning');
+                return;
+            }
+
             const saveBtn = document.getElementById('saveBtn');
             saveBtn.disabled = true;
             saveBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 저장 중...';
@@ -2021,6 +2076,7 @@
                     redirect_to: redirect_to || undefined,
                     is_locked,
                     summary: summary || undefined,
+                    turnstileToken,
                 };
 
                 if (pageVersion !== null) {
@@ -2039,7 +2095,6 @@
                     // 버전 충돌 (Optimistic Locking Failure)
                     showConflictModal(data);
 
-                    saveBtn.disabled = false;
                     saveBtn.innerHTML = '<i class="mdi mdi-check"></i> 저장';
                     return;
                 }
@@ -2066,8 +2121,12 @@
                 Swal.fire('오류', err.message, 'error');
             } finally {
                 if (!isSuccess) {
-                    saveBtn.disabled = false;
                     saveBtn.innerHTML = '<i class="mdi mdi-check"></i> 저장';
+                    if (turnstileWidgetId !== null) {
+                        refreshTurnstile();
+                    } else {
+                        saveBtn.disabled = false;
+                    }
                 }
             }
         }

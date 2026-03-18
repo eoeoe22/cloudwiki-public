@@ -42,6 +42,18 @@ function extractLinks(content: string): { target_slug: string; link_type: string
         }
     }
 
+    // 3) 이미지 참조: images/로 시작하는 R2 키를 파싱
+    // 마크다운 ![alt](/media/images/...) 또는 HTML <img src="...images/..."> 등
+    const imageRegex = /images\/[a-zA-Z0-9가-힣\-_(). ]+\.\w+/g;
+    for (const m of cleaned.matchAll(imageRegex)) {
+        const r2Key = m[0].trim();
+        const key = `image:${r2Key}`;
+        if (!seen.has(key)) {
+            seen.add(key);
+            links.push({ target_slug: r2Key, link_type: 'image' });
+        }
+    }
+
     return links;
 }
 
@@ -91,6 +103,7 @@ wiki.get('/config', (c) => {
         wikiLogoUrl: c.env.WIKI_LOGO_URL || '',
         wikiFaviconUrl: c.env.WIKI_FAVICON_URL || '',
         selectedIconsOnly: c.env.SELECTED_ICONS_ONLY === 'true',
+        turnstileSiteKey: c.env.TURNSTILE_SITE_KEY || '',
     });
 });
 
@@ -373,7 +386,28 @@ wiki.put('/wiki/:slug', requireAuth, async (c) => {
         is_private?: number;
         redirect_to?: string;
         expected_version?: number;
+        turnstileToken?: string;
     }>();
+
+    // Turnstile 검증
+    if (c.env.TURNSTILE_SECRET_KEY) {
+        const token = body.turnstileToken;
+        if (!token) {
+            return c.json({ error: 'Turnstile 검증이 필요합니다.' }, 403);
+        }
+        const formData = new FormData();
+        formData.append('secret', c.env.TURNSTILE_SECRET_KEY);
+        formData.append('response', token);
+        formData.append('remoteip', c.req.header('cf-connecting-ip') || '');
+        const tsRes = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+            method: 'POST',
+            body: formData,
+        });
+        const tsData = await tsRes.json<{ success: boolean }>();
+        if (!tsData.success) {
+            return c.json({ error: 'Turnstile 검증에 실패했습니다. 다시 시도해주세요.' }, 403);
+        }
+    }
 
     const isAdmin = user.role === 'admin' || user.role === 'super_admin';
     const db = c.env.DB;

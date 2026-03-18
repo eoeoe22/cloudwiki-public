@@ -158,7 +158,7 @@ notificationRoutes.post('/messages', requireAuth, async (c) => {
     const settings = await db.prepare('SELECT allow_direct_message FROM settings WHERE id = 1')
         .first<{ allow_direct_message: number }>();
     const dmAllowed = settings?.allow_direct_message === 1;
-    const isAdmin = roleLevel(user.role) >= 3 || isSuperAdmin(user.email, c.env);
+    const isAdmin = roleLevel(user.role) >= 2 || isSuperAdmin(user.email, c.env);
 
     if (!dmAllowed && !isAdmin) {
         // 비활성화 상태에서 일반 유저는 관리자 쪽지에 대한 답장만 가능
@@ -178,7 +178,7 @@ notificationRoutes.post('/messages', requireAuth, async (c) => {
         // 원본 발신자의 역할 확인 (관리자가 보낸 쪽지여야 답장 가능)
         const originalSender = await db.prepare('SELECT role, email FROM users WHERE id = ?')
             .bind(originalMsg.sender_id).first<{ role: string; email: string }>();
-        if (!originalSender || (roleLevel(originalSender.role) < 3 && !isSuperAdmin(originalSender.email, c.env))) {
+        if (!originalSender || (roleLevel(originalSender.role) < 2 && !isSuperAdmin(originalSender.email, c.env))) {
             return c.json({ error: '개인 쪽지가 비활성화 상태입니다.' }, 403);
         }
     }

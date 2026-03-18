@@ -349,15 +349,130 @@ adminRoutes.get('/media', async (c) => {
     });
 });
 
+// ── 미디어 쓰레기 수집기 (Garbage Collector) ──
+
+/**
+ * GET /media/gc
+ * 어떤 문서에서도 참조되지 않는 미사용 이미지 목록 조회
+ * page_links(image) + LIKE fallback 두 방식으로 사용 여부 확인
+ */
+adminRoutes.get('/media/gc', async (c) => {
+    const db = c.env.DB;
+
+    // 모든 미디어 조회
+    const allMedia = await db.prepare(
+        `SELECT m.id, m.r2_key, m.filename, m.mime_type, m.size, m.created_at, u.name as uploader_name
+         FROM media m LEFT JOIN users u ON m.uploader_id = u.id
+         ORDER BY m.created_at DESC`
+    ).all();
+
+    if (!allMedia.results || allMedia.results.length === 0) {
+        return c.json({ unused: [], total_media: 0, unused_count: 0 });
+    }
+
+    // page_links에서 image 타입으로 참조되는 r2_key 집합
+    const linkedResult = await db.prepare(
+        `SELECT DISTINCT target_slug FROM page_links WHERE link_type = 'image'`
+    ).all();
+    const linkedKeys = new Set((linkedResult.results || []).map((r: any) => r.target_slug));
+
+    // 미사용 후보: page_links에 없는 것들
+    const candidates = (allMedia.results as any[]).filter(m => !linkedKeys.has(m.r2_key));
+
+    if (candidates.length === 0) {
+        return c.json({ unused: [], total_media: allMedia.results.length, unused_count: 0 });
+    }
+
+    // LIKE fallback으로 실제 content에서도 참조 여부 확인
+    const unused: any[] = [];
+    for (const media of candidates) {
+        const found = await db.prepare(
+            `SELECT 1 FROM pages WHERE content LIKE ? AND deleted_at IS NULL LIMIT 1`
+        ).bind(`%${media.r2_key}%`).first();
+
+        if (!found) {
+            unused.push(media);
+        }
+    }
+
+    return c.json({
+        unused,
+        total_media: allMedia.results.length,
+        unused_count: unused.length
+    });
+});
+
+/**
+ * POST /media/gc
+ * 선택된 미사용 이미지 일괄 삭제
+ * body: { ids: number[] }
+ */
+adminRoutes.post('/media/gc', async (c) => {
+    const db = c.env.DB;
+    const user = c.get('user')!;
+    const { ids } = await c.req.json<{ ids: number[] }>();
+
+    if (!Array.isArray(ids) || ids.length === 0) {
+        return c.json({ error: '삭제할 이미지를 선택해주세요.' }, 400);
+    }
+
+    const deleted: number[] = [];
+    const errors: string[] = [];
+
+    for (const id of ids) {
+        const mediaItem = await db.prepare('SELECT r2_key, filename FROM media WHERE id = ?')
+            .bind(id)
+            .first<{ r2_key: string, filename: string }>();
+
+        if (!mediaItem) {
+            errors.push(`ID ${id}: 이미지를 찾을 수 없음`);
+            continue;
+        }
+
+        // 삭제 전 실제 사용 여부 재확인 (race condition 방지)
+        const stillUsed = await db.prepare(
+            `SELECT 1 FROM pages WHERE content LIKE ? AND deleted_at IS NULL LIMIT 1`
+        ).bind(`%${mediaItem.r2_key}%`).first();
+
+        if (stillUsed) {
+            errors.push(`${mediaItem.filename}: 현재 사용 중인 이미지`);
+            continue;
+        }
+
+        try {
+            await c.env.MEDIA.delete(mediaItem.r2_key);
+        } catch (e) {
+            console.error('R2 삭제 오류:', e);
+        }
+
+        await db.prepare('DELETE FROM media WHERE id = ?').bind(id).run();
+        // page_links에서 이 이미지를 가리키는 레코드도 정리
+        await db.prepare("DELETE FROM page_links WHERE link_type = 'image' AND target_slug = ?")
+            .bind(mediaItem.r2_key).run();
+
+        deleted.push(id);
+    }
+
+    if (deleted.length > 0) {
+        writeAdminLog(c, 'media_gc', `쓰레기 수집: ${deleted.length}개 미사용 이미지 삭제`, user.id);
+    }
+
+    return c.json({
+        success: true,
+        deleted_count: deleted.length,
+        errors
+    });
+});
+
 /**
  * GET /media/:id/backlinks
  * 특정 이미지가 사용된 문서 목록(역링크) 조회
+ * page_links 테이블(link_type='image') 기반 조회 + LIKE fallback
  */
 adminRoutes.get('/media/:id/backlinks', async (c) => {
     const db = c.env.DB;
     const id = c.req.param('id');
 
-    // DB에서 r2_key 조회
     const mediaItem = await db.prepare('SELECT r2_key, filename FROM media WHERE id = ?')
         .bind(id)
         .first<{ r2_key: string, filename: string }>();
@@ -366,19 +481,35 @@ adminRoutes.get('/media/:id/backlinks', async (c) => {
         return c.json({ error: '이미지를 찾을 수 없습니다.' }, 404);
     }
 
-    // pages 테이블에서 content에 r2_key가 포함된 문서 검색
-    // soft delete된 문서는 제외
-    const query = `
+    // 1차: page_links 테이블에서 인덱스 기반 조회
+    const indexedResult = await db.prepare(`
+        SELECT DISTINCT p.id, p.slug, p.title
+        FROM page_links pl
+        JOIN pages p ON pl.source_page_id = p.id
+        WHERE pl.link_type = 'image'
+          AND pl.target_slug = ?
+          AND p.deleted_at IS NULL
+    `).bind(mediaItem.r2_key).all();
+
+    // 2차: LIKE fallback (아직 page_links에 인덱싱되지 않은 오래된 문서 대응)
+    const indexedIds = new Set((indexedResult.results || []).map((r: any) => r.id));
+    const likeResult = await db.prepare(`
         SELECT id, slug, title
         FROM pages
         WHERE content LIKE ? AND deleted_at IS NULL
-    `;
-    const searchPattern = `%${mediaItem.r2_key}%`;
-    const pagesResult = await db.prepare(query).bind(searchPattern).all();
+    `).bind(`%${mediaItem.r2_key}%`).all();
+
+    // 두 결과 병합 (중복 제거)
+    const merged = [...(indexedResult.results || [])];
+    for (const row of (likeResult.results || []) as any[]) {
+        if (!indexedIds.has(row.id)) {
+            merged.push(row);
+        }
+    }
 
     return c.json({
         media: mediaItem,
-        backlinks: pagesResult.results
+        backlinks: merged
     });
 });
 

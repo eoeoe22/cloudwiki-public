@@ -207,6 +207,11 @@
         </div>
     </div>
 
+        <aside class="wiki-sidebar" id="wikiSidebar">
+            <div id="app-sidebar-placeholder"></div>
+        </aside>
+    </div>
+
     <!-- ── 푸터 Placeholder ── -->
     <div id="app-footer-placeholder"></div>
 
@@ -289,9 +294,9 @@
                 try {
                     const dmRes = await fetch('/api/settings/dm');
                     const dmData = dmRes.ok ? await dmRes.json() : { allow_direct_message: 0 };
-                    const isAdmin = currentUser.role === 'admin' || currentUser.role === 'super_admin';
+                    const canBypassDm = ['admin', 'super_admin', 'discussion_manager'].includes(currentUser.role);
 
-                    if (dmData.allow_direct_message === 1 || isAdmin) {
+                    if (dmData.allow_direct_message === 1 || canBypassDm) {
                         sendMsgBtn = `<button class="btn btn-sm btn-outline-primary mt-2" onclick="sendMessage(${profileUser.id}, '${escapeHtml(profileUser.name)}')"><i class="mdi mdi-email-plus-outline"></i> 쪽지 보내기</button>`;
                     }
                 } catch (e) { }
