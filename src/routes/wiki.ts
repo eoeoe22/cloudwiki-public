@@ -530,6 +530,21 @@ wiki.put('/wiki/:slug', requireAuth, async (c) => {
         const linkCatStmts = buildLinkAndCategoryStatements(db, existing.id, body.content, body.category || null);
         c.executionCtx.waitUntil(db.batch(linkCatStmts).catch(e => console.error('Failed to update links/categories:', e)));
 
+        // 주시자에게 알림 발송 (비동기)
+        c.executionCtx.waitUntil(
+            db.prepare('SELECT user_id FROM page_watches WHERE page_id = ? AND user_id != ?')
+                .bind(existing.id, user.id).all()
+                .then(({ results: watchers }) => {
+                    if (watchers.length === 0) return;
+                    const stmts = watchers.map((w: any) =>
+                        db.prepare('INSERT INTO notifications (user_id, type, content, link) VALUES (?, ?, ?, ?)')
+                            .bind(w.user_id, 'page_watch', `${user.name}님이 "${body.title}" 문서를 편집했습니다.`, `/wiki/${slug}`)
+                    );
+                    return db.batch(stmts);
+                })
+                .catch(e => console.error('Failed to notify watchers:', e))
+        );
+
         // 캐시 무효화 (API + SSR + 최근 변경)
         const origin = new URL(c.req.url).origin;
         c.executionCtx.waitUntil(Promise.all([
@@ -1208,6 +1223,56 @@ wiki.delete('/wiki/:slug/redirects', requireAuth, async (c) => {
     return c.json({ success: true });
 });
 
+
+/**
+ * GET /wiki/:slug/watch
+ * 현재 유저의 주시 상태 조회
+ */
+wiki.get('/wiki/:slug/watch', requireAuth, async (c) => {
+    const slug = c.req.param('slug');
+    const user = c.get('user')!;
+    const db = c.env.DB;
+
+    const page = await db.prepare('SELECT id FROM pages WHERE slug = ? AND deleted_at IS NULL')
+        .bind(slug).first<{ id: number }>();
+    if (!page) {
+        return c.json({ error: '문서를 찾을 수 없습니다.' }, 404);
+    }
+
+    const watch = await db.prepare('SELECT 1 FROM page_watches WHERE user_id = ? AND page_id = ?')
+        .bind(user.id, page.id).first();
+
+    return c.json({ watching: !!watch });
+});
+
+/**
+ * POST /wiki/:slug/watch
+ * 문서 주시 토글 (로그인 필수)
+ */
+wiki.post('/wiki/:slug/watch', requireAuth, async (c) => {
+    const slug = c.req.param('slug');
+    const user = c.get('user')!;
+    const db = c.env.DB;
+
+    const page = await db.prepare('SELECT id FROM pages WHERE slug = ? AND deleted_at IS NULL')
+        .bind(slug).first<{ id: number }>();
+    if (!page) {
+        return c.json({ error: '문서를 찾을 수 없습니다.' }, 404);
+    }
+
+    const existing = await db.prepare('SELECT 1 FROM page_watches WHERE user_id = ? AND page_id = ?')
+        .bind(user.id, page.id).first();
+
+    if (existing) {
+        await db.prepare('DELETE FROM page_watches WHERE user_id = ? AND page_id = ?')
+            .bind(user.id, page.id).run();
+        return c.json({ watching: false });
+    } else {
+        await db.prepare('INSERT INTO page_watches (user_id, page_id) VALUES (?, ?)')
+            .bind(user.id, page.id).run();
+        return c.json({ watching: true });
+    }
+});
 
 /**
  * POST /wiki/:slug/editing

@@ -141,7 +141,7 @@ export interface TicketComment {
 export interface Notification {
     id: number;
     user_id: number;
-    type: 'discussion_comment' | 'banned' | 'message' | 'ticket_comment' | 'ticket_created' | 'signup_request';
+    type: 'discussion_comment' | 'banned' | 'message' | 'ticket_comment' | 'ticket_created' | 'signup_request' | 'page_watch';
     content: string;
     link: string | null;
     ref_id: number | null;

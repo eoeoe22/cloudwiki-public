@@ -262,3 +262,14 @@ CREATE TABLE IF NOT EXISTS discussion_mutes (
     FOREIGN KEY (discussion_id) REFERENCES discussions(id)
 );
 CREATE INDEX IF NOT EXISTS idx_discussion_mutes_discussion ON discussion_mutes(discussion_id);
+
+-- 문서 주시 테이블
+CREATE TABLE IF NOT EXISTS page_watches (
+    user_id   INTEGER NOT NULL,
+    page_id   INTEGER NOT NULL,
+    created_at INTEGER DEFAULT (unixepoch()),
+    PRIMARY KEY (user_id, page_id),
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_page_watches_page ON page_watches(page_id);

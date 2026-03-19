@@ -499,6 +499,11 @@
              title="${canEdit ? '이 문서 편집' : '이 문서는 관리자만 편집할 수 있습니다'}">
             <i class="bi bi-pencil"></i> 편집
           </a></li>
+          <li>
+            <button class="dropdown-item" id="watchToggleBtn" data-slug="${escapeHtml(actionSlug)}" onclick="toggleWatch(this.dataset.slug); return false;">
+              <i class="bi bi-eye"></i> <span id="watchToggleText">주시하기</span>
+            </button>
+          </li>
           <li><hr class="dropdown-divider"></li>
         ` + actionsHtml;
 
@@ -529,6 +534,11 @@
           }
         }
         document.getElementById('articleActions').innerHTML = actionsHtml;
+
+        // 주시 상태 확인 (로그인 시)
+        if (currentUser && document.getElementById('watchToggleBtn')) {
+          loadWatchStatus(actionSlug);
+        }
 
         // Markdown → HTML 렌더링 (marked 설정은 초기화 시 1회만 적용됨)
 
@@ -1528,6 +1538,46 @@
       if (diff < 86400) return `${Math.floor(diff / 3600)}시간 전`;
       if (diff < 604800) return `${Math.floor(diff / 86400)}일 전`;
       return new Date(unixTs * 1000).toLocaleDateString('ko-KR');
+    }
+
+    // ── 문서 주시 ──
+    async function loadWatchStatus(slug) {
+      try {
+        const res = await fetch(`/api/wiki/${encodeURIComponent(slug)}/watch`);
+        if (!res.ok) return;
+        const data = await res.json();
+        updateWatchUI(data.watching);
+      } catch (e) { /* 무시 */ }
+    }
+
+    function updateWatchUI(watching) {
+      const btn = document.getElementById('watchToggleBtn');
+      const text = document.getElementById('watchToggleText');
+      if (!btn || !text) return;
+      const icon = btn.querySelector('i');
+      if (watching) {
+        text.textContent = '주시 해제';
+        if (icon) { icon.className = 'bi bi-eye-fill'; }
+      } else {
+        text.textContent = '주시하기';
+        if (icon) { icon.className = 'bi bi-eye'; }
+      }
+    }
+
+    async function toggleWatch(slug) {
+      try {
+        const res = await fetch(`/api/wiki/${encodeURIComponent(slug)}/watch`, { method: 'POST' });
+        if (!res.ok) {
+          const data = await res.json();
+          throw new Error(data.error || '주시 설정 실패');
+        }
+        const data = await res.json();
+        updateWatchUI(data.watching);
+        const Toast = Swal.mixin({ toast: true, position: 'top-end', showConfirmButton: false, timer: 1500 });
+        Toast.fire({ icon: 'success', title: data.watching ? '문서를 주시합니다.' : '주시를 해제했습니다.' });
+      } catch (err) {
+        Swal.fire('오류', err.message, 'error');
+      }
     }
   </script>
 
