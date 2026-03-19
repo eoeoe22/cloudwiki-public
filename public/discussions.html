@@ -34,29 +34,35 @@
       <!-- 토론 목록 페이지 -->
       <div id="discussionListPage" class="d-none">
         <div class="wiki-article">
-          <div class="d-flex justify-content-between align-items-center mb-3">
-            <h2><i class="bi bi-chat-dots"></i> 토론: <span id="discussionPageTitle"></span></h2>
-            <div class="d-flex gap-2">
-              <a id="discussionBackLink" href="#" class="btn btn-wiki-outline btn-sm">
+          <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
+            <h2 class="m-0 fw-bold d-flex align-items-center gap-2" style="font-size: 1.8rem; word-break: keep-all; overflow-wrap: anywhere;">
+              <i class="bi bi-chat-dots text-primary"></i> 
+              <span id="discussionPageTitle"></span>
+              <span>토론</span>
+            </h2>
+            <div class="d-flex gap-2 flex-shrink-0 w-100 w-sm-auto justify-content-end mt-2 mt-sm-0">
+              <a id="discussionBackLink" href="#" class="btn btn-outline-secondary btn-sm px-3 flex-grow-1 flex-sm-grow-0">
                 <i class="bi bi-arrow-left"></i> 문서로
               </a>
-              <button class="btn btn-wiki btn-sm d-none" id="newDiscussionBtn" onclick="showNewDiscussionForm()">
+              <button class="btn btn-primary btn-sm d-none px-3 flex-grow-1 flex-sm-grow-0" id="newDiscussionBtn" onclick="showNewDiscussionForm()">
                 <i class="bi bi-plus-lg"></i> 새 토론
               </button>
             </div>
           </div>
 
           <!-- 상태 필터 -->
-          <div class="btn-group btn-group-sm mb-3" role="group">
-            <button type="button" class="btn btn-outline-secondary active" onclick="filterDiscussions(this, '')">
-              전체
-            </button>
-            <button type="button" class="btn btn-outline-success" onclick="filterDiscussions(this, 'open')">
-              <i class="bi bi-circle-fill text-success" style="font-size:0.5em"></i> 열림
-            </button>
-            <button type="button" class="btn btn-outline-danger" onclick="filterDiscussions(this, 'closed')">
-              <i class="bi bi-circle-fill text-danger" style="font-size:0.5em"></i> 닫힘
-            </button>
+          <div class="d-flex mb-4 overflow-auto pb-1">
+            <div class="btn-group btn-group-sm flex-shrink-0" role="group shadow-sm">
+              <button type="button" class="btn btn-outline-secondary active px-3" onclick="filterDiscussions(this, '')">
+                전체
+              </button>
+              <button type="button" class="btn btn-outline-success px-3" onclick="filterDiscussions(this, 'open')">
+                <i class="bi bi-circle-fill text-success" style="font-size:0.5em; vertical-align: middle;"></i> 열림
+              </button>
+              <button type="button" class="btn btn-outline-secondary px-3" onclick="filterDiscussions(this, 'closed')">
+                <i class="bi bi-circle-fill text-secondary" style="font-size:0.5em; vertical-align: middle;"></i> 닫힘
+              </button>
+            </div>
           </div>
 
           <!-- 새 토론 폼 -->
@@ -87,16 +93,16 @@
       <!-- 토론 스레드 상세 페이지 -->
       <div id="discussionThreadPage" class="d-none">
         <div class="wiki-article">
-          <div class="d-flex justify-content-between align-items-center mb-3">
-            <h2 id="threadTitle"></h2>
-            <div class="d-flex gap-2">
-              <a id="threadBackLink" href="#" class="btn btn-wiki-outline btn-sm">
-                <i class="bi bi-arrow-left"></i> 토론 목록
+          <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-3">
+            <h2 id="threadTitle" class="m-0 fw-bold flex-grow-1" style="font-size: 1.6rem; line-height: 1.4; word-break: keep-all; overflow-wrap: anywhere;"></h2>
+            <div class="d-flex gap-2 flex-shrink-0 w-100 w-sm-auto justify-content-end mt-2 mt-sm-0">
+              <a id="threadBackLink" href="#" class="btn btn-outline-secondary btn-sm px-3 flex-grow-1 flex-sm-grow-0">
+                <i class="bi bi-arrow-left"></i> 목록
               </a>
             </div>
           </div>
-          <div class="d-flex align-items-center gap-2 mb-3" id="threadMeta"></div>
-          <div class="d-flex gap-2 mb-4" id="threadActions"></div>
+          <div class="d-flex flex-column flex-md-row align-items-start align-items-md-center gap-3 mb-3 p-3 bg-light rounded border shadow-sm w-100" id="threadMeta" style="background-color: var(--wiki-card-bg) !important; border-color: var(--wiki-border) !important;"></div>
+          <div class="d-flex flex-wrap gap-2 mb-4 w-100" id="threadActions"></div>
 
           <div id="commentsList"></div>
 
@@ -236,22 +242,21 @@
               : '<span class="badge bg-secondary">닫힘</span>';
             const date = getRelativeTime(d.created_at);
             return `
-              <a href="/wiki/${encodeURIComponent(slug)}/discussions/${d.id}"
-                 class="discussion-item">
-                <div class="d-flex justify-content-between align-items-start">
-                  <div class="discussion-item-main">
-                    <div class="discussion-item-title">
-                      ${statusBadge}
-                      <span>${escapeHtml(d.title)}</span>
-                    </div>
-                    <div class="discussion-item-meta">
-                      <span><i class="bi bi-person"></i> ${d.author_id ? `<a href="/profile/${d.author_id}" class="text-decoration-none text-dark" onclick="event.stopPropagation()">${escapeHtml(d.author_name || '알 수 없음')}${renderUserRoleIcon(d.author_role)}</a>` : `${escapeHtml(d.author_name || '알 수 없음')}${renderUserRoleIcon(d.author_role)}`}</span>
-                      <span><i class="bi bi-clock"></i> ${date}</span>
-                      <span><i class="bi bi-chat"></i> ${d.comment_count || 0}개 댓글</span>
+              <div class="discussion-item d-flex flex-column py-3 px-3 px-md-4 mb-3 position-relative shadow-sm" style="border-radius: 12px; transition: transform 0.2s, box-shadow 0.2s;">
+                <div class="discussion-item-main w-100">
+                  <div class="discussion-item-title d-flex align-items-start gap-2 mb-2">
+                    <div class="flex-shrink-0 mt-1">${statusBadge}</div>
+                    <div class="fs-5 fw-bold" style="line-height: 1.4;">
+                      <a href="/wiki/${encodeURIComponent(slug)}/discussions/${d.id}" class="stretched-link text-decoration-none" style="color: var(--wiki-text) !important; word-break: keep-all; overflow-wrap: anywhere;">${escapeHtml(d.title)}</a>
                     </div>
                   </div>
+                  <div class="discussion-item-meta d-flex flex-wrap gap-3 text-muted mt-2" style="font-size: 0.85rem;">
+                    <span class="d-flex align-items-center gap-1"><i class="bi bi-person"></i> ${d.author_id ? `<a href="/profile/${d.author_id}" class="discussion-author-link text-decoration-none fw-semibold position-relative" style="z-index: 2;" onclick="event.stopPropagation()">${escapeHtml(d.author_name || '알 수 없음')}${renderUserRoleIcon(d.author_role)}</a>` : `<span class="fw-semibold">${escapeHtml(d.author_name || '알 수 없음')}${renderUserRoleIcon(d.author_role)}</span>`}</span>
+                    <span class="d-flex align-items-center gap-1"><i class="bi bi-clock"></i> ${date}</span>
+                    <span class="d-flex align-items-center gap-1"><i class="bi bi-chat-dots"></i> ${d.comment_count || 0}</span>
+                  </div>
                 </div>
-              </a>
+              </div>
             `;
           }).join('');
         }
@@ -332,13 +337,15 @@
 
         // 메타 정보
         const statusBadge = discussion.status === 'open'
-          ? '<span class="badge bg-success">열림</span>'
-          : '<span class="badge bg-secondary">닫힘</span>';
+          ? '<span class="badge bg-success px-2 py-1 fs-6">열림</span>'
+          : '<span class="badge bg-secondary px-2 py-1 fs-6">닫힘</span>';
         const date = new Date(discussion.created_at * 1000).toLocaleString('ko-KR');
         document.getElementById('threadMeta').innerHTML = `
-          ${statusBadge}
-          <span class="text-muted small">작성자: ${discussion.author_id ? `<a href="/profile/${discussion.author_id}" class="text-decoration-none">${escapeHtml(discussion.author_name || '알 수 없음')}${renderUserRoleIcon(discussion.author_role)}</a>` : `${escapeHtml(discussion.author_name || '알 수 없음')}${renderUserRoleIcon(discussion.author_role)}`}</span>
-          <span class="text-muted small">${date}</span>
+          <div class="d-flex align-items-center gap-2">${statusBadge}</div>
+          <div class="d-flex flex-wrap align-items-center gap-3 ms-md-4 w-100">
+            <span class="text-muted d-flex align-items-center gap-2"><i class="bi bi-person-fill fs-5"></i> 작성자: ${discussion.author_id ? `<a href="/profile/${discussion.author_id}" class="discussion-author-link text-decoration-none fw-semibold">${escapeHtml(discussion.author_name || '알 수 없음')}${renderUserRoleIcon(discussion.author_role)}</a>` : `<span class="fw-semibold">${escapeHtml(discussion.author_name || '알 수 없음')}${renderUserRoleIcon(discussion.author_role)}</span>`}</span>
+            <span class="text-muted ms-auto d-flex align-items-center gap-2 small"><i class="bi bi-clock-history"></i> ${date}</span>
+          </div>
         `;
         initRoleIconPopovers(document.getElementById('threadMeta'));
 
@@ -429,9 +436,9 @@
       let quoteHtml = '';
       if (c.parent_id && c.quoted_content) {
         quoteHtml = `
-          <div class="discussion-quote">
-            <div class="discussion-quote-author"><i class="bi bi-reply"></i> ${escapeHtml(c.quoted_author_name || '알 수 없음')}:</div>
-            <div class="discussion-quote-text">${escapeHtml(c.quoted_content || '')}</div>
+          <div class="discussion-quote px-3 py-2 mb-3 bg-secondary bg-opacity-10 border-start border-primary border-4 rounded-end w-100">
+            <div class="discussion-quote-author fw-bold mb-1" style="font-size: 0.85rem;"><i class="bi bi-reply-fill text-primary"></i> ${escapeHtml(c.quoted_author_name || '알 수 없음')}님에게 답글:</div>
+            <div class="discussion-quote-text text-muted" style="font-size: 0.9rem; line-height: 1.4;">${escapeHtml(c.quoted_content || '')}</div>
           </div>
         `;
       }
@@ -465,16 +472,16 @@
       }
 
       return `
-        <div class="discussion-comment ${isDeleted ? 'discussion-comment-deleted' : ''}" id="comment-${c.id}">
-          <div class="discussion-comment-header">
-            <span class="discussion-comment-author">
-              ${c.author_id ? `<a href="/profile/${c.author_id}" class="text-decoration-none text-dark">${c.author_picture ? `<img src="${c.author_picture}" class="discussion-comment-avatar" alt="" loading="lazy">` : ''}${escapeHtml(c.author_name || '알 수 없음')}${renderUserRoleIcon(c.author_role)}</a>` : `${c.author_picture ? `<img src="${c.author_picture}" class="discussion-comment-avatar" alt="" loading="lazy">` : ''}${escapeHtml(c.author_name || '알 수 없음')}${renderUserRoleIcon(c.author_role)}`}
+        <div class="discussion-comment ${isDeleted ? 'discussion-comment-deleted' : ''} p-3 p-md-4 mb-4 shadow-sm w-100" style="border-radius: 12px; background: var(--wiki-card-bg); border: 1px solid var(--wiki-border);" id="comment-${c.id}">
+          <div class="discussion-comment-header d-flex flex-column flex-sm-row justify-content-between align-items-start align-items-sm-center mb-3 pb-2 border-bottom border-secondary border-opacity-25 w-100">
+            <span class="discussion-comment-author d-flex align-items-center gap-2 fw-bold w-100 w-sm-auto mb-2 mb-sm-0" style="font-size: 1.05rem;">
+              ${c.author_id ? `<a href="/profile/${c.author_id}" class="discussion-author-link text-decoration-none d-flex align-items-center gap-2">${c.author_picture ? `<img src="${c.author_picture}" class="discussion-comment-avatar rounded-circle border object-fit-cover" style="width: 32px; height: 32px;" alt="" loading="lazy">` : '<i class="bi bi-person-circle fs-3 text-secondary"></i>'}${escapeHtml(c.author_name || '알 수 없음')}${renderUserRoleIcon(c.author_role)}</a>` : `<span class="d-flex align-items-center gap-2">${c.author_picture ? `<img src="${c.author_picture}" class="discussion-comment-avatar rounded-circle border object-fit-cover" style="width: 32px; height: 32px;" alt="" loading="lazy">` : '<i class="bi bi-person-circle fs-3 text-secondary"></i>'}${escapeHtml(c.author_name || '알 수 없음')}${renderUserRoleIcon(c.author_role)}</span>`}
             </span>
-            <span class="discussion-comment-date text-muted small">${date}</span>
+            <span class="discussion-comment-date text-muted mt-1 mt-sm-0 ms-sm-auto" style="font-size: 0.85rem;"><i class="bi bi-clock-history"></i> ${date}</span>
           </div>
           ${quoteHtml}
-          <div class="discussion-comment-body">${contentHtml}</div>
-          <div class="discussion-comment-actions">${commentActions}</div>
+          <div class="discussion-comment-body mb-3 fs-6 w-100" style="line-height: 1.7; color: var(--wiki-text); word-break: keep-all; overflow-wrap: anywhere;">${contentHtml}</div>
+          <div class="discussion-comment-actions d-flex flex-wrap align-items-center justify-content-end gap-2 pt-2 border-top border-secondary border-opacity-10">${commentActions}</div>
         </div>
       `;
     }
@@ -484,9 +491,9 @@
       document.getElementById('replyParentId').value = parentId;
       const quoteEl = document.getElementById('replyQuote');
       quoteEl.innerHTML = `
-        <div class="discussion-quote">
-          <div class="discussion-quote-author"><i class="bi bi-reply"></i> ${escapeHtml(authorName)}에게 답글:</div>
-          <div class="discussion-quote-text">${escapeHtml(preview)}${preview.length >= 100 ? '...' : ''}</div>
+        <div class="discussion-quote px-3 py-2 mb-3 bg-secondary bg-opacity-10 border-start border-primary border-4 rounded-end w-100">
+          <div class="discussion-quote-author fw-bold mb-1" style="font-size: 0.85rem;"><i class="bi bi-reply-fill text-primary"></i> ${escapeHtml(authorName)}님에게 답글:</div>
+          <div class="discussion-quote-text text-muted" style="font-size: 0.9rem; line-height: 1.4;">${escapeHtml(preview)}${preview.length >= 100 ? '...' : ''}</div>
         </div>
       `;
       quoteEl.classList.remove('d-none');

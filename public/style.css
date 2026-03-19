@@ -1,74 +1,83 @@
-/* ── Custom Wiki Styles (Light/Dark Auto) ── */
 
 :root {
-  /* ☀️ Light Mode (GitHub/Notion Style) */
-  --wiki-bg: #ffffff;
-  --wiki-card-bg: #f6f8fa;
-  --wiki-text: #24292f;
-  --wiki-text-muted: #57606a;
+  --wiki-bg: #fafafa;
+  --wiki-card-bg: #ffffff;
+  --wiki-text: #1f2937;
+  --wiki-text-muted: #6b7280;
 
-  --wiki-border: #d0d7de;
-  --wiki-border-focus: #0969da;
-  --wiki-hr-color: #8c959f;
+  --wiki-border: #e2e8f0;
+  --wiki-border-focus: #0ea5e9;
+  --wiki-hr-color: #cbd5e1;
 
-  --wiki-primary: #0969da;
-  --wiki-primary-hover: #0550ae;
-  --wiki-accent: #8250df;
-  --wiki-success: #1a7f37;
-  --wiki-warning: #9a6700;
-  --wiki-danger: #cf222e;
+  --wiki-primary: #0ea5e9;
+  --wiki-primary-hover: #0284c7;
+  --wiki-accent: #8b5cf6;
+  --wiki-success: #10b981;
+  --wiki-warning: #f59e0b;
+  --wiki-danger: #ef4444;
 
   /* Misc */
-  --wiki-code-bg: #f6f8fa;
-  --wiki-toc-bg: #f6f8fa;
+  --wiki-code-bg: #f8fafc;
+  --wiki-toc-bg: rgba(255, 255, 255, 0.6);
   --wiki-sidebar-width: 260px;
 
   --wiki-btn-text: #ffffff;
 
   /* Diff Colors */
-  --wiki-diff-add-bg: #e6ffec;
-  --wiki-diff-add-text: #24292f;
-  --wiki-diff-del-bg: #ffebe9;
-  --wiki-diff-del-text: #24292f;
+  --wiki-diff-add-bg: #dcfce7;
+  --wiki-diff-add-text: #166534;
+  --wiki-diff-del-bg: #fee2e2;
+  --wiki-diff-del-text: #991b1b;
+  
+  /* Glassmorphism & Shadows */
+  --wiki-shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --wiki-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -2px rgba(0, 0, 0, 0.05);
+  --wiki-shadow-md: 0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -4px rgba(0, 0, 0, 0.05);
+  --wiki-shadow-lg: 0 20px 25px -5px rgba(0, 0, 0, 0.05), 0 8px 10px -6px rgba(0, 0, 0, 0.05);
+  --wiki-glass-bg: rgba(255, 255, 255, 0.75);
+  --wiki-glass-border: rgba(255, 255, 255, 0.5);
+  --wiki-glass-blur: blur(16px);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    /* 🌑 Pro Dark Palette (계측 장비 / 터미널 감성) */
-    --wiki-bg: #0d1117;
-    /* Very Deep Gray (거의 검은색) */
-    --wiki-card-bg: #161b22;
-    /* Slightly lighter for cards */
-    --wiki-text: #c9d1d9;
-    /* Off-white (눈이 편안한 텍스트) */
-    --wiki-text-muted: #8b949e;
-    /* Muted Text */
+    /* 🌑 Premium Dark Mode */
+    --wiki-bg: #09090b;
+    --wiki-card-bg: #18181b;
+    --wiki-text: #f4f4f5;
+    --wiki-text-muted: #a1a1aa;
 
-    /* 📏 Hairline Borders (뉴모피즘의 그림자를 대체할 1px 윤곽선) */
-    --wiki-border: #30363d;
-    --wiki-border-focus: #58a6ff;
-    --wiki-hr-color: #484f58;
+    --wiki-border: #27272a;
+    --wiki-border-focus: #38bdf8;
+    --wiki-hr-color: #3f3f46;
 
-    /* 💎 Accents (다크모드에 맞춰 채도와 명도 조정) */
-    --wiki-primary: #58a6ff;
-    /* 기존 딥블루보다 가독성 좋은 라이트 블루 */
-    --wiki-primary-hover: #79c0ff;
-    --wiki-accent: #bc8cff;
-    --wiki-success: #56d364;
-    --wiki-warning: #e3b341;
-    --wiki-danger: #f85149;
+    --wiki-primary: #38bdf8;
+    --wiki-primary-hover: #7dd3fc;
+    --wiki-accent: #a78bfa;
+    --wiki-success: #34d399;
+    --wiki-warning: #fbbf24;
+    --wiki-danger: #f87171;
 
     /* Misc */
-    --wiki-code-bg: #1f242c;
-    --wiki-toc-bg: #161b22;
+    --wiki-code-bg: #27272a;
+    --wiki-toc-bg: rgba(24, 24, 27, 0.6);
 
-    --wiki-btn-text: #000000;
+    --wiki-btn-text: #09090b;
 
     /* Diff Colors */
-    --wiki-diff-add-bg: rgba(46, 160, 67, 0.3);
-    --wiki-diff-add-text: #c9d1d9;
-    --wiki-diff-del-bg: rgba(248, 81, 73, 0.3);
-    --wiki-diff-del-text: #c9d1d9;
+    --wiki-diff-add-bg: rgba(16, 185, 129, 0.2);
+    --wiki-diff-add-text: #a7f3d0;
+    --wiki-diff-del-bg: rgba(239, 68, 68, 0.2);
+    --wiki-diff-del-text: #fecaca;
+    
+    /* Glassmorphism & Shadows */
+    --wiki-shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.5);
+    --wiki-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5), 0 2px 4px -2px rgba(0, 0, 0, 0.5);
+    --wiki-shadow-md: 0 10px 15px -3px rgba(0, 0, 0, 0.5), 0 4px 6px -4px rgba(0, 0, 0, 0.5);
+    --wiki-shadow-lg: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.5);
+    --wiki-glass-bg: rgba(24, 24, 27, 0.75);
+    --wiki-glass-border: rgba(255, 255, 255, 0.05);
+    --wiki-glass-blur: blur(16px);
   }
 }
 
@@ -77,16 +86,22 @@
 }
 
 body {
-  font-family: 'Pretendard', 'Montserrat', 'Noto Sans KR', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: 'Inter', 'Pretendard', 'Noto Sans KR', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   background-color: var(--wiki-bg);
   color: var(--wiki-text);
   line-height: 1.7;
+  letter-spacing: -0.01em;
   min-height: 100vh;
   /* 안티앨리어싱 강화로 글씨를 더 또렷하게 */
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   overflow-wrap: break-word;
   word-break: break-word;
+}
+
+h1, h2, h3, h4, h5, h6, .navbar-brand, .wiki-article-title {
+  font-family: 'Outfit', 'Pretendard', 'Noto Sans KR', sans-serif;
+  letter-spacing: -0.02em;
 }
 
 /* ── Bootstrap Overrides for Theme Consistency ── */
@@ -218,12 +233,16 @@ div:where(.swal2-container) .swal2-html-container {
 
 /* ── Navbar ── */
 .navbar {
-  background: var(--wiki-bg) !important;
-  border-bottom: 1px solid var(--wiki-border);
-  box-shadow: none;
-  /* 그림자 제거 */
+  background: var(--wiki-glass-bg) !important;
+  backdrop-filter: var(--wiki-glass-blur);
+  -webkit-backdrop-filter: var(--wiki-glass-blur);
+  border-bottom: 1px solid var(--wiki-glass-border);
+  box-shadow: var(--wiki-shadow-sm);
   padding: 0.8rem 1.5rem;
   margin-bottom: 2rem;
+  position: sticky;
+  top: 0;
+  z-index: 1040;
 }
 
 .navbar-toggler:focus,
@@ -357,23 +376,22 @@ div:where(.swal2-container) .swal2-html-container {
 
 /* New Page Button */
 .btn-new-page {
-  background: var(--wiki-primary);
-  /* 명확한 CTA 버튼 */
-  color: var(--wiki-btn-text);
-  /* Primary Color 위에 흰 글씨 (Light/Dark 공통으로 가독성 확보) */
+  background: linear-gradient(135deg, var(--wiki-primary), var(--wiki-accent));
+  color: #ffffff;
   border: none;
-  border-radius: 6px;
-  padding: 0.5rem 1.2rem;
+  border-radius: 8px;
+  padding: 0.6rem 1.4rem;
   font-weight: 700;
-  font-size: 0.9rem;
-  box-shadow: none;
-  transition: all 0.2s ease;
+  font-size: 0.95rem;
+  box-shadow: var(--wiki-shadow-sm);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .btn-new-page:hover {
-  background: var(--wiki-primary-hover);
-  transform: translateY(-1px);
-  color: var(--wiki-btn-text);
+  box-shadow: var(--wiki-shadow-md);
+  transform: translateY(-2px);
+  color: #ffffff;
+  filter: brightness(1.1);
 }
 
 .btn-new-page:active {
@@ -484,11 +502,17 @@ div:where(.swal2-container) .swal2-html-container {
 }
 
 .nav-search-form .input-group {
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+  box-shadow: var(--wiki-shadow-sm);
   border-radius: 20px;
   overflow: hidden;
   background: var(--wiki-bg);
   border: 1px solid var(--wiki-border);
+  transition: box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.nav-search-form .input-group:focus-within {
+  box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.15);
+  border-color: var(--wiki-border-focus);
 }
 
 .nav-search-form .form-control {
@@ -558,8 +582,14 @@ div:where(.swal2-container) .swal2-html-container {
 .sidebar-section {
   background: var(--wiki-card-bg);
   border: 1px solid var(--wiki-border);
-  border-radius: 10px;
-  padding: 1rem;
+  border-radius: 12px;
+  padding: 1.25rem;
+  box-shadow: var(--wiki-shadow-sm);
+  transition: box-shadow 0.2s ease;
+}
+
+.sidebar-section:hover {
+  box-shadow: var(--wiki-shadow);
 }
 
 .sidebar-title {
@@ -651,18 +681,27 @@ div:where(.swal2-container) .swal2-html-container {
   max-width: 1024px;
   margin: 0 auto;
   padding: 0 0.5rem 3rem;
+  animation: fadeIn 0.4s ease-out forwards;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 /* ── Wiki Article Card ── */
 .wiki-article {
   background: var(--wiki-card-bg);
-  border-radius: 12px;
-  /* 20px -> 12px로 정돈 */
+  border-radius: 16px;
   padding: 3rem;
   border: 1px solid var(--wiki-border);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
-  /* 공간 분리용 미세한 드롭 섀도우만 */
+  box-shadow: var(--wiki-shadow-md);
   margin-bottom: 2rem;
+  transition: box-shadow 0.3s ease;
+}
+
+.wiki-article:hover {
+  box-shadow: var(--wiki-shadow-lg);
 }
 
 @media (max-width: 767.98px) {
@@ -713,15 +752,19 @@ div:where(.swal2-container) .swal2-html-container {
   margin-bottom: 2rem;
 }
 
-/* Accordion Override (Flat UI) */
+/* Accordion Override (Premium UI) */
 .accordion-item {
   background-color: var(--wiki-bg);
   border: 1px solid var(--wiki-border) !important;
-  /* 윤곽선 강제 적용 */
-  margin-bottom: 0.5rem;
-  border-radius: 6px !important;
-  box-shadow: none;
+  margin-bottom: 0.75rem;
+  border-radius: 12px !important;
+  box-shadow: var(--wiki-shadow-sm);
   overflow: hidden;
+  transition: box-shadow 0.2s ease;
+}
+
+.accordion-item:hover {
+  box-shadow: var(--wiki-shadow);
 }
 
 .accordion-button {
@@ -931,27 +974,28 @@ div:where(.swal2-container) .swal2-html-container {
   opacity: 1;
 }
 
-/* ── Buttons (Flat & Professional) ── */
+/* ── Buttons (Premium Flat) ── */
 .btn-wiki {
   background: var(--wiki-card-bg);
   color: var(--wiki-text);
   border: 1px solid var(--wiki-border);
-  border-radius: 6px;
+  border-radius: 8px;
   padding: 0.5rem 1rem;
   font-weight: 600;
   font-size: 0.9rem;
-  box-shadow: none;
-  transition: all 0.2s ease;
+  box-shadow: var(--wiki-shadow-sm);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   display: inline-flex;
   align-items: center;
   gap: 6px;
 }
 
 .btn-wiki:hover {
-  background: var(--wiki-border);
-  /* 마우스 오버 시 배경만 살짝 밝게 */
-  color: var(--wiki-text);
-  transform: none;
+  background: var(--wiki-bg);
+  border-color: var(--wiki-primary);
+  color: var(--wiki-primary);
+  box-shadow: var(--wiki-shadow);
+  transform: translateY(-1px);
 }
 
 .btn-wiki-outline {
@@ -1250,8 +1294,8 @@ div:where(.swal2-container) .swal2-html-container {
 
 .badge.bg-danger {
   color: var(--wiki-danger) !important;
-  background-color: rgba(248, 81, 73, 0.1) !important;
-  border-color: rgba(248, 81, 73, 0.2) !important;
+  background-color: rgba(248, 81, 73, 0.05) !important;
+  border-color: rgba(248, 81, 73, 0.3) !important;
   box-shadow: none;
 }
 
@@ -1415,41 +1459,58 @@ div:where(.swal2-container) .swal2-html-container {
 /* ── Discussion UI ── */
 .discussion-item {
   display: block;
-  padding: 1rem 1.2rem;
+  padding: 0.85rem 1.1rem;
   border: 1px solid var(--wiki-border);
   border-radius: 8px;
   margin-bottom: 0.5rem;
   text-decoration: none !important;
   color: var(--wiki-text);
-  background: var(--wiki-bg);
-  transition: border-color 0.2s ease, background 0.15s ease;
+  background: var(--wiki-card-bg);
+  transition: border-color 0.2s ease, background 0.15s ease, box-shadow 0.15s ease;
 }
 
 .discussion-item:hover {
   border-color: var(--wiki-primary);
-  background: var(--wiki-card-bg);
+  background: var(--wiki-bg);
   color: var(--wiki-text);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
 }
 
 .discussion-item-title {
   font-weight: 600;
-  font-size: 1rem;
+  font-size: 0.95rem;
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  margin-bottom: 0.3rem;
+  margin-bottom: 0.35rem;
+  color: var(--wiki-text);
 }
 
 .discussion-item-meta {
-  font-size: 0.8rem;
+  font-size: 0.78rem;
   color: var(--wiki-text-muted);
   display: flex;
   align-items: center;
-  gap: 1rem;
+  gap: 0.85rem;
+  flex-wrap: wrap;
 }
 
 .discussion-item-meta i {
-  margin-right: 0.2rem;
+  margin-right: 0.15rem;
+  opacity: 0.7;
+}
+
+/* Discussion author link — theme-aware */
+.discussion-author-link {
+  text-decoration: none;
+  color: var(--wiki-text);
+  font-weight: 500;
+  transition: color 0.15s ease;
+}
+
+.discussion-author-link:hover {
+  color: var(--wiki-primary);
+  text-decoration: underline;
 }
 
 /* Discussion Comments */
@@ -1484,6 +1545,11 @@ div:where(.swal2-container) .swal2-html-container {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  color: var(--wiki-text);
+}
+
+.discussion-comment-date {
+  color: var(--wiki-text-muted);
 }
 
 .discussion-comment-avatar {
