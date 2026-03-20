@@ -412,6 +412,14 @@ div:where(.swal2-container) .swal2-html-container {
     box-shadow: 2px 0 8px rgba(0, 0, 0, 0.1);
     max-width: 85vw !important;
     /* 모바일에서 화면 전체를 덮지 않고 빈 공간을 남김 */
+    top: 0;
+    z-index: 1050;
+    /* 헤더(z-index: 1040)보다 위에 표시 */
+  }
+
+  .offcanvas-backdrop {
+    z-index: 1045;
+    /* offcanvas(1050)보다 아래, 헤더(1040)보다 위 */
   }
 }
 
