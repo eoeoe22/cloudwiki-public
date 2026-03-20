@@ -86,7 +86,7 @@
 }
 
 body {
-  font-family: 'Inter', 'Pretendard', 'Noto Sans KR', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: 'Inter', 'Pretendard Variable', 'Pretendard', -apple-system, BlinkMacSystemFont, 'system-ui', 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans KR', sans-serif;
   background-color: var(--wiki-bg);
   color: var(--wiki-text);
   line-height: 1.7;
@@ -100,7 +100,7 @@ body {
 }
 
 h1, h2, h3, h4, h5, h6, .navbar-brand, .wiki-article-title {
-  font-family: 'Outfit', 'Pretendard', 'Noto Sans KR', sans-serif;
+  font-family: 'Outfit', 'Pretendard Variable', 'Pretendard', -apple-system, BlinkMacSystemFont, 'system-ui', 'Segoe UI', Roboto, sans-serif;
   letter-spacing: -0.02em;
 }
 
@@ -190,7 +190,7 @@ div:where(.swal2-container) .swal2-html-container {
 
 .toastui-editor-contents,
 .ProseMirror {
-  font-family: 'Pretendard', 'Noto Sans KR', sans-serif;
+  font-family: 'Inter', 'Pretendard Variable', 'Pretendard', -apple-system, BlinkMacSystemFont, 'system-ui', 'Segoe UI', Roboto, sans-serif;
 }
 
 .toastui-editor-defaultUI .toastui-editor-toolbar {

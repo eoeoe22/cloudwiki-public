@@ -1,6 +1,5 @@
 import { Hono, Context } from 'hono';
 import { cors } from 'hono/cors';
-import { streamSSE } from 'hono/streaming';
 import type { Env } from '../types';
 import { renderForAI, extractTOC, extractSection, findSectionForSnippet } from '../utils/aiParser';
 import { normalizeSlug } from '../utils/slug';
@@ -48,28 +47,8 @@ mcpRoutes.get('/', (c) => {
     return c.json({
         mcp: true,
         version: '1.0.0',
-        transport: 'sse',
-        sse_endpoint: `${new URL(c.req.url).origin}/api/mcp/sse`
-    });
-});
-
-// GET /api/mcp/sse - SSE 연결 엔드포인트
-mcpRoutes.get('/sse', async (c) => {
-    return streamSSE(c, async (stream) => {
-        // 클라이언트에게 메시지를 보낼 POST 엔드포인트 알림 (표준 MCP)
-        const url = new URL(c.req.url);
-        const postUrl = `${url.origin}/api/mcp/messages`;
-        
-        await stream.writeSSE({
-            event: 'endpoint',
-            data: postUrl,
-        });
-
-        // 연결 유지용 킵얼라이브
-        while (true) {
-            await stream.sleep(30000);
-            await stream.writeSSE({ event: 'ping', data: 'heartbeat' });
-        }
+        transport: 'http',
+        endpoint: `${new URL(c.req.url).origin}/api/mcp`
     });
 });
 
@@ -174,14 +153,7 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
     return { jsonrpc: '2.0', error: { code: -32601, message: 'Method not found' }, id };
 }
 
-// POST /api/mcp/messages - SSE와 함께 사용되는 메시지 엔드포인트
-mcpRoutes.post('/messages', async (c) => {
-    const body = await c.req.json();
-    const response = await handleJsonRpc(c, body);
-    return c.json(response);
-});
-
-// 기존 POST /api/mcp 유지 (하위 호환성)
+// POST /api/mcp - HTTP 방식 JSON-RPC 엔드포인트
 mcpRoutes.post('/', async (c) => {
     const body = await c.req.json();
     const response = await handleJsonRpc(c, body);
