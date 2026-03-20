@@ -572,11 +572,11 @@ div:where(.swal2-container) .swal2-html-container {
   width: 260px;
   flex-shrink: 0;
   position: sticky;
-  top: 1rem;
+  top: 5rem;
   align-self: flex-start;
-  max-height: calc(100vh - 5rem);
+  max-height: calc(100vh - 6rem);
   overflow-y: auto;
-  z-index: 1045;
+  z-index: 1030;
 }
 
 .sidebar-section {
