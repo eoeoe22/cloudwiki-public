@@ -136,6 +136,15 @@ adminRoutes.put('/users/:id/role', async (c) => {
     }
 
     await db.prepare(`UPDATE users SET role = ? WHERE id = ?`).bind(role, targetUserId).run();
+
+    // 세션 KV 캐시 무효화 (사용자 정보가 변경되었으므로)
+    c.executionCtx.waitUntil(
+        db.prepare('SELECT id FROM sessions WHERE user_id = ? AND expires_at > ?')
+            .bind(targetUserId, Math.floor(Date.now() / 1000)).all()
+            .then(({ results }) => Promise.all(results.map((s: any) => c.env.KV.delete(`session:${s.id}`))))
+            .catch(e => console.error('Failed to invalidate session cache:', e))
+    );
+
     writeAdminLog(c, 'role_change', `유저 #${targetUserId}(${targetUser.name})의 권한을 '${role}'(으)로 변경`, currentUser.id);
     return c.json({ success: true });
 });
@@ -169,6 +178,14 @@ adminRoutes.put('/users/:id/ban', async (c) => {
     const bannedUntil = days === 0 ? null : now + (days * 24 * 60 * 60);
 
     await db.prepare(`UPDATE users SET banned_until = ? WHERE id = ?`).bind(bannedUntil, targetUserId).run();
+
+    // 세션 KV 캐시 무효화 (사용자 정보가 변경되었으므로)
+    c.executionCtx.waitUntil(
+        db.prepare('SELECT id FROM sessions WHERE user_id = ? AND expires_at > ?')
+            .bind(targetUserId, Math.floor(Date.now() / 1000)).all()
+            .then(({ results }) => Promise.all(results.map((s: any) => c.env.KV.delete(`session:${s.id}`))))
+            .catch(e => console.error('Failed to invalidate session cache:', e))
+    );
 
     // 차단 시 알림 생성
     if (days > 0) {

@@ -193,7 +193,7 @@
                     <div class="mb-3">
                         <label class="form-label fw-bold">표시 이름 변경</label>
                         <div class="edit-name-form">
-                            <input type="text" id="nameInput" placeholder="새 표시 이름">
+                            <input type="text" id="nameInput" placeholder="새 표시 이름" maxlength="20">
                             <button class="btn btn-wiki btn-sm" id="nameChangeBtn" onclick="updateName()">
                                 <i class="mdi mdi-check"></i> 저장
                             </button>
@@ -366,6 +366,10 @@
             const name = document.getElementById('nameInput').value.trim();
             if (!name) {
                 Swal.fire('오류', '이름을 입력해주세요.', 'warning');
+                return;
+            }
+            if (name.length > 20) {
+                Swal.fire('오류', '표시명은 20자 이내로 입력해주세요.', 'warning');
                 return;
             }
 

@@ -452,6 +452,24 @@ wiki.put('/wiki/:slug', requireAuth, async (c) => {
         return c.json({ error: 'title과 content는 필수입니다.' }, 400);
     }
 
+    // 보안: 문서 제목 최대 30자 제한
+    if (body.title.length > 30) {
+        return c.json({ error: '문서 제목은 최대 30자까지 입력할 수 있습니다.' }, 400);
+    }
+
+    // 보안: 카테고리 특수문자 금지 (한글, 영문, 숫자, 공백, 쉼표만 허용)
+    if (body.category) {
+        const categoryPattern = /^[가-힣a-zA-Z0-9\s,]+$/;
+        if (!categoryPattern.test(body.category)) {
+            return c.json({ error: '카테고리에는 특수문자를 사용할 수 없습니다.' }, 400);
+        }
+    }
+
+    // 보안: 편집 요약 최대 50자 제한
+    if (body.summary && body.summary.length > 50) {
+        return c.json({ error: '편집 요약은 최대 50자까지 입력할 수 있습니다.' }, 400);
+    }
+
     // 문서 생성/수정 전, 해당 slug가 리다이렉트 소스로 사용되고 있는지 확인 (생성 시)
     const existing = await db
         .prepare('SELECT id, version, is_locked, is_private, redirect_to, content FROM pages WHERE slug = ? AND deleted_at IS NULL')

@@ -232,8 +232,8 @@ auth.post('/api/auth/signup-request', async (c) => {
     if (!name || name.trim().length === 0) {
         return c.json({ error: '표시명을 입력해주세요.' }, 400);
     }
-    if (name.trim().length > 50) {
-        return c.json({ error: '표시명은 50자 이내로 입력해주세요.' }, 400);
+    if (name.trim().length > 20) {
+        return c.json({ error: '표시명은 20자 이내로 입력해주세요.' }, 400);
     }
 
     // 토큰 검증
@@ -386,8 +386,8 @@ auth.put('/api/me/profile', requireAuth, async (c) => {
     if (!name || name.trim().length === 0) {
         return c.json({ error: '이름을 입력해주세요.' }, 400);
     }
-    if (name.trim().length > 50) {
-        return c.json({ error: '이름은 50자 이내로 입력해주세요.' }, 400);
+    if (name.trim().length > 20) {
+        return c.json({ error: '이름은 20자 이내로 입력해주세요.' }, 400);
     }
 
     const trimmedName = name.trim();
@@ -432,6 +432,12 @@ auth.put('/api/me/profile', requireAuth, async (c) => {
     await db.prepare('UPDATE users SET name = ?, last_namechange = ? WHERE id = ?')
         .bind(trimmedName, now, user.id)
         .run();
+
+    // 4. 세션 KV 캐시 무효화 (사용자 정보가 변경되었으므로)
+    const sessionId = getCookie(c, 'wiki_session');
+    if (sessionId) {
+        c.executionCtx.waitUntil(c.env.KV.delete(`session:${sessionId}`));
+    }
 
     return c.json({ success: true, name: trimmedName });
 });

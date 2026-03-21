@@ -117,7 +117,7 @@
       <!-- 문서 없음 -->
       <div id="notFoundPage" class="d-none">
         <div class="wiki-not-found">
-          <h2>📄 문서가 없습니다</h2>
+          <h2><span class="mdi mdi-file-document-alert"></span> 문서가 없습니다</h2>
           <p id="notFoundSlug"></p>
           <button class="btn btn-wiki" id="createPageBtn">
             <i class="bi bi-plus-lg"></i> 이 문서 만들기
@@ -520,7 +520,7 @@
             } else {
               actionsHtml += `
               <li><button class="dropdown-item" data-slug="${escapeHtml(actionSlug)}" onclick="promptMove(this.dataset.slug); return false;">
-                <i class="bi bi-arrows-move"></i> 이동/이름 변경
+                <i class="bi bi-arrows-move"></i> 문서 주소 변경
               </button></li>
               <li><button class="dropdown-item" data-slug="${escapeHtml(actionSlug)}" onclick="manageRedirects(this.dataset.slug); return false;">
                 <i class="bi bi-signpost-split"></i> 넘겨주기 관리

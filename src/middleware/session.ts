@@ -10,7 +10,7 @@ import type { Env, User } from '../types';
  *
  * 성능 최적화: KV에 세션 정보를 캐싱하여 D1 쿼리 횟수를 최소화한다.
  */
-const SESSION_CACHE_TTL = 300; // KV 캐시 TTL: 5분
+const SESSION_CACHE_TTL = 1800; // KV 캐시 TTL: 30분
 
 export const sessionMiddleware = createMiddleware<Env>(async (c, next) => {
     const sessionId = getCookie(c, 'wiki_session');

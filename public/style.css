@@ -1939,3 +1939,10 @@ div:where(.swal2-container) .swal2-html-container {
   color: var(--wiki-border);
   user-select: none;
 }
+
+/* ── Loading Spinner ── */
+.spinner-border {
+  border-width: 2px;
+  border-color: var(--wiki-border);
+  border-right-color: var(--wiki-primary);
+}

@@ -558,7 +558,7 @@
             <!-- 제목 입력 -->
             <div class="mb-3">
                 <label for="titleInput" class="form-label fw-bold">제목</label>
-                <input type="text" id="titleInput" class="edit-title-input" placeholder="문서 제목을 입력하세요">
+                <input type="text" id="titleInput" class="edit-title-input" placeholder="문서 제목을 입력하세요" maxlength="30">
             </div>
 
             <div class="mb-3 row">
@@ -604,7 +604,7 @@
             <!-- 편집 요약 -->
             <div class="mb-3">
                 <label for="summaryInput" class="form-label fw-bold">편집 요약</label>
-                <input type="text" id="summaryInput" class="edit-summary-input" placeholder="변경 내용을 간단히 설명해주세요">
+                <input type="text" id="summaryInput" class="edit-summary-input" placeholder="변경 내용을 간단히 설명해주세요" maxlength="50">
             </div>
 
             <!-- 버튼 -->
@@ -2054,6 +2054,18 @@
 
             if (!title) {
                 Swal.fire('오류', '제목을 입력해주세요.', 'warning');
+                return;
+            }
+            if (title.length > 30) {
+                Swal.fire('오류', '문서 제목은 최대 30자까지 입력할 수 있습니다.', 'warning');
+                return;
+            }
+            if (category && !/^[가-힣a-zA-Z0-9\s,]+$/.test(category)) {
+                Swal.fire('오류', '카테고리에는 특수문자를 사용할 수 없습니다.', 'warning');
+                return;
+            }
+            if (summary && summary.length > 50) {
+                Swal.fire('오류', '편집 요약은 최대 50자까지 입력할 수 있습니다.', 'warning');
                 return;
             }
 
