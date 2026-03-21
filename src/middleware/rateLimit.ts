@@ -2,20 +2,20 @@ import { createMiddleware } from 'hono/factory';
 import type { Env } from '../types';
 
 export const rateLimitMiddleware = createMiddleware<Env>(async (c, next) => {
-    // 1. Check user
+    // 1. 사용자 확인
     const user = c.get('user');
 
-    // Only logged in users are checked here.
+    // 로그인한 사용자만 체크합니다
     if (!user) {
         return next();
     }
 
-    // 2. Admins and discussion managers are exempt
+    // 2. 관리자 및 토론 관리자는 제외
     if (user.role === 'admin' || user.role === 'super_admin' || user.role === 'discussion_manager') {
         return next();
     }
 
-    // 3. Check Method: Only limit mutating actions (POST, PUT, DELETE)
+    // 3. 메서드 확인: 변경 작업(POST, PUT, DELETE)만 제한
     if (!['POST', 'PUT', 'DELETE'].includes(c.req.method)) {
         return next();
     }

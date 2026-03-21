@@ -1,4 +1,5 @@
 import { Hono, Context } from 'hono';
+import robotsTxtBase from './robots-txt';
 import { csrf } from 'hono/csrf';
 import { secureHeaders } from 'hono/secure-headers';
 import type { Env, Page } from './types';
@@ -481,25 +482,7 @@ app.get('/sitemap.xml', async (c) => {
 // ── Robots.txt ──
 app.get('/robots.txt', (c) => {
     const baseUrl = new URL(c.req.url).origin;
-
-    const robotsTxt = [
-        'User-agent: Googlebot',
-        'Allow: /',
-        '',
-        'User-agent: ClaudeBot',
-        'Allow: /',
-        '',
-        'User-agent: GPTBot',
-        'Allow: /',
-        '',
-        'User-agent: Grok',
-        'Allow: /',
-        '',
-        'User-agent: *',
-        'Disallow: /',
-        '',
-        `Sitemap: ${baseUrl}/sitemap.xml`,
-    ].join('\n');
+    const robotsTxt = `${robotsTxtBase}\nSitemap: ${baseUrl}/sitemap.xml`;
 
     return new Response(robotsTxt, {
         headers: { 'Content-Type': 'text/plain; charset=utf-8' },
