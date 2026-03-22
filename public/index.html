@@ -70,14 +70,34 @@
           <div class="wiki-article-meta" id="articleMeta"></div>
 
           <!-- 문서 도구 (드롭다운) -->
-          <div class="d-flex justify-content-end mb-2">
+          <div class="d-flex justify-content-end mb-2 gap-2">
             <div class="dropdown">
               <button class="btn btn-secondary dropdown-toggle" type="button" id="docToolsDropdown"
                 data-bs-toggle="dropdown" data-bs-display="static" data-bs-flip="false" aria-expanded="false">
-                <i class="mdi mdi-dots-vertical"></i> 문서 도구
+                <i class="bi bi-pencil"></i> 문서 도구
               </button>
               <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="docToolsDropdown" id="articleActions">
                 <!-- 자바스크립트로 채워짐 -->
+              </ul>
+            </div>
+            <div class="dropdown">
+              <button class="btn btn-secondary dropdown-toggle" type="button" id="shareDropdown"
+                data-bs-toggle="dropdown" data-bs-display="static" data-bs-flip="false" aria-expanded="false">
+                <i class="bi bi-share"></i> 공유하기
+              </button>
+              <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="shareDropdown">
+                <li><button class="dropdown-item" onclick="shareCopyLink()">
+                  <i class="bi bi-link"></i> 링크 복사하기
+                </button></li>
+                <li><button class="dropdown-item" onclick="shareCopyText()">
+                  <i class="bi bi-copy"></i> 문서 텍스트 복사
+                </button></li>
+                <li><button class="dropdown-item" onclick="shareCopyMarkdown()">
+                  <i class="bi bi-markdown"></i> 문서 복사 (마크다운)
+                </button></li>
+<li><button class="dropdown-item" onclick="sharePrint()">
+                  <i class="bi bi-printer"></i> 인쇄하기
+                </button></li>
               </ul>
             </div>
           </div>
@@ -1369,6 +1389,48 @@
           Swal.fire('오류', err.message, 'error');
         }
       }
+    }
+
+    // ── 공유하기 기능 ──
+    async function shareCopyLink() {
+      const cleanUrl = window.location.origin + window.location.pathname;
+      try {
+        await navigator.clipboard.writeText(cleanUrl);
+        Swal.fire({ icon: 'success', title: '복사 완료', text: '문서 링크가 클립보드에 복사되었습니다.', timer: 1500, showConfirmButton: false });
+      } catch (err) {
+        console.error('복사 실패:', err);
+        Swal.fire('오류', '클립보드 복사에 실패했습니다.', 'error');
+      }
+    }
+
+    async function shareCopyText() {
+      const content = document.getElementById('articleContent');
+      if (!content) return;
+      try {
+        await navigator.clipboard.writeText(content.innerText);
+        Swal.fire({ icon: 'success', title: '복사 완료', text: '문서 내용이 클립보드에 복사되었습니다.', timer: 1500, showConfirmButton: false });
+      } catch (err) {
+        console.error('복사 실패:', err);
+        Swal.fire('오류', '클립보드 복사에 실패했습니다.', 'error');
+      }
+    }
+
+    async function shareCopyMarkdown() {
+      if (!currentPage || !currentPage.content) {
+        Swal.fire('오류', '문서 내용을 가져올 수 없습니다.', 'error');
+        return;
+      }
+      try {
+        await navigator.clipboard.writeText(currentPage.content);
+        Swal.fire({ icon: 'success', title: '복사 완료', text: '마크다운 원문이 클립보드에 복사되었습니다.', timer: 1500, showConfirmButton: false });
+      } catch (err) {
+        console.error('복사 실패:', err);
+        Swal.fire('오류', '클립보드 복사에 실패했습니다.', 'error');
+      }
+    }
+
+    function sharePrint() {
+      window.print();
     }
 
     // ── 네비게이션 ──
