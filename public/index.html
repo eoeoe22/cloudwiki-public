@@ -86,6 +86,10 @@
                 <i class="bi bi-share"></i> 공유하기
               </button>
               <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="shareDropdown">
+                <li class="d-lg-none"><button class="dropdown-item" onclick="shareNative()">
+                  <i class="bi bi-share"></i> 공유하기
+                </button></li>
+                <li class="d-lg-none"><hr class="dropdown-divider"></li>
                 <li><button class="dropdown-item" onclick="shareCopyLink()">
                   <i class="bi bi-link"></i> 링크 복사하기
                 </button></li>
@@ -1392,6 +1396,23 @@
     }
 
     // ── 공유하기 기능 ──
+    async function shareNative() {
+      const cleanUrl = window.location.origin + window.location.pathname;
+      const wikiName = typeof appConfig !== 'undefined' && appConfig.wikiName ? appConfig.wikiName : 'CloudWiki';
+      const pageTitle = currentPage && currentPage.title ? currentPage.title : document.title;
+      try {
+        await navigator.share({
+          title: `${wikiName} - ${pageTitle}`,
+          text: `${wikiName} - ${pageTitle}`,
+          url: cleanUrl
+        });
+      } catch (err) {
+        if (err.name !== 'AbortError') {
+          console.error('공유 실패:', err);
+        }
+      }
+    }
+
     async function shareCopyLink() {
       const cleanUrl = window.location.origin + window.location.pathname;
       try {
