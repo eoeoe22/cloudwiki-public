@@ -116,6 +116,7 @@ wiki.get('/wiki/search-titles', async (c) => {
     const db = c.env.DB;
     const q = c.req.query('q') || '';
     const type = c.req.query('type') || 'link';
+    const exclude = c.req.query('exclude') || '';
     const user = c.get('user');
     const isAdmin = user && (user.role === 'admin' || user.role === 'super_admin');
 
@@ -130,6 +131,12 @@ wiki.get('/wiki/search-titles', async (c) => {
         query += " AND slug LIKE '틀:%'";
     } else {
         query += " AND slug NOT LIKE '이미지:%'";
+    }
+
+    // 틀 자동완성에서 자기 자신 제외
+    if (exclude) {
+        query += ' AND slug != ?';
+        params.push(exclude);
     }
 
     if (q.length > 0) {

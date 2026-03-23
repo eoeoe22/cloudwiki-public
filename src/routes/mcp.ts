@@ -142,8 +142,8 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                 const page = await db.prepare('SELECT content FROM pages WHERE slug = ? AND deleted_at IS NULL AND is_private = 0').bind(slug).first<{content: string}>();
                 if (!page) return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: 'Error: 문서를 찾을 수 없거나 비공개/삭제 상태입니다.' }], isError: true } };
                 if (toolName === 'get_toc') return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: extractTOC(page.content) || '목차가 존재하지 않습니다.' }] } };
-                if (toolName === 'read_document') return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: await renderForAI(page.content, db, 0) || '문서 내용이 존재하지 않습니다.' }] } };
-                if (toolName === 'read_section') return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: await renderForAI(extractSection(page.content, args.section_name || ''), db, 0) || '해당 목차를 찾을 수 없습니다.' }] } };
+                if (toolName === 'read_document') return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: await renderForAI(page.content, db, 0, slug) || '문서 내용이 존재하지 않습니다.' }] } };
+                if (toolName === 'read_section') return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: await renderForAI(extractSection(page.content, args.section_name || ''), db, 0, slug) || '해당 목차를 찾을 수 없습니다.' }] } };
             }
             return { jsonrpc: '2.0', error: { code: -32601, message: `Tool not found: ${toolName}` }, id };
         } catch (e: any) {

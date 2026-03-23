@@ -11,13 +11,13 @@
   <meta property="og:type" content="website">
   <title class="app-wiki-name">CloudWiki</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-  <!-- Bootstrap Icons -->
+  <!-- 부트스트랩 아이콘 -->
   <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.13.1/font/bootstrap-icons.min.css" rel="stylesheet">
-  <!-- Material Design Icons -->
+  <!-- 머테리얼 디자인 아이콘 -->
   <link href="https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css" rel="stylesheet">
-  <!-- SweetAlert2 -->
+  <!-- SweetAlert2 (알림 다이얼로그 라이브러리) -->
   <link href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css" rel="stylesheet">
-  <!-- Google Fonts: Inter, Outfit, Noto Sans KR -->
+  <!-- 구글 폰트: Inter, Outfit, Noto Sans KR -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Outfit:wght@500;600;700;800;900&family=Noto+Sans+KR:wght@300;400;500;600;700;800;900&display=swap"
@@ -248,6 +248,22 @@
       route();
       _initialLoadDone = true;
       loadRecentChanges();
+
+      // 브라우저 뒤로/앞으로 버튼 처리
+      window.addEventListener('popstate', () => {
+        window.scrollTo({ top: 0, behavior: 'instant' });
+        route();
+      });
+
+      // 스크롤 FAB 표시/숨김
+      const scrollFabGroup = document.getElementById('scrollFabGroup');
+      window.addEventListener('scroll', () => {
+        if (window.scrollY > 200) {
+          scrollFabGroup.classList.add('visible');
+        } else {
+          scrollFabGroup.classList.remove('visible');
+        }
+      }, { passive: true });
     });
 
     // ── 라우팅 ──
@@ -578,7 +594,7 @@
         // Markdown → HTML 렌더링 (marked 설정은 초기화 시 1회만 적용됨)
 
         // ── Transclusion Resolution ──
-        const resolvedContent = await resolveTransclusions(page.content || '');
+        const resolvedContent = await resolveTransclusions(page.content || '', currentSlug);
 
         // ── Folding Block ([+ 제목] ... [-]) 전처리 ──
         // marked는 HTML 블록 내부의 마크다운을 파싱하지 않으므로,
@@ -742,21 +758,21 @@
           }
         });
 
-        // YouTube / Niconico Embed Processing
+        // YouTube / Niconico 임베드 처리
         document.getElementById('articleContent').querySelectorAll('a').forEach(a => {
           const href = a.getAttribute('href');
           if (!href) return;
 
-          // Must be the only text inside a block level element, specifically a paragraph
+          // 블록 레벨 요소(paragraph) 내 유일한 텍스트여야 함
           const parent = a.parentElement;
           if (!parent || parent.tagName !== 'P') return;
           if (parent.textContent.trim() !== a.textContent.trim()) return;
 
-          // Must not be a custom markdown link. If text exactly matches href or its domain, we allow it.
-          // Also ignore if it is inside a blockquote, a code block, or a footnote
+          // 커스텀 마크다운 링크가 아니어야 함. 링크 텍스트가 href 또는 도메인과 일치하면 허용.
+          // 인용구, 코드 블록, 각주 내에 있는 경우 무시
           if (a.closest('blockquote') || a.closest('code, pre') || a.closest('.wiki-fn-ref')) return;
 
-          // Checking if the link display text looks like a URL instead of custom text
+          // 링크 표시 텍스트가 커스텀 텍스트가 아닌 URL 형식인지 확인
           const textContent = a.textContent.trim();
           if (!textContent.includes('youtube.com') && !textContent.includes('youtu.be') && !textContent.includes('nicovideo.jp')) return;
 
@@ -764,7 +780,7 @@
           if (ytMatch) {
             const videoId = ytMatch[1] || ytMatch[3];
             let params = ytMatch[2] || ytMatch[4] || '';
-            // convert ?t= or &t= to start=
+            // ?t= 또는 &t= 파라미터를 start=로 변환
             const timeMatch = params.match(/[?&]t=(\d+)s?/);
             let query = '';
             if (timeMatch) {
@@ -782,7 +798,7 @@
           if (nicoMatch) {
             const videoId = nicoMatch[1];
             const params = nicoMatch[2] || '';
-            // convert ?from= or &from= to from=
+            // ?from= 또는 &from= 파라미터를 from=으로 변환
             const timeMatch = params.match(/[?&]from=(\d+)/);
             let query = '';
             if (timeMatch) {
@@ -835,7 +851,7 @@
               }, 2000);
             } catch (err) {
               console.error('복사 실패:', err);
-              // Fallback
+              // 클립보드 API 미지원 시 fallback 처리
               const textarea = document.createElement('textarea');
               textarea.value = pre.innerText || pre.textContent;
               document.body.appendChild(textarea);
@@ -933,6 +949,10 @@
         return;
       }
 
+      // 계층적 번호 생성 (예: 1., 1.1., 1.1.1.)
+      const minLevel = Math.min(...Array.from(headings).map(h => parseInt(h.tagName[1])));
+      const counters = [0, 0, 0, 0, 0, 0]; // h1~h6
+
       const tocNav = document.getElementById('tocNav');
       let html = '<ol>';
       let prevLevel = 0;
@@ -943,13 +963,33 @@
         h.id = id;
         const text = h.textContent;
 
+        // 번호 카운터 업데이트
+        const relLevel = level - minLevel;
+        counters[relLevel]++;
+        // 하위 레벨 카운터 초기화
+        for (let k = relLevel + 1; k < counters.length; k++) counters[k] = 0;
+
+        // 번호 문자열 생성
+        const numParts = [];
+        for (let k = 0; k <= relLevel; k++) numParts.push(counters[k] || 1);
+        const numStr = numParts.join('.');
+
+        // 헤딩에 번호 프리픽스 삽입
+        const existingPrefix = h.querySelector('.wiki-heading-num');
+        if (!existingPrefix) {
+          const numSpan = document.createElement('span');
+          numSpan.className = 'wiki-heading-num';
+          numSpan.textContent = numStr + '. ';
+          h.insertBefore(numSpan, h.firstChild);
+        }
+
         if (level > prevLevel) {
           for (let j = prevLevel; j < level; j++) html += '<ol>';
         } else if (level < prevLevel) {
           for (let j = level; j < prevLevel; j++) html += '</ol>';
         }
 
-        html += `<li><a href="#${id}">${escapeHtml(text)}</a></li>`;
+        html += `<li><a href="#${id}">${numStr}. ${escapeHtml(text)}</a></li>`;
         prevLevel = level;
       });
 
@@ -1404,6 +1444,7 @@
         return;
       }
       history.pushState(null, '', url);
+      window.scrollTo({ top: 0, behavior: 'instant' });
       route();
     }
 
@@ -1448,7 +1489,7 @@
     }
 
     // ── 틀(Transclusion) 처리 ──
-    async function resolveTransclusions(content) {
+    async function resolveTransclusions(content, pageSlug) {
       const MAX_DEPTH = 3;
       const cache = new Map();
 
@@ -1489,11 +1530,32 @@
         const fetchPromises = [];
         for (const slug of slugsToFetch) {
           if (!cache.has(slug)) {
+            // 자기 자신을 참조하는 틀은 가져오지 않고 경고 표시
+            if (pageSlug && slug === pageSlug) {
+              cache.set(slug, `⚠️ [자기 자신을 참조하는 틀은 사용할 수 없습니다: ${slug}]`);
+              continue;
+            }
             fetchPromises.push(
               fetch(`/api/wiki/${encodeURIComponent(slug)}`)
                 .then(res => res.ok ? res.json() : null)
                 .then(data => {
-                  cache.set(slug, data ? data.content : `⚠️ [틀을 찾을 수 없음: ${slug}]`);
+                  if (data) {
+                    // 틀 내용에서 자기 자신을 참조하는 부분을 경고 메시지로 치환
+                    const selfSlug = slug;
+                    const tplContent = data.content.replace(/\{\{\s*([^\}]+?)\s*\}\}/g, (match, name) => {
+                      let refSlug = name.trim();
+                      if (!refSlug.startsWith('template:') && !refSlug.startsWith('틀:') && !refSlug.startsWith('템플릿:')) {
+                        refSlug = '틀:' + refSlug;
+                      }
+                      if (refSlug === selfSlug) {
+                        return `⚠️ [자기 자신을 참조하는 틀은 사용할 수 없습니다: ${selfSlug}]`;
+                      }
+                      return match;
+                    });
+                    cache.set(slug, tplContent);
+                  } else {
+                    cache.set(slug, `⚠️ [틀을 찾을 수 없음: ${slug}]`);
+                  }
                 })
                 .catch(() => {
                   cache.set(slug, `⚠️ [틀 로딩 실패: ${slug}]`);
@@ -1605,6 +1667,16 @@
       }
     }
   </script>
+
+  <!-- 스크롤 FAB (뷰포트 고정, body 직전) -->
+  <div class="scroll-fab-group" id="scrollFabGroup">
+    <button class="scroll-fab" id="scrollToTopBtn" onclick="window.scrollTo({top:0,behavior:'smooth'})" title="맨 위로">
+      <i class="bi bi-chevron-double-up"></i>
+    </button>
+    <button class="scroll-fab" id="scrollToBottomBtn" onclick="window.scrollTo({top:document.body.scrollHeight,behavior:'smooth'})" title="맨 아래로">
+      <i class="bi bi-chevron-double-down"></i>
+    </button>
+  </div>
 
 </body>
 

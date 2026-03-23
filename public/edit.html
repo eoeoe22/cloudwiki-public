@@ -419,6 +419,161 @@
         #color-autocomplete .color-apply-btn:hover {
             opacity: 0.85;
         }
+
+        /* ── 드래그 앤 드롭 오버레이 ── */
+        .editor-dragover-overlay {
+            position: absolute;
+            inset: 0;
+            background: rgba(var(--wiki-primary-rgb, 59, 130, 246), 0.12);
+            border: 3px dashed var(--wiki-primary, #3b82f6);
+            border-radius: 10px;
+            z-index: 1000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+
+        .editor-dragover-overlay.active {
+            opacity: 1;
+        }
+
+        .editor-dragover-overlay .drop-label {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: var(--wiki-primary, #3b82f6);
+            background: var(--wiki-card-bg, #fff);
+            padding: 12px 28px;
+            border-radius: 8px;
+            box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
+        }
+
+        /* ── 이미지 편집 모달 ── */
+        #imageEditorModal .modal-dialog {
+            max-width: 90vw;
+            width: 640px;
+        }
+
+        #imageEditorModal .modal-body {
+            padding: 16px;
+        }
+
+        .img-editor-canvas-wrap {
+            position: relative;
+            width: 100%;
+            max-height: 60vh;
+            overflow: hidden;
+            background: repeating-conic-gradient(#e0e0e0 0% 25%, #fff 0% 50%) 50% / 16px 16px;
+            border: 1px solid var(--wiki-border);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            touch-action: none;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            .img-editor-canvas-wrap {
+                background: repeating-conic-gradient(#333 0% 25%, #222 0% 50%) 50% / 16px 16px;
+            }
+        }
+
+        .img-editor-canvas-wrap canvas {
+            max-width: 100%;
+            max-height: 60vh;
+            display: block;
+        }
+
+        /* 크롭 오버레이 */
+        .crop-overlay {
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+        }
+
+        .crop-overlay .crop-dim {
+            position: absolute;
+            background: rgba(0, 0, 0, 0.45);
+        }
+
+        .crop-overlay .crop-box {
+            position: absolute;
+            border: 2px solid #fff;
+            box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.45);
+            pointer-events: auto;
+            cursor: move;
+            touch-action: none;
+        }
+
+        .crop-overlay .crop-handle {
+            position: absolute;
+            width: 20px;
+            height: 20px;
+            background: #fff;
+            border: 2px solid var(--wiki-primary, #3b82f6);
+            border-radius: 50%;
+            pointer-events: auto;
+            touch-action: none;
+            z-index: 1;
+        }
+
+        .crop-overlay .crop-handle.tl { top: -10px; left: -10px; cursor: nw-resize; }
+        .crop-overlay .crop-handle.tr { top: -10px; right: -10px; cursor: ne-resize; }
+        .crop-overlay .crop-handle.bl { bottom: -10px; left: -10px; cursor: sw-resize; }
+        .crop-overlay .crop-handle.br { bottom: -10px; right: -10px; cursor: se-resize; }
+
+        .img-editor-toolbar {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 12px;
+            flex-wrap: wrap;
+        }
+
+        .img-editor-toolbar button {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 14px;
+            border: 1px solid var(--wiki-border);
+            border-radius: 6px;
+            background: var(--wiki-card-bg);
+            color: var(--wiki-text);
+            font-size: 0.88rem;
+            cursor: pointer;
+            transition: background 0.15s, border-color 0.15s;
+        }
+
+        .img-editor-toolbar button:hover {
+            border-color: var(--wiki-primary);
+            background: var(--wiki-bg);
+        }
+
+        .img-editor-toolbar button.active {
+            border-color: var(--wiki-primary);
+            background: var(--wiki-primary);
+            color: #fff;
+        }
+
+        .img-editor-toolbar button i {
+            font-size: 1.1rem;
+        }
+
+        .img-editor-toolbar .separator {
+            width: 1px;
+            height: 24px;
+            background: var(--wiki-border);
+        }
+
+        .img-editor-info {
+            margin-top: 8px;
+            font-size: 0.8rem;
+            color: var(--wiki-text-muted);
+        }
     </style>
 </head>
 
@@ -564,7 +719,7 @@
             <div class="mb-3 row">
                 <div class="col-md-6">
                     <label for="categoryInput" class="form-label fw-bold">카테고리 (분류)</label>
-                    <input type="text" id="categoryInput" class="form-control" placeholder="카테고리를 입력하세요 (선택)">
+                    <input type="text" id="categoryInput" class="form-control" placeholder="카테고리를 입력하세요 (쉼표로 구분)">
                 </div>
                 <div class="col-md-6 d-flex align-items-end" id="adminLockContainer" style="display: none !important;">
                     <div class="form-check mb-2">
@@ -1832,7 +1987,7 @@
             });
             // 기존 문서 불러오기
             try {
-                const res = await fetch(`/api/wiki/${encodeURIComponent(slug)}`);
+                const res = await fetch(`/api/wiki/${encodeURIComponent(slug)}?redirect=no`);
                 if (res.ok) {
                     const page = await res.json();
                     document.getElementById('titleInput').value = page.title;
@@ -1842,12 +1997,6 @@
 
                     originalContent = page.content;
                     editor.setMarkdown(page.content);
-
-                    // redirect를 통해 조회된 경우, 실제 문서의 slug로 교체 (저장 시 올바른 slug 사용)
-                    if (page.slug && page.slug !== slug) {
-                        slug = page.slug;
-                        AUTO_SAVE_KEY = 'wiki_autosave_' + slug;
-                    }
 
                     pageVersion = page.version;
                     document.getElementById('editPageTitle').innerHTML =
@@ -2522,7 +2671,12 @@
                 if (!acVisible) return;
                 try {
                     // 쿼리가 비어있어도 API 호출 (최신순 등 반환 가능)
-                    const res = await fetch(`/api/wiki/search-titles?q=${encodeURIComponent(acQuery)}&type=${acType}`);
+                    let acUrl = `/api/wiki/search-titles?q=${encodeURIComponent(acQuery)}&type=${acType}`;
+                    // 틀 자동완성에서 자기 자신 문서 제외
+                    if (acType === 'template' && slug) {
+                        acUrl += `&exclude=${encodeURIComponent(slug)}`;
+                    }
+                    const res = await fetch(acUrl);
                     if (!res.ok) return;
                     const data = await res.json();
                     acResults = data.results || [];
@@ -2837,7 +2991,435 @@
         // 에디터 초기화 대기 후 연결
         setTimeout(attachAutocomplete, 500);
 
+        // ══════════════════════════════════════════════════
+        // ── 드래그 앤 드롭 이미지 업로드 ──
+        // ══════════════════════════════════════════════════
+        (function initDragDrop() {
+            function setup() {
+                const editorEl = document.querySelector('#editor');
+                if (!editorEl) return setTimeout(setup, 300);
+
+                // 오버레이 요소 생성
+                const wrap = editorEl.closest('.toastui-editor-defaultUI') || editorEl;
+                wrap.style.position = 'relative';
+                const overlay = document.createElement('div');
+                overlay.className = 'editor-dragover-overlay';
+                overlay.innerHTML = '<div class="drop-label"><i class="bi bi-image"></i> 이미지를 놓으세요</div>';
+                wrap.appendChild(overlay);
+
+                let dragCounter = 0;
+
+                wrap.addEventListener('dragenter', (e) => {
+                    e.preventDefault();
+                    dragCounter++;
+                    overlay.classList.add('active');
+                });
+                wrap.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'copy';
+                });
+                wrap.addEventListener('dragleave', (e) => {
+                    e.preventDefault();
+                    dragCounter--;
+                    if (dragCounter <= 0) {
+                        dragCounter = 0;
+                        overlay.classList.remove('active');
+                    }
+                });
+                wrap.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    dragCounter = 0;
+                    overlay.classList.remove('active');
+
+                    const files = e.dataTransfer.files;
+                    if (!files || files.length === 0) return;
+
+                    // 1번에 1개만
+                    const file = files[0];
+                    const acceptTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp',
+                        'video/mp4', 'video/webm', 'video/ogg'];
+                    if (!acceptTypes.includes(file.type)) {
+                        Swal.fire('오류', '지원하지 않는 파일 형식입니다.', 'warning');
+                        return;
+                    }
+
+                    handleImageUpload(file, (url, alt) => {
+                        editor.insertText(`![${alt}](${url})`);
+                    });
+                });
+            }
+            setTimeout(setup, 600);
+        })();
+
+        // ══════════════════════════════════════════════════
+        // ── 이미지 편집기 (크롭 + 90도 회전, 터치 지원) ──
+        // ══════════════════════════════════════════════════
+        const ImageEditor = (() => {
+            let modal, canvas, ctx;
+            let originalImg = null;       // 원본 Image 객체
+            let currentImg = null;        // 현재 편집 상태 Image
+            let rotation = 0;             // 누적 회전 (0, 90, 180, 270)
+            let cropMode = false;
+            let crop = { x: 0, y: 0, w: 0, h: 0 }; // 캔버스 좌표 기준
+            let resolvePromise = null;
+            let originalBlob = null;
+
+            function init() {
+                modal = new bootstrap.Modal(document.getElementById('imageEditorModal'));
+                canvas = document.getElementById('imgEditorCanvas');
+                ctx = canvas.getContext('2d');
+
+                document.getElementById('btnRotateLeft').addEventListener('click', () => rotate(-90));
+                document.getElementById('btnRotateRight').addEventListener('click', () => rotate(90));
+                document.getElementById('btnCropToggle').addEventListener('click', toggleCrop);
+                document.getElementById('btnCropApply').addEventListener('click', applyCrop);
+                document.getElementById('btnImgReset').addEventListener('click', resetImage);
+                document.getElementById('btnImgEditorDone').addEventListener('click', finishEdit);
+
+                document.getElementById('imageEditorModal').addEventListener('hidden.bs.modal', () => {
+                    if (resolvePromise) {
+                        resolvePromise(null);
+                        resolvePromise = null;
+                    }
+                });
+
+                initCropInteraction();
+            }
+
+            // 외부에서 호출: 이미지 파일 → 편집 모달 → 편집된 Blob 반환
+            function open(blob) {
+                originalBlob = blob;
+                rotation = 0;
+                cropMode = false;
+                document.getElementById('cropOverlay').style.display = 'none';
+                document.getElementById('btnCropToggle').classList.remove('active');
+                document.getElementById('btnCropApply').style.display = 'none';
+
+                return new Promise((resolve) => {
+                    resolvePromise = resolve;
+                    const url = URL.createObjectURL(blob);
+                    const img = new Image();
+                    img.onload = () => {
+                        URL.revokeObjectURL(url);
+                        originalImg = img;
+                        currentImg = img;
+                        drawImage();
+                        updateInfo();
+                        modal.show();
+                    };
+                    img.onerror = () => {
+                        URL.revokeObjectURL(url);
+                        resolve(null);
+                    };
+                    img.src = url;
+                });
+            }
+
+            function drawImage() {
+                if (!currentImg) return;
+                const w = currentImg.width;
+                const h = currentImg.height;
+
+                // 회전 고려
+                const rad = (rotation % 360) * Math.PI / 180;
+                const abs90 = (rotation % 360 + 360) % 360;
+                const swap = abs90 === 90 || abs90 === 270;
+                const cw = swap ? h : w;
+                const ch = swap ? w : h;
+
+                canvas.width = cw;
+                canvas.height = ch;
+
+                ctx.save();
+                ctx.translate(cw / 2, ch / 2);
+                ctx.rotate(rad);
+                ctx.drawImage(currentImg, -w / 2, -h / 2);
+                ctx.restore();
+
+                // 캔버스 wrap 크기 자동 조절
+                updateInfo();
+            }
+
+            function rotate(deg) {
+                exitCropMode();
+                rotation = (rotation + deg + 360) % 360;
+                drawImage();
+            }
+
+            function resetImage() {
+                exitCropMode();
+                currentImg = originalImg;
+                rotation = 0;
+                drawImage();
+            }
+
+            function toggleCrop() {
+                if (cropMode) {
+                    exitCropMode();
+                } else {
+                    enterCropMode();
+                }
+            }
+
+            function enterCropMode() {
+                cropMode = true;
+                document.getElementById('btnCropToggle').classList.add('active');
+                document.getElementById('btnCropApply').style.display = '';
+
+                const overlay = document.getElementById('cropOverlay');
+                const wrap = document.getElementById('imgEditorCanvasWrap');
+                overlay.style.display = '';
+
+                // 캔버스의 실제 표시 크기 계산
+                const rect = canvas.getBoundingClientRect();
+                const wrapRect = wrap.getBoundingClientRect();
+
+                // overlay를 canvas와 동일 위치/크기로 맞춤
+                overlay.style.left = (rect.left - wrapRect.left) + 'px';
+                overlay.style.top = (rect.top - wrapRect.top) + 'px';
+                overlay.style.width = rect.width + 'px';
+                overlay.style.height = rect.height + 'px';
+
+                // 기본 크롭 영역: 가운데 80%
+                const margin = 0.1;
+                crop.x = rect.width * margin;
+                crop.y = rect.height * margin;
+                crop.w = rect.width * (1 - 2 * margin);
+                crop.h = rect.height * (1 - 2 * margin);
+
+                updateCropBox();
+            }
+
+            function exitCropMode() {
+                cropMode = false;
+                document.getElementById('btnCropToggle').classList.remove('active');
+                document.getElementById('btnCropApply').style.display = 'none';
+                document.getElementById('cropOverlay').style.display = 'none';
+            }
+
+            function updateCropBox() {
+                const box = document.getElementById('cropBox');
+                box.style.left = crop.x + 'px';
+                box.style.top = crop.y + 'px';
+                box.style.width = crop.w + 'px';
+                box.style.height = crop.h + 'px';
+            }
+
+            function applyCrop() {
+                if (!cropMode) return;
+
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = canvas.width / rect.width;
+                const scaleY = canvas.height / rect.height;
+
+                const sx = Math.round(crop.x * scaleX);
+                const sy = Math.round(crop.y * scaleY);
+                const sw = Math.round(crop.w * scaleX);
+                const sh = Math.round(crop.h * scaleY);
+
+                if (sw < 10 || sh < 10) {
+                    Swal.fire('오류', '크롭 영역이 너무 작습니다.', 'warning');
+                    return;
+                }
+
+                // 현재 캔버스 → 크롭 데이터 추출
+                const tmpCanvas = document.createElement('canvas');
+                tmpCanvas.width = sw;
+                tmpCanvas.height = sh;
+                const tmpCtx = tmpCanvas.getContext('2d');
+                tmpCtx.drawImage(canvas, sx, sy, sw, sh, 0, 0, sw, sh);
+
+                // 결과를 새 이미지로
+                const img = new Image();
+                img.onload = () => {
+                    currentImg = img;
+                    rotation = 0;
+                    exitCropMode();
+                    drawImage();
+                };
+                img.src = tmpCanvas.toDataURL();
+            }
+
+            // ── 크롭 인터랙션 (마우스 + 터치) ──
+            function initCropInteraction() {
+                const overlay = document.getElementById('cropOverlay');
+                const cropBox = document.getElementById('cropBox');
+                let dragging = null; // null | 'move' | 'tl' | 'tr' | 'bl' | 'br'
+                let startPos = { x: 0, y: 0 };
+                let startCrop = {};
+
+                function getPos(e) {
+                    const t = e.touches ? e.touches[0] : e;
+                    const rect = overlay.getBoundingClientRect();
+                    return { x: t.clientX - rect.left, y: t.clientY - rect.top };
+                }
+
+                function onStart(e) {
+                    const target = e.target;
+                    if (target.classList.contains('crop-handle')) {
+                        dragging = target.dataset.handle;
+                    } else if (target.id === 'cropBox' || target.closest('#cropBox')) {
+                        dragging = 'move';
+                    } else {
+                        return;
+                    }
+                    e.preventDefault();
+                    startPos = getPos(e);
+                    startCrop = { ...crop };
+                }
+
+                function onMove(e) {
+                    if (!dragging) return;
+                    e.preventDefault();
+                    const pos = getPos(e);
+                    const dx = pos.x - startPos.x;
+                    const dy = pos.y - startPos.y;
+
+                    const overlayRect = overlay.getBoundingClientRect();
+                    const maxW = overlayRect.width;
+                    const maxH = overlayRect.height;
+                    const minSize = 20;
+
+                    if (dragging === 'move') {
+                        crop.x = Math.max(0, Math.min(maxW - crop.w, startCrop.x + dx));
+                        crop.y = Math.max(0, Math.min(maxH - crop.h, startCrop.y + dy));
+                    } else if (dragging === 'tl') {
+                        crop.x = Math.max(0, Math.min(startCrop.x + startCrop.w - minSize, startCrop.x + dx));
+                        crop.y = Math.max(0, Math.min(startCrop.y + startCrop.h - minSize, startCrop.y + dy));
+                        crop.w = startCrop.w - (crop.x - startCrop.x);
+                        crop.h = startCrop.h - (crop.y - startCrop.y);
+                    } else if (dragging === 'tr') {
+                        crop.w = Math.max(minSize, Math.min(maxW - startCrop.x, startCrop.w + dx));
+                        crop.y = Math.max(0, Math.min(startCrop.y + startCrop.h - minSize, startCrop.y + dy));
+                        crop.h = startCrop.h - (crop.y - startCrop.y);
+                    } else if (dragging === 'bl') {
+                        crop.x = Math.max(0, Math.min(startCrop.x + startCrop.w - minSize, startCrop.x + dx));
+                        crop.w = startCrop.w - (crop.x - startCrop.x);
+                        crop.h = Math.max(minSize, Math.min(maxH - startCrop.y, startCrop.h + dy));
+                    } else if (dragging === 'br') {
+                        crop.w = Math.max(minSize, Math.min(maxW - startCrop.x, startCrop.w + dx));
+                        crop.h = Math.max(minSize, Math.min(maxH - startCrop.y, startCrop.h + dy));
+                    }
+
+                    updateCropBox();
+                }
+
+                function onEnd() {
+                    dragging = null;
+                }
+
+                // 마우스 이벤트
+                overlay.addEventListener('mousedown', onStart);
+                document.addEventListener('mousemove', onMove);
+                document.addEventListener('mouseup', onEnd);
+
+                // 터치 이벤트
+                overlay.addEventListener('touchstart', onStart, { passive: false });
+                document.addEventListener('touchmove', onMove, { passive: false });
+                document.addEventListener('touchend', onEnd);
+            }
+
+            function finishEdit() {
+                // 캔버스 → Blob
+                const mimeType = originalBlob.type && originalBlob.type.startsWith('image/')
+                    ? originalBlob.type : 'image/png';
+                const quality = mimeType === 'image/jpeg' ? 0.92 : undefined;
+
+                canvas.toBlob((blob) => {
+                    if (resolvePromise) {
+                        resolvePromise(blob);
+                        resolvePromise = null;
+                    }
+                    modal.hide();
+                }, mimeType, quality);
+            }
+
+            function updateInfo() {
+                const info = document.getElementById('imgEditorInfo');
+                if (canvas.width && canvas.height) {
+                    info.textContent = `${canvas.width} × ${canvas.height}px`;
+                }
+            }
+
+            // DOM 로드 후 초기화
+            setTimeout(init, 300);
+
+            return { open };
+        })();
+
+        // ── handleImageUpload 를 이미지 편집기와 연동 ──
+        // 기존 handleImageUpload를 래핑
+        const _origHandleImageUpload = handleImageUpload;
+        handleImageUpload = async function (blob, callback) {
+            if (!blob) return;
+
+            // 동영상은 편집 없이 바로 업로드
+            if (blob.type && blob.type.startsWith('video/')) {
+                return _origHandleImageUpload(blob, callback);
+            }
+
+            // 이미지: 편집기 열기
+            const editedBlob = await ImageEditor.open(blob);
+            if (!editedBlob) return; // 취소
+
+            // 편집된 blob에 원본 이름 유지
+            const editedFile = new File([editedBlob], blob.name || 'image', { type: editedBlob.type });
+            return _origHandleImageUpload(editedFile, callback);
+        };
+
     </script>
+
+    <!-- ── 이미지 편집 모달 ── -->
+    <div class="modal fade" id="imageEditorModal" tabindex="-1" aria-hidden="true" data-bs-backdrop="static">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h6 class="modal-title"><i class="bi bi-crop"></i> 이미지 편집</h6>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="닫기"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="img-editor-canvas-wrap" id="imgEditorCanvasWrap">
+                        <canvas id="imgEditorCanvas"></canvas>
+                        <div class="crop-overlay" id="cropOverlay" style="display:none;">
+                            <div class="crop-box" id="cropBox">
+                                <div class="crop-handle tl" data-handle="tl"></div>
+                                <div class="crop-handle tr" data-handle="tr"></div>
+                                <div class="crop-handle bl" data-handle="bl"></div>
+                                <div class="crop-handle br" data-handle="br"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="img-editor-toolbar">
+                        <button type="button" id="btnCropToggle" title="크롭 모드 전환">
+                            <i class="bi bi-crop"></i>
+                        </button>
+                        <button type="button" id="btnCropApply" style="display:none;" title="크롭 적용">
+                            <i class="bi bi-check-lg"></i>
+                        </button>
+                        <div class="separator"></div>
+                        <button type="button" id="btnRotateLeft" title="왼쪽 90도 회전">
+                            <i class="bi bi-arrow-counterclockwise"></i>
+                        </button>
+                        <button type="button" id="btnRotateRight" title="오른쪽 90도 회전">
+                            <i class="bi bi-arrow-clockwise"></i>
+                        </button>
+                        <div class="separator"></div>
+                        <button type="button" id="btnImgReset" title="원본 복원">
+                            <i class="bi bi-arrow-repeat"></i> 초기화
+                        </button>
+                    </div>
+                    <div class="img-editor-info" id="imgEditorInfo"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">취소</button>
+                    <button type="button" class="btn btn-primary btn-sm" id="btnImgEditorDone">
+                        <i class="bi bi-check-lg"></i> 편집 완료
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <!-- ── 푸터 Placeholder ── -->
     <div id="app-footer-placeholder"></div>

@@ -583,7 +583,23 @@ async function resolveTransclusions(content) {
                     fetch(`/api/wiki/${encodeURIComponent(slug)}`)
                         .then(res => res.ok ? res.json() : null)
                         .then(data => {
-                            cache.set(slug, data ? data.content : `⚠️ [틀을 찾을 수 없음: ${slug}]`);
+                            if (data) {
+                                // 틀 내용에서 자기 자신을 참조하는 부분을 경고 메시지로 치환
+                                const selfSlug = slug;
+                                const tplContent = data.content.replace(/\{\{\s*([^\}]+?)\s*\}\}/g, (match, name) => {
+                                    let refSlug = name.trim();
+                                    if (!refSlug.startsWith('template:') && !refSlug.startsWith('틀:') && !refSlug.startsWith('템플릿:')) {
+                                        refSlug = '틀:' + refSlug;
+                                    }
+                                    if (refSlug === selfSlug) {
+                                        return `⚠️ [자기 자신을 참조하는 틀은 사용할 수 없습니다: ${selfSlug}]`;
+                                    }
+                                    return match;
+                                });
+                                cache.set(slug, tplContent);
+                            } else {
+                                cache.set(slug, `⚠️ [틀을 찾을 수 없음: ${slug}]`);
+                            }
                         })
                         .catch(() => {
                             cache.set(slug, `⚠️ [틀 로딩 실패: ${slug}]`);
@@ -664,6 +680,10 @@ function generateTOC(contentEl, tocContainerId, tocNavId) {
     const tocNav = document.getElementById(tocNavId);
     if (!tocNav) return;
 
+    // 계층적 번호 생성 (예: 1., 1.1., 1.1.1.)
+    const minLevel = Math.min(...Array.from(headings).map(h => parseInt(h.tagName[1], 10)));
+    const counters = [0, 0, 0, 0, 0, 0];
+
     let html = '<ol>';
     let prevLevel = 0;
 
@@ -673,13 +693,31 @@ function generateTOC(contentEl, tocContainerId, tocNavId) {
         h.id = id;
         const text = h.textContent;
 
+        // 번호 카운터 업데이트
+        const relLevel = level - minLevel;
+        counters[relLevel]++;
+        for (let k = relLevel + 1; k < counters.length; k++) counters[k] = 0;
+
+        const numParts = [];
+        for (let k = 0; k <= relLevel; k++) numParts.push(counters[k] || 1);
+        const numStr = numParts.join('.');
+
+        // 헤딩에 번호 프리픽스 삽입
+        const existingPrefix = h.querySelector('.wiki-heading-num');
+        if (!existingPrefix) {
+            const numSpan = document.createElement('span');
+            numSpan.className = 'wiki-heading-num';
+            numSpan.textContent = numStr + '. ';
+            h.insertBefore(numSpan, h.firstChild);
+        }
+
         if (level > prevLevel) {
             for (let j = prevLevel; j < level; j++) html += '<ol>';
         } else if (level < prevLevel) {
             for (let j = level; j < prevLevel; j++) html += '</ol>';
         }
 
-        html += `<li><a href="#${id}">${escapeHtml(text)}</a></li>`;
+        html += `<li><a href="#${id}">${numStr}. ${escapeHtml(text)}</a></li>`;
         prevLevel = level;
     });
 
@@ -914,7 +952,7 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
 
             const restoredContent = foldContent.replace(/WIKICODEFPH(\d+)XEND/g, (_, i) => codeBlocksForFold[parseInt(i, 10)]);
             let rawContentHtml = (typeof marked !== 'undefined') ? marked.parse(restoredContent) : restoredContent;
-            let contentHtml = (typeof DOMPurify !== 'undefined') ? DOMPurify.sanitize(rawContentHtml, { ADD_TAGS: ['i', 'span', 'details', 'summary'], ADD_ATTR: ['class', 'data-bg', 'data-color'], FORBID_ATTR: ['id', 'name'] }) : escapeHtml(rawContentHtml);
+            let contentHtml = (typeof DOMPurify !== 'undefined') ? DOMPurify.sanitize(rawContentHtml, { ADD_TAGS: ['i', 'span', 'details', 'summary'], ADD_ATTR: ['class', 'style', 'data-bg', 'data-color'] }) : escapeHtml(rawContentHtml);
 
             foldBlocks.push({ summaryText, bgAttr, colorAttr, contentHtml });
             return `\n\nWIKIFOLDPH${idx}XEND\n\n`;
@@ -933,7 +971,7 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
                 `</details>`;
         });
 
-        let html = (typeof DOMPurify !== 'undefined') ? DOMPurify.sanitize(rawHtml, { ADD_TAGS: ['i', 'span', 'details', 'summary'], ADD_ATTR: ['class', 'data-bg', 'data-color'], FORBID_ATTR: ['id', 'name'] }) : escapeHtml(rawHtml);
+        let html = (typeof DOMPurify !== 'undefined') ? DOMPurify.sanitize(rawHtml, { ADD_TAGS: ['i', 'span', 'details', 'summary'], ADD_ATTR: ['class', 'style', 'data-bg', 'data-color'] }) : escapeHtml(rawHtml);
 
         if (options.showCategory && slug) {
             const decodedSlug = decodeURIComponent(slug);
@@ -1115,6 +1153,43 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
             }
         });
 
+        // 코드블럭 복사 버튼 추가
+        containerEl.querySelectorAll('pre').forEach(pre => {
+            if (pre.parentNode.classList.contains('wiki-code-wrapper')) return;
+
+            const wrapper = document.createElement('div');
+            wrapper.className = 'wiki-code-wrapper';
+            pre.parentNode.insertBefore(wrapper, pre);
+            wrapper.appendChild(pre);
+
+            const copyBtn = document.createElement('button');
+            copyBtn.className = 'btn-copy-code';
+            copyBtn.title = '코드 복사';
+            copyBtn.innerHTML = '<i class="bi bi-copy"></i>';
+
+            copyBtn.onclick = async () => {
+                try {
+                    const textToCopy = pre.innerText || pre.textContent;
+                    await navigator.clipboard.writeText(textToCopy);
+                    copyBtn.innerHTML = '<i class="bi bi-check-lg"></i>';
+                    setTimeout(() => { copyBtn.innerHTML = '<i class="bi bi-copy"></i>'; }, 2000);
+                } catch (err) {
+                    const textarea = document.createElement('textarea');
+                    textarea.value = pre.innerText || pre.textContent;
+                    document.body.appendChild(textarea);
+                    textarea.select();
+                    try {
+                        document.execCommand('copy');
+                        copyBtn.innerHTML = '<i class="bi bi-check-lg"></i>';
+                        setTimeout(() => { copyBtn.innerHTML = '<i class="bi bi-copy"></i>'; }, 2000);
+                    } catch (e) { /* ignore */ }
+                    document.body.removeChild(textarea);
+                }
+            };
+
+            wrapper.appendChild(copyBtn);
+        });
+
         if (options.tocContainerId && options.tocNavId) {
             generateTOC(containerEl, options.tocContainerId, options.tocNavId);
         }
@@ -1142,31 +1217,20 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
 
             if (window.innerWidth < 992) {
                 container.style.paddingBottom = '';
-                sidebar.style.maxHeight = '';
-                sidebar.style.overflow = '';
                 return;
             }
 
             // 자연 높이 측정을 위해 초기화
-            sidebar.style.maxHeight = '';
-            sidebar.style.overflow = '';
             container.style.paddingBottom = '';
 
             const sidebarH = sidebar.scrollHeight;
             const containerH = container.scrollHeight;
 
-            // 사이드바가 본문보다 긴 경우: 본문 아래에 여백 추가 (요구사항 5)
-            const extraPadding = Math.max(0, sidebarH - containerH);
-            if (extraPadding > 0) container.style.paddingBottom = extraPadding + 'px';
-
-            // 푸터 겹침 방지: 패딩 추가 후 푸터 절대 위치 기준으로 최대 높이 계산 (요구사항 6)
-            const footerAbsTop = footer.getBoundingClientRect().top + window.scrollY + extraPadding;
-            const layoutAbsTop = layout.getBoundingClientRect().top + window.scrollY;
-            const maxH = footerAbsTop - layoutAbsTop - BASE_TOP - FOOTER_GAP;
-
-            if (maxH > 0 && sidebarH > maxH) {
-                sidebar.style.maxHeight = maxH + 'px';
-                sidebar.style.overflow = 'hidden';
+            // 사이드바가 본문보다 긴 경우: 본문 아래에 여백을 추가하여
+            // flex 컨테이너가 사이드바 전체를 포함할 수 있도록 함
+            if (sidebarH > containerH) {
+                const extraPadding = sidebarH - containerH + FOOTER_GAP;
+                container.style.paddingBottom = extraPadding + 'px';
             }
         }
 

@@ -11,7 +11,7 @@ const MAX_TEMPLATE_DEPTH = 3;
  * @param db 데이터베이스 인스턴스 (틀 트랜스클루전에 사용)
  * @param depth 현재 트랜스클루전 깊이 (무한 루프 방지)
  */
-export async function renderForAI(content: string, db: D1Database, depth = 0): Promise<string> {
+export async function renderForAI(content: string, db: D1Database, depth = 0, currentSlug?: string): Promise<string> {
     if (!content) return '';
 
     let processed = content;
@@ -50,12 +50,18 @@ export async function renderForAI(content: string, db: D1Database, depth = 0): P
         if (matches.length > 0) {
             // 1) 슬러그 목록 추출 (중복 제거)
             const slugMap = new Map<string, string>(); // normalizedSlug -> original match text
+            const selfRefSlugs = new Set<string>(); // 자기 자신을 참조하는 슬러그
             for (const m of matches) {
                 let targetSlug = m[1].trim();
                 if (!targetSlug.startsWith('틀:') && !targetSlug.startsWith('template:') && !targetSlug.startsWith('템플릿:')) {
                     targetSlug = '틀:' + targetSlug;
                 }
                 const normalized = normalizeSlug(targetSlug);
+                // 자기 자신을 참조하는 틀은 건너뛰기
+                if (currentSlug && normalized === normalizeSlug(currentSlug)) {
+                    selfRefSlugs.add(normalized);
+                    continue;
+                }
                 if (!slugMap.has(normalized)) {
                     slugMap.set(normalized, targetSlug);
                 }
@@ -90,7 +96,7 @@ export async function renderForAI(content: string, db: D1Database, depth = 0): P
                 const content = templateContents.get(normalized);
                 if (content) {
                     parsePromises.push(
-                        renderForAI(content, db, depth + 1).then(parsed => {
+                        renderForAI(content, db, depth + 1, normalized).then(parsed => {
                             parsedTemplates.set(normalized, parsed);
                         })
                     );
@@ -106,7 +112,8 @@ export async function renderForAI(content: string, db: D1Database, depth = 0): P
                     targetSlug = '틀:' + targetSlug;
                 }
                 const normalized = normalizeSlug(targetSlug);
-                const replacement = parsedTemplates.get(normalized) || '';
+                // 자기 참조 틀은 빈 문자열로 치환
+                const replacement = selfRefSlugs.has(normalized) ? '' : (parsedTemplates.get(normalized) || '');
                 processed = processed.replace(new RegExp(original.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&'), 'g'), replacement);
             }
         }
