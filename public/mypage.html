@@ -167,6 +167,48 @@
             color: var(--wiki-text-muted);
             font-weight: 500;
         }
+
+        @media (max-width: 991px) {
+            .profile-container {
+                padding: 0 12px;
+                margin: 16px auto;
+            }
+
+            .profile-header {
+                flex-direction: column;
+                align-items: center;
+                text-align: center;
+                padding: 1.25rem 1rem;
+                gap: 0.75rem;
+            }
+
+            .profile-section {
+                padding: 1.25rem 1rem;
+            }
+
+            .edit-name-form {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .edit-name-form input {
+                max-width: none;
+                width: 100%;
+            }
+
+            .contribution-item {
+                flex-wrap: wrap;
+                gap: 0.25rem;
+            }
+
+            .contribution-item .meta {
+                font-size: 0.75rem;
+            }
+
+            .stat-cards {
+                grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+            }
+        }
     </style>
 </head>
 
@@ -245,7 +287,7 @@
             </div>
         </div>
 
-        <aside class="wiki-sidebar" id="wikiSidebar">
+        <aside class="wiki-sidebar d-none d-lg-block" id="wikiSidebar">
             <div id="app-sidebar-placeholder"></div>
         </aside>
     </div>

@@ -28,6 +28,10 @@
 
 <body>
 
+  <!-- SPA 네비게이션 프로그레스 바 -->
+  <div id="spaProgressBar" class="spa-progress-bar d-none">
+    <div class="spa-progress-bar-inner"></div>
+  </div>
 
   <!-- ── 네비게이션 바 Placeholder ── -->
   <div id="app-header-placeholder"></div>
@@ -36,7 +40,7 @@
   <div class="wiki-layout">
     <!-- 메인 콘텐츠 -->
     <div class="wiki-container">
-      <!-- 로딩 -->
+      <!-- 초기 로딩 (페이지 새로고침/최초 방문) -->
       <div id="loading" class="wiki-loading">
         <div class="spinner-border text-primary" role="status"></div>
         <span>불러오는 중...</span>
@@ -86,10 +90,10 @@
                 <i class="bi bi-share"></i> 공유하기
               </button>
               <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="shareDropdown">
-                <li class="d-lg-none"><button class="dropdown-item" onclick="shareNative()">
+                <li><button class="dropdown-item" onclick="shareNative()">
                   <i class="bi bi-share"></i> 공유하기
                 </button></li>
-                <li class="d-lg-none"><hr class="dropdown-divider"></li>
+                <li><hr class="dropdown-divider"></li>
                 <li><button class="dropdown-item" onclick="shareCopyLink()">
                   <i class="bi bi-link"></i> 링크 복사하기
                 </button></li>
@@ -242,13 +246,14 @@
       }
 
       route();
+      _initialLoadDone = true;
       loadRecentChanges();
     });
 
     // ── 라우팅 ──
     function route() {
       const path = window.location.pathname;
-      hideAllPages();
+      if (!_initialLoadDone) hideAllPages();
 
       if (path === '/' || path === '') {
         showHome();
@@ -268,8 +273,11 @@
       }
     }
 
+    let _initialLoadDone = false;
+
     function hideAllPages() {
       document.getElementById('loading').classList.add('d-none');
+      document.getElementById('spaProgressBar').classList.add('d-none');
       document.getElementById('homePage').classList.add('d-none');
       document.getElementById('articlePage').classList.add('d-none');
       document.getElementById('notFoundPage').classList.add('d-none');
@@ -277,8 +285,14 @@
     }
 
     function showLoading() {
-      hideAllPages();
-      document.getElementById('loading').classList.remove('d-none');
+      if (_initialLoadDone) {
+        // SPA 네비게이션: 기존 문서 유지 + 프로그레스 바
+        document.getElementById('spaProgressBar').classList.remove('d-none');
+      } else {
+        // 최초 로드: 스피너
+        hideAllPages();
+        document.getElementById('loading').classList.remove('d-none');
+      }
     }
 
     // ── 홈(환영 페이지 대신 /wiki/[WIKI_NAME] 으로 이동) ──
@@ -545,9 +559,6 @@
               actionsHtml += `
               <li><button class="dropdown-item" data-slug="${escapeHtml(actionSlug)}" onclick="promptMove(this.dataset.slug); return false;">
                 <i class="bi bi-arrows-move"></i> 문서 주소 변경
-              </button></li>
-              <li><button class="dropdown-item" data-slug="${escapeHtml(actionSlug)}" onclick="manageRedirects(this.dataset.slug); return false;">
-                <i class="bi bi-signpost-split"></i> 넘겨주기 관리
               </button></li>
               <li><hr class="dropdown-divider"></li>
               <li><button class="dropdown-item text-danger" data-slug="${escapeHtml(actionSlug)}" onclick="confirmDelete(this.dataset.slug); return false;">
@@ -879,6 +890,7 @@
 
         hideAllPages();
         document.getElementById('articlePage').classList.remove('d-none');
+        if (typeof window.__sidebarLayoutUpdate === 'function') window.__sidebarLayoutUpdate();
 
       } catch (err) {
         console.error(err);
@@ -908,6 +920,7 @@
 
       hideAllPages();
       document.getElementById('articlePage').classList.remove('d-none');
+      if (typeof window.__sidebarLayoutUpdate === 'function') window.__sidebarLayoutUpdate();
     }
 
     // ── TOC 생성 ──
@@ -1204,77 +1217,6 @@
         } catch (err) {
           Swal.fire('오류', err.message, 'error');
         }
-      }
-    }
-
-    // ── 넘겨주기 관리 ──
-    async function manageRedirects(slug) {
-      try {
-        const res = await fetch(`/api/wiki/${encodeURIComponent(slug)}/redirects`);
-        if (!res.ok) throw new Error('불러오기 실패');
-        const data = await res.json();
-
-        const redirectsHtml = data.redirects.length > 0
-          ? `<ul class="list-group text-start mb-3">
-              ${data.redirects.map(r => `
-                <li class="list-group-item d-flex justify-content-between align-items-center">
-                  <span>${escapeHtml(r.source_slug)}</span>
-                  <button class="btn btn-sm btn-outline-danger" data-slug="${escapeHtml(slug)}" data-source="${escapeHtml(r.source_slug)}" onclick="deleteRedirect(this.dataset.slug, this.dataset.source)">
-                    <i class="bi bi-x-lg"></i>
-                  </button>
-                </li>`).join('')}
-             </ul>`
-          : '<p class="text-muted mb-3">등록된 넘겨주기(별칭)가 없습니다.</p>';
-
-        Swal.fire({
-          title: '넘겨주기(Alias) 관리',
-          html: `
-            <p class="small text-muted">이 문서를 가리키는 다른 이름들을 관리합니다.</p>
-            ${redirectsHtml}
-            <div class="input-group">
-              <input type="text" id="newRedirectInput" class="form-control" placeholder="새 별칭 입력">
-              <button class="btn btn-primary" data-slug="${escapeHtml(slug)}" onclick="addRedirect(this.dataset.slug)">추가</button>
-            </div>
-          `,
-          showConfirmButton: false,
-          showCloseButton: true
-        });
-
-      } catch (err) {
-        Swal.fire('오류', err.message, 'error');
-      }
-    }
-
-    async function addRedirect(slug) {
-      const input = document.getElementById('newRedirectInput');
-      const sourceSlug = input.value.trim();
-      if (!sourceSlug) return;
-
-      try {
-        const res = await fetch(`/api/wiki/${encodeURIComponent(slug)}/redirects`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ source_slug: sourceSlug })
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || '추가 실패');
-
-        manageRedirects(slug);
-      } catch (err) {
-        Swal.showValidationMessage(err.message);
-      }
-    }
-
-    async function deleteRedirect(slug, sourceSlug) {
-      try {
-        const res = await fetch(`/api/wiki/${encodeURIComponent(slug)}/redirects?source=${encodeURIComponent(sourceSlug)}`, {
-          method: 'DELETE'
-        });
-        if (!res.ok) throw new Error('삭제 실패');
-
-        manageRedirects(slug);
-      } catch (err) {
-        Swal.fire('오류', err.message, 'error');
       }
     }
 

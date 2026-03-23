@@ -1,4 +1,3 @@
-
 :root {
   --wiki-bg: #fafafa;
   --wiki-card-bg: #ffffff;
@@ -85,6 +84,10 @@
   box-sizing: border-box;
 }
 
+html {
+  overflow-x: clip;
+}
+
 body {
   font-family: 'Inter', 'Pretendard Variable', 'Pretendard', -apple-system, BlinkMacSystemFont, 'system-ui', 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans KR', sans-serif;
   background-color: var(--wiki-bg);
@@ -97,6 +100,7 @@ body {
   -moz-osx-font-smoothing: grayscale;
   overflow-wrap: break-word;
   word-break: break-word;
+  overflow-x: clip;
 }
 
 h1, h2, h3, h4, h5, h6, .navbar-brand, .wiki-article-title {
@@ -243,6 +247,14 @@ div:where(.swal2-container) .swal2-html-container {
   position: sticky;
   top: 0;
   z-index: 1040;
+  transition: transform 0.3s ease, opacity 0.3s ease;
+}
+
+/* 모바일 사이드바 열림 시 헤더 숨김 */
+.navbar.header-hidden-mobile {
+  transform: translateY(-100%);
+  opacity: 0;
+  pointer-events: none;
 }
 
 .navbar-toggler:focus,
@@ -407,19 +419,24 @@ div:where(.swal2-container) .swal2-html-container {
 
 @media (max-width: 991.98px) {
 
+  .wiki-sidebar {
+    z-index: 1060;
+    /* 헤더(1040)보다 높게 설정하여 오프캔버스가 위로 올라오게 함 */
+  }
+
   .offcanvas,
   .offcanvas-lg {
     box-shadow: 2px 0 8px rgba(0, 0, 0, 0.1);
     max-width: 85vw !important;
     /* 모바일에서 화면 전체를 덮지 않고 빈 공간을 남김 */
     top: 0;
-    z-index: 1050;
-    /* 헤더(z-index: 1040)보다 위에 표시 */
+    z-index: 1060 !important;
+    /* 모든 구성요소(헤더 z-index: 1040 포함)보다 위에 표시 */
   }
 
   .offcanvas-backdrop {
-    z-index: 1045;
-    /* offcanvas(1050)보다 아래, 헤더(1040)보다 위 */
+    z-index: 1055 !important;
+    /* offcanvas(1060)보다 아래, 헤더(1040)보다 위 */
   }
 }
 
@@ -582,8 +599,6 @@ div:where(.swal2-container) .swal2-html-container {
   position: sticky;
   top: 5rem;
   align-self: flex-start;
-  max-height: calc(100vh - 6rem);
-  overflow-y: auto;
   z-index: 1030;
 }
 
@@ -686,6 +701,7 @@ div:where(.swal2-container) .swal2-html-container {
 .wiki-container {
   flex: 1;
   min-width: 0;
+  min-height: 60vh;
   max-width: 1024px;
   margin: 0 auto;
   padding: 0 0.5rem 3rem;
@@ -1946,3 +1962,24 @@ div:where(.swal2-container) .swal2-html-container {
   border-color: var(--wiki-border);
   border-right-color: var(--wiki-primary);
 }
+
+/* ── SPA Progress Bar ── */
+.spa-progress-bar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 3px;
+  z-index: 9999;
+  overflow: hidden;
+}
+.spa-progress-bar-inner {
+  height: 100%;
+  background: var(--wiki-primary);
+  animation: spaProgress 1.2s ease-in-out infinite;
+}
+@keyframes spaProgress {
+  0%   { width: 0; margin-left: 0; }
+  50%  { width: 60%; margin-left: 20%; }
+  100% { width: 0; margin-left: 100%; }
+  }

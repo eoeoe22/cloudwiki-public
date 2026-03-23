@@ -1123,3 +1123,85 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
         console.error('renderWikiContent error:', err);
     }
 }
+
+// ── PC 사이드바: 본문 스크롤 연동 및 푸터 겹침 방지 ──
+(function () {
+    function setupSidebarLayout() {
+        const sidebar = document.getElementById('wikiSidebar');
+        const footer = document.querySelector('.wiki-footer');
+        if (!sidebar || !footer) return;
+
+        const BASE_TOP = 80; // sticky top (5rem ≈ 80px)
+        const FOOTER_GAP = 16;
+
+        function update() {
+            const layout = sidebar.closest('.wiki-layout');
+            if (!layout) return;
+            const container = layout.querySelector('.wiki-container');
+            if (!container) return;
+
+            if (window.innerWidth < 992) {
+                container.style.paddingBottom = '';
+                sidebar.style.maxHeight = '';
+                sidebar.style.overflow = '';
+                return;
+            }
+
+            // 자연 높이 측정을 위해 초기화
+            sidebar.style.maxHeight = '';
+            sidebar.style.overflow = '';
+            container.style.paddingBottom = '';
+
+            const sidebarH = sidebar.scrollHeight;
+            const containerH = container.scrollHeight;
+
+            // 사이드바가 본문보다 긴 경우: 본문 아래에 여백 추가 (요구사항 5)
+            const extraPadding = Math.max(0, sidebarH - containerH);
+            if (extraPadding > 0) container.style.paddingBottom = extraPadding + 'px';
+
+            // 푸터 겹침 방지: 패딩 추가 후 푸터 절대 위치 기준으로 최대 높이 계산 (요구사항 6)
+            const footerAbsTop = footer.getBoundingClientRect().top + window.scrollY + extraPadding;
+            const layoutAbsTop = layout.getBoundingClientRect().top + window.scrollY;
+            const maxH = footerAbsTop - layoutAbsTop - BASE_TOP - FOOTER_GAP;
+
+            if (maxH > 0 && sidebarH > maxH) {
+                sidebar.style.maxHeight = maxH + 'px';
+                sidebar.style.overflow = 'hidden';
+            }
+        }
+
+        window.addEventListener('resize', update, { passive: true });
+        update();
+        // SPA 네비게이션 후 외부에서 호출 가능하도록 노출
+        window.__sidebarLayoutUpdate = update;
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', setupSidebarLayout);
+    } else {
+        setupSidebarLayout();
+    }
+})();
+
+// ── 모바일 사이드바 열림/닫힘 시 헤더 숨기기/표시 ──
+(function () {
+    function setupSidebarHeaderToggle() {
+        const sidebar = document.getElementById('mobileSidebar');
+        if (!sidebar) return;
+        const navbar = document.querySelector('.navbar');
+        if (!navbar) return;
+
+        sidebar.addEventListener('show.bs.offcanvas', function () {
+            navbar.classList.add('header-hidden-mobile');
+        });
+        sidebar.addEventListener('hide.bs.offcanvas', function () {
+            navbar.classList.remove('header-hidden-mobile');
+        });
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', setupSidebarHeaderToggle);
+    } else {
+        setupSidebarHeaderToggle();
+    }
+})();
