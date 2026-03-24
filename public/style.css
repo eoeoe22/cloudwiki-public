@@ -701,6 +701,7 @@ div:where(.swal2-container) .swal2-html-container {
 /* ── Main Container ── */
 .wiki-container {
   flex: 1;
+  width: 100%;
   min-width: 0;
   min-height: 60vh;
   max-width: 1024px;
