@@ -20,22 +20,9 @@ mcpRoutes.use('*', cors({
 mcpRoutes.use('*', async (c, next) => {
     if (c.req.method === 'OPTIONS') return await next();
 
-    const db = c.env.DB;
-    let settings;
-    try {
-        settings = await db.prepare('SELECT mcp_mode FROM settings WHERE id = 1').first<{ mcp_mode: string }>();
-        if (!settings) {
-            return c.json({ error: 'Critical: Settings row (id=1) not found in DB.' }, 500);
-        }
-    } catch (e: any) {
-        // 테이블이나 컬럼이 없을 때 발생하는 에러를 명확히 알림
-        return c.json({ 
-            error: `Database error: ${e.message}. Please ensure you ran 'wrangler d1 migrations apply'.`,
-            details: 'mcp_mode column might be missing.'
-        }, 500);
-    }
+    const mcpMode = c.env.MCP_MODE || 'disabled';
     
-    if (settings.mcp_mode === 'disabled') {
+    if (mcpMode === 'disabled') {
         return c.json({ jsonrpc: '2.0', error: { code: -32000, message: 'MCP is disabled by administrator.' }, id: null }, 403);
     }
 

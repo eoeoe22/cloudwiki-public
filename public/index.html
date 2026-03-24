@@ -160,11 +160,17 @@
           <div class="list-group mt-4" id="categoryDocsList"></div>
         </div>
       </div>
-      <!-- 모바일 전용 최근 변경 (문서 하단) -->
-      <div class="recent-changes-mobile d-lg-none" id="recentChangesMobile">
+      <!-- 하단 최근 변경 -->
+      <div class="recent-changes-bottom" id="recentChangesBottom">
         <div class="sidebar-section">
           <h6 class="sidebar-title"><i class="bi bi-clock-history"></i> 최근 변경</h6>
-          <div id="recentChangesListMobile" class="recent-changes-list"></div>
+          <div id="recentChangesList" class="recent-changes-list">
+            <div class="placeholder-glow">
+              <span class="placeholder col-12 mb-2" style="height: 3.5rem; border-radius: 6px;"></span>
+              <span class="placeholder col-12 mb-2" style="height: 3.5rem; border-radius: 6px;"></span>
+              <span class="placeholder col-12" style="height: 3.5rem; border-radius: 6px;"></span>
+            </div>
+          </div>
         </div>
       </div>
     </div> <!-- wiki-container end -->
@@ -173,12 +179,6 @@
     <aside class="wiki-sidebar" id="wikiSidebar">
       <!-- 사이드바 네비게이션 (모바일 오프캔버스 렌더링 영역 공유) -->
       <div id="app-sidebar-placeholder"></div>
-
-      <!-- 최근 변경 -->
-      <div class="sidebar-section mt-3 d-none d-lg-block">
-        <h6 class="sidebar-title"><i class="bi bi-clock-history"></i> 최근 변경</h6>
-        <div id="recentChangesList" class="recent-changes-list"></div>
-      </div>
     </aside>
   </div> <!-- wiki-layout end -->
 
@@ -205,21 +205,6 @@
     // ── 전역 상태 ──
     let currentSlug = null;
     let currentPage = null;
-
-    // ── Marked 설정 (1회 초기화) ──
-    marked.use({
-      renderer: {
-        html(token) {
-          const htmlStr = typeof token === 'string' ? token : (token.text || token.raw || '');
-          return escapeHtml(htmlStr);
-        }
-      }
-    });
-    marked.setOptions({
-      gfm: true,
-      breaks: true,
-      headerIds: true,
-    });
 
     // ── 초기화 ──
     document.addEventListener('DOMContentLoaded', async () => {
@@ -591,291 +576,15 @@
           loadWatchStatus(actionSlug);
         }
 
-        // Markdown → HTML 렌더링 (marked 설정은 초기화 시 1회만 적용됨)
-
-        // ── Transclusion Resolution ──
-        const resolvedContent = await resolveTransclusions(page.content || '', currentSlug);
-
-        // ── Folding Block ([+ 제목] ... [-]) 전처리 ──
-        // marked는 HTML 블록 내부의 마크다운을 파싱하지 않으므로,
-        // content를 별도로 파싱한 뒤 placeholder를 교체하는 방식 사용
-
-        // 코드블럭 보호: fold 파싱 전에 코드블럭을 placeholder로 대체
-        // ※ DOMPurify가 null byte(\x00)를 제거하고, marked가 ___...___ 패턴을 이탈릭체로 변환하므로
-        //    특수문자 없는 고유 식별자 패턴(알파벳+숫자) 사용: WIKICODEFPHnXEND, WIKIFOLDPHnXEND
-        const codeBlocksForFold = [];
-        let foldInput = resolvedContent.replace(/(`{3,})[\s\S]*?\1|`[^`\n]+`/g, (m) => {
-          const idx = codeBlocksForFold.length;
-          codeBlocksForFold.push(m);
-          return `WIKICODEFPH${idx}XEND`;
+        // Markdown → HTML 렌더링 (common.js의 renderWikiContent 모듈 사용)
+        await renderWikiContent(page.content || '', slug, 'articleContent', {
+          showCategory: true,
+          tocContainerId: 'tocContainer',
+          tocNavId: 'tocNav'
         });
-
-        const foldRegex = /^\[\+\s*(.*?)\s*\](?:(?:\r?\n)+)([\s\S]*?)(?:\r?\n)+\[-\]$/gm;
-        const foldBlocks = [];
-        let preprocessed = foldInput.replace(foldRegex, (match, titleLine, content) => {
-          let summaryText = titleLine;
-          let bgOpt = '';
-          let colorOpt = '';
-
-          let replaced = true;
-          while (replaced) {
-            replaced = false;
-            let bgMatch = summaryText.match(/\{bg:\s*([^}]+)\}/);
-            if (bgMatch) { bgOpt = escapeHtml(bgMatch[1].trim()); summaryText = summaryText.replace(bgMatch[0], ''); replaced = true; }
-            let colorMatch = summaryText.match(/\{color:\s*([^}]+)\}/);
-            if (colorMatch) { colorOpt = escapeHtml(colorMatch[1].trim()); summaryText = summaryText.replace(colorMatch[0], ''); replaced = true; }
-          }
-
-          summaryText = escapeHtml(summaryText.trim());
-
-          let bgAttr = bgOpt ? ` data-bg="${bgOpt}"` : '';
-          let colorAttr = colorOpt ? ` data-color="${colorOpt}"` : '';
-
-          const idx = foldBlocks.length;
-
-          // 코드블럭 복원 후 fold 내용물의 마크다운 렌더링
-          const restoredContent = content.replace(/WIKICODEFPH(\d+)XEND/g, (_, i) => codeBlocksForFold[parseInt(i)]);
-          let rawContentHtml = marked.parse(restoredContent);
-          const contentHtml = DOMPurify.sanitize(rawContentHtml, { ADD_TAGS: ['i', 'span', 'details', 'summary'], ADD_ATTR: ['class', 'style', 'data-bg', 'data-color'] });
-
-          foldBlocks.push({ summaryText, bgAttr, colorAttr, contentHtml });
-          return `\n\nWIKIFOLDPH${idx}XEND\n\n`;
-        });
-
-        // 코드블럭 복원 (fold 바깥 영역)
-        preprocessed = preprocessed.replace(/WIKICODEFPH(\d+)XEND/g, (_, idx) => codeBlocksForFold[parseInt(idx)]);
-
-        let rawHtml = marked.parse(preprocessed);
-
-        // Fold placeholder를 실제 HTML로 교체 (DOMPurify sanitize 전에 교체)
-        rawHtml = rawHtml.replace(/(?:<p>)?WIKIFOLDPH(\d+)XEND(?:<\/p>)?/g, (m, idx) => {
-          const block = foldBlocks[parseInt(idx)];
-          if (!block) return '';
-          return `<details class="wiki-fold border rounded mb-3"${block.bgAttr}${block.colorAttr}>` +
-            `<summary class="fw-bold p-2" style="cursor: pointer;">${block.summaryText}</summary>` +
-            `<div class="wiki-fold-content p-3 border-top">${block.contentHtml}</div>` +
-            `</details>`;
-        });
-
-        let html = DOMPurify.sanitize(rawHtml, { ADD_TAGS: ['i', 'span', 'details', 'summary'], ADD_ATTR: ['class', 'style', 'data-bg', 'data-color'] });
-
-        // 카테고리 목록 추가 (문서가 존재하는 경우)
-        const decodedSlug = decodeURIComponent(slug);
-        if (decodedSlug.startsWith('카테고리:')) {
-          const categoryName = decodedSlug.replace(/^카테고리:/, '');
-          const listHtml = await fetchCategoryList(categoryName);
-          html += listHtml;
-        }
-
-        document.getElementById('articleContent').innerHTML = html;
-
-        // 테이블 셀 색상 적용 ({bg:...}, {color:...})
-        document.querySelectorAll('#articleContent td, #articleContent th').forEach(cell => {
-          let walker = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT, null, false);
-          let firstTextNode = walker.nextNode();
-          if (firstTextNode) {
-            let val = firstTextNode.nodeValue;
-            let replaced = true;
-            // 허용되는 CSS 색상 형식: #hex (3,4,6,8자리), rgb/rgba, hsl/hsla, 혹은 영문 색상명
-            const colorRegex = /^(#[0-9a-fA-F]{3,8}|(rgb|hsl)a?\([^)]+\)|[a-zA-Z]+)$/;
-
-            while (replaced) {
-              replaced = false;
-              let bgMatch = val.match(/^([\s]*)\{bg:\s*([^}]+)\}/);
-              if (bgMatch) {
-                const colorValue = bgMatch[2].trim();
-                if (colorRegex.test(colorValue)) {
-                  cell.style.backgroundColor = colorValue;
-                }
-                val = val.replace(bgMatch[0], '');
-                replaced = true;
-              }
-              let colorMatch = val.match(/^([\s]*)\{color:\s*([^}]+)\}/);
-              if (colorMatch) {
-                const colorValue = colorMatch[2].trim();
-                if (colorRegex.test(colorValue)) {
-                  cell.style.color = colorValue;
-                }
-                val = val.replace(colorMatch[0], '');
-                replaced = true;
-              }
-            }
-            firstTextNode.nodeValue = val;
-          }
-        });
-
-        // Folding Block 스타일 색상 적용 (Post-processing)
-        document.querySelectorAll('.wiki-fold').forEach(fold => {
-          const bg = fold.getAttribute('data-bg');
-          const color = fold.getAttribute('data-color');
-          const colorRegex = /^(#[0-9a-fA-F]{3,8}|(rgb|hsl)a?\([^)]+\)|[a-zA-Z]+)$/;
-          if (bg && colorRegex.test(bg)) fold.style.backgroundColor = bg;
-
-          if (color && colorRegex.test(color)) {
-            const summary = fold.querySelector('summary');
-            if (summary) summary.style.color = color;
-          }
-        });
-
-        // 내부 위키 링크 [[text]] 변환 (이미 렌더 후)
-        processWikiLinks();
-
-        // 각주 [* 내용] 처리
-        processFootnotes();
-
-        // 각주 팝오버 초기화
-        const popoverTriggerList = [].slice.call(document.querySelectorAll('#articleContent [data-bs-toggle="popover"]'));
-        popoverTriggerList.map(function (popoverTriggerEl) {
-          return new bootstrap.Popover(popoverTriggerEl, { html: true });
-        });
-
-        // 외부 링크 경고 처리
-        document.getElementById('articleContent').querySelectorAll('a').forEach(a => {
-          const href = a.getAttribute('href');
-          if (href && (href.startsWith('http://') || href.startsWith('https://'))) {
-            try {
-              const url = new URL(href, window.location.origin);
-              if (url.origin !== window.location.origin) {
-                a.onclick = (e) => {
-                  e.preventDefault();
-                  Swal.fire({
-                    title: '외부 링크 이동',
-                    html: `외부 링크 <b>${escapeHtml(href)}</b> 로 이동합니다.<br>계속하시겠습니까?`,
-                    icon: 'warning',
-                    showCancelButton: true,
-                    confirmButtonText: '예',
-                    cancelButtonText: '아니오'
-                  }).then((result) => {
-                    if (result.isConfirmed) {
-                      window.open(href, '_blank');
-                    }
-                  });
-                };
-              }
-            } catch (urlErr) {
-              // 잘못된 URL 형식 — 무시
-            }
-          }
-        });
-
-        // YouTube / Niconico 임베드 처리
-        document.getElementById('articleContent').querySelectorAll('a').forEach(a => {
-          const href = a.getAttribute('href');
-          if (!href) return;
-
-          // 블록 레벨 요소(paragraph) 내 유일한 텍스트여야 함
-          const parent = a.parentElement;
-          if (!parent || parent.tagName !== 'P') return;
-          if (parent.textContent.trim() !== a.textContent.trim()) return;
-
-          // 커스텀 마크다운 링크가 아니어야 함. 링크 텍스트가 href 또는 도메인과 일치하면 허용.
-          // 인용구, 코드 블록, 각주 내에 있는 경우 무시
-          if (a.closest('blockquote') || a.closest('code, pre') || a.closest('.wiki-fn-ref')) return;
-
-          // 링크 표시 텍스트가 커스텀 텍스트가 아닌 URL 형식인지 확인
-          const textContent = a.textContent.trim();
-          if (!textContent.includes('youtube.com') && !textContent.includes('youtu.be') && !textContent.includes('nicovideo.jp')) return;
-
-          const ytMatch = href.match(/^https?:\/\/(?:www\.)?youtube\.com\/watch\?v=([a-zA-Z0-9_-]+)(.*)$|^https?:\/\/youtu\.be\/([a-zA-Z0-9_-]+)(.*)$/);
-          if (ytMatch) {
-            const videoId = ytMatch[1] || ytMatch[3];
-            let params = ytMatch[2] || ytMatch[4] || '';
-            // ?t= 또는 &t= 파라미터를 start=로 변환
-            const timeMatch = params.match(/[?&]t=(\d+)s?/);
-            let query = '';
-            if (timeMatch) {
-              query = `?start=${timeMatch[1]}`;
-            }
-            const iframeWrapper = document.createElement('div');
-            iframeWrapper.className = 'ratio ratio-16x9 my-3';
-            iframeWrapper.style.maxWidth = '100%';
-            iframeWrapper.innerHTML = `<iframe src="https://www.youtube.com/embed/${videoId}${query}" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>`;
-            parent.replaceWith(iframeWrapper);
-            return;
-          }
-
-          const nicoMatch = href.match(/^https?:\/\/(?:www\.)?nicovideo\.jp\/watch\/([a-zA-Z0-9_-]+)(.*)$/);
-          if (nicoMatch) {
-            const videoId = nicoMatch[1];
-            const params = nicoMatch[2] || '';
-            // ?from= 또는 &from= 파라미터를 from=으로 변환
-            const timeMatch = params.match(/[?&]from=(\d+)/);
-            let query = '';
-            if (timeMatch) {
-              query = `?from=${timeMatch[1]}`;
-            }
-            const iframeWrapper = document.createElement('div');
-            iframeWrapper.className = 'ratio ratio-16x9 my-3';
-            iframeWrapper.style.maxWidth = '100%';
-            iframeWrapper.innerHTML = `<iframe src="https://embed.nicovideo.jp/watch/${videoId}${query}" frameborder="0" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>`;
-            parent.replaceWith(iframeWrapper);
-            return;
-          }
-        });
-
-        // 테이블에 Bootstrap 클래스 적용 및 반응형 래퍼 추가
-        document.querySelectorAll('#articleContent table').forEach(t => {
-          t.classList.add('table', 'table-bordered', 'table-hover');
-          const wrapper = document.createElement('div');
-          wrapper.className = 'table-responsive';
-          t.parentNode.insertBefore(wrapper, t);
-          wrapper.appendChild(t);
-        });
-
-        // 이미지 반응형
-        document.querySelectorAll('#articleContent img').forEach(img => {
-          img.classList.add('img-fluid');
-        });
-
-        // 코드블럭 복사 버튼 추가
-        document.querySelectorAll('#articleContent pre').forEach(pre => {
-          if (pre.parentNode.classList.contains('wiki-code-wrapper')) return;
-
-          const wrapper = document.createElement('div');
-          wrapper.className = 'wiki-code-wrapper';
-          pre.parentNode.insertBefore(wrapper, pre);
-          wrapper.appendChild(pre);
-
-          const copyBtn = document.createElement('button');
-          copyBtn.className = 'btn-copy-code';
-          copyBtn.title = '코드 복사';
-          copyBtn.innerHTML = '<i class="bi bi-copy"></i>';
-
-          copyBtn.onclick = async () => {
-            try {
-              const textToCopy = pre.innerText || pre.textContent;
-              await navigator.clipboard.writeText(textToCopy);
-              copyBtn.innerHTML = '<i class="bi bi-check-lg"></i>';
-              setTimeout(() => {
-                copyBtn.innerHTML = '<i class="bi bi-copy"></i>';
-              }, 2000);
-            } catch (err) {
-              console.error('복사 실패:', err);
-              // 클립보드 API 미지원 시 fallback 처리
-              const textarea = document.createElement('textarea');
-              textarea.value = pre.innerText || pre.textContent;
-              document.body.appendChild(textarea);
-              textarea.select();
-              try {
-                document.execCommand('copy');
-                copyBtn.innerHTML = '<i class="bi bi-check-lg"></i>';
-                setTimeout(() => {
-                  copyBtn.innerHTML = '<i class="bi bi-copy"></i>';
-                }, 2000);
-              } catch (e) {
-                console.error('Fallback 복사 실패:', e);
-              }
-              document.body.removeChild(textarea);
-            }
-          };
-
-          wrapper.appendChild(copyBtn);
-        });
-
-        // TOC 생성
-        generateTOC();
 
         // 틀(Template) 문서인 경우 자동으로 역링크 로드
+        const decodedSlug = decodeURIComponent(slug);
         const templatePrefixes = ['틀:', 'template:', '템플릿:'];
         const isTemplate = templatePrefixes.some(p => decodedSlug.startsWith(p));
         if (isTemplate) {
@@ -937,209 +646,6 @@
       hideAllPages();
       document.getElementById('articlePage').classList.remove('d-none');
       if (typeof window.__sidebarLayoutUpdate === 'function') window.__sidebarLayoutUpdate();
-    }
-
-    // ── TOC 생성 ──
-    function generateTOC() {
-      const content = document.getElementById('articleContent');
-      const headings = content.querySelectorAll('h1, h2, h3, h4');
-
-      if (headings.length < 1) {
-        document.getElementById('tocContainer').classList.add('d-none');
-        return;
-      }
-
-      // 계층적 번호 생성 (예: 1., 1.1., 1.1.1.)
-      const minLevel = Math.min(...Array.from(headings).map(h => parseInt(h.tagName[1])));
-      const counters = [0, 0, 0, 0, 0, 0]; // h1~h6
-
-      const tocNav = document.getElementById('tocNav');
-      let html = '<ol>';
-      let prevLevel = 0;
-
-      headings.forEach((h, i) => {
-        const level = parseInt(h.tagName[1]);
-        const id = `heading-${i}`;
-        h.id = id;
-        const text = h.textContent;
-
-        // 번호 카운터 업데이트
-        const relLevel = level - minLevel;
-        counters[relLevel]++;
-        // 하위 레벨 카운터 초기화
-        for (let k = relLevel + 1; k < counters.length; k++) counters[k] = 0;
-
-        // 번호 문자열 생성
-        const numParts = [];
-        for (let k = 0; k <= relLevel; k++) numParts.push(counters[k] || 1);
-        const numStr = numParts.join('.');
-
-        // 헤딩에 번호 프리픽스 삽입
-        const existingPrefix = h.querySelector('.wiki-heading-num');
-        if (!existingPrefix) {
-          const numSpan = document.createElement('span');
-          numSpan.className = 'wiki-heading-num';
-          numSpan.textContent = numStr + '. ';
-          h.insertBefore(numSpan, h.firstChild);
-        }
-
-        if (level > prevLevel) {
-          for (let j = prevLevel; j < level; j++) html += '<ol>';
-        } else if (level < prevLevel) {
-          for (let j = level; j < prevLevel; j++) html += '</ol>';
-        }
-
-        html += `<li><a href="#${id}">${numStr}. ${escapeHtml(text)}</a></li>`;
-        prevLevel = level;
-      });
-
-      for (let j = 0; j < prevLevel; j++) html += '</ol>';
-
-      tocNav.innerHTML = html;
-      document.getElementById('tocContainer').classList.remove('d-none');
-    }
-
-    // ── 확장 문법(위키링크, 아이콘 등) 처리 ──
-    function processWikiLinks() {
-      const content = document.getElementById('articleContent');
-      const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT, null, false);
-      const textNodes = [];
-
-      while (walker.nextNode()) {
-        const parentTag = walker.currentNode.parentNode.tagName;
-        if (parentTag === 'CODE' || parentTag === 'PRE') continue;
-
-        const val = walker.currentNode.nodeValue;
-        if (val.includes('[[') || val.includes('{bi:') || val.includes('{mdi:')) {
-          textNodes.push(walker.currentNode);
-        }
-      }
-
-      textNodes.forEach(node => {
-        const frag = document.createDocumentFragment();
-        const parts = node.nodeValue.split(/(\[\[[^\]]+\]\]|(?<!\{)\{bi:[\w-]+\}(?!\})|(?<!\{)\{mdi:[\w-]+\}(?!\}))/g).filter(Boolean);
-
-        parts.forEach(part => {
-          if (part.startsWith('[[') && part.endsWith(']]')) {
-            const linkText = part.slice(2, -2).trim();
-            const a = document.createElement('a');
-            a.href = `/wiki/${encodeURIComponent(linkText)}`;
-            a.textContent = linkText;
-            a.onclick = (e) => { e.preventDefault(); navigateTo(a.href); };
-            frag.appendChild(a);
-          } else if (part.startsWith('{bi:') && part.endsWith('}')) {
-            const iconName = part.slice(4, -1);
-            const i = document.createElement('i');
-            i.className = `bi bi-${iconName}`;
-            frag.appendChild(i);
-          } else if (part.startsWith('{mdi:') && part.endsWith('}')) {
-            const iconName = part.slice(5, -1);
-            const span = document.createElement('span');
-            span.className = `mdi mdi-${iconName}`;
-            frag.appendChild(span);
-          } else if (part) {
-            frag.appendChild(document.createTextNode(part));
-          }
-        });
-
-        node.parentNode.replaceChild(frag, node);
-      });
-    }
-
-    // ── 각주 처리 ──
-    function processFootnotes() {
-      const content = document.getElementById('articleContent');
-      const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT, null, false);
-      const textNodes = [];
-
-      while (walker.nextNode()) {
-        const parentTag = walker.currentNode.parentNode.tagName;
-        if (parentTag === 'CODE' || parentTag === 'PRE') continue;
-
-        const val = walker.currentNode.nodeValue;
-        if (/\[\*\s/.test(val)) {
-          textNodes.push(walker.currentNode);
-        }
-      }
-
-      if (textNodes.length === 0) return;
-
-      let footnoteIndex = 0;
-      const footnotes = [];
-
-      textNodes.forEach(node => {
-        const frag = document.createDocumentFragment();
-        const parts = node.nodeValue.split(/(\[\*\s[^\]]+\])/g);
-
-        parts.forEach(part => {
-          const fnMatch = part.match(/^\[\*\s(.+)\]$/);
-          if (fnMatch) {
-            footnoteIndex++;
-            const fnContent = fnMatch[1];
-            const fnId = `fn-${footnoteIndex}`;
-            const refId = `fn-ref-${footnoteIndex}`;
-
-            footnotes.push({ id: fnId, refId: refId, num: footnoteIndex, content: fnContent });
-
-            const sup = document.createElement('sup');
-            sup.className = 'wiki-fn-ref';
-            const a = document.createElement('a');
-            a.href = `#${fnId}`;
-            a.id = refId;
-            a.textContent = `[${footnoteIndex}]`;
-
-            a.setAttribute('data-bs-toggle', 'popover');
-            a.setAttribute('data-bs-trigger', 'hover focus');
-            a.setAttribute('data-bs-placement', 'top');
-            a.setAttribute('data-bs-content', escapeHtml(fnContent || ''));
-
-            a.onclick = (e) => {
-              e.preventDefault();
-              if (window.innerWidth >= 992) {
-                document.getElementById(fnId)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-              }
-            };
-            sup.appendChild(a);
-            frag.appendChild(sup);
-          } else if (part) {
-            frag.appendChild(document.createTextNode(part));
-          }
-        });
-
-        node.parentNode.replaceChild(frag, node);
-      });
-
-      if (footnotes.length > 0) {
-        const fnSection = document.createElement('div');
-        fnSection.className = 'wiki-footnotes';
-        fnSection.innerHTML = `<hr><h4><i class="bi bi-card-text"></i> 각주</h4>`;
-
-        const ol = document.createElement('ol');
-        footnotes.forEach(fn => {
-          const li = document.createElement('li');
-          li.id = fn.id;
-
-          const backLink = document.createElement('a');
-          backLink.href = `#${fn.refId}`;
-          backLink.className = 'wiki-fn-back';
-          backLink.innerHTML = '<i class="bi bi-arrow-return-left"></i>';
-          backLink.title = '본문으로 돌아가기';
-          backLink.onclick = (e) => {
-            e.preventDefault();
-            document.getElementById(fn.refId)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          };
-
-          const span = document.createElement('span');
-          span.textContent = ' ' + fn.content;
-
-          li.appendChild(backLink);
-          li.appendChild(span);
-          ol.appendChild(li);
-        });
-
-        fnSection.appendChild(ol);
-        content.appendChild(fnSection);
-      }
     }
 
     // ── 백링크 로드 ──
@@ -1488,102 +994,6 @@
       return new Date(ts * 1000).toLocaleString('ko-KR');
     }
 
-    // ── 틀(Transclusion) 처리 ──
-    async function resolveTransclusions(content, pageSlug) {
-      const MAX_DEPTH = 3;
-      const cache = new Map();
-
-      async function resolve(text, depth) {
-        if (depth > MAX_DEPTH) return text;
-
-        const codeBlocks = [];
-        let protectedText = text;
-        const tokens = marked.lexer(protectedText);
-
-        // marked.lexer를 이용해 정확하게 코드블럭(인라인, 멀티라인) 내용 보호
-        marked.walkTokens(tokens, token => {
-          if (token.type === 'code' || token.type === 'codespan') {
-            const raw = token.raw;
-            if (protectedText.includes(raw)) {
-              const idx = codeBlocks.length;
-              codeBlocks.push(raw);
-              protectedText = protectedText.replace(raw, `\x00CODEBLOCK_${idx}\x00`);
-            }
-          }
-        });
-
-        const regex = /\{\{\s*([^\}]+?)\s*\}\}/g;
-        const matches = [...protectedText.matchAll(regex)];
-
-        if (matches.length === 0) return text;
-
-        const slugsToFetch = new Set();
-        matches.forEach(m => {
-          const name = m[1].trim();
-          let slug = name;
-          if (!slug.startsWith('template:') && !slug.startsWith('틀:') && !slug.startsWith('템플릿:')) {
-            slug = '틀:' + slug;
-          }
-          slugsToFetch.add(slug);
-        });
-
-        const fetchPromises = [];
-        for (const slug of slugsToFetch) {
-          if (!cache.has(slug)) {
-            // 자기 자신을 참조하는 틀은 가져오지 않고 경고 표시
-            if (pageSlug && slug === pageSlug) {
-              cache.set(slug, `⚠️ [자기 자신을 참조하는 틀은 사용할 수 없습니다: ${slug}]`);
-              continue;
-            }
-            fetchPromises.push(
-              fetch(`/api/wiki/${encodeURIComponent(slug)}`)
-                .then(res => res.ok ? res.json() : null)
-                .then(data => {
-                  if (data) {
-                    // 틀 내용에서 자기 자신을 참조하는 부분을 경고 메시지로 치환
-                    const selfSlug = slug;
-                    const tplContent = data.content.replace(/\{\{\s*([^\}]+?)\s*\}\}/g, (match, name) => {
-                      let refSlug = name.trim();
-                      if (!refSlug.startsWith('template:') && !refSlug.startsWith('틀:') && !refSlug.startsWith('템플릿:')) {
-                        refSlug = '틀:' + refSlug;
-                      }
-                      if (refSlug === selfSlug) {
-                        return `⚠️ [자기 자신을 참조하는 틀은 사용할 수 없습니다: ${selfSlug}]`;
-                      }
-                      return match;
-                    });
-                    cache.set(slug, tplContent);
-                  } else {
-                    cache.set(slug, `⚠️ [틀을 찾을 수 없음: ${slug}]`);
-                  }
-                })
-                .catch(() => {
-                  cache.set(slug, `⚠️ [틀 로딩 실패: ${slug}]`);
-                })
-            );
-          }
-        }
-        await Promise.all(fetchPromises);
-
-        let newText = protectedText.replace(regex, (match, name) => {
-          let slug = name.trim();
-          if (!slug.startsWith('template:') && !slug.startsWith('틀:') && !slug.startsWith('템플릿:')) {
-            slug = '틀:' + slug;
-          }
-          return cache.get(slug) || match;
-        });
-
-        newText = newText.replace(/\x00CODEBLOCK_(\d+)\x00/g, (_, idx) => codeBlocks[parseInt(idx)]);
-
-        if (newText !== text) {
-          return await resolve(newText, depth + 1);
-        }
-        return newText;
-      }
-
-      return await resolve(content, 0);
-    }
-
     // ── 최근 변경 내역 로드 ──
     async function loadRecentChanges() {
       try {
@@ -1608,10 +1018,8 @@
         const emptyMsg = '<div class="text-muted small p-2">변경 내역이 없습니다.</div>';
         const content = data.changes.length > 0 ? html : emptyMsg;
 
-        const sidebar = document.getElementById('recentChangesList');
-        const mobile = document.getElementById('recentChangesListMobile');
-        if (sidebar) sidebar.innerHTML = content;
-        if (mobile) mobile.innerHTML = content;
+        const bottomList = document.getElementById('recentChangesList');
+        if (bottomList) bottomList.innerHTML = content;
       } catch (e) {
         // 무시
       }
@@ -1671,10 +1079,10 @@
   <!-- 스크롤 FAB (뷰포트 고정, body 직전) -->
   <div class="scroll-fab-group" id="scrollFabGroup">
     <button class="scroll-fab" id="scrollToTopBtn" onclick="window.scrollTo({top:0,behavior:'smooth'})" title="맨 위로">
-      <i class="bi bi-chevron-double-up"></i>
+      <i class="bi bi-chevron-up"></i>
     </button>
     <button class="scroll-fab" id="scrollToBottomBtn" onclick="window.scrollTo({top:document.body.scrollHeight,behavior:'smooth'})" title="맨 아래로">
-      <i class="bi bi-chevron-double-down"></i>
+      <i class="bi bi-chevron-down"></i>
     </button>
   </div>
 

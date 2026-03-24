@@ -316,17 +316,13 @@
                         <hr class="my-4">
                         <h6 class="fw-bold mb-3"><i class="mdi mdi-robot-outline text-primary"></i> MCP (Model Context Protocol) 설정</h6>
                         <div class="mb-3">
-                            <div class="form-check mb-2">
-                                <input class="form-check-input" type="radio" name="mcpMode" id="mcpDisabled" value="disabled" checked>
-                                <label class="form-check-label" for="mcpDisabled">
-                                    <strong>사용 안 함</strong> — 외부 AI 에이전트의 위키 본문 리딩 접근을 차단합니다.
-                                </label>
+                            <div class="d-flex align-items-center gap-2">
+                                <span id="mcpModeDisplay" class="badge bg-secondary">확인 중...</span>
+                                <span class="text-muted small">이 설정은 <code>wrangler.toml</code>의 <code>MCP_MODE</code> 환경변수로 관리됩니다.</span>
                             </div>
-                            <div class="form-check mb-2">
-                                <input class="form-check-input" type="radio" name="mcpMode" id="mcpOpen" value="open">
-                                <label class="form-check-label" for="mcpOpen">
-                                    <strong>전체 개방</strong> — 비인증 상태의 모든 AI 클라이언트가 공개 문서를 읽을 수 있습니다.
-                                </label>
+                            <div class="text-muted small mt-2">
+                                <strong>disabled</strong>: 외부 AI 에이전트의 위키 본문 리딩 접근을 차단합니다. (기본값)<br>
+                                <strong>open</strong>: 비인증 상태의 모든 AI 클라이언트가 공개 문서를 읽을 수 있습니다.
                             </div>
                             <div id="mcpServerUrlBox" class="mt-3 p-3 rounded border" style="display:none; background: var(--wiki-card-bg); word-break: break-all;">
                                 <div class="mb-2 small fw-bold text-muted">MCP 서버 주소</div>
@@ -879,10 +875,13 @@
 
                     // MCP 설정 로드
                     const mcpMode = settings.mcp_mode || 'disabled';
+                    const mcpBadge = document.getElementById('mcpModeDisplay');
                     if (mcpMode === 'open') {
-                        document.getElementById('mcpOpen').checked = true;
+                        mcpBadge.className = 'badge bg-success';
+                        mcpBadge.textContent = 'open (전체 개방)';
                     } else {
-                        document.getElementById('mcpDisabled').checked = true;
+                        mcpBadge.className = 'badge bg-secondary';
+                        mcpBadge.textContent = 'disabled (사용 안 함)';
                     }
                     updateMcpUrlBox(mcpMode === 'open');
                 } catch (e) {
@@ -921,9 +920,6 @@
                     document.getElementById('cooldownDaysWrapper').style.display =
                         e.target.value === 'custom' ? '' : 'none';
                 }
-                if (e.target.name === 'mcpMode') {
-                    updateMcpUrlBox(e.target.value === 'open');
-                }
             });
 
             async function saveWikiSettings() {
@@ -950,18 +946,13 @@
                 // DM 설정
                 const allowDm = document.getElementById('allowDmSwitch')?.checked ? 1 : 0;
 
-                // MCP 설정
-                const mcpModeSelected = document.querySelector('input[name="mcpMode"]:checked');
-                const mcpMode = mcpModeSelected ? mcpModeSelected.value : 'disabled';
-
                 try {
                     const res = await fetch('/api/admin/settings', {
                         method: 'PUT',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ 
                             namechange_ratelimit: Number(cooldownDays), 
-                            allow_direct_message: allowDm,
-                            mcp_mode: mcpMode
+                            allow_direct_message: allowDm
                         })
                     });
                     const data = await res.json();

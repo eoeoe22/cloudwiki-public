@@ -69,7 +69,7 @@ async function fetchAssetHtml(c: any, htmlPath: string): Promise<Response> {
 
 // ── 컴포넌트 HTML 메모리 캐시 (Worker 인스턴스 수명 동안 유지) ──
 let componentCache: { header: string; sidebar: string; footer: string; timestamp: number } | null = null;
-const COMPONENT_CACHE_TTL = 60_000; // 60초
+const COMPONENT_CACHE_TTL = 1_800_000; // 30분
 
 // ── 헬퍼: 사이드바/푸터 커스텀 HTML 생성 ──
 function buildCustomSidebarHtml(configStr: string | null): string {
@@ -389,10 +389,10 @@ app.get('/wiki/:slug', async (c) => {
     // 3) HTMLRewriter로 SSR 데이터 주입 + 브랜딩 및 컴포넌트 치환
     const response = await renderHtml(c, '/', ssrData);
 
-    // 4) 공개 문서이면 Edge 캐시에 60초간 저장
+    // 4) 공개 문서이면 Edge 캐시에 24시간 저장
     if (shouldCache) {
         const cachedResponse = new Response(response.body, response);
-        cachedResponse.headers.set('Cache-Control', 'public, max-age=60');
+        cachedResponse.headers.set('Cache-Control', 'public, max-age=86400');
         c.executionCtx.waitUntil(cache.put(ssrCacheKey, cachedResponse.clone()));
         return cachedResponse;
     }

@@ -215,10 +215,14 @@ adminRoutes.put('/users/:id/ban', async (c) => {
  */
 adminRoutes.get('/settings', async (c) => {
     const db = c.env.DB;
-    const row = await db.prepare('SELECT * FROM settings WHERE id = 1').first();
+    const row = await db.prepare('SELECT * FROM settings WHERE id = 1').first() as any;
+    const mcpMode = c.env.MCP_MODE || 'disabled';
+
     if (!row) {
-        return c.json({ namechange_ratelimit: 0, allow_direct_message: 0 });
+        return c.json({ namechange_ratelimit: 0, allow_direct_message: 0, mcp_mode: mcpMode });
     }
+
+    row.mcp_mode = mcpMode;
     return c.json(row);
 });
 
@@ -231,7 +235,6 @@ adminRoutes.put('/settings', async (c) => {
     const body = await c.req.json<{ 
         namechange_ratelimit?: number; 
         allow_direct_message?: number;
-        mcp_mode?: 'disabled' | 'open';
     }>();
 
     if (body.namechange_ratelimit !== undefined) {
@@ -248,15 +251,6 @@ adminRoutes.put('/settings', async (c) => {
         const val = body.allow_direct_message ? 1 : 0;
         await db.prepare('UPDATE settings SET allow_direct_message = ? WHERE id = 1')
             .bind(val)
-            .run();
-    }
-
-    if (body.mcp_mode !== undefined) {
-        if (!['disabled', 'open'].includes(body.mcp_mode)) {
-            return c.json({ error: '잘못된 MCP 모드입니다.' }, 400);
-        }
-        await db.prepare('UPDATE settings SET mcp_mode = ? WHERE id = 1')
-            .bind(body.mcp_mode)
             .run();
     }
 

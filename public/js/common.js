@@ -7,6 +7,25 @@
 var appConfig = { wikiName: 'CloudWiki' };
 var currentUser = null;
 
+// ── Marked 설정 (1회 초기화) ──
+function initMarkedConfig() {
+    if (typeof marked === 'undefined') return;
+    marked.use({
+        renderer: {
+            html(token) {
+                const htmlStr = typeof token === 'string' ? token : (token.text || token.raw || '');
+                return escapeHtml(htmlStr);
+            }
+        }
+    });
+    marked.setOptions({
+        gfm: true,
+        breaks: true,
+        headerIds: true,
+    });
+}
+initMarkedConfig();
+
 // ── URL 스킴 검증 (XSS 방지) ──
 function isSafeUrl(url) {
     if (!url) return false;
@@ -539,7 +558,7 @@ async function sendMessage(receiverId, receiverName) {
 }
 
 // ── 틀(Transclusion) 처리 ──
-async function resolveTransclusions(content) {
+async function resolveTransclusions(content, pageSlug) {
     const MAX_DEPTH = 3;
     const cache = new Map();
 
@@ -579,6 +598,11 @@ async function resolveTransclusions(content) {
         const fetchPromises = [];
         for (const slug of slugsToFetch) {
             if (!cache.has(slug)) {
+                // 자기 자신을 참조하는 틀은 가져오지 않고 경고 표시
+                if (pageSlug && slug === pageSlug) {
+                    cache.set(slug, `⚠️ [자기 자신을 참조하는 틀은 사용할 수 없습니다: ${slug}]`);
+                    continue;
+                }
                 fetchPromises.push(
                     fetch(`/api/wiki/${encodeURIComponent(slug)}`)
                         .then(res => res.ok ? res.json() : null)
@@ -666,6 +690,37 @@ async function fetchCategoryList(category) {
 }
 
 // ── TOC 생성 ──
+// 헤딩에 계층적 번호 프리픽스 삽입 (예: 1., 1.1., 1.1.1.)
+function numberHeadings(contentEl) {
+    if (!contentEl) return;
+    const headings = contentEl.querySelectorAll('h1, h2, h3, h4');
+    if (headings.length < 1) return;
+
+    const minLevel = Math.min(...Array.from(headings).map(h => parseInt(h.tagName[1], 10)));
+    const counters = [0, 0, 0, 0, 0, 0];
+
+    headings.forEach((h, i) => {
+        const level = parseInt(h.tagName[1], 10);
+        h.id = h.id || `heading-${i}`;
+
+        const relLevel = level - minLevel;
+        counters[relLevel]++;
+        for (let k = relLevel + 1; k < counters.length; k++) counters[k] = 0;
+
+        const numParts = [];
+        for (let k = 0; k <= relLevel; k++) numParts.push(counters[k] || 1);
+        const numStr = numParts.join('.');
+
+        const existingPrefix = h.querySelector('.wiki-heading-num');
+        if (!existingPrefix) {
+            const numSpan = document.createElement('span');
+            numSpan.className = 'wiki-heading-num';
+            numSpan.textContent = numStr + '. ';
+            h.insertBefore(numSpan, h.firstChild);
+        }
+    });
+}
+
 function generateTOC(contentEl, tocContainerId, tocNavId) {
     if (!contentEl) return;
     const headings = contentEl.querySelectorAll('h1, h2, h3, h4');
@@ -680,36 +735,18 @@ function generateTOC(contentEl, tocContainerId, tocNavId) {
     const tocNav = document.getElementById(tocNavId);
     if (!tocNav) return;
 
-    // 계층적 번호 생성 (예: 1., 1.1., 1.1.1.)
-    const minLevel = Math.min(...Array.from(headings).map(h => parseInt(h.tagName[1], 10)));
-    const counters = [0, 0, 0, 0, 0, 0];
-
     let html = '<ol>';
     let prevLevel = 0;
 
     headings.forEach((h, i) => {
         const level = parseInt(h.tagName[1], 10);
-        const id = `heading-${i}`;
-        h.id = id;
-        const text = h.textContent;
-
-        // 번호 카운터 업데이트
-        const relLevel = level - minLevel;
-        counters[relLevel]++;
-        for (let k = relLevel + 1; k < counters.length; k++) counters[k] = 0;
-
-        const numParts = [];
-        for (let k = 0; k <= relLevel; k++) numParts.push(counters[k] || 1);
-        const numStr = numParts.join('.');
-
-        // 헤딩에 번호 프리픽스 삽입
-        const existingPrefix = h.querySelector('.wiki-heading-num');
-        if (!existingPrefix) {
-            const numSpan = document.createElement('span');
-            numSpan.className = 'wiki-heading-num';
-            numSpan.textContent = numStr + '. ';
-            h.insertBefore(numSpan, h.firstChild);
-        }
+        const id = h.id || `heading-${i}`;
+        // .wiki-heading-num을 제외한 순수 텍스트만 사용 (번호는 <ol>이 자동 생성)
+        const numSpan = h.querySelector('.wiki-heading-num');
+        let text = '';
+        h.childNodes.forEach(n => {
+            if (n !== numSpan) text += n.textContent;
+        });
 
         if (level > prevLevel) {
             for (let j = prevLevel; j < level; j++) html += '<ol>';
@@ -717,7 +754,7 @@ function generateTOC(contentEl, tocContainerId, tocNavId) {
             for (let j = level; j < prevLevel; j++) html += '</ol>';
         }
 
-        html += `<li><a href="#${id}">${numStr}. ${escapeHtml(text)}</a></li>`;
+        html += `<li><a href="#${id}">${escapeHtml(text.trim())}</a></li>`;
         prevLevel = level;
     });
 
@@ -918,7 +955,7 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
     if (!containerEl) return;
 
     try {
-        const resolvedContent = await resolveTransclusions(content || '');
+        const resolvedContent = await resolveTransclusions(content || '', slug);
 
         const codeBlocksForFold = [];
         let foldInput = resolvedContent.replace(/(`{3,})[\s\S]*?\1|`[^`\n]+`/g, (m) => {
@@ -1189,6 +1226,9 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
 
             wrapper.appendChild(copyBtn);
         });
+
+        // 헤딩 번호 삽입 (항상 실행)
+        numberHeadings(containerEl);
 
         if (options.tocContainerId && options.tocNavId) {
             generateTOC(containerEl, options.tocContainerId, options.tocNavId);

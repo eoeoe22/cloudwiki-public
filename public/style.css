@@ -692,8 +692,8 @@ div:where(.swal2-container) .swal2-html-container {
   margin-right: 0.25rem;
 }
 
-/* ── Mobile Recent Changes ── */
-.recent-changes-mobile {
+/* ── Bottom Recent Changes ── */
+.recent-changes-bottom {
   margin-top: 2rem;
   margin-bottom: 1rem;
 }
@@ -1359,7 +1359,7 @@ div:where(.swal2-container) .swal2-html-container {
     max-width: 100vw;
   }
 
-  .recent-changes-mobile {
+  .recent-changes-bottom {
     padding: 0 0.5rem;
   }
 }
@@ -1383,7 +1383,7 @@ div:where(.swal2-container) .swal2-html-container {
     max-width: 100vw;
   }
 
-  .recent-changes-mobile {
+  .recent-changes-bottom {
     padding: 0;
   }
 }

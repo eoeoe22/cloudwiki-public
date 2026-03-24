@@ -164,7 +164,7 @@ wiki.get('/wiki/recent-changes', async (c) => {
     const user = c.get('user');
     const isAdmin = user && (user.role === 'admin' || user.role === 'super_admin');
 
-    // 비관리자(공개 결과)는 Cache API로 60초 캐싱
+    // 비관리자(공개 결과)는 Cache API로 24시간 캐싱
     if (!isAdmin) {
         const cache = caches.default;
         const cacheKey = c.req.url;
@@ -186,7 +186,7 @@ wiki.get('/wiki/recent-changes', async (c) => {
             status: 200,
             headers: {
                 'Content-Type': 'application/json; charset=UTF-8',
-                'Cache-Control': 'public, max-age=60',
+                'Cache-Control': 'public, max-age=86400',
             },
         });
         c.executionCtx.waitUntil(cache.put(cacheKey, response.clone()));
@@ -367,7 +367,7 @@ wiki.get('/wiki/:slug', async (c) => {
 
     // 공개 문서인 경우에만 캐시 저장
     if (!page.is_private) {
-        response = c.json(result, 200, { 'Cache-Control': 'public, max-age=60' });
+        response = c.json(result, 200, { 'Cache-Control': 'public, max-age=86400' });
         c.executionCtx.waitUntil(cache.put(cacheKey, response.clone()));
     } else {
         response = c.json(result);

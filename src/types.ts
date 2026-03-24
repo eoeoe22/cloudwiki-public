@@ -19,6 +19,7 @@ export type Env = {
         CUSTOM_HEADER: string;
         SELECTED_ICONS_ONLY: string;
         SIGNUP_POLICY: string;
+        MCP_MODE: 'disabled' | 'open';
         TURNSTILE_SITE_KEY: string;
         TURNSTILE_SECRET_KEY: string;
     };
@@ -31,7 +32,6 @@ export interface Settings {
     id: number;
     namechange_ratelimit: number;
     allow_direct_message: number;
-    mcp_mode: 'disabled' | 'open';
 }
 
 // DB 모델 타입

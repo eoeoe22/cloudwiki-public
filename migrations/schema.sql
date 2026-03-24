@@ -108,8 +108,7 @@ CREATE INDEX IF NOT EXISTS idx_redirects_target ON redirects(target_page_id);
 CREATE TABLE IF NOT EXISTS settings (
   id                    INTEGER PRIMARY KEY CHECK (id = 1),
   namechange_ratelimit  INTEGER DEFAULT 0,
-  allow_direct_message  INTEGER DEFAULT 0,
-  mcp_mode              TEXT DEFAULT 'disabled'
+  allow_direct_message  INTEGER DEFAULT 0
 );
 
 -- 설정 초기 데이터 (이미 있는 경우 무시)
