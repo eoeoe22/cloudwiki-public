@@ -39,6 +39,7 @@ SUPER_ADMIN_EMAILS = "test@example.com, test2@example.com" # 콤마로 구분하
 SELECTED_ICONS_ONLY = "false" # false 권장, true시 public/icons.json에 있는 아이콘만 자동완성에 들어감. (성능 개선 용도가 아님)
 # 아이콘 선택 json 추출기 : https://vialinks.xyz/icons
 SIGNUP_POLICY = "open" # 회원가입 정책: "open" (모두 허용, 기본값), "approval" (관리자 승인제)
+MCP_MODE = "open" # MCP 서버 모드: "disabled" (사용 안 함, 기본값), "open" (전체 개방)
 
 CUSTOM_HEADER = """
 
