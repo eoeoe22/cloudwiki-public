@@ -163,13 +163,6 @@ h6,
 }
 
 /* ── SweetAlert2 Overrides ── */
-/* 뒷배경(오버레이) 블러 효과 */
-div:where(.swal2-container.swal2-backdrop-show) {
-  background: rgba(0, 0, 0, 0.3) !important;
-  backdrop-filter: blur(6px) !important;
-  -webkit-backdrop-filter: blur(6px) !important;
-}
-
 /* 팝업 창 글래스모피즘 */
 div:where(.swal2-container) div:where(.swal2-popup) {
   background: var(--wiki-glass-bg) !important;
