@@ -118,7 +118,10 @@ auth.get('/auth/google/callback', async (c) => {
             .run();
     } else {
         isNewUser = true;
-        const signupPolicy = c.env.SIGNUP_POLICY || 'open';
+        const settingsRow = await db
+            .prepare('SELECT signup_policy FROM settings WHERE id = 1')
+            .first<{ signup_policy: string }>();
+        const signupPolicy = settingsRow?.signup_policy || 'open';
 
         // 승인제: 신규 유저는 바로 가입하지 않고 가입 신청 절차를 거침
         if (signupPolicy === 'approval') {
@@ -335,8 +338,12 @@ auth.post('/api/auth/signup-request', async (c) => {
  * GET /api/auth/signup-policy
  * 현재 회원가입 정책 반환 (비인증 상태에서도 접근 가능)
  */
-auth.get('/api/auth/signup-policy', (c) => {
-    return c.json({ policy: c.env.SIGNUP_POLICY || 'open' });
+auth.get('/api/auth/signup-policy', async (c) => {
+    const db = c.env.DB;
+    const settingsRow = await db
+        .prepare('SELECT signup_policy FROM settings WHERE id = 1')
+        .first<{ signup_policy: string }>();
+    return c.json({ policy: settingsRow?.signup_policy || 'open' });
 });
 
 /**

@@ -322,8 +322,11 @@
     }
 
     async function showSubdocs(slug) {
+      // 하위 문서인 경우 최상위 문서를 기준으로 탐색
+      const topSlug = slug.includes('/') ? slug.split('/')[0] : slug;
+
       try {
-        const res = await fetch(`/api/wiki/${encodeURIComponent(slug)}/subdocs`);
+        const res = await fetch(`/api/wiki/${encodeURIComponent(topSlug)}/subdocs`);
         const data = await res.json();
         const subdocs = data.subdocs || [];
 
@@ -335,8 +338,8 @@
         // 트리 구조 빌드
         const tree = {};
         for (const doc of subdocs) {
-          // slug에서 현재 문서 prefix 제거
-          const relative = doc.slug.substring(slug.length + 1); // "스마트폰/갤럭시S"
+          // slug에서 최상위 문서 prefix 제거
+          const relative = doc.slug.substring(topSlug.length + 1); // "스마트폰/갤럭시S"
           const parts = relative.split('/');
           let node = tree;
           for (const part of parts) {
@@ -379,7 +382,7 @@
         }
 
         // 루트 문서 포함
-        let treeHtml = `<div style="font-family:monospace;white-space:pre;line-height:1.6;"><a href="/wiki/${encodeURIComponent(slug)}" onclick="Swal.close();navigateTo(this.href);return false;" class="text-decoration-none fw-bold">${escapeHtml(decodeURIComponent(slug))}</a></div>`;
+        let treeHtml = `<div style="font-family:monospace;white-space:pre;line-height:1.6;"><a href="/wiki/${encodeURIComponent(topSlug)}" onclick="Swal.close();navigateTo(this.href);return false;" class="text-decoration-none fw-bold">${escapeHtml(decodeURIComponent(topSlug))}</a></div>`;
         treeHtml += renderTree(tree, '');
 
         Swal.fire({

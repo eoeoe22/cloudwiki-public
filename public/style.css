@@ -27,7 +27,7 @@
   --wiki-diff-add-text: #166534;
   --wiki-diff-del-bg: #fee2e2;
   --wiki-diff-del-text: #991b1b;
-  
+
   /* Glassmorphism & Shadows */
   --wiki-shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
   --wiki-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -2px rgba(0, 0, 0, 0.05);
@@ -68,7 +68,7 @@
     --wiki-diff-add-text: #a7f3d0;
     --wiki-diff-del-bg: rgba(239, 68, 68, 0.2);
     --wiki-diff-del-text: #fecaca;
-    
+
     /* Glassmorphism & Shadows */
     --wiki-shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.5);
     --wiki-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5), 0 2px 4px -2px rgba(0, 0, 0, 0.5);
@@ -103,7 +103,14 @@ body {
   overflow-x: clip;
 }
 
-h1, h2, h3, h4, h5, h6, .navbar-brand, .wiki-article-title {
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+.navbar-brand,
+.wiki-article-title {
   font-family: 'Outfit', 'Pretendard Variable', 'Pretendard', -apple-system, BlinkMacSystemFont, 'system-ui', 'Segoe UI', Roboto, sans-serif;
   letter-spacing: -0.02em;
 }
@@ -156,10 +163,28 @@ h1, h2, h3, h4, h5, h6, .navbar-brand, .wiki-article-title {
 }
 
 /* ── SweetAlert2 Overrides ── */
+/* 뒷배경(오버레이) 블러 효과 */
+div:where(.swal2-container.swal2-backdrop-show) {
+  background: rgba(0, 0, 0, 0.3) !important;
+  backdrop-filter: blur(6px) !important;
+  -webkit-backdrop-filter: blur(6px) !important;
+}
+
+/* 팝업 창 글래스모피즘 */
 div:where(.swal2-container) div:where(.swal2-popup) {
-  background: var(--wiki-card-bg) !important;
+  background: var(--wiki-glass-bg) !important;
+  backdrop-filter: var(--wiki-glass-blur) !important;
+  -webkit-backdrop-filter: var(--wiki-glass-blur) !important;
   color: var(--wiki-text) !important;
-  border: 1px solid var(--wiki-border);
+  border: 1px solid var(--wiki-glass-border) !important;
+  box-shadow: var(--wiki-shadow-lg) !important;
+}
+
+/* 체크 표시(Success) 애니메이션 배경 투명화 처리 */
+div:where(.swal2-container) .swal2-success-circular-line-left,
+div:where(.swal2-container) .swal2-success-circular-line-right,
+div:where(.swal2-container) .swal2-success-fix {
+  background: transparent !important;
 }
 
 div:where(.swal2-container) input:where(.swal2-input),
@@ -711,8 +736,15 @@ div:where(.swal2-container) .swal2-html-container {
 }
 
 @keyframes fadeIn {
-  from { opacity: 0; transform: translateY(10px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 /* ── Wiki Article Card ── */
@@ -1993,16 +2025,29 @@ div:where(.swal2-container) .swal2-html-container {
   z-index: 9999;
   overflow: hidden;
 }
+
 .spa-progress-bar-inner {
   height: 100%;
   background: var(--wiki-primary);
   animation: spaProgress 1.2s ease-in-out infinite;
 }
+
 @keyframes spaProgress {
-  0%   { width: 0; margin-left: 0; }
-  50%  { width: 60%; margin-left: 20%; }
-  100% { width: 0; margin-left: 100%; }
+  0% {
+    width: 0;
+    margin-left: 0;
   }
+
+  50% {
+    width: 60%;
+    margin-left: 20%;
+  }
+
+  100% {
+    width: 0;
+    margin-left: 100%;
+  }
+}
 
 /* ── Scroll FAB Buttons ── */
 .scroll-fab-group {
@@ -2017,10 +2062,12 @@ div:where(.swal2-container) .swal2-html-container {
   pointer-events: none;
   transition: opacity 0.25s ease;
 }
+
 .scroll-fab-group.visible {
   opacity: 1;
   pointer-events: auto;
 }
+
 .scroll-fab {
   width: 2.25rem;
   height: 2.25rem;
@@ -2040,11 +2087,75 @@ div:where(.swal2-container) .swal2-html-container {
   padding: 0;
   line-height: 1;
 }
+
 .scroll-fab:hover {
   background: var(--wiki-glass-bg);
   box-shadow: var(--wiki-shadow-md);
   transform: scale(1.1);
 }
+
 .scroll-fab:active {
   transform: scale(0.95);
+}
+
+/* ── 카테고리 버블 태그 ── */
+.category-tag-container {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--wiki-border);
+  border-radius: var(--wiki-radius, 8px);
+  background-color: var(--wiki-bg);
+  min-height: 42px;
+  cursor: text;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.category-tag-container:focus-within {
+  border-color: var(--wiki-primary);
+  box-shadow: 0 0 0 0.25rem rgba(88, 166, 255, 0.25);
+  background-color: var(--wiki-card-bg);
+}
+
+.category-tag {
+  display: inline-flex;
+  align-items: center;
+  background-color: rgba(88, 166, 255, 0.1);
+  color: var(--wiki-primary);
+  border: 1px solid rgba(88, 166, 255, 0.2);
+  border-radius: 20px;
+  padding: 3px 10px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  line-height: 1.2;
+}
+
+.category-tag i {
+  font-size: 0.9rem;
+  color: var(--wiki-primary);
+  opacity: 0.7;
+  transition: opacity 0.15s;
+  margin-top: 1px;
+  margin-left: 4px;
+}
+
+.category-tag i:hover {
+  opacity: 1;
+}
+
+.category-tag-input {
+  flex: 1;
+  min-width: 120px;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--wiki-text);
+  font-size: 0.95rem;
+  padding: 2px 0;
+}
+
+.category-tag-input::placeholder {
+  color: var(--wiki-text-muted);
 }

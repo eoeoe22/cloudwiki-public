@@ -205,7 +205,6 @@
                 </div>
             </div>
         </div>
-    </div>
 
         <aside class="wiki-sidebar" id="wikiSidebar">
             <div id="app-sidebar-placeholder"></div>
@@ -297,7 +296,11 @@
                     const canBypassDm = ['admin', 'super_admin', 'discussion_manager'].includes(currentUser.role);
 
                     if (dmData.allow_direct_message === 1 || canBypassDm) {
-                        sendMsgBtn = `<button class="btn btn-sm btn-outline-primary mt-2" onclick="sendMessage(${profileUser.id}, '${escapeHtml(profileUser.name)}')"><i class="mdi mdi-email-plus-outline"></i> 쪽지 보내기</button>`;
+                        if (profileUser.role === 'deleted') {
+                            sendMsgBtn = `<button class="btn btn-sm btn-outline-secondary mt-2" disabled><i class="mdi mdi-email-plus-outline"></i> 쪽지 보내기 (탈퇴한 사용자)</button>`;
+                        } else {
+                            sendMsgBtn = `<button class="btn btn-sm btn-outline-primary mt-2" onclick="sendMessage(${profileUser.id}, '${escapeHtml(profileUser.name)}')"><i class="mdi mdi-email-plus-outline"></i> 쪽지 보내기</button>`;
+                        }
                     }
                 } catch (e) { }
             }

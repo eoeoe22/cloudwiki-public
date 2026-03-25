@@ -8,6 +8,50 @@ import { ROLE_CASE_SQL, enrichRoles } from '../utils/role';
 const wiki = new Hono<Env>();
 
 /**
+ * 최근 변경 캐시를 즉시 새 데이터로 갱신
+ * (delete 후 재요청 대기 대신, 직접 put하여 즉시 반영)
+ */
+async function refreshRecentChangesCache(c: any) {
+    const db = c.env.DB;
+    const origin = new URL(c.req.url).origin;
+    const cacheUrl = `${origin}/api/wiki/recent-changes`;
+    const cache = caches.default;
+
+    const { results } = await db.prepare(`
+        SELECT p.slug, p.title, p.updated_at, u.name as author_name
+        FROM pages p
+        LEFT JOIN users u ON p.author_id = u.id
+        WHERE p.deleted_at IS NULL AND p.is_private = 0
+        ORDER BY p.updated_at DESC LIMIT 10
+    `).all();
+
+    const body = JSON.stringify(safeJSON({ changes: results }));
+    const response = new Response(body, {
+        status: 200,
+        headers: {
+            'Content-Type': 'application/json; charset=UTF-8',
+            'Cache-Control': 'public, max-age=60',
+        },
+    });
+    await cache.put(cacheUrl, response);
+}
+
+/**
+ * 문서의 캐시를 무효화하는 유틸리티 함수
+ */
+function invalidatePageCache(c: any, slug: string) {
+    const origin = new URL(c.req.url).origin;
+    const cache = caches.default;
+    const path = encodeURIComponent(slug);
+
+    return Promise.all([
+        cache.delete(`${origin}/api/wiki/${path}`),
+        cache.delete(`${origin}/api/wiki/${path}?redirect=no`),
+        cache.delete(`${origin}/wiki/${path}`)
+    ]);
+}
+
+/**
  * 문서 content에서 링크를 파싱하여 { target_slug, link_type } 배열을 반환
  */
 function extractLinks(content: string): { target_slug: string; link_type: string }[] {
@@ -186,7 +230,7 @@ wiki.get('/wiki/recent-changes', async (c) => {
             status: 200,
             headers: {
                 'Content-Type': 'application/json; charset=UTF-8',
-                'Cache-Control': 'public, max-age=86400',
+                'Cache-Control': 'public, max-age=60',
             },
         });
         c.executionCtx.waitUntil(cache.put(cacheKey, response.clone()));
@@ -282,10 +326,11 @@ wiki.get('/wiki/:slug', async (c) => {
     const user = c.get('user');
     const cache = caches.default;
     const cacheKey = c.req.url;
+    const nocache = c.req.query('nocache') === 'true';
 
     // 캐시 확인
     let response = await cache.match(cacheKey);
-    if (response) {
+    if (response && !nocache) {
         // 캐시된 응답은 불변(immutable)이므로, 전역 미들웨어가 헤더를 수정할 수 있도록 복제하여 반환
         return new Response(response.body, response);
     }
@@ -366,7 +411,7 @@ wiki.get('/wiki/:slug', async (c) => {
     const result = safeJSON({ ...page, author, redirected_from: redirectedFrom });
 
     // 공개 문서인 경우에만 캐시 저장
-    if (!page.is_private) {
+    if (!page.is_private && !nocache) {
         response = c.json(result, 200, { 'Cache-Control': 'public, max-age=86400' });
         c.executionCtx.waitUntil(cache.put(cacheKey, response.clone()));
     } else {
@@ -570,12 +615,10 @@ wiki.put('/wiki/:slug', requireAuth, async (c) => {
                 .catch(e => console.error('Failed to notify watchers:', e))
         );
 
-        // 캐시 무효화 (API + SSR + 최근 변경)
-        const origin = new URL(c.req.url).origin;
+        // 캐시 무효화 (API + SSR) + 최근 변경 즉시 갱신
         c.executionCtx.waitUntil(Promise.all([
-            caches.default.delete(c.req.url),
-            caches.default.delete(`${origin}/wiki/${encodeURIComponent(slug)}`),
-            caches.default.delete(`${origin}/api/wiki/recent-changes`),
+            invalidatePageCache(c, slug),
+            refreshRecentChangesCache(c),
         ]));
 
         return c.json(safeJSON({ slug, version: newVersion, revision_id: revisionId }));
@@ -613,12 +656,10 @@ wiki.put('/wiki/:slug', requireAuth, async (c) => {
         const linkCatStmts = buildLinkAndCategoryStatements(db, pageId, body.content, body.category || null);
         c.executionCtx.waitUntil(db.batch(linkCatStmts).catch(e => console.error('Failed to update links/categories:', e)));
 
-        // 캐시 무효화 (API + SSR + 최근 변경)
-        const origin = new URL(c.req.url).origin;
+        // 캐시 무효화 (API + SSR) + 최근 변경 즉시 갱신
         c.executionCtx.waitUntil(Promise.all([
-            caches.default.delete(c.req.url),
-            caches.default.delete(`${origin}/wiki/${encodeURIComponent(slug)}`),
-            caches.default.delete(`${origin}/api/wiki/recent-changes`),
+            invalidatePageCache(c, slug),
+            refreshRecentChangesCache(c),
         ]));
 
         return c.json(safeJSON({ slug, version: 1, revision_id: revisionId }), 201);
@@ -933,12 +974,10 @@ wiki.delete('/wiki/:slug', requireAuth, async (c) => {
         ];
         await db.batch(batch);
 
-        // 캐시 무효화 (API + SSR + 최근 변경)
-        const origin = new URL(c.req.url).origin;
+        // 캐시 무효화 (API + SSR) + 최근 변경 즉시 갱신
         c.executionCtx.waitUntil(Promise.all([
-            caches.default.delete(c.req.url),
-            caches.default.delete(`${origin}/wiki/${encodeURIComponent(slug)}`),
-            caches.default.delete(`${origin}/api/wiki/recent-changes`),
+            invalidatePageCache(c, slug),
+            refreshRecentChangesCache(c),
         ]));
 
         // 관리자 로그 기록
@@ -974,12 +1013,10 @@ wiki.delete('/wiki/:slug', requireAuth, async (c) => {
             .bind(page.id)
             .run();
 
-        // 캐시 무효화 (API + SSR + 최근 변경)
-        const origin2 = new URL(c.req.url).origin;
+        // 캐시 무효화 (API + SSR) + 최근 변경 즉시 갱신
         c.executionCtx.waitUntil(Promise.all([
-            caches.default.delete(c.req.url),
-            caches.default.delete(`${origin2}/wiki/${encodeURIComponent(slug)}`),
-            caches.default.delete(`${origin2}/api/wiki/recent-changes`),
+            invalidatePageCache(c, slug),
+            refreshRecentChangesCache(c),
         ]));
 
         // 관리자 로그 기록
@@ -1028,12 +1065,10 @@ wiki.post('/wiki/:slug/restore', requireAuth, async (c) => {
             .run().catch((e: any) => console.error('Failed to write admin log:', e))
     );
 
-    // 캐시 무효화 (API + SSR + 최근 변경)
-    const origin = new URL(c.req.url).origin;
+    // 캐시 무효화 (API + SSR) + 최근 변경 즉시 갱신
     c.executionCtx.waitUntil(Promise.all([
-        caches.default.delete(`${origin}/api/wiki/${encodeURIComponent(slug)}`),
-        caches.default.delete(`${origin}/wiki/${encodeURIComponent(slug)}`),
-        caches.default.delete(`${origin}/api/wiki/recent-changes`),
+        invalidatePageCache(c, slug),
+        refreshRecentChangesCache(c),
     ]));
 
     return c.json({ message: '문서가 복원되었습니다.' });
@@ -1091,21 +1126,11 @@ wiki.post('/wiki/:slug/move', requireAuth, async (c) => {
             .run().catch((e: any) => console.error('Failed to write admin log:', e))
     );
 
-    // 캐시 무효화 (이전 주소와 새 주소 모두)
-    const url = new URL(c.req.url);
-    // Strip /move suffix to get the old page URL
-    url.pathname = url.pathname.replace(/\/move$/, '');
-    const oldPageUrl = url.toString();
-
-    // Construct new page URL by replacing the last segment (slug)
-    const pathSegments = url.pathname.split('/');
-    pathSegments[pathSegments.length - 1] = encodeURIComponent(new_slug);
-    url.pathname = pathSegments.join('/');
-    const newPageUrl = url.toString();
-
+    // 캐시 무효화 (API + SSR) + 최근 변경 즉시 갱신
     c.executionCtx.waitUntil(Promise.all([
-        caches.default.delete(oldPageUrl),
-        caches.default.delete(newPageUrl)
+        invalidatePageCache(c, currentSlug),
+        invalidatePageCache(c, new_slug),
+        refreshRecentChangesCache(c),
     ]));
 
     return c.json({ message: '문서가 이동되었습니다.', new_slug });
@@ -1153,10 +1178,11 @@ wiki.post('/wiki/:slug/revert', requireAuth, async (c) => {
         .bind(targetRevision.content, newRevId, newVersion, page.id)
         .run();
 
-    // 캐시 무효화
-    const url = new URL(c.req.url);
-    url.pathname = url.pathname.replace(/\/revert$/, '');
-    c.executionCtx.waitUntil(caches.default.delete(url.toString()));
+    // 캐시 무효화 (API + SSR) + 최근 변경 즉시 갱신
+    c.executionCtx.waitUntil(Promise.all([
+        invalidatePageCache(c, slug),
+        refreshRecentChangesCache(c),
+    ]));
 
     return c.json({ message: '문서가 되돌려졌습니다.', version: newVersion });
 });

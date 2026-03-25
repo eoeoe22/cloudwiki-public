@@ -219,7 +219,7 @@ adminRoutes.get('/settings', async (c) => {
     const mcpMode = c.env.MCP_MODE || 'disabled';
 
     if (!row) {
-        return c.json({ namechange_ratelimit: 0, allow_direct_message: 0, mcp_mode: mcpMode });
+        return c.json({ namechange_ratelimit: 0, allow_direct_message: 0, signup_policy: 'open', mcp_mode: mcpMode });
     }
 
     row.mcp_mode = mcpMode;
@@ -235,6 +235,7 @@ adminRoutes.put('/settings', async (c) => {
     const body = await c.req.json<{ 
         namechange_ratelimit?: number; 
         allow_direct_message?: number;
+        signup_policy?: string;
     }>();
 
     if (body.namechange_ratelimit !== undefined) {
@@ -250,6 +251,16 @@ adminRoutes.put('/settings', async (c) => {
     if (body.allow_direct_message !== undefined) {
         const val = body.allow_direct_message ? 1 : 0;
         await db.prepare('UPDATE settings SET allow_direct_message = ? WHERE id = 1')
+            .bind(val)
+            .run();
+    }
+
+    if (body.signup_policy !== undefined) {
+        const val = body.signup_policy;
+        if (val !== 'open' && val !== 'approval') {
+            return c.json({ error: '회원가입 정책은 "open" 또는 "approval"만 가능합니다.' }, 400);
+        }
+        await db.prepare('UPDATE settings SET signup_policy = ? WHERE id = 1')
             .bind(val)
             .run();
     }

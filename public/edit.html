@@ -608,8 +608,8 @@
     <!-- Icon Inline Autocomplete Dropdown -->
     <div id="icon-autocomplete">
         <div class="icon-ac-header">
-            <i id="iconAcTypeIcon"></i>
-            <span id="iconAcTypeLabel">아이콘</span>
+            <i id="iconAc.typeIcon"></i>
+            <span id="iconAc.typeLabel">아이콘</span>
         </div>
         <div id="iconAcGrid" class="icon-ac-grid"></div>
         <div id="iconAcEmpty" class="icon-ac-empty" style="display:none;">결과 없음</div>
@@ -741,8 +741,11 @@
 
             <div class="mb-3 row">
                 <div class="col-md-6">
-                    <label for="categoryInput" class="form-label fw-bold">카테고리 (분류)</label>
-                    <input type="text" id="categoryInput" class="form-control" placeholder="카테고리를 입력하세요 (쉼표로 구분)">
+                    <label for="categoryTagInput" class="form-label fw-bold">카테고리 (분류)</label>
+                    <div class="category-tag-container" id="categoryTagContainer" onclick="document.getElementById('categoryTagInput').focus()">
+                        <input type="text" id="categoryTagInput" class="category-tag-input" placeholder="카테고리 입력 후 엔터나 쉼표">
+                    </div>
+                    <input type="hidden" id="categoryInput">
                 </div>
                 <div class="col-md-6 d-flex align-items-end" id="adminLockContainer" style="display: none !important;">
                     <div class="form-check mb-2">
@@ -808,18 +811,19 @@
 
     <script src="/js/common.js"></script>
     <script>
+        // ── 에디터 상태 ──
         let slug = null;
         let pageVersion = null;
-        let originalContent = ''; // 기존 문서 내용 보관
+        let originalContent = '';
         let editor = null;
         let AUTO_SAVE_KEY = '';
-        let conflictEditor = null;   // 내 수정본 Toast UI 인스턴스
-        let serverViewMode = 'raw';  // 최신본 뷰 상태
-        let serverViewer = null;     // 최신본 Viewer 인스턴스 (lazy)
-        let cachedDiffData = null;   // Diff 연산 결과
-        let diffViewMode = 'summary';// Diff 보기 상태 ('summary' 또는 'all')
+        let conflictEditor = null;
+        let serverViewMode = 'raw';
+        let serverViewer = null;
+        let cachedDiffData = null;
+        let diffViewMode = 'summary';
 
-        // ── Turnstile 변수 ──
+        // ── Turnstile 상태 ──
         let turnstileToken = null;
         let turnstileWidgetId = null;
         let turnstileReady = false;
@@ -877,32 +881,72 @@
         let pendingIconInsertion = null;     // 모달에서 선택된 아이콘 삽입 대기
         let iconPickerToken = 0;             // 아이콘 피커 호출 토큰 (경쟁 조건 방지)
 
-        // ── 아이콘 인라인 자동완성 변수 ──
-        let iconAcVisible = false;
-        let iconAcType = 'bi';       // 'bi' or 'mdi'
-        let iconAcQuery = '';
-        let iconAcResults = [];
-        let iconAcSelectedIndex = -1;
-        let iconAcLastKey = null;
-        let iconAcDebounceTimer = null;
-        const iconAcDiv = document.getElementById('icon-autocomplete');
-        const ICON_AC_COLS = 5;      // 인라인 자동완성 그리드 열 수
+        // ── 아이콘 인라인 자동완성 상태 ──
+        const iconAc = {
+            visible: false,
+            type: 'bi',              // 'bi' | 'mdi' | 'icon'
+            query: '',
+            results: [],
+            selectedIndex: -1,
+            lastKey: null,
+            debounceTimer: null,
+            div: document.getElementById('icon-autocomplete'),
+            COLS: 5,                 // 인라인 자동완성 그리드 열 수
+        };
 
-        // ── 색상 피커 인라인 자동완성 변수 ──
-        let colorAcVisible = false;
-        let colorAcTrigger = 'bg';   // 'bg' or 'color'
-        let colorAcHue = 0;
-        let colorAcSaturation = 1;
-        let colorAcBrightness = 1;
-        let colorAcSelectedSwatchIndex = -1;
-        let colorAcDragging = null; // 'palette' or 'hue' or null
-        const colorAcDiv = document.getElementById('color-autocomplete');
+        // ── 색상 피커 인라인 자동완성 상태 ──
+        const colorAc = {
+            visible: false,
+            trigger: 'bg',           // 'bg' | 'color'
+            hue: 0,
+            saturation: 1,
+            brightness: 1,
+            selectedSwatchIndex: -1,
+            dragging: null,          // 'palette' | 'hue' | null
+            div: document.getElementById('color-autocomplete'),
+        };
         const COLOR_SWATCHES = [
             '#000000', '#FFFFFF', '#FF0000', '#FF8000', '#FFFF00',
             '#00FF00', '#00FFFF', '#0080FF', '#0000FF', '#8000FF',
             '#FF00FF', '#FF0080', '#808080', '#C0C0C0', '#800000',
             '#808000', '#008000', '#008080', '#000080', '#800080'
         ];
+
+        // ── 다크모드 감지 유틸리티 ──
+        function getIsDarkMode() {
+            return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+        }
+
+        // ── 커서 위치 기반 드롭다운 포지셔닝 공통 함수 ──
+        function positionDropdownAtCursor(dropdownEl, dropdownWidth) {
+            if (!dropdownEl) return;
+            let positioned = false;
+            const sel = window.getSelection();
+            if (sel && sel.rangeCount > 0) {
+                const range = sel.getRangeAt(0).cloneRange();
+                range.collapse(true);
+                const rect = range.getBoundingClientRect();
+                if (rect.height > 0) {
+                    let left = rect.left + window.scrollX;
+                    let top = rect.bottom + window.scrollY + 4;
+                    if (left + dropdownWidth > window.innerWidth) left = window.innerWidth - (dropdownWidth + 5);
+                    if (left < 0) left = 4;
+                    dropdownEl.style.left = `${left}px`;
+                    dropdownEl.style.top = `${top}px`;
+                    dropdownEl.style.display = 'block';
+                    positioned = true;
+                }
+            }
+            if (!positioned) {
+                const editorEl = document.querySelector('#editor');
+                if (editorEl) {
+                    const rect = editorEl.getBoundingClientRect();
+                    dropdownEl.style.left = `${rect.left + 50 + window.scrollX}px`;
+                    dropdownEl.style.top = `${rect.top + 80 + window.scrollY}px`;
+                    dropdownEl.style.display = 'block';
+                }
+            }
+        }
 
         // ── 색상 유틸리티 함수 ──
         function hsvToHex(h, s, v) {
@@ -957,14 +1001,14 @@
                 const s = x / w;
                 for (let y = 0; y < h; y++) {
                     const v = 1 - y / h;
-                    ctx.fillStyle = hsvToHex(colorAcHue, s, v);
+                    ctx.fillStyle = hsvToHex(colorAc.hue, s, v);
                     ctx.fillRect(x, y, 1, 1);
                 }
             }
 
             // 선택 위치 표시
-            const cx = colorAcSaturation * w;
-            const cy = (1 - colorAcBrightness) * h;
+            const cx = colorAc.saturation * w;
+            const cy = (1 - colorAc.brightness) * h;
             ctx.beginPath();
             ctx.arc(cx, cy, 6, 0, Math.PI * 2);
             ctx.strokeStyle = '#fff';
@@ -991,7 +1035,7 @@
             ctx.fillRect(0, 0, w, h);
 
             // 선택 위치 표시
-            const cx = (colorAcHue / 360) * w;
+            const cx = (colorAc.hue / 360) * w;
             ctx.beginPath();
             ctx.rect(cx - 3, 0, 6, h);
             ctx.strokeStyle = '#fff';
@@ -1005,7 +1049,7 @@
         }
 
         function updateColorPreview() {
-            const hex = hsvToHex(colorAcHue, colorAcSaturation, colorAcBrightness);
+            const hex = hsvToHex(colorAc.hue, colorAc.saturation, colorAc.brightness);
             const previewBox = document.getElementById('colorPreviewBox');
             const hexInput = document.getElementById('colorHexInput');
             if (previewBox) previewBox.style.backgroundColor = hex;
@@ -1017,7 +1061,7 @@
             const container = document.getElementById('colorAcSwatches');
             if (!container) return;
             container.innerHTML = COLOR_SWATCHES.map((color, i) =>
-                `<div class="color-swatch${i === colorAcSelectedSwatchIndex ? ' active' : ''}" data-index="${i}" style="background:${color};" title="${color}"></div>`
+                `<div class="color-swatch${i === colorAc.selectedSwatchIndex ? ' active' : ''}" data-index="${i}" style="background:${color};" title="${color}"></div>`
             ).join('');
 
             container.querySelectorAll('.color-swatch').forEach(el => {
@@ -1039,12 +1083,12 @@
         }
 
         function selectColorSwatch(index) {
-            colorAcSelectedSwatchIndex = index;
+            colorAc.selectedSwatchIndex = index;
             const hex = COLOR_SWATCHES[index];
             const hsv = hexToHsv(hex);
-            colorAcHue = hsv.h;
-            colorAcSaturation = hsv.s;
-            colorAcBrightness = hsv.v;
+            colorAc.hue = hsv.h;
+            colorAc.saturation = hsv.s;
+            colorAc.brightness = hsv.v;
             drawColorPalette();
             drawHueSlider();
             updateColorPreview();
@@ -1075,9 +1119,9 @@
 
             function handlePaletteInteraction(e) {
                 const pos = getCanvasPos(paletteCanvas, e);
-                colorAcSaturation = pos.x;
-                colorAcBrightness = 1 - pos.y;
-                colorAcSelectedSwatchIndex = -1;
+                colorAc.saturation = pos.x;
+                colorAc.brightness = 1 - pos.y;
+                colorAc.selectedSwatchIndex = -1;
                 drawColorPalette();
                 updateColorPreview();
                 renderColorSwatches();
@@ -1085,8 +1129,8 @@
 
             function handleHueInteraction(e) {
                 const pos = getCanvasPos(hueCanvas, e);
-                colorAcHue = pos.x * 360;
-                colorAcSelectedSwatchIndex = -1;
+                colorAc.hue = pos.x * 360;
+                colorAc.selectedSwatchIndex = -1;
                 drawColorPalette();
                 drawHueSlider();
                 updateColorPreview();
@@ -1096,36 +1140,36 @@
             // 마우스 이벤트
             paletteCanvas.addEventListener('mousedown', (e) => {
                 e.preventDefault();
-                colorAcDragging = 'palette';
+                colorAc.dragging = 'palette';
                 handlePaletteInteraction(e);
             });
             hueCanvas.addEventListener('mousedown', (e) => {
                 e.preventDefault();
-                colorAcDragging = 'hue';
+                colorAc.dragging = 'hue';
                 handleHueInteraction(e);
             });
             document.addEventListener('mousemove', (e) => {
-                if (colorAcDragging === 'palette') handlePaletteInteraction(e);
-                else if (colorAcDragging === 'hue') handleHueInteraction(e);
+                if (colorAc.dragging === 'palette') handlePaletteInteraction(e);
+                else if (colorAc.dragging === 'hue') handleHueInteraction(e);
             });
-            document.addEventListener('mouseup', () => { colorAcDragging = null; });
+            document.addEventListener('mouseup', () => { colorAc.dragging = null; });
 
             // 터치 이벤트
             paletteCanvas.addEventListener('touchstart', (e) => {
                 e.preventDefault();
-                colorAcDragging = 'palette';
+                colorAc.dragging = 'palette';
                 handlePaletteInteraction(e);
             }, { passive: false });
             hueCanvas.addEventListener('touchstart', (e) => {
                 e.preventDefault();
-                colorAcDragging = 'hue';
+                colorAc.dragging = 'hue';
                 handleHueInteraction(e);
             }, { passive: false });
             document.addEventListener('touchmove', (e) => {
-                if (colorAcDragging === 'palette') { e.preventDefault(); handlePaletteInteraction(e); }
-                else if (colorAcDragging === 'hue') { e.preventDefault(); handleHueInteraction(e); }
+                if (colorAc.dragging === 'palette') { e.preventDefault(); handlePaletteInteraction(e); }
+                else if (colorAc.dragging === 'hue') { e.preventDefault(); handleHueInteraction(e); }
             }, { passive: false });
-            document.addEventListener('touchend', () => { colorAcDragging = null; });
+            document.addEventListener('touchend', () => { colorAc.dragging = null; });
 
             // Hex 입력 직접 수정
             const hexInput = document.getElementById('colorHexInput');
@@ -1134,10 +1178,10 @@
                     const val = hexInput.value.trim();
                     if (/^#[0-9A-Fa-f]{6}$/.test(val)) {
                         const hsv = hexToHsv(val);
-                        colorAcHue = hsv.h;
-                        colorAcSaturation = hsv.s;
-                        colorAcBrightness = hsv.v;
-                        colorAcSelectedSwatchIndex = -1;
+                        colorAc.hue = hsv.h;
+                        colorAc.saturation = hsv.s;
+                        colorAc.brightness = hsv.v;
+                        colorAc.selectedSwatchIndex = -1;
                         drawColorPalette();
                         drawHueSlider();
                         updateColorPreview();
@@ -1166,16 +1210,16 @@
 
         // ── 색상 자동완성: 숨기기 ──
         function hideColorAutocomplete() {
-            colorAcVisible = false;
-            colorAcDragging = null;
-            colorAcSelectedSwatchIndex = -1;
-            if (colorAcDiv) colorAcDiv.style.display = 'none';
+            colorAc.visible = false;
+            colorAc.dragging = null;
+            colorAc.selectedSwatchIndex = -1;
+            if (colorAc.div) colorAc.div.style.display = 'none';
         }
 
         // ── 색상 자동완성: 표시 ──
         function showColorAutocomplete(query, type) {
-            colorAcTrigger = type;
-            colorAcVisible = true;
+            colorAc.trigger = type;
+            colorAc.visible = true;
 
             const typeLabelEl = document.getElementById('colorAcTypeLabel');
             if (typeLabelEl) {
@@ -1183,42 +1227,15 @@
             }
 
             // 커서 위치에 드롭다운 표시
-            if (colorAcDiv) {
-                let positioned = false;
-                const sel = window.getSelection();
-                if (sel && sel.rangeCount > 0) {
-                    const range = sel.getRangeAt(0).cloneRange();
-                    range.collapse(true);
-                    const rect = range.getBoundingClientRect();
-                    if (rect.height > 0) {
-                        let left = rect.left + window.scrollX;
-                        let top = rect.bottom + window.scrollY + 4;
-                        if (left + 290 > window.innerWidth) left = window.innerWidth - 295;
-                        if (left < 0) left = 4;
-                        colorAcDiv.style.left = `${left}px`;
-                        colorAcDiv.style.top = `${top}px`;
-                        colorAcDiv.style.display = 'block';
-                        positioned = true;
-                    }
-                }
-                if (!positioned) {
-                    const editorEl = document.querySelector('#editor');
-                    if (editorEl) {
-                        const rect = editorEl.getBoundingClientRect();
-                        colorAcDiv.style.left = `${rect.left + 50 + window.scrollX}px`;
-                        colorAcDiv.style.top = `${rect.top + 80 + window.scrollY}px`;
-                        colorAcDiv.style.display = 'block';
-                    }
-                }
-            }
+            positionDropdownAtCursor(colorAc.div, 280);
 
             // 쿼리에 이미 색상값이 있으면 반영
             if (query && /^#[0-9A-Fa-f]{6}$/.test(query.trim())) {
                 const hsv = hexToHsv(query.trim());
-                colorAcHue = hsv.h;
-                colorAcSaturation = hsv.s;
-                colorAcBrightness = hsv.v;
-                colorAcSelectedSwatchIndex = -1;
+                colorAc.hue = hsv.h;
+                colorAc.saturation = hsv.s;
+                colorAc.brightness = hsv.v;
+                colorAc.selectedSwatchIndex = -1;
             }
 
             renderColorSwatches();
@@ -1231,7 +1248,7 @@
         function applyColorAutocomplete() {
             if (!editor) { hideColorAutocomplete(); return; }
 
-            const hex = hsvToHex(colorAcHue, colorAcSaturation, colorAcBrightness).toUpperCase();
+            const hex = hsvToHex(colorAc.hue, colorAc.saturation, colorAc.brightness).toUpperCase();
             const selection = editor.getSelection();
             if (!selection) { hideColorAutocomplete(); return; }
 
@@ -1244,7 +1261,7 @@
             const lineText = lines[line - 1] || '';
             const textBefore = lineText.substring(0, col - 1);
 
-            const prefix = colorAcTrigger === 'bg' ? '{bg:' : '{color:';
+            const prefix = colorAc.trigger === 'bg' ? '{bg:' : '{color:';
             const lastTriggerIndex = textBefore.lastIndexOf(prefix);
 
             if (lastTriggerIndex !== -1) {
@@ -1492,21 +1509,21 @@
 
         // ── 아이콘 인라인 자동완성: 숨기기 ──
         function hideIconAutocomplete() {
-            iconAcVisible = false;
-            iconAcResults = [];
-            iconAcSelectedIndex = -1;
-            iconAcLastKey = null;
-            if (iconAcDiv) iconAcDiv.style.display = 'none';
+            iconAc.visible = false;
+            iconAc.results = [];
+            iconAc.selectedIndex = -1;
+            iconAc.lastKey = null;
+            if (iconAc.div) iconAc.div.style.display = 'none';
         }
 
         // ── 아이콘 인라인 자동완성: 표시 ──
         function showIconAutocomplete(query, type) {
-            iconAcQuery = query;
-            iconAcType = type;
-            iconAcVisible = true;
+            iconAc.query = query;
+            iconAc.type = type;
+            iconAc.visible = true;
 
-            const typeIconEl = document.getElementById('iconAcTypeIcon');
-            const typeLabelEl = document.getElementById('iconAcTypeLabel');
+            const typeIconEl = document.getElementById('iconAc.typeIcon');
+            const typeLabelEl = document.getElementById('iconAc.typeLabel');
             if (typeIconEl) {
                 typeIconEl.className = type === 'icon' ? 'bi bi-search' : (type === 'bi' ? 'bi bi-bootstrap' : 'mdi mdi-material-design');
             }
@@ -1515,38 +1532,11 @@
             }
 
             // 커서 위치에 드롭다운 표시
-            if (iconAcDiv) {
-                let positioned = false;
-                const sel = window.getSelection();
-                if (sel && sel.rangeCount > 0) {
-                    const range = sel.getRangeAt(0).cloneRange();
-                    range.collapse(true);
-                    const rect = range.getBoundingClientRect();
-                    if (rect.height > 0) {
-                        let left = rect.left + window.scrollX;
-                        let top = rect.bottom + window.scrollY + 4;
-                        if (left + 340 > window.innerWidth) left = window.innerWidth - 345;
-                        if (left < 0) left = 4;
-                        iconAcDiv.style.left = `${left}px`;
-                        iconAcDiv.style.top = `${top}px`;
-                        iconAcDiv.style.display = 'block';
-                        positioned = true;
-                    }
-                }
-                if (!positioned) {
-                    const editorEl = document.querySelector('#editor');
-                    if (editorEl) {
-                        const rect = editorEl.getBoundingClientRect();
-                        iconAcDiv.style.left = `${rect.left + 50 + window.scrollX}px`;
-                        iconAcDiv.style.top = `${rect.top + 80 + window.scrollY}px`;
-                        iconAcDiv.style.display = 'block';
-                    }
-                }
-            }
+            positionDropdownAtCursor(iconAc.div, 330);
 
             const iconAcKey = `${type}:${query}`;
-            if (iconAcKey === iconAcLastKey) return;
-            iconAcLastKey = iconAcKey;
+            if (iconAcKey === iconAc.lastKey) return;
+            iconAc.lastKey = iconAcKey;
 
             // 로딩 표시
             const gridEl = document.getElementById('iconAcGrid');
@@ -1556,11 +1546,11 @@
             if (emptyEl) emptyEl.style.display = 'none';
             if (loadingEl) loadingEl.style.display = 'block';
 
-            clearTimeout(iconAcDebounceTimer);
-            iconAcDebounceTimer = setTimeout(async () => {
+            clearTimeout(iconAc.debounceTimer);
+            iconAc.debounceTimer = setTimeout(async () => {
                 const requestedType = type;
                 const requestedQuery = query;
-                if (!iconAcVisible) return;
+                if (!iconAc.visible) return;
 
                 let icons;
                 if (requestedType === 'icon') {
@@ -1575,10 +1565,10 @@
                     icons = requestedType === 'bi' ? await loadBiIcons() : await loadMdiIcons();
                 }
 
-                if (!iconAcVisible) return;
-                if (iconAcType !== requestedType || iconAcQuery !== requestedQuery) return;
+                if (!iconAc.visible) return;
+                if (iconAc.type !== requestedType || iconAc.query !== requestedQuery) return;
                 if (loadingEl) loadingEl.style.display = 'none';
-                iconAcResults = filterIcons(icons, requestedQuery, 30);
+                iconAc.results = filterIcons(icons, requestedQuery, 30);
                 renderIconAcResults();
             }, 150);
         }
@@ -1589,7 +1579,7 @@
             const emptyEl = document.getElementById('iconAcEmpty');
             if (!gridEl) return;
 
-            if (iconAcResults.length === 0) {
+            if (iconAc.results.length === 0) {
                 gridEl.innerHTML = '';
                 if (emptyEl) emptyEl.style.display = 'block';
                 return;
@@ -1597,31 +1587,31 @@
             if (emptyEl) emptyEl.style.display = 'none';
 
             const getIconClass = (iconName) => {
-                if (iconAcType === 'icon') {
+                if (iconAc.type === 'icon') {
                     // {icon:} 타입: 아이콘코드에 bi- 또는 mdi- 접두사 포함
                     if (iconName.startsWith('bi-')) return `bi ${iconName}`;
                     if (iconName.startsWith('mdi-')) return `mdi ${iconName}`;
                     return iconName;
                 }
-                return iconAcType === 'bi' ? `bi bi-${iconName}` : `mdi mdi-${iconName}`;
+                return iconAc.type === 'bi' ? `bi bi-${iconName}` : `mdi mdi-${iconName}`;
             };
-            gridEl.innerHTML = iconAcResults.map((iconName, index) => `
+            gridEl.innerHTML = iconAc.results.map((iconName, index) => `
                 <div class="icon-ac-item" data-index="${index}" onclick="selectIconAutocomplete(${index})">
                     <i class="${getIconClass(escapeHtml(iconName))}"></i>
                     <span>${escapeHtml(iconName)}</span>
                 </div>
             `).join('');
 
-            iconAcSelectedIndex = 0;
+            iconAc.selectedIndex = 0;
             highlightIconAcItem();
         }
 
         // ── 아이콘 인라인 자동완성: 선택 항목 하이라이트 ──
         function highlightIconAcItem() {
-            if (!iconAcDiv) return;
-            const items = iconAcDiv.querySelectorAll('.icon-ac-item');
+            if (!iconAc.div) return;
+            const items = iconAc.div.querySelectorAll('.icon-ac-item');
             items.forEach((item, idx) => {
-                if (idx === iconAcSelectedIndex) {
+                if (idx === iconAc.selectedIndex) {
                     item.classList.add('active');
                     item.scrollIntoView({ block: 'nearest' });
                 } else {
@@ -1632,7 +1622,7 @@
 
         // ── 아이콘 인라인 자동완성: 선택 ──
         function selectIconAutocomplete(index) {
-            const iconName = iconAcResults[index];
+            const iconName = iconAc.results[index];
             if (!iconName || !editor) return;
 
             const selection = editor.getSelection();
@@ -1647,7 +1637,7 @@
             const lineText = lines[line - 1] || '';
             const textBefore = lineText.substring(0, col - 1);
 
-            const prefix = iconAcType === 'icon' ? '{icon:' : (iconAcType === 'bi' ? '{bi:' : '{mdi:');
+            const prefix = iconAc.type === 'icon' ? '{icon:' : (iconAc.type === 'bi' ? '{bi:' : '{mdi:');
             const lastTriggerIndex = textBefore.lastIndexOf(prefix);
 
             if (lastTriggerIndex !== -1) {
@@ -1669,6 +1659,91 @@
                 }
             }, 10000); // 10 seconds
         }
+
+        // ── 카테고리 태그 UI 로직 ──
+        const categoryInputHidden = document.getElementById('categoryInput');
+        const categoryTagContainer = document.getElementById('categoryTagContainer');
+        const categoryTagInput = document.getElementById('categoryTagInput');
+        let categoryTags = [];
+
+        function renderCategoryTags() {
+            // 기존 렌더링 된 태그 요소들만 삭제
+            const tags = categoryTagContainer.querySelectorAll('.category-tag');
+            tags.forEach(tag => tag.remove());
+            
+            categoryTags.forEach((tagText, index) => {
+                const tagEl = document.createElement('span');
+                tagEl.className = 'category-tag';
+                tagEl.innerHTML = `<span>${escapeHtml(tagText)}</span> <i class="mdi mdi-close" onclick="removeCategoryTag(${index})"></i>`;
+                categoryTagContainer.insertBefore(tagEl, categoryTagInput);
+            });
+            categoryInputHidden.value = categoryTags.join(',');
+            // 이벤트 강제 트리거 (관리자 전용 체크 로직 동작을 위해)
+            categoryInputHidden.dispatchEvent(new Event('input'));
+        }
+
+        function addCategoryTag(tag) {
+            const cleanTag = tag.trim();
+            if (cleanTag && !categoryTags.includes(cleanTag) && /^[가-힣a-zA-Z0-9\s_.-]+$/.test(cleanTag)) {
+                categoryTags.push(cleanTag);
+                renderCategoryTags();
+            } else if (cleanTag && !/^[가-힣a-zA-Z0-9\s_.-]+$/.test(cleanTag)) {
+                Swal.fire({
+                    icon: 'warning',
+                    title: '특수문자 제외',
+                    text: '특수문자를 제외한 카테고리 이름을 입력해 주세요.',
+                    toast: true,
+                    position: 'top-end',
+                    timer: 2000,
+                    showConfirmButton: false
+                });
+            }
+        }
+
+        window.removeCategoryTag = function(index) {
+            categoryTags.splice(index, 1);
+            renderCategoryTags();
+        };
+
+        if (categoryTagInput) {
+            categoryTagInput.addEventListener('keydown', (e) => {
+                // 한글 조합 중 엔터 등 처리 방지
+                if (e.isComposing) return;
+                
+                if (e.key === 'Enter' || e.key === ',') {
+                    e.preventDefault();
+                    if (categoryTagInput.value.trim()) {
+                        const tags = categoryTagInput.value.split(','); // 복붙 등에 의한 다중입력 대비
+                        tags.forEach(t => addCategoryTag(t));
+                        categoryTagInput.value = '';
+                    }
+                } else if (e.key === 'Backspace' && categoryTagInput.value === '') {
+                    if (categoryTags.length > 0) {
+                        categoryTags.pop();
+                        renderCategoryTags();
+                    }
+                }
+            });
+
+            categoryTagInput.addEventListener('blur', () => {
+                if (categoryTagInput.value.trim()) {
+                    const tags = categoryTagInput.value.split(',');
+                    tags.forEach(t => addCategoryTag(t));
+                    categoryTagInput.value = '';
+                }
+            });
+            
+            // 쉼표 입력시 블러나 다른 이벤트에서 쉼표가 방해될 수 있으므로 input 이벤트에서도 쉼표 감지
+            categoryTagInput.addEventListener('input', (e) => {
+                if (categoryTagInput.value.includes(',')) {
+                    const tags = categoryTagInput.value.split(',');
+                    const lastFragment = tags.pop(); // 아직 입력중인 텍스트
+                    tags.forEach(t => addCategoryTag(t));
+                    categoryTagInput.value = lastFragment;
+                }
+            });
+        }
+
 
         async function checkAutoSave() {
             if (!AUTO_SAVE_KEY) return;
@@ -1921,7 +1996,7 @@
                 });
             });
 
-            const isDarkMode = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+            const isDarkMode = getIsDarkMode();
 
             editor = new toastui.Editor({
                 el: document.querySelector('#editor'),
@@ -1972,6 +2047,22 @@
                     pendingIconInsertion = null;
                 }
             });
+
+            // ── 붙여넣기 시 화면 스크롤 이동 방지 ──
+            const editorEl = document.querySelector('#editor');
+            if (editorEl) {
+                editorEl.addEventListener('paste', () => {
+                    // 현재 스크롤 위치 저장
+                    const currentScrollY = window.scrollY;
+                    const currentScrollX = window.scrollX;
+                    // 붙여넣기 완료 직후 원래 위치로 원복
+                    requestAnimationFrame(() => {
+                        window.scrollTo(currentScrollX, currentScrollY);
+                        // 혹시 늦게 렌더링되며 튀는 경우를 대비해 약간의 지연 후 한 번 더 복구
+                        setTimeout(() => window.scrollTo(currentScrollX, currentScrollY), 10);
+                    });
+                }, true); // 캡처링 단계에서 먼저 감지
+            }
 
             // ── 실시간 프리뷰 ──
             editor.on('change', () => {
@@ -2070,11 +2161,15 @@
             });
             // 기존 문서 불러오기
             try {
-                const res = await fetch(`/api/wiki/${encodeURIComponent(slug)}?redirect=no`);
+                const res = await fetch(`/api/wiki/${encodeURIComponent(slug)}?redirect=no&nocache=true`);
                 if (res.ok) {
                     const page = await res.json();
                     document.getElementById('titleInput').value = page.title;
-                    if (page.category) document.getElementById('categoryInput').value = page.category;
+                    if (page.category) {
+                        document.getElementById('categoryInput').value = page.category;
+                        categoryTags = page.category.split(',').map(c => c.trim()).filter(c => c);
+                        renderCategoryTags();
+                    }
                     if (page.redirect_to) document.getElementById('redirectInput').value = page.redirect_to;
                     if (page.is_locked) document.getElementById('isLockedCheck').checked = true;
 
@@ -2123,6 +2218,42 @@
             checkConcurrentEditors();
         });
 
+        // ── Diff HTML 생성 공통 함수 ──
+        function buildDiffHtml(diffData, contextLines) {
+            let html = '';
+            diffData.forEach((part, i) => {
+                if (part.added || part.removed) {
+                    const cls = part.added ? 'diff-added' : 'diff-removed';
+                    html += `<span class="${cls}">${escapeHtml(part.value)}</span>`;
+                } else {
+                    let lines = part.value.split('\n');
+                    let hasTrailingNewline = false;
+                    if (lines[lines.length - 1] === '') {
+                        lines.pop();
+                        hasTrailingNewline = true;
+                    }
+
+                    let showTop = (i !== 0);
+                    let showBottom = (i !== diffData.length - 1);
+
+                    if (!showTop && !showBottom) {
+                        html += `<span>${escapeHtml(part.value)}</span>`;
+                    } else if (lines.length <= contextLines * 2 + 1) {
+                        html += `<span>${escapeHtml(part.value)}</span>`;
+                    } else {
+                        if (showTop) {
+                            html += `<span>${escapeHtml(lines.slice(0, contextLines).join('\n') + '\n')}</span>`;
+                        }
+                        html += `<span style="color: grey; font-style: italic; background: #e9ecef; border-radius: 4px; padding: 0 4px;">... (생략됨) ...</span>\n`;
+                        if (showBottom) {
+                            html += `<span>${escapeHtml(lines.slice(-contextLines).join('\n') + (hasTrailingNewline ? '\n' : ''))}</span>`;
+                        }
+                    }
+                }
+            });
+            return html;
+        }
+
         // ── 변경 사항 (내 수정본) 렌더링 ──
         function renderLocalDiff() {
             const container = document.getElementById('diffPreviewContainer');
@@ -2135,47 +2266,7 @@
             }
 
             const diffData = Diff.diffLines(originalContent, currentContent);
-
-            let diffHtml = '';
-            const contextLines = 3; // 주변 3줄 보여주기
-
-            diffData.forEach((part, i) => {
-                if (part.added || part.removed) {
-                    const cls = part.added ? 'diff-added' : 'diff-removed';
-                    diffHtml += `<span class="${cls}">${escapeHtml(part.value)}</span>`;
-                } else {
-                    let lines = part.value.split('\n');
-                    let hasTrailingNewline = false;
-                    if (lines[lines.length - 1] === '') {
-                        lines.pop(); // remove trailing empty string
-                        hasTrailingNewline = true;
-                    }
-
-                    let showTop = (i !== 0); // Not first block
-                    let showBottom = (i !== diffData.length - 1); // Not last block
-
-                    if (!showTop && !showBottom) {
-                        diffHtml += `<span>${escapeHtml(part.value)}</span>`;
-                    } else if (lines.length <= contextLines * 2 + 1) {
-                        diffHtml += `<span>${escapeHtml(part.value)}</span>`;
-                    } else {
-                        let topTxt = '';
-                        let bottomTxt = '';
-                        if (showTop) {
-                            topTxt = lines.slice(0, contextLines).join('\n') + '\n';
-                        }
-                        if (showBottom) {
-                            bottomTxt = lines.slice(-contextLines).join('\n') + (hasTrailingNewline ? '\n' : '');
-                        }
-
-                        if (showTop) diffHtml += `<span>${escapeHtml(topTxt)}</span>`;
-                        diffHtml += `<span style="color: grey; font-style: italic; background: #e9ecef; border-radius: 4px; padding: 0 4px;">... (생략됨) ...</span>\n`;
-                        if (showBottom) diffHtml += `<span>${escapeHtml(bottomTxt)}</span>`;
-                    }
-                }
-            });
-
-            container.innerHTML = diffHtml;
+            container.innerHTML = buildDiffHtml(diffData, 3);
         }
 
         // ── 템플릿 모달 ──
@@ -2399,7 +2490,7 @@
             window.scrollTo(0, 0);
 
             if (!conflictEditor) {
-                const isDarkMode = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+                const isDarkMode = getIsDarkMode();
                 conflictEditor = new toastui.Editor({
                     el: document.querySelector('#conflict-local-editor'),
                     height: '500px',
@@ -2444,54 +2535,16 @@
 
         function renderDiffView() {
             if (!cachedDiffData) return;
-            let diffHtml = '';
+            let diffHtml;
 
             if (diffViewMode === 'all') {
+                diffHtml = '';
                 cachedDiffData.forEach(part => {
                     const cls = part.added ? 'diff-added' : part.removed ? 'diff-removed' : '';
                     diffHtml += `<span class="${cls}">${escapeHtml(part.value)}</span>`;
                 });
             } else {
-                const contextLines = 2; // 보여줄 위/아래 줄 수
-
-                cachedDiffData.forEach((part, i) => {
-                    if (part.added || part.removed) {
-                        const cls = part.added ? 'diff-added' : 'diff-removed';
-                        diffHtml += `<span class="${cls}">${escapeHtml(part.value)}</span>`;
-                    } else {
-                        // 변경되지 않은 텍스트
-                        let lines = part.value.split('\n');
-                        let hasTrailingNewline = false;
-                        if (lines[lines.length - 1] === '') {
-                            lines.pop(); // 맨 끝 빈 요소 제거
-                            hasTrailingNewline = true;
-                        }
-
-                        let showTop = (i !== 0); // 이전 요소가 수정사항이면 앞부분 노출
-                        let showBottom = (i !== cachedDiffData.length - 1); // 다음 요소가 수정사항이면 뒷부분 노출
-
-                        if (!showTop && !showBottom) {
-                            // 수정사항 전혀 없을 때
-                            diffHtml += `<span>${escapeHtml(part.value)}</span>`;
-                        } else if (lines.length <= contextLines * 2 + 1) {
-                            // 줄 수가 적으면 모두 표시
-                            diffHtml += `<span>${escapeHtml(part.value)}</span>`;
-                        } else {
-                            let topTxt = '';
-                            let bottomTxt = '';
-                            if (showTop) {
-                                topTxt = lines.slice(0, contextLines).join('\n') + '\n';
-                            }
-                            if (showBottom) {
-                                bottomTxt = lines.slice(-contextLines).join('\n') + (hasTrailingNewline ? '\n' : '');
-                            }
-
-                            if (showTop) diffHtml += `<span>${escapeHtml(topTxt)}</span>`;
-                            diffHtml += `<span style="color: grey; font-style: italic; background: #e9ecef; border-radius: 4px; padding: 0 4px;">... (생략됨) ...</span>\n`;
-                            if (showBottom) diffHtml += `<span>${escapeHtml(bottomTxt)}</span>`;
-                        }
-                    }
-                });
+                diffHtml = buildDiffHtml(cachedDiffData, 2);
             }
             document.getElementById('conflict-diff-view').innerHTML = diffHtml;
         }
@@ -2503,7 +2556,7 @@
 
             if (serverViewMode === 'raw') {
                 if (!serverViewer) {
-                    const isDarkMode = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+                    const isDarkMode = getIsDarkMode();
                     serverViewer = toastui.Editor.factory({
                         el: preview,
                         viewer: true,
@@ -2564,6 +2617,13 @@
             if (blob.size > 15 * 1024 * 1024) {
                 Swal.fire('오류', '파일 크기는 15MB 이하만 허용됩니다.', 'warning');
                 return;
+            }
+
+            // 이미지인 경우 편집기를 먼저 실행 (동영상은 바로 업로드)
+            if (blob.type && !blob.type.startsWith('video/') && typeof ImageEditor !== 'undefined') {
+                const editedBlob = await ImageEditor.open(blob);
+                if (!editedBlob) return; // 편집 취소
+                blob = new File([editedBlob], blob.name || 'image', { type: editedBlob.type });
             }
 
             // 사용자에게 파일명 입력 요청
@@ -2637,8 +2697,10 @@
         }
 
         // ── 동시편집 감지 ──
-        let heartbeatInterval = null;
-        let editorCheckInterval = null;
+        const heartbeat = {
+            interval: null,
+            editorCheckInterval: null,
+        };
 
         function startEditingHeartbeat() {
             if (!slug) return;
@@ -2647,10 +2709,24 @@
             sendHeartbeat();
 
             // 30초마다 하트비트 전송
-            heartbeatInterval = setInterval(sendHeartbeat, 30000);
+            heartbeat.interval = setInterval(sendHeartbeat, 30000);
 
             // 30초마다 편집자 목록 확인
-            editorCheckInterval = setInterval(checkConcurrentEditors, 30000);
+            heartbeat.editorCheckInterval = setInterval(checkConcurrentEditors, 30000);
+
+            // 페이지 이탈 시 인터벌 정리
+            window.addEventListener('beforeunload', stopEditingHeartbeat);
+        }
+
+        function stopEditingHeartbeat() {
+            if (heartbeat.interval) {
+                clearInterval(heartbeat.interval);
+                heartbeat.interval = null;
+            }
+            if (heartbeat.editorCheckInterval) {
+                clearInterval(heartbeat.editorCheckInterval);
+                heartbeat.editorCheckInterval = null;
+            }
         }
 
         async function sendHeartbeat() {
@@ -2694,75 +2770,50 @@
         }
 
         // ── 위키 자동완성 (Autocomplete) ──
-        let acVisible = false;
-        let acType = 'link'; // 'link' or 'template'
-        let acResults = [];
-        let acSelectedIndex = -1;
-        let acQuery = '';
-        let acLastQuery = null;
-        let acDebounceTimer = null;
-        const acDiv = document.getElementById('wiki-autocomplete');
+        const wikiAc = {
+            visible: false,
+            type: 'link',            // 'link' | 'template'
+            results: [],
+            selectedIndex: -1,
+            query: '',
+            lastQuery: null,
+            debounceTimer: null,
+            div: document.getElementById('wiki-autocomplete'),
+        };
 
         function hideAutocomplete() {
-            acVisible = false;
-            acResults = [];
-            acSelectedIndex = -1;
-            acLastQuery = null;
-            if (acDiv) acDiv.style.display = 'none';
+            wikiAc.visible = false;
+            wikiAc.results = [];
+            wikiAc.selectedIndex = -1;
+            wikiAc.lastQuery = null;
+            if (wikiAc.div) wikiAc.div.style.display = 'none';
         }
 
         function showAutocomplete(query, type) {
-            acQuery = query;
-            acType = type;
-            acVisible = true;
+            wikiAc.query = query;
+            wikiAc.type = type;
+            wikiAc.visible = true;
 
-            // window.getSelection()으로 실제 커서 위치 획득 (에디터 내부 구조에 무관)
-            if (acDiv) {
-                let positioned = false;
-                const sel = window.getSelection();
-                if (sel && sel.rangeCount > 0) {
-                    const range = sel.getRangeAt(0).cloneRange();
-                    range.collapse(true);
-                    const rect = range.getBoundingClientRect();
-                    if (rect.height > 0) {
-                        let left = rect.left + window.scrollX;
-                        let top = rect.bottom + window.scrollY + 4;
-                        if (left + 260 > window.innerWidth) left = window.innerWidth - 270;
-                        acDiv.style.left = `${left}px`;
-                        acDiv.style.top = `${top}px`;
-                        acDiv.style.display = 'block';
-                        positioned = true;
-                    }
-                }
-                if (!positioned) {
-                    // fallback: 에디터 기준
-                    const editorEl = document.querySelector('#editor');
-                    if (editorEl) {
-                        const rect = editorEl.getBoundingClientRect();
-                        acDiv.style.left = `${rect.left + 50 + window.scrollX}px`;
-                        acDiv.style.top = `${rect.top + 80 + window.scrollY}px`;
-                        acDiv.style.display = 'block';
-                    }
-                }
-            }
+            // 커서 위치에 드롭다운 표시
+            positionDropdownAtCursor(wikiAc.div, 250);
 
-            if (acQuery === acLastQuery) return;
-            acLastQuery = acQuery;
+            if (wikiAc.query === wikiAc.lastQuery) return;
+            wikiAc.lastQuery = wikiAc.query;
 
-            clearTimeout(acDebounceTimer);
-            acDebounceTimer = setTimeout(async () => {
-                if (!acVisible) return;
+            clearTimeout(wikiAc.debounceTimer);
+            wikiAc.debounceTimer = setTimeout(async () => {
+                if (!wikiAc.visible) return;
                 try {
                     // 쿼리가 비어있어도 API 호출 (최신순 등 반환 가능)
-                    let acUrl = `/api/wiki/search-titles?q=${encodeURIComponent(acQuery)}&type=${acType}`;
+                    let acUrl = `/api/wiki/search-titles?q=${encodeURIComponent(wikiAc.query)}&type=${wikiAc.type}`;
                     // 틀 자동완성에서 자기 자신 문서 제외
-                    if (acType === 'template' && slug) {
+                    if (wikiAc.type === 'template' && slug) {
                         acUrl += `&exclude=${encodeURIComponent(slug)}`;
                     }
                     const res = await fetch(acUrl);
                     if (!res.ok) return;
                     const data = await res.json();
-                    acResults = data.results || [];
+                    wikiAc.results = data.results || [];
                     renderAutocompleteResults();
                 } catch (e) {
                     console.error('Autocomplete fetch error:', e);
@@ -2771,29 +2822,29 @@
         }
 
         function renderAutocompleteResults() {
-            if (!acDiv) return;
+            if (!wikiAc.div) return;
 
-            if (acResults.length === 0) {
-                acDiv.innerHTML = '<div class="list-group-item text-muted" style="font-size:0.85rem">결과 없음</div>';
+            if (wikiAc.results.length === 0) {
+                wikiAc.div.innerHTML = '<div class="list-group-item text-muted" style="font-size:0.85rem">결과 없음</div>';
                 return;
             }
 
-            acDiv.innerHTML = acResults.map((item, index) => `
+            wikiAc.div.innerHTML = wikiAc.results.map((item, index) => `
                 <div class="list-group-item autocomplete-item" data-index="${index}" onclick="selectAutocomplete(${index})">
-                    <i class="mdi ${acType === 'template' ? 'mdi-toy-brick-outline' : 'mdi-file-document-outline'}"></i>
+                    <i class="mdi ${wikiAc.type === 'template' ? 'mdi-toy-brick-outline' : 'mdi-file-document-outline'}"></i>
                     <span class="item-title">${escapeHtml(item.title)}</span>
-                    <span class="item-type">${acType === 'template' ? '틀' : '문서'}</span>
+                    <span class="item-type">${wikiAc.type === 'template' ? '틀' : '문서'}</span>
                 </div>
             `).join('');
 
-            acSelectedIndex = 0;
+            wikiAc.selectedIndex = 0;
             highlightAutocompleteItem();
         }
 
         function highlightAutocompleteItem() {
-            const items = acDiv.querySelectorAll('.autocomplete-item');
+            const items = wikiAc.div.querySelectorAll('.autocomplete-item');
             items.forEach((item, idx) => {
-                if (idx === acSelectedIndex) {
+                if (idx === wikiAc.selectedIndex) {
                     item.classList.add('active');
                     item.scrollIntoView({ block: 'nearest' });
                 } else {
@@ -2803,7 +2854,7 @@
         }
 
         function selectAutocomplete(index) {
-            const item = acResults[index];
+            const item = wikiAc.results[index];
             if (!item || !editor) return;
 
             const selection = editor.getSelection();
@@ -2818,8 +2869,8 @@
             const lineText = lines[line - 1] || '';
             const textBefore = lineText.substring(0, col - 1);
 
-            const trigger = acType === 'template' ? '{{' : '[[';
-            const close = acType === 'template' ? '}}' : ']]';
+            const trigger = wikiAc.type === 'template' ? '{{' : '[[';
+            const close = wikiAc.type === 'template' ? '}}' : ']]';
             const lastTriggerIndex = textBefore.lastIndexOf(trigger);
 
             if (lastTriggerIndex !== -1) {
@@ -2831,157 +2882,131 @@
             hideAutocomplete();
         }
 
-        // 키보드 네비게이션 (Capturing 모드 사용)
+        // ── 자동완성 통합 키보드 네비게이션 (단일 Capturing 핸들러) ──
         window.addEventListener('keydown', (e) => {
-            if (!acVisible) return;
-
             // 한글 IME 등에서 Process 키가 들어올 때 무시
             if (e.key === 'Process') return;
 
-            if (e.key === 'ArrowDown' || e.keyCode === 40) {
-                if (acResults.length > 0) {
-                    e.preventDefault();
-                    e.stopPropagation(); // 에디터 커서 이동 방지
-                    acSelectedIndex = (acSelectedIndex + 1) % acResults.length;
-                    highlightAutocompleteItem();
-                } else {
+            // 현재 활성 자동완성 타입 판별
+            const activeAc = wikiAc.visible ? 'wiki'
+                           : iconAc.visible ? 'icon'
+                           : colorAc.visible ? 'color'
+                           : null;
+            if (!activeAc) return;
+
+            const key = e.key;
+            const isDown  = key === 'ArrowDown'  || e.keyCode === 40;
+            const isUp    = key === 'ArrowUp'    || e.keyCode === 38;
+            const isRight = key === 'ArrowRight'  || e.keyCode === 39;
+            const isLeft  = key === 'ArrowLeft'   || e.keyCode === 37;
+            const isEnter = key === 'Enter'       || e.keyCode === 13;
+            const isEsc   = key === 'Escape'      || e.keyCode === 27;
+
+            if (activeAc === 'wiki') {
+                if (isDown) {
+                    if (wikiAc.results.length > 0) {
+                        e.preventDefault(); e.stopPropagation();
+                        wikiAc.selectedIndex = (wikiAc.selectedIndex + 1) % wikiAc.results.length;
+                        highlightAutocompleteItem();
+                    } else { hideAutocomplete(); }
+                } else if (isUp) {
+                    if (wikiAc.results.length > 0) {
+                        e.preventDefault(); e.stopPropagation();
+                        wikiAc.selectedIndex = (wikiAc.selectedIndex - 1 + wikiAc.results.length) % wikiAc.results.length;
+                        highlightAutocompleteItem();
+                    } else { hideAutocomplete(); }
+                } else if (isLeft || isRight) {
+                    hideAutocomplete();
+                } else if (isEnter) {
+                    if (wikiAc.results.length > 0 && wikiAc.selectedIndex >= 0) {
+                        e.preventDefault(); e.stopPropagation();
+                        selectAutocomplete(wikiAc.selectedIndex);
+                    } else { hideAutocomplete(); }
+                } else if (isEsc) {
+                    e.preventDefault(); e.stopPropagation();
                     hideAutocomplete();
                 }
-            } else if (e.key === 'ArrowUp' || e.keyCode === 38) {
-                if (acResults.length > 0) {
-                    e.preventDefault();
-                    e.stopPropagation(); // 에디터 커서 이동 방지
-                    acSelectedIndex = (acSelectedIndex - 1 + acResults.length) % acResults.length;
-                    highlightAutocompleteItem();
-                } else {
-                    hideAutocomplete();
-                }
-            } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.keyCode === 37 || e.keyCode === 39) {
-                hideAutocomplete();
-            } else if (e.key === 'Enter' || e.keyCode === 13) {
-                if (acResults.length > 0 && acSelectedIndex >= 0) {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    selectAutocomplete(acSelectedIndex);
-                } else {
-                    hideAutocomplete();
-                }
-            } else if (e.key === 'Escape' || e.keyCode === 27) {
-                e.preventDefault();
-                e.stopPropagation();
-                hideAutocomplete();
-            }
-        }, true);
-
-        // ── 아이콘 자동완성 키보드 네비게이션 (Capturing 모드) ──
-        window.addEventListener('keydown', (e) => {
-            if (!iconAcVisible) return;
-            if (e.key === 'Process') return;
-
-            if (e.key === 'ArrowDown' || e.keyCode === 40) {
-                if (iconAcResults.length > 0) {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    // 아래 행으로 이동 (ICON_AC_COLS 칸씩)
-                    iconAcSelectedIndex = Math.min(iconAcSelectedIndex + ICON_AC_COLS, iconAcResults.length - 1);
-                    highlightIconAcItem();
-                } else {
+            } else if (activeAc === 'icon') {
+                if (isDown) {
+                    if (iconAc.results.length > 0) {
+                        e.preventDefault(); e.stopPropagation();
+                        iconAc.selectedIndex = Math.min(iconAc.selectedIndex + iconAc.COLS, iconAc.results.length - 1);
+                        highlightIconAcItem();
+                    } else { hideIconAutocomplete(); }
+                } else if (isUp) {
+                    if (iconAc.results.length > 0) {
+                        e.preventDefault(); e.stopPropagation();
+                        iconAc.selectedIndex = Math.max(iconAc.selectedIndex - iconAc.COLS, 0);
+                        highlightIconAcItem();
+                    } else { hideIconAutocomplete(); }
+                } else if (isRight) {
+                    if (iconAc.results.length > 0) {
+                        e.preventDefault(); e.stopPropagation();
+                        iconAc.selectedIndex = (iconAc.selectedIndex + 1) % iconAc.results.length;
+                        highlightIconAcItem();
+                    }
+                } else if (isLeft) {
+                    if (iconAc.results.length > 0) {
+                        e.preventDefault(); e.stopPropagation();
+                        iconAc.selectedIndex = (iconAc.selectedIndex - 1 + iconAc.results.length) % iconAc.results.length;
+                        highlightIconAcItem();
+                    }
+                } else if (isEnter) {
+                    if (iconAc.results.length > 0 && iconAc.selectedIndex >= 0) {
+                        e.preventDefault(); e.stopPropagation();
+                        selectIconAutocomplete(iconAc.selectedIndex);
+                    } else { hideIconAutocomplete(); }
+                } else if (isEsc) {
+                    e.preventDefault(); e.stopPropagation();
                     hideIconAutocomplete();
                 }
-            } else if (e.key === 'ArrowUp' || e.keyCode === 38) {
-                if (iconAcResults.length > 0) {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    iconAcSelectedIndex = Math.max(iconAcSelectedIndex - ICON_AC_COLS, 0);
-                    highlightIconAcItem();
-                } else {
-                    hideIconAutocomplete();
-                }
-            } else if (e.key === 'ArrowRight' || e.keyCode === 39) {
-                if (iconAcResults.length > 0) {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    iconAcSelectedIndex = (iconAcSelectedIndex + 1) % iconAcResults.length;
-                    highlightIconAcItem();
-                }
-            } else if (e.key === 'ArrowLeft' || e.keyCode === 37) {
-                if (iconAcResults.length > 0) {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    iconAcSelectedIndex = (iconAcSelectedIndex - 1 + iconAcResults.length) % iconAcResults.length;
-                    highlightIconAcItem();
-                }
-            } else if (e.key === 'Enter' || e.keyCode === 13) {
-                if (iconAcResults.length > 0 && iconAcSelectedIndex >= 0) {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    selectIconAutocomplete(iconAcSelectedIndex);
-                } else {
-                    hideIconAutocomplete();
-                }
-            } else if (e.key === 'Escape' || e.keyCode === 27) {
-                e.preventDefault();
-                e.stopPropagation();
-                hideIconAutocomplete();
-            }
-        }, true);
+            } else if (activeAc === 'color') {
+                const swatchCount = COLOR_SWATCHES.length;
+                const SWATCH_COLS = 10;
 
-        // ── 색상 자동완성 키보드 네비게이션 (Capturing 모드) ──
-        window.addEventListener('keydown', (e) => {
-            if (!colorAcVisible) return;
-            if (e.key === 'Process') return;
-
-            const swatchCount = COLOR_SWATCHES.length;
-            const SWATCH_COLS = 10; // 스와치 한 줄에 10개
-
-            if (e.key === 'ArrowRight' || e.keyCode === 39) {
-                if (swatchCount > 0) {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    colorAcSelectedSwatchIndex = (colorAcSelectedSwatchIndex + 1) % swatchCount;
-                    selectColorSwatch(colorAcSelectedSwatchIndex);
+                if (isRight) {
+                    if (swatchCount > 0) {
+                        e.preventDefault(); e.stopPropagation();
+                        colorAc.selectedSwatchIndex = (colorAc.selectedSwatchIndex + 1) % swatchCount;
+                        selectColorSwatch(colorAc.selectedSwatchIndex);
+                    }
+                } else if (isLeft) {
+                    if (swatchCount > 0) {
+                        e.preventDefault(); e.stopPropagation();
+                        colorAc.selectedSwatchIndex = (colorAc.selectedSwatchIndex - 1 + swatchCount) % swatchCount;
+                        selectColorSwatch(colorAc.selectedSwatchIndex);
+                    }
+                } else if (isDown) {
+                    if (swatchCount > 0) {
+                        e.preventDefault(); e.stopPropagation();
+                        colorAc.selectedSwatchIndex = Math.min(colorAc.selectedSwatchIndex + SWATCH_COLS, swatchCount - 1);
+                        selectColorSwatch(colorAc.selectedSwatchIndex);
+                    }
+                } else if (isUp) {
+                    if (swatchCount > 0) {
+                        e.preventDefault(); e.stopPropagation();
+                        colorAc.selectedSwatchIndex = Math.max(colorAc.selectedSwatchIndex - SWATCH_COLS, 0);
+                        selectColorSwatch(colorAc.selectedSwatchIndex);
+                    }
+                } else if (isEnter) {
+                    e.preventDefault(); e.stopPropagation();
+                    applyColorAutocomplete();
+                } else if (isEsc) {
+                    e.preventDefault(); e.stopPropagation();
+                    hideColorAutocomplete();
                 }
-            } else if (e.key === 'ArrowLeft' || e.keyCode === 37) {
-                if (swatchCount > 0) {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    colorAcSelectedSwatchIndex = (colorAcSelectedSwatchIndex - 1 + swatchCount) % swatchCount;
-                    selectColorSwatch(colorAcSelectedSwatchIndex);
-                }
-            } else if (e.key === 'ArrowDown' || e.keyCode === 40) {
-                if (swatchCount > 0) {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    colorAcSelectedSwatchIndex = Math.min(colorAcSelectedSwatchIndex + SWATCH_COLS, swatchCount - 1);
-                    selectColorSwatch(colorAcSelectedSwatchIndex);
-                }
-            } else if (e.key === 'ArrowUp' || e.keyCode === 38) {
-                if (swatchCount > 0) {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    colorAcSelectedSwatchIndex = Math.max(colorAcSelectedSwatchIndex - SWATCH_COLS, 0);
-                    selectColorSwatch(colorAcSelectedSwatchIndex);
-                }
-            } else if (e.key === 'Enter' || e.keyCode === 13) {
-                e.preventDefault();
-                e.stopPropagation();
-                applyColorAutocomplete();
-            } else if (e.key === 'Escape' || e.keyCode === 27) {
-                e.preventDefault();
-                e.stopPropagation();
-                hideColorAutocomplete();
             }
         }, true);
 
         // 전역 클릭 시 자동완성 닫기
         document.addEventListener('mousedown', (e) => {
-            if (acDiv && !acDiv.contains(e.target)) {
+            if (wikiAc.div && !wikiAc.div.contains(e.target)) {
                 setTimeout(hideAutocomplete, 100);
             }
-            if (iconAcDiv && !iconAcDiv.contains(e.target)) {
+            if (iconAc.div && !iconAc.div.contains(e.target)) {
                 setTimeout(hideIconAutocomplete, 100);
             }
-            if (colorAcDiv && !colorAcDiv.contains(e.target)) {
+            if (colorAc.div && !colorAc.div.contains(e.target)) {
                 setTimeout(hideColorAutocomplete, 100);
             }
         });
@@ -3381,26 +3406,6 @@
 
             return { open };
         })();
-
-        // ── handleImageUpload 를 이미지 편집기와 연동 ──
-        // 기존 handleImageUpload를 래핑
-        const _origHandleImageUpload = handleImageUpload;
-        handleImageUpload = async function (blob, callback) {
-            if (!blob) return;
-
-            // 동영상은 편집 없이 바로 업로드
-            if (blob.type && blob.type.startsWith('video/')) {
-                return _origHandleImageUpload(blob, callback);
-            }
-
-            // 이미지: 편집기 열기
-            const editedBlob = await ImageEditor.open(blob);
-            if (!editedBlob) return; // 취소
-
-            // 편집된 blob에 원본 이름 유지
-            const editedFile = new File([editedBlob], blob.name || 'image', { type: editedBlob.type });
-            return _origHandleImageUpload(editedFile, callback);
-        };
 
     </script>
 

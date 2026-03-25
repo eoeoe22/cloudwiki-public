@@ -338,13 +338,19 @@
                         <hr class="my-4">
                         <h6 class="fw-bold mb-3"><i class="mdi mdi-account-multiple-plus-outline text-primary"></i> 회원가입 정책</h6>
                         <div class="mb-3">
-                            <div class="d-flex align-items-center gap-2">
-                                <span id="signupPolicyDisplay" class="badge bg-secondary">확인 중...</span>
-                                <span class="text-muted small">이 설정은 <code>wrangler.toml</code>의 <code>SIGNUP_POLICY</code> 환경변수로 관리됩니다.</span>
+                            <div class="form-check mb-2">
+                                <input class="form-check-input" type="radio" name="signupPolicy"
+                                    id="signupPolicyOpen" value="open">
+                                <label class="form-check-label" for="signupPolicyOpen">
+                                    <strong>모두 허용 (open)</strong> — 모든 사용자가 자유롭게 가입할 수 있습니다. (기본값)
+                                </label>
                             </div>
-                            <div class="text-muted small mt-2">
-                                <strong>open</strong>: 모든 사용자가 자유롭게 가입 가능 (기본값)<br>
-                                <strong>approval</strong>: 관리자 승인 후 가입 가능 (승인제)
+                            <div class="form-check mb-2">
+                                <input class="form-check-input" type="radio" name="signupPolicy"
+                                    id="signupPolicyApproval" value="approval">
+                                <label class="form-check-label" for="signupPolicyApproval">
+                                    <strong>승인제 (approval)</strong> — 관리자 승인 후 가입이 가능합니다.
+                                </label>
                             </div>
                         </div>
 
@@ -579,11 +585,12 @@
                     </div>
                 </div>
             </div>
-
-            <aside class="wiki-sidebar" id="wikiSidebar">
-                <div id="app-sidebar-placeholder"></div>
-            </aside>
         </div>
+
+        <aside class="wiki-sidebar" id="wikiSidebar">
+            <div id="app-sidebar-placeholder"></div>
+        </aside>
+    </div>
 
         <!-- ── 푸터 Placeholder ── -->
         <div id="app-footer-placeholder"></div>
@@ -727,11 +734,14 @@
                         banStatus = `<span class="badge bg-danger" title="차단 해제일: ${banEnd}">차단됨 (${banEnd}까지)</span>`;
                     }
 
+                    const isDeleted = u.role === 'deleted';
+
                     let roleBadge = '';
                     if (u.role === 'super_admin') roleBadge = '<span class="badge bg-dark">최고 관리자</span>';
                     else if (u.role === 'admin') roleBadge = '<span class="badge bg-primary">관리자</span>';
                     else if (u.role === 'discussion_manager') roleBadge = '<span class="badge bg-info">토론 관리자</span>';
                     else if (u.role === 'banned') roleBadge = '<span class="badge bg-danger">차단됨</span>';
+                    else if (isDeleted) roleBadge = '<span class="badge bg-secondary">탈퇴한 사용자</span>';
                     else roleBadge = '<span class="badge bg-secondary">일반 유저</span>';
 
                     const disableRoleChange = currentUser.role !== 'super_admin' || u.role === 'super_admin' ? 'disabled' : '';
@@ -742,17 +752,17 @@
                     let roleSelectHtml = '';
                     if (currentUser.role === 'super_admin' && u.role !== 'super_admin') {
                         roleSelectHtml = `
-                    <select class="form-select form-select-sm d-inline-block w-auto" onchange="changeRole(${u.id}, this.value)">
+                    <select class="form-select form-select-sm d-inline-block w-auto" onchange="changeRole(${u.id}, this.value)" ${isDeleted ? 'disabled' : ''}>
                         <option value="user" ${u.role === 'user' ? 'selected' : ''}>일반 유저</option>
                         <option value="discussion_manager" ${u.role === 'discussion_manager' ? 'selected' : ''}>토론 관리자</option>
                         <option value="admin" ${u.role === 'admin' ? 'selected' : ''}>관리자</option>
+                        ${isDeleted ? '<option value="deleted" selected>탈퇴한 사용자</option>' : ''}
                     </select>
                `;
                     } else {
                         roleSelectHtml = roleBadge;
                     }
 
-                    const isDeleted = u.role === 'deleted';
                     const nameCell = isDeleted
                         ? `<a href="/profile/${u.id}" class="fw-bold text-decoration-none text-muted">${escapeHtml(u.name)}</a>`
                         : `<a href="/profile/${u.id}" class="fw-bold text-decoration-none">${escapeHtml(u.name)}</a>`;
@@ -762,13 +772,13 @@
                     <td>${profile}</td>
                     <td>${nameCell}</td>
                     <td>${escapeHtml(u.email)}</td>
-                    <td>${isDeleted ? '<span class="badge bg-secondary">탈퇴한 사용자</span>' : roleSelectHtml}</td>
+                    <td>${roleSelectHtml}</td>
                     <td>${isDeleted ? '<span class="badge bg-secondary">해당 없음</span>' : banStatus}</td>
                     <td>${joinDate}</td>
                     <td>
-                        ${isDeleted ? '' : `<button class="btn btn-sm btn-outline-danger mb-1" data-id="${u.id}" data-name="${escapeHtml(u.name)}" onclick="promptBan(+this.dataset.id, this.dataset.name)" ${disableBan}>
-                            ${u.banned_until ? '<i class="mdi mdi-lock-open-variant"></i> 해제' : '<i class="mdi mdi-block-helper"></i> 차단'}
-                        </button>`}
+                        <button class="btn btn-sm btn-outline-danger mb-1" data-id="${u.id}" data-name="${escapeHtml(u.name)}" onclick="promptBan(+this.dataset.id, this.dataset.name)" ${disableBan || isDeleted ? 'disabled' : ''}>
+                            ${u.banned_until ? '<i class="mdi mdi-lock-open-variant"></i> 해제' : (isDeleted ? '<i class="mdi mdi-block-helper"></i> 차단 (탈퇴)' : '<i class="mdi mdi-block-helper"></i> 차단')}
+                        </button>
                     </td>
                 </tr>
             `;
@@ -884,6 +894,14 @@
                         mcpBadge.textContent = 'disabled (사용 안 함)';
                     }
                     updateMcpUrlBox(mcpMode === 'open');
+
+                    // 회원가입 정책 로드
+                    const signupPolicy = settings.signup_policy || 'open';
+                    if (signupPolicy === 'approval') {
+                        document.getElementById('signupPolicyApproval').checked = true;
+                    } else {
+                        document.getElementById('signupPolicyOpen').checked = true;
+                    }
                 } catch (e) {
                     console.error('설정 로드 실패', e);
                 }
@@ -925,7 +943,7 @@
             async function saveWikiSettings() {
                 const selected = document.querySelector('input[name="namechangePolicy"]:checked');
                 if (!selected) {
-                    Swal.fire('오류', '정책을 선택해주세요.', 'warning');
+                    Swal.fire('오류', '표시명 변경 정책을 선택해주세요.', 'warning');
                     return;
                 }
 
@@ -946,19 +964,26 @@
                 // DM 설정
                 const allowDm = document.getElementById('allowDmSwitch')?.checked ? 1 : 0;
 
+                // 회원가입 정책
+                const signupPolicySelected = document.querySelector('input[name="signupPolicy"]:checked');
+                const signupPolicy = signupPolicySelected ? signupPolicySelected.value : 'open';
+
                 try {
                     const res = await fetch('/api/admin/settings', {
                         method: 'PUT',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ 
                             namechange_ratelimit: Number(cooldownDays), 
-                            allow_direct_message: allowDm
+                            allow_direct_message: allowDm,
+                            signup_policy: signupPolicy
                         })
                     });
                     const data = await res.json();
                     if (!res.ok) throw new Error(data.error || '저장 실패');
 
                     Swal.fire({ icon: 'success', title: '설정 저장됨', showConfirmButton: false, timer: 1000 });
+                    // 가입 신청 카드 표시/숨기기 갱신
+                    loadSignupPolicy();
                 } catch (err) {
                     Swal.fire('오류', err.message, 'error');
                 }
@@ -976,16 +1001,12 @@
                     const data = await res.json();
                     const policy = data.policy || 'open';
 
-                    const badge = document.getElementById('signupPolicyDisplay');
                     if (policy === 'approval') {
-                        badge.className = 'badge bg-warning text-dark';
-                        badge.textContent = 'approval (승인제)';
                         document.getElementById('signupRequestsCard').style.display = '';
                         // 대기 중인 신청 수 로드
                         loadSignupRequestsCount();
                     } else {
-                        badge.className = 'badge bg-success';
-                        badge.textContent = 'open (모두 허용)';
+                        document.getElementById('signupRequestsCard').style.display = 'none';
                     }
                 } catch (e) {
                     console.error('가입 정책 로드 실패', e);

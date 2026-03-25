@@ -445,6 +445,14 @@ app.get('/profile/:id', async (c) => {
 
 // ── 사이트맵 ──
 app.get('/sitemap.xml', async (c) => {
+    // ALLOW_CRAWL이 true가 아니면 빈 사이트맵 반환
+    if (c.env.ALLOW_CRAWL !== 'true') {
+        const xml = '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n</urlset>';
+        return new Response(xml, {
+            headers: { 'Content-Type': 'application/xml; charset=utf-8' },
+        });
+    }
+
     const db = c.env.DB;
     const baseUrl = new URL(c.req.url).origin;
 
@@ -481,6 +489,14 @@ app.get('/sitemap.xml', async (c) => {
 
 // ── Robots.txt ──
 app.get('/robots.txt', (c) => {
+    // ALLOW_CRAWL이 true가 아니면 전체 차단
+    if (c.env.ALLOW_CRAWL !== 'true') {
+        const robotsTxt = 'User-agent: *\nDisallow: /';
+        return new Response(robotsTxt, {
+            headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+        });
+    }
+
     const baseUrl = new URL(c.req.url).origin;
     const robotsTxt = `${robotsTxtBase}\nSitemap: ${baseUrl}/sitemap.xml`;
 

@@ -18,8 +18,8 @@ export type Env = {
         WIKI_FAVICON_URL: string;
         CUSTOM_HEADER: string;
         SELECTED_ICONS_ONLY: string;
-        SIGNUP_POLICY: string;
         MCP_MODE: 'disabled' | 'open';
+        ALLOW_CRAWL: string;
         TURNSTILE_SITE_KEY: string;
         TURNSTILE_SECRET_KEY: string;
     };
@@ -32,6 +32,7 @@ export interface Settings {
     id: number;
     namechange_ratelimit: number;
     allow_direct_message: number;
+    signup_policy: string;
 }
 
 // DB 모델 타입
