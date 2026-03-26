@@ -158,11 +158,11 @@
                 await checkAuth();
 
                 if (!currentUser) {
-                    window.location.href = '/login';
+                    window.location.href = '/auth/google';
                     return;
                 }
 
-                // OAuth에서 받아온 기본 이름 세팅
+                // 구글에서 받아온 기본 이름 세팅
                 document.getElementById('nameInput').value = currentUser.name;
 
                 // 표시명 설정 상태(메시지) 확인

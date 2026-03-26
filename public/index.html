@@ -967,7 +967,7 @@
           text: '문서를 만들려면 먼저 로그인해주세요.',
           confirmButtonText: '로그인',
         }).then(result => {
-          if (result.isConfirmed) window.location.href = '/login';
+          if (result.isConfirmed) window.location.href = '/auth/google';
         });
         return;
       }

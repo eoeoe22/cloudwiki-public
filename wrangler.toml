@@ -1,4 +1,4 @@
-name = "cloudwiki" # 변경가능
+name = "cloudwiki"
 main = "src/index.ts"
 compatibility_date = "2026-03-01"
 
@@ -9,43 +9,36 @@ run_worker_first = ["/", "/wiki/*", "/mypage", "/profile/*", "/search", "/admin-
 
 [[d1_databases]]
 binding = "DB"
-database_name = ""
-database_id = ""
+database_name = "cloudwiki"
+database_id = "4312cdfc-73a8-47f1-a5ea-dbd3efca5350"
 
 [[r2_buckets]]
 binding = "MEDIA"
-bucket_name = ""
+bucket_name = "cloudwiki"
 
 [[kv_namespaces]]
 binding = "KV"
-id = ""
+id = "c318df6c9f244489afba8670b0309e06"
 
 [observability]
 enabled = true
 head_sampling_rate = 1.0
 
 [vars]
-GOOGLE_CLIENT_ID = ""
-GOOGLE_REDIRECT_URI = "https://도메인/auth/google/callback"
+GOOGLE_CLIENT_ID = "541709689530-1rl2sv6lm53b3kaf3s6ec9qurl6eanbn.apps.googleusercontent.com"
+GOOGLE_REDIRECT_URI = "https://wiki.vialinks.xyz/auth/google/callback"
 # GOOGLE_CLIENT_SECRET은 Cloudflare Workers 대시보드에서 Secret에 저장
-TURNSTILE_SITE_KEY = ""
+TURNSTILE_SITE_KEY = "0x4AAAAAABkrf7cd8w3d1nxe"
 # TURNSTILE_SECRET_KEY 는 Cloudflare Workers 대시보드에서 Secret에 저장
-DISCORD_CLIENT_ID = ""
-DISCORD_REDIRECT_URI = "https://wiki.vialinks.xyz/auth/discord/callback"
-# DISCORD_CLIENT_SECRET은 Cloudflare Workers 대시보드에서 Secret에 저장
-# Discord를 활성화하려면 DISCORD_CLIENT_ID에 값을 넣으세요
-MEDIA_PUBLIC_URL = "https://도메인/media"
-MAX_UPLOAD_SIZE = "15728640" # 15MB, 변경 가능
-WIKI_NAME = "Testwiki" # 변경 가능, 사이트 전역에 적용되는 위키 이름
+MEDIA_PUBLIC_URL = "https://wiki.vialinks.xyz/media"
+MAX_UPLOAD_SIZE = "15728640" # 15MB
+WIKI_NAME = "Cloudwiki"
 WIKI_LOGO_URL = "/favicon.jpg"
-WIKI_FAVICON_URL = "/favicon.jpg" # public 폴더에 있는 favicon.jpg를 본인의 로고로 교체하세요.
-SUPER_ADMIN_EMAILS = "test@example.com, test2@example.com" # 콤마로 구분하여 여러 명 지정 가능
-SELECTED_ICONS_ONLY = "false" # false 권장, true시 public/icons.json에 있는 아이콘만 자동완성에 들어감. (성능 개선 용도가 아님)
-# 아이콘 선택 json 추출기 : https://vialinks.xyz/icons
-SIGNUP_POLICY = "open" # 회원가입 정책: "open" (모두 허용, 기본값), "approval" (관리자 승인제)
+WIKI_FAVICON_URL = "/favicon.ico" #아이콘과 로고를 교체하세요
+SUPER_ADMIN_EMAILS = "eoe253326@gmail.com, gcrcdi@gmail.com" # 콤마로 구분하여 여러 명 지정 가능
+SELECTED_ICONS_ONLY = "false" # false시 모든 아이콘 허용 
 MCP_MODE = "open" # MCP 서버 모드: "disabled" (사용 안 함, 기본값), "open" (전체 개방)
-ALLOW_CRAWL = "true" # robots.txt/사이트맵 관리: "true" (크롤링 허용, 사이트맵 자동 생성, 봇 정책은 src/robots-txt.ts 직접 수정), "false" (전체 차단, 사이트맵 비활성화)
-
+ALLOW_CRAWL = "true" # robots.txt/사이트맵 관리: "true" (크롤링 허용, 사이트맵 자동 생성), "false" (전체 차단, 사이트맵 비활성화)
 CUSTOM_HEADER = """
 
 """
@@ -53,3 +46,5 @@ CUSTOM_HEADER = """
 
 [triggers]
 crons = ["0 0 * * *"] # 매일 자정 (UTC 기준)에 실행
+
+
