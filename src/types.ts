@@ -10,6 +10,9 @@ export type Env = {
         GOOGLE_CLIENT_ID: string;
         GOOGLE_CLIENT_SECRET: string;
         GOOGLE_REDIRECT_URI: string;
+        DISCORD_CLIENT_ID: string;
+        DISCORD_CLIENT_SECRET: string;
+        DISCORD_REDIRECT_URI: string;
         MEDIA_PUBLIC_URL: string;
         MAX_UPLOAD_SIZE: string;
         SUPER_ADMIN_EMAILS: string;
@@ -38,7 +41,6 @@ export interface Settings {
 // DB 모델 타입
 export interface User {
     id: number;
-    google_id: string;
     email: string;
     name: string;
     picture: string | null;

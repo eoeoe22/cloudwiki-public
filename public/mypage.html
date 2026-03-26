@@ -275,6 +275,14 @@
                     </div>
                 </div>
 
+                <!-- 연결된 계정 -->
+                <div class="profile-section" id="oauthSection">
+                    <h4><i class="mdi mdi-link-variant"></i> 연결된 계정</h4>
+                    <div id="oauthList">
+                        <div class="text-center text-muted py-3">불러오는 중...</div>
+                    </div>
+                </div>
+
                 <!-- 문의하기 / 회원탈퇴 -->
                 <div class="text-center mb-4 d-flex justify-content-center gap-2">
                     <a href="/tickets" class="btn btn-wiki-outline">
@@ -304,13 +312,14 @@
         document.addEventListener('DOMContentLoaded', async () => {
             await Promise.all([loadConfig(), checkAuth()]);
             if (!currentUser) {
-                window.location.href = '/auth/google';
+                window.location.href = '/login';
                 return;
             }
             renderProfile();
             loadContributions();
             loadMessages();
             checkNameChangeStatus();
+            loadOAuthAccounts();
         });
 
         function renderProfile() {
@@ -551,6 +560,103 @@
             await loadMessages(true);
             btn.disabled = false;
             btn.innerHTML = '더보기 <i class="mdi mdi-chevron-down"></i>';
+        }
+
+        const providerIcons = {
+            google: 'mdi-google',
+            discord: 'mdi-message-text',
+        };
+        const providerColors = {
+            google: '#4285f4',
+            discord: '#5865f2',
+        };
+
+        async function loadOAuthAccounts() {
+            const container = document.getElementById('oauthList');
+            try {
+                const res = await fetch('/api/me/oauth-accounts');
+                if (!res.ok) throw new Error();
+                const data = await res.json();
+                const accounts = data.accounts || [];
+                const enabledProviders = data.enabledProviders || [];
+
+                let html = '';
+
+                // URL 파라미터에서 성공/에러 메시지 표시
+                const urlParams = new URLSearchParams(window.location.search);
+                if (urlParams.get('success') === 'oauth_linked') {
+                    html += '<div class="alert alert-success py-2 mb-3"><i class="mdi mdi-check-circle"></i> 계정이 연결되었습니다.</div>';
+                }
+                if (urlParams.get('error') === 'oauth_already_linked') {
+                    html += '<div class="alert alert-danger py-2 mb-3"><i class="mdi mdi-alert-circle"></i> 해당 계정은 이미 다른 사용자에게 연결되어 있습니다.</div>';
+                }
+                if (urlParams.get('error') === 'provider_already_linked') {
+                    html += '<div class="alert alert-warning py-2 mb-3"><i class="mdi mdi-alert"></i> 이미 해당 프로바이더가 연결되어 있습니다.</div>';
+                }
+
+                // 연결된 계정 표시
+                for (const acc of accounts) {
+                    const icon = providerIcons[acc.provider] || 'mdi-link';
+                    const color = providerColors[acc.provider] || '#666';
+                    const displayName = enabledProviders.find(p => p.name === acc.provider)?.displayName || acc.provider;
+                    const canUnlink = accounts.length > 1;
+
+                    html += `<div class="d-flex align-items-center justify-content-between p-2 mb-2 rounded border" style="background: var(--wiki-bg);">
+                        <div class="d-flex align-items-center gap-2">
+                            <i class="mdi ${icon}" style="font-size:1.3rem; color:${color};"></i>
+                            <div>
+                                <strong>${displayName}</strong>
+                                <div class="text-muted small">${acc.email || ''}</div>
+                            </div>
+                        </div>
+                        ${canUnlink
+                            ? `<button class="btn btn-sm btn-outline-danger" onclick="unlinkOAuth('${acc.provider}')">연결 해제</button>`
+                            : `<span class="text-muted small">유일한 로그인 수단</span>`
+                        }
+                    </div>`;
+                }
+
+                // 미연결된 활성 프로바이더에 연결 버튼
+                const linkedProviders = new Set(accounts.map(a => a.provider));
+                const unlinkable = enabledProviders.filter(p => !linkedProviders.has(p.name));
+                for (const p of unlinkable) {
+                    const icon = providerIcons[p.name] || p.icon;
+                    const color = providerColors[p.name] || '#666';
+                    html += `<div class="d-flex align-items-center justify-content-between p-2 mb-2 rounded border" style="background: var(--wiki-bg); opacity: 0.7;">
+                        <div class="d-flex align-items-center gap-2">
+                            <i class="mdi ${icon}" style="font-size:1.3rem; color:${color};"></i>
+                            <span>${p.displayName}</span>
+                        </div>
+                        <a href="/api/auth/link/${p.name}" class="btn btn-sm btn-outline-primary">연결하기</a>
+                    </div>`;
+                }
+
+                container.innerHTML = html || '<p class="text-muted mb-0">연결된 계정이 없습니다.</p>';
+            } catch (e) {
+                container.innerHTML = '<p class="text-muted mb-0">계정 정보를 불러올 수 없습니다.</p>';
+            }
+        }
+
+        async function unlinkOAuth(provider) {
+            const result = await Swal.fire({
+                title: '계정 연결 해제',
+                text: `${provider} 계정 연결을 해제하시겠습니까?`,
+                icon: 'question',
+                showCancelButton: true,
+                confirmButtonText: '해제',
+                cancelButtonText: '취소',
+            });
+            if (!result.isConfirmed) return;
+
+            try {
+                const res = await fetch(`/api/auth/unlink/${provider}`, { method: 'DELETE' });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error);
+                await Swal.fire({ icon: 'success', title: '연결이 해제되었습니다.', timer: 1500, showConfirmButton: false });
+                loadOAuthAccounts();
+            } catch (e) {
+                Swal.fire({ icon: 'error', title: '오류', text: e.message || '연결 해제에 실패했습니다.' });
+            }
         }
 
         async function deleteAccount() {

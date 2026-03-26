@@ -51,7 +51,7 @@ export const sessionMiddleware = createMiddleware<Env>(async (c, next) => {
     if (!row) {
         const dbRow = await db
             .prepare(
-                `SELECT u.id, u.google_id, u.email, u.name, u.picture, u.role, u.banned_until, u.last_namechange, u.created_at, s.expires_at, s.user_agent
+                `SELECT u.id, u.email, u.name, u.picture, u.role, u.banned_until, u.last_namechange, u.created_at, s.expires_at, s.user_agent
            FROM sessions s
            JOIN users u ON s.user_id = u.id
            WHERE s.id = ? AND s.expires_at > ?`

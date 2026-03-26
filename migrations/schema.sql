@@ -1,7 +1,6 @@
 -- 사용자 테이블
 CREATE TABLE IF NOT EXISTS users (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
-  google_id  TEXT NOT NULL UNIQUE,
   email      TEXT NOT NULL,
   name       TEXT NOT NULL,
   picture    TEXT,
@@ -10,6 +9,20 @@ CREATE TABLE IF NOT EXISTS users (
   banned_until INTEGER,
   last_namechange INTEGER
 );
+
+-- OAuth 계정 연동 테이블 (다중 프로바이더 지원)
+CREATE TABLE IF NOT EXISTS user_oauth_accounts (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id      INTEGER NOT NULL,
+  provider     TEXT NOT NULL,       -- 'google', 'discord' 등
+  provider_id  TEXT NOT NULL,       -- 프로바이더측 고유 ID
+  email        TEXT,                -- 프로바이더에서 가져온 이메일
+  created_at   INTEGER DEFAULT (unixepoch()),
+  UNIQUE(provider, provider_id),
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_oauth_accounts_user ON user_oauth_accounts(user_id);
+CREATE INDEX IF NOT EXISTS idx_oauth_accounts_provider ON user_oauth_accounts(provider, provider_id);
 
 -- 세션 테이블
 CREATE TABLE IF NOT EXISTS sessions (
@@ -238,7 +251,8 @@ CREATE INDEX IF NOT EXISTS idx_page_categories_category ON page_categories(categ
 -- 가입 신청 테이블 (승인제 회원가입용)
 CREATE TABLE IF NOT EXISTS signup_requests (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
-  google_id   TEXT NOT NULL,
+  provider    TEXT NOT NULL,         -- 'google', 'discord' 등
+  provider_id TEXT NOT NULL,         -- 프로바이더측 고유 ID
   email       TEXT NOT NULL,
   name        TEXT NOT NULL,
   picture     TEXT,
@@ -250,7 +264,7 @@ CREATE TABLE IF NOT EXISTS signup_requests (
   FOREIGN KEY (reviewed_by) REFERENCES users(id)
 );
 CREATE INDEX IF NOT EXISTS idx_signup_requests_status ON signup_requests(status);
-CREATE INDEX IF NOT EXISTS idx_signup_requests_google ON signup_requests(google_id);
+CREATE INDEX IF NOT EXISTS idx_signup_requests_provider ON signup_requests(provider, provider_id);
 
 -- 개별 토론 알림 뮤트 테이블
 CREATE TABLE IF NOT EXISTS discussion_mutes (
