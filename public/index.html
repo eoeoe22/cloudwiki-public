@@ -583,7 +583,8 @@
         await renderWikiContent(page.content || '', slug, 'articleContent', {
           showCategory: true,
           tocContainerId: 'tocContainer',
-          tocNavId: 'tocNav'
+          tocNavId: 'tocNav',
+          collapsibleSections: true
         });
 
         // 틀(Template) 문서인 경우 자동으로 역링크 로드

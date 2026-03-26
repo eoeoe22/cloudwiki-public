@@ -764,6 +764,73 @@ function generateTOC(contentEl, tocContainerId, tocNavId) {
     tocContainer.classList.remove('d-none');
 }
 
+// ── 본문 섹션 접기/펼치기 ──
+function makeCollapsibleSections(containerEl) {
+    const headings = containerEl.querySelectorAll('h1, h2, h3, h4');
+    if (headings.length < 1) return;
+    const minLevel = Math.min(...Array.from(headings).map(h => parseInt(h.tagName[1], 10)));
+    _wrapLevelSections(containerEl, minLevel);
+}
+
+function _wrapLevelSections(containerEl, level) {
+    if (level > 4) return;
+    const tagName = 'H' + level;
+    const children = Array.from(containerEl.childNodes);
+
+    let i = 0;
+    while (i < children.length) {
+        const child = children[i];
+        if (child.nodeName === tagName) {
+            // 토글 아이콘 삽입
+            const toggleIcon = document.createElement('span');
+            toggleIcon.className = 'wiki-section-toggle-icon';
+            toggleIcon.innerHTML = '<i class="bi bi-chevron-down"></i>';
+            child.appendChild(toggleIcon);
+            child.classList.add('wiki-section-heading');
+
+            // 섹션 래퍼 생성
+            const section = document.createElement('div');
+            section.className = 'wiki-section wiki-section-level-' + level;
+            child.parentNode.insertBefore(section, child);
+            section.appendChild(child);
+
+            // 섹션 본문 래퍼 생성
+            const body = document.createElement('div');
+            body.className = 'wiki-section-body';
+            section.appendChild(body);
+
+            // 이 헤딩 이하에 속하는 형제 노드들을 body로 이동
+            let j = i + 1;
+            while (j < children.length) {
+                const sibling = children[j];
+                const m = sibling.nodeName.match(/^H(\d)$/);
+                if (m && parseInt(m[1], 10) <= level) break;
+                body.appendChild(sibling);
+                j++;
+            }
+
+            // 헤딩 클릭 시 섹션 토글
+            child.addEventListener('click', function (e) {
+                if (e.target.closest('a')) return;
+                const collapsed = section.classList.toggle('wiki-section-collapsed');
+                const icon = toggleIcon.querySelector('i');
+                if (icon) {
+                    icon.className = collapsed ? 'bi bi-chevron-right' : 'bi bi-chevron-down';
+                }
+            });
+
+            i = j;
+        } else {
+            i++;
+        }
+    }
+
+    // 하위 레벨 섹션 재귀 처리
+    containerEl.querySelectorAll('.wiki-section-level-' + level + ' > .wiki-section-body').forEach(function (body) {
+        _wrapLevelSections(body, level + 1);
+    });
+}
+
 // ── 확장 문법(위키링크, 아이콘 등) 처리 ──
 function processWikiLinks(contentEl) {
     if (!contentEl) return;
@@ -1232,6 +1299,10 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
 
         if (options.tocContainerId && options.tocNavId) {
             generateTOC(containerEl, options.tocContainerId, options.tocNavId);
+        }
+
+        if (options.collapsibleSections) {
+            makeCollapsibleSections(containerEl);
         }
 
     } catch (err) {

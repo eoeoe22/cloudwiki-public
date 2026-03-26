@@ -918,6 +918,26 @@ div:where(.swal2-container) .swal2-html-container {
   /* 얇고 뚜렷한 선 */
 }
 
+/* ── 접을 수 있는 섹션 ── */
+.wiki-content .wiki-section-heading {
+  cursor: pointer;
+  display: flex;
+  align-items: baseline;
+  user-select: none;
+}
+
+.wiki-section-toggle-icon {
+  margin-left: auto;
+  padding-left: 0.5rem;
+  font-size: 0.7em;
+  color: var(--wiki-muted, #aaa);
+  flex-shrink: 0;
+}
+
+.wiki-section-collapsed > .wiki-section-body {
+  display: none;
+}
+
 .wiki-content p {
   margin-bottom: 1.2rem;
   line-height: 1.8;
