@@ -17,7 +17,103 @@
                     <i class="mdi mdi-magnify"></i>
                 </button>
             </div>
+            <!-- 연관검색어 드롭다운 -->
+            <ul class="search-suggestions" id="searchSuggestions"></ul>
         </form>
+
+        <script>
+        (function() {
+            let debounceTimer = null;
+            const input = document.getElementById('searchInput');
+            const sugBox = document.getElementById('searchSuggestions');
+            let activeIdx = -1;
+
+            input.addEventListener('input', function() {
+                clearTimeout(debounceTimer);
+                const q = this.value.trim();
+                if (q.length < 2) {
+                    sugBox.classList.remove('show');
+                    sugBox.innerHTML = '';
+                    return;
+                }
+                debounceTimer = setTimeout(() => fetchSuggestions(q), 250);
+            });
+
+            async function fetchSuggestions(q) {
+                try {
+                    const res = await fetch('/api/search/suggest?q=' + encodeURIComponent(q));
+                    if (!res.ok) return;
+                    const data = await res.json();
+                    renderSuggestions(data.suggestions || []);
+                } catch(e) { /* ignore */ }
+            }
+
+            function renderSuggestions(items) {
+                activeIdx = -1;
+                if (!items.length) {
+                    sugBox.classList.remove('show');
+                    sugBox.innerHTML = '';
+                    return;
+                }
+                sugBox.innerHTML = items.map((item, i) =>
+                    '<li class="search-suggestion-item" data-slug="' + escapeHtml(item.slug) + '">'
+                    + '<i class="mdi mdi-file-document-outline"></i> '
+                    + escapeHtml(item.title) + '</li>'
+                ).join('');
+                sugBox.classList.add('show');
+
+                sugBox.querySelectorAll('.search-suggestion-item').forEach(el => {
+                    el.addEventListener('mousedown', function(e) {
+                        e.preventDefault();
+                        const slug = this.dataset.slug;
+                        if (typeof navigateTo === 'function') {
+                            navigateTo('/wiki/' + encodeURIComponent(slug));
+                        } else {
+                            window.location.href = '/wiki/' + encodeURIComponent(slug);
+                        }
+                        sugBox.classList.remove('show');
+                        sugBox.innerHTML = '';
+                        input.value = '';
+                        input.blur();
+                    });
+                });
+            }
+
+            // 키보드 탐색
+            input.addEventListener('keydown', function(e) {
+                const items = sugBox.querySelectorAll('.search-suggestion-item');
+                if (!items.length || !sugBox.classList.contains('show')) return;
+                if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    activeIdx = Math.min(activeIdx + 1, items.length - 1);
+                    updateActive(items);
+                } else if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    activeIdx = Math.max(activeIdx - 1, -1);
+                    updateActive(items);
+                } else if (e.key === 'Enter' && activeIdx >= 0) {
+                    e.preventDefault();
+                    items[activeIdx].dispatchEvent(new Event('mousedown'));
+                } else if (e.key === 'Escape') {
+                    sugBox.classList.remove('show');
+                }
+            });
+
+            function updateActive(items) {
+                items.forEach((el, i) => el.classList.toggle('active', i === activeIdx));
+            }
+
+            input.addEventListener('blur', function() {
+                setTimeout(() => { sugBox.classList.remove('show'); }, 150);
+            });
+
+            input.addEventListener('focus', function() {
+                if (sugBox.innerHTML && this.value.trim().length >= 2) {
+                    sugBox.classList.add('show');
+                }
+            });
+        })();
+        </script>
 
         <!-- 알림 버튼 (로그인 시에만 표시) -->
         <div class="position-relative ms-2 d-none" id="notificationBtnWrapper">

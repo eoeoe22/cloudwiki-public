@@ -1079,8 +1079,22 @@
     }
   </script>
 
+  <!-- 플로팅 목차 패널 -->
+  <div class="toc-floating-panel" id="tocFloatingPanel">
+    <div class="toc-floating-header">
+      <span><i class="mdi mdi-format-list-bulleted-square me-1"></i> 목차</span>
+      <button class="toc-floating-close" onclick="toggleFloatingToc()" title="닫기">
+        <i class="bi bi-x-lg"></i>
+      </button>
+    </div>
+    <nav class="toc-floating-body" id="tocFloatingNav"></nav>
+  </div>
+
   <!-- 스크롤 FAB (뷰포트 고정, body 직전) -->
   <div class="scroll-fab-group" id="scrollFabGroup">
+    <button class="scroll-fab" id="tocFabBtn" onclick="toggleFloatingToc()" title="목차">
+      <i class="mdi mdi-format-list-bulleted-square"></i>
+    </button>
     <button class="scroll-fab" id="scrollToTopBtn" onclick="window.scrollTo({top:0,behavior:'smooth'})" title="맨 위로">
       <i class="bi bi-chevron-up"></i>
     </button>
@@ -1088,6 +1102,46 @@
       <i class="bi bi-chevron-down"></i>
     </button>
   </div>
+
+  <script>
+    function toggleFloatingToc() {
+      const panel = document.getElementById('tocFloatingPanel');
+      const tocSource = document.getElementById('tocNav');
+      const floatingNav = document.getElementById('tocFloatingNav');
+      const isVisible = panel.classList.contains('visible');
+
+      if (!isVisible) {
+        // 목차 내용이 없으면 표시하지 않음
+        if (!tocSource || !tocSource.innerHTML.trim()) return;
+        // 기존 tocNav 내용을 복제하여 표시
+        floatingNav.innerHTML = tocSource.innerHTML;
+        // 클릭 시 해당 위치로 이동 후 패널 닫기
+        floatingNav.querySelectorAll('a').forEach(a => {
+          a.addEventListener('click', () => {
+            panel.classList.remove('visible');
+          });
+        });
+      }
+
+      panel.classList.toggle('visible');
+    }
+
+    // 문서 페이지가 아닐 때 TOC FAB 숨기기
+    const _origHideAllPages = typeof hideAllPages === 'function' ? hideAllPages : null;
+    document.addEventListener('DOMContentLoaded', () => {
+      const observer = new MutationObserver(() => {
+        const tocBtn = document.getElementById('tocFabBtn');
+        const tocSource = document.getElementById('tocNav');
+        const articlePage = document.getElementById('articlePage');
+        if (tocBtn) {
+          const hasToc = tocSource && tocSource.innerHTML.trim();
+          const isArticle = articlePage && !articlePage.classList.contains('d-none');
+          tocBtn.style.display = (hasToc && isArticle) ? '' : 'none';
+        }
+      });
+      observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
+    });
+  </script>
 
 </body>
 

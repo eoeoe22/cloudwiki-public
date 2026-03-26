@@ -151,4 +151,37 @@ search.get('/search', async (c) => {
     }
 });
 
+/**
+ * GET /search/suggest?q=키워드
+ * 검색어 2글자 이상일 때 제목이 일치하는 문서 목록 반환 (연관검색어)
+ */
+search.get('/search/suggest', async (c) => {
+    const query = c.req.query('q');
+    if (!query || query.trim().length < 2) {
+        return c.json({ suggestions: [] });
+    }
+
+    const db = c.env.DB;
+    const user = c.get('user');
+    const isAdmin = user && (user.role === 'admin' || user.role === 'super_admin');
+    const trimmed = query.trim();
+    const likePattern = `%${trimmed}%`;
+
+    let sql = `
+        SELECT title, slug FROM pages
+        WHERE title LIKE ?
+    `;
+    if (!isAdmin) {
+        sql += ' AND deleted_at IS NULL AND is_private = 0';
+    }
+    sql += ' ORDER BY CASE WHEN title LIKE ? THEN 0 ELSE 1 END, length(title) LIMIT 7';
+
+    const startPattern = `${trimmed}%`;
+    const results = await db.prepare(sql).bind(likePattern, startPattern).all();
+
+    return c.json({
+        suggestions: results.results.map((r: any) => ({ title: r.title, slug: r.slug })),
+    });
+});
+
 export default search;
