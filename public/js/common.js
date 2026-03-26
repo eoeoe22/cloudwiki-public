@@ -1056,7 +1056,7 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
 
             const restoredContent = foldContent.replace(/WIKICODEFPH(\d+)XEND/g, (_, i) => codeBlocksForFold[parseInt(i, 10)]);
             let rawContentHtml = (typeof marked !== 'undefined') ? marked.parse(restoredContent) : restoredContent;
-            let contentHtml = (typeof DOMPurify !== 'undefined') ? DOMPurify.sanitize(rawContentHtml, { ADD_TAGS: ['i', 'span', 'details', 'summary'], ADD_ATTR: ['class', 'style', 'data-bg', 'data-color'] }) : escapeHtml(rawContentHtml);
+            let contentHtml = (typeof DOMPurify !== 'undefined') ? DOMPurify.sanitize(rawContentHtml, { ADD_TAGS: ['i', 'span', 'details', 'summary'], ADD_ATTR: ['class', 'style', 'data-bg', 'data-color', 'colspan', 'rowspan'] }) : escapeHtml(rawContentHtml);
 
             foldBlocks.push({ summaryText, bgAttr, colorAttr, contentHtml });
             return `\n\nWIKIFOLDPH${idx}XEND\n\n`;
@@ -1075,7 +1075,7 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
                 `</details>`;
         });
 
-        let html = (typeof DOMPurify !== 'undefined') ? DOMPurify.sanitize(rawHtml, { ADD_TAGS: ['i', 'span', 'details', 'summary'], ADD_ATTR: ['class', 'style', 'data-bg', 'data-color'] }) : escapeHtml(rawHtml);
+        let html = (typeof DOMPurify !== 'undefined') ? DOMPurify.sanitize(rawHtml, { ADD_TAGS: ['i', 'span', 'details', 'summary'], ADD_ATTR: ['class', 'style', 'data-bg', 'data-color', 'colspan', 'rowspan'] }) : escapeHtml(rawHtml);
 
         if (options.showCategory && slug) {
             const decodedSlug = decodeURIComponent(slug);
@@ -1116,6 +1116,109 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
                     }
                 }
                 firstTextNode.nodeValue = val;
+            }
+        });
+
+        // 테이블 셀 병합 처리 (colspan/rowspan)
+        containerEl.querySelectorAll('table').forEach(table => {
+            const rows = Array.from(table.querySelectorAll(':scope > thead > tr, :scope > tbody > tr, :scope > tr'));
+            if (rows.length === 0) return;
+
+            // {^} 병합이 thead/tbody 경계를 넘는 경우 rowspan이 작동하지 않으므로,
+            // thead 행을 tbody로 이동하고 th를 td로 변환
+            const thead = table.querySelector(':scope > thead');
+            const tbody = table.querySelector(':scope > tbody');
+            if (thead && tbody) {
+                const hasVerticalMerge = Array.from(tbody.querySelectorAll('td, th')).some(cell => cell.textContent.trim().match(/^\{\^\}$/));
+                if (hasVerticalMerge) {
+                    const theadRows = Array.from(thead.querySelectorAll('tr'));
+                    theadRows.forEach(tr => {
+                        Array.from(tr.querySelectorAll('th')).forEach(th => {
+                            const td = document.createElement('td');
+                            td.innerHTML = th.innerHTML;
+                            Array.from(th.attributes).forEach(attr => td.setAttribute(attr.name, attr.value));
+                            td.style.fontWeight = 'bold';
+                            td.style.textAlign = th.style.textAlign || 'center';
+                            th.replaceWith(td);
+                        });
+                        tbody.insertBefore(tr, tbody.firstChild);
+                    });
+                    thead.remove();
+                }
+            }
+
+            // 행 목록을 재구성 (thead가 이동되었을 수 있으므로)
+            const updatedRows = Array.from(table.querySelectorAll(':scope > thead > tr, :scope > tbody > tr, :scope > tr'));
+            if (updatedRows.length === 0) return;
+
+            const grid = updatedRows.map(row => Array.from(row.cells));
+            const markers = grid.map(row => row.map(cell => {
+                const text = cell.textContent.trim();
+                const m = text.match(/^\{([<>^])\}$/);
+                return m ? m[1] : null;
+            }));
+
+            const toRemove = grid.map(row => row.map(() => false));
+
+            // {<} 처리 (왼쪽 병합)
+            for (let r = 0; r < grid.length; r++) {
+                for (let c = 1; c < grid[r].length; c++) {
+                    if (markers[r][c] === '<') {
+                        let target = c - 1;
+                        while (target >= 0 && markers[r][target] === '<') target--;
+                        if (target >= 0 && !toRemove[r][target]) {
+                            const currentSpan = parseInt(grid[r][target].getAttribute('colspan') || '1');
+                            grid[r][target].setAttribute('colspan', currentSpan + 1);
+                            toRemove[r][c] = true;
+                        }
+                    }
+                }
+            }
+
+            // {>} 처리 (오른쪽 병합)
+            for (let r = 0; r < grid.length; r++) {
+                for (let c = grid[r].length - 2; c >= 0; c--) {
+                    if (markers[r][c] === '>') {
+                        let target = c + 1;
+                        while (target < grid[r].length && markers[r][target] === '>') target++;
+                        if (target < grid[r].length && !toRemove[r][target]) {
+                            const currentSpan = parseInt(grid[r][target].getAttribute('colspan') || '1');
+                            grid[r][target].setAttribute('colspan', currentSpan + 1);
+                            toRemove[r][c] = true;
+                        }
+                    }
+                }
+            }
+
+            // {^} 처리 (위쪽 병합)
+            for (let r = 1; r < grid.length; r++) {
+                for (let c = 0; c < grid[r].length; c++) {
+                    if (markers[r][c] === '^') {
+                        if (toRemove[r][c]) continue;
+                        let target = r - 1;
+                        while (target >= 0 && markers[target][c] === '^') target--;
+                        if (target >= 0 && c < grid[target].length) {
+                            const currentSpan = parseInt(grid[target][c].getAttribute('rowspan') || '1');
+                            grid[target][c].setAttribute('rowspan', currentSpan + 1);
+                            toRemove[r][c] = true;
+                        }
+                    }
+                }
+            }
+
+            // 병합 마커 셀 제거 및 병합된 셀 가운데 정렬
+            for (let r = 0; r < grid.length; r++) {
+                for (let c = grid[r].length - 1; c >= 0; c--) {
+                    if (toRemove[r][c]) {
+                        grid[r][c].remove();
+                    } else {
+                        const cell = grid[r][c];
+                        if (cell.getAttribute('colspan') > 1 || cell.getAttribute('rowspan') > 1) {
+                            if (!cell.style.textAlign) cell.style.textAlign = 'center';
+                            if (!cell.style.verticalAlign) cell.style.verticalAlign = 'middle';
+                        }
+                    }
+                }
             }
         });
 

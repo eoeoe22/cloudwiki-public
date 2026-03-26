@@ -127,6 +127,12 @@ h6,
 .table {
   color: var(--wiki-text);
   border-color: var(--wiki-border);
+  width: auto;
+}
+
+.table-responsive {
+  display: inline-block;
+  max-width: 100%;
 }
 
 .table> :not(caption)>*>* {
