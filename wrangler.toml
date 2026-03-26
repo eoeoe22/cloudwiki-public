@@ -30,6 +30,10 @@ GOOGLE_REDIRECT_URI = "https://도메인/auth/google/callback"
 # GOOGLE_CLIENT_SECRET은 Cloudflare Workers 대시보드에서 Secret에 저장
 TURNSTILE_SITE_KEY = ""
 # TURNSTILE_SECRET_KEY 는 Cloudflare Workers 대시보드에서 Secret에 저장
+DISCORD_CLIENT_ID = ""
+DISCORD_REDIRECT_URI = "https://wiki.vialinks.xyz/auth/discord/callback"
+# DISCORD_CLIENT_SECRET은 Cloudflare Workers 대시보드에서 Secret에 저장
+# Discord를 활성화하려면 DISCORD_CLIENT_ID에 값을 넣으세요
 MEDIA_PUBLIC_URL = "https://도메인/media"
 MAX_UPLOAD_SIZE = "15728640" # 15MB, 변경 가능
 WIKI_NAME = "Testwiki" # 변경 가능, 사이트 전역에 적용되는 위키 이름
