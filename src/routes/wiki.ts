@@ -157,6 +157,9 @@ wiki.get('/config', (c) => {
  * Query: q (검색어), type (link | template)
  */
 wiki.get('/wiki/search-titles', async (c) => {
+    if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) {
+        return c.json({ error: '로그인이 필요합니다.' }, 401);
+    }
     const db = c.env.DB;
     const q = c.req.query('q') || '';
     const type = c.req.query('type') || 'link';
@@ -204,6 +207,9 @@ wiki.get('/wiki/search-titles', async (c) => {
  * 위키 전체에서 가장 최근에 수정된 문서 10개
  */
 wiki.get('/wiki/recent-changes', async (c) => {
+    if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) {
+        return c.json({ error: '로그인이 필요합니다.' }, 401);
+    }
     const db = c.env.DB;
     const user = c.get('user');
     const isAdmin = user && (user.role === 'admin' || user.role === 'super_admin');
@@ -288,6 +294,9 @@ wiki.get('/wiki/templates', async (c) => {
  * 단일 랜덤 문서 반환 (접근 가능한 문서 중)
  */
 wiki.get('/wiki/random', async (c) => {
+    if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) {
+        return c.json({ error: '로그인이 필요합니다.' }, 401);
+    }
     const db = c.env.DB;
     const user = c.get('user');
     const isAdmin = user && (user.role === 'admin' || user.role === 'super_admin');
@@ -321,6 +330,9 @@ wiki.get('/wiki/random', async (c) => {
  * - 비공개 문서: 관리자만 접근 가능
  */
 wiki.get('/wiki/:slug', async (c) => {
+    if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) {
+        return c.json({ error: '로그인이 필요합니다.' }, 401);
+    }
     const slug = c.req.param('slug');
     const db = c.env.DB;
     const user = c.get('user');

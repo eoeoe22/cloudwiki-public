@@ -237,20 +237,33 @@ app.get('/tickets', async (c) => {
 
 // /wiki/:slug/discussions/* → discussions.html 서빙 (SSR 브랜딩 적용)
 app.get('/wiki/:slug/discussions/:id', async (c) => {
+    if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) {
+        return c.redirect('/login');
+    }
     return renderHtml(c, '/discussions.html');
 });
 
 app.get('/wiki/:slug/discussions', async (c) => {
+    if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) {
+        return c.redirect('/login');
+    }
     return renderHtml(c, '/discussions.html');
 });
 
 // /wiki/:slug/revisions → revisions.html 서빙 (SSR 브랜딩 적용)
 app.get('/wiki/:slug/revisions', async (c) => {
+    if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) {
+        return c.redirect('/login');
+    }
     return renderHtml(c, '/revisions.html');
 });
 
 // /wiki/:slug → index.html + SSR (문서 데이터 주입)
 app.get('/wiki/:slug', async (c) => {
+    if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) {
+        return c.redirect('/login');
+    }
+
     const slug = c.req.param('slug');
     const db = c.env.DB;
     const user = c.get('user');
@@ -396,13 +409,30 @@ app.get('/wiki/:slug', async (c) => {
     return response;
 });
 
+// /login 접근 시 로그인 페이지 서빙
+app.get('/login', async (c) => {
+    if (c.get('user')) {
+        return c.redirect('/');
+    }
+    return renderHtml(c, '/login.html', {
+        _ssrTitle: '로그인 - ' + (c.env.WIKI_NAME || 'Cloudwiki'),
+        closedWikiMessage: c.env.CLOSED_WIKI_MESSAGE || '비공개 위키입니다. 로그인 후 이용해주세요.',
+    });
+});
+
 // / (루트) 접근 시 index.html 서빙 (SSR 브랜딩 적용)
 app.get('/', async (c) => {
+    if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) {
+        return c.redirect('/login');
+    }
     return renderHtml(c, '/');
 });
 
 // /search 접근 시 search.html 서빙 (SSR 브랜딩 적용)
 app.get('/search', async (c) => {
+    if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) {
+        return c.redirect('/login');
+    }
     return renderHtml(c, '/search.html');
 });
 

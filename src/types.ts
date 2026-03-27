@@ -20,6 +20,8 @@ export type Env = {
         SELECTED_ICONS_ONLY: string;
         MCP_MODE: 'disabled' | 'open';
         ALLOW_CRAWL: string;
+        WIKI_VISIBILITY: 'open' | 'closed';
+        CLOSED_WIKI_MESSAGE: string;
         TURNSTILE_SITE_KEY: string;
         TURNSTILE_SECRET_KEY: string;
     };
