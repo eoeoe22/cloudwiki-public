@@ -49,8 +49,7 @@ mcpRoutes.get('/', async (c) => {
 
         // 안내 배너 HTML (captcha 페이지 body 최상단에 삽입)
         const bannerHtml = `<div style="position:fixed;top:0;left:0;right:0;z-index:99999;background:#fff;border-bottom:2px solid #e0e0e0;padding:0.7rem 1.2rem;display:flex;align-items:center;justify-content:space-between;gap:1rem;font-family:'Segoe UI',system-ui,sans-serif;font-size:0.92rem;box-shadow:0 2px 8px rgba(0,0,0,0.08);">
-  <span>🤖 <strong>로봇입니까?</strong> &nbsp;사람은 접속할 수 없습니다.</span>
-  <span style="color:#2563eb;">MCP 서버 테스트: <a href="https://mcp.vialinks.xyz" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;font-weight:600;">https://mcp.vialinks.xyz</a></span>
+  <span><strong>로봇입니까?</strong> &nbsp;사람은 MCP 서버에 접속할 수 없습니다.</span>
 </div>
 <div style="height:52px;"></div>`;
 
@@ -98,16 +97,11 @@ mcpRoutes.get('/', async (c) => {
 </head>
 <body>
 <div class="card">
-  <div class="robot-icon">🤖</div>
+  <div class="robot-icon"></div>
   <h1>로봇입니까?</h1>
   <p class="subtitle">사람은 접속할 수 없습니다.</p>
   <div class="iframe-wrapper">
     <iframe src="https://vialinks.xyz/captcha" title="CAPTCHA" sandbox="allow-scripts allow-same-origin"></iframe>
-  </div>
-  <div class="info-box">
-    MCP 서버를 테스트하려면
-    <a href="https://mcp.vialinks.xyz" target="_blank" rel="noopener noreferrer">https://mcp.vialinks.xyz</a>
-    를 이용하십시오.
   </div>
 </div>
 </body>
@@ -165,6 +159,11 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
             result: {
                 tools: [
                     {
+                        name: 'information',
+                        description: `이 도구는 ${c.env.WIKI_NAME} 의 문서를 탐색할 수 있는 MCP 도구입니다.`,
+                        inputSchema: { type: 'object', properties: {}, required: [] }
+                    },
+                    {
                         name: 'search_title',
                         description: '위키 문서의 제목을 검색합니다.',
                         inputSchema: { type: 'object', properties: { query: { type: 'string', description: '검색어' } }, required: ['query'] }
@@ -198,6 +197,9 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
         const toolName = params?.name;
         const args = params?.arguments || {};
         try {
+            if (toolName === 'information') {
+                return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: `이 도구는 ${c.env.WIKI_NAME} 의 문서를 탐색할 수 있는 MCP 도구입니다.` }] } };
+            }
             if (toolName === 'search_title') {
                 const results = await db.prepare('SELECT title FROM pages WHERE title LIKE ? AND deleted_at IS NULL AND is_private = 0 LIMIT 15')
                     .bind(`%${args.query}%`).all();

@@ -4,7 +4,6 @@ import { csrf } from 'hono/csrf';
 import { secureHeaders } from 'hono/secure-headers';
 import type { Env, Page } from './types';
 import { sessionMiddleware } from './middleware/session';
-import { rateLimitMiddleware } from './middleware/rateLimit';
 import { applyPageSSR } from './middleware/ssr';
 import { safeJSON } from './utils/json';
 import { escapeHtml, sanitizeUrl } from './utils/html';
@@ -36,9 +35,6 @@ app.use('*', (c, next) => {
 
 // 세션 미들웨어 (모든 요청에서 유저 정보를 주입)
 app.use('*', sessionMiddleware);
-
-// 레이트 리밋 미들웨어 (일반 사용자의 과도한 요청 제한)
-app.use('*', rateLimitMiddleware);
 
 // ── 라우트 등록 ──
 app.route('/', authRoutes);

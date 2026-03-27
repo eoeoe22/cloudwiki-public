@@ -1,0 +1,545 @@
+/* ── Diff 인라인 표시 ── */
+.diff-added {
+    background-color: var(--wiki-diff-add-bg);
+    color: var(--wiki-diff-add-text);
+}
+
+.diff-removed {
+    background-color: var(--wiki-diff-del-bg);
+    color: var(--wiki-diff-del-text);
+    text-decoration: line-through;
+}
+
+/* Mobile Optimization for Toast UI Editor Toolbar */
+@media (max-width: 768px) {
+    .toastui-editor-popup {
+        max-width: 90vw !important;
+        left: 5% !important;
+        margin-left: 0 !important;
+    }
+
+    /* Fix toolbar dropdown (More button) overflow */
+    .toastui-editor-dropdown-toolbar {
+        flex-wrap: wrap;
+        height: auto !important;
+        overflow: visible !important;
+    }
+}
+
+.conflict-textarea {
+    height: 500px;
+    font-family: monospace;
+    font-size: 0.9rem;
+    overflow-y: auto;
+    resize: none;
+}
+
+/* 에디터 내부 높이를 conflict-textarea와 맞춤 */
+#conflict-local-editor .ProseMirror,
+#conflict-local-editor .toastui-editor {
+    height: 440px !important;
+}
+
+/* 동시편집 경고 배너 */
+#concurrent-edit-banner {
+    display: none;
+    background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%);
+    border: 1px solid #ffc107;
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin-bottom: 16px;
+    font-size: 0.95rem;
+    align-items: center;
+    gap: 10px;
+    box-shadow: 0 2px 8px rgba(255, 193, 7, 0.15);
+}
+
+#concurrent-edit-banner .editor-avatar {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    vertical-align: middle;
+    margin-right: 4px;
+}
+
+@media (prefers-color-scheme: dark) {
+    #concurrent-edit-banner {
+        background: linear-gradient(135deg, #3d3200 0%, #4a3d00 100%);
+        border-color: #b38600;
+        color: #ffe082;
+    }
+}
+
+/* Wiki Autocomplete Dropdown */
+#wiki-autocomplete {
+    position: absolute;
+    z-index: 2100;
+    background: var(--wiki-card-bg);
+    border: 1px solid var(--wiki-border);
+    border-radius: 8px;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.15);
+    min-width: 250px;
+    max-width: 400px;
+    display: none;
+    overflow: hidden;
+}
+
+#wiki-autocomplete .list-group-item {
+    background: transparent;
+    color: var(--wiki-text);
+    border: none;
+    border-bottom: 1px solid var(--wiki-border);
+    padding: 10px 15px;
+    cursor: pointer;
+    transition: background 0.2s;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 0.95rem;
+}
+
+#wiki-autocomplete .list-group-item:last-child {
+    border-bottom: none;
+}
+
+#wiki-autocomplete .list-group-item:hover,
+#wiki-autocomplete .list-group-item.active {
+    background-color: var(--wiki-bg);
+    border-left: 3px solid var(--wiki-primary);
+    padding-left: 12px;
+    /* 15px - 3px */
+}
+
+#wiki-autocomplete .item-title {
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+#wiki-autocomplete .item-type {
+    font-size: 0.75rem;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: var(--wiki-border);
+    color: var(--wiki-text-muted);
+    margin-left: auto;
+}
+
+/* ── 아이콘 피커 모달 그리드 ── */
+.icon-grid-modal {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+    gap: 6px;
+    max-height: 420px;
+    overflow-y: auto;
+    padding: 4px;
+}
+
+.icon-grid-modal-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 8px 4px;
+    cursor: pointer;
+    border-radius: 6px;
+    border: 1px solid var(--wiki-border);
+    transition: all 0.15s;
+    font-size: 0.68rem;
+    text-align: center;
+    overflow: hidden;
+    color: var(--wiki-text);
+    background: transparent;
+    line-height: 1.3;
+}
+
+.icon-grid-modal-item:hover {
+    background: var(--wiki-bg);
+    border-color: var(--wiki-primary);
+    color: var(--wiki-primary);
+}
+
+.icon-grid-modal-item i {
+    font-size: 1.4rem;
+    margin-bottom: 4px;
+    display: block;
+}
+
+.icon-grid-modal-item span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 74px;
+    display: block;
+}
+
+/* ── 아이콘 인라인 자동완성 드롭다운 ── */
+#icon-autocomplete {
+    position: absolute;
+    z-index: 2100;
+    background: var(--wiki-card-bg);
+    border: 1px solid var(--wiki-border);
+    border-radius: 8px;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.15);
+    width: 330px;
+    display: none;
+    overflow: hidden;
+}
+
+#icon-autocomplete .icon-ac-header {
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--wiki-border);
+    font-size: 0.8rem;
+    color: var(--wiki-text-muted);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--wiki-toc-bg);
+}
+
+#icon-autocomplete .icon-ac-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 4px;
+    padding: 8px;
+    max-height: 250px;
+    overflow-y: auto;
+}
+
+#icon-autocomplete .icon-ac-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 6px 3px;
+    cursor: pointer;
+    border-radius: 4px;
+    border: 1px solid transparent;
+    font-size: 0.6rem;
+    text-align: center;
+    color: var(--wiki-text);
+    transition: all 0.15s;
+    overflow: hidden;
+}
+
+#icon-autocomplete .icon-ac-item:hover,
+#icon-autocomplete .icon-ac-item.active {
+    background: var(--wiki-bg);
+    border-color: var(--wiki-primary);
+    color: var(--wiki-primary);
+}
+
+#icon-autocomplete .icon-ac-item i {
+    font-size: 1.2rem;
+    margin-bottom: 2px;
+    display: block;
+}
+
+#icon-autocomplete .icon-ac-item span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 56px;
+    display: block;
+}
+
+#icon-autocomplete .icon-ac-empty,
+#icon-autocomplete .icon-ac-loading {
+    padding: 14px;
+    text-align: center;
+    font-size: 0.85rem;
+    color: var(--wiki-text-muted);
+}
+
+/* ── 색상 선택 인라인 자동완성 드롭다운 ── */
+#color-autocomplete {
+    position: absolute;
+    z-index: 2100;
+    background: var(--wiki-card-bg);
+    border: 1px solid var(--wiki-border);
+    border-radius: 8px;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.15);
+    width: 280px;
+    display: none;
+    overflow: hidden;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+#color-autocomplete .color-ac-header {
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--wiki-border);
+    font-size: 0.8rem;
+    color: var(--wiki-text-muted);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--wiki-toc-bg);
+}
+
+#color-autocomplete .color-ac-swatches {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 8px;
+    border-bottom: 1px solid var(--wiki-border);
+}
+
+#color-autocomplete .color-swatch {
+    width: 28px;
+    height: 28px;
+    border-radius: 4px;
+    cursor: pointer;
+    border: 2px solid transparent;
+    transition: border-color 0.15s, transform 0.1s;
+    flex-shrink: 0;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+}
+
+#color-autocomplete .color-swatch:hover,
+#color-autocomplete .color-swatch.active {
+    border-color: var(--wiki-primary);
+    transform: scale(1.15);
+}
+
+#color-autocomplete .color-palette-area {
+    padding: 8px;
+}
+
+#color-autocomplete .color-palette-canvas {
+    width: 100%;
+    height: 120px;
+    border-radius: 4px;
+    cursor: crosshair;
+    border: 1px solid var(--wiki-border);
+    touch-action: none;
+}
+
+#color-autocomplete .color-hue-slider {
+    width: 100%;
+    height: 16px;
+    border-radius: 4px;
+    cursor: pointer;
+    border: 1px solid var(--wiki-border);
+    margin-top: 6px;
+    touch-action: none;
+}
+
+#color-autocomplete .color-preview-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 6px;
+}
+
+#color-autocomplete .color-preview-box {
+    width: 32px;
+    height: 32px;
+    border-radius: 4px;
+    border: 1px solid var(--wiki-border);
+    flex-shrink: 0;
+}
+
+#color-autocomplete .color-hex-input {
+    flex: 1;
+    font-size: 0.85rem;
+    padding: 4px 8px;
+    border: 1px solid var(--wiki-border);
+    border-radius: 4px;
+    background: var(--wiki-bg);
+    color: var(--wiki-text);
+    font-family: monospace;
+}
+
+#color-autocomplete .color-apply-btn {
+    padding: 4px 12px;
+    font-size: 0.8rem;
+    border: none;
+    border-radius: 4px;
+    background: var(--wiki-primary);
+    color: #fff;
+    cursor: pointer;
+    font-weight: 600;
+    transition: opacity 0.15s;
+}
+
+#color-autocomplete .color-apply-btn:hover {
+    opacity: 0.85;
+}
+
+/* ── 이미지 업로드 드롭존 팝업 ── */
+.img-upload-popup {
+    position: absolute;
+    z-index: 1100;
+    background: var(--wiki-card-bg, #fff);
+    border: 1px solid var(--wiki-border, #dee2e6);
+    border-radius: 12px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
+    padding: 16px;
+    width: 320px;
+    display: none;
+}
+
+.img-upload-popup.active {
+    display: block;
+}
+
+.img-upload-dropzone {
+    border: 2px dashed var(--wiki-primary, #3b82f6);
+    border-radius: 10px;
+    padding: 32px 16px;
+    text-align: center;
+    cursor: pointer;
+    transition: background 0.2s, border-color 0.2s;
+    background: rgba(var(--wiki-primary-rgb, 59, 130, 246), 0.04);
+}
+
+.img-upload-dropzone:hover,
+.img-upload-dropzone.dragover {
+    background: rgba(var(--wiki-primary-rgb, 59, 130, 246), 0.10);
+    border-color: var(--wiki-link, #2563eb);
+}
+
+.img-upload-dropzone i {
+    font-size: 2.2rem;
+    color: var(--wiki-primary, #3b82f6);
+    display: block;
+    margin-bottom: 8px;
+}
+
+.img-upload-dropzone .drop-main-text {
+    font-weight: 600;
+    font-size: 0.95rem;
+    color: var(--wiki-text, #333);
+}
+
+.img-upload-dropzone .drop-sub-text {
+    font-size: 0.82rem;
+    color: var(--wiki-muted, #888);
+    margin-top: 4px;
+}
+
+/* ── 이미지 편집 모달 ── */
+#imageEditorModal .modal-dialog {
+    max-width: 90vw;
+    width: 640px;
+}
+
+#imageEditorModal .modal-body {
+    padding: 16px;
+}
+
+.img-editor-canvas-wrap {
+    position: relative;
+    width: 100%;
+    max-height: 60vh;
+    overflow: hidden;
+    background: repeating-conic-gradient(#e0e0e0 0% 25%, #fff 0% 50%) 50% / 16px 16px;
+    border: 1px solid var(--wiki-border);
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+@media (prefers-color-scheme: dark) {
+    .img-editor-canvas-wrap {
+        background: repeating-conic-gradient(#333 0% 25%, #222 0% 50%) 50% / 16px 16px;
+    }
+}
+
+.img-editor-canvas-wrap canvas {
+    max-width: 100%;
+    max-height: 60vh;
+    display: block;
+}
+
+/* 크롭 오버레이 */
+.crop-overlay {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+}
+
+.crop-overlay .crop-dim {
+    position: absolute;
+    background: rgba(0, 0, 0, 0.45);
+}
+
+.crop-overlay .crop-box {
+    position: absolute;
+    border: 2px solid #fff;
+    box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.45);
+    pointer-events: auto;
+    cursor: move;
+    touch-action: none;
+}
+
+.crop-overlay .crop-handle {
+    position: absolute;
+    width: 20px;
+    height: 20px;
+    background: #fff;
+    border: 2px solid var(--wiki-primary, #3b82f6);
+    border-radius: 50%;
+    pointer-events: auto;
+    touch-action: none;
+    z-index: 1;
+}
+
+.crop-overlay .crop-handle.tl { top: -10px; left: -10px; cursor: nw-resize; }
+.crop-overlay .crop-handle.tr { top: -10px; right: -10px; cursor: ne-resize; }
+.crop-overlay .crop-handle.bl { bottom: -10px; left: -10px; cursor: sw-resize; }
+.crop-overlay .crop-handle.br { bottom: -10px; right: -10px; cursor: se-resize; }
+
+.img-editor-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 12px;
+    flex-wrap: wrap;
+}
+
+.img-editor-toolbar button {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 14px;
+    border: 1px solid var(--wiki-border);
+    border-radius: 6px;
+    background: var(--wiki-card-bg);
+    color: var(--wiki-text);
+    font-size: 0.88rem;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+}
+
+.img-editor-toolbar button:hover {
+    border-color: var(--wiki-primary);
+    background: var(--wiki-bg);
+}
+
+.img-editor-toolbar button.active {
+    border-color: var(--wiki-primary);
+    background: var(--wiki-primary);
+    color: #fff;
+}
+
+.img-editor-toolbar button i {
+    font-size: 1.1rem;
+}
+
+.img-editor-toolbar .separator {
+    width: 1px;
+    height: 24px;
+    background: var(--wiki-border);
+}
+
+.img-editor-info {
+    margin-top: 8px;
+    font-size: 0.8rem;
+    color: var(--wiki-text-muted);
+}

@@ -1025,15 +1025,18 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
         const resolvedContent = await resolveTransclusions(content || '', slug);
 
         const codeBlocksForFold = [];
-        let foldInput = resolvedContent.replace(/(`{3,})[\s\S]*?\1|`[^`\n]+`/g, (m) => {
+        let foldInput = resolvedContent.replace(/^(`{3,})[^\n]*\n[\s\S]*?\n\1[ \t]*$|`[^`\n]+`/gm, (m) => {
             const idx = codeBlocksForFold.length;
             codeBlocksForFold.push(m);
             return `WIKICODEFPH${idx}XEND`;
         });
 
-        const foldRegex = /^\[\+\s*(.*?)\s*\](?:(?:\r?\n)+)([\s\S]*?)(?:\r?\n)+\[-\]$/gm;
+        foldInput = foldInput.replace(/^[\u200B\uFEFF]+(\[[-+])/gm, '$1');
+
+        const foldRegex = /^\[\+\s*(.*?)\s*\][ \t]*\n((?:(?!^\[-\][ \t]*$)[\s\S])*?)\n\[-\][ \t]*$/gm;
         const foldBlocks = [];
         let preprocessed = foldInput.replace(foldRegex, (match, titleLine, foldContent) => {
+            foldContent = foldContent.replace(/^\n+|\n+$/g, '');
             let summaryText = titleLine;
             let bgOpt = '';
             let colorOpt = '';

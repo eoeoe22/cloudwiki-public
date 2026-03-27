@@ -17,9 +17,59 @@
     <link rel="stylesheet" href="/style.css">
     <style>
         .admin-container {
+            width: 100%;
+            min-width: 0;
             max-width: 1000px;
             margin: 40px auto;
             padding: 0 20px;
+            box-sizing: border-box;
+            word-break: break-word;
+            overflow-wrap: break-word;
+        }
+
+        @media (max-width: 768px) {
+            .admin-container {
+                margin: 20px auto;
+                padding: 0 10px;
+                max-width: 100vw;
+            }
+
+            .admin-container h2,
+            .admin-container h3,
+            .admin-container h5,
+            .admin-container p,
+            .admin-container label,
+            .admin-container .form-check-label,
+            .admin-container .card-header,
+            .admin-container .card-body {
+                word-break: break-word;
+                overflow-wrap: break-word;
+            }
+
+            .admin-container .card {
+                max-width: 100%;
+                overflow: hidden;
+            }
+        }
+
+        .table-responsive {
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+            width: 100%;
+        }
+
+        .wiki-layout {
+            min-width: 0;
+            max-width: 100vw;
+            overflow-x: hidden;
+        }
+
+        .wiki-container {
+            min-width: 0;
+        }
+
+        .card, .card-body {
+            min-width: 0;
         }
 
         .media-item {
@@ -137,14 +187,15 @@
                 </div>
 
             </div>
-
-            <aside class="wiki-sidebar" id="wikiSidebar">
-                <div id="app-sidebar-placeholder"></div>
-            </aside>
         </div>
 
-        <!-- ── 푸터 Placeholder ── -->
-        <div id="app-footer-placeholder"></div>
+        <aside class="wiki-sidebar d-none" id="wikiSidebar">
+            <div id="app-sidebar-placeholder"></div>
+        </aside>
+    </div>
+
+    <!-- ── 푸터 Placeholder ── -->
+    <div id="app-footer-placeholder"></div>
 
         <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
         <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>

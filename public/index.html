@@ -24,6 +24,7 @@
     rel="stylesheet">
   <!-- 커스텀 스타일 -->
   <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/edit.css">
 </head>
 
 <body>
@@ -505,9 +506,8 @@
         }
 
         document.getElementById('articleMeta').innerHTML = `
-      <span class="meta-item"><i class="bi bi-person"></i> ${escapeHtml(authorName)}</span>
-      <span class="meta-item"><i class="bi bi-clock"></i> ${updatedDate}</span>
-      <span class="meta-item"><i class="bi bi-hash"></i> v${page.version}</span>
+      <span class="meta-item">마지막 수정 : ${updatedDate}</span>
+      <span class="meta-item">v${page.version}</span>
       ${badgesHtml}
     `;
 
