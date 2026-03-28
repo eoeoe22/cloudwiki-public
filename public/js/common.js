@@ -1374,56 +1374,113 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
 
             // Checking if the link display text looks like a URL instead of custom text
             const textContent = a.textContent.trim();
-            if (!textContent.includes('youtube.com') && !textContent.includes('youtu.be') && !textContent.includes('nicovideo.jp')) return;
+            if (!textContent.includes('youtube.com') && !textContent.includes('youtu.be') && !textContent.includes('nicovideo.jp') && !textContent.includes('spotify.com')) return;
 
-            // YouTube playlist-only URL: youtube.com/playlist?list=PLxxxxxx
-            const ytPlaylistOnlyMatch = href.match(/^https?:\/\/(?:www\.)?youtube\.com\/playlist\?list=([a-zA-Z0-9_-]+)/);
-            if (ytPlaylistOnlyMatch) {
-                const listId = ytPlaylistOnlyMatch[1];
-                const iframeWrapper = document.createElement('div');
-                iframeWrapper.className = 'ratio ratio-16x9 my-3';
-                iframeWrapper.style.maxWidth = '100%';
-                const ytIframe = document.createElement('iframe');
-                ytIframe.setAttribute('src', `https://www.youtube.com/embed/videoseries?list=${encodeURIComponent(listId)}`);
-                ytIframe.setAttribute('title', 'YouTube playlist player');
-                ytIframe.setAttribute('frameborder', '0');
-                ytIframe.setAttribute('allow', 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture');
-                ytIframe.setAttribute('referrerpolicy', 'strict-origin-when-cross-origin');
-                ytIframe.setAttribute('allowfullscreen', '');
-                iframeWrapper.appendChild(ytIframe);
-                parent.replaceWith(iframeWrapper);
-                return;
+            // Spotify Embed Processing
+            if (href.includes('open.spotify.com')) {
+                try {
+                    const url = new URL(href, window.location.origin);
+                    const pathParts = url.pathname.split('/').filter(Boolean); // e.g. ["track", "ID"]
+                    
+                    if (pathParts.length >= 2) {
+                        const type = pathParts[0];
+                        const id = pathParts[1];
+                        const allowedTypes = ['track', 'album', 'playlist', 'artist', 'show', 'episode'];
+                        
+                        if (allowedTypes.includes(type)) {
+                            const container = document.createElement('div');
+                            container.className = 'spotify-embed-container my-3';
+                            
+                            const iframe = document.createElement('iframe');
+                            const embedUrl = `https://open.spotify.com/embed/${type}/${id}${url.search}`;
+                            
+                            iframe.setAttribute('src', embedUrl);
+                            iframe.setAttribute('width', '100%');
+                            // 트랙/에피소드는 짧게(152px), 나머지는 길게(352px) 설정
+                            iframe.setAttribute('height', (type === 'track' || type === 'episode') ? '152' : '352');
+                            iframe.setAttribute('frameborder', '0');
+                            iframe.setAttribute('allow', 'autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture');
+                            iframe.setAttribute('loading', 'lazy');
+                            iframe.style.borderRadius = '12px';
+                            
+                            container.appendChild(iframe);
+                            parent.replaceWith(container);
+                            return;
+                        }
+                    }
+                } catch (e) {
+                    console.error('Spotify embed error:', e);
+                }
             }
 
-            const ytMatch = href.match(/^https?:\/\/(?:www\.)?youtube\.com\/watch\?v=([a-zA-Z0-9_-]+)(.*)$|^https?:\/\/youtu\.be\/([a-zA-Z0-9_-]+)(.*)$/);
-            if (ytMatch) {
-                const videoId = ytMatch[1] || ytMatch[3];
-                let params = ytMatch[2] || ytMatch[4] || '';
-                const queryParams = [];
-                // convert ?t= or &t= to start=
-                const timeMatch = params.match(/[?&]t=(\d+)s?/);
-                if (timeMatch) {
-                    queryParams.push(`start=${parseInt(timeMatch[1], 10)}`);
+            // YouTube Embed Processing (Improved)
+            if (href.includes('youtube.com') || href.includes('youtu.be')) {
+                try {
+                    const url = new URL(href, window.location.origin);
+                    let videoId = '';
+                    let listId = url.searchParams.get('list');
+                    let start = url.searchParams.get('t');
+
+                    if (url.hostname.includes('youtu.be')) {
+                        videoId = url.pathname.slice(1);
+                    } else if (url.pathname === '/watch') {
+                        videoId = url.searchParams.get('v');
+                    } else if (url.pathname.startsWith('/shorts/')) {
+                        videoId = url.pathname.split('/')[2];
+                    } else if (url.pathname.startsWith('/live/')) {
+                        videoId = url.pathname.split('/')[2];
+                    } else if (url.pathname === '/playlist' && listId) {
+                        // Playlist only URL
+                        const iframeWrapper = document.createElement('div');
+                        iframeWrapper.className = 'ratio ratio-16x9 my-3';
+                        iframeWrapper.style.maxWidth = '100%';
+                        const ytIframe = document.createElement('iframe');
+                        ytIframe.setAttribute('src', `https://www.youtube.com/embed/videoseries?list=${encodeURIComponent(listId)}`);
+                        ytIframe.setAttribute('title', 'YouTube playlist player');
+                        ytIframe.setAttribute('frameborder', '0');
+                        ytIframe.setAttribute('allow', 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture');
+                        ytIframe.setAttribute('referrerpolicy', 'strict-origin-when-cross-origin');
+                        ytIframe.setAttribute('allowfullscreen', '');
+                        iframeWrapper.appendChild(ytIframe);
+                        parent.replaceWith(iframeWrapper);
+                        return;
+                    }
+
+                    if (videoId) {
+                        const queryParams = [];
+                        if (start) {
+                            // handle format like 1m30s or 90
+                            let seconds = 0;
+                            const timeMatch = start.match(/(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?/);
+                            if (timeMatch && (timeMatch[1] || timeMatch[2] || timeMatch[3])) {
+                                seconds = (parseInt(timeMatch[1] || 0) * 3600) + (parseInt(timeMatch[2] || 0) * 60) + parseInt(timeMatch[3] || 0);
+                            } else {
+                                seconds = parseInt(start, 10);
+                            }
+                            if (!isNaN(seconds)) queryParams.push(`start=${seconds}`);
+                        }
+                        if (listId) {
+                            queryParams.push(`list=${encodeURIComponent(listId)}`);
+                        }
+                        const query = queryParams.length > 0 ? '?' + queryParams.join('&') : '';
+                        
+                        const iframeWrapper = document.createElement('div');
+                        iframeWrapper.className = 'ratio ratio-16x9 my-3';
+                        iframeWrapper.style.maxWidth = '100%';
+                        const ytIframe = document.createElement('iframe');
+                        ytIframe.setAttribute('src', `https://www.youtube.com/embed/${encodeURIComponent(videoId)}${query}`);
+                        ytIframe.setAttribute('title', 'YouTube video player');
+                        ytIframe.setAttribute('frameborder', '0');
+                        ytIframe.setAttribute('allow', 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture');
+                        ytIframe.setAttribute('referrerpolicy', 'strict-origin-when-cross-origin');
+                        ytIframe.setAttribute('allowfullscreen', '');
+                        iframeWrapper.appendChild(ytIframe);
+                        parent.replaceWith(iframeWrapper);
+                        return;
+                    }
+                } catch (e) {
+                    console.error('YouTube embed error:', e);
                 }
-                // carry through list= parameter for playlist context
-                const listMatch = params.match(/[?&]list=([a-zA-Z0-9_-]+)/);
-                if (listMatch) {
-                    queryParams.push(`list=${encodeURIComponent(listMatch[1])}`);
-                }
-                const query = queryParams.length > 0 ? '?' + queryParams.join('&') : '';
-                const iframeWrapper = document.createElement('div');
-                iframeWrapper.className = 'ratio ratio-16x9 my-3';
-                iframeWrapper.style.maxWidth = '100%';
-                const ytIframe = document.createElement('iframe');
-                ytIframe.setAttribute('src', `https://www.youtube.com/embed/${encodeURIComponent(videoId)}${query}`);
-                ytIframe.setAttribute('title', 'YouTube video player');
-                ytIframe.setAttribute('frameborder', '0');
-                ytIframe.setAttribute('allow', 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture');
-                ytIframe.setAttribute('referrerpolicy', 'strict-origin-when-cross-origin');
-                ytIframe.setAttribute('allowfullscreen', '');
-                iframeWrapper.appendChild(ytIframe);
-                parent.replaceWith(iframeWrapper);
-                return;
             }
 
             const nicoMatch = href.match(/^https?:\/\/(?:www\.)?nicovideo\.jp\/watch\/([a-zA-Z0-9_-]+)(.*)$/);
@@ -1497,8 +1554,17 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
             }
         });
 
-        // 코드블럭 복사 버튼 추가
+        // 코드블럭 복사 버튼 추가 및 언어 하이라이팅 감지
+        let requirePrism = false;
         containerEl.querySelectorAll('pre').forEach(pre => {
+            const codeEl = pre.querySelector('code');
+            if (codeEl) {
+                const hasLanguage = Array.from(codeEl.classList).some(cls => cls.startsWith('language-') && cls !== 'language-');
+                if (hasLanguage) {
+                    requirePrism = true;
+                }
+            }
+
             if (pre.parentNode.classList.contains('wiki-code-wrapper')) return;
 
             const wrapper = document.createElement('div');
@@ -1533,6 +1599,44 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
 
             wrapper.appendChild(copyBtn);
         });
+
+        // ── 코드블럭 문법 하이라이팅 (Prism.js Autoloader 연동) ──
+        // 코드블럭이 아무 문법이 아니라면 라이브러리를 불러오지 않음
+        if (requirePrism) {
+            if (typeof window.Prism === 'undefined') {
+                if (!document.getElementById('prism-core-script')) {
+                    const prismCss = document.createElement('link');
+                    prismCss.rel = 'stylesheet';
+                    prismCss.href = 'https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css';
+                    document.head.appendChild(prismCss);
+
+                    const prismCore = document.createElement('script');
+                    prismCore.id = 'prism-core-script';
+                    prismCore.src = 'https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js';
+                    prismCore.onload = () => {
+                        const prismAutoloader = document.createElement('script');
+                        prismAutoloader.id = 'prism-autoloader-script';
+                        prismAutoloader.src = 'https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js';
+                        prismAutoloader.onload = () => {
+                            Prism.plugins.autoloader.languages_path = 'https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/';
+                            document.querySelectorAll('pre code[class*="language-"]').forEach(el => Prism.highlightElement(el));
+                        };
+                        document.body.appendChild(prismAutoloader);
+                    };
+                    document.body.appendChild(prismCore);
+                } else {
+                    // 스크립트가 로딩 중인 경우
+                    const checkPrism = setInterval(() => {
+                        if (typeof window.Prism !== 'undefined' && window.Prism.plugins && window.Prism.plugins.autoloader) {
+                            clearInterval(checkPrism);
+                            containerEl.querySelectorAll('pre code[class*="language-"]').forEach(el => Prism.highlightElement(el));
+                        }
+                    }, 100);
+                }
+            } else if (typeof window.Prism !== 'undefined' && window.Prism.highlightElement) {
+                containerEl.querySelectorAll('pre code[class*="language-"]').forEach(el => Prism.highlightElement(el));
+            }
+        }
 
         // 헤딩 번호 삽입 (항상 실행)
         numberHeadings(containerEl);

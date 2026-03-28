@@ -900,10 +900,10 @@ div:where(.swal2-container) .swal2-html-container {
   max-width: 100%;
 }
 
-.wiki-content iframe,
-.wiki-content video,
-.wiki-content embed,
-.wiki-content object {
+.wiki-content iframe:not(.ratio > iframe),
+.wiki-content video:not(.ratio > video),
+.wiki-content embed:not(.ratio > embed),
+.wiki-content object:not(.ratio > object) {
   max-width: 100%;
   height: auto;
 }
