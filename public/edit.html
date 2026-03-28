@@ -28,6 +28,9 @@
 
 <body>
 
+    <!-- Category Autocomplete Dropdown -->
+    <div id="category-autocomplete" class="list-group"></div>
+
     <!-- Wiki Autocomplete Dropdown -->
     <div id="wiki-autocomplete" class="list-group"></div>
 
@@ -1092,6 +1095,95 @@
         const categoryTagInput = document.getElementById('categoryTagInput');
         let categoryTags = [];
 
+        // ── 카테고리 자동완성 상태 ──
+        const categoryAc = {
+            visible: false,
+            results: [],
+            selectedIndex: -1,
+            query: '',
+            lastQuery: null,
+            debounceTimer: null,
+            div: document.getElementById('category-autocomplete'),
+        };
+
+        function hideCategoryAutocomplete() {
+            categoryAc.visible = false;
+            categoryAc.results = [];
+            categoryAc.selectedIndex = -1;
+            categoryAc.lastQuery = null;
+            if (categoryAc.div) categoryAc.div.style.display = 'none';
+        }
+
+        function showCategoryAutocomplete(query) {
+            categoryAc.query = query;
+            categoryAc.visible = true;
+
+            if (categoryAc.div) {
+                const rect = categoryTagContainer.getBoundingClientRect();
+                categoryAc.div.style.left = rect.left + 'px';
+                categoryAc.div.style.top = (rect.bottom + 2) + 'px';
+                categoryAc.div.style.width = rect.width + 'px';
+                categoryAc.div.style.display = 'block';
+            }
+
+            if (categoryAc.query === categoryAc.lastQuery) return;
+            categoryAc.lastQuery = categoryAc.query;
+
+            clearTimeout(categoryAc.debounceTimer);
+            categoryAc.debounceTimer = setTimeout(async () => {
+                if (!categoryAc.visible) return;
+                try {
+                    const res = await fetch(`/api/wiki/search-categories?q=${encodeURIComponent(categoryAc.query)}`);
+                    if (!res.ok) return;
+                    const data = await res.json();
+                    categoryAc.results = data.results || [];
+                    renderCategoryAcResults();
+                } catch (e) {
+                    console.error('Category autocomplete fetch error:', e);
+                }
+            }, 200);
+        }
+
+        function renderCategoryAcResults() {
+            if (!categoryAc.div) return;
+            if (categoryAc.results.length === 0) {
+                hideCategoryAutocomplete();
+                return;
+            }
+            categoryAc.div.innerHTML = categoryAc.results.map((item, index) => `
+                <div class="list-group-item cat-ac-item" data-index="${index}" onmousedown="selectCategoryAcByIndex(${index})">
+                    <i class="mdi mdi-tag-outline"></i>
+                    <span>${escapeHtml(item)}</span>
+                </div>
+            `).join('');
+            categoryAc.selectedIndex = -1;
+            highlightCategoryAcItem();
+        }
+
+        function highlightCategoryAcItem() {
+            if (!categoryAc.div) return;
+            const items = categoryAc.div.querySelectorAll('.cat-ac-item');
+            items.forEach((item, idx) => {
+                if (idx === categoryAc.selectedIndex) {
+                    item.classList.add('active');
+                    item.scrollIntoView({ block: 'nearest' });
+                } else {
+                    item.classList.remove('active');
+                }
+            });
+        }
+
+        function selectCategoryAc(index) {
+            const item = categoryAc.results[index];
+            if (!item) return;
+            addCategoryTag(item);
+            categoryTagInput.value = '';
+            hideCategoryAutocomplete();
+            categoryTagInput.focus();
+        }
+
+        window.selectCategoryAcByIndex = selectCategoryAc;
+
         function renderCategoryTags() {
             // 기존 렌더링 된 태그 요소들만 삭제
             const tags = categoryTagContainer.querySelectorAll('.category-tag');
@@ -1135,13 +1227,41 @@
             categoryTagInput.addEventListener('keydown', (e) => {
                 // 한글 조합 중 엔터 등 처리 방지
                 if (e.isComposing) return;
-                
+
+                // 자동완성 키 처리
+                if (categoryAc.visible) {
+                    if (e.key === 'ArrowDown') {
+                        e.preventDefault();
+                        if (categoryAc.results.length > 0) {
+                            categoryAc.selectedIndex = (categoryAc.selectedIndex + 1) % categoryAc.results.length;
+                            highlightCategoryAcItem();
+                        }
+                        return;
+                    } else if (e.key === 'ArrowUp') {
+                        e.preventDefault();
+                        if (categoryAc.results.length > 0) {
+                            categoryAc.selectedIndex = (categoryAc.selectedIndex - 1 + categoryAc.results.length) % categoryAc.results.length;
+                            highlightCategoryAcItem();
+                        }
+                        return;
+                    } else if (e.key === 'Escape') {
+                        e.preventDefault();
+                        hideCategoryAutocomplete();
+                        return;
+                    } else if (e.key === 'Enter' && categoryAc.selectedIndex >= 0) {
+                        e.preventDefault();
+                        selectCategoryAc(categoryAc.selectedIndex);
+                        return;
+                    }
+                }
+
                 if (e.key === 'Enter' || e.key === ',') {
                     e.preventDefault();
                     if (categoryTagInput.value.trim()) {
                         const tags = categoryTagInput.value.split(','); // 복붙 등에 의한 다중입력 대비
                         tags.forEach(t => addCategoryTag(t));
                         categoryTagInput.value = '';
+                        hideCategoryAutocomplete();
                     }
                 } else if (e.key === 'Backspace' && categoryTagInput.value === '') {
                     if (categoryTags.length > 0) {
@@ -1152,13 +1272,17 @@
             });
 
             categoryTagInput.addEventListener('blur', () => {
-                if (categoryTagInput.value.trim()) {
-                    const tags = categoryTagInput.value.split(',');
-                    tags.forEach(t => addCategoryTag(t));
-                    categoryTagInput.value = '';
-                }
+                // 자동완성 항목 클릭(onmousedown) 처리 후 닫기
+                setTimeout(() => {
+                    hideCategoryAutocomplete();
+                    if (categoryTagInput.value.trim()) {
+                        const tags = categoryTagInput.value.split(',');
+                        tags.forEach(t => addCategoryTag(t));
+                        categoryTagInput.value = '';
+                    }
+                }, 150);
             });
-            
+
             // 쉼표 입력시 블러나 다른 이벤트에서 쉼표가 방해될 수 있으므로 input 이벤트에서도 쉼표 감지
             categoryTagInput.addEventListener('input', (e) => {
                 if (categoryTagInput.value.includes(',')) {
@@ -1166,7 +1290,11 @@
                     const lastFragment = tags.pop(); // 아직 입력중인 텍스트
                     tags.forEach(t => addCategoryTag(t));
                     categoryTagInput.value = lastFragment;
+                    hideCategoryAutocomplete();
+                    return;
                 }
+                // 자동완성 표시
+                showCategoryAutocomplete(categoryTagInput.value.trim());
             });
         }
 

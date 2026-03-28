@@ -203,6 +203,36 @@ wiki.get('/wiki/search-titles', async (c) => {
 
 
 /**
+ * GET /wiki/search-categories
+ * 카테고리 자동완성용 검색 (최대 8개)
+ * Query: q (검색어)
+ */
+wiki.get('/wiki/search-categories', async (c) => {
+    if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) {
+        return c.json({ error: '로그인이 필요합니다.' }, 401);
+    }
+    const db = c.env.DB;
+    const q = c.req.query('q') || '';
+
+    let rows: { category: string }[];
+    if (q.length > 0) {
+        const { results } = await db
+            .prepare('SELECT DISTINCT category FROM page_categories WHERE category LIKE ? ORDER BY category ASC LIMIT 8')
+            .bind(`%${q}%`)
+            .all<{ category: string }>();
+        rows = results;
+    } else {
+        const { results } = await db
+            .prepare('SELECT DISTINCT category FROM page_categories ORDER BY category ASC LIMIT 8')
+            .all<{ category: string }>();
+        rows = results;
+    }
+
+    return c.json({ results: rows.map(r => r.category) });
+});
+
+
+/**
  * GET /wiki/recent-changes
  * 위키 전체에서 가장 최근에 수정된 문서 10개
  */

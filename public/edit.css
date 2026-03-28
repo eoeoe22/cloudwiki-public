@@ -70,6 +70,42 @@
     }
 }
 
+/* Category Tag Autocomplete Dropdown */
+#category-autocomplete {
+    position: fixed;
+    z-index: 2100;
+    background: var(--wiki-card-bg);
+    border: 1px solid var(--wiki-border);
+    border-radius: 8px;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.15);
+    display: none;
+    overflow: hidden;
+}
+
+#category-autocomplete .list-group-item {
+    background: transparent;
+    color: var(--wiki-text);
+    border: none;
+    border-bottom: 1px solid var(--wiki-border);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.9rem;
+    padding: 8px 12px;
+}
+
+#category-autocomplete .list-group-item:last-child {
+    border-bottom: none;
+}
+
+#category-autocomplete .list-group-item:hover,
+#category-autocomplete .list-group-item.active {
+    background-color: var(--wiki-bg);
+    border-left: 3px solid var(--wiki-primary);
+    padding-left: 9px;
+}
+
 /* Wiki Autocomplete Dropdown */
 #wiki-autocomplete {
     position: absolute;
