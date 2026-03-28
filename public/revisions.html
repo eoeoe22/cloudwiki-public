@@ -12,7 +12,8 @@
   <link href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css" rel="stylesheet">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Outfit:wght@500;600;700;800;900&family=Noto+Sans+KR:wght@300;400;500;600;700;800;900&display=swap"
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Outfit:wght@500;600;700;800;900&family=Noto+Sans+KR:wght@300;400;500;600;700;800;900&display=swap"
     rel="stylesheet">
   <link rel="stylesheet" href="/style.css">
 </head>
@@ -35,7 +36,8 @@
       <div id="revisionsPage" class="d-none">
         <div class="wiki-article" style="width: 100%; max-width: 100vw; overflow-x: hidden;">
           <h2 class="text-break"><i class="bi bi-clock-history"></i> 편집 이력: <span id="revPageTitle"></span></h2>
-          <div class="table-responsive" style="width: 100%; max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch;">
+          <div class="table-responsive"
+            style="width: 100%; max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch;">
             <div class="revision-list" id="revisionsList" style="min-width: 800px;"></div>
           </div>
           <button id="loadMoreBtn" class="btn btn-outline-secondary w-100 mt-3 d-none" onclick="loadMoreRevisions()">
@@ -71,7 +73,7 @@
     // ── URL에서 slug 추출 ──
     function extractSlug() {
       const path = window.location.pathname;
-      const m = path.match(/^\/wiki\/(.+)\/revisions$/);
+      const m = path.match(/^\/w\/(.+)\/revisions$/);
       return m ? decodeURIComponent(m[1]) : null;
     }
 
@@ -97,18 +99,18 @@
           currentOffset = 0;
         }
 
-        const res = await fetch(`/api/wiki/${encodeURIComponent(slug)}/revisions?offset=${currentOffset}`);
+        const res = await fetch(`/api/w/${encodeURIComponent(slug)}/revisions?offset=${currentOffset}`);
         if (!res.ok) throw new Error('리비전 로딩 실패');
 
         const data = await res.json();
 
         if (!append) {
-          const pageRes = await fetch(`/api/wiki/${encodeURIComponent(slug)}`);
+          const pageRes = await fetch(`/api/w/${encodeURIComponent(slug)}`);
           const pageData = pageRes.ok ? await pageRes.json() : null;
           isPageDeleted = !!pageData?.deleted_at;
 
           document.getElementById('revPageTitle').textContent = pageData?.title || slug;
-          document.getElementById('revBackLink').href = `/wiki/${encodeURIComponent(slug)}`;
+          document.getElementById('revBackLink').href = `/w/${encodeURIComponent(slug)}`;
 
           document.title = `편집 이력 - ${pageData?.title || slug} - ${appConfig.wikiName}`;
         }
@@ -174,7 +176,7 @@
     // ── 리비전 보기 ──
     async function viewRevision(slug, revId) {
       try {
-        const res = await fetch(`/api/wiki/${encodeURIComponent(slug)}/revisions/${revId}`);
+        const res = await fetch(`/api/w/${encodeURIComponent(slug)}/revisions/${revId}`);
         if (!res.ok) throw new Error('리비전 불러오기 실패');
         const rev = await res.json();
 
@@ -193,7 +195,7 @@
     // ── 리비전 Diff 보기 ──
     async function showDiff(slug, revId) {
       try {
-        const res = await fetch(`/api/wiki/${encodeURIComponent(slug)}/revisions/${revId}/diff`);
+        const res = await fetch(`/api/w/${encodeURIComponent(slug)}/revisions/${revId}/diff`);
         if (!res.ok) throw new Error('Diff 불러오기 실패');
         const data = await res.json();
 
@@ -275,7 +277,7 @@
 
       if (result.isConfirmed) {
         try {
-          const res = await fetch(`/api/wiki/${encodeURIComponent(slug)}/revert`, {
+          const res = await fetch(`/api/w/${encodeURIComponent(slug)}/revert`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ revision_id: revId })
@@ -284,7 +286,7 @@
           if (!res.ok) throw new Error(data.error || '되돌리기 실패');
 
           Swal.fire('성공', '문서가 되돌려졌습니다.', 'success').then(() => {
-            window.location.href = `/wiki/${encodeURIComponent(slug)}`;
+            window.location.href = `/w/${encodeURIComponent(slug)}`;
           });
         } catch (err) {
           Swal.fire('오류', err.message, 'error');

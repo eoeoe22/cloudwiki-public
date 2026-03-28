@@ -49,7 +49,7 @@ search.get('/search', async (c) => {
 
     const exactMatch = await db.prepare(exactSql).bind(query.trim()).first();
     if (exactMatch) {
-        return c.json({ redirect: `/wiki/${encodeURIComponent((exactMatch as any).slug)}` });
+        return c.json({ redirect: `/w/${encodeURIComponent((exactMatch as any).slug)}` });
     }
 
     // 정확 일치 없을 때만 검색 실행

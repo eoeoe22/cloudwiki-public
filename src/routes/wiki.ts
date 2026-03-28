@@ -14,7 +14,7 @@ const wiki = new Hono<Env>();
 async function refreshRecentChangesCache(c: any) {
     const db = c.env.DB;
     const origin = new URL(c.req.url).origin;
-    const cacheUrl = `${origin}/api/wiki/recent-changes`;
+    const cacheUrl = `${origin}/api/w/recent-changes`;
     const cache = caches.default;
 
     const { results } = await db.prepare(`
@@ -45,9 +45,9 @@ function invalidatePageCache(c: any, slug: string) {
     const path = encodeURIComponent(slug);
 
     return Promise.all([
-        cache.delete(`${origin}/api/wiki/${path}`),
-        cache.delete(`${origin}/api/wiki/${path}?redirect=no`),
-        cache.delete(`${origin}/wiki/${path}`)
+        cache.delete(`${origin}/api/w/${path}`),
+        cache.delete(`${origin}/api/w/${path}?redirect=no`),
+        cache.delete(`${origin}/w/${path}`)
     ]);
 }
 
@@ -152,11 +152,11 @@ wiki.get('/config', (c) => {
 });
 
 /**
- * GET /wiki/search-titles
+ * GET /w/search-titles
  * 자동완성용 제목 검색 (최대 5개)
  * Query: q (검색어), type (link | template)
  */
-wiki.get('/wiki/search-titles', async (c) => {
+wiki.get('/w/search-titles', async (c) => {
     if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) {
         return c.json({ error: '로그인이 필요합니다.' }, 401);
     }
@@ -203,11 +203,11 @@ wiki.get('/wiki/search-titles', async (c) => {
 
 
 /**
- * GET /wiki/search-categories
+ * GET /w/search-categories
  * 카테고리 자동완성용 검색 (최대 8개)
  * Query: q (검색어)
  */
-wiki.get('/wiki/search-categories', async (c) => {
+wiki.get('/w/search-categories', async (c) => {
     if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) {
         return c.json({ error: '로그인이 필요합니다.' }, 401);
     }
@@ -233,10 +233,10 @@ wiki.get('/wiki/search-categories', async (c) => {
 
 
 /**
- * GET /wiki/recent-changes
+ * GET /w/recent-changes
  * 위키 전체에서 가장 최근에 수정된 문서 10개
  */
-wiki.get('/wiki/recent-changes', async (c) => {
+wiki.get('/w/recent-changes', async (c) => {
     if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) {
         return c.json({ error: '로그인이 필요합니다.' }, 401);
     }
@@ -286,10 +286,10 @@ wiki.get('/wiki/recent-changes', async (c) => {
 });
 
 /**
- * GET /wiki/admin-categories
+ * GET /w/admin-categories
  * 관리자 전용 카테고리 목록 (공개 - 편집 페이지에서 사용)
  */
-wiki.get('/wiki/admin-categories', async (c) => {
+wiki.get('/w/admin-categories', async (c) => {
     const db = c.env.DB;
     const { results } = await db
         .prepare('SELECT name FROM admin_categories ORDER BY name ASC')
@@ -298,10 +298,10 @@ wiki.get('/wiki/admin-categories', async (c) => {
 });
 
 /**
- * GET /wiki/templates
+ * GET /w/templates
  * 템플릿 목록 (slug가 '템플릿:'으로 시작하는 문서들만)
  */
-wiki.get('/wiki/templates', async (c) => {
+wiki.get('/w/templates', async (c) => {
     const db = c.env.DB;
     const q = c.req.query('q');
 
@@ -320,10 +320,10 @@ wiki.get('/wiki/templates', async (c) => {
 });
 
 /**
- * GET /wiki/random
+ * GET /random
  * 단일 랜덤 문서 반환 (접근 가능한 문서 중)
  */
-wiki.get('/wiki/random', async (c) => {
+wiki.get('/w/random', async (c) => {
     if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) {
         return c.json({ error: '로그인이 필요합니다.' }, 401);
     }
@@ -341,7 +341,7 @@ wiki.get('/wiki/random', async (c) => {
     }
     // 관리자 페이지, 틀, 이미지, 카테고리 등 배제
     query += " AND slug NOT LIKE '이미지:%' AND slug NOT LIKE '틀:%' AND slug NOT LIKE 'template:%' AND slug NOT LIKE '템플릿:%' AND slug NOT LIKE '카테고리:%'";
-    
+
     query += ' ORDER BY RANDOM() LIMIT 1';
 
     const page = await db.prepare(query).first<{ slug: string, title: string }>();
@@ -354,12 +354,12 @@ wiki.get('/wiki/random', async (c) => {
 });
 
 /**
- * GET /wiki/:slug
+ * GET /w/:slug
  * 문서 조회 (공개)
  * - 리다이렉트 처리: 문서가 없고 리다이렉트가 존재하면 대상 문서 반환 (redirected_from 포함)
  * - 비공개 문서: 관리자만 접근 가능
  */
-wiki.get('/wiki/:slug', async (c) => {
+wiki.get('/w/:slug', async (c) => {
     if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) {
         return c.json({ error: '로그인이 필요합니다.' }, 401);
     }
@@ -464,11 +464,11 @@ wiki.get('/wiki/:slug', async (c) => {
 });
 
 /**
- * PUT /wiki/:slug
+ * PUT /w/:slug
  * 문서 생성 또는 수정 (로그인 필수)
  * Body: { title, content, summary, expected_version? }
  */
-wiki.put('/wiki/:slug', requireAuth, async (c) => {
+wiki.put('/w/:slug', requireAuth, async (c) => {
     const slug = c.req.param('slug');
     const user = c.get('user')!;
     const body = await c.req.json<{
@@ -650,7 +650,7 @@ wiki.put('/wiki/:slug', requireAuth, async (c) => {
                     if (watchers.length === 0) return;
                     const stmts = watchers.map((w: any) =>
                         db.prepare('INSERT INTO notifications (user_id, type, content, link) VALUES (?, ?, ?, ?)')
-                            .bind(w.user_id, 'page_watch', `${user.name}님이 "${body.title}" 문서를 편집했습니다.`, `/wiki/${slug}`)
+                            .bind(w.user_id, 'page_watch', `${user.name}님이 "${body.title}" 문서를 편집했습니다.`, `/w/${slug}`)
                     );
                     return db.batch(stmts);
                 })
@@ -709,10 +709,10 @@ wiki.put('/wiki/:slug', requireAuth, async (c) => {
 });
 
 /**
- * GET /wiki/category/:category
+ * GET /w/category/:category
  * 카테고리별 문서 목록 (page_categories 테이블 기반)
  */
-wiki.get('/wiki/category/:category', async (c) => {
+wiki.get('/w/category/:category', async (c) => {
     const category = c.req.param('category');
     const db = c.env.DB;
     const user = c.get('user');
@@ -739,10 +739,10 @@ wiki.get('/wiki/category/:category', async (c) => {
 });
 
 /**
- * GET /wiki/:slug/revisions
+ * GET /w/:slug/revisions
  * 리비전 목록
  */
-wiki.get('/wiki/:slug/revisions', async (c) => {
+wiki.get('/w/:slug/revisions', async (c) => {
     const slug = c.req.param('slug');
     const offset = parseInt(c.req.query('offset') || '0', 10);
     const limit = 10;
@@ -758,7 +758,7 @@ wiki.get('/wiki/:slug/revisions', async (c) => {
     if (!page || (page.deleted_at && !isAdmin)) {
         return c.json({ error: '문서를 찾을 수 없습니다.' }, 404);
     }
-    
+
     if (page.is_private && !isAdmin) {
         return c.json({ error: '비공개 문서입니다.' }, 403);
     }
@@ -789,10 +789,10 @@ wiki.get('/wiki/:slug/revisions', async (c) => {
 });
 
 /**
- * GET /wiki/:slug/revisions/:id
+ * GET /w/:slug/revisions/:id
  * 특정 리비전 내용
  */
-wiki.get('/wiki/:slug/revisions/:id', async (c) => {
+wiki.get('/w/:slug/revisions/:id', async (c) => {
     const revId = parseInt(c.req.param('id'));
     const slug = c.req.param('slug');
     const db = c.env.DB;
@@ -830,10 +830,10 @@ wiki.get('/wiki/:slug/revisions/:id', async (c) => {
 });
 
 /**
- * GET /wiki/:slug/revisions/:id/diff
+ * GET /w/:slug/revisions/:id/diff
  * 특정 리비전과 이전 리비전의 내용을 비교용으로 반환
  */
-wiki.get('/wiki/:slug/revisions/:id/diff', async (c) => {
+wiki.get('/w/:slug/revisions/:id/diff', async (c) => {
     const revId = parseInt(c.req.param('id'));
     const slug = c.req.param('slug');
     const db = c.env.DB;
@@ -886,10 +886,10 @@ wiki.get('/wiki/:slug/revisions/:id/diff', async (c) => {
 });
 
 /**
- * GET /wiki/:slug/subdocs
+ * GET /w/:slug/subdocs
  * 하위 문서 목록 (제목이 '{slug}/'로 시작하는 문서들)
  */
-wiki.get('/wiki/:slug/subdocs', async (c) => {
+wiki.get('/w/:slug/subdocs', async (c) => {
     const slug = c.req.param('slug');
     const db = c.env.DB;
     const user = c.get('user');
@@ -915,12 +915,12 @@ wiki.get('/wiki/:slug/subdocs', async (c) => {
 });
 
 /**
- * GET /wiki/:slug/backlinks
+ * GET /w/:slug/backlinks
  * 이 문서를 참조하는 문서 목록 (page_links 테이블 기반)
  * - 문서 링크: [[slug]] → link_type = 'wikilink'
  * - 틀 트랜스클루전: {{slug}} → link_type = 'template'
  */
-wiki.get('/wiki/:slug/backlinks', async (c) => {
+wiki.get('/w/:slug/backlinks', async (c) => {
     const slug = c.req.param('slug');
     const db = c.env.DB;
     const user = c.get('user');
@@ -962,13 +962,13 @@ wiki.get('/wiki/:slug/backlinks', async (c) => {
 });
 
 /**
- * DELETE /wiki/:slug
+ * DELETE /w/:slug
  * 문서 삭제 (로그인 필수)
  * - 관리자: ?hard=true 시 영구 삭제 (문서, 리비전, 리다이렉트)
  * - 일반: Soft Delete
  * - 이미지: 접두사 문서의 경우 R2 파일 및 media 레코드도 함께 삭제
  */
-wiki.delete('/wiki/:slug', requireAuth, async (c) => {
+wiki.delete('/w/:slug', requireAuth, async (c) => {
     const slug = c.req.param('slug');
     const user = c.get('user')!;
     const db = c.env.DB;
@@ -1073,11 +1073,11 @@ wiki.delete('/wiki/:slug', requireAuth, async (c) => {
 });
 
 /**
- * POST /wiki/:slug/restore
+ * POST /w/:slug/restore
  * 문서 복원 (관리자 전용)
  * - Soft Delete된 문서를 복구
  */
-wiki.post('/wiki/:slug/restore', requireAuth, async (c) => {
+wiki.post('/w/:slug/restore', requireAuth, async (c) => {
     const slug = c.req.param('slug');
     const user = c.get('user')!;
     const db = c.env.DB;
@@ -1117,13 +1117,13 @@ wiki.post('/wiki/:slug/restore', requireAuth, async (c) => {
 });
 
 /**
- * POST /wiki/:slug/move
+ * POST /w/:slug/move
  * 문서 이동 (이름 변경)
  * - 기존 문서 이름(slug)을 새로운 이름으로 변경
  * - 기존 문서에 리디렉션을 생성하지 않음
  * - Backlinks FROM this page are updated to reflect the new source slug
  */
-wiki.post('/wiki/:slug/move', requireAuth, async (c) => {
+wiki.post('/w/:slug/move', requireAuth, async (c) => {
     const currentSlug = c.req.param('slug');
     const { new_slug } = await c.req.json<{ new_slug: string }>();
     const user = c.get('user')!;
@@ -1179,10 +1179,10 @@ wiki.post('/wiki/:slug/move', requireAuth, async (c) => {
 });
 
 /**
- * POST /wiki/:slug/revert
+ * POST /w/:slug/revert
  * 문서 되돌리기
  */
-wiki.post('/wiki/:slug/revert', requireAuth, async (c) => {
+wiki.post('/w/:slug/revert', requireAuth, async (c) => {
     const slug = c.req.param('slug');
     const { revision_id } = await c.req.json<{ revision_id: number }>();
     const user = c.get('user')!;
@@ -1230,10 +1230,10 @@ wiki.post('/wiki/:slug/revert', requireAuth, async (c) => {
 });
 
 /**
- * GET /wiki/:slug/redirects
+ * GET /w/:slug/redirects
  * 해당 문서로 연결된 넘겨주기 목록
  */
-wiki.get('/wiki/:slug/redirects', async (c) => {
+wiki.get('/w/:slug/redirects', async (c) => {
     const slug = c.req.param('slug');
     const db = c.env.DB;
 
@@ -1250,10 +1250,10 @@ wiki.get('/wiki/:slug/redirects', async (c) => {
 });
 
 /**
- * POST /wiki/:slug/redirects
+ * POST /w/:slug/redirects
  * 넘겨주기 추가
  */
-wiki.post('/wiki/:slug/redirects', requireAuth, async (c) => {
+wiki.post('/w/:slug/redirects', requireAuth, async (c) => {
     const slug = c.req.param('slug');
     const { source_slug } = await c.req.json<{ source_slug: string }>();
     const db = c.env.DB;
@@ -1289,10 +1289,10 @@ wiki.post('/wiki/:slug/redirects', requireAuth, async (c) => {
 });
 
 /**
- * DELETE /wiki/:slug/redirects
+ * DELETE /w/:slug/redirects
  * 넘겨주기 삭제
  */
-wiki.delete('/wiki/:slug/redirects', requireAuth, async (c) => {
+wiki.delete('/w/:slug/redirects', requireAuth, async (c) => {
     const slug = c.req.param('slug'); // The target page slug (context)
     const source_slug = c.req.query('source');
     const db = c.env.DB;
@@ -1318,10 +1318,10 @@ wiki.delete('/wiki/:slug/redirects', requireAuth, async (c) => {
 
 
 /**
- * GET /wiki/:slug/watch
+ * GET /w/:slug/watch
  * 현재 유저의 주시 상태 조회
  */
-wiki.get('/wiki/:slug/watch', requireAuth, async (c) => {
+wiki.get('/w/:slug/watch', requireAuth, async (c) => {
     const slug = c.req.param('slug');
     const user = c.get('user')!;
     const db = c.env.DB;
@@ -1339,10 +1339,10 @@ wiki.get('/wiki/:slug/watch', requireAuth, async (c) => {
 });
 
 /**
- * POST /wiki/:slug/watch
+ * POST /w/:slug/watch
  * 문서 주시 토글 (로그인 필수)
  */
-wiki.post('/wiki/:slug/watch', requireAuth, async (c) => {
+wiki.post('/w/:slug/watch', requireAuth, async (c) => {
     const slug = c.req.param('slug');
     const user = c.get('user')!;
     const db = c.env.DB;
@@ -1368,11 +1368,11 @@ wiki.post('/wiki/:slug/watch', requireAuth, async (c) => {
 });
 
 /**
- * POST /wiki/:slug/editing
+ * POST /w/:slug/editing
  * 편집 하트비트 전송 (로그인 필수)
  * - KV에 편집 중 상태를 기록 (TTL 60초)
  */
-wiki.post('/wiki/:slug/editing', requireAuth, async (c) => {
+wiki.post('/w/:slug/editing', requireAuth, async (c) => {
     const slug = c.req.param('slug');
     const user = c.get('user')!;
     const kv = c.env.KV;
@@ -1386,11 +1386,11 @@ wiki.post('/wiki/:slug/editing', requireAuth, async (c) => {
 });
 
 /**
- * GET /wiki/:slug/editors
+ * GET /w/:slug/editors
  * 현재 편집 중인 사용자 목록 (로그인 필수)
  * - 자기 자신은 제외
  */
-wiki.get('/wiki/:slug/editors', requireAuth, async (c) => {
+wiki.get('/w/:slug/editors', requireAuth, async (c) => {
     const slug = c.req.param('slug');
     const user = c.get('user')!;
     const kv = c.env.KV;

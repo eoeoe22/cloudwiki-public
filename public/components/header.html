@@ -67,9 +67,9 @@
                         e.preventDefault();
                         const slug = this.dataset.slug;
                         if (typeof navigateTo === 'function') {
-                            navigateTo('/wiki/' + encodeURIComponent(slug));
+                            navigateTo('/w/' + encodeURIComponent(slug));
                         } else {
-                            window.location.href = '/wiki/' + encodeURIComponent(slug);
+                            window.location.href = '/w/' + encodeURIComponent(slug);
                         }
                         sugBox.classList.remove('show');
                         sugBox.innerHTML = '';

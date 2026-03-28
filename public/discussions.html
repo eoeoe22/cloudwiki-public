@@ -12,7 +12,8 @@
   <link href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css" rel="stylesheet">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Outfit:wght@500;600;700;800;900&family=Noto+Sans+KR:wght@300;400;500;600;700;800;900&display=swap"
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Outfit:wght@500;600;700;800;900&family=Noto+Sans+KR:wght@300;400;500;600;700;800;900&display=swap"
     rel="stylesheet">
   <link rel="stylesheet" href="/style.css">
 </head>
@@ -35,16 +36,19 @@
       <div id="discussionListPage" class="d-none">
         <div class="wiki-article">
           <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
-            <h2 class="m-0 fw-bold d-flex align-items-center gap-2" style="font-size: 1.8rem; word-break: keep-all; overflow-wrap: anywhere;">
-              <i class="bi bi-chat-dots text-primary"></i> 
+            <h2 class="m-0 fw-bold d-flex align-items-center gap-2"
+              style="font-size: 1.8rem; word-break: keep-all; overflow-wrap: anywhere;">
+              <i class="bi bi-chat-dots text-primary"></i>
               <span id="discussionPageTitle"></span>
               <span>토론</span>
             </h2>
             <div class="d-flex gap-2 flex-shrink-0 w-100 w-sm-auto justify-content-end mt-2 mt-sm-0">
-              <a id="discussionBackLink" href="#" class="btn btn-outline-secondary btn-sm px-3 flex-grow-1 flex-sm-grow-0">
+              <a id="discussionBackLink" href="#"
+                class="btn btn-outline-secondary btn-sm px-3 flex-grow-1 flex-sm-grow-0">
                 <i class="bi bi-arrow-left"></i> 문서로
               </a>
-              <button class="btn btn-primary btn-sm d-none px-3 flex-grow-1 flex-sm-grow-0" id="newDiscussionBtn" onclick="showNewDiscussionForm()">
+              <button class="btn btn-primary btn-sm d-none px-3 flex-grow-1 flex-sm-grow-0" id="newDiscussionBtn"
+                onclick="showNewDiscussionForm()">
                 <i class="bi bi-plus-lg"></i> 새 토론
               </button>
             </div>
@@ -94,14 +98,19 @@
       <div id="discussionThreadPage" class="d-none">
         <div class="wiki-article">
           <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-3">
-            <h2 id="threadTitle" class="m-0 fw-bold flex-grow-1" style="font-size: 1.6rem; line-height: 1.4; word-break: keep-all; overflow-wrap: anywhere;"></h2>
+            <h2 id="threadTitle" class="m-0 fw-bold flex-grow-1"
+              style="font-size: 1.6rem; line-height: 1.4; word-break: keep-all; overflow-wrap: anywhere;"></h2>
             <div class="d-flex gap-2 flex-shrink-0 w-100 w-sm-auto justify-content-end mt-2 mt-sm-0">
               <a id="threadBackLink" href="#" class="btn btn-outline-secondary btn-sm px-3 flex-grow-1 flex-sm-grow-0">
                 <i class="bi bi-arrow-left"></i> 목록
               </a>
             </div>
           </div>
-          <div class="d-flex flex-column flex-md-row align-items-start align-items-md-center gap-3 mb-3 p-3 bg-light rounded border shadow-sm w-100" id="threadMeta" style="background-color: var(--wiki-card-bg) !important; border-color: var(--wiki-border) !important;"></div>
+          <div
+            class="d-flex flex-column flex-md-row align-items-start align-items-md-center gap-3 mb-3 p-3 bg-light rounded border shadow-sm w-100"
+            id="threadMeta"
+            style="background-color: var(--wiki-card-bg) !important; border-color: var(--wiki-border) !important;">
+          </div>
           <div class="d-flex flex-wrap gap-2 mb-4 w-100" id="threadActions"></div>
 
           <div id="commentsList"></div>
@@ -151,13 +160,13 @@
     // ── URL 파싱 ──
     function parseUrl() {
       const path = window.location.pathname;
-      // /wiki/:slug/discussions/:id
-      let m = path.match(/^\/wiki\/(.+)\/discussions\/([0-9]+)$/);
+      // /w/:slug/discussions/:id
+      let m = path.match(/^\/w\/(.+)\/discussions\/([0-9]+)$/);
       if (m) {
         return { slug: decodeURIComponent(m[1]), threadId: Number(m[2]) };
       }
-      // /wiki/:slug/discussions
-      m = path.match(/^\/wiki\/(.+)\/discussions$/);
+      // /w/:slug/discussions
+      m = path.match(/^\/w\/(.+)\/discussions$/);
       if (m) {
         return { slug: decodeURIComponent(m[1]), threadId: null };
       }
@@ -212,13 +221,13 @@
       currentDiscussionFilter = filter || '';
 
       try {
-        const pageRes = await fetch(`/api/wiki/${encodeURIComponent(slug)}`);
+        const pageRes = await fetch(`/api/w/${encodeURIComponent(slug)}`);
         if (!pageRes.ok) throw new Error('문서를 찾을 수 없습니다.');
         const pageData = await pageRes.json();
         currentDiscussionPageId = pageData.id;
 
         document.getElementById('discussionPageTitle').textContent = pageData.title;
-        document.getElementById('discussionBackLink').href = `/wiki/${encodeURIComponent(slug)}`;
+        document.getElementById('discussionBackLink').href = `/w/${encodeURIComponent(slug)}`;
 
         // 로그인 여부에 따라 새 토론 버튼 표시
         if (currentUser && currentUser.role !== 'banned') {
@@ -247,7 +256,7 @@
                   <div class="discussion-item-title d-flex align-items-start gap-2 mb-2">
                     <div class="flex-shrink-0 mt-1">${statusBadge}</div>
                     <div class="fs-5 fw-bold" style="line-height: 1.4;">
-                      <a href="/wiki/${encodeURIComponent(slug)}/discussions/${d.id}" class="stretched-link text-decoration-none" style="color: var(--wiki-text) !important; word-break: keep-all; overflow-wrap: anywhere;">${escapeHtml(d.title)}</a>
+                      <a href="/w/${encodeURIComponent(slug)}/discussions/${d.id}" class="stretched-link text-decoration-none" style="color: var(--wiki-text) !important; word-break: keep-all; overflow-wrap: anywhere;">${escapeHtml(d.title)}</a>
                     </div>
                   </div>
                   <div class="discussion-item-meta d-flex flex-wrap gap-3 text-muted mt-2" style="font-size: 0.85rem;">
@@ -308,7 +317,7 @@
         if (!res.ok) throw new Error(data.error || '토론 생성 실패');
 
         Swal.fire('성공', '새 토론이 생성되었습니다.', 'success').then(() => {
-          window.location.href = `/wiki/${encodeURIComponent(currentSlug)}/discussions/${data.id}`;
+          window.location.href = `/w/${encodeURIComponent(currentSlug)}/discussions/${data.id}`;
         });
       } catch (err) {
         Swal.fire('오류', err.message, 'error');
@@ -333,7 +342,7 @@
           `<i class="bi bi-chat-dots"></i> ${escapeHtml(discussion.title)}`;
 
         // 뒤로가기
-        document.getElementById('threadBackLink').href = `/wiki/${encodeURIComponent(slug)}/discussions`;
+        document.getElementById('threadBackLink').href = `/w/${encodeURIComponent(slug)}/discussions`;
 
         // 메타 정보
         const statusBadge = discussion.status === 'open'
@@ -412,7 +421,7 @@
 
         // 해당 토론 관련 알림 일괄 삭제 (로그인 유저만, 백그라운드 처리)
         if (currentUser) {
-          const notifLink = `/wiki/${encodeURIComponent(slug)}/discussions/${threadId}`;
+          const notifLink = `/w/${encodeURIComponent(slug)}/discussions/${threadId}`;
           fetch('/api/notifications/by-link', {
             method: 'DELETE',
             headers: { 'Content-Type': 'application/json' },
@@ -588,7 +597,7 @@
         if (!res.ok) throw new Error(data.error || '삭제 실패');
 
         Swal.fire('삭제됨', '토론이 삭제되었습니다.', 'success').then(() => {
-          window.location.href = `/wiki/${encodeURIComponent(currentSlug)}/discussions`;
+          window.location.href = `/w/${encodeURIComponent(currentSlug)}/discussions`;
         });
       } catch (err) {
         Swal.fire('오류', err.message, 'error');

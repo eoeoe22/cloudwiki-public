@@ -1272,7 +1272,7 @@
 
                     return `
                         <tr>
-                            <td class="fw-bold"><a href="/wiki/${encodeURIComponent(p.slug)}" target="_blank" class="text-decoration-none">${escapeHtml(p.slug)} <i class="mdi mdi-open-in-new ms-1 small"></i></a></td>
+                            <td class="fw-bold"><a href="/w/${encodeURIComponent(p.slug)}" target="_blank" class="text-decoration-none">${escapeHtml(p.slug)} <i class="mdi mdi-open-in-new ms-1 small"></i></a></td>
                             <td>${statusBadge || '<span class="text-muted">-</span>'}</td>
                             <td>${deletedAt}</td>
                             <td>
@@ -1303,7 +1303,7 @@
 
                 if (result.isConfirmed) {
                     try {
-                        const res = await fetch(`/api/wiki/${encodeURIComponent(slug)}/restore`, { method: 'POST' });
+                        const res = await fetch(`/api/w/${encodeURIComponent(slug)}/restore`, { method: 'POST' });
                         const data = await res.json();
                         if (!res.ok) throw new Error(data.error || '복원 실패');
 
@@ -1529,7 +1529,7 @@
                     <div class="mb-3 text-start">
                         <label class="form-label fw-bold small">연결할 URL</label>
                         <input id="swal-input-url" class="form-control" value="${escapeHtml(item.url || '')}" placeholder="https://...">
-                        <div class="form-text">내부 문서 링크는 <code>/wiki/...</code> 형식으로 적어주세요.</div>
+                        <div class="form-text">내부 문서 링크는 <code>/w/...</code> 형식으로 적어주세요.</div>
                     </div>
                     <div class="mb-3 text-start">
                         <label class="form-label fw-bold small">아이콘 클래스 (선택)</label>
@@ -1744,7 +1744,7 @@
                     <div class="mb-3 text-start">
                         <label class="form-label fw-bold small">연결할 URL</label>
                         <input id="swal-footer-url" class="form-control" value="${escapeHtml(item.url || '')}" placeholder="https://...">
-                        <div class="form-text">내부 문서 링크는 <code>/wiki/...</code> 형식으로 적어주세요.</div>
+                        <div class="form-text">내부 문서 링크는 <code>/w/...</code> 형식으로 적어주세요.</div>
                     </div>
                     <div class="mb-3 text-start">
                         <label class="form-label fw-bold small">아이콘 클래스 (선택)</label>

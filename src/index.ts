@@ -225,6 +225,13 @@ async function renderHtml(c: Context<Env>, targetHtmlPath: string, pageData: Rec
 
 // ── 프론트엔드 라우팅 ──
 
+// 레거시 /wiki 하위 경로 영구 리다이렉트 (301)
+app.get('/wiki/*', async (c) => {
+    const relativePath = c.req.path.substring('/wiki/'.length);
+    const searchParams = new URL(c.req.url).search;
+    return c.redirect(`/w/${relativePath}${searchParams}`, 301);
+});
+
 // /tickets/:id → tickets.html 서빙 (SSR 브랜딩 적용)
 app.get('/tickets/:id', async (c) => {
     return renderHtml(c, '/tickets.html');
@@ -235,31 +242,31 @@ app.get('/tickets', async (c) => {
     return renderHtml(c, '/tickets.html');
 });
 
-// /wiki/:slug/discussions/* → discussions.html 서빙 (SSR 브랜딩 적용)
-app.get('/wiki/:slug/discussions/:id', async (c) => {
+// /w/:slug/discussions/* → discussions.html 서빙 (SSR 브랜딩 적용)
+app.get('/w/:slug/discussions/:id', async (c) => {
     if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) {
         return c.redirect('/login');
     }
     return renderHtml(c, '/discussions.html');
 });
 
-app.get('/wiki/:slug/discussions', async (c) => {
+app.get('/w/:slug/discussions', async (c) => {
     if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) {
         return c.redirect('/login');
     }
     return renderHtml(c, '/discussions.html');
 });
 
-// /wiki/:slug/revisions → revisions.html 서빙 (SSR 브랜딩 적용)
-app.get('/wiki/:slug/revisions', async (c) => {
+// /w/:slug/revisions → revisions.html 서빙 (SSR 브랜딩 적용)
+app.get('/w/:slug/revisions', async (c) => {
     if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) {
         return c.redirect('/login');
     }
     return renderHtml(c, '/revisions.html');
 });
 
-// /wiki/:slug → index.html + SSR (문서 데이터 주입)
-app.get('/wiki/:slug', async (c) => {
+// /w/:slug → index.html + SSR (문서 데이터 주입)
+app.get('/w/:slug', async (c) => {
     if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) {
         return c.redirect('/login');
     }
@@ -499,7 +506,7 @@ app.get('/sitemap.xml', async (c) => {
     for (const page of pages || []) {
         const lastmod = new Date(page.updated_at * 1000).toISOString().split('T')[0];
         xml += '  <url>\n';
-        xml += `    <loc>${baseUrl}/wiki/${encodeURIComponent(page.slug)}</loc>\n`;
+        xml += `    <loc>${baseUrl}/w/${encodeURIComponent(page.slug)}</loc>\n`;
         xml += `    <lastmod>${lastmod}</lastmod>\n`;
         xml += '    <changefreq>weekly</changefreq>\n';
         xml += '    <priority>0.8</priority>\n';

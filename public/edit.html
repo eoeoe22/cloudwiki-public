@@ -1133,7 +1133,7 @@
             categoryAc.debounceTimer = setTimeout(async () => {
                 if (!categoryAc.visible) return;
                 try {
-                    const res = await fetch(`/api/wiki/search-categories?q=${encodeURIComponent(categoryAc.query)}`);
+                    const res = await fetch(`/api/w/search-categories?q=${encodeURIComponent(categoryAc.query)}`);
                     if (!res.ok) return;
                     const data = await res.json();
                     categoryAc.results = data.results || [];
@@ -1687,7 +1687,7 @@
             // 관리자 전용 카테고리 목록 불러오기
             let adminCategories = [];
             try {
-                const catRes = await fetch('/api/wiki/admin-categories');
+                const catRes = await fetch('/api/w/admin-categories');
                 if (catRes.ok) {
                     const catData = await catRes.json();
                     adminCategories = catData.categories || [];
@@ -1715,7 +1715,7 @@
             });
             // 기존 문서 불러오기
             try {
-                const res = await fetch(`/api/wiki/${encodeURIComponent(slug)}?redirect=no&nocache=true`);
+                const res = await fetch(`/api/w/${encodeURIComponent(slug)}?redirect=no&nocache=true`);
                 if (res.ok) {
                     const page = await res.json();
                     document.getElementById('titleInput').value = page.title;
@@ -1868,7 +1868,7 @@
                         const fetchTemplates = async (query = '') => {
                             listContainer.innerHTML = '<div class="p-3 text-center"><span class="spinner-border spinner-border-sm text-primary" role="status"></span> 불러오는 중...</div>';
                             try {
-                                const res = await fetch(`/api/wiki/templates${query ? `?q=${encodeURIComponent(query)}` : ''}`);
+                                const res = await fetch(`/api/w/templates${query ? `?q=${encodeURIComponent(query)}` : ''}`);
                                 if (!res.ok) throw new Error('템플릿 목록을 불러올 수 없습니다.');
                                 const data = await res.json();
                                 renderTemplates(data.templates);
@@ -1893,7 +1893,7 @@
 
                 async function applyTemplate(selectedSlug) {
                     try {
-                        const tRes = await fetch(`/api/wiki/${encodeURIComponent(selectedSlug)}`);
+                        const tRes = await fetch(`/api/w/${encodeURIComponent(selectedSlug)}`);
                         if (!tRes.ok) throw new Error('템플릿 내용을 불러올 수 없습니다.');
                         const tPage = await tRes.json();
 
@@ -1972,7 +1972,7 @@
                     body.expected_version = pageVersion;
                 }
 
-                const res = await fetch(`/api/wiki/${encodeURIComponent(slug)}`, {
+                const res = await fetch(`/api/w/${encodeURIComponent(slug)}`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(body),
@@ -2003,7 +2003,7 @@
                     timer: 1500,
                     showConfirmButton: false,
                 }).then(() => {
-                    window.location.href = `/wiki/${encodeURIComponent(slug)}`;
+                    window.location.href = `/w/${encodeURIComponent(slug)}`;
                 });
 
             } catch (err) {
@@ -2242,11 +2242,11 @@
                     cancelButtonText: '계속 편집',
                 }).then(result => {
                     if (result.isConfirmed) {
-                        window.location.href = slug ? `/wiki/${encodeURIComponent(slug)}` : '/';
+                        window.location.href = slug ? `/w/${encodeURIComponent(slug)}` : '/';
                     }
                 });
             } else {
-                window.location.href = slug ? `/wiki/${encodeURIComponent(slug)}` : '/';
+                window.location.href = slug ? `/w/${encodeURIComponent(slug)}` : '/';
             }
         }
 
@@ -2286,7 +2286,7 @@
         async function sendHeartbeat() {
             if (!slug) return;
             try {
-                await fetch(`/api/wiki/${encodeURIComponent(slug)}/editing`, {
+                await fetch(`/api/w/${encodeURIComponent(slug)}/editing`, {
                     method: 'POST',
                 });
             } catch (e) {
@@ -2297,7 +2297,7 @@
         async function checkConcurrentEditors() {
             if (!slug) return;
             try {
-                const res = await fetch(`/api/wiki/${encodeURIComponent(slug)}/editors`);
+                const res = await fetch(`/api/w/${encodeURIComponent(slug)}/editors`);
                 if (!res.ok) return;
                 const data = await res.json();
 
@@ -2359,7 +2359,7 @@
                 if (!wikiAc.visible) return;
                 try {
                     // 쿼리가 비어있어도 API 호출 (최신순 등 반환 가능)
-                    let acUrl = `/api/wiki/search-titles?q=${encodeURIComponent(wikiAc.query)}&type=${wikiAc.type}`;
+                    let acUrl = `/api/w/search-titles?q=${encodeURIComponent(wikiAc.query)}&type=${wikiAc.type}`;
                     // 틀 자동완성에서 자기 자신 문서 제외
                     if (wikiAc.type === 'template' && slug) {
                         acUrl += `&exclude=${encodeURIComponent(slug)}`;

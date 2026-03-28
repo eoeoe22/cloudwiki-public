@@ -126,11 +126,11 @@ function doSearch(e) {
 // ── 랜덤 문서 ──
 async function goRandomPage() {
     try {
-        const res = await fetch('/api/wiki/random');
+        const res = await fetch('/api/w/random');
         if (!res.ok) throw new Error();
         const data = await res.json();
         if (data.slug) {
-            const url = `/wiki/${encodeURIComponent(data.slug)}`;
+            const url = `/w/${encodeURIComponent(data.slug)}`;
             if (typeof navigateTo === 'function') {
                 navigateTo(url);
                 const sidebar = document.getElementById('mobileSidebar');
@@ -672,7 +672,7 @@ async function resolveTransclusions(content, pageSlug) {
                     continue;
                 }
                 fetchPromises.push(
-                    fetch(`/api/wiki/${encodeURIComponent(slug)}`)
+                    fetch(`/api/w/${encodeURIComponent(slug)}`)
                         .then(res => res.ok ? res.json() : null)
                         .then(data => {
                             if (data) {
@@ -723,7 +723,7 @@ async function resolveTransclusions(content, pageSlug) {
 // ── 카테고리 목록 렌더링 ──
 async function fetchCategoryList(category) {
     try {
-        const res = await fetch(`/api/wiki/category/${encodeURIComponent(category)}`);
+        const res = await fetch(`/api/w/category/${encodeURIComponent(category)}`);
         if (!res.ok) return '';
 
         const data = await res.json();
@@ -735,7 +735,7 @@ async function fetchCategoryList(category) {
             const date = new Date(page.updated_at * 1000).toLocaleString('ko-KR');
             const lockIcon = page.is_locked ? ' <i class="bi bi-lock-fill text-danger" title="관리자 전용"></i>' : '';
             return `
-        <a href="/wiki/${encodeURIComponent(page.slug)}" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center wiki-spa-link">
+        <a href="/w/${encodeURIComponent(page.slug)}" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center wiki-spa-link">
             <div>
                 <span class="fw-bold">${escapeHtml(page.title)}</span>
                 ${lockIcon}
@@ -923,7 +923,7 @@ function processWikiLinks(contentEl) {
             if (part.startsWith('[[') && part.endsWith(']]')) {
                 const linkText = part.slice(2, -2).trim();
                 const a = document.createElement('a');
-                a.href = `/wiki/${encodeURIComponent(linkText)}`;
+                a.href = `/w/${encodeURIComponent(linkText)}`;
                 a.textContent = linkText;
                 a.onclick = (e) => {
                     e.preventDefault();

@@ -187,6 +187,11 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                         name: 'read_section',
                         description: '위키 문서에서 특정 목차의 내용만 읽어옵니다.',
                         inputSchema: { type: 'object', properties: { title: { type: 'string', description: '문서 제목' }, section_name: { type: 'string', description: '목차 명' } }, required: ['title', 'section_name'] }
+                    },
+                    {
+                        name: 'get_tree',
+                        description: '해당 문서의 하위 문서 목록을 tree구조로 보여줍니다.',
+                        inputSchema: { type: 'object', properties: { title: { type: 'string', description: '문서 제목' } }, required: ['title'] }
                     }
                 ]
             }
@@ -221,6 +226,57 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                 if (toolName === 'get_toc') return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: extractTOC(page.content) || '목차가 존재하지 않습니다.' }] } };
                 if (toolName === 'read_document') return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: await renderForAI(page.content, db, 0, slug) || '문서 내용이 존재하지 않습니다.' }] } };
                 if (toolName === 'read_section') return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: await renderForAI(extractSection(page.content, args.section_name || ''), db, 0, slug) || '해당 목차를 찾을 수 없습니다.' }] } };
+            }
+            if (toolName === 'get_tree') {
+                const requestedSlug = normalizeSlug(args.title || '');
+                const topSlug = requestedSlug.includes('/') ? requestedSlug.split('/')[0] : requestedSlug;
+
+                const subdocs = await db.prepare('SELECT slug FROM pages WHERE deleted_at IS NULL AND is_private = 0 AND slug LIKE ? ORDER BY slug ASC LIMIT 200').bind(topSlug + '/%').all<{slug: string}>();
+
+                if (subdocs.results.length === 0) {
+                    return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: '하위 문서가 없습니다.' }] } };
+                }
+
+                const tree: any = {};
+                for (const doc of subdocs.results) {
+                    const relative = doc.slug.substring(topSlug.length + 1);
+                    const parts = relative.split('/');
+                    let node = tree;
+                    for (const part of parts) {
+                        if (!node[part]) node[part] = { _children: {}, _doc: null };
+                        node = node[part]._children;
+                    }
+                    let target = tree;
+                    for (let i = 0; i < parts.length; i++) {
+                        if (i === parts.length - 1) {
+                            target[parts[i]]._doc = doc;
+                        } else {
+                            target = target[parts[i]]._children;
+                        }
+                    }
+                }
+
+                function renderTree(nodes: any, parentPrefix: string): string {
+                    const entries = Object.keys(nodes).sort();
+                    let text = '';
+                    entries.forEach((key, idx) => {
+                        const node = nodes[key];
+                        const isLast = idx === entries.length - 1;
+                        const hasChildren = Object.keys(node._children).length > 0;
+                        const connector = isLast ? '└── ' : '├── ';
+                        const childPrefix = parentPrefix + (isLast ? '    ' : '│   ');
+
+                        text += `${parentPrefix}${connector}${key}\n`;
+
+                        if (hasChildren) {
+                            text += renderTree(node._children, childPrefix);
+                        }
+                    });
+                    return text;
+                }
+
+                const treeText = `${topSlug}\n` + renderTree(tree, '');
+                return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: treeText }] } };
             }
             return { jsonrpc: '2.0', error: { code: -32601, message: `Tool not found: ${toolName}` }, id };
         } catch (e: any) {
