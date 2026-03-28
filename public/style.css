@@ -255,7 +255,7 @@ div:where(.swal2-container) .swal2-html-container {
   background: var(--wiki-card-bg);
   box-shadow: none !important;
   border: 1px solid var(--wiki-border);
-  border-radius: 8px;
+  border-radius: 2px;
   /* 곡률을 20px -> 8px로 줄여서 정밀한 느낌 강조 */
 }
 
@@ -304,7 +304,7 @@ div:where(.swal2-container) .swal2-html-container {
 }
 
 .brand-logo {
-  border-radius: 6px;
+  border-radius: 2px;
   object-fit: cover;
 }
 
@@ -314,7 +314,7 @@ div:where(.swal2-container) .swal2-html-container {
   font-weight: 600;
   transition: all 0.2s ease;
   padding: 0.5rem 1rem;
-  border-radius: 6px;
+  border-radius: 2px;
 }
 
 .nav-link:hover,
@@ -332,7 +332,7 @@ div:where(.swal2-container) .swal2-html-container {
 }
 
 .nav-search-form .form-control {
-  border-radius: 6px 0 0 6px;
+  border-radius: 3px 0 0 3px;
   border: 1px solid var(--wiki-border);
   background: var(--wiki-bg);
   color: var(--wiki-text);
@@ -359,7 +359,7 @@ div:where(.swal2-container) .swal2-html-container {
   color: var(--wiki-text-muted);
   font-size: 0.8rem;
   white-space: nowrap;
-  border-radius: 0 6px 6px 0;
+  border-radius: 0 3px 3px 0;
   padding: 0.5rem 0.6rem;
   transition: all 0.2s ease;
 }
@@ -379,7 +379,7 @@ div:where(.swal2-container) .swal2-html-container {
 .nav-search-form .dropdown-menu {
   background: var(--wiki-card-bg);
   border: 1px solid var(--wiki-border);
-  border-radius: 6px;
+  border-radius: 2px;
   min-width: 120px;
 }
 
@@ -415,7 +415,7 @@ div:where(.swal2-container) .swal2-html-container {
   background: linear-gradient(135deg, var(--wiki-primary), var(--wiki-accent));
   color: #ffffff;
   border: none;
-  border-radius: 8px;
+  border-radius: 2px;
   padding: 0.6rem 1.4rem;
   font-weight: 700;
   font-size: 0.95rem;
@@ -475,7 +475,7 @@ div:where(.swal2-container) .swal2-html-container {
 .offcanvas .nav-link,
 .offcanvas-lg .nav-link {
   color: var(--wiki-text) !important;
-  border-radius: 8px;
+  border-radius: 2px;
   transition: all 0.2s;
 }
 
@@ -516,7 +516,7 @@ div:where(.swal2-container) .swal2-html-container {
   .sidebar-section-pc-only {
     background: var(--wiki-card-bg) !important;
     border: 1px solid var(--wiki-border);
-    border-radius: 10px;
+    border-radius: 2px;
   }
 }
 
@@ -552,7 +552,7 @@ div:where(.swal2-container) .swal2-html-container {
 
 .nav-search-form .input-group {
   box-shadow: var(--wiki-shadow-sm);
-  border-radius: 20px;
+  border-radius: 2px;
   overflow: hidden;
   background: var(--wiki-bg);
   border: 1px solid var(--wiki-border);
@@ -603,7 +603,7 @@ div:where(.swal2-container) .swal2-html-container {
   list-style: none;
   background: var(--wiki-card-bg);
   border: 1px solid var(--wiki-border);
-  border-radius: 10px;
+  border-radius: 2px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
   max-height: 320px;
   overflow-y: auto;
@@ -674,7 +674,7 @@ div:where(.swal2-container) .swal2-html-container {
 .sidebar-section {
   background: var(--wiki-card-bg);
   border: 1px solid var(--wiki-border);
-  border-radius: 12px;
+  border-radius: 2px;
   padding: 1.25rem;
   box-shadow: var(--wiki-shadow-sm);
   transition: box-shadow 0.2s ease;
@@ -711,7 +711,7 @@ div:where(.swal2-container) .swal2-html-container {
 .recent-change-item {
   display: block;
   padding: 0.5rem 0.6rem;
-  border-radius: 6px;
+  border-radius: 2px;
   text-decoration: none !important;
   color: var(--wiki-text);
   transition: background 0.15s ease;
@@ -793,7 +793,7 @@ div:where(.swal2-container) .swal2-html-container {
 /* ── Wiki Article Card ── */
 .wiki-article {
   background: var(--wiki-card-bg);
-  border-radius: 16px;
+  border-radius: 2px;
   padding: 3rem;
   border: 1px solid var(--wiki-border);
   box-shadow: var(--wiki-shadow-md);
@@ -808,7 +808,7 @@ div:where(.swal2-container) .swal2-html-container {
 @media (max-width: 767.98px) {
   .wiki-article {
     padding: 1.5rem;
-    border-radius: 8px;
+    border-radius: 2px;
   }
 }
 
@@ -847,7 +847,7 @@ div:where(.swal2-container) .swal2-html-container {
 .wiki-toc {
   background: var(--wiki-card-bg);
   border: 1px solid var(--wiki-border);
-  border-radius: 8px;
+  border-radius: 2px;
   padding: 1.5rem;
   box-shadow: none;
   margin-bottom: 2rem;
@@ -858,7 +858,7 @@ div:where(.swal2-container) .swal2-html-container {
   background-color: var(--wiki-bg);
   border: 1px solid var(--wiki-border) !important;
   margin-bottom: 0.75rem;
-  border-radius: 12px !important;
+  border-radius: 2px !important;
   box-shadow: var(--wiki-shadow-sm);
   overflow: hidden;
   transition: box-shadow 0.2s ease;
@@ -950,7 +950,7 @@ div:where(.swal2-container) .swal2-html-container {
 }
 
 .wiki-content img {
-  border-radius: 8px;
+  border-radius: 2px;
   margin: 1.5rem 0;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
   /* 이미지만 살짝 띄우기 */
@@ -964,7 +964,7 @@ div:where(.swal2-container) .swal2-html-container {
 .wiki-content code {
   background: var(--wiki-code-bg);
   padding: 0.2rem 0.4rem;
-  border-radius: 4px;
+  border-radius: 2px;
   font-size: 0.9em;
   color: var(--wiki-primary);
   border: 1px solid var(--wiki-border);
@@ -983,7 +983,7 @@ div:where(.swal2-container) .swal2-html-container {
   background: var(--wiki-code-bg);
   color: var(--wiki-text);
   padding: 1.2rem;
-  border-radius: 8px;
+  border-radius: 2px;
   white-space: pre-wrap;
   word-break: break-all;
   overflow-wrap: break-word;
@@ -1010,7 +1010,7 @@ div:where(.swal2-container) .swal2-html-container {
   background: transparent;
   border: 1px solid transparent;
   color: var(--wiki-text-muted);
-  border-radius: 6px;
+  border-radius: 2px;
   padding: 0.3rem 0.5rem;
   cursor: pointer;
   transition: all 0.2s ease;
@@ -1040,7 +1040,7 @@ div:where(.swal2-container) .swal2-html-container {
   padding: 1rem 1.5rem;
   margin: 1.5rem 0;
   background: var(--wiki-card-bg);
-  border-radius: 0 8px 8px 0;
+  border-radius: 0 4px 4px 0;
   color: var(--wiki-text-muted);
   box-shadow: none;
 }
@@ -1051,7 +1051,7 @@ div:where(.swal2-container) .swal2-html-container {
   margin: 1.5rem 0;
   border-collapse: collapse;
   /* separate 대신 collapse */
-  border-radius: 8px;
+  border-radius: 2px;
   overflow: hidden;
   /* 모바일에서 표가 화면을 벗어나지 않도록 감싸기 */
   display: block;
@@ -1111,7 +1111,7 @@ div:where(.swal2-container) .swal2-html-container {
   background: var(--wiki-card-bg);
   color: var(--wiki-text);
   border: 1px solid var(--wiki-border);
-  border-radius: 8px;
+  border-radius: 2px;
   padding: 0.5rem 1rem;
   font-weight: 600;
   font-size: 0.9rem;
@@ -1134,7 +1134,7 @@ div:where(.swal2-container) .swal2-html-container {
   background: transparent;
   color: var(--wiki-text-muted);
   border: 1px solid var(--wiki-border);
-  border-radius: 6px;
+  border-radius: 2px;
   padding: 0.5rem 1rem;
   font-weight: 600;
   box-shadow: none;
@@ -1194,7 +1194,7 @@ div:where(.swal2-container) .swal2-html-container {
 .form-control {
   background: var(--wiki-bg);
   border: 1px solid var(--wiki-border);
-  border-radius: 6px;
+  border-radius: 2px;
   padding: 0.7rem 1rem;
   color: var(--wiki-text);
   box-shadow: none;
@@ -1240,7 +1240,7 @@ div:where(.swal2-container) .swal2-html-container {
   width: 100%;
   background: var(--wiki-bg);
   border: 1px solid var(--wiki-border);
-  border-radius: 8px;
+  border-radius: 2px;
   padding: 1rem 1.2rem;
   font-size: 1.5rem;
   font-weight: 700;
@@ -1259,7 +1259,7 @@ div:where(.swal2-container) .swal2-html-container {
   width: 100%;
   background: var(--wiki-bg);
   border: 1px solid var(--wiki-border);
-  border-radius: 6px;
+  border-radius: 2px;
   padding: 0.7rem 1rem;
   color: var(--wiki-text);
   box-shadow: none;
@@ -1281,7 +1281,7 @@ div:where(.swal2-container) .swal2-html-container {
 /* ── Search Results ── */
 .search-result-item {
   background: var(--wiki-card-bg);
-  border-radius: 8px;
+  border-radius: 2px;
   padding: 1.5rem;
   margin-bottom: 1rem;
   box-shadow: none;
@@ -1305,7 +1305,7 @@ div:where(.swal2-container) .swal2-html-container {
   background: var(--wiki-card-bg);
   margin-bottom: 0.5rem;
   padding: 1rem;
-  border-radius: 8px;
+  border-radius: 2px;
   box-shadow: none;
   border: 1px solid var(--wiki-border);
 }
@@ -1316,7 +1316,7 @@ div:where(.swal2-container) .swal2-html-container {
   max-height: 500px;
   overflow-y: auto;
   border: 1px solid var(--wiki-border);
-  border-radius: 6px;
+  border-radius: 2px;
   background: var(--wiki-bg);
 }
 
@@ -1390,7 +1390,7 @@ div:where(.swal2-container) .swal2-html-container {
 
 .recent-page-card {
   background: var(--wiki-card-bg);
-  border-radius: 8px;
+  border-radius: 2px;
   padding: 1.25rem;
   box-shadow: none;
   border: 1px solid var(--wiki-border);
@@ -1412,7 +1412,7 @@ div:where(.swal2-container) .swal2-html-container {
   /* 투명도 있는 배경 트렌드 */
   box-shadow: none;
   border: 1px solid rgba(88, 166, 255, 0.2) !important;
-  border-radius: 4px;
+  border-radius: 2px;
   /* 더 각진 느낌 */
   padding: 0.3em 0.6em;
   font-weight: 600;
@@ -1434,7 +1434,7 @@ div:where(.swal2-container) .swal2-html-container {
 .alert {
   background-color: var(--wiki-card-bg);
   border: 1px solid var(--wiki-border);
-  border-radius: 8px;
+  border-radius: 2px;
   box-shadow: none;
   color: var(--wiki-text);
 }
@@ -1495,7 +1495,7 @@ div:where(.swal2-container) .swal2-html-container {
 
 ::-webkit-scrollbar-thumb {
   background: #30363d;
-  border-radius: 5px;
+  border-radius: 2px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
@@ -1591,7 +1591,7 @@ div:where(.swal2-container) .swal2-html-container {
 /* Highlight animation when navigating to a footnote */
 .wiki-footnotes ol li:target {
   background-color: rgba(88, 166, 255, 0.1);
-  border-radius: 4px;
+  border-radius: 2px;
   transition: background-color 0.3s ease;
 }
 
@@ -1600,7 +1600,7 @@ div:where(.swal2-container) .swal2-html-container {
   display: block;
   padding: 0.85rem 1.1rem;
   border: 1px solid var(--wiki-border);
-  border-radius: 8px;
+  border-radius: 2px;
   margin-bottom: 0.5rem;
   text-decoration: none !important;
   color: var(--wiki-text);
@@ -1656,7 +1656,7 @@ div:where(.swal2-container) .swal2-html-container {
 .discussion-comment {
   background: var(--wiki-bg);
   border: 1px solid var(--wiki-border);
-  border-radius: 8px;
+  border-radius: 2px;
   padding: 1rem 1.2rem;
   margin-bottom: 0.75rem;
   transition: border-color 0.2s ease;
@@ -1720,7 +1720,7 @@ div:where(.swal2-container) .swal2-html-container {
 .discussion-quote {
   border-left: 3px solid var(--wiki-primary);
   background: var(--wiki-card-bg);
-  border-radius: 0 6px 6px 0;
+  border-radius: 0 3px 3px 0;
   padding: 0.6rem 1rem;
   margin-bottom: 0.5rem;
   font-size: 0.85rem;
@@ -1818,7 +1818,7 @@ div:where(.swal2-container) .swal2-html-container {
 .spoiler {
   background-color: var(--wiki-text, #333);
   color: transparent;
-  border-radius: 3px;
+  border-radius: 2px;
   padding: 0 4px;
   cursor: pointer;
   transition: color 0.3s, background-color 0.3s;
@@ -1928,7 +1928,7 @@ div:where(.swal2-container) .swal2-html-container {
   max-height: 480px;
   background: var(--wiki-card-bg);
   border: 1px solid var(--wiki-border);
-  border-radius: 12px;
+  border-radius: 2px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
   z-index: 9999;
   overflow: hidden;
@@ -2018,7 +2018,7 @@ div:where(.swal2-container) .swal2-html-container {
   background: transparent;
   color: var(--wiki-text-muted);
   padding: 2px 4px;
-  border-radius: 4px;
+  border-radius: 2px;
   cursor: pointer;
   font-size: 0.9rem;
   transition: all 0.15s;
@@ -2151,7 +2151,7 @@ div:where(.swal2-container) .swal2-html-container {
 .scroll-fab {
   width: 2.25rem;
   height: 2.25rem;
-  border-radius: 8px;
+  border-radius: 2px;
   border: 1px solid var(--wiki-glass-border);
   background: var(--wiki-glass-bg);
   backdrop-filter: var(--wiki-glass-blur);
@@ -2191,7 +2191,7 @@ div:where(.swal2-container) .swal2-html-container {
   backdrop-filter: var(--wiki-glass-blur);
   -webkit-backdrop-filter: var(--wiki-glass-blur);
   border: 1px solid var(--wiki-glass-border);
-  border-radius: 12px;
+  border-radius: 2px;
   box-shadow: var(--wiki-shadow-lg, 0 8px 32px rgba(0,0,0,0.12));
   z-index: 1049;
   opacity: 0;
@@ -2257,7 +2257,7 @@ div:where(.swal2-container) .swal2-html-container {
   text-decoration: none;
   display: block;
   padding: 0.2rem 0.35rem;
-  border-radius: 6px;
+  border-radius: 2px;
   transition: background 0.15s;
 }
 
@@ -2283,7 +2283,7 @@ div:where(.swal2-container) .swal2-html-container {
   gap: 6px;
   padding: 6px 12px;
   border: 1px solid var(--wiki-border);
-  border-radius: var(--wiki-radius, 8px);
+  border-radius: var(--wiki-radius, 4px);
   background-color: var(--wiki-bg);
   min-height: 42px;
   cursor: text;
@@ -2302,7 +2302,7 @@ div:where(.swal2-container) .swal2-html-container {
   background-color: rgba(88, 166, 255, 0.1);
   color: var(--wiki-primary);
   border: 1px solid rgba(88, 166, 255, 0.2);
-  border-radius: 20px;
+  border-radius: 2px;
   padding: 3px 10px;
   font-size: 0.85rem;
   font-weight: 500;
