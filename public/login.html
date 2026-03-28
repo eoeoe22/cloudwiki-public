@@ -22,29 +22,6 @@
       overflow: hidden;
     }
 
-    /* Background decorative blobs for glassmorphism effect */
-    .bg-blob {
-      position: absolute;
-      border-radius: 50%;
-      filter: blur(80px);
-      z-index: 0;
-      opacity: 0.6;
-    }
-    .bg-blob-1 {
-      width: 400px;
-      height: 400px;
-      background: rgba(14, 165, 233, 0.4); /* var(--wiki-primary) */
-      top: -100px;
-      left: -100px;
-    }
-    .bg-blob-2 {
-      width: 500px;
-      height: 500px;
-      background: rgba(139, 92, 246, 0.3); /* var(--wiki-accent) */
-      bottom: -150px;
-      right: -100px;
-    }
-
     .login-container {
       position: relative;
       z-index: 1;
@@ -125,9 +102,6 @@
   </style>
 </head>
 <body>
-  <div class="bg-blob bg-blob-1"></div>
-  <div class="bg-blob bg-blob-2"></div>
-
   <div class="login-container">
     <div class="wiki-logo-container" id="logoContainer">
       <!-- Logo injected by SSR -->

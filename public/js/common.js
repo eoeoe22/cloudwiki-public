@@ -11,6 +11,74 @@ var currentUser = null;
 function initMarkedConfig() {
     if (typeof marked === 'undefined') return;
     marked.use({
+        extensions: [
+            {
+                name: 'highlight',
+                level: 'inline',
+                start(src) { return src.indexOf('=='); },
+                tokenizer(src) {
+                    const match = src.match(/^==([^=]+)==/);
+                    if (match) {
+                        const token = {
+                            type: 'highlight',
+                            raw: match[0],
+                            text: match[1],
+                            tokens: []
+                        };
+                        this.lexer.inline(token.text, token.tokens);
+                        return token;
+                    }
+                },
+                childTokens: ['tokens'],
+                renderer(token) {
+                    return '<mark>' + this.parser.parseInline(token.tokens) + '</mark>';
+                }
+            },
+            {
+                name: 'underline',
+                level: 'inline',
+                start(src) { return src.indexOf('__'); },
+                tokenizer(src) {
+                    const match = src.match(/^__([^_]+(?:_[^_]+)*)__/);
+                    if (match) {
+                        const token = {
+                            type: 'underline',
+                            raw: match[0],
+                            text: match[1],
+                            tokens: []
+                        };
+                        this.lexer.inline(token.text, token.tokens);
+                        return token;
+                    }
+                },
+                childTokens: ['tokens'],
+                renderer(token) {
+                    return '<u>' + this.parser.parseInline(token.tokens) + '</u>';
+                }
+            },
+            {
+                name: 'spoiler',
+                level: 'inline',
+                start(src) { return src.indexOf('||'); },
+                tokenizer(src) {
+                    const match = src.match(/^\|\|([^|]+(?:\|[^|]+)*?)\|\|/);
+                    if (match) {
+                        const token = {
+                            type: 'spoiler',
+                            raw: match[0],
+                            text: match[1],
+                            tokens: []
+                        };
+                        this.lexer.inline(token.text, token.tokens);
+                        return token;
+                    }
+                },
+                childTokens: ['tokens'],
+                renderer(token) {
+                    return '<span class="spoiler">' + this.parser.parseInline(token.tokens) + '</span>';
+                }
+            }
+        ],
         renderer: {
             html(token) {
                 const htmlStr = typeof token === 'string' ? token : (token.text || token.raw || '');
@@ -1157,7 +1225,7 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
             const grid = updatedRows.map(row => Array.from(row.cells));
             const markers = grid.map(row => row.map(cell => {
                 const text = cell.textContent.trim();
-                const m = text.match(/^\{([<>^])\}$/);
+                const m = text.match(/^\{(><|[<>^])\}$/);
                 return m ? m[1] : null;
             }));
 
@@ -1205,6 +1273,47 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
                             grid[target][c].setAttribute('rowspan', currentSpan + 1);
                             toRemove[r][c] = true;
                         }
+                    }
+                }
+            }
+
+            // {><} 처리 (양쪽 분할 병합)
+            const hasDoubleMerge = markers.some(row => row.some(m => m === '><'));
+            if (hasDoubleMerge) {
+                // 모든 셀의 colspan을 2배로 확대하여 반분할 가능하게 함
+                for (let r = 0; r < grid.length; r++) {
+                    for (let c = 0; c < grid[r].length; c++) {
+                        const currentSpan = parseInt(grid[r][c].getAttribute('colspan') || '1');
+                        grid[r][c].setAttribute('colspan', currentSpan * 2);
+                    }
+                }
+
+                // {><} 마커 셀의 공간을 양쪽 이웃에 균등 분배
+                for (let r = 0; r < grid.length; r++) {
+                    for (let c = 0; c < grid[r].length; c++) {
+                        if (markers[r][c] !== '><') continue;
+
+                        let left = c - 1;
+                        while (left >= 0 && (toRemove[r][left] || markers[r][left] === '><')) left--;
+                        let right = c + 1;
+                        while (right < grid[r].length && (toRemove[r][right] || markers[r][right] === '><')) right++;
+
+                        const hasLeft = left >= 0;
+                        const hasRight = right < grid[r].length;
+
+                        if (hasLeft && hasRight) {
+                            const leftSpan = parseInt(grid[r][left].getAttribute('colspan') || '1');
+                            grid[r][left].setAttribute('colspan', leftSpan + 1);
+                            const rightSpan = parseInt(grid[r][right].getAttribute('colspan') || '1');
+                            grid[r][right].setAttribute('colspan', rightSpan + 1);
+                        } else if (hasLeft) {
+                            const leftSpan = parseInt(grid[r][left].getAttribute('colspan') || '1');
+                            grid[r][left].setAttribute('colspan', leftSpan + 2);
+                        } else if (hasRight) {
+                            const rightSpan = parseInt(grid[r][right].getAttribute('colspan') || '1');
+                            grid[r][right].setAttribute('colspan', rightSpan + 2);
+                        }
+                        toRemove[r][c] = true;
                     }
                 }
             }
@@ -1267,16 +1376,41 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
             const textContent = a.textContent.trim();
             if (!textContent.includes('youtube.com') && !textContent.includes('youtu.be') && !textContent.includes('nicovideo.jp')) return;
 
+            // YouTube playlist-only URL: youtube.com/playlist?list=PLxxxxxx
+            const ytPlaylistOnlyMatch = href.match(/^https?:\/\/(?:www\.)?youtube\.com\/playlist\?list=([a-zA-Z0-9_-]+)/);
+            if (ytPlaylistOnlyMatch) {
+                const listId = ytPlaylistOnlyMatch[1];
+                const iframeWrapper = document.createElement('div');
+                iframeWrapper.className = 'ratio ratio-16x9 my-3';
+                iframeWrapper.style.maxWidth = '100%';
+                const ytIframe = document.createElement('iframe');
+                ytIframe.setAttribute('src', `https://www.youtube.com/embed/videoseries?list=${encodeURIComponent(listId)}`);
+                ytIframe.setAttribute('title', 'YouTube playlist player');
+                ytIframe.setAttribute('frameborder', '0');
+                ytIframe.setAttribute('allow', 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture');
+                ytIframe.setAttribute('referrerpolicy', 'strict-origin-when-cross-origin');
+                ytIframe.setAttribute('allowfullscreen', '');
+                iframeWrapper.appendChild(ytIframe);
+                parent.replaceWith(iframeWrapper);
+                return;
+            }
+
             const ytMatch = href.match(/^https?:\/\/(?:www\.)?youtube\.com\/watch\?v=([a-zA-Z0-9_-]+)(.*)$|^https?:\/\/youtu\.be\/([a-zA-Z0-9_-]+)(.*)$/);
             if (ytMatch) {
                 const videoId = ytMatch[1] || ytMatch[3];
                 let params = ytMatch[2] || ytMatch[4] || '';
+                const queryParams = [];
                 // convert ?t= or &t= to start=
                 const timeMatch = params.match(/[?&]t=(\d+)s?/);
-                let query = '';
                 if (timeMatch) {
-                    query = `?start=${parseInt(timeMatch[1], 10)}`;
+                    queryParams.push(`start=${parseInt(timeMatch[1], 10)}`);
                 }
+                // carry through list= parameter for playlist context
+                const listMatch = params.match(/[?&]list=([a-zA-Z0-9_-]+)/);
+                if (listMatch) {
+                    queryParams.push(`list=${encodeURIComponent(listMatch[1])}`);
+                }
+                const query = queryParams.length > 0 ? '?' + queryParams.join('&') : '';
                 const iframeWrapper = document.createElement('div');
                 iframeWrapper.className = 'ratio ratio-16x9 my-3';
                 iframeWrapper.style.maxWidth = '100%';
@@ -1486,3 +1620,9 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
         setupSidebarHeaderToggle();
     }
 })();
+
+// ── 스포일러 클릭 이벤트 위임 ──
+document.addEventListener('click', function (e) {
+    const spoiler = e.target.closest('.spoiler');
+    if (spoiler) spoiler.classList.toggle('revealed');
+});
