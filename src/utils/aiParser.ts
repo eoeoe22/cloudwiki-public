@@ -33,7 +33,12 @@ export async function renderForAI(content: string, db: D1Database, depth = 0, cu
         return key;
     });
 
-    // 3. {중괄호} 문법 완전 제거
+    // 3. {중괄호} 문법 처리
+    // {<}, {>}, {^}, {><} 등 표 셀 병합 문법이 포함되어 있으면 안내 문구 추가 후 제거
+    if (/\{[<>^]{1,2}\}/.test(processed)) {
+        processed = '참고 : 표의 병합된 셀은 빈칸으로 표시됩니다\n\n' + processed;
+    }
+    processed = processed.replace(/\{[<>^]{1,2}\}/g, '');
     // {#fff}, {mdi mdi-icon} 등 표 색상, 아이콘 문법을 제거. 내용물까지 모두 제거함.
     processed = processed.replace(/\{[^{}]*\}/g, '');
 

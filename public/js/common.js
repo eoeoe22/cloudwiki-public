@@ -1370,7 +1370,7 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
 
             // Must not be a custom markdown link. If text exactly matches href or its domain, we allow it.
             // Also ignore if it is inside a blockquote, a code block, or a footnote
-            if (a.closest('blockquote') || a.closest('code, pre') || a.closest('.wiki-fn-ref')) return;
+            if (a.closest('code, pre') || a.closest('.wiki-fn-ref')) return;
 
             // Checking if the link display text looks like a URL instead of custom text
             const textContent = a.textContent.trim();

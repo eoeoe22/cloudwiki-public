@@ -4,7 +4,7 @@
 
 CloudWiki는 Cloudflare Workers 환경에서 동작하는 서버리스 위키 엔진입니다. Hono 프레임워크를 기반으로 하며, D1 (SQLite), R2 (스토리지), KV 등 Cloudflare의 다양한 생태계를 적극 활용하여 가볍고 빠르며 저렴한 운영이 가능합니다.
 
-> https://w.vialinks.xyz
+> https://wiki.vialinks.xyz
 
 [+ 주요 문서 목록]
 
