@@ -57,6 +57,36 @@ function initMarkedConfig() {
                 }
             },
             {
+                name: 'customImage',
+                level: 'inline',
+                start(src) { return src.indexOf('!['); },
+                tokenizer(src) {
+                    const match = src.match(/^!\[([^\]]*)\]\(([^)]+)\)(?:\{size:\s*(icon|small|medium|full)\})/);
+                    if (match) {
+                        return {
+                            type: 'customImage',
+                            raw: match[0],
+                            text: match[1],
+                            href: match[2],
+                            size: match[3]
+                        };
+                    }
+                },
+                renderer(token) {
+                    let style = '';
+                    if (token.size === 'icon') {
+                        style = 'height: 1.2em; width: auto; display: inline-block; vertical-align: middle; margin: 0 2px;';
+                    } else if (token.size === 'small') {
+                        style = 'max-width: 25%; height: auto;';
+                    } else if (token.size === 'medium') {
+                        style = 'max-width: 50%; height: auto;';
+                    } else if (token.size === 'full') {
+                        style = 'max-width: 100%; height: auto;';
+                    }
+                    return `<img src="${escapeHtml(token.href)}" alt="${escapeHtml(token.text)}" style="${style}" data-size="${token.size}">`;
+                }
+            },
+            {
                 name: 'spoiler',
                 level: 'inline',
                 start(src) { return src.indexOf('||'); },
@@ -1127,7 +1157,7 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
 
             const restoredContent = foldContent.replace(/WIKICODEFPH(\d+)XEND/g, (_, i) => codeBlocksForFold[parseInt(i, 10)]);
             let rawContentHtml = (typeof marked !== 'undefined') ? marked.parse(restoredContent) : restoredContent;
-            let contentHtml = (typeof DOMPurify !== 'undefined') ? DOMPurify.sanitize(rawContentHtml, { ADD_TAGS: ['i', 'span', 'details', 'summary'], ADD_ATTR: ['class', 'style', 'data-bg', 'data-color', 'colspan', 'rowspan'] }) : escapeHtml(rawContentHtml);
+            let contentHtml = (typeof DOMPurify !== 'undefined') ? DOMPurify.sanitize(rawContentHtml, { ADD_TAGS: ['i', 'span', 'details', 'summary'], ADD_ATTR: ['class', 'style', 'data-bg', 'data-color', 'data-size', 'colspan', 'rowspan'] }) : escapeHtml(rawContentHtml);
 
             foldBlocks.push({ summaryText, bgAttr, colorAttr, contentHtml });
             return `\n\nWIKIFOLDPH${idx}XEND\n\n`;
@@ -1146,7 +1176,7 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
                 `</details>`;
         });
 
-        let html = (typeof DOMPurify !== 'undefined') ? DOMPurify.sanitize(rawHtml, { ADD_TAGS: ['i', 'span', 'details', 'summary'], ADD_ATTR: ['class', 'style', 'data-bg', 'data-color', 'colspan', 'rowspan'] }) : escapeHtml(rawHtml);
+        let html = (typeof DOMPurify !== 'undefined') ? DOMPurify.sanitize(rawHtml, { ADD_TAGS: ['i', 'span', 'details', 'summary'], ADD_ATTR: ['class', 'style', 'data-bg', 'data-color', 'data-size', 'colspan', 'rowspan'] }) : escapeHtml(rawHtml);
 
         if (options.showCategory && slug) {
             const decodedSlug = decodeURIComponent(slug);
@@ -1548,7 +1578,9 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
         });
 
         containerEl.querySelectorAll('img').forEach(img => {
-            img.classList.add('img-fluid');
+            if (img.getAttribute('data-size') !== 'icon') {
+                img.classList.add('img-fluid');
+            }
             if (!img.hasAttribute('loading')) {
                 img.setAttribute('loading', 'lazy');
             }
@@ -1661,8 +1693,22 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
         const footer = document.querySelector('.wiki-footer');
         if (!sidebar || !footer) return;
 
-        const BASE_TOP = 80; // sticky top (5rem ≈ 80px)
         const FOOTER_GAP = 16;
+
+        function getNavbarHeight() {
+            const navbar = document.querySelector('.navbar');
+            return navbar ? navbar.offsetHeight : 0;
+        }
+
+        function updateSidebarTop() {
+            if (window.innerWidth < 992) {
+                sidebar.style.top = '';
+                return;
+            }
+            const navH = getNavbarHeight();
+            const top = Math.max(0, navH - window.scrollY);
+            sidebar.style.top = top + 'px';
+        }
 
         function update() {
             const layout = sidebar.closest('.wiki-layout');
@@ -1687,8 +1733,11 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
                 const extraPadding = sidebarH - containerH + FOOTER_GAP;
                 container.style.paddingBottom = extraPadding + 'px';
             }
+
+            updateSidebarTop();
         }
 
+        window.addEventListener('scroll', updateSidebarTop, { passive: true });
         window.addEventListener('resize', update, { passive: true });
         update();
         // SPA 네비게이션 후 외부에서 호출 가능하도록 노출

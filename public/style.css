@@ -268,10 +268,8 @@ div:where(.swal2-container) .swal2-html-container {
   box-shadow: var(--wiki-shadow-sm);
   padding: 0.8rem 1.5rem;
   margin-bottom: 2rem;
-  position: sticky;
-  top: 0;
+  position: relative;
   z-index: 1040;
-  transition: transform 0.3s ease, opacity 0.3s ease;
 }
 
 /* 모바일 사이드바 열림 시 헤더 숨김 */
@@ -666,7 +664,7 @@ div:where(.swal2-container) .swal2-html-container {
   width: 260px;
   flex-shrink: 0;
   position: sticky;
-  top: 5rem;
+  top: 5;
   align-self: flex-start;
   z-index: 1030;
 }

@@ -47,6 +47,14 @@
         </div>
     </div>
 
+    <!-- Image Size Inline Autocomplete Dropdown -->
+    <div id="imgsize-autocomplete" class="list-group" style="display:none; position:absolute; z-index:9999; background:var(--wiki-bg); border:1px solid var(--wiki-border); border-radius:4px; box-shadow:0 2px 10px rgba(0,0,0,0.1); width:200px; padding:0;">
+        <div class="list-group-item text-muted" style="font-size:0.85rem; background:var(--wiki-bg-alt); padding:6px 10px; border-bottom:1px solid var(--wiki-border);">
+            <i class="mdi mdi-image-size-select-large"></i> 이미지 사이즈 선택
+        </div>
+        <div id="imgsizeAcGrid"></div>
+    </div>
+
     <!-- Color Picker Inline Autocomplete Dropdown -->
     <div id="color-autocomplete">
         <div class="color-ac-header">
@@ -309,6 +317,89 @@
         let iconPickerSavedSelection = null; // 모달 열기 전 에디터 선택 위치
         let pendingIconInsertion = null;     // 모달에서 선택된 아이콘 삽입 대기
         let iconPickerToken = 0;             // 아이콘 피커 호출 토큰 (경쟁 조건 방지)
+
+        // ── 이미지 사이즈 인라인 자동완성 상태 ──
+        const imgSizeAc = {
+            visible: false,
+            selectedIndex: -1,
+            div: document.getElementById('imgsize-autocomplete'),
+            options: [
+                { id: 'icon', label: '아이콘', icon: 'mdi-square-medium-outline' },
+                { id: 'small', label: '작게', icon: 'mdi-arrow-collapse' },
+                { id: 'medium', label: '중간', icon: 'mdi-square-outline' },
+                { id: 'full', label: '크게(기본)', icon: 'mdi-arrow-expand-all' }
+            ]
+        };
+
+        function hideImgSizeAutocomplete() {
+            imgSizeAc.visible = false;
+            imgSizeAc.selectedIndex = -1;
+            if (imgSizeAc.div) imgSizeAc.div.style.display = 'none';
+        }
+
+        function showImgSizeAutocomplete() {
+            imgSizeAc.visible = true;
+            positionDropdownAtCursor(imgSizeAc.div, 200);
+            renderImgSizeAcResults();
+        }
+
+        function renderImgSizeAcResults() {
+            const gridEl = document.getElementById('imgsizeAcGrid');
+            if (!gridEl) return;
+
+            gridEl.innerHTML = imgSizeAc.options.map((opt, index) => `
+                <div class="list-group-item autocomplete-item" data-index="${index}" onclick="selectImgSizeAutocomplete(${index})" style="cursor:pointer; padding:8px 10px;">
+                    <i class="mdi ${opt.icon}"></i>
+                    <span>${escapeHtml(opt.label)}</span>
+                    <span class="text-muted" style="font-size:0.8em; margin-left:4px;">${escapeHtml(opt.id)}</span>
+                </div>
+            `).join('');
+
+            imgSizeAc.selectedIndex = 0;
+            highlightImgSizeAcItem();
+        }
+
+        function highlightImgSizeAcItem() {
+            if (!imgSizeAc.div) return;
+            const items = imgSizeAc.div.querySelectorAll('.autocomplete-item');
+            items.forEach((item, idx) => {
+                if (idx === imgSizeAc.selectedIndex) {
+                    item.classList.add('active');
+                    item.scrollIntoView({ block: 'nearest' });
+                } else {
+                    item.classList.remove('active');
+                }
+            });
+        }
+
+        function selectImgSizeAutocomplete(index) {
+            const opt = imgSizeAc.options[index];
+            if (!opt || !editor) return;
+
+            const selection = editor.getSelection();
+            if (!selection) { hideImgSizeAutocomplete(); return; }
+
+            const [from] = selection;
+            const line = from[0];
+            const col = from[1];
+
+            const md = editor.getMarkdown();
+            const lines = md.split('\n');
+            const lineText = lines[line - 1] || '';
+            const textBefore = lineText.substring(0, col - 1);
+
+            // `![...](...)` 의 마지막 `)` 위치를 찾는다
+            const match = textBefore.match(/!\[[^\]]*\]\([^)]+\)$/);
+
+            if (match) {
+                // 이미지가 바로 앞에 있을 때
+                if (opt.id !== 'full') {
+                    editor.insertText(`{size:${opt.id}}`);
+                }
+            }
+            hideImgSizeAutocomplete();
+            editor.focus();
+        }
 
         // ── 아이콘 인라인 자동완성 상태 ──
         const iconAc = {
@@ -1512,8 +1603,12 @@
                 const file = e.target.files[0];
                 if (!file) return;
                 imgUploadPopup.classList.remove('active');
-                await handleImageUpload(file, (url, alt) => {
-                    editor.insertText(`![${alt}](${url})`);
+                await handleImageUpload(file, (url, alt, size) => {
+                    let insertTxt = `![${alt}](${url})`;
+                    if (size && size !== 'full') {
+                        insertTxt += `{size:${size}}`;
+                    }
+                    editor.insertText(insertTxt);
                 });
                 imgFileInput.value = '';
             });
@@ -1545,8 +1640,12 @@
                     return;
                 }
                 imgUploadPopup.classList.remove('active');
-                await handleImageUpload(file, (url, alt) => {
-                    editor.insertText(`![${alt}](${url})`);
+                await handleImageUpload(file, (url, alt, size) => {
+                    let insertTxt = `![${alt}](${url})`;
+                    if (size && size !== 'full') {
+                        insertTxt += `{size:${size}}`;
+                    }
+                    editor.insertText(insertTxt);
                 });
             });
 
@@ -2173,11 +2272,14 @@
                 return;
             }
 
+            let selectedSize = 'full';
+
             // 이미지인 경우 편집기를 먼저 실행 (동영상은 바로 업로드)
             if (blob.type && !blob.type.startsWith('video/') && typeof ImageEditor !== 'undefined') {
-                const editedBlob = await ImageEditor.open(blob);
-                if (!editedBlob) return; // 편집 취소
-                blob = new File([editedBlob], blob.name || 'image', { type: editedBlob.type });
+                const editResult = await ImageEditor.open(blob);
+                if (!editResult) return; // 편집 취소
+                blob = new File([editResult.blob], blob.name || 'image', { type: editResult.blob.type });
+                selectedSize = editResult.size || 'full';
             }
 
             // 사용자에게 파일명 입력 요청
@@ -2218,8 +2320,8 @@
 
                 const data = await res.json();
 
-                // callback(url, altText)
-                callback(data.url, data.filename);
+                // callback(url, altText, size)
+                callback(data.url, data.filename, selectedSize);
 
             } catch (err) {
                 console.error(err);
@@ -2445,6 +2547,7 @@
             const activeAc = wikiAc.visible ? 'wiki'
                            : iconAc.visible ? 'icon'
                            : colorAc.visible ? 'color'
+                           : imgSizeAc.visible ? 'imgsize'
                            : null;
             if (!activeAc) return;
 
@@ -2514,6 +2617,26 @@
                     e.preventDefault(); e.stopPropagation();
                     hideIconAutocomplete();
                 }
+            } else if (activeAc === 'imgsize') {
+                if (isDown) {
+                    e.preventDefault(); e.stopPropagation();
+                    imgSizeAc.selectedIndex = (imgSizeAc.selectedIndex + 1) % imgSizeAc.options.length;
+                    highlightImgSizeAcItem();
+                } else if (isUp) {
+                    e.preventDefault(); e.stopPropagation();
+                    imgSizeAc.selectedIndex = (imgSizeAc.selectedIndex - 1 + imgSizeAc.options.length) % imgSizeAc.options.length;
+                    highlightImgSizeAcItem();
+                } else if (isLeft || isRight) {
+                    hideImgSizeAutocomplete();
+                } else if (isEnter) {
+                    if (imgSizeAc.selectedIndex >= 0) {
+                        e.preventDefault(); e.stopPropagation();
+                        selectImgSizeAutocomplete(imgSizeAc.selectedIndex);
+                    } else { hideImgSizeAutocomplete(); }
+                } else if (isEsc) {
+                    e.preventDefault(); e.stopPropagation();
+                    hideImgSizeAutocomplete();
+                }
             } else if (activeAc === 'color') {
                 const swatchCount = COLOR_SWATCHES.length;
                 const SWATCH_COLS = 10;
@@ -2563,6 +2686,9 @@
             if (colorAc.div && !colorAc.div.contains(e.target)) {
                 setTimeout(hideColorAutocomplete, 100);
             }
+            if (imgSizeAc.div && !imgSizeAc.div.contains(e.target)) {
+                setTimeout(hideImgSizeAutocomplete, 100);
+            }
         });
 
         // 에디터 변경 감지 및 트리거 실행
@@ -2597,6 +2723,7 @@
                     const iconMatch = textBefore.match(/\{icon:([^}]*)$/);
                     const bgColorMatch = textBefore.match(/\{bg:([^}]*)$/);
                     const textColorMatch = textBefore.match(/\{color:([^}]*)$/);
+                    const imgMatch = textBefore.match(/!\[[^\]]*\]\([^)]+\)$/);
 
                     if (linkMatch) {
                         hideIconAutocomplete();
@@ -2626,10 +2753,17 @@
                         hideAutocomplete();
                         hideIconAutocomplete();
                         showColorAutocomplete(textColorMatch[1], 'color');
+                    } else if (imgMatch) {
+                        // 이미지 마크다운 `)` 입력 직후 트리거
+                        hideAutocomplete();
+                        hideIconAutocomplete();
+                        hideColorAutocomplete();
+                        showImgSizeAutocomplete();
                     } else {
                         hideAutocomplete();
                         hideIconAutocomplete();
                         hideColorAutocomplete();
+                        hideImgSizeAutocomplete();
                     }
                 });
             });
@@ -2645,6 +2779,9 @@
                     }
                     if (!document.activeElement.closest('#color-autocomplete')) {
                         hideColorAutocomplete();
+                    }
+                    if (!document.activeElement.closest('#imgsize-autocomplete')) {
+                        hideImgSizeAutocomplete();
                     }
                 }, 200);
             });
@@ -2677,6 +2814,7 @@
             let crop = { x: 0, y: 0, w: 0, h: 0 }; // 캔버스 좌표 기준
             let resolvePromise = null;
             let originalBlob = null;
+            let selectedSize = 'full';
 
             function init() {
                 modal = new bootstrap.Modal(document.getElementById('imageEditorModal'));
@@ -2689,6 +2827,20 @@
                 document.getElementById('btnCropApply').addEventListener('click', applyCrop);
                 document.getElementById('btnImgReset').addEventListener('click', resetImage);
                 document.getElementById('btnImgEditorDone').addEventListener('click', finishEdit);
+
+                // 사이즈 드롭다운 이벤트 연동
+                const dropdownItems = document.querySelectorAll('#imgEditorSizeDropdown .dropdown-item');
+                if (dropdownItems.length) {
+                    dropdownItems.forEach(item => {
+                        item.addEventListener('click', (e) => {
+                            e.preventDefault();
+                            const size = e.currentTarget.dataset.size;
+                            const label = e.currentTarget.innerHTML;
+                            selectedSize = size;
+                            document.getElementById('btnImgEditorSizeToggle').innerHTML = label;
+                        });
+                    });
+                }
 
                 document.getElementById('imageEditorModal').addEventListener('hidden.bs.modal', () => {
                     if (resolvePromise) {
@@ -2705,6 +2857,11 @@
                 originalBlob = blob;
                 rotation = 0;
                 cropMode = false;
+                selectedSize = 'full';
+                const toggleBtn = document.getElementById('btnImgEditorSizeToggle');
+                if (toggleBtn) {
+                    toggleBtn.innerHTML = '<i class="mdi mdi-arrow-expand-all me-1"></i>크게(기본)';
+                }
                 document.getElementById('cropOverlay').style.display = 'none';
                 document.getElementById('btnCropToggle').classList.remove('active');
                 document.getElementById('btnCropApply').style.display = 'none';
@@ -2941,7 +3098,7 @@
 
                 canvas.toBlob((blob) => {
                     if (resolvePromise) {
-                        resolvePromise(blob);
+                        resolvePromise({ blob, size: selectedSize });
                         resolvePromise = null;
                     }
                     modal.hide();
@@ -3004,11 +3161,24 @@
                     </div>
                     <div class="img-editor-info" id="imgEditorInfo"></div>
                 </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">취소</button>
-                    <button type="button" class="btn btn-primary btn-sm" id="btnImgEditorDone">
-                        <i class="bi bi-check-lg"></i> 편집 완료
-                    </button>
+                <div class="modal-footer d-flex justify-content-between align-items-center w-100">
+                    <div class="dropdown">
+                        <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button" id="btnImgEditorSizeToggle" data-bs-toggle="dropdown" aria-expanded="false">
+                            <i class="mdi mdi-arrow-expand-all me-1"></i>크게(기본)
+                        </button>
+                        <ul class="dropdown-menu" id="imgEditorSizeDropdown" aria-labelledby="btnImgEditorSizeToggle">
+                            <li><a class="dropdown-item" href="#" data-size="icon"><i class="mdi mdi-square-medium-outline me-2"></i>아이콘</a></li>
+                            <li><a class="dropdown-item" href="#" data-size="small"><i class="mdi mdi-arrow-collapse me-2"></i>작게</a></li>
+                            <li><a class="dropdown-item" href="#" data-size="medium"><i class="mdi mdi-square-outline me-2"></i>중간</a></li>
+                            <li><a class="dropdown-item" href="#" data-size="full"><i class="mdi mdi-arrow-expand-all me-2"></i>크게(기본)</a></li>
+                        </ul>
+                    </div>
+                    <div>
+                        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">취소</button>
+                        <button type="button" class="btn btn-primary btn-sm" id="btnImgEditorDone">
+                            <i class="bi bi-check-lg"></i> 편집 완료
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>

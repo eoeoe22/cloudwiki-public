@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <link rel="stylesheet" href="https://uicdn.toast.com/editor/latest/toastui-editor.min.css" />
+    <script src="https://uicdn.toast.com/editor/latest/toastui-editor-all.min.js"></script>
+</head>
+<body>
+    <div id="editor"></div>
+    <script>
+        const editor = new toastui.Editor({
+            el: document.querySelector('#editor'),
+            initialEditType: 'markdown',
+            initialValue: 'Hello {color:#ff0000} World ==highlight== [[link]]'
+        });
+        setTimeout(() => {
+            console.log(document.querySelector('.toastui-editor-md-editor .ProseMirror').innerHTML);
+        }, 1000);
+    </script>
+</body>
+</html>
