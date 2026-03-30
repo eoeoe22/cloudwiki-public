@@ -25,6 +25,7 @@ enabled = true
 head_sampling_rate = 1.0
 
 [vars]
+WIKI_HOME_PAGE = "" #위키 홈페이지로 쓸 문서 제목
 GOOGLE_CLIENT_ID = ""
 GOOGLE_REDIRECT_URI = "https://도메인/auth/google/callback"
 # GOOGLE_CLIENT_SECRET은 Cloudflare Workers 대시보드에서 Secret에 저장
