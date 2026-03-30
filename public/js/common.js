@@ -897,24 +897,25 @@ function _wrapLevelSections(containerEl, level) {
             body.className = 'wiki-section-body';
             section.appendChild(body);
 
-            // 이 헤딩 이하에 속하는 형제 노드들을 body로 이동
+            // 애니메이션을 위한 내부 래퍼
+            const bodyInner = document.createElement('div');
+            bodyInner.className = 'wiki-section-body-inner';
+            body.appendChild(bodyInner);
+
+            // 이 헤딩 이하에 속하는 형제 노드들을 inner로 이동
             let j = i + 1;
             while (j < children.length) {
                 const sibling = children[j];
                 const m = sibling.nodeName.match(/^H(\d)$/);
                 if (m && parseInt(m[1], 10) <= level) break;
-                body.appendChild(sibling);
+                bodyInner.appendChild(sibling);
                 j++;
             }
 
-            // 헤딩 클릭 시 섹션 토글
+            // 헤딩 클릭 시 섹션 토글 (아이콘은 CSS로 제어)
             child.addEventListener('click', function (e) {
                 if (e.target.closest('a')) return;
-                const collapsed = section.classList.toggle('wiki-section-collapsed');
-                const icon = toggleIcon.querySelector('i');
-                if (icon) {
-                    icon.className = collapsed ? 'bi bi-chevron-right' : 'bi bi-chevron-down';
-                }
+                section.classList.toggle('wiki-section-collapsed');
             });
 
             i = j;

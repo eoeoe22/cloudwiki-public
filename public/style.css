@@ -938,8 +938,27 @@ div:where(.swal2-container) .swal2-html-container {
   flex-shrink: 0;
 }
 
+.wiki-section-toggle-icon i {
+  display: inline-block;
+  transition: transform 0.25s ease;
+}
+
+.wiki-section-collapsed > .wiki-section-heading .wiki-section-toggle-icon i {
+  transform: rotate(-90deg);
+}
+
+.wiki-section-body {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows 0.3s ease;
+}
+
 .wiki-section-collapsed > .wiki-section-body {
-  display: none;
+  grid-template-rows: 0fr;
+}
+
+.wiki-section-body-inner {
+  overflow: hidden;
 }
 
 .wiki-content p {
