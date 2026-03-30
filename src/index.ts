@@ -432,6 +432,9 @@ app.get('/', async (c) => {
     if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) {
         return c.redirect('/login');
     }
+    if (c.env.WIKI_HOME_PAGE) {
+        return c.redirect(`/w/${encodeURIComponent(c.env.WIKI_HOME_PAGE)}`);
+    }
     return renderHtml(c, '/');
 });
 

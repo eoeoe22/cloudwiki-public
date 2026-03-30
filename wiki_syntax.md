@@ -8,22 +8,22 @@ CloudWiki에서 지원하는 기본 마크다운 문법과 확장 문법(위키 
 ## 텍스트 꾸미기
 
 **굵게**
-```markdown
+```
 **굵게**
 ```
 
 *기울임*
-```markdown
+```
 *기울임* 혹은 _기울임_
 ```
 
 ***굵게 + 기울임***
-```markdown
+```
 ***굵게 + 기울임***
 ```
 
 ~~취소선~~
-```markdown
+```
 ~~취소선~~
 ```
 
@@ -50,7 +50,7 @@ __밑줄__
 
 제목은 `#` 기호의 개수로 단계를 구분합니다. `#`부터 `######`까지 6단계를 지원합니다.
 
-```markdown
+```
 # 제목 1단계
 ## 제목 2단계
 ### 제목 3단계
@@ -74,7 +74,7 @@ __밑줄__
   - 하위 항목 2-2
     - 하위 항목 2-2-1
 
-```markdown
+```
 - 항목 1
 - 항목 2
   - 하위 항목 2-1
@@ -90,7 +90,7 @@ __밑줄__
 3. 세 번째
    1. 하위 항목
 
-```markdown
+```
 1. 첫 번째
 2. 두 번째
 3. 세 번째
@@ -101,7 +101,7 @@ __밑줄__
 - [ ] 미완료 항목
 - [x] 완료 항목
 
-```markdown
+```
 - [ ] 미완료 항목
 - [x] 완료 항목
 ```
@@ -111,27 +111,27 @@ __밑줄__
 ## 링크 및 이미지
 
 [일반 링크](https://github.com)
-```markdown
+```
 [일반 링크](https://github.com)
 ```
 
 링크에 마우스를 올렸을 때 나타나는 툴팁(타이틀)을 추가할 수 있습니다.
 
 [타이틀 있는 링크](https://github.com "깃허브로 이동")
-```markdown
+```
 [타이틀 있는 링크](https://github.com "깃허브로 이동")
 ```
 
 URL을 그대로 링크로 표시하려면 꺾쇠괄호로 감쌉니다.
 
 <https://github.com>
-```markdown
+```
 <https://github.com>
 ```
 
 ![Cloudwiki-로고.jpg](https://wiki.vialinks.xyz/media/images/Cloudwiki-로고.jpg)
 
-```markdown
+```
 ![Cloudwiki-로고.jpg](https://wiki.vialinks.xyz/media/images/Cloudwiki-로고.jpg)
 ```
 이미지의 경우, 문서 편집기의 이미지 업로드 기능 사용시 자동으로 작성됩니다.
@@ -141,13 +141,21 @@ URL을 그대로 링크로 표시하려면 꺾쇠괄호로 감쌉니다.
 이미지 링크 뒤에 `{size:옵션}` 을 붙여 이미지 사이즈를 조절할 수 있습니다.
 지원되는 사이즈 옵션: `icon`, `small`, `medium`, `full` (기본값)
 
-```markdown
+[+ 사이즈별 이미지 보기]
+![Cloudwiki-로고.jpg](https://wiki.vialinks.xyz/media/images/Cloudwiki-로고.jpg){size:icon}
+![Cloudwiki-로고.jpg](https://wiki.vialinks.xyz/media/images/Cloudwiki-로고.jpg){size:small}
+![Cloudwiki-로고.jpg](https://wiki.vialinks.xyz/media/images/Cloudwiki-로고.jpg){size:medium}
+![Cloudwiki-로고.jpg](https://wiki.vialinks.xyz/media/images/Cloudwiki-로고.jpg){size:full}
+[-]
+
+
+```
 ![Cloudwiki-로고.jpg](https://wiki.vialinks.xyz/media/images/Cloudwiki-로고.jpg){size:icon}
 ![Cloudwiki-로고.jpg](https://wiki.vialinks.xyz/media/images/Cloudwiki-로고.jpg){size:small}
 ![Cloudwiki-로고.jpg](https://wiki.vialinks.xyz/media/images/Cloudwiki-로고.jpg){size:medium}
 ![Cloudwiki-로고.jpg](https://wiki.vialinks.xyz/media/images/Cloudwiki-로고.jpg){size:full}
 ```
-문서 편집기에서 이미지를 첨부한 후 나타나는 사이즈 지정 GUI를 통해 쉽게 옵션을 적용할 수 있습니다.
+문서 편집기에서 이미지를 첨부시 나타나는 사이즈 지정 옵션, 또는 이미지 문법에 커서를 가져다 놓을때 나타나는 팝업울 통해 쉽게 옵션을 적용할 수 있습니다.
 
 ---
 
@@ -161,7 +169,7 @@ Cloudwiki 문법은 기본 마크다운 표 문법과 호환되며, 셀 병합, 
 | --- | --- | --- |
 | 내용 A | 내용 B | 내용 C |
 
-```markdown
+```
 | 열 1 | 열 2 | 열 3 |
 | --- | --- | --- |
 | 내용 A | 내용 B | 내용 C |
@@ -177,7 +185,7 @@ Cloudwiki 문법은 기본 마크다운 표 문법과 호환되며, 셀 병합, 
 | :--- | :---: | ---: |
 | 내용 | 내용 | 내용 |
 
-```markdown
+```
 | 왼쪽 정렬 | 가운데 정렬 | 오른쪽 정렬 |
 | :--- | :---: | ---: |
 | 내용 | 내용 | 내용 |
@@ -189,7 +197,7 @@ Cloudwiki 문법은 기본 마크다운 표 문법과 호환되며, 셀 병합, 
 | --- | --- | --- |
 | 내용 | {bg: yellow} 노란 배경 | {color: blue} 파란 글씨 |
 
-```markdown
+```
 | 기본 셀 | {bg:#ff0000} 빨간 배경 | {bg:#000} {color:#fff} 검정 배경 흰 글씨 |
 | --- | --- | --- |
 | 내용 | {bg: yellow} 노란 배경 | {color: blue} 파란 글씨 |
@@ -236,7 +244,7 @@ Cloudwiki 문법은 기본 마크다운 표 문법과 호환되며, 셀 병합, 
 위키 내의 다른 문서로 이동할 수 있는 링크를 편리하게 생성합니다.
 
 [[문서제목]]
-```markdown
+```
 [[문서제목]]
 ```
 
@@ -269,12 +277,12 @@ CloudWiki는 부트스트랩 아이콘(Bootstrap Icons)과 MDI(Material Design I
 ### 기본 문법
 
 {bi:card-text}
-```markdown
+```
 {bi:card-text}
 ```
 
 {mdi:dots-vertical}
-```markdown
+```
 {mdi:dots-vertical}
 ```
 
@@ -298,7 +306,7 @@ CloudWiki는 부트스트랩 아이콘(Bootstrap Icons)과 MDI(Material Design I
 문서 내에 부연 설명을 추가할 때 사용합니다.
 
 부연설명을 추가할 텍스트[* 여기에 각주 내용이 들어갑니다]
-```markdown
+```
 부연설명을 추가할 텍스트[* 여기에 각주 내용이 들어갑니다]
 ```
 
@@ -309,13 +317,13 @@ CloudWiki는 부트스트랩 아이콘(Bootstrap Icons)과 MDI(Material Design I
 
 > 인용문 예시입니다.
 >> 중첩 인용문입니다.
-```markdown
+```
 > 인용문 예시입니다.
 >> 중첩 인용문입니다.
 ```
 
 `인라인 코드`
-```markdown
+```
 `인라인 코드`
 ```
 
@@ -334,7 +342,7 @@ console.log("Test");
 
 ---
 
-```markdown
+```
 ---
 ***
 ___
@@ -351,7 +359,7 @@ ___
 여기에 숨겨진 내용이 들어갑니다.
 **마크다운** 문법도 이 안에서 정상 동작합니다.
 [-]
-```markdown
+```
 [+ 상세 내용 보기 (클릭)]
 여기에 숨겨진 내용이 들어갑니다.
 **마크다운** 문법도 이 안에서 정상 동작합니다.
@@ -362,7 +370,7 @@ ___
 배경색과 글자색이 지정된 상태입니다.
 [-]
 
-```markdown
+```
 [+ {bg:#f8f9fa} {color:blue} 커스텀 색상 접기]
 배경색과 글자색이 지정된 상태입니다.
 [-]

@@ -13,6 +13,7 @@ export type Env = {
         MEDIA_PUBLIC_URL: string;
         MAX_UPLOAD_SIZE: string;
         SUPER_ADMIN_EMAILS: string;
+        WIKI_HOME_PAGE: string;
         WIKI_NAME: string;
         WIKI_LOGO_URL: string;
         WIKI_FAVICON_URL: string;
