@@ -89,7 +89,7 @@ html {
 }
 
 body {
-  font-family: 'Inter', 'Pretendard Variable', 'Pretendard', -apple-system, BlinkMacSystemFont, 'system-ui', 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans KR', sans-serif;
+  font-family: 'Noto Sans KR', 'Inter', 'Pretendard Variable', 'Pretendard', -apple-system, BlinkMacSystemFont, 'system-ui', 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   background-color: var(--wiki-bg);
   color: var(--wiki-text);
   line-height: 1.7;
@@ -111,7 +111,7 @@ h5,
 h6,
 .navbar-brand,
 .wiki-article-title {
-  font-family: 'Outfit', 'Pretendard Variable', 'Pretendard', -apple-system, BlinkMacSystemFont, 'system-ui', 'Segoe UI', Roboto, sans-serif;
+  font-family: 'Noto Sans KR', 'Outfit', 'Pretendard Variable', 'Pretendard', -apple-system, BlinkMacSystemFont, 'system-ui', 'Segoe UI', Roboto, sans-serif;
   letter-spacing: -0.02em;
 }
 
@@ -218,7 +218,7 @@ div:where(.swal2-container) .swal2-html-container {
 
 .toastui-editor-contents,
 .ProseMirror {
-  font-family: 'Inter', 'Pretendard Variable', 'Pretendard', -apple-system, BlinkMacSystemFont, 'system-ui', 'Segoe UI', Roboto, sans-serif;
+  font-family: 'Noto Sans KR', 'Inter', 'Pretendard Variable', 'Pretendard', -apple-system, BlinkMacSystemFont, 'system-ui', 'Segoe UI', Roboto, sans-serif;
 }
 
 .toastui-editor-defaultUI .toastui-editor-toolbar {
@@ -1395,6 +1395,24 @@ div:where(.swal2-container) .swal2-html-container {
   text-align: center;
   color: var(--wiki-text-muted);
   font-style: italic;
+}
+
+.diff-table tr.diff-skip {
+  background: transparent;
+}
+
+.diff-table tr.diff-skip td.diff-prefix {
+  color: var(--wiki-text-muted);
+  opacity: 0.6;
+  font-weight: 400;
+}
+
+.diff-table td.diff-skip-label {
+  color: var(--wiki-text-muted);
+  font-style: italic;
+  font-size: 0.78rem;
+  padding-top: 2px;
+  padding-bottom: 2px;
 }
 
 /* ── Home Page / Welcome ── */

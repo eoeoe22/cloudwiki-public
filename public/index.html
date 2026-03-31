@@ -165,10 +165,10 @@
         </div>
       </div>
       <!-- 하단 최근 변경 -->
-      <div class="recent-changes-bottom" id="recentChangesBottom">
+      <div class="recent-changes-bottom d-lg-none" id="recentChangesBottom">
         <div class="sidebar-section">
           <h6 class="sidebar-title"><i class="bi bi-clock-history"></i> 최근 변경</h6>
-          <div id="recentChangesList" class="recent-changes-list">
+          <div id="recentChangesList" class="recent-changes-list recent-changes-container">
             <div class="placeholder-glow">
               <span class="placeholder w-100 d-block mb-2" style="height: 2.5rem; border-radius: 6px;"></span>
               <span class="placeholder w-100 d-block mb-2" style="height: 2.5rem; border-radius: 6px;"></span>
@@ -183,6 +183,20 @@
     <aside class="wiki-sidebar" id="wikiSidebar">
       <!-- 사이드바 네비게이션 (모바일 오프캔버스 렌더링 영역 공유) -->
       <div id="app-sidebar-placeholder"></div>
+
+      <!-- PC 전용 최근 변경 -->
+      <div class="d-none d-lg-block mt-4">
+        <div class="sidebar-section sidebar-section-pc-only">
+          <h6 class="sidebar-title"><i class="bi bi-clock-history"></i> 최근 변경</h6>
+          <div id="recentChangesListPc" class="recent-changes-list recent-changes-container">
+            <div class="placeholder-glow">
+              <span class="placeholder w-100 d-block mb-2" style="height: 2.5rem; border-radius: 6px;"></span>
+              <span class="placeholder w-100 d-block mb-2" style="height: 2.5rem; border-radius: 6px;"></span>
+              <span class="placeholder w-100 d-block" style="height: 2.5rem; border-radius: 6px;"></span>
+            </div>
+          </div>
+        </div>
+      </div>
     </aside>
   </div> <!-- wiki-layout end -->
 
@@ -1002,45 +1016,7 @@
     }
 
     // ── 최근 변경 내역 로드 ──
-    async function loadRecentChanges() {
-      try {
-        const res = await fetch('/api/w/recent-changes');
-        if (!res.ok) return;
-        const data = await res.json();
-
-        const html = data.changes.map(item => {
-          const timeAgo = getRelativeTime(item.updated_at);
-          return `
-            <a href="/w/${encodeURIComponent(item.slug)}" class="recent-change-item"
-               onclick="navigateTo(this.href); return false;">
-              <div class="rc-title">${escapeHtml(item.title)}</div>
-              <div class="rc-meta">
-                <span class="rc-time">${timeAgo}</span>
-                <span class="rc-author">${escapeHtml(item.author_name || '알 수 없음')}</span>
-              </div>
-            </a>
-          `;
-        }).join('');
-
-        const emptyMsg = '<div class="text-muted small p-2">변경 내역이 없습니다.</div>';
-        const content = data.changes.length > 0 ? html : emptyMsg;
-
-        const bottomList = document.getElementById('recentChangesList');
-        if (bottomList) bottomList.innerHTML = content;
-      } catch (e) {
-        // 무시
-      }
-    }
-
-    function getRelativeTime(unixTs) {
-      const now = Math.floor(Date.now() / 1000);
-      const diff = now - unixTs;
-      if (diff < 60) return '방금 전';
-      if (diff < 3600) return `${Math.floor(diff / 60)}분 전`;
-      if (diff < 86400) return `${Math.floor(diff / 3600)}시간 전`;
-      if (diff < 604800) return `${Math.floor(diff / 86400)}일 전`;
-      return new Date(unixTs * 1000).toLocaleDateString('ko-KR');
-    }
+    // loadRecentChanges, getRelativeTime → common.js로 이동
 
     // ── 문서 주시 ──
     async function loadWatchStatus(slug) {

@@ -32,6 +32,21 @@
         <span>불러오는 중...</span>
       </div>
 
+      <!-- 리비전 본문 보기 -->
+      <div id="revisionViewPage" class="d-none">
+        <div class="alert alert-warning py-2 px-3 mb-0 d-flex align-items-center justify-content-between"
+          style="position: sticky; top: 0; z-index: 100; border-radius: 0; border-left: none; border-right: none; margin-left: calc(-1 * var(--wiki-container-padding, 1.5rem)); margin-right: calc(-1 * var(--wiki-container-padding, 1.5rem));">
+          <span><i class="bi bi-clock-history me-2"></i><strong id="revisionViewLabel"></strong></span>
+          <button class="btn btn-sm btn-warning ms-3" onclick="backToRevisions()">
+            <i class="bi bi-arrow-left"></i> 목록으로
+          </button>
+        </div>
+        <div class="wiki-article">
+          <h1 class="wiki-article-title" id="revisionViewTitle"></h1>
+          <div class="wiki-content" id="revisionViewContent"></div>
+        </div>
+      </div>
+
       <!-- 리비전 목록 -->
       <div id="revisionsPage" class="d-none">
         <div class="wiki-article" style="width: 100%; max-width: 100vw; overflow-x: hidden;">
@@ -48,11 +63,38 @@
           </a>
         </div>
       </div>
+      <!-- 하단 최근 변경 (모바일) -->
+      <div class="recent-changes-bottom d-lg-none">
+        <div class="sidebar-section">
+          <h6 class="sidebar-title"><i class="bi bi-clock-history"></i> 최근 변경</h6>
+          <div id="recentChangesList" class="recent-changes-list recent-changes-container">
+            <div class="placeholder-glow">
+              <span class="placeholder w-100 d-block mb-2" style="height: 2.5rem; border-radius: 6px;"></span>
+              <span class="placeholder w-100 d-block mb-2" style="height: 2.5rem; border-radius: 6px;"></span>
+              <span class="placeholder w-100 d-block" style="height: 2.5rem; border-radius: 6px;"></span>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
 
-    <!-- 오른쪽 사이드바 (PC 전용 오프캔버스 컨테이너) -->
+    <!-- 오른쪽 사이드바 (PC 전용 오프캔버스 컨테이너 및 최근 변경) -->
     <aside class="wiki-sidebar" id="wikiSidebar">
       <div id="app-sidebar-placeholder"></div>
+
+      <!-- PC 전용 최근 변경 -->
+      <div class="d-none d-lg-block mt-4">
+        <div class="sidebar-section sidebar-section-pc-only">
+          <h6 class="sidebar-title"><i class="bi bi-clock-history"></i> 최근 변경</h6>
+          <div id="recentChangesListPc" class="recent-changes-list recent-changes-container">
+            <div class="placeholder-glow">
+              <span class="placeholder w-100 d-block mb-2" style="height: 2.5rem; border-radius: 6px;"></span>
+              <span class="placeholder w-100 d-block mb-2" style="height: 2.5rem; border-radius: 6px;"></span>
+              <span class="placeholder w-100 d-block" style="height: 2.5rem; border-radius: 6px;"></span>
+            </div>
+          </div>
+        </div>
+      </div>
     </aside>
   </div>
 
@@ -62,6 +104,8 @@
   <!-- ── Scripts ── -->
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
 
   <script src="/js/common.js"></script>
   <script>
@@ -88,6 +132,7 @@
         document.getElementById('loading').classList.add('d-none');
         Swal.fire('오류', '문서를 찾을 수 없습니다.', 'error');
       }
+      loadRecentChanges();
     });
 
     // ── 리비전 목록 ──
@@ -180,16 +225,24 @@
         if (!res.ok) throw new Error('리비전 불러오기 실패');
         const rev = await res.json();
 
-        Swal.fire({
-          title: `리비전 #${rev.id} 내용`,
-          html: `<div style="text-align: left; max-height: 500px; overflow-y: auto; background: #f8f9fa; padding: 10px; border: 1px solid #dee2e6; border-radius: 5px;"><pre style="margin: 0; white-space: pre-wrap; word-break: break-all;">${escapeHtml(rev.content)}</pre></div>`,
-          width: '800px',
-          showCloseButton: true,
-          confirmButtonText: '닫기'
-        });
+        document.getElementById('revisionViewLabel').textContent = `v${revId} 리비전 열람중입니다`;
+        document.getElementById('revisionViewTitle').textContent = document.getElementById('revPageTitle').textContent || slug;
+        document.getElementById('revisionViewContent').innerHTML = '';
+
+        await renderWikiContent(rev.content || '', slug, 'revisionViewContent');
+
+        document.getElementById('revisionsPage').classList.add('d-none');
+        document.getElementById('revisionViewPage').classList.remove('d-none');
+        window.scrollTo({ top: 0, behavior: 'instant' });
       } catch (err) {
         Swal.fire('오류', err.message, 'error');
       }
+    }
+
+    function backToRevisions() {
+      document.getElementById('revisionViewPage').classList.add('d-none');
+      document.getElementById('revisionsPage').classList.remove('d-none');
+      window.scrollTo({ top: 0, behavior: 'instant' });
     }
 
     // ── 리비전 Diff 보기 ──
@@ -214,7 +267,7 @@
       }
     }
 
-    // ── Line-by-line Diff 알고리즘 (LCS 기반) ──
+    // ── Line-by-line Diff 알고리즘 (LCS 기반, 컨텍스트 축소) ──
     function computeLineDiff(oldText, newText) {
       const oldLines = oldText.split('\n');
       const newLines = newText.split('\n');
@@ -250,13 +303,46 @@
         return '<div class="diff-empty">변경된 내용이 없습니다.</div>';
       }
 
-      let lineNum = 0;
-      return '<table class="diff-table">' + result.map(r => {
-        const cls = r.type === 'add' ? 'diff-add' : r.type === 'del' ? 'diff-del' : 'diff-same';
-        const prefix = r.type === 'add' ? '+' : r.type === 'del' ? '-' : ' ';
-        if (r.type !== 'del') lineNum++;
-        return `<tr class="${cls}"><td class="diff-prefix">${prefix}</td><td class="diff-line">${escapeHtml(r.text || '')}</td></tr>`;
-      }).join('') + '</table>';
+      // 변경이 없으면 빈 diff
+      const hasChange = result.some(r => r.type !== 'same');
+      if (!hasChange) {
+        return '<div class="diff-empty">변경된 내용이 없습니다.</div>';
+      }
+
+      // 변경된 줄 주변 CONTEXT_LINES만 표시, 나머지는 생략
+      const CONTEXT = 3;
+      const visible = new Set();
+      result.forEach((r, idx) => {
+        if (r.type !== 'same') {
+          for (let k = Math.max(0, idx - CONTEXT); k <= Math.min(result.length - 1, idx + CONTEXT); k++) {
+            visible.add(k);
+          }
+        }
+      });
+
+      let rows = '';
+      let skipStart = -1;
+      for (let idx = 0; idx < result.length; idx++) {
+        if (visible.has(idx)) {
+          if (skipStart !== -1) {
+            const skipCount = idx - skipStart;
+            rows += `<tr class="diff-skip"><td class="diff-prefix">⋯</td><td class="diff-line diff-skip-label">${skipCount}줄 생략됨</td></tr>`;
+            skipStart = -1;
+          }
+          const r = result[idx];
+          const cls = r.type === 'add' ? 'diff-add' : r.type === 'del' ? 'diff-del' : 'diff-same';
+          const prefix = r.type === 'add' ? '+' : r.type === 'del' ? '-' : ' ';
+          rows += `<tr class="${cls}"><td class="diff-prefix">${prefix}</td><td class="diff-line">${escapeHtml(r.text || '')}</td></tr>`;
+        } else {
+          if (skipStart === -1) skipStart = idx;
+        }
+      }
+      if (skipStart !== -1) {
+        const skipCount = result.length - skipStart;
+        rows += `<tr class="diff-skip"><td class="diff-prefix">⋯</td><td class="diff-line diff-skip-label">${skipCount}줄 생략됨</td></tr>`;
+      }
+
+      return '<table class="diff-table">' + rows + '</table>';
     }
 
     // ── 되돌리기 확인 ──

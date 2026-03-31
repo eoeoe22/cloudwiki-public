@@ -864,16 +864,17 @@ function generateTOC(contentEl, tocContainerId, tocNavId) {
 
 // ── 본문 섹션 접기/펼치기 ──
 function makeCollapsibleSections(containerEl) {
-    const headings = containerEl.querySelectorAll('h1, h2, h3, h4');
+    const headings = containerEl.querySelectorAll('h1, h2, h3, h4, h5, h6');
     if (headings.length < 1) return;
     const minLevel = Math.min(...Array.from(headings).map(h => parseInt(h.tagName[1], 10)));
     _wrapLevelSections(containerEl, minLevel);
 }
 
 function _wrapLevelSections(containerEl, level) {
-    if (level > 4) return;
+    if (level > 6) return;
     const tagName = 'H' + level;
     const children = Array.from(containerEl.childNodes);
+    const inners = [];
 
     let i = 0;
     while (i < children.length) {
@@ -901,13 +902,26 @@ function _wrapLevelSections(containerEl, level) {
             const bodyInner = document.createElement('div');
             bodyInner.className = 'wiki-section-body-inner';
             body.appendChild(bodyInner);
+            inners.push(bodyInner);
 
             // 이 헤딩 이하에 속하는 형제 노드들을 inner로 이동
             let j = i + 1;
             while (j < children.length) {
                 const sibling = children[j];
+                // 일반 H태그 체크
                 const m = sibling.nodeName.match(/^H(\d)$/);
                 if (m && parseInt(m[1], 10) <= level) break;
+                // 이미 래핑된 상위 레벨의 섹션인지 체크
+                let isHigherOrEqualSection = false;
+                if (sibling.nodeType === 1 && sibling.classList.contains('wiki-section')) {
+                    for (let l = 1; l <= level; l++) {
+                        if (sibling.classList.contains('wiki-section-level-' + l)) {
+                            isHigherOrEqualSection = true;
+                            break;
+                        }
+                    }
+                }
+                if (isHigherOrEqualSection) break;
                 bodyInner.appendChild(sibling);
                 j++;
             }
@@ -925,9 +939,14 @@ function _wrapLevelSections(containerEl, level) {
     }
 
     // 하위 레벨 섹션 재귀 처리
-    containerEl.querySelectorAll('.wiki-section-level-' + level + ' > .wiki-section-body').forEach(function (body) {
-        _wrapLevelSections(body, level + 1);
+    // 현재 레벨에서 생성된 내부 래퍼들을 대상으로 하위 레벨 적용
+    inners.forEach(function (inner) {
+        _wrapLevelSections(inner, level + 1);
     });
+
+    // 만약 상위 레벨 헤딩 없이 하위 레벨 헤딩만 존재하는 경우를 위해
+    // 현재 containerEl에 대해서도 하위 레벨 처리를 수행
+    _wrapLevelSections(containerEl, level + 1);
 }
 
 // ── 확장 문법(위키링크, 아이콘 등) 처리 ──
@@ -1780,3 +1799,46 @@ document.addEventListener('click', function (e) {
     const spoiler = e.target.closest('.spoiler');
     if (spoiler) spoiler.classList.toggle('revealed');
 });
+
+// ── 상대 시간 변환 ──
+function getRelativeTime(unixTs) {
+    const now = Math.floor(Date.now() / 1000);
+    const diff = now - unixTs;
+    if (diff < 60) return '방금 전';
+    if (diff < 3600) return `${Math.floor(diff / 60)}분 전`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)}시간 전`;
+    if (diff < 604800) return `${Math.floor(diff / 86400)}일 전`;
+    return new Date(unixTs * 1000).toLocaleDateString('ko-KR');
+}
+
+// ── 최근 변경 로드 (recent-changes-container 클래스를 가진 모든 요소에 채움) ──
+async function loadRecentChanges() {
+    try {
+        const res = await fetch('/api/w/recent-changes');
+        if (!res.ok) return;
+        const data = await res.json();
+
+        const html = data.changes.map(item => {
+            const timeAgo = getRelativeTime(item.updated_at);
+            return `
+              <a href="/w/${encodeURIComponent(item.slug)}" class="recent-change-item"
+                 onclick="if(typeof navigateTo==='function'){navigateTo(this.href);return false;}">
+                <div class="rc-title">${escapeHtml(item.title)}</div>
+                <div class="rc-meta">
+                  <span class="rc-time">${timeAgo}</span>
+                  <span class="rc-author">${escapeHtml(item.author_name || '알 수 없음')}</span>
+                </div>
+              </a>
+            `;
+        }).join('');
+
+        const emptyMsg = '<div class="text-muted small p-2">변경 내역이 없습니다.</div>';
+        const content = data.changes.length > 0 ? html : emptyMsg;
+
+        document.querySelectorAll('.recent-changes-container').forEach(el => {
+            el.innerHTML = content;
+        });
+    } catch (e) {
+        // 무시
+    }
+}

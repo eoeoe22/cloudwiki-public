@@ -192,6 +192,21 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                         name: 'get_tree',
                         description: '해당 문서의 하위 문서 목록을 tree구조로 보여줍니다.',
                         inputSchema: { type: 'object', properties: { title: { type: 'string', description: '문서 제목' } }, required: ['title'] }
+                    },
+                    {
+                        name: 'search_category',
+                        description: '카테고리를 제목으로 검색합니다.',
+                        inputSchema: { type: 'object', properties: { query: { type: 'string', description: '검색할 카테고리 이름 (부분 문자열)' } }, required: ['query'] }
+                    },
+                    {
+                        name: 'get_category_info',
+                        description: '해당 카테고리에 속한 문서 목록과 카테고리 설명을 반환합니다.',
+                        inputSchema: { type: 'object', properties: { category: { type: 'string', description: '조회할 카테고리 이름' } }, required: ['category'] }
+                    },
+                    {
+                        name: 'get_document_categoty',
+                        description: '해당 문서가 속한 카테고리 목록을 반환합니다.',
+                        inputSchema: { type: 'object', properties: { title: { type: 'string', description: '조회할 문서 제목' } }, required: ['title'] }
                     }
                 ]
             }
@@ -277,6 +292,35 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
 
                 const treeText = `${topSlug}\n` + renderTree(tree, '');
                 return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: treeText }] } };
+            }
+            if (toolName === 'search_category') {
+                const results = await db.prepare('SELECT DISTINCT category FROM page_categories WHERE category LIKE ? ORDER BY category ASC LIMIT 15')
+                    .bind(`%${args.query}%`).all<{category: string}>();
+                return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(results.results.map(r => r.category), null, 2) }] } };
+            }
+            if (toolName === 'get_category_info') {
+                const docs = await db.prepare('SELECT p.title FROM page_categories pc JOIN pages p ON pc.page_id = p.id WHERE pc.category = ? AND p.deleted_at IS NULL AND p.is_private = 0 ORDER BY p.title ASC LIMIT 50')
+                    .bind(args.category).all<{title: string}>();
+
+                const catSlug = normalizeSlug(`카테고리:${args.category}`);
+                const catPage = await db.prepare('SELECT content FROM pages WHERE slug = ? AND deleted_at IS NULL AND is_private = 0').bind(catSlug).first<{content: string}>();
+
+                let renderedCatContent = '카테고리 문서가 존재하지 않습니다.';
+                if (catPage) {
+                    renderedCatContent = await renderForAI(catPage.content, db, 0, catSlug) || '문서 내용이 존재하지 않습니다.';
+                }
+
+                const output = {
+                    documents: docs.results.map(r => r.title),
+                    categoryContent: renderedCatContent
+                };
+                return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(output, null, 2) }] } };
+            }
+            if (toolName === 'get_document_categoty') {
+                const slug = normalizeSlug(args.title || '');
+                const cats = await db.prepare('SELECT pc.category FROM page_categories pc JOIN pages p ON pc.page_id = p.id WHERE p.slug = ? AND p.deleted_at IS NULL AND p.is_private = 0 ORDER BY pc.category ASC')
+                    .bind(slug).all<{category: string}>();
+                return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(cats.results.map(r => r.category), null, 2) }] } };
             }
             return { jsonrpc: '2.0', error: { code: -32601, message: `Tool not found: ${toolName}` }, id };
         } catch (e: any) {
