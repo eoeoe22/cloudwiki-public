@@ -44,12 +44,13 @@ CREATE INDEX IF NOT EXISTS idx_pages_updated ON pages(updated_at);
 
 -- 리비전 테이블
 CREATE TABLE IF NOT EXISTS revisions (
-  id         INTEGER PRIMARY KEY AUTOINCREMENT,
-  page_id    INTEGER NOT NULL,
-  content    TEXT NOT NULL,
-  summary    TEXT,
-  author_id  INTEGER,
-  created_at INTEGER DEFAULT (unixepoch()),
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  page_id      INTEGER NOT NULL,
+  page_version INTEGER,
+  content      TEXT NOT NULL,
+  summary      TEXT,
+  author_id    INTEGER,
+  created_at   INTEGER DEFAULT (unixepoch()),
   FOREIGN KEY (page_id) REFERENCES pages(id),
   FOREIGN KEY (author_id) REFERENCES users(id)
 );

@@ -620,9 +620,9 @@ wiki.put('/w/:slug', requireAuth, async (c) => {
         // 리비전 생성
         const revResult = await db
             .prepare(
-                'INSERT INTO revisions (page_id, content, summary, author_id) VALUES (?, ?, ?, ?)'
+                'INSERT INTO revisions (page_id, page_version, content, summary, author_id) VALUES (?, ?, ?, ?, ?)'
             )
-            .bind(existing.id, body.content, body.summary ?? null, user.id)
+            .bind(existing.id, newVersion, body.content, body.summary ?? null, user.id)
             .run();
 
         const revisionId = revResult.meta.last_row_id;
@@ -681,9 +681,9 @@ wiki.put('/w/:slug', requireAuth, async (c) => {
         // 첫 리비전 생성
         const revResult = await db
             .prepare(
-                'INSERT INTO revisions (page_id, content, summary, author_id) VALUES (?, ?, ?, ?)'
+                'INSERT INTO revisions (page_id, page_version, content, summary, author_id) VALUES (?, ?, ?, ?, ?)'
             )
-            .bind(pageId, body.content, body.summary ?? '문서 생성', user.id)
+            .bind(pageId, 1, body.content, body.summary ?? '문서 생성', user.id)
             .run();
 
         const revisionId = revResult.meta.last_row_id;
@@ -765,7 +765,7 @@ wiki.get('/w/:slug/revisions', async (c) => {
 
     const revisions = await db
         .prepare(
-            `SELECT r.id, r.summary, r.created_at, u.id as author_id, u.name as author_name, u.picture as author_picture,
+            `SELECT r.id, r.page_version, r.summary, r.created_at, u.id as author_id, u.name as author_name, u.picture as author_picture,
                     ${ROLE_CASE_SQL} as author_role,
                     u.email as _author_email
        FROM revisions r
@@ -856,12 +856,12 @@ wiki.get('/w/:slug/revisions/:id/diff', async (c) => {
     // 해당 리비전 조회
     const revision = await db
         .prepare(
-            `SELECT id, content, page_id, created_at
+            `SELECT id, page_version, content, page_id, created_at
        FROM revisions
        WHERE id = ? AND page_id = ?`
         )
         .bind(revId, page.id)
-        .first<{ id: number; content: string; page_id: number; created_at: number }>();
+        .first<{ id: number; page_version: number | null; content: string; page_id: number; created_at: number }>();
 
     if (!revision) {
         return c.json({ error: '리비전을 찾을 수 없습니다.' }, 404);
@@ -870,18 +870,20 @@ wiki.get('/w/:slug/revisions/:id/diff', async (c) => {
     // 바로 이전 리비전 조회 (같은 page_id, created_at이 더 이전인 것 중 가장 최신)
     const prevRevision = await db
         .prepare(
-            `SELECT id, content FROM revisions
+            `SELECT id, page_version, content FROM revisions
        WHERE page_id = ? AND id < ?
        ORDER BY id DESC LIMIT 1`
         )
         .bind(revision.page_id, revId)
-        .first<{ id: number; content: string }>();
+        .first<{ id: number; page_version: number | null; content: string }>();
 
     return c.json(safeJSON({
         old_content: prevRevision?.content ?? '',
         new_content: revision.content,
         old_revision_id: prevRevision?.id ?? null,
-        new_revision_id: revision.id
+        new_revision_id: revision.id,
+        old_page_version: prevRevision?.page_version ?? null,
+        new_page_version: revision.page_version ?? null,
     }));
 });
 
@@ -1199,8 +1201,8 @@ wiki.post('/w/:slug/revert', requireAuth, async (c) => {
         return c.json({ error: '잠긴 문서는 관리자만 되돌릴 수 있습니다.' }, 403);
     }
 
-    const targetRevision = await db.prepare('SELECT content FROM revisions WHERE id = ? AND page_id = ?')
-        .bind(revision_id, page.id).first<{ content: string }>();
+    const targetRevision = await db.prepare('SELECT content, page_version FROM revisions WHERE id = ? AND page_id = ?')
+        .bind(revision_id, page.id).first<{ content: string; page_version: number | null }>();
 
     if (!targetRevision) {
         return c.json({ error: '해당 리비전을 찾을 수 없습니다.' }, 404);
@@ -1208,10 +1210,11 @@ wiki.post('/w/:slug/revert', requireAuth, async (c) => {
 
     // Create new revision with old content
     const newVersion = page.version + 1;
-    const summary = `리비전 #${revision_id}로 되돌리기`;
+    const targetVersionLabel = targetRevision.page_version != null ? `v${targetRevision.page_version}` : `#${revision_id}`;
+    const summary = `${targetVersionLabel}으로 되돌리기`;
 
-    const revResult = await db.prepare('INSERT INTO revisions (page_id, content, summary, author_id) VALUES (?, ?, ?, ?)')
-        .bind(page.id, targetRevision.content, summary, user.id)
+    const revResult = await db.prepare('INSERT INTO revisions (page_id, page_version, content, summary, author_id) VALUES (?, ?, ?, ?, ?)')
+        .bind(page.id, newVersion, targetRevision.content, summary, user.id)
         .run();
 
     const newRevId = revResult.meta.last_row_id;
