@@ -16,6 +16,8 @@ import discussionRoutes from './routes/discussion';
 import notificationRoutes from './routes/notification';
 import ticketRoutes from './routes/ticket';
 import mcpRoutes from './routes/mcp';
+import analyticsRoutes from './routes/analytics';
+import { trackPageView, trackError, queryAnalytics } from './utils/analytics';
 
 const app = new Hono<Env>();
 
@@ -46,6 +48,64 @@ app.route('/api', discussionRoutes);
 app.route('/api', notificationRoutes);
 app.route('/api', ticketRoutes);
 app.route('/api/mcp', mcpRoutes);
+app.route('/api/admin/analytics', analyticsRoutes);
+
+// ── 공개 Analytics API (인기 문서, 문서별 조회수) ──
+app.get('/api/analytics/trending', async (c) => {
+    const accountId = c.env.CF_ACCOUNT_ID;
+    const apiToken = c.env.CF_API_TOKEN;
+    if (!accountId || !apiToken) return c.json({ trending: [] });
+
+    const hours = Math.min(72, Math.max(1, Number(c.req.query('hours')) || 24));
+    const limit = Math.min(20, Math.max(1, Number(c.req.query('limit')) || 10));
+
+    try {
+        const result = await queryAnalytics(accountId, apiToken, `
+            SELECT blob2 as slug, sum(_sample_interval) as views
+            FROM cloudwiki
+            WHERE blob1 = 'pageview' AND blob2 != ''
+              AND timestamp >= now() - toIntervalHour(${hours})
+            GROUP BY slug ORDER BY views DESC LIMIT ${limit}
+            FORMAT JSON
+        `);
+        return c.json({ trending: result?.data || [] });
+    } catch {
+        return c.json({ trending: [] });
+    }
+});
+
+app.get('/api/analytics/page-views/:slug', async (c) => {
+    const accountId = c.env.CF_ACCOUNT_ID;
+    const apiToken = c.env.CF_API_TOKEN;
+    if (!accountId || !apiToken) return c.json({ total: 0, recent: 0 });
+
+    const slug = c.req.param('slug');
+    const safeSlug = slug.replace(/'/g, "\\'");
+
+    try {
+        const [totalResult, recentResult] = await Promise.all([
+            queryAnalytics(accountId, apiToken, `
+                SELECT sum(_sample_interval) as views
+                FROM cloudwiki
+                WHERE blob1 = 'pageview' AND blob2 = '${safeSlug}'
+                FORMAT JSON
+            `),
+            queryAnalytics(accountId, apiToken, `
+                SELECT sum(_sample_interval) as views
+                FROM cloudwiki
+                WHERE blob1 = 'pageview' AND blob2 = '${safeSlug}'
+                  AND timestamp >= now() - toIntervalDay(7)
+                FORMAT JSON
+            `),
+        ]);
+        return c.json({
+            total: totalResult?.data?.[0]?.views || 0,
+            recent: recentResult?.data?.[0]?.views || 0,
+        });
+    } catch {
+        return c.json({ total: 0, recent: 0 });
+    }
+});
 
 // ── 헬퍼: ASSETS에서 HTML 가져오기 ──
 async function fetchAssetHtml(c: any, htmlPath: string): Promise<Response> {
@@ -276,6 +336,7 @@ app.get('/w/:slug', async (c) => {
     const user = c.get('user');
     const redirectParam = c.req.query('redirect');
     const isAdmin = user && (user.role === 'admin' || user.role === 'super_admin');
+    const startTime = Date.now();
 
     // ── 캐시 확인 (비관리자 + redirect=no가 아닌 일반 요청만) ──
     const cache = caches.default;
@@ -288,6 +349,7 @@ app.get('/w/:slug', async (c) => {
     if (canUseCache) {
         const cached = await cache.match(ssrCacheKey);
         if (cached) {
+            trackPageView(c, slug, Date.now() - startTime);
             return new Response(cached.body, cached);
         }
     }
@@ -395,6 +457,11 @@ app.get('/w/:slug', async (c) => {
 
     // 3) HTMLRewriter로 SSR 데이터 주입 + 브랜딩 및 컴포넌트 치환
     const response = await renderHtml(c, '/', ssrData);
+
+    // Analytics: 문서 조회 추적 (존재하는 문서만)
+    if (!ssrData._ssrNotFound) {
+        trackPageView(c, ssrData.slug || slug, Date.now() - startTime);
+    }
 
     // 4) 공개 문서이면 Edge 캐시에 24시간 저장
     if (shouldCache) {
@@ -557,6 +624,7 @@ app.notFound(async (c) => {
 // ── 에러 핸들러 ──
 app.onError(async (err, c) => {
     console.error('Unhandled error:', err);
+    trackError(c, c.req.path, 500, err.message || 'Internal Server Error');
     if (c.req.path.startsWith('/api/') || c.req.path.startsWith('/assets/')) {
         return c.json({ error: 'Internal Server Error' }, 500);
     }

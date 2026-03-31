@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import type { Env } from '../types';
+import { trackSearch } from '../utils/analytics';
 
 const search = new Hono<Env>();
 
@@ -19,6 +20,7 @@ search.get('/search', async (c) => {
 
     const db = c.env.DB;
     const isAdmin = user && (user.role === 'admin' || user.role === 'super_admin');
+    const searchStartTime = Date.now();
 
     // 카테고리 검색 모드
     if (mode === 'category') {
@@ -33,6 +35,7 @@ search.get('/search', async (c) => {
         sql += ' ORDER BY title LIMIT 50';
 
         const results = await db.prepare(sql).bind(query.trim()).all();
+        trackSearch(c, query.trim(), results.results?.length || 0, Date.now() - searchStartTime);
         return c.json({ results: results.results, mode: 'category' });
     }
 
@@ -49,6 +52,7 @@ search.get('/search', async (c) => {
 
     const exactMatch = await db.prepare(exactSql).bind(query.trim()).first();
     if (exactMatch) {
+        trackSearch(c, query.trim(), 1, Date.now() - searchStartTime);
         return c.json({ redirect: `/w/${encodeURIComponent((exactMatch as any).slug)}` });
     }
 
@@ -76,6 +80,7 @@ search.get('/search', async (c) => {
             snippet: '',
         }));
 
+        trackSearch(c, trimmedQuery, safeResults.length, Date.now() - searchStartTime);
         return c.json({ results: safeResults });
     }
 
@@ -124,6 +129,7 @@ search.get('/search', async (c) => {
             return finalR;
         });
 
+        trackSearch(c, trimmedQuery, safeResults.length, Date.now() - searchStartTime);
         return c.json({ results: safeResults });
     } catch (ftsError) {
         // FTS5 쿼리 실패 시 LIKE fallback
@@ -147,6 +153,7 @@ search.get('/search', async (c) => {
             snippet: '',
         }));
 
+        trackSearch(c, trimmedQuery, safeResults.length, Date.now() - searchStartTime);
         return c.json({ results: safeResults });
     }
 });

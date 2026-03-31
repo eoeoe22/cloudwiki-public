@@ -525,8 +525,20 @@
         document.getElementById('articleMeta').innerHTML = `
       <span class="meta-item">마지막 수정 : ${updatedDate}</span>
       <span class="meta-item">v${page.version}</span>
+      <span class="meta-item" id="pageViewCount" style="display:none;"><i class="bi bi-eye"></i> <span id="pageViewNum">0</span></span>
       ${badgesHtml}
     `;
+
+        // 조회수 비동기 로드
+        fetch('/api/analytics/page-views/' + encodeURIComponent(page.slug))
+          .then(r => r.json())
+          .then(data => {
+            if (data.total > 0) {
+              document.getElementById('pageViewNum').textContent = Number(data.total).toLocaleString();
+              document.getElementById('pageViewCount').style.display = '';
+            }
+          })
+          .catch(() => {});
 
         // redirect를 통해 문서를 조회한 경우, 액션 버튼에 실제 문서의 slug를 사용
         const actionSlug = page.slug || slug;

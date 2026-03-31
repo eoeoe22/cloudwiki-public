@@ -538,6 +538,134 @@
                     </div>
                 </div>
 
+                <!-- 트래픽 통계 (Analytics Engine) -->
+                <h3 class="mt-5 mb-3"><i class="mdi mdi-chart-line"></i> 트래픽 통계</h3>
+                <p class="text-muted mb-3">Analytics Engine 기반 실시간 트래픽 통계입니다.</p>
+
+                <div class="card shadow-sm border-0 mb-4">
+                    <div class="card-body">
+                        <div id="analyticsLoadBtn" class="text-center py-2">
+                            <button class="btn btn-primary" onclick="loadAnalyticsDashboard()">
+                                <i class="mdi mdi-chart-box"></i> 통계 대시보드 열기
+                            </button>
+                        </div>
+                        <div id="analyticsContainer" style="display: none;">
+                            <!-- 기간 선택 -->
+                            <div class="d-flex flex-wrap gap-2 mb-4 align-items-center">
+                                <label class="form-label mb-0 fw-semibold">기간:</label>
+                                <div class="btn-group btn-group-sm" role="group">
+                                    <button type="button" class="btn btn-outline-primary active" onclick="setAnalyticsPeriod('7d', this)">7일</button>
+                                    <button type="button" class="btn btn-outline-primary" onclick="setAnalyticsPeriod('30d', this)">30일</button>
+                                    <button type="button" class="btn btn-outline-primary" onclick="setAnalyticsPeriod('90d', this)">90일</button>
+                                </div>
+                                <button class="btn btn-sm btn-outline-secondary ms-auto" onclick="refreshAnalytics()">
+                                    <i class="mdi mdi-refresh"></i> 새로고침
+                                </button>
+                            </div>
+
+                            <!-- 요약 카드 -->
+                            <div class="row g-3 mb-4">
+                                <div class="col-6 col-md-3">
+                                    <div class="card text-center border-0 bg-light">
+                                        <div class="card-body py-3">
+                                            <div class="text-muted small">총 페이지뷰</div>
+                                            <div class="fs-4 fw-bold text-primary" id="statTotalViews">-</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-6 col-md-3">
+                                    <div class="card text-center border-0 bg-light">
+                                        <div class="card-body py-3">
+                                            <div class="text-muted small">접속 국가 수</div>
+                                            <div class="fs-4 fw-bold text-success" id="statCountries">-</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-6 col-md-3">
+                                    <div class="card text-center border-0 bg-light">
+                                        <div class="card-body py-3">
+                                            <div class="text-muted small">평균 응답시간</div>
+                                            <div class="fs-4 fw-bold text-warning" id="statAvgResponse">-</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-6 col-md-3">
+                                    <div class="card text-center border-0 bg-light">
+                                        <div class="card-body py-3">
+                                            <div class="text-muted small">P95 응답시간</div>
+                                            <div class="fs-4 fw-bold text-danger" id="statP95Response">-</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- 일별 PV 차트 (심플 바 차트) -->
+                            <div class="mb-4">
+                                <h6 class="fw-semibold mb-3"><i class="mdi mdi-chart-bar"></i> 일별 페이지뷰</h6>
+                                <div id="dailyChart" style="overflow-x: auto;"></div>
+                            </div>
+
+                            <!-- 하위 섹션들 -->
+                            <div class="row g-4">
+                                <!-- 인기 문서 -->
+                                <div class="col-md-6">
+                                    <h6 class="fw-semibold mb-2"><i class="mdi mdi-fire"></i> 인기 문서 TOP 10</h6>
+                                    <div id="topPagesContainer" class="list-group list-group-flush small"></div>
+                                </div>
+
+                                <!-- 실시간 트렌딩 -->
+                                <div class="col-md-6">
+                                    <h6 class="fw-semibold mb-2"><i class="mdi mdi-trending-up"></i> 실시간 트렌딩 (24h)</h6>
+                                    <div id="trendingContainer" class="list-group list-group-flush small"></div>
+                                </div>
+
+                                <!-- 유입 경로 -->
+                                <div class="col-md-6">
+                                    <h6 class="fw-semibold mb-2"><i class="mdi mdi-link-variant"></i> 유입 경로 TOP 10</h6>
+                                    <div id="referrersContainer" class="list-group list-group-flush small"></div>
+                                </div>
+
+                                <!-- 접속 국가 -->
+                                <div class="col-md-6">
+                                    <h6 class="fw-semibold mb-2"><i class="mdi mdi-earth"></i> 접속 국가</h6>
+                                    <div id="countriesContainer" class="list-group list-group-flush small"></div>
+                                </div>
+
+                                <!-- 기기 유형 -->
+                                <div class="col-md-6">
+                                    <h6 class="fw-semibold mb-2"><i class="mdi mdi-cellphone-link"></i> 기기 유형</h6>
+                                    <div id="devicesContainer" class="list-group list-group-flush small"></div>
+                                </div>
+
+                                <!-- 인기 검색어 -->
+                                <div class="col-md-6">
+                                    <h6 class="fw-semibold mb-2"><i class="mdi mdi-magnify"></i> 인기 검색어 TOP 15</h6>
+                                    <div id="searchesContainer" class="list-group list-group-flush small"></div>
+                                </div>
+
+                                <!-- 에러 로그 -->
+                                <div class="col-12">
+                                    <h6 class="fw-semibold mb-2"><i class="mdi mdi-alert-circle-outline"></i> 에러 발생 현황</h6>
+                                    <div class="table-responsive">
+                                        <table class="table table-sm table-hover mb-0" id="errorsTable" style="display: none;">
+                                            <thead class="table-light">
+                                                <tr>
+                                                    <th>경로</th>
+                                                    <th>상태 코드</th>
+                                                    <th>에러 메시지</th>
+                                                    <th>발생 횟수</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody id="errorsBody"></tbody>
+                                        </table>
+                                        <div id="errorsEmpty" class="text-center text-muted py-3">데이터 로딩 중...</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- 관리 로그 -->
                 <h3 class="mt-5 mb-3"><i class="mdi mdi-clipboard-text-clock"></i> 관리 로그</h3>
                 <p class="text-muted mb-3">관리자 기능 사용 기록을 확인할 수 있습니다. (읽기 전용)</p>
@@ -1936,6 +2064,176 @@
             } catch (err) {
                 Swal.fire('오류', err.message, 'error');
             }
+        }
+
+        // ── 트래픽 통계 (Analytics Engine) ──
+        let analyticsPeriod = '7d';
+
+        function setAnalyticsPeriod(period, btn) {
+            analyticsPeriod = period;
+            if (btn) {
+                btn.closest('.btn-group').querySelectorAll('.btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+            }
+            refreshAnalytics();
+        }
+
+        async function loadAnalyticsDashboard() {
+            document.getElementById('analyticsLoadBtn').style.display = 'none';
+            document.getElementById('analyticsContainer').style.display = '';
+            await refreshAnalytics();
+        }
+
+        async function refreshAnalytics() {
+            const p = analyticsPeriod;
+            try {
+                const [overviewRes, pagesRes, trendingRes, referrersRes, countriesRes, devicesRes, searchesRes, errorsRes, perfRes] = await Promise.all([
+                    fetch(`/api/admin/analytics/overview?period=${p}`).then(r => r.json()),
+                    fetch(`/api/admin/analytics/pages?period=${p}&limit=10`).then(r => r.json()),
+                    fetch(`/api/admin/analytics/trending?hours=24`).then(r => r.json()),
+                    fetch(`/api/admin/analytics/referrers?period=${p}&limit=10`).then(r => r.json()),
+                    fetch(`/api/admin/analytics/countries?period=${p}`).then(r => r.json()),
+                    fetch(`/api/admin/analytics/devices?period=${p}`).then(r => r.json()),
+                    fetch(`/api/admin/analytics/searches?period=${p}&limit=15`).then(r => r.json()),
+                    fetch(`/api/admin/analytics/errors?period=${p}&limit=10`).then(r => r.json()),
+                    fetch(`/api/admin/analytics/performance?period=${p}`).then(r => r.json()),
+                ]);
+
+                // 에러 체크
+                if (overviewRes.error) {
+                    document.getElementById('analyticsContainer').innerHTML = `<div class="alert alert-warning"><i class="mdi mdi-alert"></i> ${escapeHtml(overviewRes.error)}</div>`;
+                    return;
+                }
+
+                // 요약 카드
+                const s = overviewRes.summary || {};
+                document.getElementById('statTotalViews').textContent = Number(s.sampled_views || s.total_views || 0).toLocaleString();
+                document.getElementById('statCountries').textContent = Number(s.unique_countries || 0).toLocaleString();
+
+                const perf = perfRes.summary || {};
+                document.getElementById('statAvgResponse').textContent = Math.round(perf.avg_response_ms || 0) + 'ms';
+                document.getElementById('statP95Response').textContent = Math.round(perf.p95_response_ms || 0) + 'ms';
+
+                // 일별 PV 차트 (CSS 바 차트)
+                renderDailyChart(overviewRes.daily || []);
+
+                // 인기 문서
+                renderRankedList('topPagesContainer', (pagesRes.pages || []).map(p => ({
+                    label: p.slug,
+                    value: Number(p.views || 0),
+                    link: `/w/${encodeURIComponent(p.slug)}`
+                })));
+
+                // 트렌딩
+                renderRankedList('trendingContainer', (trendingRes.trending || []).map(p => ({
+                    label: p.slug,
+                    value: Number(p.views || 0),
+                    link: `/w/${encodeURIComponent(p.slug)}`
+                })));
+
+                // 유입 경로
+                renderRankedList('referrersContainer', (referrersRes.referrers || []).map(r => {
+                    let display = r.referer;
+                    try { display = new URL(r.referer).hostname; } catch {}
+                    return { label: display, value: Number(r.views || 0), title: r.referer };
+                }));
+
+                // 국가
+                renderRankedList('countriesContainer', (countriesRes.countries || []).map(c => ({
+                    label: c.country || '(unknown)',
+                    value: Number(c.views || 0)
+                })));
+
+                // 기기
+                renderRankedList('devicesContainer', (devicesRes.devices || []).map(d => ({
+                    label: d.device === 'mobile' ? '모바일' : d.device === 'desktop' ? '데스크톱' : d.device,
+                    value: Number(d.views || 0)
+                })));
+
+                // 검색어
+                renderRankedList('searchesContainer', (searchesRes.searches || []).map(s => ({
+                    label: s.query,
+                    value: Number(s.count || 0)
+                })));
+
+                // 에러
+                renderErrorsTable(errorsRes.errors || []);
+
+            } catch (err) {
+                console.error('Analytics load failed:', err);
+                Swal.fire('오류', '통계 데이터를 불러오는 중 오류가 발생했습니다: ' + err.message, 'error');
+            }
+        }
+
+        function renderDailyChart(data) {
+            const container = document.getElementById('dailyChart');
+            if (!data || data.length === 0) {
+                container.innerHTML = '<div class="text-muted text-center py-3">데이터가 없습니다.</div>';
+                return;
+            }
+
+            const maxVal = Math.max(...data.map(d => Number(d.views || 0)), 1);
+            let html = '<div style="display: flex; align-items: flex-end; gap: 2px; height: 120px; min-width: fit-content;">';
+            for (const d of data) {
+                const val = Number(d.views || 0);
+                const pct = Math.max((val / maxVal) * 100, 2);
+                const date = d.date ? d.date.substring(5) : '';
+                html += `<div style="flex: 1; min-width: 20px; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%;" title="${date}: ${val.toLocaleString()}뷰">`;
+                html += `<div class="small text-muted" style="font-size: 10px; margin-bottom: 2px;">${val > 0 ? val.toLocaleString() : ''}</div>`;
+                html += `<div style="width: 100%; max-width: 40px; height: ${pct}%; background: var(--bs-primary); border-radius: 3px 3px 0 0; min-height: 2px;"></div>`;
+                html += `<div class="small text-muted" style="font-size: 9px; margin-top: 2px; white-space: nowrap;">${date}</div>`;
+                html += '</div>';
+            }
+            html += '</div>';
+            container.innerHTML = html;
+        }
+
+        function renderRankedList(containerId, items) {
+            const container = document.getElementById(containerId);
+            if (!items || items.length === 0) {
+                container.innerHTML = '<div class="text-muted text-center py-2">데이터 없음</div>';
+                return;
+            }
+            const maxVal = Math.max(...items.map(i => i.value), 1);
+            let html = '';
+            items.forEach((item, idx) => {
+                const pct = (item.value / maxVal) * 100;
+                const labelHtml = item.link
+                    ? `<a href="${escapeHtml(item.link)}" class="text-decoration-none">${escapeHtml(item.label)}</a>`
+                    : `<span ${item.title ? 'title="' + escapeHtml(item.title) + '"' : ''}>${escapeHtml(item.label)}</span>`;
+                html += `<div class="list-group-item border-0 px-0 py-1">`;
+                html += `<div class="d-flex justify-content-between align-items-center mb-1">`;
+                html += `<span class="text-truncate" style="max-width: 70%;">${idx + 1}. ${labelHtml}</span>`;
+                html += `<span class="badge bg-primary-subtle text-primary">${item.value.toLocaleString()}</span>`;
+                html += `</div>`;
+                html += `<div class="progress" style="height: 4px;"><div class="progress-bar" style="width: ${pct}%"></div></div>`;
+                html += `</div>`;
+            });
+            container.innerHTML = html;
+        }
+
+        function renderErrorsTable(errors) {
+            const table = document.getElementById('errorsTable');
+            const tbody = document.getElementById('errorsBody');
+            const empty = document.getElementById('errorsEmpty');
+
+            if (!errors || errors.length === 0) {
+                table.style.display = 'none';
+                empty.textContent = '에러 기록이 없습니다.';
+                empty.style.display = '';
+                return;
+            }
+
+            empty.style.display = 'none';
+            table.style.display = '';
+            tbody.innerHTML = errors.map(e => `
+                <tr>
+                    <td class="text-truncate" style="max-width: 200px;">${escapeHtml(e.path || '')}</td>
+                    <td><span class="badge bg-danger">${escapeHtml(String(e.status_code || ''))}</span></td>
+                    <td class="text-truncate" style="max-width: 300px;">${escapeHtml(e.error_message || '')}</td>
+                    <td>${Number(e.count || 0).toLocaleString()}</td>
+                </tr>
+            `).join('');
         }
 
     </script>

@@ -7,6 +7,7 @@ export type Env = {
         MEDIA: R2Bucket;
         KV: KVNamespace;
         ASSETS: Fetcher;
+        ANALYTICS?: AnalyticsEngineDataset;
         GOOGLE_CLIENT_ID: string;
         GOOGLE_CLIENT_SECRET: string;
         GOOGLE_REDIRECT_URI: string;
@@ -25,6 +26,8 @@ export type Env = {
         CLOSED_WIKI_MESSAGE: string;
         TURNSTILE_SITE_KEY: string;
         TURNSTILE_SECRET_KEY: string;
+        CF_ACCOUNT_ID?: string;
+        CF_API_TOKEN?: string;
     };
     Variables: {
         user: User | null;
