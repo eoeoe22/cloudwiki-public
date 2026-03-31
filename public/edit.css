@@ -1,3 +1,32 @@
+/* ── 에디터 프리뷰 타이포그래피: 실제 문서 열람과 완전 일치 ── */
+#custom-wiki-preview {
+    padding: 18px;
+}
+
+#custom-wiki-preview ul,
+#custom-wiki-preview ol {
+    line-height: 1.7;
+    padding-left: 2rem;
+    margin-top: 0;
+    margin-bottom: 1rem;
+}
+
+#custom-wiki-preview ul ul,
+#custom-wiki-preview ul ol,
+#custom-wiki-preview ol ul,
+#custom-wiki-preview ol ol {
+    margin-bottom: 0;
+}
+
+#custom-wiki-preview li {
+    line-height: 1.7;
+}
+
+#custom-wiki-preview li > p {
+    margin-bottom: 0.4rem;
+    line-height: 1.7;
+}
+
 /* ── Diff 인라인 표시 ── */
 .diff-added {
     background-color: var(--wiki-diff-add-bg);

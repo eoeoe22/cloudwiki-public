@@ -1123,6 +1123,13 @@ wiki.delete('/w/:slug', requireAuth, async (c) => {
             }
         }
 
+        // 리비전 R2 파일 삭제
+        const revisionKeys = await db.prepare('SELECT r2_key FROM revisions WHERE page_id = ? AND r2_key IS NOT NULL')
+            .bind(page.id).all<{ r2_key: string }>();
+        if (revisionKeys.results.length > 0) {
+            await Promise.all(revisionKeys.results.map(r => c.env.MEDIA.delete(r.r2_key)));
+        }
+
         // Hard Delete Transaction
         const batch = [
             db.prepare('DELETE FROM page_links WHERE source_page_id = ?').bind(page.id),
