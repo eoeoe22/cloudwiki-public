@@ -4,7 +4,7 @@ import { csrf } from 'hono/csrf';
 import { secureHeaders } from 'hono/secure-headers';
 import type { Env, Page } from './types';
 import { sessionMiddleware } from './middleware/session';
-import { applyPageSSR } from './middleware/ssr';
+import { applyPageSSR, extractMetaDescription } from './middleware/ssr';
 import { safeJSON } from './utils/json';
 import { escapeHtml, sanitizeUrl } from './utils/html';
 import authRoutes from './routes/auth';
@@ -371,21 +371,12 @@ app.get('/w/:slug', async (c) => {
                 ? await db.prepare('SELECT name, picture FROM users WHERE id = ?').bind(page.author_id).first()
                 : null;
 
-            // 본문 내용 기반 설명글(Description) 생성 (마크다운 태그, 특수문자 기본 제거)
+            // 본문 내용 기반 설명글(Description) 생성
             let desc = `${page.title} - ${c.env.WIKI_NAME || 'CloudWiki'}`;
             if (page.content) {
-                let plainText = page.content
-                    .replace(/\[\+.*?\]/g, '')     // 접기 문법 태그 제거
-                    .replace(/\[-\]/g, '')         // 접기 종료 문법 제거
-                    .replace(/\[\[.*?\]\]/g, (match) => match.replace(/[\[\]]/g, '')) // 위키 링크를 일반 텍스트로
-                    .replace(/```[\s\S]*?```/g, '') // 코드 블록 제거
-                    .replace(/[#>*\-_~=`]+/g, '')  // 마크다운 특수기호 제거
-                    .replace(/\n/g, ' ')           // 줄바꿈을 공백으로
-                    .replace(/\s{2,}/g, ' ')       // 연속된 공백 줄이기
-                    .trim();
-
-                if (plainText.length > 0) {
-                    desc = plainText.length > 150 ? plainText.substring(0, 150) + '...' : plainText;
+                const extracted = extractMetaDescription(page.content);
+                if (extracted) {
+                    desc = extracted;
                 }
             }
 
