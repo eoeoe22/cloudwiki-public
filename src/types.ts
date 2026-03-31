@@ -84,7 +84,9 @@ export interface Page {
 export interface Revision {
     id: number;
     page_id: number;
-    content: string;
+    page_version: number | null;
+    content: string;          // 기존 리비전: 본문 직접 저장. 신규 리비전: '' (r2_key 사용)
+    r2_key: string | null;    // R2 저장 경로 (revisions/{pageId}/{pageVersion}.md)
     summary: string | null;
     author_id: number | null;
     created_at: number;

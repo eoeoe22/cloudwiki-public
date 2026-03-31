@@ -43,11 +43,14 @@ CREATE INDEX IF NOT EXISTS idx_pages_slug ON pages(slug);
 CREATE INDEX IF NOT EXISTS idx_pages_updated ON pages(updated_at);
 
 -- 리비전 테이블
+-- content: 기존 리비전은 본문이 직접 저장됨. 신규 리비전은 r2_key를 통해 R2에서 조회.
+-- r2_key: R2 버킷 내 파일 경로 (예: revisions/{pageId}/{pageVersion}.md)
 CREATE TABLE IF NOT EXISTS revisions (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
   page_id      INTEGER NOT NULL,
   page_version INTEGER,
-  content      TEXT NOT NULL,
+  content      TEXT NOT NULL DEFAULT '',
+  r2_key       TEXT,
   summary      TEXT,
   author_id    INTEGER,
   created_at   INTEGER DEFAULT (unixepoch()),

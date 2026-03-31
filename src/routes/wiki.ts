@@ -137,6 +137,74 @@ function buildLinkAndCategoryStatements(
     return stmts;
 }
 
+// ─────────────────────────────────────────────────────────────
+// R2 Hybrid Storage 헬퍼
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * 리비전 본문을 R2에 업로드하고 r2_key를 반환.
+ * Key 형식: revisions/{pageId}/{pageVersion}.md
+ */
+async function uploadRevisionToR2(
+    bucket: R2Bucket,
+    pageId: number,
+    pageVersion: number,
+    content: string
+): Promise<string> {
+    const r2Key = `revisions/${pageId}/${pageVersion}.md`;
+    await bucket.put(r2Key, content, {
+        httpMetadata: { contentType: 'text/markdown; charset=utf-8' },
+    });
+    return r2Key;
+}
+
+/**
+ * R2에서 리비전 본문을 가져오며 Cache API로 영구 캐시.
+ * 리비전은 불변(Immutable)이므로 max-age=31536000, immutable 적용.
+ */
+async function fetchRevisionFromR2(
+    bucket: R2Bucket,
+    r2Key: string,
+    origin: string
+): Promise<string> {
+    const cacheKey = `${origin}/__r2_revision__/${r2Key}`;
+    const cache = caches.default;
+
+    const cached = await cache.match(cacheKey);
+    if (cached) return cached.text();
+
+    const obj = await bucket.get(r2Key);
+    if (!obj) throw new Error(`R2 revision not found: ${r2Key}`);
+    const content = await obj.text();
+
+    // 비동기로 캐시 저장 (응답을 블로킹하지 않음)
+    cache.put(
+        cacheKey,
+        new Response(content, {
+            headers: { 'Cache-Control': 'public, max-age=31536000, immutable' },
+        })
+    );
+
+    return content;
+}
+
+/**
+ * DB 레코드에서 리비전 본문 반환.
+ * r2_key가 있으면 R2에서, 없으면 content 필드에서 직접 반환 (하위 호환).
+ */
+async function getRevisionContent(
+    bucket: R2Bucket,
+    revision: { content: string; r2_key?: string | null },
+    origin: string
+): Promise<string> {
+    if (revision.r2_key) {
+        return fetchRevisionFromR2(bucket, revision.r2_key, origin);
+    }
+    return revision.content;
+}
+
+// ─────────────────────────────────────────────────────────────
+
 /**
  * GET /config
  * 동적 설정 (위키 이름 등) 반환
@@ -617,17 +685,33 @@ wiki.put('/w/:slug', requireAuth, async (c) => {
 
         const newVersion = existing.version + 1;
 
-        // 리비전 생성
-        const revResult = await db
-            .prepare(
-                'INSERT INTO revisions (page_id, page_version, content, summary, author_id) VALUES (?, ?, ?, ?, ?)'
-            )
-            .bind(existing.id, newVersion, body.content, body.summary ?? null, user.id)
-            .run();
+        // 1. 리비전 본문을 R2에 먼저 업로드
+        let r2Key: string;
+        try {
+            r2Key = await uploadRevisionToR2(c.env.MEDIA, existing.id, newVersion, body.content);
+        } catch (e) {
+            console.error('R2 revision upload failed:', e);
+            return c.json({ error: '리비전 저장에 실패했습니다. 잠시 후 다시 시도해주세요.' }, 500);
+        }
 
-        const revisionId = revResult.meta.last_row_id;
+        // 2. D1에 리비전 메타데이터 삽입 (content는 빈 문자열, r2_key 저장)
+        let revisionId: number;
+        try {
+            const revResult = await db
+                .prepare(
+                    'INSERT INTO revisions (page_id, page_version, content, r2_key, summary, author_id) VALUES (?, ?, ?, ?, ?, ?)'
+                )
+                .bind(existing.id, newVersion, '', r2Key, body.summary ?? null, user.id)
+                .run();
+            revisionId = revResult.meta.last_row_id;
+        } catch (e) {
+            // D1 실패 시 업로드한 R2 파일 롤백
+            await c.env.MEDIA.delete(r2Key).catch(() => {});
+            console.error('D1 revision insert failed:', e);
+            return c.json({ error: '리비전 저장에 실패했습니다. 잠시 후 다시 시도해주세요.' }, 500);
+        }
 
-        // 페이지 업데이트
+        // 3. 페이지 업데이트 (pages.content는 최신 본문 유지 → 빠른 조회 보장)
         await db
             .prepare(
                 `UPDATE pages
@@ -679,14 +763,33 @@ wiki.put('/w/:slug', requireAuth, async (c) => {
         const pageId = pageResult.meta.last_row_id;
 
         // 첫 리비전 생성
-        const revResult = await db
-            .prepare(
-                'INSERT INTO revisions (page_id, page_version, content, summary, author_id) VALUES (?, ?, ?, ?, ?)'
-            )
-            .bind(pageId, 1, body.content, body.summary ?? '문서 생성', user.id)
-            .run();
+        // 1. R2 업로드
+        let firstR2Key: string;
+        try {
+            firstR2Key = await uploadRevisionToR2(c.env.MEDIA, pageId, 1, body.content);
+        } catch (e) {
+            // R2 실패 시 방금 생성한 페이지 롤백
+            await db.prepare('DELETE FROM pages WHERE id = ?').bind(pageId).run().catch(() => {});
+            console.error('R2 first revision upload failed:', e);
+            return c.json({ error: '리비전 저장에 실패했습니다. 잠시 후 다시 시도해주세요.' }, 500);
+        }
 
-        const revisionId = revResult.meta.last_row_id;
+        // 2. D1 리비전 삽입
+        let revisionId: number;
+        try {
+            const revResult = await db
+                .prepare(
+                    'INSERT INTO revisions (page_id, page_version, content, r2_key, summary, author_id) VALUES (?, ?, ?, ?, ?, ?)'
+                )
+                .bind(pageId, 1, '', firstR2Key, body.summary ?? '문서 생성', user.id)
+                .run();
+            revisionId = revResult.meta.last_row_id;
+        } catch (e) {
+            await c.env.MEDIA.delete(firstR2Key).catch(() => {});
+            await db.prepare('DELETE FROM pages WHERE id = ?').bind(pageId).run().catch(() => {});
+            console.error('D1 first revision insert failed:', e);
+            return c.json({ error: '리비전 저장에 실패했습니다. 잠시 후 다시 시도해주세요.' }, 500);
+        }
 
         // last_revision_id 업데이트
         await db
@@ -814,19 +917,24 @@ wiki.get('/w/:slug/revisions/:id', async (c) => {
 
     const revision = await db
         .prepare(
-            `SELECT r.*, u.name as author_name
+            `SELECT r.id, r.page_id, r.page_version, r.content, r.r2_key, r.summary, r.author_id, r.created_at,
+                    u.name as author_name
        FROM revisions r
        LEFT JOIN users u ON r.author_id = u.id
        WHERE r.id = ? AND r.page_id = ?`
         )
         .bind(revId, page.id)
-        .first();
+        .first<{ id: number; page_id: number; page_version: number | null; content: string; r2_key: string | null; summary: string | null; author_id: number | null; created_at: number; author_name: string | null }>();
 
     if (!revision) {
         return c.json({ error: '리비전을 찾을 수 없습니다.' }, 404);
     }
 
-    return c.json(safeJSON(revision));
+    // r2_key가 있으면 R2에서 본문 조회
+    const origin = new URL(c.req.url).origin;
+    const content = await getRevisionContent(c.env.MEDIA, revision, origin);
+
+    return c.json(safeJSON({ ...revision, content }));
 });
 
 /**
@@ -856,30 +964,37 @@ wiki.get('/w/:slug/revisions/:id/diff', async (c) => {
     // 해당 리비전 조회
     const revision = await db
         .prepare(
-            `SELECT id, page_version, content, page_id, created_at
+            `SELECT id, page_version, content, r2_key, page_id, created_at
        FROM revisions
        WHERE id = ? AND page_id = ?`
         )
         .bind(revId, page.id)
-        .first<{ id: number; page_version: number | null; content: string; page_id: number; created_at: number }>();
+        .first<{ id: number; page_version: number | null; content: string; r2_key: string | null; page_id: number; created_at: number }>();
 
     if (!revision) {
         return c.json({ error: '리비전을 찾을 수 없습니다.' }, 404);
     }
 
-    // 바로 이전 리비전 조회 (같은 page_id, created_at이 더 이전인 것 중 가장 최신)
+    // 바로 이전 리비전 조회
     const prevRevision = await db
         .prepare(
-            `SELECT id, page_version, content FROM revisions
+            `SELECT id, page_version, content, r2_key FROM revisions
        WHERE page_id = ? AND id < ?
        ORDER BY id DESC LIMIT 1`
         )
         .bind(revision.page_id, revId)
-        .first<{ id: number; page_version: number | null; content: string }>();
+        .first<{ id: number; page_version: number | null; content: string; r2_key: string | null }>();
+
+    // R2 or D1에서 본문 조회
+    const origin = new URL(c.req.url).origin;
+    const [newContent, oldContent] = await Promise.all([
+        getRevisionContent(c.env.MEDIA, revision, origin),
+        prevRevision ? getRevisionContent(c.env.MEDIA, prevRevision, origin) : Promise.resolve(''),
+    ]);
 
     return c.json(safeJSON({
-        old_content: prevRevision?.content ?? '',
-        new_content: revision.content,
+        old_content: oldContent,
+        new_content: newContent,
         old_revision_id: prevRevision?.id ?? null,
         new_revision_id: revision.id,
         old_page_version: prevRevision?.page_version ?? null,
@@ -1201,26 +1316,52 @@ wiki.post('/w/:slug/revert', requireAuth, async (c) => {
         return c.json({ error: '잠긴 문서는 관리자만 되돌릴 수 있습니다.' }, 403);
     }
 
-    const targetRevision = await db.prepare('SELECT content, page_version FROM revisions WHERE id = ? AND page_id = ?')
-        .bind(revision_id, page.id).first<{ content: string; page_version: number | null }>();
+    const targetRevision = await db.prepare('SELECT content, r2_key, page_version FROM revisions WHERE id = ? AND page_id = ?')
+        .bind(revision_id, page.id).first<{ content: string; r2_key: string | null; page_version: number | null }>();
 
     if (!targetRevision) {
         return c.json({ error: '해당 리비전을 찾을 수 없습니다.' }, 404);
     }
 
-    // Create new revision with old content
+    // 되돌릴 리비전의 본문을 R2 또는 D1에서 조회
+    const origin = new URL(c.req.url).origin;
+    let revertContent: string;
+    try {
+        revertContent = await getRevisionContent(c.env.MEDIA, targetRevision, origin);
+    } catch (e) {
+        console.error('Failed to fetch revert target content:', e);
+        return c.json({ error: '리비전 본문을 불러오지 못했습니다.' }, 500);
+    }
+
+    // 새 리비전 생성 (리비전 이력은 선형으로 계속 쌓임)
     const newVersion = page.version + 1;
     const targetVersionLabel = targetRevision.page_version != null ? `v${targetRevision.page_version}` : `#${revision_id}`;
     const summary = `${targetVersionLabel}으로 되돌리기`;
 
-    const revResult = await db.prepare('INSERT INTO revisions (page_id, page_version, content, summary, author_id) VALUES (?, ?, ?, ?, ?)')
-        .bind(page.id, newVersion, targetRevision.content, summary, user.id)
-        .run();
+    // 1. R2에 새 리비전 본문 업로드
+    let newR2Key: string;
+    try {
+        newR2Key = await uploadRevisionToR2(c.env.MEDIA, page.id, newVersion, revertContent);
+    } catch (e) {
+        console.error('R2 revert upload failed:', e);
+        return c.json({ error: '리비전 저장에 실패했습니다. 잠시 후 다시 시도해주세요.' }, 500);
+    }
 
-    const newRevId = revResult.meta.last_row_id;
+    // 2. D1에 새 리비전 레코드 삽입
+    let newRevId: number;
+    try {
+        const revResult = await db.prepare('INSERT INTO revisions (page_id, page_version, content, r2_key, summary, author_id) VALUES (?, ?, ?, ?, ?, ?)')
+            .bind(page.id, newVersion, '', newR2Key, summary, user.id)
+            .run();
+        newRevId = revResult.meta.last_row_id;
+    } catch (e) {
+        await c.env.MEDIA.delete(newR2Key).catch(() => {});
+        console.error('D1 revert revision insert failed:', e);
+        return c.json({ error: '리비전 저장에 실패했습니다. 잠시 후 다시 시도해주세요.' }, 500);
+    }
 
     await db.prepare('UPDATE pages SET content = ?, last_revision_id = ?, version = ?, updated_at = unixepoch() WHERE id = ?')
-        .bind(targetRevision.content, newRevId, newVersion, page.id)
+        .bind(revertContent, newRevId, newVersion, page.id)
         .run();
 
     // 캐시 무효화 (API + SSR) + 최근 변경 즉시 갱신
