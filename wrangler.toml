@@ -20,6 +20,10 @@ bucket_name = ""
 binding = "KV"
 id = ""
 
+[[analytics_engine_datasets]]
+binding = "ANALYTICS"
+dataset = "" # 원하는 이름으로 수정
+
 [observability]
 enabled = true
 head_sampling_rate = 1.0
@@ -31,6 +35,11 @@ GOOGLE_REDIRECT_URI = "https://도메인/auth/google/callback"
 # GOOGLE_CLIENT_SECRET은 Cloudflare Workers 대시보드에서 Secret에 저장
 TURNSTILE_SITE_KEY = ""
 # TURNSTILE_SECRET_KEY 는 Cloudflare Workers 대시보드에서 Secret에 저장
+
+# CF_ACCOUNT_ID, CF_API_TOKEN 미설정시 작동에는 문제가 없으나, 통계 조회 불가.
+# CF_ACCOUNT_ID, CF_API_TOKEN은 Cloudflare Workers 대시보드에서 Secret에 저장 (Analytics Engine 통계 조회용)
+
+
 MEDIA_PUBLIC_URL = "https://도메인/media"
 MAX_UPLOAD_SIZE = "15728640" # 15MB, 변경 가능
 WIKI_NAME = "Testwiki" # 변경 가능, 사이트 전역에 적용되는 위키 이름
