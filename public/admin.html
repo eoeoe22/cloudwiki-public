@@ -1395,6 +1395,15 @@
                 }
             }
 
+            function encodeUrlSafely(url) {
+                if (!url) return url;
+                try {
+                    return encodeURI(decodeURI(url));
+                } catch {
+                    return url;
+                }
+            }
+
             let sidebarConfigData = [];
 
             async function loadSidebarConfig() {
@@ -1571,7 +1580,7 @@
                         const iconEl = document.getElementById('swal-input-icon');
 
                         if (textEl) res.text = textEl.value;
-                        if (urlEl) res.url = urlEl.value;
+                        if (urlEl) res.url = encodeUrlSafely(urlEl.value);
                         if (iconEl) res.icon = iconEl.value;
 
                         if (item.type !== 'divider' && !res.text) {
@@ -1779,7 +1788,7 @@
                         const iconEl = document.getElementById('swal-footer-icon');
 
                         if (textEl) res.text = textEl.value;
-                        if (urlEl) res.url = urlEl.value;
+                        if (urlEl) res.url = encodeUrlSafely(urlEl.value);
                         if (iconEl) res.icon = iconEl.value;
 
                         if (item.type !== 'divider' && !res.text) {
