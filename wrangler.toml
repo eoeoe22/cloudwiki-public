@@ -5,7 +5,7 @@ compatibility_date = "2026-03-01"
 [assets]
 directory = "public"
 binding = "ASSETS"
-run_worker_first = ["/", "/wiki/*", "/mypage", "/profile/*", "/search", "/admin-media", "/sitemap.xml", "/robots.txt"]
+run_worker_first = ["/", "/w/*", "/wiki/*", "/mypage", "/edit", "/profile/*", "/search", "/admin", "/admin-media", "/tickets", "/tickets/*", "/setup-profile", "/sitemap.xml", "/robots.txt", "/login"]
 
 [[d1_databases]]
 binding = "DB"
