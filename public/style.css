@@ -1844,6 +1844,12 @@ div:where(.swal2-container) .swal2-html-container {
   color: var(--wiki-primary);
 }
 
+.wiki-tree-line {
+  font-family: monospace;
+  white-space: pre;
+  line-height: 1.6;
+}
+
 /* ── Spoiler (스포일러) ── */
 .spoiler {
   background-color: var(--wiki-text, #333);

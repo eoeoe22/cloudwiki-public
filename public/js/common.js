@@ -805,24 +805,54 @@ async function fetchCategoryList(category) {
             return '<div class="alert alert-light border text-center my-4">이 카테고리에 속한 문서가 없습니다.</div>';
         }
 
-        const listHtml = data.pages.map(page => {
-            const date = new Date(page.updated_at * 1000).toLocaleString('ko-KR');
-            const lockIcon = page.is_locked ? ' <i class="bi bi-lock-fill text-danger" title="관리자 전용"></i>' : '';
-            return `
-        <a href="/w/${encodeURIComponent(page.slug)}" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center wiki-spa-link">
-            <div>
-                <span class="fw-bold">${escapeHtml(page.title)}</span>
-                ${lockIcon}
-            </div>
-            <small class="text-muted">${date}</small>
-        </a>
-      `;
-        }).join('');
+        // 트리 구조 빌드
+        const tree = {};
+        for (const page of data.pages) {
+            const parts = page.slug.split('/');
+            let node = tree;
+            for (const part of parts) {
+                if (!node[part]) node[part] = { _children: {}, _doc: null };
+                node = node[part]._children;
+            }
+            let target = tree;
+            for (let i = 0; i < parts.length; i++) {
+                if (i === parts.length - 1) {
+                    target[parts[i]]._doc = page;
+                } else {
+                    target = target[parts[i]]._children;
+                }
+            }
+        }
+
+        function renderTree(nodes, parentPrefix) {
+            const entries = Object.keys(nodes).sort();
+            let html = '';
+            entries.forEach((key, idx) => {
+                const node = nodes[key];
+                const isLast = idx === entries.length - 1;
+                const hasChildren = Object.keys(node._children).length > 0;
+                const connector = isLast ? '└── ' : '├── ';
+                const childPrefix = parentPrefix + (isLast ? '    ' : '│   ');
+
+                if (node._doc) {
+                    html += `<div class="wiki-tree-line">${parentPrefix}${connector}<a href="/w/${encodeURIComponent(node._doc.slug)}" class="text-decoration-none wiki-spa-link">${escapeHtml(key)}</a></div>`;
+                } else {
+                    html += `<div class="wiki-tree-line">${parentPrefix}${connector}${escapeHtml(key)}</div>`;
+                }
+
+                if (hasChildren) {
+                    html += renderTree(node._children, childPrefix);
+                }
+            });
+            return html;
+        }
+
+        const treeHtml = renderTree(tree, '');
 
         return `
         <div class="category-list mt-4">
             <h4><i class="bi bi-folder2-open"></i> "${escapeHtml(category)}" 카테고리에 속한 문서</h4>
-            <div class="list-group mt-3">${listHtml}</div>
+            <div class="mt-3">${treeHtml}</div>
         </div>
     `;
     } catch (e) {
