@@ -53,6 +53,8 @@ MCP_MODE = "open" # MCP 서버 모드: "disabled" (사용 안 함, 기본값), "
 ALLOW_CRAWL = "true" # robots.txt/사이트맵 관리: "true" (크롤링 허용, 사이트맵 자동 생성, 봇 정책은 src/robots-txt.ts 직접 수정), "false" (전체 차단, 사이트맵 비활성화)
 WIKI_VISIBILITY = "open" # 문서 열람 권한: "open" (비로그인 사용자도 열람 가능), "closed" (로그인 필요)
 CLOSED_WIKI_MESSAGE = "비공개 위키입니다. 로그인 후 이용해주세요." # WIKI_VISIBILITY 가 closed일때, 비로그인 사용자가 로그인페이지에서 볼 메시지
+EMAIL_RESTRICTION = "" # 이메일 도메인 가입 제한 설정: "" 또는 "none" (제한 없음), "whitelist" (허용 도메인만), "blacklist" (차단 도메인 제외)
+EMAIL_LIST = "example.com, example.example.com" # 콤마로 구분된 도메인 목록 (EMAIL_RESTRICTION이 whitelist 또는 blacklist일 때 사용)
 
 CUSTOM_HEADER = """
 
