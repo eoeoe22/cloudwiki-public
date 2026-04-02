@@ -173,21 +173,55 @@ search.get('/search/suggest', async (c) => {
     const isAdmin = user && (user.role === 'admin' || user.role === 'super_admin');
     const trimmed = query.trim();
     const likePattern = `%${trimmed}%`;
+    const startPattern = `${trimmed}%`;
 
-    let sql = `
+    // 1. 카테고리 검색
+    const catSql = `
+        SELECT DISTINCT category FROM page_categories
+        WHERE category LIKE ?
+        ORDER BY CASE WHEN category LIKE ? THEN 0 ELSE 1 END, length(category)
+        LIMIT 7
+    `;
+    const catResults = await db.prepare(catSql).bind(likePattern, startPattern).all();
+
+    // 2. 문서 검색
+    let pageSql = `
         SELECT title, slug FROM pages
         WHERE title LIKE ?
     `;
     if (!isAdmin) {
-        sql += ' AND deleted_at IS NULL AND is_private = 0';
+        pageSql += ' AND deleted_at IS NULL AND is_private = 0';
     }
-    sql += ' ORDER BY CASE WHEN title LIKE ? THEN 0 ELSE 1 END, length(title) LIMIT 7';
+    pageSql += ' ORDER BY CASE WHEN title LIKE ? THEN 0 ELSE 1 END, length(title) LIMIT 7';
 
-    const startPattern = `${trimmed}%`;
-    const results = await db.prepare(sql).bind(likePattern, startPattern).all();
+    const pageResults = await db.prepare(pageSql).bind(likePattern, startPattern).all();
+
+    const suggestions: { title: string, slug: string }[] = [];
+    const seenSlugs = new Set<string>();
+
+    // 카테고리 결과를 먼저 추가 (형식: 카테고리:제목)
+    for (const r of catResults.results) {
+        const catName = r.category as string;
+        const slug = `카테고리:${catName}`;
+        if (!seenSlugs.has(slug)) {
+            suggestions.push({ title: slug, slug: slug });
+            seenSlugs.add(slug);
+        }
+    }
+
+    // 문서 결과를 추가 (중복 방지)
+    for (const r of pageResults.results) {
+        if (!seenSlugs.has(r.slug as string)) {
+            suggestions.push({ title: r.title as string, slug: r.slug as string });
+            seenSlugs.add(r.slug as string);
+        }
+    }
+
+    // 최종 결과 7개로 제한
+    const finalSuggestions = suggestions.slice(0, 7);
 
     return c.json({
-        suggestions: results.results.map((r: any) => ({ title: r.title, slug: r.slug })),
+        suggestions: finalSuggestions,
     });
 });
 

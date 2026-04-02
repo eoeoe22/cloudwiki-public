@@ -157,6 +157,14 @@
         </div>
       </div>
 
+      <!-- 삭제된 문서 -->
+      <div id="deletedPage" class="d-none">
+        <div class="wiki-not-found">
+          <h2><span class="mdi mdi-delete-empty text-danger"></span> 삭제된 문서입니다</h2>
+          <p id="deletedSlug"></p>
+        </div>
+      </div>
+
       <!-- 카테고리 문서 목록 -->
       <div id="categoryPage" class="d-none">
         <div class="wiki-article">
@@ -301,6 +309,7 @@
       document.getElementById('homePage').classList.add('d-none');
       document.getElementById('articlePage').classList.add('d-none');
       document.getElementById('notFoundPage').classList.add('d-none');
+      document.getElementById('deletedPage').classList.add('d-none');
       document.getElementById('categoryPage').classList.add('d-none');
     }
 
@@ -432,6 +441,17 @@
             return;
           }
           if (ssrData._ssrNotFound) {
+            if (ssrData._ssrDeleted) {
+              hideAllPages();
+              document.getElementById('deletedPage').classList.remove('d-none');
+              document.getElementById('deletedSlug').textContent = `"${decodeURIComponent(slug)}" 문서는 삭제되었습니다.`;
+              document.title = `삭제된 문서 - ${appConfig.wikiName}`;
+
+              // 삭제된 문서 화면이 보이도록 렌더링 강제 업데이트
+              if (typeof window.__sidebarLayoutUpdate === 'function') window.__sidebarLayoutUpdate();
+              return;
+            }
+
             // 카테고리 문서 체크
             const decodedSlug = decodeURIComponent(slug);
             if (decodedSlug.startsWith('카테고리:')) {
@@ -456,6 +476,17 @@
           // 클라이언트 사이드 네비게이션 — API로 문서 로드
           const search = window.location.search;
           const res = await fetch(`/api/w/${encodeURIComponent(slug)}${search}`);
+
+          if (res.status === 410) {
+            hideAllPages();
+            document.getElementById('deletedPage').classList.remove('d-none');
+            document.getElementById('deletedSlug').textContent = `"${decodeURIComponent(slug)}" 문서는 삭제되었습니다.`;
+            document.title = `삭제된 문서 - ${appConfig.wikiName}`;
+
+            // 삭제된 문서 화면이 보이도록 렌더링 강제 업데이트
+            if (typeof window.__sidebarLayoutUpdate === 'function') window.__sidebarLayoutUpdate();
+            return;
+          }
 
           if (res.status === 404) {
             const decodedSlug = decodeURIComponent(slug);

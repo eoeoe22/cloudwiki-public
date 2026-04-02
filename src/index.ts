@@ -361,7 +361,16 @@ app.get('/w/:slug', async (c) => {
         .first<Page>();
 
     if (page && page.deleted_at && !isAdmin) {
-        page = null;
+        // SSR에서도 삭제된 문서 처리
+        const deletedSsrData: Record<string, any> = {
+            _ssrSlug: slug,
+            _ssrNotFound: true,
+            _ssrDeleted: true,
+            _ssrTitle: `삭제된 문서 - ${c.env.WIKI_NAME || 'CloudWiki'}`
+        };
+        // 삭제된 문서는 리다이렉트나 본문 조회를 하지 않도록 처리
+        const response = await renderHtml(c, '/', deletedSsrData);
+        return new Response(response.body, { status: 410, headers: response.headers });
     }
 
     let redirectedFrom: string | null = null;

@@ -658,7 +658,7 @@ div:where(.swal2-container) .swal2-html-container {
   width: 260px;
   flex-shrink: 0;
   position: sticky;
-  top: 5;
+  top: 1.5rem !important; /* 화면 최상단과 약간의 여백 주기 (JS 덮어쓰기 방지) */
   align-self: flex-start;
   z-index: 1030;
 }
@@ -1008,6 +1008,32 @@ div:where(.swal2-container) .swal2-html-container {
   font-size: inherit;
   word-break: inherit;
   overflow-wrap: inherit;
+}
+
+/* Prism.js 스타일 덮어쓰기 (기존 위키 코드블럭 스타일과 동기화) */
+.wiki-content pre[class*="language-"] {
+  background: var(--wiki-code-bg) !important;
+  color: var(--wiki-text) !important;
+  padding: 1.2rem !important;
+  border-radius: 8px !important;
+  white-space: pre-wrap !important;
+  word-break: break-all !important;
+  overflow-wrap: break-word !important;
+  margin: 0 !important;
+  box-shadow: none !important;
+  border: 1px solid var(--wiki-border) !important;
+  text-shadow: none !important;
+}
+
+.wiki-content pre[class*="language-"] code[class*="language-"] {
+  background: transparent !important;
+  padding: 0 !important;
+  border: none !important;
+  color: inherit !important;
+  font-size: inherit !important;
+  word-break: inherit !important;
+  overflow-wrap: inherit !important;
+  text-shadow: none !important;
 }
 
 /* 코드 복사 버튼 */

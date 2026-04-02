@@ -453,7 +453,7 @@ wiki.get('/w/:slug', async (c) => {
     const isAdmin = user && (user.role === 'admin' || user.role === 'super_admin');
 
     if (page && page.deleted_at && !isAdmin) {
-        page = null;
+        return c.json({ error: '삭제된 문서입니다.', is_deleted: true }, 410);
     }
 
     let redirectedFrom: string | null = null;
@@ -505,6 +505,7 @@ wiki.get('/w/:slug', async (c) => {
     if (!page) {
         return c.json({ error: '문서를 찾을 수 없습니다.' }, 404);
     }
+
 
     // 비공개 문서 접근 제어
     if (page.is_private) {

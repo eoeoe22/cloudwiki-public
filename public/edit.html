@@ -28,6 +28,12 @@
 
 <body style="-webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;">
 
+    <!-- 초기 로딩 오버레이 -->
+    <div id="initLoadingOverlay">
+        <div class="spinner-border" role="status"></div>
+        <span>불러오는 중...</span>
+    </div>
+
     <!-- 카테고리 자동완성 드롭다운 -->
     <div id="category-autocomplete" class="list-group"></div>
 
@@ -1810,6 +1816,25 @@
             // 기존 문서 불러오기
             try {
                 const res = await fetch(`/api/w/${encodeURIComponent(slug)}?redirect=no&nocache=true`);
+
+                if (res.status === 410) {
+                    // 로딩 오버레이 먼저 숨김
+                    const overlay = document.getElementById('initLoadingOverlay');
+                    if (overlay) {
+                        overlay.classList.add('hidden');
+                        overlay.style.display = 'none';
+                    }
+                    Swal.fire({
+                        icon: 'error',
+                        title: '삭제된 문서',
+                        text: '삭제된 문서는 열람하거나 편집할 수 없습니다.',
+                        confirmButtonText: '홈으로'
+                    }).then(() => {
+                        window.location.href = '/';
+                    });
+                    return;
+                }
+
                 if (res.ok) {
                     const page = await res.json();
                     document.getElementById('titleInput').value = page.title;
@@ -1870,6 +1895,16 @@
             // 동시편집 감지: 하트비트 전송 + 편집자 체크 시작
             startEditingHeartbeat();
             checkConcurrentEditors();
+
+            // 로딩 오버레이 숨기기
+            const overlay = document.getElementById('initLoadingOverlay');
+            if (overlay) {
+                overlay.classList.add('hidden');
+                // 트랜지션 완료 후 DOM에서 완전히 숨김 처리
+                setTimeout(() => {
+                    overlay.style.display = 'none';
+                }, 300);
+            }
         });
 
         // ── Diff HTML 생성 공통 함수 ──
