@@ -630,3 +630,8 @@
 .toastui-editor-ww-container .ProseMirror {
     padding-bottom: 25vh !important;
 }
+
+/* Hide mobile hamburger menu since sidebar is completely hidden on the edit page */
+.navbar-toggler[data-bs-target="#mobileSidebar"] {
+    display: none !important;
+}
