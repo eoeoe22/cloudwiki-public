@@ -28,6 +28,8 @@ export type Env = {
         TURNSTILE_SECRET_KEY: string;
         CF_ACCOUNT_ID?: string;
         CF_API_TOKEN?: string;
+        EMAIL_RESTRICTION: string;
+        EMAIL_LIST: string;
     };
     Variables: {
         user: User | null;

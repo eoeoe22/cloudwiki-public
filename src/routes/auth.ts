@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { getCookie } from 'hono/cookie';
 import type { Env } from '../types';
 import { requireAuth } from '../middleware/session';
-import { isSuperAdmin, getSuperAdmins } from '../utils/auth';
+import { isSuperAdmin, getSuperAdmins, isEmailDomainAllowed } from '../utils/auth';
 
 const auth = new Hono<Env>();
 
@@ -118,6 +118,12 @@ auth.get('/auth/google/callback', async (c) => {
             .run();
     } else {
         isNewUser = true;
+
+        // 이메일 도메인 필터링
+        if (!isEmailDomainAllowed(userInfo.email, c.env.EMAIL_RESTRICTION, c.env.EMAIL_LIST)) {
+            return c.redirect('/?error=email_domain_not_allowed');
+        }
+
         const settingsRow = await db
             .prepare('SELECT signup_policy FROM settings WHERE id = 1')
             .first<{ signup_policy: string }>();
