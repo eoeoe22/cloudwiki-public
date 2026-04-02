@@ -21,14 +21,14 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link
-    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Outfit:wght@500;600;700;800;900&family=Noto+Sans+KR:wght@300;400;500;600;700;800;900&display=swap"
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Outfit:wght@500;600;700;800;900&family=Inter:wght@400;500;700;800&display=swap"
     rel="stylesheet">
   <!-- 커스텀 스타일 -->
   <link rel="stylesheet" href="/style.css">
   <link rel="stylesheet" href="/edit.css">
 </head>
 
-<body>
+<body style="-webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;">
 
   <!-- SPA 네비게이션 프로그레스 바 -->
   <div id="spaProgressBar" class="spa-progress-bar d-none">
@@ -443,7 +443,7 @@
             document.getElementById('notFoundSlug').textContent =
               `"${decodeURIComponent(slug)}" 문서가 아직 존재하지 않습니다.`;
             document.getElementById('createPageBtn').onclick = () => {
-              window.location.href = `/edit.html?slug=${encodeURIComponent(slug)}`;
+              window.location.href = `/edit?slug=${encodeURIComponent(slug)}`;
             };
             document.title = `문서 없음 - ${appConfig.wikiName}`;
             return;
@@ -468,7 +468,7 @@
             document.getElementById('notFoundSlug').textContent =
               `"${decodeURIComponent(slug)}" 문서가 아직 존재하지 않습니다.`;
             document.getElementById('createPageBtn').onclick = () => {
-              window.location.href = `/edit.html?slug=${encodeURIComponent(slug)}`;
+              window.location.href = `/edit?slug=${encodeURIComponent(slug)}`;
             };
             document.title = `문서 없음 - ${appConfig.wikiName}`;
             return;

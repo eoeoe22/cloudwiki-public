@@ -220,6 +220,50 @@ async function loadConfig() {
     } catch (e) {
         console.error('설정 로드 실패', e);
     }
+    // 레이아웃 컴포넌트(헤더/사이드바)가 비어있으면 클라이언트에서 로드 시도 (SSR 누락 대비)
+    await ensureLayoutComponents();
+
+    // 전역 인증 상태 동기화 (레이아웃 주입 여부와 상관없이 항상 수행)
+    await checkAuth();
+}
+
+/**
+ * SSR이 누락된 경우를 대비한 클라이언트 사이드 레이아웃 주입
+ */
+async function ensureLayoutComponents() {
+    const header = document.getElementById('app-header-placeholder');
+    const sidebar = document.getElementById('app-sidebar-placeholder');
+    const footer = document.getElementById('app-footer-placeholder');
+
+    const headerEmpty = header && header.innerHTML.trim() === '';
+    const sidebarEmpty = sidebar && sidebar.innerHTML.trim() === '';
+    const footerEmpty = footer && footer.innerHTML.trim() === '';
+
+    if (headerEmpty || sidebarEmpty || footerEmpty) {
+        try {
+            const [h, s, f] = await Promise.all([
+                headerEmpty ? fetch('/components/header.html').then(r => r.ok ? r.text() : null) : Promise.resolve(null),
+                sidebarEmpty ? fetch('/components/sidebar.html').then(r => r.ok ? r.text() : null) : Promise.resolve(null),
+                footerEmpty ? fetch('/components/footer.html').then(r => r.ok ? r.text() : null) : Promise.resolve(null)
+            ]);
+
+            if (h && header) header.innerHTML = h;
+            if (s && sidebar) sidebar.innerHTML = s;
+            if (f && footer) footer.innerHTML = f;
+
+            // 컴포넌트 로드 후 브랜딩 및 인증 재적용
+            if (h || s || f) {
+                // 무한 루프 방지를 위해 ensureLayoutComponents 제외하고 재호출
+                document.querySelectorAll('.app-wiki-name').forEach(el => {
+                    if (el.tagName !== 'TITLE') el.textContent = appConfig.wikiName;
+                });
+                await checkAuth();
+                if (window.__sidebarLayoutUpdate) window.__sidebarLayoutUpdate();
+            }
+        } catch (e) {
+            console.error('Layout component load failed:', e);
+        }
+    }
 }
 
 // ── 인증 확인 + 네비바 UI 업데이트 ──
@@ -1590,7 +1634,7 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
         });
 
         containerEl.querySelectorAll('table').forEach(t => {
-            t.classList.add('table', 'table-bordered', 'table-hover');
+            t.classList.add('table', 'table-bordered');
             const wrapper = document.createElement('div');
             wrapper.className = 'table-responsive';
             t.parentNode.insertBefore(wrapper, t);

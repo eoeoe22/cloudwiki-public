@@ -527,6 +527,22 @@ app.get('/mypage', async (c) => {
     return renderHtml(c, '/mypage.html');
 });
 
+// /edit/:slug → edit.html 서빙 (SSR 브랜딩)
+app.get('/edit/:slug', async (c) => {
+    if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) {
+        return c.redirect('/login');
+    }
+    return renderHtml(c, '/edit.html');
+});
+
+// /edit → edit.html 서빙 (SSR 브랜딩)
+app.get('/edit', async (c) => {
+    if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) {
+        return c.redirect('/login');
+    }
+    return renderHtml(c, '/edit.html');
+});
+
 // /setup-profile 접근 시 서빙
 app.get('/setup-profile', async (c) => {
     return renderHtml(c, '/setup-profile.html');
