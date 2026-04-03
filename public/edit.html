@@ -262,6 +262,7 @@
         let serverViewer = null;
         let cachedDiffData = null;
         let diffViewMode = 'summary';
+        let pageLeft = false;
 
         // ── Turnstile 상태 ──
         let turnstileToken = null;
@@ -1896,6 +1897,15 @@
             startEditingHeartbeat();
             checkConcurrentEditors();
 
+            // 미저장 변경사항 이탈 경고
+            window.addEventListener('beforeunload', (e) => {
+                if (pageLeft || !editor) return;
+                if (editor.getMarkdown() !== originalContent) {
+                    e.preventDefault();
+                    e.returnValue = '';
+                }
+            });
+
             // 로딩 오버레이 숨기기
             const overlay = document.getElementById('initLoadingOverlay');
             if (overlay) {
@@ -2137,6 +2147,7 @@
                 if (AUTO_SAVE_KEY) localStorage.removeItem(AUTO_SAVE_KEY);
 
                 isSuccess = true;
+                originalContent = content;
                 Swal.fire({
                     icon: 'success',
                     title: '저장 완료!',
@@ -2384,10 +2395,12 @@
                     cancelButtonText: '계속 편집',
                 }).then(result => {
                     if (result.isConfirmed) {
+                        pageLeft = true;
                         window.location.href = slug ? `/w/${encodeURIComponent(slug)}` : '/';
                     }
                 });
             } else {
+                pageLeft = true;
                 window.location.href = slug ? `/w/${encodeURIComponent(slug)}` : '/';
             }
         }
