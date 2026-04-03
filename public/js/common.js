@@ -274,11 +274,12 @@ async function checkAuth() {
             currentUser = await res.json();
             document.querySelectorAll('#navLogin').forEach(el => el.classList.add('d-none'));
             document.querySelectorAll('#navUser').forEach(el => el.classList.remove('d-none'));
+            
             document.querySelectorAll('#userAvatar').forEach(el => el.src = isSafeUrl(currentUser.picture) ? currentUser.picture : '');
             document.querySelectorAll('#userName').forEach(el => el.textContent = currentUser.name);
 
             if (currentUser.role === 'admin' || currentUser.role === 'super_admin') {
-                document.querySelectorAll('#navAdminConsole, #navAdminDivider').forEach(el => el.classList.remove('d-none'));
+                document.querySelectorAll('#navAdminConsole').forEach(el => el.classList.remove('d-none'));
             }
 
             // 알림 버튼 표시 및 카운트 로드
@@ -1914,5 +1915,97 @@ async function loadRecentChanges() {
         });
     } catch (e) {
         // 무시
+    }
+}
+
+// ── 실시간 트렌딩 로드 ──
+// ── 실시간 트렌딩 로드 ──
+async function loadTrending() {
+    try {
+        const res = await fetch('/api/analytics/trending?limit=10');
+        if (!res.ok) return;
+        const data = await res.json();
+
+        // 트렌딩 문서 표시 간소화: 일반 텍스트 순위, 조회수 미표시
+        const html = (data.trending || []).map((item, index) => {
+            return `
+              <a href="/w/${encodeURIComponent(item.slug)}" class="text-decoration-none d-flex align-items-center py-2 px-2 text-body trending-item-link"
+                 onclick="if(typeof navigateTo==='function'){navigateTo(this.href);return false;}">
+                <span class="text-muted fw-bold me-2" style="font-size: 0.95rem;">${index + 1}.</span>
+                <span class="text-truncate" style="font-size: 0.95rem;">${escapeHtml(item.slug)}</span>
+              </a>
+            `;
+        }).join('');
+
+        const emptyMsg = '<div class="text-muted small p-2">트렌딩 데이터가 없습니다.</div>';
+        const content = data.trending && data.trending.length > 0 ? html : emptyMsg;
+
+        document.querySelectorAll('.trending-container').forEach(el => {
+            el.innerHTML = content;
+            if (data.trending && data.trending.length > 0) {
+                initTrendingTicker(el, Math.min(data.trending.length, 10));
+            }
+        });
+    } catch (e) {
+        // 무시
+    }
+}
+
+function initTrendingTicker(container, count) {
+    const parent = container.parentElement;
+    if (!parent || !parent.classList.contains('trending-ticker-wrapper')) return;
+    
+    parent.style.height = '38px';
+    parent.style.transition = 'height 0.4s ease'; // Expand/fold animation
+    container.style.position = 'absolute';
+    container.style.top = '0';
+    container.style.left = '0';
+    container.style.width = '100%';
+    container.style.transition = 'transform 0.4s ease';
+
+    let currentIndex = 0;
+    let tickerInterval = setInterval(slideNext, 3000);
+    let isExpanded = false;
+
+    function slideNext() {
+        if (isExpanded) return;
+        currentIndex++;
+        if (currentIndex >= count) {
+            currentIndex = 0;
+            container.style.transition = 'none';
+            container.style.transform = `translateY(0)`;
+            // force flush layout
+            void container.offsetHeight;
+            container.style.transition = 'transform 0.4s ease';
+            return;
+        }
+        container.style.transform = `translateY(-${currentIndex * 38}px)`;
+    }
+
+    const section = container.closest('.sidebar-section');
+    const expandBtn = section ? section.querySelector('.trending-expand-btn') : null;
+    
+    if (expandBtn) {
+        // 클릭 시 이벤트 전파 방지 등을 고려해 다시 세팅
+        const clone = expandBtn.cloneNode(true);
+        expandBtn.replaceWith(clone);
+        
+        clone.addEventListener('click', (e) => {
+            e.preventDefault();
+            isExpanded = !isExpanded;
+            if (isExpanded) {
+                // 펼치기 - 애니메이션으로 전체 높이 적용, 변형 초기화
+                parent.style.height = `${count * 38}px`; 
+                container.style.transform = 'translateY(0)';
+                clone.innerHTML = '접기 <i class="bi bi-chevron-up"></i>';
+                clearInterval(tickerInterval);
+            } else {
+                // 접기 - 다시 1줄 크기로, 현재 순위 위치로 이동 애니메이션
+                parent.style.height = '38px';
+                container.style.transform = `translateY(-${currentIndex * 38}px)`;
+                clone.innerHTML = '펼치기 <i class="bi bi-chevron-down"></i>';
+                tickerInterval = setInterval(slideNext, 3000);
+            }
+        });
     }
 }

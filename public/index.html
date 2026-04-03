@@ -171,25 +171,30 @@
           <div class="list-group mt-4" id="categoryDocsList"></div>
         </div>
       </div>
-      <!-- 하단 최근 변경 -->
-      <div class="recent-changes-bottom d-lg-none" id="recentChangesBottom">
-        <div class="sidebar-section">
-          <h6 class="sidebar-title"><i class="bi bi-clock-history"></i> 최근 변경</h6>
-          <div id="recentChangesList" class="recent-changes-list recent-changes-container">
-            <div class="placeholder-glow">
-              <span class="placeholder w-100 d-block mb-2" style="height: 2.5rem; border-radius: 6px;"></span>
-              <span class="placeholder w-100 d-block mb-2" style="height: 2.5rem; border-radius: 6px;"></span>
-              <span class="placeholder w-100 d-block" style="height: 2.5rem; border-radius: 6px;"></span>
-            </div>
-          </div>
-        </div>
-      </div>
+
     </div> <!-- wiki-container end -->
 
     <!-- 오른쪽 사이드바 (PC 전용 오프캔버스 컨테이너 및 최근 변경) -->
     <aside class="wiki-sidebar" id="wikiSidebar">
       <!-- 사이드바 네비게이션 (모바일 오프캔버스 렌더링 영역 공유) -->
       <div id="app-sidebar-placeholder"></div>
+
+      <!-- 실시간 트렌딩 (PC/모바일 공통) -->
+      <div class="mt-4 mb-4">
+        <div class="sidebar-section">
+          <h6 class="sidebar-title d-flex justify-content-between align-items-center mb-2">
+            <span><i class="bi bi-graph-up-arrow text-danger"></i> 실시간 트렌딩</span>
+            <a href="#" class="small text-muted text-decoration-none trending-expand-btn" style="font-size: 0.8rem;">펼치기 <i class="bi bi-chevron-down"></i></a>
+          </h6>
+          <div class="position-relative overflow-hidden trending-ticker-wrapper" style="height: 38px;">
+            <div id="trendingListPc" class="trending-container trending-ticker-list">
+              <div class="placeholder-glow px-2 py-2">
+                <span class="placeholder w-100 d-block" style="height: 1.5rem; border-radius: 4px;"></span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
 
       <!-- PC 전용 최근 변경 -->
       <div class="d-none d-lg-block mt-4">
@@ -258,6 +263,7 @@
 
       route();
       _initialLoadDone = true;
+      loadTrending();
       loadRecentChanges();
 
       // 브라우저 뒤로/앞으로 버튼 처리
