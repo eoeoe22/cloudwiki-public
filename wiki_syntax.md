@@ -1,6 +1,6 @@
-# CloudWiki 문법 가이드
+# Cloudwiki 문법 가이드
 
-CloudWiki에서 지원하는 기본 마크다운 문법과 확장 문법(위키 고유 문법)에 대한 안내입니다.
+Cloudwiki에서 지원하는 기본 마크다운 문법과 확장 문법(위키 고유 문법)에 대한 안내입니다.
 
 
 ---
@@ -450,3 +450,4 @@ https://youtu.be/jQmYZWjLwzw
 
 테스트 https://youtu.be/jQmYZWjLwzw
 https://youtu.be/jQmYZWjLwzw 테스트
+
