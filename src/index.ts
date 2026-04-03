@@ -52,6 +52,15 @@ app.route('/api/admin/analytics', analyticsRoutes);
 
 // ── 공개 Analytics API (인기 문서, 문서별 조회수) ──
 app.get('/api/analytics/trending', async (c) => {
+    const cache = caches.default;
+    const cacheKey = c.req.url;
+
+    // 캐시 확인
+    const cached = await cache.match(cacheKey);
+    if (cached) {
+        return new Response(cached.body, cached);
+    }
+
     const accountId = c.env.CF_ACCOUNT_ID;
     const apiToken = c.env.CF_API_TOKEN;
     if (!accountId || !apiToken) return c.json({ trending: [] });
@@ -68,7 +77,13 @@ app.get('/api/analytics/trending', async (c) => {
             GROUP BY slug ORDER BY views DESC LIMIT ${limit}
             FORMAT JSON
         `);
-        return c.json({ trending: result?.data || [] });
+
+        const response = c.json({ trending: result?.data || [] }, 200, {
+            'Cache-Control': 'public, max-age=60'
+        });
+
+        c.executionCtx.waitUntil(cache.put(cacheKey, response.clone()));
+        return response;
     } catch {
         return c.json({ trending: [] });
     }

@@ -7,6 +7,36 @@ const adminRoutes = new Hono<Env>();
 
 adminRoutes.use('*', requireAdmin);
 
+/**
+ * 모든 문서의 HTML 캐시를 무효화합니다.
+ * 사이드바, 푸터 등의 전역 UI가 변경될 때 사용합니다.
+ */
+async function invalidateAllPagesCache(c: any) {
+    const db = c.env.DB;
+    const origin = new URL(c.req.url).origin;
+    const cache = caches.default;
+
+    try {
+        const { results } = await db.prepare(`
+            SELECT slug FROM pages WHERE deleted_at IS NULL
+            UNION
+            SELECT source_slug as slug FROM redirects
+        `).all();
+
+        // 너무 많은 프로미스가 동시에 실행되지 않도록 배치 처리
+        for (let i = 0; i < results.length; i += 50) {
+            const batch = results.slice(i, i + 50);
+            const promises = batch.map((row: any) => {
+                const path = encodeURIComponent(row.slug);
+                return cache.delete(`${origin}/w/${path}`);
+            });
+            await Promise.allSettled(promises);
+        }
+    } catch (e) {
+        console.error('Failed to invalidate all pages cache:', e);
+    }
+}
+
 // ── 관리 로그 기록 헬퍼 ──
 function writeAdminLog(c: any, type: string, log: string, userId: number) {
     const db = c.env.DB;
@@ -764,6 +794,9 @@ adminRoutes.post('/sidebar-config', async (c) => {
         }
         await c.env.KV.put('sidebar_config', JSON.stringify(config));
         writeAdminLog(c, 'sidebar_config', `사이드바 설정 변경 (${config.length}개 항목)`, c.get('user')!.id);
+
+        c.executionCtx.waitUntil(invalidateAllPagesCache(c));
+
         return c.json({ success: true });
     } catch (e) {
         return c.json({ error: '설정을 저장하지 못했습니다.' }, 500);
@@ -796,6 +829,9 @@ adminRoutes.post('/footer-config', async (c) => {
         }
         await c.env.KV.put('footer_config', JSON.stringify(config));
         writeAdminLog(c, 'footer_config', `푸터 설정 변경 (${config.length}개 항목)`, c.get('user')!.id);
+
+        c.executionCtx.waitUntil(invalidateAllPagesCache(c));
+
         return c.json({ success: true });
     } catch (e) {
         return c.json({ error: '설정을 저장하지 못했습니다.' }, 500);

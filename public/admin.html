@@ -456,18 +456,18 @@
 
                 <div class="row g-4">
                     <div class="col-md-6">
-                        <div class="card shadow-sm border-0">
-                            <div class="card-header py-3">사이드바 커스터마이징</div>
+                        <div class="card shadow-sm border-0" style="overflow: visible;">
+                            <div class="card-header py-3" style="border-top-left-radius: inherit; border-top-right-radius: inherit;">사이드바 커스터마이징</div>
                             <div class="card-body p-0">
                                 <ul class="list-group list-group-flush" id="sidebarItemsList" style="min-height:100px;">
                                 </ul>
                             </div>
-                            <div class="card-footer bg-white border-top-0">
+                            <div class="card-footer bg-white border-top-0" style="border-bottom-left-radius: inherit; border-bottom-right-radius: inherit;">
                                 <div class="dropdown d-grid mb-2">
                                     <button class="btn btn-sm btn-outline-primary dropdown-toggle"
                                         data-bs-toggle="dropdown">항목 추가</button>
                                     <ul class="dropdown-menu shadow-lg border-0"
-                                        style="background: var(--wiki-card-bg); border: 1px solid var(--wiki-border) !important;">
+                                        style="background: var(--wiki-card-bg); border: 1px solid var(--wiki-border) !important; z-index: 1050;">
                                         <li><a class="dropdown-item py-2" onclick="addSidebarItem('link')"><i
                                                     class="mdi mdi-link me-2 text-primary"></i>링크</a></li>
                                         <li><a class="dropdown-item py-2" onclick="addSidebarItem('header')"><i
@@ -483,18 +483,18 @@
                         </div>
                     </div>
                     <div class="col-md-6">
-                        <div class="card shadow-sm border-0">
-                            <div class="card-header py-3">푸터 커스터마이징</div>
+                        <div class="card shadow-sm border-0" style="overflow: visible;">
+                            <div class="card-header py-3" style="border-top-left-radius: inherit; border-top-right-radius: inherit;">푸터 커스터마이징</div>
                             <div class="card-body p-0">
                                 <ul class="list-group list-group-flush" id="footerItemsList" style="min-height:100px;">
                                 </ul>
                             </div>
-                            <div class="card-footer bg-white border-top-0">
+                            <div class="card-footer bg-white border-top-0" style="border-bottom-left-radius: inherit; border-bottom-right-radius: inherit;">
                                 <div class="dropdown d-grid mb-2">
                                     <button class="btn btn-sm btn-outline-primary dropdown-toggle"
                                         data-bs-toggle="dropdown">항목 추가</button>
                                     <ul class="dropdown-menu shadow-lg border-0"
-                                        style="background: var(--wiki-card-bg); border: 1px solid var(--wiki-border) !important;">
+                                        style="background: var(--wiki-card-bg); border: 1px solid var(--wiki-border) !important; z-index: 1050;">
                                         <li><a class="dropdown-item py-2" onclick="addFooterItem('link')"><i
                                                     class="mdi mdi-link me-2 text-primary"></i>링크</a></li>
                                         <li><a class="dropdown-item py-2" onclick="addFooterItem('text')"><i
