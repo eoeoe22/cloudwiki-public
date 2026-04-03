@@ -115,13 +115,21 @@
         })();
         </script>
 
-        <!-- 알림 버튼 (로그인 시에만 표시) -->
-        <div class="position-relative ms-2 d-none" id="notificationBtnWrapper">
-            <button class="btn border-0 px-1 position-relative" id="notificationBtn" onclick="toggleNotificationPanel()"
-                type="button" title="알림">
-                <i class="mdi mdi-inbox fs-4 text-body"></i>
-                <span class="notification-badge d-none" id="notificationBadge"></span>
-            </button>
+        <!-- 유저 버튼 & 알림 패널 통합 -->
+        <div class="dropdown ms-2 d-none position-relative" id="navUser">
+            <a href="#" class="d-flex align-items-center text-decoration-none position-relative" data-bs-toggle="dropdown" aria-expanded="false">
+               <img id="userAvatar" class="user-avatar m-0" src="" alt="" style="width: 28px; height: 28px; border-radius: 50%;">
+               <span class="notification-badge d-none" id="notificationBadge"></span>
+            </a>
+            <ul class="dropdown-menu dropdown-menu-end shadow-sm position-absolute">
+                <li><h6 class="dropdown-header text-truncate" id="userName"></h6></li>
+                <li><a class="dropdown-item" href="#" onclick="document.querySelector('#navUser > a').click(); toggleNotificationPanel(); event.stopPropagation(); return false;"><i class="mdi mdi-inbox me-2 text-warning"></i> 알림</a></li>
+                <li><a class="dropdown-item" href="/mypage"><i class="mdi mdi-account-circle me-2 text-primary"></i> 마이페이지</a></li>
+                <li id="navAdminConsole" class="d-none"><a class="dropdown-item" href="/admin.html"><i class="mdi mdi-shield-account me-2 text-danger"></i> 관리자 콘솔</a></li>
+                <li><hr class="dropdown-divider"></li>
+                <li><a class="dropdown-item" href="/auth/logout"><i class="mdi mdi-logout me-2 text-danger"></i> 로그아웃</a></li>
+            </ul>
+
             <!-- 알림 드롭다운 패널 -->
             <div class="notification-panel d-none" id="notificationPanel">
                 <div class="notification-panel-header">
@@ -131,20 +139,8 @@
                     <div class="text-center text-muted py-4">불러오는 중...</div>
                 </div>
             </div>
-        </div>
-
-        <!-- 유저 버튼 -->
-        <div class="dropdown ms-2 d-none" id="navUser">
-            <a href="#" class="d-flex align-items-center text-decoration-none" data-bs-toggle="dropdown" aria-expanded="false">
-               <img id="userAvatar" class="user-avatar m-0" src="" alt="" style="width: 32px; height: 32px; border-radius: 50%;">
-            </a>
-            <ul class="dropdown-menu dropdown-menu-end shadow-sm position-absolute">
-                <li><h6 class="dropdown-header text-truncate" id="userName"></h6></li>
-                <li><a class="dropdown-item" href="/mypage"><i class="mdi mdi-account-circle me-2 text-primary"></i> 마이페이지</a></li>
-                <li id="navAdminConsole" class="d-none"><a class="dropdown-item" href="/admin.html"><i class="mdi mdi-shield-account me-2 text-danger"></i> 관리자 콘솔</a></li>
-                <li><hr class="dropdown-divider"></li>
-                <li><a class="dropdown-item" href="/auth/logout"><i class="mdi mdi-logout me-2 text-danger"></i> 로그아웃</a></li>
-            </ul>
+            <!-- js 호환성을 위한 안보이는 래퍼 유지 -->
+            <div id="notificationBtnWrapper" class="d-none"></div>
         </div>
         <a class="btn btn-outline-primary btn-sm ms-2" style="padding: 0.25rem 0.6rem; font-weight: 600;" id="navLogin" href="/auth/google"><i class="mdi mdi-login d-none d-sm-inline"></i> 로그인</a>
 

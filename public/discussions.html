@@ -16,6 +16,12 @@
     href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Outfit:wght@500;600;700;800;900&family=Inter:wght@400;500;700;800&display=swap"
     rel="stylesheet">
   <link rel="stylesheet" href="/style.css">
+  <style>
+    /* 모바일에서 햄버거 메뉴 숨김 */
+    .navbar-toggler[data-bs-target="#mobileSidebar"] {
+      display: none !important;
+    }
+  </style>
 </head>
 
 <body style="-webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;">
@@ -138,7 +144,7 @@
     </div>
 
     <!-- 오른쪽 사이드바 (PC 전용 오프캔버스 컨테이너) -->
-    <aside class="wiki-sidebar" id="wikiSidebar">
+    <aside class="wiki-sidebar d-none" id="wikiSidebar">
       <div id="app-sidebar-placeholder"></div>
     </aside>
   </div>

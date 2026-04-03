@@ -17,6 +17,11 @@
         rel="stylesheet">
     <link rel="stylesheet" href="/style.css">
     <style>
+        /* 모바일에서 햄버거 메뉴 숨김 */
+        .navbar-toggler[data-bs-target="#mobileSidebar"] {
+            display: none !important;
+        }
+
         /* ── 관리자 전용 3컬럼 레이아웃 ── */
         .admin-layout {
             display: flex;
@@ -562,7 +567,7 @@
         </div> <!-- wiki-container end -->
 
         <!-- ── 오른쪽 사이드바 (기존 사이드바 구성요소) ── -->
-        <aside class="wiki-sidebar">
+        <aside class="wiki-sidebar d-none">
             <div id="app-sidebar-placeholder"></div>
         </aside>
     </div> <!-- admin-layout end -->

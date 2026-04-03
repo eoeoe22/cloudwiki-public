@@ -351,10 +351,11 @@ function toggleNotificationPanel() {
 }
 
 function _closeNotifOnOutsideClick(e) {
-    const wrapper = document.getElementById('notificationBtnWrapper');
-    if (wrapper && !wrapper.contains(e.target)) {
+    const panel = document.getElementById('notificationPanel');
+    const navUser = document.getElementById('navUser');
+    if ((panel && !panel.contains(e.target)) && (navUser && !navUser.contains(e.target))) {
         _notifPanelOpen = false;
-        document.getElementById('notificationPanel')?.classList.add('d-none');
+        panel?.classList.add('d-none');
         document.removeEventListener('click', _closeNotifOnOutsideClick);
     }
 }

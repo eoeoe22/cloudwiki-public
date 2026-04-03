@@ -84,8 +84,14 @@ export const sessionMiddleware = createMiddleware<Env>(async (c, next) => {
     if (row) {
         // 탈퇴한 유저는 세션 무효화
         if (row.role === 'deleted') {
+            c.header('Set-Cookie', 'wiki_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0');
+            // 삭제된 사용자 에러로 리다이렉트 (api인 경우 미들웨어 이후 단계에서 처리되거나 json 응답이 필요하지만 일단 next()로 null로 전달 후 라우트 단에서 권한없음으로 처리)
+            // 브라우저에서 페이지 접근 시 강제 리다이렉트
             c.set('user', null);
-            return next();
+            if (c.req.path.startsWith('/api/')) {
+                return c.json({ error: '탈퇴한 사용자입니다.' }, 403);
+            }
+            return c.redirect('/?error=deleted_account');
         }
         // Super Admin 판별
         if (isSuperAdmin(row.email, c.env)) {

@@ -16,6 +16,11 @@
         rel="stylesheet">
     <link rel="stylesheet" href="/style.css">
     <style>
+        /* 모바일에서 햄버거 메뉴 숨김 */
+        .navbar-toggler[data-bs-target="#mobileSidebar"] {
+            display: none !important;
+        }
+
         .profile-container {
             max-width: 800px;
             margin: 40px auto;
@@ -287,7 +292,7 @@
             </div>
         </div>
 
-        <aside class="wiki-sidebar d-none d-lg-block" id="wikiSidebar">
+        <aside class="wiki-sidebar d-none" id="wikiSidebar">
             <div id="app-sidebar-placeholder"></div>
         </aside>
     </div>
