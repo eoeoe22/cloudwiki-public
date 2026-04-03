@@ -12,7 +12,8 @@
     <link href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css" rel="stylesheet">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Outfit:wght@500;600;700;800;900&family=Inter:wght@400;500;700;800&display=swap"
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Outfit:wght@500;600;700;800;900&family=Inter:wght@400;500;700;800&display=swap"
         rel="stylesheet">
 
     <!-- Toast UI 에디터 -->
@@ -54,8 +55,10 @@
     </div>
 
     <!-- 이미지 사이즈 인라인 자동완성 드롭다운 -->
-    <div id="imgsize-autocomplete" class="list-group" style="display:none; position:absolute; z-index:9999; background:var(--wiki-bg); border:1px solid var(--wiki-border); border-radius:4px; box-shadow:0 2px 10px rgba(0,0,0,0.1); width:200px; padding:0;">
-        <div class="list-group-item text-muted" style="font-size:0.85rem; background:var(--wiki-bg-alt); padding:6px 10px; border-bottom:1px solid var(--wiki-border);">
+    <div id="imgsize-autocomplete" class="list-group"
+        style="display:none; position:absolute; z-index:9999; background:var(--wiki-bg); border:1px solid var(--wiki-border); border-radius:4px; box-shadow:0 2px 10px rgba(0,0,0,0.1); width:200px; padding:0;">
+        <div class="list-group-item text-muted"
+            style="font-size:0.85rem; background:var(--wiki-bg-alt); padding:6px 10px; border-bottom:1px solid var(--wiki-border);">
             <i class="mdi mdi-image-size-select-large"></i> 이미지 사이즈 선택
         </div>
         <div id="imgsizeAcGrid"></div>
@@ -176,14 +179,17 @@
             <!-- 제목 입력 -->
             <div class="mb-3">
                 <label for="titleInput" class="form-label fw-bold">제목</label>
-                <input type="text" id="titleInput" class="edit-title-input" placeholder="문서 제목을 입력하세요" maxlength="30" readonly style="opacity: 0.7; cursor: not-allowed;">
+                <input type="text" id="titleInput" class="edit-title-input" placeholder="문서 제목을 입력하세요" maxlength="30"
+                    readonly style="opacity: 0.7; cursor: not-allowed;">
             </div>
 
             <div class="mb-3 row">
                 <div class="col-md-6">
                     <label for="categoryTagInput" class="form-label fw-bold">카테고리 (분류)</label>
-                    <div class="category-tag-container" id="categoryTagContainer" onclick="document.getElementById('categoryTagInput').focus()">
-                        <input type="text" id="categoryTagInput" class="category-tag-input" placeholder="카테고리 입력 후 엔터나 쉼표">
+                    <div class="category-tag-container" id="categoryTagContainer"
+                        onclick="document.getElementById('categoryTagInput').focus()">
+                        <input type="text" id="categoryTagInput" class="category-tag-input"
+                            placeholder="카테고리 입력 후 엔터나 쉼표">
                     </div>
                     <input type="hidden" id="categoryInput">
                 </div>
@@ -225,7 +231,8 @@
             <!-- 편집 요약 -->
             <div class="mb-3">
                 <label for="summaryInput" class="form-label fw-bold">편집 요약</label>
-                <input type="text" id="summaryInput" class="edit-summary-input" placeholder="변경 내용을 간단히 설명해주세요" maxlength="50">
+                <input type="text" id="summaryInput" class="edit-summary-input" placeholder="변경 내용을 간단히 설명해주세요"
+                    maxlength="50">
             </div>
 
             <!-- 버튼 -->
@@ -250,6 +257,7 @@
     <script src="https://uicdn.toast.com/editor/latest/i18n/ko-kr.min.js"></script>
 
     <script src="/js/common.js"></script>
+    <script src="/js/render.js"></script>
     <script>
         // ── 에디터 상태 ──
         let slug = null;
@@ -1283,7 +1291,7 @@
             // 기존 렌더링 된 태그 요소들만 삭제
             const tags = categoryTagContainer.querySelectorAll('.category-tag');
             tags.forEach(tag => tag.remove());
-            
+
             categoryTags.forEach((tagText, index) => {
                 const tagEl = document.createElement('span');
                 tagEl.className = 'category-tag';
@@ -1313,7 +1321,7 @@
             }
         }
 
-        window.removeCategoryTag = function(index) {
+        window.removeCategoryTag = function (index) {
             categoryTags.splice(index, 1);
             renderCategoryTags();
         };
@@ -1555,7 +1563,7 @@
             });
 
             // 커스텀 이미지 업로드 버튼 (드래그앤드롭 팝업)
-            const imageUploadBtn = createCustomButton('<i class="mdi mdi-image-plus" style="font-size:16px"></i>', '이미지 업로드', () => {});
+            const imageUploadBtn = createCustomButton('<i class="mdi mdi-image-plus" style="font-size:16px"></i>', '이미지 업로드', () => { });
 
             // 드래그앤드롭 팝업 생성
             const imgUploadPopup = document.createElement('div');
@@ -2598,19 +2606,19 @@
 
             // 현재 활성 자동완성 타입 판별
             const activeAc = wikiAc.visible ? 'wiki'
-                           : iconAc.visible ? 'icon'
-                           : colorAc.visible ? 'color'
-                           : imgSizeAc.visible ? 'imgsize'
-                           : null;
+                : iconAc.visible ? 'icon'
+                    : colorAc.visible ? 'color'
+                        : imgSizeAc.visible ? 'imgsize'
+                            : null;
             if (!activeAc) return;
 
             const key = e.key;
-            const isDown  = key === 'ArrowDown'  || e.keyCode === 40;
-            const isUp    = key === 'ArrowUp'    || e.keyCode === 38;
-            const isRight = key === 'ArrowRight'  || e.keyCode === 39;
-            const isLeft  = key === 'ArrowLeft'   || e.keyCode === 37;
-            const isEnter = key === 'Enter'       || e.keyCode === 13;
-            const isEsc   = key === 'Escape'      || e.keyCode === 27;
+            const isDown = key === 'ArrowDown' || e.keyCode === 40;
+            const isUp = key === 'ArrowUp' || e.keyCode === 38;
+            const isRight = key === 'ArrowRight' || e.keyCode === 39;
+            const isLeft = key === 'ArrowLeft' || e.keyCode === 37;
+            const isEnter = key === 'Enter' || e.keyCode === 13;
+            const isEsc = key === 'Escape' || e.keyCode === 27;
 
             if (activeAc === 'wiki') {
                 if (isDown) {
@@ -3216,14 +3224,19 @@
                 </div>
                 <div class="modal-footer d-flex justify-content-between align-items-center w-100">
                     <div class="dropdown">
-                        <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button" id="btnImgEditorSizeToggle" data-bs-toggle="dropdown" aria-expanded="false">
+                        <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button"
+                            id="btnImgEditorSizeToggle" data-bs-toggle="dropdown" aria-expanded="false">
                             <i class="mdi mdi-arrow-expand-all me-1"></i>크게(기본)
                         </button>
                         <ul class="dropdown-menu" id="imgEditorSizeDropdown" aria-labelledby="btnImgEditorSizeToggle">
-                            <li><a class="dropdown-item" href="#" data-size="icon"><i class="mdi mdi-square-medium-outline me-2"></i>아이콘</a></li>
-                            <li><a class="dropdown-item" href="#" data-size="small"><i class="mdi mdi-arrow-collapse me-2"></i>작게</a></li>
-                            <li><a class="dropdown-item" href="#" data-size="medium"><i class="mdi mdi-square-outline me-2"></i>중간</a></li>
-                            <li><a class="dropdown-item" href="#" data-size="full"><i class="mdi mdi-arrow-expand-all me-2"></i>크게(기본)</a></li>
+                            <li><a class="dropdown-item" href="#" data-size="icon"><i
+                                        class="mdi mdi-square-medium-outline me-2"></i>아이콘</a></li>
+                            <li><a class="dropdown-item" href="#" data-size="small"><i
+                                        class="mdi mdi-arrow-collapse me-2"></i>작게</a></li>
+                            <li><a class="dropdown-item" href="#" data-size="medium"><i
+                                        class="mdi mdi-square-outline me-2"></i>중간</a></li>
+                            <li><a class="dropdown-item" href="#" data-size="full"><i
+                                        class="mdi mdi-arrow-expand-all me-2"></i>크게(기본)</a></li>
                         </ul>
                     </div>
                     <div>

@@ -141,7 +141,7 @@ function buildCustomSidebarHtml(configStr: string | null): string {
                 const iconHtml = item.icon ? `<i class="${escapeHtml(item.icon)} me-2"></i>` : '';
                 const safeUrl = sanitizeUrl(item.url);
                 const target = item.url?.startsWith('/') ? '' : ' target="_blank" rel="noopener noreferrer"';
-                html += `<li class="nav-item mb-1"><a class="nav-link px-3 py-2 rounded text-dark" href="${safeUrl}"${target}>${iconHtml}${escapeHtml(item.text)}</a></li>`;
+                html += `<li class="nav-item mb-1"><a class="nav-link px-3 py-2 rounded text-body" href="${safeUrl}"${target}>${iconHtml}${escapeHtml(item.text)}</a></li>`;
             } else if (item.type === 'text') {
                 const iconHtml = item.icon ? `<i class="${escapeHtml(item.icon)} me-2"></i>` : '';
                 html += `<li class="nav-item mb-1 px-3 py-2 text-body small">${iconHtml}${escapeHtml(item.text)}</li>`;

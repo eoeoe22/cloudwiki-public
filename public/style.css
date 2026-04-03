@@ -260,7 +260,7 @@ div:where(.swal2-container) .swal2-html-container {
   -webkit-backdrop-filter: var(--wiki-glass-blur);
   border-bottom: 1px solid var(--wiki-glass-border);
   box-shadow: var(--wiki-shadow-sm);
-  padding: 0.8rem 1.5rem;
+  padding: 0.8rem 1.5rem 0.6rem;
   margin-bottom: 2rem;
   position: relative;
   z-index: 1040;
@@ -319,8 +319,10 @@ div:where(.swal2-container) .swal2-html-container {
 
 /* Search Input */
 .nav-search-form {
-  max-width: 400px;
-  flex: 1;
+  flex-basis: 100%;
+  order: 10;
+  max-width: 100%;
+  margin-top: 0.5rem;
 }
 
 .nav-search-form .form-control {
@@ -391,12 +393,6 @@ div:where(.swal2-container) .swal2-html-container {
 }
 
 @media (max-width: 991px) {
-  .nav-search-form {
-    margin-top: 1rem;
-    margin-bottom: 0.5rem;
-    max-width: 100%;
-  }
-
   .nav-search-form .input-group {
     flex-wrap: nowrap;
   }
@@ -505,10 +501,55 @@ div:where(.swal2-container) .swal2-html-container {
 }
 
 @media (min-width: 992px) {
-  .sidebar-section-pc-only {
+  .offcanvas-lg {
+    background-color: transparent !important;
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+  }
+
+  /* .offcanvas-body가 .sidebar-section-pc-only 클래스를 가지고 있으므로 명시적으로 지정 */
+  .offcanvas-lg .offcanvas-body.sidebar-section-pc-only {
+    background-color: var(--wiki-card-bg) !important;
     background: var(--wiki-card-bg) !important;
-    border: 1px solid var(--wiki-border);
+    border: 1px solid var(--wiki-border) !important;
+    border-radius: 8px !important;
+    padding: 1.25rem !important;
+    box-shadow: var(--wiki-shadow-sm) !important;
+    transition: box-shadow 0.2s ease;
+    margin-bottom: 1.5rem;
+  }
+
+  .offcanvas-lg .offcanvas-body.sidebar-section-pc-only:hover {
+    box-shadow: var(--wiki-shadow) !important;
+  }
+
+  .sidebar-section-pc-only .nav-item.mt-3 {
+    font-size: 0.85rem;
+    font-weight: 700 !important;
+    color: var(--wiki-text-muted) !important;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 0.75rem !important;
+    padding-bottom: 0.5rem !important;
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+    border-bottom: 1px solid var(--wiki-border);
+    margin-top: 0 !important;
+  }
+
+  .sidebar-section-pc-only .nav-link,
+  .sidebar-section-pc-only .nav-item.text-body {
+    padding: 0.5rem 0.6rem !important;
     border-radius: 8px;
+    text-decoration: none !important;
+    color: var(--wiki-text) !important;
+    transition: background 0.15s ease;
+  }
+
+  .sidebar-section-pc-only .nav-link:hover,
+  .sidebar-section-pc-only .nav-item.text-body:hover {
+    background: var(--wiki-bg);
   }
 }
 
@@ -626,11 +667,10 @@ div:where(.swal2-container) .swal2-html-container {
   margin-right: 6px;
 }
 
-/* 반응형 검색바 - 작은 화면에서는 앱 이름 숨기기(HTML 클래스로 처리됨) 및 여백 줄이기 */
+/* 반응형 검색바 */
 @media (max-width: 576px) {
   .nav-search-form {
     max-width: none !important;
-    width: auto;
   }
 }
 
@@ -1511,10 +1551,24 @@ div:where(.swal2-container) .swal2-html-container {
     max-width: 100vw;
   }
 
+  .wiki-sidebar {
+    width: 100% !important;
+    position: relative !important;
+    top: 0 !important;
+    margin-top: 0 !important;
+    padding: 0 0.5rem !important;
+    z-index: 1030;
+  }
+
+  .sidebar-section {
+    margin-bottom: 1.5rem !important;
+  }
+
   .recent-changes-bottom {
     padding: 0 0.5rem;
   }
 }
+
 
 @media (max-width: 768px) {
   .wiki-article {
@@ -1575,6 +1629,37 @@ div:where(.swal2-container) .swal2-html-container {
   visibility: visible;
   transform: translateY(0);
   pointer-events: auto;
+}
+
+/* ── Dropdown 다크모드 대응 ── */
+.dropdown-menu {
+  background-color: var(--wiki-card-bg);
+  border: 1px solid var(--wiki-border);
+  box-shadow: var(--wiki-shadow-md);
+}
+
+.dropdown-item {
+  color: var(--wiki-text);
+}
+
+.dropdown-item:hover,
+.dropdown-item:focus {
+  background-color: var(--wiki-bg);
+  color: var(--wiki-text);
+}
+
+.dropdown-item.active,
+.dropdown-item:active {
+  background-color: var(--wiki-primary);
+  color: var(--wiki-btn-text);
+}
+
+.dropdown-header {
+  color: var(--wiki-text-muted);
+}
+
+.dropdown-divider {
+  border-color: var(--wiki-border);
 }
 
 /* ── Footnotes ── */

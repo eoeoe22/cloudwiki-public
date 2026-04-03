@@ -179,12 +179,14 @@
       <!-- 사이드바 네비게이션 (모바일 오프캔버스 렌더링 영역 공유) -->
       <div id="app-sidebar-placeholder"></div>
 
-      <!-- 실시간 트렌딩 (PC/모바일 공통) -->
-      <div class="mt-4 mb-4">
+      <!-- 실시간 트렌딩 -->
+      <div class="mb-4">
+
         <div class="sidebar-section">
           <h6 class="sidebar-title d-flex justify-content-between align-items-center mb-2">
             <span><i class="bi bi-graph-up-arrow text-danger"></i> 실시간 트렌딩</span>
-            <a href="#" class="small text-muted text-decoration-none trending-expand-btn" style="font-size: 0.8rem;">펼치기 <i class="bi bi-chevron-down"></i></a>
+            <a href="#" class="small text-muted text-decoration-none trending-expand-btn" style="font-size: 0.8rem;">펼치기
+              <i class="bi bi-chevron-down"></i></a>
           </h6>
           <div class="position-relative overflow-hidden trending-ticker-wrapper" style="height: 38px;">
             <div id="trendingListPc" class="trending-container trending-ticker-list">
@@ -196,9 +198,9 @@
         </div>
       </div>
 
-      <!-- PC 전용 최근 변경 -->
-      <div class="d-none d-lg-block mt-4">
-        <div class="sidebar-section sidebar-section-pc-only">
+      <!-- 최근 변경 -->
+      <div class="mb-4">
+        <div class="sidebar-section">
           <h6 class="sidebar-title"><i class="bi bi-clock-history"></i> 최근 변경</h6>
           <div id="recentChangesListPc" class="recent-changes-list recent-changes-container">
             <div class="placeholder-glow">
@@ -209,6 +211,7 @@
           </div>
         </div>
       </div>
+
     </aside>
   </div> <!-- wiki-layout end -->
 
@@ -222,6 +225,7 @@
   <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
 
   <script src="/js/common.js"></script>
+  <script src="/js/render.js"></script>
   <script>
     // ── SSR 데이터 로드 ──
     let ssrData = null;
@@ -575,7 +579,7 @@
               document.getElementById('pageViewCount').style.display = '';
             }
           })
-          .catch(() => {});
+          .catch(() => { });
 
         // redirect를 통해 문서를 조회한 경우, 액션 버튼에 실제 문서의 slug를 사용
         const actionSlug = page.slug || slug;
