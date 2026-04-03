@@ -25,7 +25,6 @@
     rel="stylesheet">
   <!-- 커스텀 스타일 -->
   <link rel="stylesheet" href="/style.css">
-  <link rel="stylesheet" href="/edit.css">
 </head>
 
 <body style="-webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;">
@@ -649,9 +648,10 @@
         });
 
         // 틀(Template) 문서인 경우 자동으로 역링크 로드
+        // 템플릿: 접두사는 역링크 추적이 불가능하므로 섹션 노출 안 함
         const decodedSlug = decodeURIComponent(slug);
-        const templatePrefixes = ['틀:', 'template:', '템플릿:'];
-        const isTemplate = templatePrefixes.some(p => decodedSlug.startsWith(p));
+        const trackableTemplatePrefixes = ['틀:', 'template:'];
+        const isTemplate = trackableTemplatePrefixes.some(p => decodedSlug.toLowerCase().startsWith(p.toLowerCase()));
         if (isTemplate) {
           document.querySelector('#backlinksSection h5').innerHTML = '<i class="bi bi-link-45deg"></i> 이 틀을 사용하는 문서';
           await loadBacklinks(slug);
