@@ -207,14 +207,9 @@ async function renderHtml(c: Context<Env>, targetHtmlPath: string, pageData: Rec
     const now = Date.now();
     const cacheValid = componentCache && (now - componentCache.timestamp < COMPONENT_CACHE_TTL);
 
-    // KV에서 커스텀 사이드바/푸터 설정을 병렬로 로드
-    const [sidebarConfigStr, footerConfigStr] = await Promise.all([
-        c.env.KV.get('sidebar_config'),
-        c.env.KV.get('footer_config'),
-    ]);
-
-    const customSidebarHtml = buildCustomSidebarHtml(sidebarConfigStr);
-    const customFooterHtml = buildCustomFooterHtml(footerConfigStr);
+    // wrangler.toml vars에서 커스텀 사이드바/푸터 설정을 로드
+    const customSidebarHtml = buildCustomSidebarHtml(c.env.SIDEBAR || null);
+    const customFooterHtml = buildCustomFooterHtml(c.env.FOOTER || null);
 
     const getRewriter = () => new HTMLRewriter()
         .on('.app-wiki-name', {

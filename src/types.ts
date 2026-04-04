@@ -19,6 +19,8 @@ export type Env = {
         WIKI_LOGO_URL: string;
         WIKI_FAVICON_URL: string;
         CUSTOM_HEADER: string;
+        SIDEBAR: string;
+        FOOTER: string;
         SELECTED_ICONS_ONLY: string;
         MCP_MODE: 'disabled' | 'open';
         ALLOW_CRAWL: string;

@@ -454,60 +454,6 @@
                     </div>
                 </div>
 
-                <div class="row g-4">
-                    <div class="col-md-6">
-                        <div class="card shadow-sm border-0" style="overflow: visible;">
-                            <div class="card-header py-3" style="border-top-left-radius: inherit; border-top-right-radius: inherit;">사이드바 커스터마이징</div>
-                            <div class="card-body p-0">
-                                <ul class="list-group list-group-flush" id="sidebarItemsList" style="min-height:100px;">
-                                </ul>
-                            </div>
-                            <div class="card-footer bg-white border-top-0" style="border-bottom-left-radius: inherit; border-bottom-right-radius: inherit;">
-                                <div class="dropdown d-grid mb-2">
-                                    <button class="btn btn-sm btn-outline-primary dropdown-toggle"
-                                        data-bs-toggle="dropdown">항목 추가</button>
-                                    <ul class="dropdown-menu shadow-lg border-0"
-                                        style="background: var(--wiki-card-bg); border: 1px solid var(--wiki-border) !important; z-index: 1050;">
-                                        <li><a class="dropdown-item py-2" onclick="addSidebarItem('link')"><i
-                                                    class="mdi mdi-link me-2 text-primary"></i>링크</a></li>
-                                        <li><a class="dropdown-item py-2" onclick="addSidebarItem('header')"><i
-                                                    class="mdi mdi-format-header-1 me-2 text-success"></i>제목</a></li>
-                                        <li><a class="dropdown-item py-2" onclick="addSidebarItem('text')"><i
-                                                    class="mdi mdi-format-text me-2 text-secondary"></i>텍스트</a></li>
-                                        <li><a class="dropdown-item py-2" onclick="addSidebarItem('divider')"><i
-                                                    class="mdi mdi-minus me-2 text-muted"></i>구분선</a></li>
-                                    </ul>
-                                </div>
-                                <button class="btn btn-primary btn-sm w-100" onclick="saveSidebarConfig()">저장</button>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="col-md-6">
-                        <div class="card shadow-sm border-0" style="overflow: visible;">
-                            <div class="card-header py-3" style="border-top-left-radius: inherit; border-top-right-radius: inherit;">푸터 커스터마이징</div>
-                            <div class="card-body p-0">
-                                <ul class="list-group list-group-flush" id="footerItemsList" style="min-height:100px;">
-                                </ul>
-                            </div>
-                            <div class="card-footer bg-white border-top-0" style="border-bottom-left-radius: inherit; border-bottom-right-radius: inherit;">
-                                <div class="dropdown d-grid mb-2">
-                                    <button class="btn btn-sm btn-outline-primary dropdown-toggle"
-                                        data-bs-toggle="dropdown">항목 추가</button>
-                                    <ul class="dropdown-menu shadow-lg border-0"
-                                        style="background: var(--wiki-card-bg); border: 1px solid var(--wiki-border) !important; z-index: 1050;">
-                                        <li><a class="dropdown-item py-2" onclick="addFooterItem('link')"><i
-                                                    class="mdi mdi-link me-2 text-primary"></i>링크</a></li>
-                                        <li><a class="dropdown-item py-2" onclick="addFooterItem('text')"><i
-                                                    class="mdi mdi-format-text me-2 text-secondary"></i>텍스트</a></li>
-                                        <li><a class="dropdown-item py-2" onclick="addFooterItem('divider')"><i
-                                                    class="mdi mdi-minus me-2 text-muted"></i>구분선</a></li>
-                                    </ul>
-                                </div>
-                                <button class="btn btn-primary btn-sm w-100" onclick="saveFooterConfig()">저장</button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
             </div>
 
             <!-- ── 탭: 통계 및 로그 (Stats) ── -->
@@ -615,8 +561,6 @@
             }
 
             loadCategories();
-            loadSidebarConfig();
-            loadFooterConfig();
             loadWikiSettings();
             loadSignupPolicy();
             loadDashStats();
@@ -849,114 +793,6 @@
         async function deleteCategory(id) {
             if (await fetch(`/api/admin/categories/${id}`, { method: 'DELETE' })) loadCategories();
         }
-
-        // ── 사이드바/푸터 설정 (간략화) ──
-        let sidebarData = [], footerData = [];
-        async function loadSidebarConfig() {
-            const res = await fetch('/api/admin/sidebar-config');
-            sidebarData = await res.json() || [];
-            renderConfigList('sidebarItemsList', sidebarData, 'sidebar');
-        }
-        async function loadFooterConfig() {
-            const res = await fetch('/api/admin/footer-config');
-            footerData = await res.json() || [];
-            renderConfigList('footerItemsList', footerData, 'footer');
-        }
-        function renderConfigList(id, data, type) {
-            document.getElementById(id).innerHTML = data.map((item, idx) => {
-                let typeLabel = '';
-                if (item.type === 'header') typeLabel = '<span class="badge bg-success-subtle text-success me-2">제목</span>';
-                else if (item.type === 'link') typeLabel = '<span class="badge bg-primary-subtle text-primary me-2">링크</span>';
-                else if (item.type === 'text') typeLabel = '<span class="badge bg-secondary-subtle text-secondary me-2">텍스트</span>';
-                else if (item.type === 'divider') typeLabel = '<span class="badge bg-light text-muted me-2">구분선</span>';
-
-                return `
-                <li class="list-group-item d-flex align-items-center py-2 small">
-                    <div class="btn-group-vertical btn-group-sm me-2">
-                        <button class="btn p-0" onclick="moveItem('${type}', ${idx}, -1)"><i class="mdi mdi-chevron-up"></i></button>
-                        <button class="btn p-0" onclick="moveItem('${type}', ${idx}, 1)"><i class="mdi mdi-chevron-down"></i></button>
-                    </div>
-                    <div class="flex-grow-1 text-truncate">
-                        ${typeLabel}
-                        <span class="fw-bold">${escapeHtml(item.text || item.type)}</span>
-                        ${item.url ? `<br><small class="text-muted">${escapeHtml(item.url)}</small>` : ''}
-                    </div>
-                    <button class="btn btn-link btn-sm text-danger" onclick="deleteItem('${type}', ${idx})"><i class="mdi mdi-close"></i></button>
-                </li>`;
-            }).join('');
-        }
-
-        function addSidebarItem(type) { showItemModal('sidebar', type); }
-        function addFooterItem(type) { showItemModal('footer', type); }
-
-        async function showItemModal(target, type) {
-            if (type === 'divider') {
-                const data = target === 'sidebar' ? sidebarData : footerData;
-                data.push({ type: 'divider' });
-                renderConfigList(target + 'ItemsList', data, target);
-                return;
-            }
-
-            let html = `
-                <div class="mb-3 text-start">
-                    <label class="form-label small fw-bold">표시 텍스트</label>
-                    <input id="swal-item-text" class="form-control" placeholder="예: 공지사항">
-                </div>
-            `;
-            if (type === 'link') {
-                html += `
-                    <div class="mb-3 text-start">
-                        <label class="form-label small fw-bold">이동할 URL</label>
-                        <input id="swal-item-url" class="form-control" placeholder="/w/문서이름 또는 https://...">
-                    </div>
-                `;
-            }
-            if (type !== 'header') {
-                html += `
-                    <div class="mb-3 text-start">
-                        <label class="form-label small fw-bold">아이콘 (선택)</label>
-                        <input id="swal-item-icon" class="form-control" placeholder="예: mdi mdi-star">
-                    </div>
-                `;
-            }
-
-            const { value: formValues } = await Swal.fire({
-                title: (type === 'header' ? '제목' : type === 'text' ? '텍스트' : '링크') + ' 추가',
-                html: html,
-                focusConfirm: false,
-                showCancelButton: true,
-                confirmButtonText: '추가',
-                cancelButtonText: '취소',
-                preConfirm: () => {
-                    const text = document.getElementById('swal-item-text').value.trim();
-                    const url = document.getElementById('swal-item-url')?.value.trim();
-                    const icon = document.getElementById('swal-item-icon')?.value.trim();
-                    if (!text) { Swal.showValidationMessage('텍스트를 입력해주세요.'); return false; }
-                    if (type === 'link' && !url) { Swal.showValidationMessage('URL을 입력해주세요.'); return false; }
-                    return { type, text, url, icon };
-                }
-            });
-
-            if (formValues) {
-                const data = target === 'sidebar' ? sidebarData : footerData;
-                data.push(formValues);
-                renderConfigList(target + 'ItemsList', data, target);
-            }
-        }
-
-        function moveItem(type, idx, dir) {
-            let d = type === 'sidebar' ? sidebarData : footerData;
-            if (idx + dir < 0 || idx + dir >= d.length) return;
-            [d[idx], d[idx + dir]] = [d[idx + dir], d[idx]];
-            renderConfigList(type + 'ItemsList', d, type);
-        }
-        function deleteItem(type, idx) {
-            let d = type === 'sidebar' ? sidebarData : footerData;
-            d.splice(idx, 1);
-            renderConfigList(type + 'ItemsList', d, type);
-        }
-        async function saveSidebarConfig() { await fetch('/api/admin/sidebar-config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(sidebarData) }); Swal.fire({ icon: 'success', title: '저장됨', timer: 800 }); }
-        async function saveFooterConfig() { await fetch('/api/admin/footer-config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(footerData) }); Swal.fire({ icon: 'success', title: '저장됨', timer: 800 }); }
 
         // ── 통계 및 로그 ──
         let adminLogOffset = 0, adminLogLoaded = false;
