@@ -61,6 +61,8 @@ CUSTOM_HEADER = """
 """
 # 구글 애널리스틱스, 애드센스등 외부 스크립트 삽입용
 
+# 사이드바 / 푸터 내용 커스터마이징
+# 아래 링크에서 제작 후 나온 결과물 json을 붙여넣으세요
 # https://vialinks.xyz/components-json-builder#
 
 SIDEBAR = """
