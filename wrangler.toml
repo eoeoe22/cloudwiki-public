@@ -61,5 +61,14 @@ CUSTOM_HEADER = """
 """
 # 구글 애널리스틱스, 애드센스등 외부 스크립트 삽입용
 
+# https://vialinks.xyz/components-json-builder#
+
+SIDEBAR = """
+
+"""
+FOOTER = """
+
+"""
+
 [triggers]
 crons = ["0 0 * * *"] # 매일 자정 (UTC 기준)에 실행
