@@ -2028,11 +2028,10 @@
                     html: `
                         <div class="text-start">
                             <label class="form-label">문서 검색</label>
-                            <div class="position-relative">
-                                <input type="text" id="subdocSearchInput" class="form-control"
-                                       placeholder="문서 제목 입력..." autocomplete="off">
-                                <ul class="search-suggestions" id="subdocSuggestions"></ul>
-                            </div>
+                            <input type="text" id="subdocSearchInput" class="form-control"
+                                   placeholder="문서 제목 입력..." autocomplete="off">
+                            <ul id="subdocSuggestions" class="list-unstyled mt-1 mb-0 border rounded bg-body"
+                                style="display:none; padding:4px 0; max-height:none;"></ul>
                             <div id="subdocPreview" class="mt-3" style="display:none;">
                                 <label class="form-label text-muted small">미리보기</label>
                                 <pre id="subdocPreviewContent"
@@ -2055,7 +2054,7 @@
                             clearTimeout(subdocDebounceTimer);
                             const q = this.value.trim();
                             if (q.length < 2) {
-                                sugBox.classList.remove('show');
+                                sugBox.style.display = 'none';
                                 sugBox.innerHTML = '';
                                 return;
                             }
@@ -2073,18 +2072,20 @@
 
                         function renderSubdocSuggestions(items) {
                             subdocActiveIdx = -1;
-                            if (!items.length) {
-                                sugBox.classList.remove('show');
+                            // 네임스페이스 문서(슬러그에 ':' 포함) 제외
+                            const filtered = items.filter(item => !item.slug.includes(':'));
+                            if (!filtered.length) {
+                                sugBox.style.display = 'none';
                                 sugBox.innerHTML = '';
                                 return;
                             }
-                            sugBox.innerHTML = items.map((item) =>
+                            sugBox.innerHTML = filtered.map((item) =>
                                 '<li class="search-suggestion-item" data-slug="' + escapeHtml(item.slug) +
                                 '" data-title="' + escapeHtml(item.title) + '">' +
                                 '<i class="mdi mdi-file-document-outline"></i> ' +
                                 escapeHtml(item.title) + '</li>'
                             ).join('');
-                            sugBox.classList.add('show');
+                            sugBox.style.display = 'block';
                             sugBox.querySelectorAll('.search-suggestion-item').forEach(el => {
                                 el.addEventListener('mousedown', function(e) {
                                     e.preventDefault();
@@ -2096,14 +2097,14 @@
                         function selectSubdocItem(slug, title) {
                             subdocSelectedSlug = slug;
                             input.value = title;
-                            sugBox.classList.remove('show');
+                            sugBox.style.display = 'none';
                             sugBox.innerHTML = '';
                             loadSubdocPreview(slug);
                         }
 
                         input.addEventListener('keydown', function(e) {
                             const items = sugBox.querySelectorAll('.search-suggestion-item');
-                            if (sugBox.classList.contains('show') && items.length) {
+                            if (sugBox.style.display !== 'none' && items.length) {
                                 if (e.key === 'ArrowDown') {
                                     e.preventDefault();
                                     subdocActiveIdx = Math.min(subdocActiveIdx + 1, items.length - 1);
@@ -2117,13 +2118,13 @@
                                     const el = items[subdocActiveIdx];
                                     selectSubdocItem(el.dataset.slug, el.dataset.title);
                                 } else if (e.key === 'Escape') {
-                                    sugBox.classList.remove('show');
+                                    sugBox.style.display = 'none';
                                 }
                             }
                         });
 
                         input.addEventListener('blur', function() {
-                            setTimeout(() => sugBox.classList.remove('show'), 150);
+                            setTimeout(() => { sugBox.style.display = 'none'; }, 150);
                         });
 
                         input.focus();
