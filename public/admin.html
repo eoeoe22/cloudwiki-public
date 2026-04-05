@@ -206,7 +206,7 @@
                     <div class="col-md-6">
                         <div class="card shadow-sm border-0 h-100">
                             <div class="card-body">
-                                <h5 class="card-title mb-3"><i class="mdi mdi-ticket-outline text-primary"></i> 링크
+                                <h5 class="card-title mb-3"><i class="mdi mdi-ticket-outline text-primary"></i> 빠른 링크
                                 </h5>
                                 <div class="d-grid gap-2">
                                     <a href="/tickets" class="btn btn-outline-primary text-start">
@@ -428,6 +428,11 @@
                                 <input class="form-check-input" type="radio" name="signupPolicy"
                                     id="signupPolicyApproval" value="approval">
                                 <label class="form-check-label" for="signupPolicyApproval">관리자 승인제</label>
+                            </div>
+                            <div class="form-check mb-2">
+                                <input class="form-check-input" type="radio" name="signupPolicy"
+                                    id="signupPolicyBlocked" value="blocked">
+                                <label class="form-check-label" for="signupPolicyBlocked">차단 (가입 불가)</label>
                             </div>
                         </div>
 
@@ -669,7 +674,8 @@
                     document.getElementById('cooldownDaysWrapper').style.display = '';
                 }
                 document.getElementById('allowDmSwitch').checked = s.allow_direct_message === 1;
-                document.getElementById('signupPolicy' + (s.signup_policy === 'approval' ? 'Approval' : 'Open')).checked = true;
+                const policyId = s.signup_policy === 'approval' ? 'Approval' : s.signup_policy === 'blocked' ? 'Blocked' : 'Open';
+                document.getElementById('signupPolicy' + policyId).checked = true;
 
                 // MCP 설정 로드
                 const mcp = s.mcp_mode || 'disabled';

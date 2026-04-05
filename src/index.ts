@@ -140,7 +140,7 @@ async function fetchAssetHtml(c: any, htmlPath: string): Promise<Response> {
 
 // ── 컴포넌트 HTML 메모리 캐시 (Worker 인스턴스 수명 동안 유지) ──
 let componentCache: { header: string; sidebar: string; footer: string; timestamp: number } | null = null;
-const COMPONENT_CACHE_TTL = 1_800_000; // 30분
+const COMPONENT_CACHE_TTL = 60_000; // 1분
 
 // ── 헬퍼: 사이드바/푸터 커스텀 HTML 생성 ──
 function buildCustomSidebarHtml(configStr: string | null): string {

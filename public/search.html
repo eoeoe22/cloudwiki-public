@@ -99,7 +99,8 @@
 
                 const listEl = document.getElementById('resultsList');
                 let newDocumentButtonHtml = '';
-                if (!exactMatch && q.trim() !== '') {
+                const canCreate = currentUser && currentUser.role !== 'banned';
+                if (!exactMatch && q.trim() !== '' && canCreate) {
                     newDocumentButtonHtml = `
                     <div class="mb-4">
                         <div class="alert alert-light border d-flex justify-content-between align-items-center">

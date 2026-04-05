@@ -129,6 +129,11 @@ auth.get('/auth/google/callback', async (c) => {
             .first<{ signup_policy: string }>();
         const signupPolicy = settingsRow?.signup_policy || 'open';
 
+        // 차단: 신규 유저 가입 완전 차단
+        if (signupPolicy === 'blocked') {
+            return c.redirect('/?error=signup_blocked');
+        }
+
         // 승인제: 신규 유저는 바로 가입하지 않고 가입 신청 절차를 거침
         if (signupPolicy === 'approval') {
             // 기존 가입 신청 확인

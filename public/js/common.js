@@ -1393,7 +1393,21 @@ function initTrendingTicker(container, count) {
     const parent = container.parentElement;
     if (!parent || !parent.classList.contains('trending-ticker-wrapper')) return;
 
-    parent.style.height = '38px';
+    const getItemHeight = () => {
+        const firstItem = container.querySelector('.trending-item-link');
+        if (!firstItem) return 38;
+        const rect = firstItem.getBoundingClientRect();
+        return Math.max(1, Math.round(rect.height || 38));
+    };
+
+    let itemHeight = getItemHeight();
+
+    const applyFoldedState = () => {
+        parent.style.height = `${itemHeight}px`;
+        container.style.transform = `translateY(-${currentIndex * itemHeight}px)`;
+    };
+
+    parent.style.height = `${itemHeight}px`;
     parent.style.transition = 'height 0.4s ease'; // Expand/fold animation
     container.style.position = 'absolute';
     container.style.top = '0';
@@ -1411,14 +1425,25 @@ function initTrendingTicker(container, count) {
         if (currentIndex >= count) {
             currentIndex = 0;
             container.style.transition = 'none';
-            container.style.transform = `translateY(0)`;
+            container.style.transform = 'translateY(0)';
             // force flush layout
             void container.offsetHeight;
             container.style.transition = 'transform 0.4s ease';
             return;
         }
-        container.style.transform = `translateY(-${currentIndex * 38}px)`;
+        container.style.transform = `translateY(-${currentIndex * itemHeight}px)`;
     }
+
+    window.addEventListener('resize', () => {
+        const nextHeight = getItemHeight();
+        if (nextHeight === itemHeight) return;
+        itemHeight = nextHeight;
+        if (isExpanded) {
+            parent.style.height = `${count * itemHeight}px`;
+        } else {
+            applyFoldedState();
+        }
+    }, { passive: true });
 
     const section = container.closest('.sidebar-section');
     const expandBtn = section ? section.querySelector('.trending-expand-btn') : null;
@@ -1433,14 +1458,13 @@ function initTrendingTicker(container, count) {
             isExpanded = !isExpanded;
             if (isExpanded) {
                 // 펼치기 - 애니메이션으로 전체 높이 적용, 변형 초기화
-                parent.style.height = `${count * 38}px`;
+                parent.style.height = `${count * itemHeight}px`;
                 container.style.transform = 'translateY(0)';
                 clone.innerHTML = '접기 <i class="bi bi-chevron-up"></i>';
                 clearInterval(tickerInterval);
             } else {
                 // 접기 - 다시 1줄 크기로, 현재 순위 위치로 이동 애니메이션
-                parent.style.height = '38px';
-                container.style.transform = `translateY(-${currentIndex * 38}px)`;
+                applyFoldedState();
                 clone.innerHTML = '펼치기 <i class="bi bi-chevron-down"></i>';
                 tickerInterval = setInterval(slideNext, 3000);
             }
