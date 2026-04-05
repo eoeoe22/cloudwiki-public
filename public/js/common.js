@@ -1047,10 +1047,18 @@ function processWikiLinks(contentEl) {
 
         parts.forEach(part => {
             if (part.startsWith('[[') && part.endsWith(']]')) {
-                const linkText = part.slice(2, -2).trim();
+                const innerContent = part.slice(2, -2).trim();
+                let linkText = innerContent;
+                let displayText = innerContent;
+                const pipeIndex = innerContent.indexOf('|');
+                if (pipeIndex !== -1) {
+                    linkText = innerContent.substring(0, pipeIndex).trim();
+                    displayText = innerContent.substring(pipeIndex + 1).trim();
+                }
+
                 const a = document.createElement('a');
                 a.href = `/w/${encodeURIComponent(linkText)}`;
-                a.textContent = linkText;
+                a.textContent = displayText;
                 a.onclick = (e) => {
                     e.preventDefault();
                     if (typeof navigateTo === 'function') {

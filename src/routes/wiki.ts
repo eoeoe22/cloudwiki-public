@@ -615,6 +615,11 @@ wiki.put('/w/:slug', requireAuth, async (c) => {
         return c.json({ error: 'title과 content는 필수입니다.' }, 400);
     }
 
+    // 보안: 문서 제목 금지 문자 점검
+    if (/[\[\]()#%|<>^\x00-\x1F\x7F]/.test(body.title)) {
+        return c.json({ error: '문서 제목에 사용할 수 없는 특수문자가 포함되어 있습니다.' }, 400);
+    }
+
     // 보안: 문서 제목 최대 30자 제한
     if (body.title.length > 30) {
         return c.json({ error: '문서 제목은 최대 30자까지 입력할 수 있습니다.' }, 400);
@@ -1256,6 +1261,11 @@ wiki.post('/w/:slug/move', requireAuth, async (c) => {
 
     if (!new_slug || new_slug.trim().length === 0) {
         return c.json({ error: '새 문서 이름을 입력해주세요.' }, 400);
+    }
+
+    // 보안: 문서 제목 금지 문자 점검
+    if (/[\[\]()#%|<>^\x00-\x1F\x7F]/.test(new_slug)) {
+        return c.json({ error: '문서 제목에 사용할 수 없는 특수문자가 포함되어 있습니다.' }, 400);
     }
 
     // new_slug validation logic same as create (e.g. valid chars) - skip for brevity or assume client sends valid slug

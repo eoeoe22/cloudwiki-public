@@ -2483,3 +2483,23 @@ div:where(.swal2-container) .swal2-html-container {
 .category-tag-input::placeholder {
   color: var(--wiki-text-muted);
 }
+
+/* ── 타임스탬프 문법 렌더링 ── */
+.wiki-dday,
+.wiki-timestamp,
+.wiki-timer,
+.wiki-dday-today,
+.wiki-dday-past {
+  display: inline;
+  font-size: inherit;
+  font-weight: inherit;
+  font-family: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  padding: 0;
+  line-height: inherit;
+  vertical-align: baseline;
+  cursor: default;
+}
+

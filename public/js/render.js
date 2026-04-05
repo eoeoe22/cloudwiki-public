@@ -1,3 +1,129 @@
+// ── 타임스탬프 유틸리티 ──
+
+/** {dday:YYYY-MM-DD} → "n일 남음" / "D-Day" / "n일 지남" */
+function _computeDdayText(dateStr) {
+    const parts = dateStr.split('-');
+    if (parts.length !== 3) return null;
+    const target = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    target.setHours(0, 0, 0, 0);
+    if (isNaN(target.getTime())) return null;
+    const diff = Math.round((target - today) / (1000 * 60 * 60 * 24));
+    if (diff > 0) return `${diff}일 남음`;
+    if (diff === 0) return 'D-Day';
+    return `${Math.abs(diff)}일 지남`;
+}
+
+/** {time:UNIX} → 날짜+시간 문자열 */
+function _formatUnixTime(unixSec) {
+    const d = new Date(unixSec * 1000);
+    if (isNaN(d.getTime())) return null;
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+/** {timer:UNIX} → "n년 n달 n일 n시간 n분 n초 남음/지남" (0인 단위 제거) */
+function _computeTimerText(unixSec) {
+    const now = Math.floor(Date.now() / 1000);
+    const diff = unixSec - now;
+    const s = Math.abs(diff);
+    const years   = Math.floor(s / (365 * 24 * 3600));
+    const months  = Math.floor((s % (365 * 24 * 3600)) / (30 * 24 * 3600));
+    const days    = Math.floor((s % (30 * 24 * 3600)) / (24 * 3600));
+    const hours   = Math.floor((s % (24 * 3600)) / 3600);
+    const minutes = Math.floor((s % 3600) / 60);
+    const seconds = s % 60;
+    const parts = [];
+    if (years   > 0) parts.push(`${years}년`);
+    if (months  > 0) parts.push(`${months}달`);
+    if (days    > 0) parts.push(`${days}일`);
+    if (hours   > 0) parts.push(`${hours}시간`);
+    if (minutes > 0) parts.push(`${minutes}분`);
+    if (seconds > 0 || parts.length === 0) parts.push(`${seconds}초`);
+    return parts.join(' ') + (diff >= 0 ? ' 남음' : ' 지남');
+}
+
+// containerId → intervalId (타이머 중복 방지)
+const _timerIntervalMap = {};
+
+function _initTimers(containerEl, containerId) {
+    if (_timerIntervalMap[containerId]) {
+        clearInterval(_timerIntervalMap[containerId]);
+        delete _timerIntervalMap[containerId];
+    }
+    const timerEls = containerEl.querySelectorAll('.wiki-timer[data-unix]');
+    if (timerEls.length === 0) return;
+    function tick() {
+        timerEls.forEach(el => {
+            const unix = parseInt(el.getAttribute('data-unix'), 10);
+            if (!isNaN(unix)) el.textContent = _computeTimerText(unix);
+        });
+    }
+    tick();
+    _timerIntervalMap[containerId] = setInterval(tick, 1000);
+}
+
+/** {age:YYYY-MM-DD} → 만 나이 (국제 표준) */
+function _computeAge(dateStr) {
+    const parts = dateStr.split('-');
+    if (parts.length !== 3) return null;
+    const birth = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+    if (isNaN(birth.getTime())) return null;
+    const today = new Date();
+    let age = today.getFullYear() - birth.getFullYear();
+    const m = today.getMonth() - birth.getMonth();
+    if (m < 0 || (m === 0 && today.getDate() < birth.getDate())) age--;
+    if (age < 0) return null;
+    return `${age}세`;
+}
+
+/** HTML 문자열 내의 타임스탬프 문법을 span 태그로 치환 (코드블록 제외) */
+function _processTimestampsInHtml(html) {
+    // <pre>…</pre> 및 인라인 <code>…</code> 내부는 건드리지 않음
+    const prot = [];
+    html = html.replace(/<pre[\s\S]*?<\/pre>/gi, (m) => {
+        prot.push(m);
+        return `\x00TSPROT${prot.length - 1}\x00`;
+    });
+    html = html.replace(/<code[^>]*>[\s\S]*?<\/code>/gi, (m) => {
+        prot.push(m);
+        return `\x00TSPROT${prot.length - 1}\x00`;
+    });
+
+    // {dday:YYYY-MM-DD}
+    html = html.replace(/\{dday:(\d{4}-\d{2}-\d{2})\}/g, (match, dateStr) => {
+        const text = _computeDdayText(dateStr);
+        if (text === null) return match;
+        const cls = text === 'D-Day' ? 'wiki-dday wiki-dday-today'
+            : text.endsWith('남음') ? 'wiki-dday wiki-dday-future'
+            : 'wiki-dday wiki-dday-past';
+        return `<span class="${cls}" title="${dateStr}">${text}</span>`;
+    });
+    // {time:UNIX}
+    html = html.replace(/\{time:(\d+)\}/g, (match, unixStr) => {
+        const text = _formatUnixTime(parseInt(unixStr, 10));
+        if (text === null) return match;
+        return `<span class="wiki-timestamp" title="Unix: ${unixStr}">${text}</span>`;
+    });
+    // {timer:UNIX}
+    html = html.replace(/\{timer:(\d+)\}/g, (match, unixStr) => {
+        const unix = parseInt(unixStr, 10);
+        const text = _computeTimerText(unix);
+        return `<span class="wiki-timer" data-unix="${unix}" title="Unix: ${unixStr}">${text}</span>`;
+    });
+    // {age:YYYY-MM-DD}
+    html = html.replace(/\{age:(\d{4}-\d{2}-\d{2})\}/g, (match, dateStr) => {
+        const text = _computeAge(dateStr);
+        if (text === null) return match;
+        return `<span class="wiki-age" title="${dateStr}">${text}</span>`;
+    });
+
+    // 보호했던 코드블록 복원
+    html = html.replace(/\x00TSPROT(\d+)\x00/g, (_, i) => prot[parseInt(i, 10)]);
+    return html;
+}
+
 // ── 문서 렌더링 통합 (index.html, edit.html 공통) ──
 async function renderWikiContent(content, slug, containerId, options = {}) {
     const containerEl = document.getElementById(containerId);
@@ -41,7 +167,7 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
 
             const restoredContent = foldContent.replace(/WIKICODEFPH(\d+)XEND/g, (_, i) => codeBlocksForFold[parseInt(i, 10)]);
             let rawContentHtml = (typeof marked !== 'undefined') ? marked.parse(restoredContent) : restoredContent;
-            let contentHtml = (typeof DOMPurify !== 'undefined') ? DOMPurify.sanitize(rawContentHtml, { ADD_TAGS: ['i', 'span', 'details', 'summary'], ADD_ATTR: ['class', 'style', 'data-bg', 'data-color', 'data-size', 'colspan', 'rowspan'] }) : escapeHtml(rawContentHtml);
+            let contentHtml = (typeof DOMPurify !== 'undefined') ? DOMPurify.sanitize(rawContentHtml, { ADD_TAGS: ['i', 'span', 'details', 'summary'], ADD_ATTR: ['class', 'style', 'data-bg', 'data-color', 'data-size', 'data-unix', 'colspan', 'rowspan', 'title'] }) : escapeHtml(rawContentHtml);
 
             foldBlocks.push({ summaryText, bgAttr, colorAttr, contentHtml });
             return `\n\nWIKIFOLDPH${idx}XEND\n\n`;
@@ -60,7 +186,7 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
                 `</details>`;
         });
 
-        let html = (typeof DOMPurify !== 'undefined') ? DOMPurify.sanitize(rawHtml, { ADD_TAGS: ['i', 'span', 'details', 'summary'], ADD_ATTR: ['class', 'style', 'data-bg', 'data-color', 'data-size', 'colspan', 'rowspan'] }) : escapeHtml(rawHtml);
+        let html = (typeof DOMPurify !== 'undefined') ? DOMPurify.sanitize(rawHtml, { ADD_TAGS: ['i', 'span', 'details', 'summary'], ADD_ATTR: ['class', 'style', 'data-bg', 'data-color', 'data-size', 'data-unix', 'colspan', 'rowspan', 'title'] }) : escapeHtml(rawHtml);
 
         if (options.showCategory && slug) {
             const decodedSlug = decodeURIComponent(slug);
@@ -72,6 +198,9 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
                 }
             }
         }
+
+        // 타임스탬프 문법 처리
+        html = _processTimestampsInHtml(html);
 
         containerEl.innerHTML = html;
 
@@ -564,6 +693,9 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
         if (options.collapsibleSections) {
             makeCollapsibleSections(containerEl);
         }
+
+        // {timer:} 요소 실시간 업데이트
+        _initTimers(containerEl, containerId);
 
     } catch (err) {
         console.error('renderWikiContent error:', err);

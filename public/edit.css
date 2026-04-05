@@ -663,6 +663,250 @@
     color: var(--wiki-text-muted);
 }
 
+/* ── 타임스탬프 인라인 자동완성 드롭다운 ── */
+#timestamp-autocomplete {
+    position: absolute;
+    z-index: 2100;
+    background: var(--wiki-card-bg);
+    border: 1px solid var(--wiki-border);
+    border-radius: 8px;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.15);
+    width: 294px;
+    display: none;
+    overflow: hidden;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+#timestamp-autocomplete .ts-ac-header {
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--wiki-border);
+    font-size: 0.8rem;
+    color: var(--wiki-text-muted);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--wiki-toc-bg);
+}
+
+#timestamp-autocomplete .ts-ac-presets {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    padding: 8px;
+    border-bottom: 1px solid var(--wiki-border);
+}
+
+#timestamp-autocomplete .ts-ac-preset-btn {
+    padding: 3px 10px;
+    font-size: 0.78rem;
+    border: 1px solid var(--wiki-border);
+    border-radius: 20px;
+    background: var(--wiki-bg);
+    color: var(--wiki-text);
+    cursor: pointer;
+    transition: all 0.15s;
+    white-space: nowrap;
+}
+
+#timestamp-autocomplete .ts-ac-preset-btn:hover {
+    border-color: var(--wiki-primary);
+    color: var(--wiki-primary);
+    background: var(--wiki-bg);
+}
+
+#timestamp-autocomplete .ts-ac-input-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px;
+}
+
+#timestamp-autocomplete .ts-ac-input {
+    flex: 1;
+    font-size: 0.83rem;
+    padding: 4px 8px;
+    border: 1px solid var(--wiki-border);
+    border-radius: 8px;
+    background: var(--wiki-bg);
+    color: var(--wiki-text);
+    font-family: monospace;
+    min-width: 0;
+}
+
+#timestamp-autocomplete .ts-ac-apply-btn {
+    padding: 4px 12px;
+    font-size: 0.8rem;
+    border: none;
+    border-radius: 8px;
+    background: var(--wiki-primary);
+    color: #fff;
+    cursor: pointer;
+    font-weight: 600;
+    transition: opacity 0.15s;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+#timestamp-autocomplete .ts-ac-apply-btn:hover {
+    opacity: 0.85;
+}
+
+/* ── 타임스탬프 달력 ── */
+#timestamp-autocomplete .ts-cal-nav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 8px 4px;
+    border-bottom: 1px solid var(--wiki-border);
+}
+
+#timestamp-autocomplete .ts-cal-nav-btn {
+    background: none;
+    border: 1px solid var(--wiki-border);
+    border-radius: 6px;
+    color: var(--wiki-text);
+    cursor: pointer;
+    width: 26px;
+    height: 26px;
+    font-size: 1rem;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s, border-color 0.15s;
+    flex-shrink: 0;
+}
+
+#timestamp-autocomplete .ts-cal-nav-btn:hover {
+    background: var(--wiki-bg);
+    border-color: var(--wiki-primary);
+    color: var(--wiki-primary);
+}
+
+#timestamp-autocomplete .ts-cal-ym-btn {
+    background: none;
+    border: none;
+    font-size: 0.88rem;
+    font-weight: 600;
+    color: var(--wiki-text);
+    cursor: pointer;
+    padding: 2px 8px;
+    border-radius: 6px;
+    transition: background 0.15s;
+}
+
+#timestamp-autocomplete .ts-cal-ym-btn:hover {
+    background: var(--wiki-bg);
+    color: var(--wiki-primary);
+}
+
+#timestamp-autocomplete .ts-cal-weekdays {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    padding: 4px 8px 2px;
+    gap: 2px;
+}
+
+#timestamp-autocomplete .ts-cal-weekdays span {
+    text-align: center;
+    font-size: 0.72rem;
+    color: var(--wiki-text-muted);
+    font-weight: 600;
+}
+
+#timestamp-autocomplete .ts-cal-weekdays span:first-child { color: #e55; }
+#timestamp-autocomplete .ts-cal-weekdays span:last-child  { color: var(--wiki-primary, #3b82f6); }
+
+#timestamp-autocomplete .ts-cal-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 2px;
+    padding: 2px 8px 8px;
+}
+
+#timestamp-autocomplete .ts-cal-cell {
+    background: none;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    font-size: 0.8rem;
+    color: var(--wiki-text);
+    cursor: pointer;
+    aspect-ratio: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.12s, border-color 0.12s, color 0.12s;
+    padding: 0;
+}
+
+#timestamp-autocomplete .ts-cal-cell.empty {
+    cursor: default;
+    pointer-events: none;
+}
+
+#timestamp-autocomplete .ts-cal-cell:not(.empty):hover {
+    background: var(--wiki-bg);
+    border-color: var(--wiki-primary);
+    color: var(--wiki-primary);
+}
+
+#timestamp-autocomplete .ts-cal-cell.today {
+    font-weight: 700;
+    color: var(--wiki-primary);
+}
+
+#timestamp-autocomplete .ts-cal-cell.selected {
+    background: var(--wiki-primary);
+    border-color: var(--wiki-primary);
+    color: #fff;
+    font-weight: 700;
+}
+
+/* 연도 선택 패널 */
+#timestamp-autocomplete .ts-cal-ym-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 8px 4px;
+    border-bottom: 1px solid var(--wiki-border);
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--wiki-text);
+}
+
+#timestamp-autocomplete .ts-cal-year-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 4px;
+    padding: 8px;
+}
+
+#timestamp-autocomplete .ts-cal-year-btn {
+    background: none;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    font-size: 0.8rem;
+    color: var(--wiki-text);
+    cursor: pointer;
+    padding: 5px 0;
+    text-align: center;
+    transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+
+#timestamp-autocomplete .ts-cal-year-btn:hover {
+    background: var(--wiki-bg);
+    border-color: var(--wiki-primary);
+    color: var(--wiki-primary);
+}
+
+#timestamp-autocomplete .ts-cal-year-btn.selected {
+    background: var(--wiki-primary);
+    border-color: var(--wiki-primary);
+    color: #fff;
+    font-weight: 700;
+}
+
 /* ── 모바일 환경 에디터 입력 버그(마지막 줄 코드블럭 이후 커서 갇힘) 방지용 하단 여백 ── */
 .toastui-editor-md-editor .ProseMirror,
 .toastui-editor-ww-container .ProseMirror {

@@ -82,6 +82,41 @@
         </div>
     </div>
 
+    <!-- 타임스탬프 인라인 자동완성 드롭다운 -->
+    <div id="timestamp-autocomplete">
+        <div class="ts-ac-header">
+            <i id="tsAcIcon" class="mdi mdi-clock-outline"></i>
+            <span id="tsAcTypeLabel">날짜/시간</span>
+        </div>
+        <!-- 달력 (age/dday 전용) -->
+        <div id="tsCalSection" style="display:none;">
+            <div class="ts-cal-nav">
+                <button type="button" id="tsCalPrev" class="ts-cal-nav-btn">&#8249;</button>
+                <button type="button" id="tsCalYearMonth" class="ts-cal-ym-btn"></button>
+                <button type="button" id="tsCalNext" class="ts-cal-nav-btn">&#8250;</button>
+            </div>
+            <div class="ts-cal-weekdays">
+                <span>일</span><span>월</span><span>화</span><span>수</span><span>목</span><span>금</span><span>토</span>
+            </div>
+            <div id="tsCalGrid" class="ts-cal-grid"></div>
+        </div>
+        <!-- 연/월 선택 패널 (달력 헤더 클릭 시 표시) -->
+        <div id="tsCalYearPanel" style="display:none;">
+            <div class="ts-cal-ym-panel-header">
+                <button type="button" id="tsCalYearPrev" class="ts-cal-nav-btn">&#8249;</button>
+                <span id="tsCalYearRange"></span>
+                <button type="button" id="tsCalYearNext" class="ts-cal-nav-btn">&#8250;</button>
+            </div>
+            <div id="tsCalYearGrid" class="ts-cal-year-grid"></div>
+        </div>
+        <!-- 프리셋 (time/timer 전용) -->
+        <div id="tsAcPresets" class="ts-ac-presets" style="display:none;"></div>
+        <div class="ts-ac-input-row">
+            <input type="text" id="tsAcInput" class="ts-ac-input" placeholder="">
+            <button type="button" id="tsAcApplyBtn" class="ts-ac-apply-btn">적용</button>
+        </div>
+    </div>
+
     <!-- 아이콘 선택 모달 -->
     <div class="modal fade" id="iconPickerModal" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog modal-xl modal-dialog-scrollable">
@@ -807,6 +842,271 @@
 
         // 캔버스 이벤트 초기화
         initColorPickerCanvasEvents();
+
+        // ── 타임스탬프 인라인 자동완성 ──
+        const timestampAc = {
+            visible: false,
+            trigger: 'dday',   // 'age' | 'dday' | 'time' | 'timer'
+            div: document.getElementById('timestamp-autocomplete'),
+        };
+
+        // ── 달력 상태 ──
+        const cal = {
+            year: new Date().getFullYear(),
+            month: new Date().getMonth() + 1, // 1~12
+            selectedDate: null,               // 'YYYY-MM-DD'
+            yearPanelBase: Math.floor(new Date().getFullYear() / 12) * 12,
+            showingYearPanel: false,
+        };
+
+        function _calPad(n) { return String(n).padStart(2, '0'); }
+
+        function _renderCalendar() {
+            const grid = document.getElementById('tsCalGrid');
+            const ymBtn = document.getElementById('tsCalYearMonth');
+            const yearRangeEl = document.getElementById('tsCalYearRange');
+            const yearGrid = document.getElementById('tsCalYearGrid');
+            const calSection = document.getElementById('tsCalSection');
+            const yearPanel = document.getElementById('tsCalYearPanel');
+            if (!grid || !ymBtn) return;
+
+            ymBtn.textContent = `${cal.year}년 ${_calPad(cal.month)}월`;
+
+            if (cal.showingYearPanel) {
+                calSection.style.display = 'none';
+                yearPanel.style.display = 'block';
+                const base = cal.yearPanelBase;
+                if (yearRangeEl) yearRangeEl.textContent = `${base} – ${base + 11}`;
+                if (yearGrid) {
+                    yearGrid.innerHTML = '';
+                    for (let y = base; y < base + 12; y++) {
+                        const btn = document.createElement('button');
+                        btn.type = 'button';
+                        btn.className = 'ts-cal-year-btn' + (y === cal.year ? ' selected' : '');
+                        btn.textContent = y;
+                        btn.addEventListener('mousedown', (e) => {
+                            e.preventDefault();
+                            cal.year = y;
+                            cal.showingYearPanel = false;
+                            _renderCalendar();
+                        });
+                        yearGrid.appendChild(btn);
+                    }
+                }
+                return;
+            }
+
+            calSection.style.display = 'block';
+            yearPanel.style.display = 'none';
+
+            const firstDay = new Date(cal.year, cal.month - 1, 1).getDay(); // 0=Sun
+            const daysInMonth = new Date(cal.year, cal.month, 0).getDate();
+            const today = new Date();
+            const todayStr = `${today.getFullYear()}-${_calPad(today.getMonth()+1)}-${_calPad(today.getDate())}`;
+
+            grid.innerHTML = '';
+            // 빈 칸
+            for (let i = 0; i < firstDay; i++) {
+                const empty = document.createElement('div');
+                empty.className = 'ts-cal-cell empty';
+                grid.appendChild(empty);
+            }
+            // 날짜 칸
+            for (let d = 1; d <= daysInMonth; d++) {
+                const dateStr = `${cal.year}-${_calPad(cal.month)}-${_calPad(d)}`;
+                const cell = document.createElement('button');
+                cell.type = 'button';
+                cell.className = 'ts-cal-cell';
+                if (dateStr === todayStr) cell.classList.add('today');
+                if (dateStr === cal.selectedDate) cell.classList.add('selected');
+                cell.textContent = d;
+                cell.addEventListener('mousedown', (e) => {
+                    e.preventDefault();
+                    cal.selectedDate = dateStr;
+                    const inputEl = document.getElementById('tsAcInput');
+                    if (inputEl) inputEl.value = dateStr;
+                    applyTimestampAutocomplete();
+                });
+                grid.appendChild(cell);
+            }
+        }
+
+        function _initCalendarEvents() {
+            document.getElementById('tsCalPrev').addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                if (cal.showingYearPanel) { cal.yearPanelBase -= 12; }
+                else { cal.month--; if (cal.month < 1) { cal.month = 12; cal.year--; } }
+                _renderCalendar();
+            });
+            document.getElementById('tsCalNext').addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                if (cal.showingYearPanel) { cal.yearPanelBase += 12; }
+                else { cal.month++; if (cal.month > 12) { cal.month = 1; cal.year++; } }
+                _renderCalendar();
+            });
+            document.getElementById('tsCalYearMonth').addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                cal.yearPanelBase = Math.floor(cal.year / 12) * 12;
+                cal.showingYearPanel = !cal.showingYearPanel;
+                _renderCalendar();
+            });
+            document.getElementById('tsCalYearPrev').addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                cal.yearPanelBase -= 12;
+                _renderCalendar();
+            });
+            document.getElementById('tsCalYearNext').addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                cal.yearPanelBase += 12;
+                _renderCalendar();
+            });
+        }
+        _initCalendarEvents();
+
+        function hideTimestampAutocomplete() {
+            timestampAc.visible = false;
+            if (timestampAc.div) timestampAc.div.style.display = 'none';
+        }
+
+        function showTimestampAutocomplete(trigger) {
+            timestampAc.trigger = trigger;
+            timestampAc.visible = true;
+
+            const iconEl    = document.getElementById('tsAcIcon');
+            const labelEl   = document.getElementById('tsAcTypeLabel');
+            const inputEl   = document.getElementById('tsAcInput');
+            const presetsEl = document.getElementById('tsAcPresets');
+            const calSec    = document.getElementById('tsCalSection');
+            const yearPanel = document.getElementById('tsCalYearPanel');
+
+            const isDate = (trigger === 'age' || trigger === 'dday');
+
+            // 섹션 전환
+            if (calSec)    calSec.style.display    = isDate ? 'block' : 'none';
+            if (yearPanel) yearPanel.style.display  = 'none';
+            if (presetsEl) presetsEl.style.display  = isDate ? 'none'  : 'flex';
+
+            const today = new Date();
+            function _offsetDate(days) {
+                const d = new Date(today);
+                d.setDate(d.getDate() + days);
+                return d.toISOString().slice(0, 10);
+            }
+            function _offsetYear(years) {
+                const d = new Date(today);
+                d.setFullYear(d.getFullYear() + years);
+                return d.toISOString().slice(0, 10);
+            }
+
+            if (trigger === 'age') {
+                if (iconEl)  iconEl.className   = 'mdi mdi-cake-variant-outline';
+                if (labelEl) labelEl.textContent = '만 나이 생년월일';
+                if (inputEl) { inputEl.type = 'text'; inputEl.placeholder = 'YYYY-MM-DD'; inputEl.readOnly = true; }
+                const initDate = _offsetYear(-20);
+                cal.year = parseInt(initDate.slice(0, 4), 10);
+                cal.month = parseInt(initDate.slice(5, 7), 10);
+                cal.selectedDate = initDate;
+                cal.showingYearPanel = false;
+                if (inputEl) inputEl.value = initDate;
+            } else if (trigger === 'dday') {
+                if (iconEl)  iconEl.className   = 'mdi mdi-calendar';
+                if (labelEl) labelEl.textContent = 'D-Day 날짜 선택';
+                if (inputEl) { inputEl.type = 'text'; inputEl.placeholder = 'YYYY-MM-DD'; inputEl.readOnly = true; }
+                const initDate = _offsetDate(0);
+                cal.year = parseInt(initDate.slice(0, 4), 10);
+                cal.month = parseInt(initDate.slice(5, 7), 10);
+                cal.selectedDate = initDate;
+                cal.showingYearPanel = false;
+                if (inputEl) inputEl.value = initDate;
+            } else {
+                // time / timer
+                if (iconEl)  iconEl.className   = trigger === 'timer' ? 'mdi mdi-timer-outline' : 'mdi mdi-clock-outline';
+                if (labelEl) labelEl.textContent = trigger === 'timer' ? '타이머 시간 선택' : '표시 시간 선택';
+                if (inputEl) { inputEl.type = 'text'; inputEl.placeholder = 'Unix 타임스탬프 (초)'; inputEl.readOnly = false; }
+                const now = Math.floor(Date.now() / 1000);
+                const presets = [
+                    { label: '지금',   value: now },
+                    { label: '+1시간', value: now + 3600 },
+                    { label: '+1일',   value: now + 86400 },
+                    { label: '+1주',   value: now + 7 * 86400 },
+                    { label: '+1달',   value: now + 30 * 86400 },
+                    { label: '+1년',   value: now + 365 * 86400 },
+                ];
+                if (presetsEl) {
+                    presetsEl.innerHTML = presets.map(p =>
+                        `<button type="button" class="ts-ac-preset-btn" data-value="${p.value}">${escapeHtml(p.label)}</button>`
+                    ).join('');
+                    presetsEl.querySelectorAll('.ts-ac-preset-btn').forEach(btn => {
+                        btn.addEventListener('mousedown', (e) => {
+                            e.preventDefault();
+                            if (inputEl) inputEl.value = btn.dataset.value;
+                            applyTimestampAutocomplete();
+                        });
+                    });
+                }
+                if (inputEl) inputEl.value = String(now);
+            }
+
+            if (isDate) _renderCalendar();
+            positionDropdownAtCursor(timestampAc.div, 294);
+        }
+
+        function applyTimestampAutocomplete() {
+            if (!editor) { hideTimestampAutocomplete(); return; }
+
+            const inputEl = document.getElementById('tsAcInput');
+            if (!inputEl) { hideTimestampAutocomplete(); return; }
+            const val = inputEl.value.trim();
+            if (!val) { hideTimestampAutocomplete(); return; }
+
+            const selection = editor.getSelection();
+            if (!selection) { hideTimestampAutocomplete(); return; }
+
+            const [from] = selection;
+            const line = from[0];
+            const col  = from[1];
+
+            const md = editor.getMarkdown();
+            const lines = md.split('\n');
+            const lineText = lines[line - 1] || '';
+            const textBefore = lineText.substring(0, col - 1);
+
+            const prefix = `{${timestampAc.trigger}:`;
+            const lastTriggerIndex = textBefore.lastIndexOf(prefix);
+            if (lastTriggerIndex !== -1) {
+                editor.setSelection([line, lastTriggerIndex + 1], [line, col]);
+                editor.insertText(`${prefix}${val}}`);
+            }
+
+            hideTimestampAutocomplete();
+            editor.focus();
+        }
+
+        // 적용 버튼 / 입력창 키보드
+        (function () {
+            const applyBtn = document.getElementById('tsAcApplyBtn');
+            if (applyBtn) {
+                applyBtn.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    applyTimestampAutocomplete();
+                });
+            }
+            const inputEl = document.getElementById('tsAcInput');
+            if (inputEl) {
+                inputEl.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        applyTimestampAutocomplete();
+                    } else if (e.key === 'Escape') {
+                        e.preventDefault();
+                        hideTimestampAutocomplete();
+                        if (editor) editor.focus();
+                    }
+                });
+            }
+        })();
 
         // ── Bootstrap Icons 목록 로딩 (지연 로딩, 캐시됨) ──
         async function loadBiIcons() {
@@ -1562,6 +1862,10 @@
                 editor.insertText('[+ 펼치기/접기 제목]\n여기에 숨겨진 내용이 들어갑니다.\n[-]');
             });
 
+            const subdocBtn = createCustomButton('<i class="bi bi-diagram-3-fill" style="font-size:16px"></i>', '하위 문서 구조 삽입', () => {
+                openSubdocInsertModal();
+            });
+
             // 커스텀 이미지 업로드 버튼 (드래그앤드롭 팝업)
             const imageUploadBtn = createCustomButton('<i class="mdi mdi-image-plus" style="font-size:16px"></i>', '이미지 업로드', () => { });
 
@@ -1687,6 +1991,7 @@
                             ]),
                         { name: 'footnote', tooltip: '각주 삽입', el: footnoteBtn },
                         { name: 'folding', tooltip: '펼치기 접기 삽입', el: foldingBtn },
+                        { name: 'subdocInsert', tooltip: '하위 문서 구조 삽입', el: subdocBtn },
                         { name: 'imageUpload', tooltip: '이미지 업로드', el: imageUploadBtn }
                     ],
                     ['code', 'codeblock']
@@ -1710,6 +2015,189 @@
                     pendingIconInsertion = null;
                 }
             });
+
+            // ── 하위 문서 구조 삽입 모달 ──
+            async function openSubdocInsertModal() {
+                let subdocSelectedSlug = null;
+                let subdocPreviewText = '';
+                let subdocDebounceTimer = null;
+                let subdocActiveIdx = -1;
+
+                const result = await Swal.fire({
+                    title: '<i class="bi bi-diagram-3-fill me-2"></i>하위 문서 구조 삽입',
+                    html: `
+                        <div class="text-start">
+                            <label class="form-label">문서 검색</label>
+                            <div class="position-relative">
+                                <input type="text" id="subdocSearchInput" class="form-control"
+                                       placeholder="문서 제목 입력..." autocomplete="off">
+                                <ul class="search-suggestions" id="subdocSuggestions"></ul>
+                            </div>
+                            <div id="subdocPreview" class="mt-3" style="display:none;">
+                                <label class="form-label text-muted small">미리보기</label>
+                                <pre id="subdocPreviewContent"
+                                     class="border rounded p-2 bg-body-secondary small"
+                                     style="max-height:200px;overflow-y:auto;font-size:0.85rem;margin:0;text-align:left;"></pre>
+                            </div>
+                        </div>
+                    `,
+                    width: 600,
+                    showCancelButton: true,
+                    cancelButtonText: '취소',
+                    confirmButtonText: '삽입',
+                    didOpen: () => {
+                        Swal.getConfirmButton().disabled = true;
+
+                        const input = document.getElementById('subdocSearchInput');
+                        const sugBox = document.getElementById('subdocSuggestions');
+
+                        input.addEventListener('input', function() {
+                            clearTimeout(subdocDebounceTimer);
+                            const q = this.value.trim();
+                            if (q.length < 2) {
+                                sugBox.classList.remove('show');
+                                sugBox.innerHTML = '';
+                                return;
+                            }
+                            subdocDebounceTimer = setTimeout(() => fetchSubdocSuggestions(q), 250);
+                        });
+
+                        async function fetchSubdocSuggestions(q) {
+                            try {
+                                const res = await fetch('/api/search/suggest?q=' + encodeURIComponent(q));
+                                if (!res.ok) return;
+                                const data = await res.json();
+                                renderSubdocSuggestions(data.suggestions || []);
+                            } catch(e) {}
+                        }
+
+                        function renderSubdocSuggestions(items) {
+                            subdocActiveIdx = -1;
+                            if (!items.length) {
+                                sugBox.classList.remove('show');
+                                sugBox.innerHTML = '';
+                                return;
+                            }
+                            sugBox.innerHTML = items.map((item) =>
+                                '<li class="search-suggestion-item" data-slug="' + escapeHtml(item.slug) +
+                                '" data-title="' + escapeHtml(item.title) + '">' +
+                                '<i class="mdi mdi-file-document-outline"></i> ' +
+                                escapeHtml(item.title) + '</li>'
+                            ).join('');
+                            sugBox.classList.add('show');
+                            sugBox.querySelectorAll('.search-suggestion-item').forEach(el => {
+                                el.addEventListener('mousedown', function(e) {
+                                    e.preventDefault();
+                                    selectSubdocItem(this.dataset.slug, this.dataset.title);
+                                });
+                            });
+                        }
+
+                        function selectSubdocItem(slug, title) {
+                            subdocSelectedSlug = slug;
+                            input.value = title;
+                            sugBox.classList.remove('show');
+                            sugBox.innerHTML = '';
+                            loadSubdocPreview(slug);
+                        }
+
+                        input.addEventListener('keydown', function(e) {
+                            const items = sugBox.querySelectorAll('.search-suggestion-item');
+                            if (sugBox.classList.contains('show') && items.length) {
+                                if (e.key === 'ArrowDown') {
+                                    e.preventDefault();
+                                    subdocActiveIdx = Math.min(subdocActiveIdx + 1, items.length - 1);
+                                    items.forEach((el, i) => el.classList.toggle('active', i === subdocActiveIdx));
+                                } else if (e.key === 'ArrowUp') {
+                                    e.preventDefault();
+                                    subdocActiveIdx = Math.max(subdocActiveIdx - 1, -1);
+                                    items.forEach((el, i) => el.classList.toggle('active', i === subdocActiveIdx));
+                                } else if (e.key === 'Enter' && subdocActiveIdx >= 0) {
+                                    e.preventDefault();
+                                    const el = items[subdocActiveIdx];
+                                    selectSubdocItem(el.dataset.slug, el.dataset.title);
+                                } else if (e.key === 'Escape') {
+                                    sugBox.classList.remove('show');
+                                }
+                            }
+                        });
+
+                        input.addEventListener('blur', function() {
+                            setTimeout(() => sugBox.classList.remove('show'), 150);
+                        });
+
+                        input.focus();
+                    },
+                    preConfirm: () => {
+                        if (!subdocPreviewText) return false;
+                        return subdocPreviewText;
+                    }
+                });
+
+                if (result.isConfirmed && result.value) {
+                    editor.insertText(result.value);
+                    editor.focus();
+                }
+
+                async function loadSubdocPreview(slug) {
+                    try {
+                        const res = await fetch('/api/w/' + encodeURIComponent(slug) + '/subdocs');
+                        const data = await res.json();
+                        const subdocs = data.subdocs || [];
+
+                        const tree = {};
+                        for (const doc of subdocs) {
+                            const relative = doc.slug.substring(slug.length + 1);
+                            const parts = relative.split('/');
+                            let node = tree;
+                            for (const part of parts) {
+                                if (!node[part]) node[part] = { _children: {}, _doc: null };
+                                node = node[part]._children;
+                            }
+                            let target = tree;
+                            for (let i = 0; i < parts.length; i++) {
+                                if (i === parts.length - 1) {
+                                    target[parts[i]]._doc = doc;
+                                } else {
+                                    target = target[parts[i]]._children;
+                                }
+                            }
+                        }
+
+                        function renderTree(nodes, parentPrefix) {
+                            const entries = Object.keys(nodes).sort();
+                            let text = '';
+                            entries.forEach((key, idx) => {
+                                const node = nodes[key];
+                                const isLast = idx === entries.length - 1;
+                                const connector = isLast ? '└── ' : '├── ';
+                                const childPrefix = parentPrefix + (isLast ? '    ' : '│   ');
+                                if (node._doc) {
+                                    text += parentPrefix + connector + '[[' + node._doc.slug + '|' + key + ']]\n';
+                                } else {
+                                    text += parentPrefix + connector + key + '\n';
+                                }
+                                if (Object.keys(node._children).length > 0) {
+                                    text += renderTree(node._children, childPrefix);
+                                }
+                            });
+                            return text;
+                        }
+
+                        subdocPreviewText = '[[' + slug + ']]\n' + renderTree(tree, '');
+
+                        const previewEl = document.getElementById('subdocPreview');
+                        const previewContent = document.getElementById('subdocPreviewContent');
+                        if (previewEl && previewContent) {
+                            previewContent.textContent = subdocPreviewText;
+                            previewEl.style.display = '';
+                        }
+                        Swal.getConfirmButton().disabled = false;
+                    } catch(e) {
+                        console.error(e);
+                    }
+                }
+            }
 
             // ── 붙여넣기 시 화면 스크롤 이동 방지 ──
             const editorEl = document.querySelector('#editor');
@@ -2090,6 +2578,10 @@
 
             if (!title) {
                 Swal.fire('오류', '제목을 입력해주세요.', 'warning');
+                return;
+            }
+            if (/[\[\]()#%|<>^\x00-\x1F\x7F]/.test(title)) {
+                Swal.fire('오류', '문서 제목에 사용할 수 없는 특수문자가 포함되어 있습니다.', 'warning');
                 return;
             }
             if (title.length > 30) {
@@ -2609,7 +3101,8 @@
                 : iconAc.visible ? 'icon'
                     : colorAc.visible ? 'color'
                         : imgSizeAc.visible ? 'imgsize'
-                            : null;
+                            : timestampAc.visible ? 'timestamp'
+                                : null;
             if (!activeAc) return;
 
             const key = e.key;
@@ -2733,6 +3226,15 @@
                     e.preventDefault(); e.stopPropagation();
                     hideColorAutocomplete();
                 }
+            } else if (activeAc === 'timestamp') {
+                if (isEsc) {
+                    e.preventDefault(); e.stopPropagation();
+                    hideTimestampAutocomplete();
+                    if (editor) editor.focus();
+                } else if (isEnter) {
+                    e.preventDefault(); e.stopPropagation();
+                    applyTimestampAutocomplete();
+                }
             }
         }, true);
 
@@ -2749,6 +3251,9 @@
             }
             if (imgSizeAc.div && !imgSizeAc.div.contains(e.target)) {
                 setTimeout(hideImgSizeAutocomplete, 100);
+            }
+            if (timestampAc.div && !timestampAc.div.contains(e.target)) {
+                setTimeout(hideTimestampAutocomplete, 100);
             }
         });
 
@@ -2785,46 +3290,79 @@
                     const bgColorMatch = textBefore.match(/\{bg:([^}]*)$/);
                     const textColorMatch = textBefore.match(/\{color:([^}]*)$/);
                     const imgMatch = textBefore.match(/!\[[^\]]*\]\([^)]+\)$/);
+                    const ddayMatch = textBefore.match(/\{dday:([^}]*)$/);
+                    const timeMatch = textBefore.match(/\{time:([^}]*)$/);
+                    const timerMatch = textBefore.match(/\{timer:([^}]*)$/);
+                    const ageMatch = textBefore.match(/\{age:([^}]*)$/);
 
                     if (linkMatch) {
                         hideIconAutocomplete();
                         hideColorAutocomplete();
+                        hideTimestampAutocomplete();
                         showAutocomplete(linkMatch[1], 'link');
                     } else if (templateMatch) {
                         hideIconAutocomplete();
                         hideColorAutocomplete();
+                        hideTimestampAutocomplete();
                         showAutocomplete(templateMatch[1], 'template');
                     } else if (iconMatch) {
                         hideAutocomplete();
                         hideColorAutocomplete();
+                        hideTimestampAutocomplete();
                         showIconAutocomplete(iconMatch[1], 'icon');
                     } else if (biIconMatch) {
                         hideAutocomplete();
                         hideColorAutocomplete();
+                        hideTimestampAutocomplete();
                         showIconAutocomplete(biIconMatch[1], 'bi');
                     } else if (mdiIconMatch) {
                         hideAutocomplete();
                         hideColorAutocomplete();
+                        hideTimestampAutocomplete();
                         showIconAutocomplete(mdiIconMatch[1], 'mdi');
                     } else if (bgColorMatch) {
                         hideAutocomplete();
                         hideIconAutocomplete();
+                        hideTimestampAutocomplete();
                         showColorAutocomplete(bgColorMatch[1], 'bg');
                     } else if (textColorMatch) {
                         hideAutocomplete();
                         hideIconAutocomplete();
+                        hideTimestampAutocomplete();
                         showColorAutocomplete(textColorMatch[1], 'color');
+                    } else if (ageMatch) {
+                        hideAutocomplete();
+                        hideIconAutocomplete();
+                        hideColorAutocomplete();
+                        showTimestampAutocomplete('age');
+                    } else if (ddayMatch) {
+                        hideAutocomplete();
+                        hideIconAutocomplete();
+                        hideColorAutocomplete();
+                        showTimestampAutocomplete('dday');
+                    } else if (timerMatch) {
+                        hideAutocomplete();
+                        hideIconAutocomplete();
+                        hideColorAutocomplete();
+                        showTimestampAutocomplete('timer');
+                    } else if (timeMatch) {
+                        hideAutocomplete();
+                        hideIconAutocomplete();
+                        hideColorAutocomplete();
+                        showTimestampAutocomplete('time');
                     } else if (imgMatch) {
                         // 이미지 마크다운 `)` 입력 직후 트리거
                         hideAutocomplete();
                         hideIconAutocomplete();
                         hideColorAutocomplete();
+                        hideTimestampAutocomplete();
                         showImgSizeAutocomplete();
                     } else {
                         hideAutocomplete();
                         hideIconAutocomplete();
                         hideColorAutocomplete();
                         hideImgSizeAutocomplete();
+                        hideTimestampAutocomplete();
                     }
                 });
             });
@@ -2843,6 +3381,9 @@
                     }
                     if (!document.activeElement.closest('#imgsize-autocomplete')) {
                         hideImgSizeAutocomplete();
+                    }
+                    if (!document.activeElement.closest('#timestamp-autocomplete')) {
+                        hideTimestampAutocomplete();
                     }
                 }, 200);
             });
