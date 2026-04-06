@@ -1019,6 +1019,7 @@ div:where(.swal2-container) .swal2-html-container {
   box-shadow: none;
   word-break: break-all;
   overflow-wrap: break-word;
+  font-family: inherit !important;
 }
 
 /* 큰 코드 블록 (Wrapper로 마진 이동) */
@@ -1038,6 +1039,7 @@ div:where(.swal2-container) .swal2-html-container {
   margin: 0;
   box-shadow: none;
   border: 1px solid var(--wiki-border);
+  font-family: inherit !important;
 }
 
 .wiki-content pre code {
@@ -1048,6 +1050,7 @@ div:where(.swal2-container) .swal2-html-container {
   font-size: inherit;
   word-break: inherit;
   overflow-wrap: inherit;
+  font-family: inherit !important;
 }
 
 /* Prism.js 스타일 덮어쓰기 (기존 위키 코드블럭 스타일과 동기화) */
@@ -1063,6 +1066,7 @@ div:where(.swal2-container) .swal2-html-container {
   box-shadow: none !important;
   border: 1px solid var(--wiki-border) !important;
   text-shadow: none !important;
+  font-family: inherit !important;
 }
 
 .wiki-content pre[class*="language-"] code[class*="language-"] {
@@ -1074,6 +1078,7 @@ div:where(.swal2-container) .swal2-html-container {
   word-break: inherit !important;
   overflow-wrap: inherit !important;
   text-shadow: none !important;
+  font-family: inherit !important;
 }
 
 /* 코드 복사 버튼 */
