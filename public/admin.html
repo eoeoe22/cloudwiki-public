@@ -1,527 +1,817 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ko">
-
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title class="app-wiki-name">관리자 콘솔 - CloudWiki</title>
-    <link rel="icon" id="wiki-favicon" href="/favicon.ico">
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.13.1/font/bootstrap-icons.min.css" rel="stylesheet">
-    <link href="https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css" rel="stylesheet">
-    <link href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css" rel="stylesheet">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="icon" id="wiki-favicon" href="/favicon.ico" />
     <link
-        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Outfit:wght@500;600;700;800;900&family=Noto+Sans+KR:wght@300;400;500;600;700;800;900&display=swap"
-        rel="stylesheet">
-    <link rel="stylesheet" href="/style.css">
+      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
+      rel="stylesheet"
+    />
+    <link
+      href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.13.1/font/bootstrap-icons.min.css"
+      rel="stylesheet"
+    />
+    <link
+      href="https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css"
+      rel="stylesheet"
+    />
+    <link
+      href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css"
+      rel="stylesheet"
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Outfit:wght@500;600;700;800;900&family=Noto+Sans+KR:wght@300;400;500;600;700;800;900&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/style.css" />
     <style>
-        /* 모바일에서 햄버거 메뉴 숨김 */
-        .navbar-toggler[data-bs-target="#mobileSidebar"] {
-            display: none !important;
+      /* 모바일에서 햄버거 메뉴 숨김 */
+      .navbar-toggler[data-bs-target="#mobileSidebar"] {
+        display: none !important;
+      }
+
+      /* ── 관리자 전용 3컬럼 레이아웃 ── */
+      .admin-layout {
+        display: flex;
+        max-width: 1440px;
+        /* 사이드바가 2개이므로 가로폭 소폭 확장 */
+        margin: 0 auto;
+        padding: 0 1rem;
+        gap: 1.5rem;
+      }
+
+      .admin-sidebar {
+        width: 240px;
+        flex-shrink: 0;
+        position: sticky;
+        top: 20px;
+        align-self: flex-start;
+        z-index: 1020;
+      }
+
+      .admin-sidebar-nav {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+
+      .admin-nav-item {
+        padding: 10px 14px;
+        border-radius: 8px;
+        cursor: pointer;
+        transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        color: var(--wiki-text);
+        text-decoration: none;
+        font-weight: 500;
+        font-size: 0.95rem;
+        border: 1px solid transparent;
+      }
+
+      .admin-nav-item:hover {
+        background: rgba(var(--wiki-primary-rgb, 0, 123, 255), 0.05);
+        color: var(--wiki-primary);
+      }
+
+      .admin-nav-item.active {
+        background: var(--wiki-primary);
+        color: #fff;
+        box-shadow: 0 4px 10px rgba(var(--wiki-primary-rgb, 0, 123, 255), 0.2);
+      }
+
+      .admin-nav-item i {
+        font-size: 1.1rem;
+        opacity: 0.9;
+      }
+
+      .tab-pane {
+        display: none;
+        animation: fadeIn 0.3s ease;
+      }
+
+      .tab-pane.active {
+        display: block;
+      }
+
+      @keyframes fadeIn {
+        from {
+          opacity: 0;
+          transform: translateY(10px);
         }
 
-        /* ── 관리자 전용 3컬럼 레이아웃 ── */
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      .admin-header {
+        margin-bottom: 25px;
+        padding-bottom: 15px;
+        border-bottom: 1px solid var(--wiki-border);
+      }
+
+      .card {
+        border-radius: 12px;
+        overflow: hidden;
+        border: 1px solid var(--wiki-border);
+      }
+
+      .card-header {
+        background-color: rgba(
+          var(--wiki-primary-rgb, 0, 123, 255),
+          0.03
+        ) !important;
+        border-bottom: 1px solid var(--wiki-border) !important;
+        font-weight: 600;
+      }
+
+      /* Mobile & Tablet Adjustments */
+      @media (max-width: 1200px) {
         .admin-layout {
-            display: flex;
-            max-width: 1440px;
-            /* 사이드바가 2개이므로 가로폭 소폭 확장 */
-            margin: 0 auto;
-            padding: 0 1rem;
-            gap: 1.5rem;
+          flex-wrap: wrap;
         }
 
         .admin-sidebar {
-            width: 240px;
-            flex-shrink: 0;
-            position: sticky;
-            top: 20px;
-            align-self: flex-start;
-            z-index: 1020;
+          width: 100%;
+          position: relative;
+          top: 0;
+          margin-bottom: 1rem;
         }
 
         .admin-sidebar-nav {
-            display: flex;
-            flex-direction: column;
-            gap: 4px;
+          flex-direction: row;
+          overflow-x: auto;
+          padding-bottom: 10px;
+          white-space: nowrap;
         }
 
         .admin-nav-item {
-            padding: 10px 14px;
-            border-radius: 8px;
-            cursor: pointer;
-            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            color: var(--wiki-text);
-            text-decoration: none;
-            font-weight: 500;
-            font-size: 0.95rem;
-            border: 1px solid transparent;
+          padding: 8px 12px;
+          font-size: 0.9rem;
         }
 
-        .admin-nav-item:hover {
-            background: rgba(var(--wiki-primary-rgb, 0, 123, 255), 0.05);
-            color: var(--wiki-primary);
+        .wiki-sidebar {
+          width: 100%;
+          order: 3;
         }
+      }
 
-        .admin-nav-item.active {
-            background: var(--wiki-primary);
-            color: #fff;
-            box-shadow: 0 4px 10px rgba(var(--wiki-primary-rgb, 0, 123, 255), 0.2);
-        }
-
-        .admin-nav-item i {
-            font-size: 1.1rem;
-            opacity: 0.9;
-        }
-
-        .tab-pane {
-            display: none;
-            animation: fadeIn 0.3s ease;
-        }
-
-        .tab-pane.active {
-            display: block;
-        }
-
-        @keyframes fadeIn {
-            from {
-                opacity: 0;
-                transform: translateY(10px);
-            }
-
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
-        }
-
+      @media (max-width: 768px) {
         .admin-header {
-            margin-bottom: 25px;
-            padding-bottom: 15px;
-            border-bottom: 1px solid var(--wiki-border);
+          flex-direction: column;
+          align-items: flex-start !important;
+          gap: 15px;
         }
-
-        .card {
-            border-radius: 12px;
-            overflow: hidden;
-            border: 1px solid var(--wiki-border);
-        }
-
-        .card-header {
-            background-color: rgba(var(--wiki-primary-rgb, 0, 123, 255), 0.03) !important;
-            border-bottom: 1px solid var(--wiki-border) !important;
-            font-weight: 600;
-        }
-
-        /* Mobile & Tablet Adjustments */
-        @media (max-width: 1200px) {
-            .admin-layout {
-                flex-wrap: wrap;
-            }
-
-            .admin-sidebar {
-                width: 100%;
-                position: relative;
-                top: 0;
-                margin-bottom: 1rem;
-            }
-
-            .admin-sidebar-nav {
-                flex-direction: row;
-                overflow-x: auto;
-                padding-bottom: 10px;
-                white-space: nowrap;
-            }
-
-            .admin-nav-item {
-                padding: 8px 12px;
-                font-size: 0.9rem;
-            }
-
-            .wiki-sidebar {
-                width: 100%;
-                order: 3;
-            }
-        }
-
-        @media (max-width: 768px) {
-            .admin-header {
-                flex-direction: column;
-                align-items: flex-start !important;
-                gap: 15px;
-            }
-        }
+      }
     </style>
-</head>
+  </head>
 
-<body>
-
+  <body>
     <!-- ── 네비게이션 바 Placeholder ── -->
     <div id="app-header-placeholder"></div>
 
     <div class="admin-layout">
-        <!-- ── 왼쪽 사이드바 (관리 메뉴 전용) ── -->
-        <aside class="admin-sidebar">
-            <div class="sidebar-section">
-                <h6 class="sidebar-title"><i class="bi bi-gear-fill"></i> 관리 메뉴</h6>
-                <div class="admin-sidebar-nav">
-                    <a href="javascript:void(0)" class="admin-nav-item active" onclick="showTab('tab-dashboard')">
-                        <i class="mdi mdi-view-dashboard-outline"></i> <span>대시보드</span>
-                    </a>
-                    <a href="javascript:void(0)" class="admin-nav-item" onclick="showTab('tab-users')">
-                        <i class="mdi mdi-account-group-outline"></i> <span>회원 관리</span>
-                    </a>
-                    <a href="javascript:void(0)" class="admin-nav-item" onclick="showTab('tab-content')">
-                        <i class="mdi mdi-file-document-edit-outline"></i> <span>콘텐츠 관리</span>
-                    </a>
-                    <a href="javascript:void(0)" class="admin-nav-item" onclick="showTab('tab-settings')">
-                        <i class="mdi mdi-cog-outline"></i> <span>시스템 설정</span>
-                    </a>
-                    <a href="javascript:void(0)" class="admin-nav-item" onclick="showTab('tab-stats')">
-                        <i class="mdi mdi-chart-line"></i> <span>통계 및 로그</span>
-                    </a>
-                </div>
-            </div>
-        </aside>
+      <!-- ── 왼쪽 사이드바 (관리 메뉴 전용) ── -->
+      <aside class="admin-sidebar">
+        <div class="sidebar-section">
+          <h6 class="sidebar-title">
+            <i class="bi bi-gear-fill"></i> 관리 메뉴
+          </h6>
+          <div class="admin-sidebar-nav">
+            <a
+              href="javascript:void(0)"
+              class="admin-nav-item active"
+              onclick="showTab('tab-dashboard')"
+            >
+              <i class="mdi mdi-view-dashboard-outline"></i>
+              <span>대시보드</span>
+            </a>
+            <a
+              href="javascript:void(0)"
+              class="admin-nav-item"
+              onclick="showTab('tab-users')"
+            >
+              <i class="mdi mdi-account-group-outline"></i>
+              <span>회원 관리</span>
+            </a>
+            <a
+              href="javascript:void(0)"
+              class="admin-nav-item"
+              onclick="showTab('tab-content')"
+            >
+              <i class="mdi mdi-file-document-edit-outline"></i>
+              <span>콘텐츠 관리</span>
+            </a>
+            <a
+              href="javascript:void(0)"
+              class="admin-nav-item"
+              onclick="showTab('tab-settings')"
+            >
+              <i class="mdi mdi-cog-outline"></i> <span>시스템 설정</span>
+            </a>
+            <a
+              href="javascript:void(0)"
+              class="admin-nav-item"
+              onclick="showTab('tab-stats')"
+            >
+              <i class="mdi mdi-chart-line"></i> <span>통계 및 로그</span>
+            </a>
+          </div>
+        </div>
+      </aside>
 
-        <!-- ── 메인 콘텐츠 영역 ── -->
-        <div class="wiki-container">
-            <div class="admin-header d-flex justify-content-between align-items-center">
-                <div>
-                    <h2 class="mb-1"><i class="mdi mdi-shield-account text-primary"></i> 관리자 콘솔</h2>
-                    <p class="text-muted mb-0 small">위키 운영에 필요한 모든 설정을 관리합니다.</p>
+      <!-- ── 메인 콘텐츠 영역 ── -->
+      <div class="wiki-container">
+        <div
+          class="admin-header d-flex justify-content-between align-items-center"
+        >
+          <div>
+            <h2 class="mb-1">
+              <i class="mdi mdi-shield-account text-primary"></i> 관리자 콘솔
+            </h2>
+            <p class="text-muted mb-0 small">
+              위키 운영에 필요한 모든 설정을 관리합니다.
+            </p>
+          </div>
+          <button
+            class="btn btn-outline-secondary btn-sm"
+            onclick="history.back()"
+          >
+            <i class="mdi mdi-arrow-left"></i> 돌아가기
+          </button>
+        </div>
+
+        <!-- ── 탭: 대시보드 (Dashboard) ── -->
+        <div id="tab-dashboard" class="tab-pane active">
+          <div class="row g-4 mb-4">
+            <div class="col-md-6">
+              <div class="card shadow-sm border-0 h-100">
+                <div class="card-body">
+                  <h5 class="card-title mb-3">
+                    <i class="mdi mdi-ticket-outline text-primary"></i> 빠른
+                    링크
+                  </h5>
+                  <div class="d-grid gap-2">
+                    <a
+                      href="/tickets"
+                      class="btn btn-outline-primary text-start"
+                    >
+                      <i class="mdi mdi-ticket-confirmation-outline"></i> 티켓
+                      문의 관리
+                    </a>
+                    <a
+                      href="/admin-media"
+                      class="btn btn-outline-info text-start"
+                    >
+                      <i class="mdi mdi-image-multiple-outline"></i>
+                      이미지(미디어) 관리 도구
+                    </a>
+                  </div>
                 </div>
-                <button class="btn btn-outline-secondary btn-sm" onclick="history.back()">
-                    <i class="mdi mdi-arrow-left"></i> 돌아가기
+              </div>
+            </div>
+            <div class="col-md-6">
+              <div class="card shadow-sm border-0 h-100">
+                <div
+                  class="card-body text-center d-flex flex-column justify-content-center"
+                >
+                  <h6 class="text-muted mb-2">실시간 통계 확인</h6>
+                  <button
+                    class="btn btn-primary btn-lg"
+                    onclick="
+                      showTab('tab-stats');
+                      loadAnalyticsDashboard();
+                    "
+                  >
+                    <i class="mdi mdi-chart-box-outline"></i> 통계 대시보드 열기
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div
+            class="card shadow-sm border-0 mb-4"
+            id="analyticsSummaryCard"
+            style="display: none"
+          >
+            <div class="card-header py-3">
+              <h5 class="mb-0">주요 통계 요약 (최근 7일)</h5>
+            </div>
+            <div class="card-body">
+              <div class="row g-3 text-center">
+                <div class="col-6 col-md-3">
+                  <div class="p-3 bg-light rounded-3">
+                    <div class="text-muted small">총 페이지뷰</div>
+                    <div class="fs-4 fw-bold text-primary" id="dashTotalViews">
+                      -
+                    </div>
+                  </div>
+                </div>
+                <div class="col-6 col-md-3">
+                  <div class="p-3 bg-light rounded-3">
+                    <div class="text-muted small">접속 국가</div>
+                    <div class="fs-4 fw-bold text-success" id="dashCountries">
+                      -
+                    </div>
+                  </div>
+                </div>
+                <div class="col-12 col-md-6">
+                  <div id="dashDailyChart" style="height: 60px"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── 탭: 회원 관리 (Users) ── -->
+        <div id="tab-users" class="tab-pane">
+          <div
+            id="signupRequestsCard"
+            class="card shadow-sm border-0 mb-4"
+            style="display: none"
+          >
+            <div class="card-header py-3">
+              <div class="d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">
+                  가입 신청 관리
+                  <span
+                    class="badge bg-warning text-dark ms-2"
+                    id="signupRequestsCount"
+                    style="display: none"
+                    >0</span
+                  >
+                </h5>
+                <span class="badge bg-info">승인제 운영 중</span>
+              </div>
+            </div>
+            <div class="card-body">
+              <div class="d-flex flex-wrap gap-2 mb-3">
+                <select
+                  id="signupStatusFilter"
+                  class="form-select form-select-sm"
+                  style="width: auto"
+                >
+                  <option value="pending">대기 중</option>
+                  <option value="approved">승인됨</option>
+                  <option value="rejected">거절됨</option>
+                  <option value="blocked">차단됨</option>
+                  <option value="all">모두 보기</option>
+                </select>
+                <button
+                  class="btn btn-sm btn-primary"
+                  onclick="loadSignupRequests()"
+                >
+                  필터 적용
                 </button>
+              </div>
+              <div class="table-responsive">
+                <table class="table table-hover text-nowrap mb-0">
+                  <thead class="table-light">
+                    <tr>
+                      <th>프로필</th>
+                      <th>표시명</th>
+                      <th>이메일</th>
+                      <th>상태</th>
+                      <th>액션</th>
+                    </tr>
+                  </thead>
+                  <tbody id="signupRequestsBody"></tbody>
+                </table>
+              </div>
+              <div
+                id="signupRequestsLoadMore"
+                class="text-center py-3"
+                style="display: none"
+              >
+                <button
+                  class="btn btn-outline-secondary btn-sm"
+                  onclick="loadMoreSignupRequests()"
+                >
+                  더 불러오기
+                </button>
+              </div>
             </div>
+          </div>
 
-            <!-- ── 탭: 대시보드 (Dashboard) ── -->
-            <div id="tab-dashboard" class="tab-pane active">
-                <div class="row g-4 mb-4">
+          <div class="card shadow-sm border-0">
+            <div class="card-header py-3">
+              <h5 class="mb-0">유저 목록 및 권한 관리</h5>
+            </div>
+            <div class="card-body">
+              <div class="d-flex flex-wrap gap-2 mb-3">
+                <input
+                  type="text"
+                  id="userSearchInput"
+                  class="form-control form-control-sm"
+                  placeholder="이름/이메일 검색"
+                  style="max-width: 180px"
+                />
+                <select
+                  id="userRoleFilter"
+                  class="form-select form-select-sm"
+                  style="width: auto"
+                >
+                  <option value="all">모든 권한</option>
+                  <option value="super_admin">최고 관리자</option>
+                  <option value="admin">관리자</option>
+                  <option value="user">일반 유저</option>
+                </select>
+                <button class="btn btn-sm btn-primary" onclick="searchUsers()">
+                  검색
+                </button>
+              </div>
+              <div class="table-responsive">
+                <table class="table table-hover user-table text-nowrap mb-0">
+                  <thead class="table-light">
+                    <tr>
+                      <th>프로필</th>
+                      <th>이름</th>
+                      <th>권한</th>
+                      <th>상태</th>
+                      <th>가입일</th>
+                      <th>관리</th>
+                    </tr>
+                  </thead>
+                  <tbody id="userTableBody"></tbody>
+                </table>
+              </div>
+              <div
+                id="userLoadMoreWrapper"
+                class="text-center py-3"
+                style="display: none"
+              >
+                <button
+                  class="btn btn-outline-secondary btn-sm"
+                  onclick="loadMoreUsers()"
+                >
+                  더 불러오기
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── 탭: 콘텐츠 관리 (Content) ── -->
+        <div id="tab-content" class="tab-pane">
+          <div class="card shadow-sm border-0 mb-4">
+            <div class="card-header py-3">
+              <h5 class="mb-0">삭제된 문서 관리 (Soft Delete)</h5>
+            </div>
+            <div class="card-body">
+              <div class="table-responsive">
+                <table class="table table-hover mb-0">
+                  <thead class="table-light">
+                    <tr>
+                      <th>문서명 (Slug)</th>
+                      <th>삭제일시</th>
+                      <th>액션</th>
+                    </tr>
+                  </thead>
+                  <tbody id="deletedPagesBody"></tbody>
+                </table>
+              </div>
+              <div
+                id="deletedPagesLoadMoreWrapper"
+                class="text-center py-3"
+                style="display: none"
+              >
+                <button
+                  class="btn btn-outline-secondary btn-sm"
+                  onclick="loadMoreDeletedPages()"
+                >
+                  더 불러오기
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="card shadow-sm border-0 mb-4">
+            <div class="card-header py-3">
+              <h5 class="mb-0">관리자 전용 카테고리</h5>
+            </div>
+            <div class="card-body">
+              <div class="d-flex gap-2 mb-3">
+                <input
+                  type="text"
+                  id="newCategoryInput"
+                  class="form-control"
+                  placeholder="새 카테고리 이름"
+                />
+                <button class="btn btn-primary" onclick="addCategory()">
+                  추가
+                </button>
+              </div>
+              <div
+                id="categoriesList"
+                class="list-group list-group-flush border rounded"
+              ></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── 탭: 시스템 설정 (Settings) ── -->
+        <div id="tab-settings" class="tab-pane">
+          <div class="card shadow-sm border-0 mb-4">
+            <div class="card-header py-3">
+              <h5 class="mb-0">위키 운영 정책</h5>
+            </div>
+            <div class="card-body">
+              <h6 class="fw-bold mb-3">표시명 변경 정책</h6>
+              <div class="mb-4">
+                <div class="form-check mb-2">
+                  <input
+                    class="form-check-input"
+                    type="radio"
+                    name="namechangePolicy"
+                    id="namechangeUnlimited"
+                    value="0"
+                  />
+                  <label class="form-check-label" for="namechangeUnlimited"
+                    >무제한 허용</label
+                  >
+                </div>
+                <div class="form-check mb-2">
+                  <input
+                    class="form-check-input"
+                    type="radio"
+                    name="namechangePolicy"
+                    id="namechangeDisabled"
+                    value="-1"
+                  />
+                  <label class="form-check-label" for="namechangeDisabled"
+                    >변경 불허</label
+                  >
+                </div>
+                <div class="form-check mb-2">
+                  <input
+                    class="form-check-input"
+                    type="radio"
+                    name="namechangePolicy"
+                    id="namechangeCooldown"
+                    value="custom"
+                  />
+                  <label class="form-check-label" for="namechangeCooldown"
+                    >일 단위 제한</label
+                  >
+                </div>
+                <div
+                  class="ms-4 mt-2"
+                  id="cooldownDaysWrapper"
+                  style="display: none"
+                >
+                  <div class="input-group" style="max-width: 150px">
+                    <input
+                      type="number"
+                      class="form-control"
+                      id="cooldownDaysInput"
+                      min="1"
+                      value="30"
+                    />
+                    <span class="input-group-text">일</span>
+                  </div>
+                </div>
+              </div>
+
+              <hr />
+              <h6 class="fw-bold mb-3">개인 쪽지 및 가입</h6>
+              <div class="form-check form-switch mb-3">
+                <input
+                  class="form-check-input"
+                  type="checkbox"
+                  id="allowDmSwitch"
+                />
+                <label class="form-check-label" for="allowDmSwitch"
+                  >개인 쪽지 허용</label
+                >
+              </div>
+              <div class="mb-4">
+                <div class="form-check mb-2">
+                  <input
+                    class="form-check-input"
+                    type="radio"
+                    name="signupPolicy"
+                    id="signupPolicyOpen"
+                    value="open"
+                  />
+                  <label class="form-check-label" for="signupPolicyOpen"
+                    >자유 가입</label
+                  >
+                </div>
+                <div class="form-check mb-2">
+                  <input
+                    class="form-check-input"
+                    type="radio"
+                    name="signupPolicy"
+                    id="signupPolicyApproval"
+                    value="approval"
+                  />
+                  <label class="form-check-label" for="signupPolicyApproval"
+                    >관리자 승인제</label
+                  >
+                </div>
+                <div class="form-check mb-2">
+                  <input
+                    class="form-check-input"
+                    type="radio"
+                    name="signupPolicy"
+                    id="signupPolicyBlocked"
+                    value="blocked"
+                  />
+                  <label class="form-check-label" for="signupPolicyBlocked"
+                    >차단 (가입 불가)</label
+                  >
+                </div>
+              </div>
+
+              <hr />
+              <h6 class="fw-bold mb-3">MCP (Model Context Protocol) 설정</h6>
+              <div class="mb-3">
+                <div class="d-flex align-items-center gap-2 mb-2">
+                  <span id="mcpModeDisplay" class="badge bg-secondary"
+                    >확인 중...</span
+                  >
+                  <span class="text-muted small"
+                    >wrangler.toml의 MCP_MODE 환경변수로 관리됩니다.</span
+                  >
+                </div>
+                <div
+                  id="mcpServerUrlBox"
+                  class="p-3 rounded small border"
+                  style="
+                    display: none;
+                    background: var(--wiki-bg);
+                    color: var(--wiki-text);
+                  "
+                >
+                  <div class="fw-bold mb-2">
+                    MCP 서버 주소 (에이전트 연결용)
+                  </div>
+                  <div class="input-group input-group-sm">
+                    <input
+                      type="text"
+                      id="mcpServerUrlInput"
+                      class="form-control font-monospace"
+                      style="
+                        background: var(--wiki-card-bg);
+                        color: var(--wiki-text);
+                        border-color: var(--wiki-border);
+                      "
+                      readonly
+                    />
+                    <button
+                      class="btn btn-outline-secondary"
+                      onclick="copyMcpUrl()"
+                    >
+                      복사
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <button
+                class="btn btn-primary w-100"
+                onclick="saveWikiSettings()"
+              >
+                설정 저장
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── 탭: 통계 및 로그 (Stats) ── -->
+        <div id="tab-stats" class="tab-pane">
+          <div class="card shadow-sm border-0 mb-4">
+            <div
+              class="card-header py-3 d-flex justify-content-between align-items-center"
+            >
+              <h5 class="mb-0">실시간 트래픽 통계</h5>
+              <button
+                class="btn btn-sm btn-outline-secondary"
+                onclick="refreshAnalytics()"
+              >
+                새로고침
+              </button>
+            </div>
+            <div class="card-body">
+              <div id="analyticsContainer">
+                <div class="text-center py-5" id="analyticsLoadBtn">
+                  <button
+                    class="btn btn-primary"
+                    onclick="loadAnalyticsDashboard()"
+                  >
+                    데이터 로드
+                  </button>
+                </div>
+                <div id="analyticsRealContent" style="display: none">
+                  <div
+                    id="dailyChart"
+                    class="mb-4"
+                    style="overflow-x: auto"
+                  ></div>
+                  <div class="row g-4">
                     <div class="col-md-6">
-                        <div class="card shadow-sm border-0 h-100">
-                            <div class="card-body">
-                                <h5 class="card-title mb-3"><i class="mdi mdi-ticket-outline text-primary"></i> 빠른 링크
-                                </h5>
-                                <div class="d-grid gap-2">
-                                    <a href="/tickets" class="btn btn-outline-primary text-start">
-                                        <i class="mdi mdi-ticket-confirmation-outline"></i> 티켓 문의 관리
-                                    </a>
-                                    <a href="/admin-media" class="btn btn-outline-info text-start">
-                                        <i class="mdi mdi-image-multiple-outline"></i> 이미지(미디어) 관리 도구
-                                    </a>
-                                </div>
-                            </div>
-                        </div>
+                      <h6>인기 문서</h6>
+                      <div id="topPagesContainer" class="small"></div>
                     </div>
                     <div class="col-md-6">
-                        <div class="card shadow-sm border-0 h-100">
-                            <div class="card-body text-center d-flex flex-column justify-content-center">
-                                <h6 class="text-muted mb-2">실시간 통계 확인</h6>
-                                <button class="btn btn-primary btn-lg"
-                                    onclick="showTab('tab-stats'); loadAnalyticsDashboard();">
-                                    <i class="mdi mdi-chart-box-outline"></i> 통계 대시보드 열기
-                                </button>
-                            </div>
-                        </div>
+                      <h6>트렌딩 (24h)</h6>
+                      <div id="trendingContainer" class="small"></div>
                     </div>
+                    <div class="col-md-6">
+                      <h6>유입 경로</h6>
+                      <div id="referrersContainer" class="small"></div>
+                    </div>
+                    <div class="col-md-6">
+                      <h6>접속 국가</h6>
+                      <div id="countriesContainer" class="small"></div>
+                    </div>
+                    <div class="col-md-6">
+                      <h6>기기 및 브라우저</h6>
+                      <div id="devicesContainer" class="small"></div>
+                    </div>
+                    <div class="col-md-6">
+                      <h6>검색어</h6>
+                      <div id="searchesContainer" class="small"></div>
+                    </div>
+                    <div class="col-12 mt-3">
+                      <h6>최근 에러 (HTTP 오류)</h6>
+                      <div class="table-responsive">
+                        <table class="table table-sm">
+                          <thead>
+                            <tr>
+                              <th>경로</th>
+                              <th>에러 메시지</th>
+                              <th>상태 코드</th>
+                              <th>발생 횟수</th>
+                            </tr>
+                          </thead>
+                          <tbody id="errorsContainerBody"></tbody>
+                        </table>
+                      </div>
+                    </div>
+                    <div class="col-12 mt-3">
+                      <h6>성능 통계 (평균 응답 속도)</h6>
+                      <div
+                        id="performanceContainer"
+                        class="small d-flex gap-4"
+                      ></div>
+                    </div>
+                  </div>
                 </div>
-
-                <div class="card shadow-sm border-0 mb-4" id="analyticsSummaryCard" style="display:none;">
-                    <div class="card-header py-3">
-                        <h5 class="mb-0">주요 통계 요약 (최근 7일)</h5>
-                    </div>
-                    <div class="card-body">
-                        <div class="row g-3 text-center">
-                            <div class="col-6 col-md-3">
-                                <div class="p-3 bg-light rounded-3">
-                                    <div class="text-muted small">총 페이지뷰</div>
-                                    <div class="fs-4 fw-bold text-primary" id="dashTotalViews">-</div>
-                                </div>
-                            </div>
-                            <div class="col-6 col-md-3">
-                                <div class="p-3 bg-light rounded-3">
-                                    <div class="text-muted small">접속 국가</div>
-                                    <div class="fs-4 fw-bold text-success" id="dashCountries">-</div>
-                                </div>
-                            </div>
-                            <div class="col-12 col-md-6">
-                                <div id="dashDailyChart" style="height: 60px;"></div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
+              </div>
             </div>
+          </div>
 
-            <!-- ── 탭: 회원 관리 (Users) ── -->
-            <div id="tab-users" class="tab-pane">
-                <div id="signupRequestsCard" class="card shadow-sm border-0 mb-4" style="display: none;">
-                    <div class="card-header py-3">
-                        <div class="d-flex justify-content-between align-items-center">
-                            <h5 class="mb-0">가입 신청 관리
-                                <span class="badge bg-warning text-dark ms-2" id="signupRequestsCount"
-                                    style="display: none;">0</span>
-                            </h5>
-                            <span class="badge bg-info">승인제 운영 중</span>
-                        </div>
-                    </div>
-                    <div class="card-body">
-                        <div class="d-flex flex-wrap gap-2 mb-3">
-                            <select id="signupStatusFilter" class="form-select form-select-sm" style="width: auto;">
-                                <option value="pending">대기 중</option>
-                                <option value="approved">승인됨</option>
-                                <option value="rejected">거절됨</option>
-                                <option value="blocked">차단됨</option>
-                                <option value="all">모두 보기</option>
-                            </select>
-                            <button class="btn btn-sm btn-primary" onclick="loadSignupRequests()">필터 적용</button>
-                        </div>
-                        <div class="table-responsive">
-                            <table class="table table-hover text-nowrap mb-0">
-                                <thead class="table-light">
-                                    <tr>
-                                        <th>프로필</th>
-                                        <th>표시명</th>
-                                        <th>이메일</th>
-                                        <th>상태</th>
-                                        <th>액션</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="signupRequestsBody"></tbody>
-                            </table>
-                        </div>
-                        <div id="signupRequestsLoadMore" class="text-center py-3" style="display: none;">
-                            <button class="btn btn-outline-secondary btn-sm" onclick="loadMoreSignupRequests()">더
-                                불러오기</button>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="card shadow-sm border-0">
-                    <div class="card-header py-3">
-                        <h5 class="mb-0">유저 목록 및 권한 관리</h5>
-                    </div>
-                    <div class="card-body">
-                        <div class="d-flex flex-wrap gap-2 mb-3">
-                            <input type="text" id="userSearchInput" class="form-control form-control-sm"
-                                placeholder="이름/이메일 검색" style="max-width: 180px;">
-                            <select id="userRoleFilter" class="form-select form-select-sm" style="width: auto;">
-                                <option value="all">모든 권한</option>
-                                <option value="super_admin">최고 관리자</option>
-                                <option value="admin">관리자</option>
-                                <option value="user">일반 유저</option>
-                            </select>
-                            <button class="btn btn-sm btn-primary" onclick="searchUsers()">검색</button>
-                        </div>
-                        <div class="table-responsive">
-                            <table class="table table-hover user-table text-nowrap mb-0">
-                                <thead class="table-light">
-                                    <tr>
-                                        <th>프로필</th>
-                                        <th>이름</th>
-                                        <th>권한</th>
-                                        <th>상태</th>
-                                        <th>가입일</th>
-                                        <th>관리</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="userTableBody"></tbody>
-                            </table>
-                        </div>
-                        <div id="userLoadMoreWrapper" class="text-center py-3" style="display: none;">
-                            <button class="btn btn-outline-secondary btn-sm" onclick="loadMoreUsers()">더 불러오기</button>
-                        </div>
-                    </div>
-                </div>
+          <div class="card shadow-sm border-0">
+            <div class="card-header py-3">
+              <h5 class="mb-0">관리 활동 로그</h5>
             </div>
-
-            <!-- ── 탭: 콘텐츠 관리 (Content) ── -->
-            <div id="tab-content" class="tab-pane">
-                <div class="card shadow-sm border-0 mb-4">
-                    <div class="card-header py-3">
-                        <h5 class="mb-0">삭제된 문서 관리 (Soft Delete)</h5>
-                    </div>
-                    <div class="card-body">
-                        <div class="table-responsive">
-                            <table class="table table-hover mb-0">
-                                <thead class="table-light">
-                                    <tr>
-                                        <th>문서명 (Slug)</th>
-                                        <th>삭제일시</th>
-                                        <th>액션</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="deletedPagesBody"></tbody>
-                            </table>
-                        </div>
-                        <div id="deletedPagesLoadMoreWrapper" class="text-center py-3" style="display: none;">
-                            <button class="btn btn-outline-secondary btn-sm" onclick="loadMoreDeletedPages()">더
-                                불러오기</button>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="card shadow-sm border-0 mb-4">
-                    <div class="card-header py-3">
-                        <h5 class="mb-0">관리자 전용 카테고리</h5>
-                    </div>
-                    <div class="card-body">
-                        <div class="d-flex gap-2 mb-3">
-                            <input type="text" id="newCategoryInput" class="form-control" placeholder="새 카테고리 이름">
-                            <button class="btn btn-primary" onclick="addCategory()">추가</button>
-                        </div>
-                        <div id="categoriesList" class="list-group list-group-flush border rounded"></div>
-                    </div>
-                </div>
+            <div class="card-body">
+              <div class="table-responsive">
+                <table class="table table-hover table-sm">
+                  <thead class="table-light">
+                    <tr>
+                      <th>시간</th>
+                      <th>유형</th>
+                      <th>내용</th>
+                      <th>관리자</th>
+                    </tr>
+                  </thead>
+                  <tbody id="adminLogBody"></tbody>
+                </table>
+              </div>
+              <div
+                id="adminLogMore"
+                class="text-center py-2"
+                style="display: none"
+              >
+                <button
+                  class="btn btn-sm btn-outline-secondary"
+                  onclick="loadMoreAdminLogs()"
+                >
+                  더 보기
+                </button>
+              </div>
             </div>
+          </div>
+        </div>
+      </div>
+      <!-- wiki-container end -->
 
-            <!-- ── 탭: 시스템 설정 (Settings) ── -->
-            <div id="tab-settings" class="tab-pane">
-                <div class="card shadow-sm border-0 mb-4">
-                    <div class="card-header py-3">
-                        <h5 class="mb-0">위키 운영 정책</h5>
-                    </div>
-                    <div class="card-body">
-                        <h6 class="fw-bold mb-3">표시명 변경 정책</h6>
-                        <div class="mb-4">
-                            <div class="form-check mb-2">
-                                <input class="form-check-input" type="radio" name="namechangePolicy"
-                                    id="namechangeUnlimited" value="0">
-                                <label class="form-check-label" for="namechangeUnlimited">무제한 허용</label>
-                            </div>
-                            <div class="form-check mb-2">
-                                <input class="form-check-input" type="radio" name="namechangePolicy"
-                                    id="namechangeDisabled" value="-1">
-                                <label class="form-check-label" for="namechangeDisabled">변경 불허</label>
-                            </div>
-                            <div class="form-check mb-2">
-                                <input class="form-check-input" type="radio" name="namechangePolicy"
-                                    id="namechangeCooldown" value="custom">
-                                <label class="form-check-label" for="namechangeCooldown">일 단위 제한</label>
-                            </div>
-                            <div class="ms-4 mt-2" id="cooldownDaysWrapper" style="display:none;">
-                                <div class="input-group" style="max-width: 150px;">
-                                    <input type="number" class="form-control" id="cooldownDaysInput" min="1" value="30">
-                                    <span class="input-group-text">일</span>
-                                </div>
-                            </div>
-                        </div>
-
-                        <hr>
-                        <h6 class="fw-bold mb-3">개인 쪽지 및 가입</h6>
-                        <div class="form-check form-switch mb-3">
-                            <input class="form-check-input" type="checkbox" id="allowDmSwitch">
-                            <label class="form-check-label" for="allowDmSwitch">개인 쪽지 허용</label>
-                        </div>
-                        <div class="mb-4">
-                            <div class="form-check mb-2">
-                                <input class="form-check-input" type="radio" name="signupPolicy" id="signupPolicyOpen"
-                                    value="open">
-                                <label class="form-check-label" for="signupPolicyOpen">자유 가입</label>
-                            </div>
-                            <div class="form-check mb-2">
-                                <input class="form-check-input" type="radio" name="signupPolicy"
-                                    id="signupPolicyApproval" value="approval">
-                                <label class="form-check-label" for="signupPolicyApproval">관리자 승인제</label>
-                            </div>
-                            <div class="form-check mb-2">
-                                <input class="form-check-input" type="radio" name="signupPolicy"
-                                    id="signupPolicyBlocked" value="blocked">
-                                <label class="form-check-label" for="signupPolicyBlocked">차단 (가입 불가)</label>
-                            </div>
-                        </div>
-
-                        <hr>
-                        <h6 class="fw-bold mb-3">MCP (Model Context Protocol) 설정</h6>
-                        <div class="mb-3">
-                            <div class="d-flex align-items-center gap-2 mb-2">
-                                <span id="mcpModeDisplay" class="badge bg-secondary">확인 중...</span>
-                                <span class="text-muted small">wrangler.toml의 MCP_MODE 환경변수로 관리됩니다.</span>
-                            </div>
-                            <div id="mcpServerUrlBox" class="p-3 rounded small border"
-                                style="display:none; background: var(--wiki-bg); color: var(--wiki-text);">
-                                <div class="fw-bold mb-2">MCP 서버 주소 (에이전트 연결용)</div>
-                                <div class="input-group input-group-sm">
-                                    <input type="text" id="mcpServerUrlInput" class="form-control font-monospace"
-                                        style="background: var(--wiki-card-bg); color: var(--wiki-text); border-color: var(--wiki-border);"
-                                        readonly>
-                                    <button class="btn btn-outline-secondary" onclick="copyMcpUrl()">복사</button>
-                                </div>
-                            </div>
-                        </div>
-
-                        <button class="btn btn-primary w-100" onclick="saveWikiSettings()">설정 저장</button>
-                    </div>
-                </div>
-
-            </div>
-
-            <!-- ── 탭: 통계 및 로그 (Stats) ── -->
-            <div id="tab-stats" class="tab-pane">
-                <div class="card shadow-sm border-0 mb-4">
-                    <div class="card-header py-3 d-flex justify-content-between align-items-center">
-                        <h5 class="mb-0">실시간 트래픽 통계</h5>
-                        <button class="btn btn-sm btn-outline-secondary" onclick="refreshAnalytics()">새로고침</button>
-                    </div>
-                    <div class="card-body">
-                        <div id="analyticsContainer">
-                            <div class="text-center py-5" id="analyticsLoadBtn">
-                                <button class="btn btn-primary" onclick="loadAnalyticsDashboard()">데이터 로드</button>
-                            </div>
-                            <div id="analyticsRealContent" style="display:none;">
-                                <div id="dailyChart" class="mb-4" style="overflow-x:auto;"></div>
-                                <div class="row g-4">
-                                    <div class="col-md-6">
-                                        <h6>인기 문서</h6>
-                                        <div id="topPagesContainer" class="small"></div>
-                                    </div>
-                                    <div class="col-md-6">
-                                        <h6>트렌딩 (24h)</h6>
-                                        <div id="trendingContainer" class="small"></div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="card shadow-sm border-0">
-                    <div class="card-header py-3">
-                        <h5 class="mb-0">관리 활동 로그</h5>
-                    </div>
-                    <div class="card-body">
-                        <div class="table-responsive">
-                            <table class="table table-hover table-sm">
-                                <thead class="table-light">
-                                    <tr>
-                                        <th>시간</th>
-                                        <th>유형</th>
-                                        <th>내용</th>
-                                        <th>관리자</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="adminLogBody"></tbody>
-                            </table>
-                        </div>
-                        <div id="adminLogMore" class="text-center py-2" style="display:none;"><button
-                                class="btn btn-sm btn-outline-secondary" onclick="loadMoreAdminLogs()">더 보기</button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-        </div> <!-- wiki-container end -->
-
-        <!-- ── 오른쪽 사이드바 (기존 사이드바 구성요소) ── -->
-        <aside class="wiki-sidebar d-none">
-            <div id="app-sidebar-placeholder"></div>
-        </aside>
-    </div> <!-- admin-layout end -->
+      <!-- ── 오른쪽 사이드바 (기존 사이드바 구성요소) ── -->
+      <aside class="wiki-sidebar d-none">
+        <div id="app-sidebar-placeholder"></div>
+      </aside>
+    </div>
+    <!-- admin-layout end -->
 
     <!-- ── 푸터 Placeholder ── -->
     <div id="app-footer-placeholder"></div>
@@ -531,220 +821,336 @@
 
     <script src="/js/common.js"></script>
     <script>
-        // ── 탭 전환 로직 ──
-        function showTab(tabId) {
-            document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
-            document.getElementById(tabId).classList.add('active');
+      // ── 탭 전환 로직 ──
+      function showTab(tabId) {
+        document
+          .querySelectorAll(".tab-pane")
+          .forEach((p) => p.classList.remove("active"));
+        document.getElementById(tabId).classList.add("active");
 
-            document.querySelectorAll('.admin-nav-item').forEach(item => {
-                const onclick = item.getAttribute('onclick');
-                if (onclick && onclick.includes(tabId)) {
-                    item.classList.add('active');
-                } else {
-                    item.classList.remove('active');
-                }
-            });
-
-            if (tabId === 'tab-users' && !userListLoaded) toggleUserList();
-            if (tabId === 'tab-content' && !deletedPagesLoaded) toggleDeletedPages();
-            if (tabId === 'tab-stats' && !adminLogLoaded) loadAdminLogs();
-        }
-
-        document.addEventListener('DOMContentLoaded', async () => {
-            await loadConfig();
-
-            if (!currentUser) {
-                window.location.href = '/auth/google';
-                return;
-            }
-
-            if (currentUser.role !== 'admin' && currentUser.role !== 'super_admin') {
-                Swal.fire('접근 제한', '관리자만 접근할 수 있습니다.', 'error').then(() => {
-                    window.location.href = '/';
-                });
-                return;
-            }
-
-            loadCategories();
-            loadWikiSettings();
-            loadSignupPolicy();
-            loadDashStats();
+        document.querySelectorAll(".admin-nav-item").forEach((item) => {
+          const onclick = item.getAttribute("onclick");
+          if (onclick && onclick.includes(tabId)) {
+            item.classList.add("active");
+          } else {
+            item.classList.remove("active");
+          }
         });
 
-        async function loadDashStats() {
-            try {
-                const res = await fetch('/api/admin/analytics/overview?period=7d');
-                if (!res.ok) return;
-                const data = await res.json();
-                if (data.summary) {
-                    document.getElementById('analyticsSummaryCard').style.display = '';
-                    document.getElementById('dashTotalViews').textContent = Number(data.summary.sampled_views || data.summary.total_views || 0).toLocaleString();
-                    document.getElementById('dashCountries').textContent = Number(data.summary.unique_countries || 0).toLocaleString();
-                    renderMiniChart('dashDailyChart', data.daily || []);
-                }
-            } catch (e) { }
+        if (tabId === "tab-users" && !userListLoaded) toggleUserList();
+        if (tabId === "tab-content" && !deletedPagesLoaded)
+          toggleDeletedPages();
+        if (tabId === "tab-stats" && !adminLogLoaded) loadAdminLogs();
+      }
+
+      document.addEventListener("DOMContentLoaded", async () => {
+        await loadConfig();
+
+        if (!currentUser) {
+          window.location.href = "/auth/google";
+          return;
         }
 
-        function renderMiniChart(id, data) {
-            const container = document.getElementById(id);
-            if (!data || data.length === 0) return;
-            const maxVal = Math.max(...data.map(d => Number(d.views || 0)), 1);
-            let html = '<div class="d-flex align-items-end gap-1 h-100">';
-            data.forEach(d => {
-                const pct = (Number(d.views || 0) / maxVal) * 100;
-                html += `<div style="flex:1; height:${Math.max(pct, 5)}%; background:var(--wiki-primary); border-radius:2px;" title="${d.date}: ${d.views}"></div>`;
-            });
-            html += '</div>';
-            container.innerHTML = html;
+        if (
+          currentUser.role !== "admin" &&
+          currentUser.role !== "super_admin"
+        ) {
+          Swal.fire("접근 제한", "관리자만 접근할 수 있습니다.", "error").then(
+            () => {
+              window.location.href = "/";
+            },
+          );
+          return;
         }
 
-        // ── 유저 관리 ──
-        var userCurrentPage = 1, currentSearch = '', userListLoaded = false, userHasMore = false;
-        function toggleUserList() {
-            userListLoaded = true;
-            loadUsers(1, '');
-        }
-        async function loadUsers(page = 1, search = '', append = false) {
-            try {
-                userCurrentPage = page; currentSearch = search;
-                const role = document.getElementById('userRoleFilter').value;
-                const params = new URLSearchParams({ page, limit: 15, role, sort: 'desc' });
-                if (search) params.append('search', search);
-                const res = await fetch(`/api/admin/users?${params.toString()}`);
-                const data = await res.json();
-                renderUsers(data.users, append);
-                userHasMore = page < data.totalPages;
-                document.getElementById('userLoadMoreWrapper').style.display = userHasMore ? '' : 'none';
-            } catch (err) { Swal.fire('오류', err.message, 'error'); }
-        }
-        function loadMoreUsers() { loadUsers(userCurrentPage + 1, currentSearch, true); }
-        function searchUsers() { loadUsers(1, document.getElementById('userSearchInput').value.trim()); }
-        function renderUsers(users, append = false) {
-            const tbody = document.getElementById('userTableBody');
-            const html = (users || []).map(u => {
-                const profile = u.picture ? `<img src="${u.picture}" class="rounded-circle" width="28" height="28">` : `<i class="mdi mdi-account-circle fs-4 text-secondary"></i>`;
-                const joinDate = new Date(u.created_at * 1000).toLocaleDateString('ko-KR');
-                const isDeleted = u.role === 'deleted';
-                let roleBadge = `<span class="badge bg-secondary">${u.role}</span>`;
-                if (u.role === 'super_admin') roleBadge = '<span class="badge bg-dark">최고 관리자</span>';
-                else if (u.role === 'admin') roleBadge = '<span class="badge bg-primary">관리자</span>';
+        loadCategories();
+        loadWikiSettings();
+        loadSignupPolicy();
+        loadDashStats();
+      });
 
-                let roleSelect = '';
-                if (currentUser.role === 'super_admin' && u.role !== 'super_admin') {
-                    roleSelect = `<select class="form-select form-select-sm w-auto d-inline" onchange="changeRole(${u.id}, this.value)">
-                        <option value="user" ${u.role === 'user' ? 'selected' : ''}>유저</option>
-                        <option value="admin" ${u.role === 'admin' ? 'selected' : ''}>관리자</option>
+      async function loadDashStats() {
+        try {
+          const res = await fetch("/api/admin/analytics/overview?period=7d");
+          if (!res.ok) return;
+          const data = await res.json();
+          if (data.summary) {
+            document.getElementById("analyticsSummaryCard").style.display = "";
+            document.getElementById("dashTotalViews").textContent = Number(
+              data.summary.sampled_views || data.summary.total_views || 0,
+            ).toLocaleString();
+            document.getElementById("dashCountries").textContent = Number(
+              data.summary.unique_countries || 0,
+            ).toLocaleString();
+            renderMiniChart("dashDailyChart", data.daily || []);
+          }
+        } catch (e) {}
+      }
+
+      function renderMiniChart(id, data) {
+        const container = document.getElementById(id);
+        if (!data || data.length === 0) return;
+        const maxVal = Math.max(...data.map((d) => Number(d.views || 0)), 1);
+        let html = '<div class="d-flex align-items-end gap-1 h-100">';
+        data.forEach((d) => {
+          const pct = (Number(d.views || 0) / maxVal) * 100;
+          html += `<div style="flex:1; height:${Math.max(pct, 5)}%; background:var(--wiki-primary); border-radius:2px;" title="${d.date}: ${d.views}"></div>`;
+        });
+        html += "</div>";
+        container.innerHTML = html;
+      }
+
+      // ── 유저 관리 ──
+      var userCurrentPage = 1,
+        currentSearch = "",
+        userListLoaded = false,
+        userHasMore = false;
+      function toggleUserList() {
+        userListLoaded = true;
+        loadUsers(1, "");
+      }
+      async function loadUsers(page = 1, search = "", append = false) {
+        try {
+          userCurrentPage = page;
+          currentSearch = search;
+          const role = document.getElementById("userRoleFilter").value;
+          const params = new URLSearchParams({
+            page,
+            limit: 15,
+            role,
+            sort: "desc",
+          });
+          if (search) params.append("search", search);
+          const res = await fetch(`/api/admin/users?${params.toString()}`);
+          const data = await res.json();
+          renderUsers(data.users, append);
+          userHasMore = page < data.totalPages;
+          document.getElementById("userLoadMoreWrapper").style.display =
+            userHasMore ? "" : "none";
+        } catch (err) {
+          Swal.fire("오류", err.message, "error");
+        }
+      }
+      function loadMoreUsers() {
+        loadUsers(userCurrentPage + 1, currentSearch, true);
+      }
+      function searchUsers() {
+        loadUsers(1, document.getElementById("userSearchInput").value.trim());
+      }
+      function renderUsers(users, append = false) {
+        const tbody = document.getElementById("userTableBody");
+        const html = (users || [])
+          .map((u) => {
+            const profile = u.picture
+              ? `<img src="${u.picture}" class="rounded-circle" width="28" height="28">`
+              : `<i class="mdi mdi-account-circle fs-4 text-secondary"></i>`;
+            const joinDate = new Date(u.created_at * 1000).toLocaleDateString(
+              "ko-KR",
+            );
+            const isDeleted = u.role === "deleted";
+            let roleBadge = `<span class="badge bg-secondary">${u.role}</span>`;
+            if (u.role === "super_admin")
+              roleBadge = '<span class="badge bg-dark">최고 관리자</span>';
+            else if (u.role === "admin")
+              roleBadge = '<span class="badge bg-primary">관리자</span>';
+
+            let roleSelect = "";
+            if (
+              currentUser.role === "super_admin" &&
+              u.role !== "super_admin"
+            ) {
+              roleSelect = `<select class="form-select form-select-sm w-auto d-inline" onchange="changeRole(${u.id}, this.value)">
+                        <option value="user" ${u.role === "user" ? "selected" : ""}>유저</option>
+                        <option value="admin" ${u.role === "admin" ? "selected" : ""}>관리자</option>
                     </select>`;
-                } else roleSelect = roleBadge;
+            } else roleSelect = roleBadge;
 
-                return `<tr>
+            return `<tr>
                     <td>${profile}</td>
-                    <td><a href="/profile/${u.id}" class="text-decoration-none fw-bold ${isDeleted ? 'text-muted' : ''}">${escapeHtml(u.name)}</a></td>
+                    <td><a href="/profile/${u.id}" class="text-decoration-none fw-bold ${isDeleted ? "text-muted" : ""}">${escapeHtml(u.name)}</a></td>
                     <td>${roleSelect}</td>
                     <td>${u.banned_until ? '<span class="badge bg-danger">차단됨</span>' : '<span class="badge bg-success">정상</span>'}</td>
                     <td class="small text-muted">${joinDate}</td>
-                    <td><button class="btn btn-xs btn-outline-danger" onclick="promptBan(${u.id}, '${escapeHtml(u.name)}')">${u.banned_until ? '해제' : '차단'}</button></td>
+                    <td><button class="btn btn-xs btn-outline-danger" onclick="promptBan(${u.id}, '${escapeHtml(u.name)}')">${u.banned_until ? "해제" : "차단"}</button></td>
                 </tr>`;
-            }).join('');
-            if (append) tbody.insertAdjacentHTML('beforeend', html); else tbody.innerHTML = html || '<tr><td colspan="6" class="text-center py-4">결과 없음</td></tr>';
-        }
-        async function changeRole(id, role) {
-            const res = await fetch(`/api/admin/users/${id}/role`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ role }) });
-            if (res.ok) Swal.fire({ icon: 'success', title: '변경됨', timer: 800, showConfirmButton: false });
-        }
-        async function promptBan(id, name) {
-            const { value: days } = await Swal.fire({ title: `${name} 차단`, input: 'number', inputLabel: '일수 (0=해제)', inputValue: 7, showCancelButton: true });
-            if (days !== undefined) {
-                const res = await fetch(`/api/admin/users/${id}/ban`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ days: Number(days) }) });
-                if (res.ok) loadUsers(1, currentSearch);
-            }
-        }
-
-        // ── 위키 설정 ──
-        async function loadWikiSettings() {
-            try {
-                const res = await fetch('/api/admin/settings');
-                const s = await res.json();
-                const rl = parseInt(s.namechange_ratelimit, 10);
-                if (rl === 0) document.getElementById('namechangeUnlimited').checked = true;
-                else if (rl === -1) document.getElementById('namechangeDisabled').checked = true;
-                else {
-                    document.getElementById('namechangeCooldown').checked = true;
-                    document.getElementById('cooldownDaysInput').value = rl;
-                    document.getElementById('cooldownDaysWrapper').style.display = '';
-                }
-                document.getElementById('allowDmSwitch').checked = s.allow_direct_message === 1;
-                const policyId = s.signup_policy === 'approval' ? 'Approval' : s.signup_policy === 'blocked' ? 'Blocked' : 'Open';
-                document.getElementById('signupPolicy' + policyId).checked = true;
-
-                // MCP 설정 로드
-                const mcp = s.mcp_mode || 'disabled';
-                const b = document.getElementById('mcpModeDisplay');
-                if (b) {
-                    b.textContent = mcp === 'open' ? 'Open (전체 개방)' : 'Disabled (차단)';
-                    b.className = 'badge ' + (mcp === 'open' ? 'bg-success' : 'bg-secondary');
-                }
-                if (mcp === 'open') {
-                    document.getElementById('mcpServerUrlBox').style.display = '';
-                    document.getElementById('mcpServerUrlInput').value = window.location.origin + '/api/mcp';
-                } else {
-                    document.getElementById('mcpServerUrlBox').style.display = 'none';
-                }
-            } catch (e) {
-                console.error('Settings load failed', e);
-            }
-        }
-
-        async function copyMcpUrl() {
-            const input = document.getElementById('mcpServerUrlInput');
-            if (!input) return;
-            try {
-                await navigator.clipboard.writeText(input.value);
-                Swal.fire({ icon: 'success', title: '복사됨', showConfirmButton: false, timer: 800 });
-            } catch (e) {
-                input.select();
-                document.execCommand('copy');
-                Swal.fire({ icon: 'success', title: '복사됨', showConfirmButton: false, timer: 800 });
-            }
-        }
-        document.querySelectorAll('input[name="namechangePolicy"]').forEach(r => {
-            r.addEventListener('change', e => { document.getElementById('cooldownDaysWrapper').style.display = e.target.value === 'custom' ? '' : 'none'; });
+          })
+          .join("");
+        if (append) tbody.insertAdjacentHTML("beforeend", html);
+        else
+          tbody.innerHTML =
+            html ||
+            '<tr><td colspan="6" class="text-center py-4">결과 없음</td></tr>';
+      }
+      async function changeRole(id, role) {
+        const res = await fetch(`/api/admin/users/${id}/role`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ role }),
         });
-        async function saveWikiSettings() {
-            const p = document.querySelector('input[name="namechangePolicy"]:checked').value;
-            const rl = p === 'custom' ? parseInt(document.getElementById('cooldownDaysInput').value) : parseInt(p);
-            const body = {
-                namechange_ratelimit: rl,
-                allow_direct_message: document.getElementById('allowDmSwitch').checked ? 1 : 0,
-                signup_policy: document.querySelector('input[name="signupPolicy"]:checked').value
-            };
-            const res = await fetch('/api/admin/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-            if (res.ok) Swal.fire({ icon: 'success', title: '저장 완료', timer: 1000, showConfirmButton: false });
+        if (res.ok)
+          Swal.fire({
+            icon: "success",
+            title: "변경됨",
+            timer: 800,
+            showConfirmButton: false,
+          });
+      }
+      async function promptBan(id, name) {
+        const { value: days } = await Swal.fire({
+          title: `${name} 차단`,
+          input: "number",
+          inputLabel: "일수 (0=해제)",
+          inputValue: 7,
+          showCancelButton: true,
+        });
+        if (days !== undefined) {
+          const res = await fetch(`/api/admin/users/${id}/ban`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ days: Number(days) }),
+          });
+          if (res.ok) loadUsers(1, currentSearch);
         }
+      }
 
-        // ── 가입 신청 ──
-        async function loadSignupPolicy() {
-            const res = await fetch('/api/auth/signup-policy');
-            const data = await res.json();
-            if (data.policy === 'approval') {
-                document.getElementById('signupRequestsCard').style.display = '';
-                loadSignupRequests();
-            }
+      // ── 위키 설정 ──
+      async function loadWikiSettings() {
+        try {
+          const res = await fetch("/api/admin/settings");
+          const s = await res.json();
+          const rl = parseInt(s.namechange_ratelimit, 10);
+          if (rl === 0)
+            document.getElementById("namechangeUnlimited").checked = true;
+          else if (rl === -1)
+            document.getElementById("namechangeDisabled").checked = true;
+          else {
+            document.getElementById("namechangeCooldown").checked = true;
+            document.getElementById("cooldownDaysInput").value = rl;
+            document.getElementById("cooldownDaysWrapper").style.display = "";
+          }
+          document.getElementById("allowDmSwitch").checked =
+            s.allow_direct_message === 1;
+          const policyId =
+            s.signup_policy === "approval"
+              ? "Approval"
+              : s.signup_policy === "blocked"
+                ? "Blocked"
+                : "Open";
+          document.getElementById("signupPolicy" + policyId).checked = true;
+
+          // MCP 설정 로드
+          const mcp = s.mcp_mode || "disabled";
+          const b = document.getElementById("mcpModeDisplay");
+          if (b) {
+            b.textContent =
+              mcp === "open" ? "Open (전체 개방)" : "Disabled (차단)";
+            b.className =
+              "badge " + (mcp === "open" ? "bg-success" : "bg-secondary");
+          }
+          if (mcp === "open") {
+            document.getElementById("mcpServerUrlBox").style.display = "";
+            document.getElementById("mcpServerUrlInput").value =
+              window.location.origin + "/api/mcp";
+          } else {
+            document.getElementById("mcpServerUrlBox").style.display = "none";
+          }
+        } catch (e) {
+          console.error("Settings load failed", e);
         }
-        var signupRequestsOffset = 0;
-        async function loadSignupRequests(append = false) {
-            if (!append) signupRequestsOffset = 0;
-            const status = document.getElementById('signupStatusFilter').value;
-            const res = await fetch(`/api/admin/signup-requests?status=${status}&limit=10&offset=${signupRequestsOffset}`);
-            const data = await res.json();
-            renderSignupRequests(data.requests, append);
-            document.getElementById('signupRequestsLoadMore').style.display = data.hasMore ? '' : 'none';
+      }
+
+      async function copyMcpUrl() {
+        const input = document.getElementById("mcpServerUrlInput");
+        if (!input) return;
+        try {
+          await navigator.clipboard.writeText(input.value);
+          Swal.fire({
+            icon: "success",
+            title: "복사됨",
+            showConfirmButton: false,
+            timer: 800,
+          });
+        } catch (e) {
+          input.select();
+          document.execCommand("copy");
+          Swal.fire({
+            icon: "success",
+            title: "복사됨",
+            showConfirmButton: false,
+            timer: 800,
+          });
         }
-        function loadMoreSignupRequests() { signupRequestsOffset += 10; loadSignupRequests(true); }
-        function renderSignupRequests(reqs, append) {
-            const tbody = document.getElementById('signupRequestsBody');
-            const html = (reqs || []).map(r => `<tr>
-                <td>${r.picture ? `<img src="${r.picture}" width="24" height="24" class="rounded-circle">` : '-'}</td>
+      }
+      document
+        .querySelectorAll('input[name="namechangePolicy"]')
+        .forEach((r) => {
+          r.addEventListener("change", (e) => {
+            document.getElementById("cooldownDaysWrapper").style.display =
+              e.target.value === "custom" ? "" : "none";
+          });
+        });
+      async function saveWikiSettings() {
+        const p = document.querySelector(
+          'input[name="namechangePolicy"]:checked',
+        ).value;
+        const rl =
+          p === "custom"
+            ? parseInt(document.getElementById("cooldownDaysInput").value)
+            : parseInt(p);
+        const body = {
+          namechange_ratelimit: rl,
+          allow_direct_message: document.getElementById("allowDmSwitch").checked
+            ? 1
+            : 0,
+          signup_policy: document.querySelector(
+            'input[name="signupPolicy"]:checked',
+          ).value,
+        };
+        const res = await fetch("/api/admin/settings", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        if (res.ok)
+          Swal.fire({
+            icon: "success",
+            title: "저장 완료",
+            timer: 1000,
+            showConfirmButton: false,
+          });
+      }
+
+      // ── 가입 신청 ──
+      async function loadSignupPolicy() {
+        const res = await fetch("/api/auth/signup-policy");
+        const data = await res.json();
+        if (data.policy === "approval") {
+          document.getElementById("signupRequestsCard").style.display = "";
+          loadSignupRequests();
+        }
+      }
+      var signupRequestsOffset = 0;
+      async function loadSignupRequests(append = false) {
+        if (!append) signupRequestsOffset = 0;
+        const status = document.getElementById("signupStatusFilter").value;
+        const res = await fetch(
+          `/api/admin/signup-requests?status=${status}&limit=10&offset=${signupRequestsOffset}`,
+        );
+        const data = await res.json();
+        renderSignupRequests(data.requests, append);
+        document.getElementById("signupRequestsLoadMore").style.display =
+          data.hasMore ? "" : "none";
+      }
+      function loadMoreSignupRequests() {
+        signupRequestsOffset += 10;
+        loadSignupRequests(true);
+      }
+      function renderSignupRequests(reqs, append) {
+        const tbody = document.getElementById("signupRequestsBody");
+        const html = (reqs || [])
+          .map(
+            (r) => `<tr>
+                <td>${r.picture ? `<img src="${r.picture}" width="24" height="24" class="rounded-circle">` : "-"}</td>
                 <td class="fw-bold small">${escapeHtml(r.name)}</td>
                 <td class="small">${escapeHtml(r.email)}</td>
                 <td><span class="badge bg-info">${r.status}</span></td>
@@ -752,102 +1158,246 @@
                     <button class="btn btn-xs btn-success" onclick="approveSignup(${r.id})">승인</button>
                     <button class="btn btn-xs btn-danger" onclick="rejectSignup(${r.id})">거절</button>
                 </td>
-            </tr>`).join('');
-            if (append) tbody.insertAdjacentHTML('beforeend', html); else tbody.innerHTML = html || '<tr><td colspan="5" class="text-center py-3">신청 없음</td></tr>';
-        }
-        async function approveSignup(id) {
-            if (await fetch(`/api/admin/signup-requests/${id}/approve`, { method: 'PUT' })) loadSignupRequests();
-        }
+            </tr>`,
+          )
+          .join("");
+        if (append) tbody.insertAdjacentHTML("beforeend", html);
+        else
+          tbody.innerHTML =
+            html ||
+            '<tr><td colspan="5" class="text-center py-3">신청 없음</td></tr>';
+      }
+      async function approveSignup(id) {
+        if (
+          await fetch(`/api/admin/signup-requests/${id}/approve`, {
+            method: "PUT",
+          })
+        )
+          loadSignupRequests();
+      }
 
-        // ── 삭제된 문서 ──
-        var deletedPagesLoaded = false, deletedPagesPage = 1;
-        async function loadDeletedPages(page = 1, append = false) {
-            deletedPagesLoaded = true; deletedPagesPage = page;
-            const res = await fetch(`/api/admin/pages/deleted?limit=10&offset=${(page - 1) * 10}`);
-            const data = await res.json();
-            const html = (data.pages || []).map(p => `<tr>
+      // ── 삭제된 문서 ──
+      var deletedPagesLoaded = false,
+        deletedPagesPage = 1;
+      async function loadDeletedPages(page = 1, append = false) {
+        deletedPagesLoaded = true;
+        deletedPagesPage = page;
+        const res = await fetch(
+          `/api/admin/pages/deleted?limit=10&offset=${(page - 1) * 10}`,
+        );
+        const data = await res.json();
+        const html = (data.pages || [])
+          .map(
+            (p) => `<tr>
                 <td class="fw-bold small">${escapeHtml(p.slug)}</td>
                 <td class="small text-muted">${new Date(p.deleted_at * 1000).toLocaleString()}</td>
                 <td><button class="btn btn-xs btn-outline-success" onclick="restorePage('${escapeHtml(p.slug)}')">복원</button></td>
-            </tr>`).join('');
-            const tbody = document.getElementById('deletedPagesBody');
-            if (append) tbody.insertAdjacentHTML('beforeend', html); else tbody.innerHTML = html || '<tr><td colspan="3" class="text-center py-3">없음</td></tr>';
-            document.getElementById('deletedPagesLoadMoreWrapper').style.display = page * 10 < data.total ? '' : 'none';
-        }
-        function loadMoreDeletedPages() { loadDeletedPages(deletedPagesPage + 1, true); }
-        async function restorePage(slug) {
-            if (await fetch(`/api/w/${encodeURIComponent(slug)}/restore`, { method: 'POST' })) loadDeletedPages();
-        }
+            </tr>`,
+          )
+          .join("");
+        const tbody = document.getElementById("deletedPagesBody");
+        if (append) tbody.insertAdjacentHTML("beforeend", html);
+        else
+          tbody.innerHTML =
+            html ||
+            '<tr><td colspan="3" class="text-center py-3">없음</td></tr>';
+        document.getElementById("deletedPagesLoadMoreWrapper").style.display =
+          page * 10 < data.total ? "" : "none";
+      }
+      function loadMoreDeletedPages() {
+        loadDeletedPages(deletedPagesPage + 1, true);
+      }
+      async function restorePage(slug) {
+        if (
+          await fetch(`/api/w/${encodeURIComponent(slug)}/restore`, {
+            method: "POST",
+          })
+        )
+          loadDeletedPages();
+      }
 
-        // ── 카테고리 ──
-        async function loadCategories() {
-            const res = await fetch('/api/admin/categories');
-            const cats = await res.json();
-            document.getElementById('categoriesList').innerHTML = (cats || []).map(c => `
+      // ── 카테고리 ──
+      async function loadCategories() {
+        const res = await fetch("/api/admin/categories");
+        const cats = await res.json();
+        document.getElementById("categoriesList").innerHTML =
+          (cats || [])
+            .map(
+              (c) => `
                 <div class="list-group-item d-flex justify-content-between align-items-center py-2">
                     <span class="small"><i class="mdi mdi-folder-outline me-1"></i>${escapeHtml(c.name)}</span>
                     <button class="btn btn-xs btn-link text-danger p-0" onclick="deleteCategory(${c.id})"><i class="mdi mdi-delete-outline"></i></button>
                 </div>
-            `).join('') || '<div class="p-3 text-center text-muted small">카테고리 없음</div>';
+            `,
+            )
+            .join("") ||
+          '<div class="p-3 text-center text-muted small">카테고리 없음</div>';
+      }
+      async function addCategory() {
+        const name = document.getElementById("newCategoryInput").value.trim();
+        if (!name) return;
+        const res = await fetch("/api/admin/categories", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name }),
+        });
+        if (res.ok) {
+          document.getElementById("newCategoryInput").value = "";
+          loadCategories();
         }
-        async function addCategory() {
-            const name = document.getElementById('newCategoryInput').value.trim();
-            if (!name) return;
-            const res = await fetch('/api/admin/categories', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
-            if (res.ok) { document.getElementById('newCategoryInput').value = ''; loadCategories(); }
-        }
-        async function deleteCategory(id) {
-            if (await fetch(`/api/admin/categories/${id}`, { method: 'DELETE' })) loadCategories();
-        }
+      }
+      async function deleteCategory(id) {
+        if (await fetch(`/api/admin/categories/${id}`, { method: "DELETE" }))
+          loadCategories();
+      }
 
-        // ── 통계 및 로그 ──
-        let adminLogOffset = 0, adminLogLoaded = false;
-        async function loadAdminLogs() {
-            adminLogLoaded = true; adminLogOffset = 0;
-            document.getElementById('adminLogBody').innerHTML = '';
-            await fetchAdminLogs();
-        }
-        async function fetchAdminLogs() {
-            const res = await fetch(`/api/admin/logs?offset=${adminLogOffset}`);
-            const data = await res.json();
-            const html = data.logs.map(log => `<tr>
+      // ── 통계 및 로그 ──
+      let adminLogOffset = 0,
+        adminLogLoaded = false;
+      async function loadAdminLogs() {
+        adminLogLoaded = true;
+        adminLogOffset = 0;
+        document.getElementById("adminLogBody").innerHTML = "";
+        await fetchAdminLogs();
+      }
+      async function fetchAdminLogs() {
+        const res = await fetch(`/api/admin/logs?offset=${adminLogOffset}`);
+        const data = await res.json();
+        const html = data.logs
+          .map(
+            (log) => `<tr>
                 <td class="small text-muted">${new Date(log.created_at * 1000).toLocaleTimeString()}</td>
                 <td><span class="badge bg-secondary">${log.type}</span></td>
                 <td class="small">${escapeHtml(log.log)}</td>
-                <td class="small">${escapeHtml(log.user_name || 'Admin')}</td>
-            </tr>`).join('');
-            document.getElementById('adminLogBody').insertAdjacentHTML('beforeend', html);
-            adminLogOffset += data.logs.length;
+                <td class="small">${escapeHtml(log.user_name || "Admin")}</td>
+            </tr>`,
+          )
+          .join("");
+        document
+          .getElementById("adminLogBody")
+          .insertAdjacentHTML("beforeend", html);
+        adminLogOffset += data.logs.length;
+      }
+
+      async function loadAnalyticsDashboard() {
+        document.getElementById("analyticsLoadBtn").style.display = "none";
+        document.getElementById("analyticsRealContent").style.display = "";
+        refreshAnalytics();
+      }
+      async function refreshAnalytics() {
+        const p = "7d";
+        const [o, pg, t, ref, cou, dev, sea, err, perf] = await Promise.all([
+          fetch(`/api/admin/analytics/overview?period=${p}`).then((r) =>
+            r.json(),
+          ),
+          fetch(`/api/admin/analytics/pages?period=${p}`).then((r) => r.json()),
+          fetch(`/api/admin/analytics/trending?hours=24`).then((r) => r.json()),
+          fetch(`/api/admin/analytics/referrers?period=${p}`).then((r) =>
+            r.json(),
+          ),
+          fetch(`/api/admin/analytics/countries?period=${p}`).then((r) =>
+            r.json(),
+          ),
+          fetch(`/api/admin/analytics/devices?period=${p}`).then((r) =>
+            r.json(),
+          ),
+          fetch(`/api/admin/analytics/searches?period=${p}`).then((r) =>
+            r.json(),
+          ),
+          fetch(`/api/admin/analytics/errors?period=${p}`).then((r) =>
+            r.json(),
+          ),
+          fetch(`/api/admin/analytics/performance?period=${p}`).then((r) =>
+            r.json(),
+          ),
+        ]);
+        renderMiniChart("dailyChart", o.daily || []);
+        renderAnalyticsList(
+          "topPagesContainer",
+          pg.pages?.map((x) => ({ label: x.slug, value: x.views })),
+        );
+        renderAnalyticsList(
+          "trendingContainer",
+          t.trending?.map((x) => ({ label: x.slug, value: x.views })),
+        );
+        renderAnalyticsList(
+          "referrersContainer",
+          ref.referrers?.map((x) => ({ label: x.referer, value: x.views })),
+        );
+        renderAnalyticsList(
+          "countriesContainer",
+          cou.countries?.map((x) => ({ label: x.country, value: x.views })),
+        );
+        renderAnalyticsList(
+          "devicesContainer",
+          dev.devices?.map((x) => ({ label: x.device, value: x.views })),
+        );
+        renderAnalyticsList(
+          "searchesContainer",
+          sea.searches?.map((x) => ({ label: x.query, value: x.count })),
+        );
+
+        // Render Errors
+        const errBody = document.getElementById("errorsContainerBody");
+        if (!err.errors || err.errors.length === 0) {
+          errBody.innerHTML =
+            '<tr><td colspan="4" class="text-center text-muted">에러 없음</td></tr>';
+        } else {
+          errBody.innerHTML = err.errors
+            .map(
+              (e) => `
+                    <tr>
+                        <td class="text-truncate" style="max-width:150px;" title="${escapeHtml(e.path)}">${escapeHtml(e.path)}</td>
+                        <td class="text-truncate" style="max-width:200px;" title="${escapeHtml(e.error_message)}">${escapeHtml(e.error_message)}</td>
+                        <td><span class="badge ${e.status_code >= 500 ? "bg-danger" : "bg-warning text-dark"}">${e.status_code}</span></td>
+                        <td>${e.count}</td>
+                    </tr>
+                `,
+            )
+            .join("");
         }
 
-        async function loadAnalyticsDashboard() {
-            document.getElementById('analyticsLoadBtn').style.display = 'none';
-            document.getElementById('analyticsRealContent').style.display = '';
-            refreshAnalytics();
+        // Render Performance
+        const perfContainer = document.getElementById("performanceContainer");
+        if (!perf.summary) {
+          perfContainer.innerHTML =
+            '<span class="text-muted">데이터 없음</span>';
+        } else {
+          perfContainer.innerHTML = `
+                    <div class="p-2 bg-light rounded text-center" style="flex:1;">
+                        <div class="text-muted mb-1">평균 (Avg)</div>
+                        <div class="fw-bold">${Math.round(perf.summary.avg_response_ms || 0)} ms</div>
+                    </div>
+                    <div class="p-2 bg-light rounded text-center" style="flex:1;">
+                        <div class="text-muted mb-1">p95</div>
+                        <div class="fw-bold">${Math.round(perf.summary.p95_response_ms || 0)} ms</div>
+                    </div>
+                    <div class="p-2 bg-light rounded text-center" style="flex:1;">
+                        <div class="text-muted mb-1">p99</div>
+                        <div class="fw-bold">${Math.round(perf.summary.p99_response_ms || 0)} ms</div>
+                    </div>
+                `;
         }
-        async function refreshAnalytics() {
-            const p = '7d';
-            const [o, pg, t] = await Promise.all([
-                fetch(`/api/admin/analytics/overview?period=${p}`).then(r => r.json()),
-                fetch(`/api/admin/analytics/pages?period=${p}`).then(r => r.json()),
-                fetch(`/api/admin/analytics/trending?hours=24`).then(r => r.json()),
-            ]);
-            renderMiniChart('dailyChart', o.daily || []);
-            renderAnalyticsList('topPagesContainer', pg.pages?.map(x => ({ label: x.slug, value: x.views })));
-            renderAnalyticsList('trendingContainer', t.trending?.map(x => ({ label: x.slug, value: x.views })));
+      }
+      function renderAnalyticsList(id, items) {
+        const el = document.getElementById(id);
+        if (!items || items.length === 0) {
+          el.innerHTML = '<div class="text-muted py-2">데이터 없음</div>';
+          return;
         }
-        function renderAnalyticsList(id, items) {
-            const el = document.getElementById(id);
-            if (!items || items.length === 0) { el.innerHTML = '<div class="text-muted py-2">데이터 없음</div>'; return; }
-            const max = Math.max(...items.map(i => i.value), 1);
-            el.innerHTML = items.slice(0, 5).map(i => `
+        const max = Math.max(...items.map((i) => i.value), 1);
+        el.innerHTML = items
+          .slice(0, 5)
+          .map(
+            (i) => `
                 <div class="mb-2">
                     <div class="d-flex justify-content-between small mb-1"><span class="text-truncate" style="max-width:80%">${escapeHtml(i.label)}</span><span>${i.value}</span></div>
                     <div class="progress" style="height:3px;"><div class="progress-bar" style="width:${(i.value / max) * 100}%"></div></div>
                 </div>
-            `).join('');
-        }
+            `,
+          )
+          .join("");
+      }
     </script>
-</body>
-
+  </body>
 </html>

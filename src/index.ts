@@ -327,6 +327,14 @@ app.get('/w/:slug/discussions', async (c) => {
     return renderHtml(c, '/discussions.html');
 });
 
+// /recent-changes → recent-changes.html 서빙 (SSR 브랜딩 적용)
+app.get('/recent-changes', async (c) => {
+    if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) {
+        return c.redirect('/login');
+    }
+    return renderHtml(c, '/recent-changes.html');
+});
+
 // /w/:slug/revisions → revisions.html 서빙 (SSR 브랜딩 적용)
 app.get('/w/:slug/revisions', async (c) => {
     if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) {

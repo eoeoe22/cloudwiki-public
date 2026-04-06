@@ -422,6 +422,52 @@ wiki.get('/w/random', async (c) => {
 });
 
 /**
+ * GET /w/recent-revisions
+ * 위키 전체에서 가장 최근 리비전 내역 (모든 문서 대상)
+ * - 비관리자: 공개 + 삭제되지 않은 문서의 리비전만 표시
+ * - 관리자: 비공개 문서 포함, 삭제된 문서 제외
+ * Query: offset (기본 0), limit (기본 10, 최대 50)
+ */
+wiki.get('/w/recent-revisions', async (c) => {
+    if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) {
+        return c.json({ error: '로그인이 필요합니다.' }, 401);
+    }
+    const db = c.env.DB;
+    const user = c.get('user');
+    const isAdmin = user && (user.role === 'admin' || user.role === 'super_admin');
+    const offset = Math.max(0, parseInt(c.req.query('offset') || '0', 10));
+    const limit = Math.min(50, Math.max(1, parseInt(c.req.query('limit') || '10', 10)));
+
+    let query = `
+        SELECT r.id, r.page_id, r.page_version, r.summary, r.created_at,
+               p.slug, p.title,
+               u.id as author_id, u.name as author_name, u.picture as author_picture,
+               ${ROLE_CASE_SQL} as author_role,
+               u.email as _author_email
+        FROM revisions r
+        JOIN pages p ON r.page_id = p.id
+        LEFT JOIN users u ON r.author_id = u.id
+        WHERE p.deleted_at IS NULL
+    `;
+    if (!isAdmin) {
+        query += ' AND p.is_private = 0';
+    }
+    query += ` ORDER BY r.created_at DESC LIMIT ? OFFSET ?`;
+
+    const { results } = await db.prepare(query).bind(limit + 1, offset).all();
+
+    let has_more = false;
+    if (results.length > limit) {
+        has_more = true;
+        results.pop();
+    }
+
+    enrichRoles(results, 'author_role', '_author_email', c.env);
+
+    return c.json(safeJSON({ revisions: results, has_more }));
+});
+
+/**
  * GET /w/:slug
  * 문서 조회 (공개)
  * - 리다이렉트 처리: 문서가 없고 리다이렉트가 존재하면 대상 문서 반환 (redirected_from 포함)

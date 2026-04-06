@@ -176,13 +176,13 @@
                 <span class="revision-summary text-truncate">${escapeHtml(rev.summary || '(요약 없음)')}</span>
               </div>
               <div class="d-flex gap-2 ms-2" style="white-space: nowrap;">
-                <button class="btn btn-sm btn-outline-primary" data-slug="${escapeHtml(slug)}" data-id="${rev.id}" data-page-version="${rev.page_version ?? ''}" onclick="viewRevision(this.dataset.slug, +this.dataset.id, this.dataset.pageVersion)">
+                <button class="btn btn-rev-action btn-rev-view" data-slug="${escapeHtml(slug)}" data-id="${rev.id}" data-page-version="${rev.page_version ?? ''}" onclick="viewRevision(this.dataset.slug, +this.dataset.id, this.dataset.pageVersion)">
                   <i class="bi bi-file-text"></i> 보기
                 </button>
-                <button class="btn btn-sm btn-outline-info" data-slug="${escapeHtml(slug)}" data-id="${rev.id}" onclick="showDiff(this.dataset.slug, +this.dataset.id)">
+                <button class="btn btn-rev-action btn-rev-diff" data-slug="${escapeHtml(slug)}" data-id="${rev.id}" onclick="showDiff(this.dataset.slug, +this.dataset.id)">
                   <i class="bi bi-file-diff"></i> 비교
                 </button>
-                <button class="btn btn-sm btn-outline-danger" data-slug="${escapeHtml(slug)}" data-id="${rev.id}" data-page-version="${rev.page_version ?? ''}" onclick="confirmRevert(this.dataset.slug, +this.dataset.id, this.dataset.pageVersion)" ${isPageDeleted ? 'disabled title="삭제된 문서는 되돌릴 수 없습니다. 먼저 복원하세요."' : ''}>
+                <button class="btn btn-rev-action btn-rev-revert" data-slug="${escapeHtml(slug)}" data-id="${rev.id}" data-page-version="${rev.page_version ?? ''}" onclick="confirmRevert(this.dataset.slug, +this.dataset.id, this.dataset.pageVersion)" ${isPageDeleted ? 'disabled title="삭제된 문서는 되돌릴 수 없습니다. 먼저 복원하세요."' : ''}>
                   <i class="bi bi-arrow-counterclockwise"></i> 되돌리기
                 </button>
               </div>

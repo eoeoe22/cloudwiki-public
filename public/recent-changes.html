@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title class="app-wiki-name">최근 수정 내역 - CloudWiki</title>
+  <link rel="icon" id="wiki-favicon" href="/favicon.ico">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.13.1/font/bootstrap-icons.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css" rel="stylesheet">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Outfit:wght@500;600;700;800;900&family=Inter:wght@400;500;700;800&display=swap"
+    rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+</head>
+
+<body style="-webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;">
+
+  <!-- ── 네비게이션 바 Placeholder ── -->
+  <div id="app-header-placeholder"></div>
+
+  <!-- ── 메인 레이아웃 ── -->
+  <div class="wiki-layout">
+    <div class="wiki-container">
+      <!-- 로딩 -->
+      <div id="loading" class="wiki-loading">
+        <div class="spinner-border text-primary" role="status"></div>
+        <span>불러오는 중...</span>
+      </div>
+
+      <!-- 최근 수정 내역 목록 -->
+      <div id="recentRevisionsPage" class="d-none">
+        <div class="wiki-article" style="width: 100%; max-width: 100vw; overflow-x: hidden;">
+          <h2 class="text-break"><i class="bi bi-clock-history"></i> 최근 수정 내역</h2>
+          <div class="table-responsive"
+            style="width: 100%; max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch;">
+            <div class="revision-list" id="revisionsList" style="min-width: 700px;"></div>
+          </div>
+          <button id="loadMoreBtn" class="btn btn-outline-secondary w-100 mt-3 d-none" onclick="loadMore()">
+            <i class="bi bi-chevron-down"></i> 더 로드하기
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 오른쪽 사이드바 (PC 전용 오프캔버스 컨테이너 및 최근 변경) -->
+    <aside class="wiki-sidebar" id="wikiSidebar">
+      <div id="app-sidebar-placeholder"></div>
+
+      <!-- 실시간 트렌딩 (PC/모바일 공통) -->
+      <div class="mb-4">
+        <div class="sidebar-section">
+          <h6 class="sidebar-title d-flex justify-content-between align-items-center mb-2">
+            <span><i class="bi bi-graph-up-arrow text-danger"></i> 실시간 트렌딩</span>
+            <a href="#" class="small text-muted text-decoration-none trending-expand-btn" style="font-size: 0.8rem;">펼치기 <i class="bi bi-chevron-down"></i></a>
+          </h6>
+          <div class="position-relative overflow-hidden trending-ticker-wrapper" style="height: 38px;">
+            <div id="trendingListPc" class="trending-container trending-ticker-list">
+              <div class="placeholder-glow px-2 py-2">
+                <span class="placeholder w-100 d-block" style="height: 1.5rem; border-radius: 4px;"></span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- PC 전용 최근 변경 -->
+      <div class="d-none d-lg-block">
+        <div class="sidebar-section sidebar-section-pc-only">
+          <h6 class="sidebar-title"><i class="bi bi-clock-history"></i> 최근 변경</h6>
+          <div id="recentChangesListPc" class="recent-changes-list recent-changes-container">
+            <div class="placeholder-glow">
+              <span class="placeholder w-100 d-block mb-2" style="height: 2.5rem; border-radius: 6px;"></span>
+              <span class="placeholder w-100 d-block mb-2" style="height: 2.5rem; border-radius: 6px;"></span>
+              <span class="placeholder w-100 d-block" style="height: 2.5rem; border-radius: 6px;"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <!-- ── 푸터 Placeholder ── -->
+  <div id="app-footer-placeholder"></div>
+
+  <!-- ── Scripts ── -->
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+
+  <script src="/js/common.js"></script>
+  <script>
+    // ── 전역 상태 ──
+    let currentOffset = 0;
+    const PAGE_SIZE = 10;
+
+    // ── 초기화 ──
+    document.addEventListener('DOMContentLoaded', async () => {
+      await loadConfig();
+      await checkAuth();
+      loadRecentRevisions();
+      loadTrending();
+      loadRecentChanges();
+    });
+
+    // ── 최근 수정 내역 로드 ──
+    async function loadRecentRevisions(append = false) {
+      try {
+        if (!append) {
+          document.getElementById('loading').classList.remove('d-none');
+          document.getElementById('recentRevisionsPage').classList.add('d-none');
+          currentOffset = 0;
+        }
+
+        const res = await fetch(`/api/w/recent-revisions?offset=${currentOffset}&limit=${PAGE_SIZE}`);
+        if (!res.ok) throw new Error('최근 수정 내역 로딩 실패');
+
+        const data = await res.json();
+        const listEl = document.getElementById('revisionsList');
+
+        const itemsHtml = data.revisions.map(rev => {
+          const date = new Date(rev.created_at * 1000).toLocaleString('ko-KR');
+          const timeAgo = getRelativeTime(rev.created_at);
+          const versionLabel = rev.page_version != null ? `v${rev.page_version}` : `#${rev.id}`;
+
+          return `
+            <div class="revision-item d-flex align-items-center justify-content-between border-bottom py-2">
+              <div class="d-flex align-items-center gap-3 flex-grow-1 overflow-hidden">
+                <span class="revision-date text-muted small" style="min-width: 140px;" title="${escapeHtml(date)}">${timeAgo}</span>
+                <a href="/w/${encodeURIComponent(rev.slug)}" class="badge bg-light text-dark border text-decoration-none text-truncate" style="max-width: 200px;" title="${escapeHtml(rev.title || rev.slug)}"
+                   onclick="event.preventDefault(); window.location.href=this.href;">
+                  ${escapeHtml(rev.title || rev.slug)}
+                </a>
+                ${rev.author_id ? `<a href="/profile/${rev.author_id}" class="revision-author badge bg-light text-dark border text-decoration-none">${escapeHtml(rev.author_name || '알 수 없음')}${renderUserRoleIcon(rev.author_role)}</a>` : `<span class="revision-author badge bg-light text-dark border">${escapeHtml(rev.author_name || '알 수 없음')}${renderUserRoleIcon(rev.author_role)}</span>`}
+                <span class="revision-summary text-truncate">${escapeHtml(rev.summary || '(요약 없음)')}</span>
+              </div>
+              <div class="d-flex gap-2 ms-2" style="white-space: nowrap;">
+                <span class="text-muted small">${versionLabel}</span>
+                <a href="/w/${encodeURIComponent(rev.slug)}/revisions" class="btn btn-rev-action btn-rev-view" title="편집 이력 보기">
+                  <i class="bi bi-clock-history"></i> 이력
+                </a>
+              </div>
+            </div>
+          `;
+        }).join('');
+
+        if (append) {
+          listEl.insertAdjacentHTML('beforeend', itemsHtml);
+        } else {
+          listEl.innerHTML = itemsHtml;
+        }
+
+        // 빈 결과 처리
+        if (data.revisions.length === 0 && !append) {
+          listEl.innerHTML = '<div class="text-center text-muted py-5"><i class="bi bi-inbox fs-1 d-block mb-2"></i>최근 수정 내역이 없습니다.</div>';
+        }
+
+        const loadMoreBtn = document.getElementById('loadMoreBtn');
+        if (data.has_more) {
+          loadMoreBtn.classList.remove('d-none');
+        } else {
+          loadMoreBtn.classList.add('d-none');
+        }
+
+        document.getElementById('loading').classList.add('d-none');
+        document.getElementById('recentRevisionsPage').classList.remove('d-none');
+        initRoleIconPopovers(listEl);
+
+        currentOffset += data.revisions.length;
+
+      } catch (err) {
+        console.error(err);
+        document.getElementById('loading').classList.add('d-none');
+        Swal.fire('오류', '최근 수정 내역을 불러오는 데 실패했습니다.', 'error');
+      }
+    }
+
+    // ── 더 로드하기 ──
+    function loadMore() {
+      loadRecentRevisions(true);
+    }
+  </script>
+
+</body>
+
+</html>

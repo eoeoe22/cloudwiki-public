@@ -1369,8 +1369,8 @@ async function loadTrending() {
             return `
               <a href="/w/${encodeURIComponent(item.slug)}" class="text-decoration-none d-flex align-items-center py-2 px-2 text-body trending-item-link"
                  onclick="if(typeof navigateTo==='function'){navigateTo(this.href);return false;}">
-                <span class="text-muted fw-bold me-2" style="font-size: 0.95rem;">${index + 1}.</span>
-                <span class="text-truncate" style="font-size: 0.95rem;">${escapeHtml(item.slug)}</span>
+                <span class="text-muted fw-bold me-2 flex-shrink-0" style="font-size: 0.95rem; white-space: nowrap;">${index + 1}.</span>
+                <span class="text-truncate" style="font-size: 0.95rem; min-width: 0;">${escapeHtml(item.slug)}</span>
               </a>
             `;
         }).join('');

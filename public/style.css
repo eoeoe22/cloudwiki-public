@@ -1388,6 +1388,76 @@ div:where(.swal2-container) .swal2-html-container {
   border: 1px solid var(--wiki-border);
 }
 
+/* 리비전 조작 버튼 (Premium Neutral UI) */
+.btn-rev-action {
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 0.45rem 0.85rem;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  background-color: var(--wiki-card-bg);
+  border: 1px solid var(--wiki-border);
+  color: var(--wiki-text);
+  box-shadow: var(--wiki-shadow-sm);
+  white-space: nowrap;
+}
+
+.btn-rev-action i {
+  font-size: 0.95rem;
+  transition: color 0.2s ease;
+}
+
+.btn-rev-action:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--wiki-shadow-md);
+  border-color: var(--wiki-border-focus);
+}
+
+.btn-rev-action:active {
+  transform: translateY(0);
+}
+
+/* 보기 버튼 - Blue Icon on Hover */
+.btn-rev-view:hover {
+  color: var(--wiki-primary) !important;
+}
+.btn-rev-view:hover i {
+  color: var(--wiki-primary);
+}
+
+/* 비교 버튼 - Indigo Icon on Hover */
+.btn-rev-diff:hover {
+  color: var(--wiki-accent) !important;
+}
+.btn-rev-diff:hover i {
+  color: var(--wiki-accent);
+}
+
+/* 되돌리기 버튼 - Rose Icon on Hover */
+.btn-rev-revert:hover {
+  color: var(--wiki-danger) !important;
+}
+.btn-rev-revert:hover i {
+  color: var(--wiki-danger);
+}
+
+.btn-rev-revert:disabled {
+  background-color: var(--wiki-bg) !important;
+  color: var(--wiki-text-muted) !important;
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none !important;
+  box-shadow: none !important;
+  border-color: var(--wiki-border) !important;
+}
+
+.btn-rev-revert:disabled i {
+  color: inherit !important;
+}
+
 /* ── Diff View ── */
 .diff-container {
   text-align: left;

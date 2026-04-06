@@ -1,3 +1,6 @@
+-- Cloudflare D1 Database Schema
+
+
 -- 사용자 테이블
 CREATE TABLE IF NOT EXISTS users (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -10,6 +13,8 @@ CREATE TABLE IF NOT EXISTS users (
   banned_until INTEGER,
   last_namechange INTEGER
 );
+CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+CREATE INDEX IF NOT EXISTS idx_users_created ON users(created_at DESC);
 
 -- 세션 테이블
 CREATE TABLE IF NOT EXISTS sessions (
@@ -39,8 +44,9 @@ CREATE TABLE IF NOT EXISTS pages (
   FOREIGN KEY (author_id) REFERENCES users(id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_pages_slug ON pages(slug);
-CREATE INDEX IF NOT EXISTS idx_pages_updated ON pages(updated_at);
+
+CREATE INDEX IF NOT EXISTS idx_pages_updated ON pages(updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_pages_author ON pages(author_id);
 
 -- 리비전 테이블
 -- content: 기존 리비전은 본문이 직접 저장됨. 신규 리비전은 r2_key를 통해 R2에서 조회.
@@ -58,7 +64,9 @@ CREATE TABLE IF NOT EXISTS revisions (
   FOREIGN KEY (author_id) REFERENCES users(id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_revisions_page ON revisions(page_id);
+CREATE INDEX IF NOT EXISTS idx_revisions_page_version ON revisions(page_id, page_version DESC);
+CREATE INDEX IF NOT EXISTS idx_revisions_author ON revisions(author_id);
+CREATE INDEX IF NOT EXISTS idx_revisions_created ON revisions(created_at DESC);
 
 -- 미디어 테이블
 CREATE TABLE IF NOT EXISTS media (
@@ -71,6 +79,7 @@ CREATE TABLE IF NOT EXISTS media (
   created_at  INTEGER DEFAULT (unixepoch()),
   FOREIGN KEY (uploader_id) REFERENCES users(id)
 );
+CREATE INDEX IF NOT EXISTS idx_media_uploader ON media(uploader_id);
 
 -- FTS5 검색 가상 테이블
 CREATE VIRTUAL TABLE IF NOT EXISTS pages_fts
@@ -105,7 +114,7 @@ CREATE TABLE IF NOT EXISTS redirects (
   created_at INTEGER DEFAULT (unixepoch())
 );
 
-CREATE INDEX IF NOT EXISTS idx_redirects_source ON redirects(source_slug);
+
 CREATE INDEX IF NOT EXISTS idx_redirects_target ON redirects(target_page_id);
 
 -- 설정 테이블
@@ -130,7 +139,7 @@ CREATE TABLE IF NOT EXISTS notifications (
   created_at  INTEGER DEFAULT (unixepoch()),
   FOREIGN KEY (user_id) REFERENCES users(id)
 );
-CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id);
+CREATE INDEX IF NOT EXISTS idx_notifications_user_created ON notifications(user_id, created_at DESC);
 
 -- 쪽지 테이블
 CREATE TABLE IF NOT EXISTS messages (
@@ -145,7 +154,8 @@ CREATE TABLE IF NOT EXISTS messages (
   FOREIGN KEY (receiver_id) REFERENCES users(id),
   FOREIGN KEY (reply_to) REFERENCES messages(id)
 );
-CREATE INDEX IF NOT EXISTS idx_messages_receiver ON messages(receiver_id);
+CREATE INDEX IF NOT EXISTS idx_messages_receiver_created ON messages(receiver_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_id);
 
 -- 토론 스레드
 CREATE TABLE IF NOT EXISTS discussions (
@@ -160,7 +170,7 @@ CREATE TABLE IF NOT EXISTS discussions (
   FOREIGN KEY (page_id) REFERENCES pages(id),
   FOREIGN KEY (author_id) REFERENCES users(id)
 );
-CREATE INDEX IF NOT EXISTS idx_discussions_page ON discussions(page_id);
+CREATE INDEX IF NOT EXISTS idx_discussions_page_updated ON discussions(page_id, updated_at DESC);
 
 -- 토론 댓글
 CREATE TABLE IF NOT EXISTS discussion_comments (
@@ -175,7 +185,7 @@ CREATE TABLE IF NOT EXISTS discussion_comments (
   FOREIGN KEY (author_id) REFERENCES users(id),
   FOREIGN KEY (parent_id) REFERENCES discussion_comments(id)
 );
-CREATE INDEX IF NOT EXISTS idx_dcomments_discussion ON discussion_comments(discussion_id);
+CREATE INDEX IF NOT EXISTS idx_dcomments_discussion_created ON discussion_comments(discussion_id, created_at ASC);
 
 -- 티켓 문의
 CREATE TABLE IF NOT EXISTS tickets (
@@ -216,7 +226,7 @@ CREATE TABLE IF NOT EXISTS admin_log (
   created_at INTEGER DEFAULT (unixepoch()),
   FOREIGN KEY (user) REFERENCES users(id)
 );
-CREATE INDEX IF NOT EXISTS idx_admin_log_created ON admin_log(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_admin_log_user_created ON admin_log(user, created_at DESC);
 
 -- 문서 간 링크 테이블 (역링크 인덱싱용)
 -- 문서 수정 시 content에서 [[링크]]를 파싱하여 이 테이블에 저장
@@ -255,6 +265,7 @@ CREATE TABLE IF NOT EXISTS signup_requests (
 );
 CREATE INDEX IF NOT EXISTS idx_signup_requests_status ON signup_requests(status);
 CREATE INDEX IF NOT EXISTS idx_signup_requests_google ON signup_requests(google_id);
+CREATE INDEX IF NOT EXISTS idx_signup_requests_created ON signup_requests(created_at DESC);
 
 -- 개별 토론 알림 뮤트 테이블
 CREATE TABLE IF NOT EXISTS discussion_mutes (
