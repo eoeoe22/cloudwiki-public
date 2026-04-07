@@ -2,7 +2,8 @@ import { Hono, Context } from 'hono';
 import { cors } from 'hono/cors';
 import type { Env } from '../types';
 import { renderForAI, extractTOC, extractSection, findSectionForSnippet } from '../utils/aiParser';
-import { normalizeSlug } from '../utils/slug';
+import { normalizeSlug, isR2OnlyNamespace } from '../utils/slug';
+import { getRevisionContent } from '../utils/r2';
 
 const mcpRoutes = new Hono<Env>();
 
@@ -226,21 +227,46 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                 return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(results.results, null, 2) }] } };
             }
             if (toolName === 'search_fts') {
-                const query = `SELECT p.title, p.content, snippet(pages_fts, -1, '<b>', '</b>', '...', 20) as snippet FROM pages_fts f JOIN pages p ON f.rowid = p.id WHERE pages_fts MATCH ? AND p.deleted_at IS NULL AND p.is_private = 0 LIMIT 10`;
-                const results = await db.prepare(query).bind(`"${args.query}"*`).all<{ title: string; content: string; snippet: string }>();
-                const output = results.results.map(({ title, content, snippet }) => ({
-                    title,
-                    section: findSectionForSnippet(content, snippet),
+                const query = `SELECT p.slug, p.title, p.content, p.last_revision_id, snippet(pages_fts, -1, '<b>', '</b>', '...', 20) as snippet FROM pages_fts f JOIN pages p ON f.rowid = p.id WHERE pages_fts MATCH ? AND p.deleted_at IS NULL AND p.is_private = 0 LIMIT 10`;
+                const results = await db.prepare(query).bind(`"${args.query}"*`).all<{ slug: string; title: string; content: string; last_revision_id: number | null; snippet: string }>();
+                
+                const origin = new URL(c.req.url).origin;
+                const output = await Promise.all(results.results.map(async (row) => {
+                    let actualContent = row.content;
+                    if (isR2OnlyNamespace(row.slug) && (!actualContent || actualContent === '')) {
+                        if (row.last_revision_id) {
+                            const lastRev = await db.prepare('SELECT content, r2_key FROM revisions WHERE id = ?').bind(row.last_revision_id).first<{ content: string, r2_key: string | null }>();
+                            if (lastRev) {
+                                actualContent = await getRevisionContent(c.env.MEDIA, lastRev, origin);
+                            }
+                        }
+                    }
+                    return {
+                        title: row.title,
+                        section: findSectionForSnippet(actualContent, row.snippet),
+                    };
                 }));
                 return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(output, null, 2) }] } };
             }
             if (toolName === 'get_toc' || toolName === 'read_document' || toolName === 'read_section') {
                 const slug = normalizeSlug(args.title || '');
-                const page = await db.prepare('SELECT content FROM pages WHERE slug = ? AND deleted_at IS NULL AND is_private = 0').bind(slug).first<{content: string}>();
+                const page = await db.prepare('SELECT slug, content, last_revision_id FROM pages WHERE slug = ? AND deleted_at IS NULL AND is_private = 0').bind(slug).first<{slug: string, content: string, last_revision_id: number | null}>();
                 if (!page) return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: 'Error: 문서를 찾을 수 없거나 비공개/삭제 상태입니다.' }], isError: true } };
-                if (toolName === 'get_toc') return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: extractTOC(page.content) || '목차가 존재하지 않습니다.' }] } };
-                if (toolName === 'read_document') return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: await renderForAI(page.content, db, 0, slug) || '문서 내용이 존재하지 않습니다.' }] } };
-                if (toolName === 'read_section') return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: await renderForAI(extractSection(page.content, args.section_name || ''), db, 0, slug) || '해당 목차를 찾을 수 없습니다.' }] } };
+                
+                let actualContent = page.content;
+                const origin = new URL(c.req.url).origin;
+                if (isR2OnlyNamespace(page.slug) && (!actualContent || actualContent === '')) {
+                    if (page.last_revision_id) {
+                        const lastRev = await db.prepare('SELECT content, r2_key FROM revisions WHERE id = ?').bind(page.last_revision_id).first<{ content: string, r2_key: string | null }>();
+                        if (lastRev) {
+                            actualContent = await getRevisionContent(c.env.MEDIA, lastRev, origin);
+                        }
+                    }
+                }
+
+                if (toolName === 'get_toc') return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: extractTOC(actualContent) || '목차가 존재하지 않습니다.' }] } };
+                if (toolName === 'read_document') return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: await renderForAI(actualContent, db, 0, slug) || '문서 내용이 존재하지 않습니다.' }] } };
+                if (toolName === 'read_section') return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: await renderForAI(extractSection(actualContent, args.section_name || ''), db, 0, slug) || '해당 목차를 찾을 수 없습니다.' }] } };
             }
             if (toolName === 'get_tree') {
                 const requestedSlug = normalizeSlug(args.title || '');
@@ -303,11 +329,21 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                     .bind(args.category).all<{title: string}>();
 
                 const catSlug = normalizeSlug(`카테고리:${args.category}`);
-                const catPage = await db.prepare('SELECT content FROM pages WHERE slug = ? AND deleted_at IS NULL AND is_private = 0').bind(catSlug).first<{content: string}>();
+                const catPage = await db.prepare('SELECT slug, content, last_revision_id FROM pages WHERE slug = ? AND deleted_at IS NULL AND is_private = 0').bind(catSlug).first<{slug: string, content: string, last_revision_id: number | null}>();
 
                 let renderedCatContent = '카테고리 문서가 존재하지 않습니다.';
                 if (catPage) {
-                    renderedCatContent = await renderForAI(catPage.content, db, 0, catSlug) || '문서 내용이 존재하지 않습니다.';
+                    let actualContent = catPage.content;
+                    const origin = new URL(c.req.url).origin;
+                    if (isR2OnlyNamespace(catPage.slug) && (!actualContent || actualContent === '')) {
+                        if (catPage.last_revision_id) {
+                            const lastRev = await db.prepare('SELECT content, r2_key FROM revisions WHERE id = ?').bind(catPage.last_revision_id).first<{ content: string, r2_key: string | null }>();
+                            if (lastRev) {
+                                actualContent = await getRevisionContent(c.env.MEDIA, lastRev, origin);
+                            }
+                        }
+                    }
+                    renderedCatContent = await renderForAI(actualContent, db, 0, catSlug) || '문서 내용이 존재하지 않습니다.';
                 }
 
                 const output = {

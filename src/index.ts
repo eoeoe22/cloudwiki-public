@@ -18,6 +18,8 @@ import ticketRoutes from './routes/ticket';
 import mcpRoutes from './routes/mcp';
 import analyticsRoutes from './routes/analytics';
 import { trackPageView, trackError, queryAnalytics } from './utils/analytics';
+import { isR2OnlyNamespace } from './utils/slug';
+import { getRevisionContent } from './utils/r2';
 
 const app = new Hono<Env>();
 
@@ -459,6 +461,17 @@ app.get('/w/:slug', async (c) => {
             const author = page.author_id
                 ? await db.prepare('SELECT name, picture FROM users WHERE id = ?').bind(page.author_id).first()
                 : null;
+
+            // R2-only 네임스페이스인 경우, 본문이 비어있다면 최신 리비전에서 본문을 가져옵니다.
+            const origin = new URL(c.req.url).origin;
+            if (isR2OnlyNamespace(page.slug) && (!page.content || page.content === '')) {
+                if (page.last_revision_id) {
+                    const lastRev = await db.prepare('SELECT content, r2_key FROM revisions WHERE id = ?').bind(page.last_revision_id).first<{ content: string, r2_key: string | null }>();
+                    if (lastRev) {
+                        page.content = await getRevisionContent(c.env.MEDIA, lastRev, origin);
+                    }
+                }
+            }
 
             // 본문 내용 기반 설명글(Description) 생성
             let desc = `${page.title} - ${c.env.WIKI_NAME || 'CloudWiki'}`;

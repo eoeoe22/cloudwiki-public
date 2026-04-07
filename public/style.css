@@ -2585,9 +2585,23 @@ div:where(.swal2-container) .swal2-html-container {
   font-size: 0.875rem;
 }
 
+/* 익스텐션 문서 직접 열람 뷰 */
+.wiki-ext-doc-view {
+  margin: 0.5rem 0;
+}
+
+.wiki-ext-doc-rendered {
+  min-height: 2rem;
+}
+
+.wiki-ext-doc-raw-toggle {
+  display: flex;
+  align-items: center;
+}
+
 /* 익스텐션 데이터 문서 원본 표시 */
 .wiki-ext-raw-data {
-  margin: 1rem 0;
+  margin: 0.5rem 0;
 }
 
 .wiki-ext-raw-badge {

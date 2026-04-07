@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import type { Env, Page, Revision } from '../types';
 import { requireAuth } from '../middleware/session';
-import { normalizeSlug } from '../utils/slug';
+import { normalizeSlug, isR2OnlyNamespace } from '../utils/slug';
 import { safeJSON } from '../utils/json';
 import { ROLE_CASE_SQL, enrichRoles } from '../utils/role';
 
@@ -49,6 +49,44 @@ function invalidatePageCache(c: any, slug: string) {
         cache.delete(`${origin}/api/w/${path}?redirect=no`),
         cache.delete(`${origin}/w/${path}`)
     ]);
+}
+
+/**
+ * 콜론이 포함된 문서(틀, 익스텐션 등)가 변경될 때
+ * 해당 문서를 참조하는 모든 문서의 캐시를 무효화
+ */
+async function invalidateBacklinkCaches(c: any, slug: string, db: D1Database): Promise<void> {
+    if (!slug.includes(':')) return;
+
+    const targetSlugs: string[] = [slug];
+    const templatePrefixes = ['틀:', 'template:', '템플릿:'];
+    const matchedPrefix = templatePrefixes.find(p => slug.startsWith(p));
+    if (matchedPrefix) {
+        // extractLinks()는 {{Foo}}를 항상 '틀:Foo'로 저장하므로,
+        // template:Foo / 템플릿:Foo 문서 편집 시에도 '틀:Foo' 변형을 포함해야 함 (반대도 동일)
+        const baseName = slug.substring(matchedPrefix.length);
+        for (const prefix of templatePrefixes) {
+            const variant = prefix + baseName;
+            if (!targetSlugs.includes(variant)) targetSlugs.push(variant);
+        }
+        // 접두사 없는 이름({{Foo}} 방식으로 저장된 경우)도 포함
+        if (!targetSlugs.includes(baseName)) targetSlugs.push(baseName);
+    }
+
+    const placeholders = targetSlugs.map(() => '?').join(', ');
+    const { results } = await db
+        .prepare(`
+            SELECT DISTINCT p.slug
+            FROM page_links pl
+            JOIN pages p ON pl.source_page_id = p.id
+            WHERE p.deleted_at IS NULL
+              AND pl.target_slug IN (${placeholders})
+        `)
+        .bind(...targetSlugs)
+        .all<{ slug: string }>();
+
+    if (results.length === 0) return;
+    await Promise.allSettled(results.map((row: { slug: string }) => invalidatePageCache(c, row.slug)));
 }
 
 /**
@@ -148,74 +186,7 @@ function buildLinkAndCategoryStatements(
     return stmts;
 }
 
-// ─────────────────────────────────────────────────────────────
-// R2 Hybrid Storage 헬퍼
-// ─────────────────────────────────────────────────────────────
-
-/**
- * 리비전 본문을 R2에 업로드하고 r2_key를 반환.
- * Key 형식: revisions/{pageId}/{pageVersion}.md
- */
-async function uploadRevisionToR2(
-    bucket: R2Bucket,
-    pageId: number,
-    pageVersion: number,
-    content: string
-): Promise<string> {
-    const r2Key = `revisions/${pageId}/${pageVersion}.md`;
-    await bucket.put(r2Key, content, {
-        httpMetadata: { contentType: 'text/markdown; charset=utf-8' },
-    });
-    return r2Key;
-}
-
-/**
- * R2에서 리비전 본문을 가져오며 Cache API로 영구 캐시.
- * 리비전은 불변(Immutable)이므로 max-age=31536000, immutable 적용.
- */
-async function fetchRevisionFromR2(
-    bucket: R2Bucket,
-    r2Key: string,
-    origin: string
-): Promise<string> {
-    const cacheKey = `${origin}/__r2_revision__/${r2Key}`;
-    const cache = caches.default;
-
-    const cached = await cache.match(cacheKey);
-    if (cached) return cached.text();
-
-    const obj = await bucket.get(r2Key);
-    if (!obj) throw new Error(`R2 revision not found: ${r2Key}`);
-    const content = await obj.text();
-
-    // 비동기로 캐시 저장 (응답을 블로킹하지 않음)
-    cache.put(
-        cacheKey,
-        new Response(content, {
-            headers: { 'Cache-Control': 'public, max-age=31536000, immutable' },
-        })
-    );
-
-    return content;
-}
-
-/**
- * DB 레코드에서 리비전 본문 반환.
- * r2_key가 있으면 R2에서, 없으면 content 필드에서 직접 반환 (하위 호환).
- */
-async function getRevisionContent(
-    bucket: R2Bucket,
-    revision: { content: string; r2_key?: string | null },
-    origin: string
-): Promise<string> {
-    if (revision.r2_key) {
-        return fetchRevisionFromR2(bucket, revision.r2_key, origin);
-    }
-    return revision.content;
-}
-
-// ─────────────────────────────────────────────────────────────
-
+import { uploadRevisionToR2, getRevisionContent } from '../utils/r2';
 /**
  * GET /config
  * 동적 설정 (위키 이름 등) 반환
@@ -255,7 +226,10 @@ wiki.get('/w/search-titles', async (c) => {
     }
 
     if (type === 'template') {
-        query += " AND slug LIKE '틀:%'";
+        const enabledExtensions = (c.env.ENABLED_EXTENSIONS || '').split(',').map((s: string) => s.trim()).filter(Boolean);
+        const namespaceLikes = ["slug LIKE '틀:%'", ...enabledExtensions.map(() => "slug LIKE ?")];
+        query += ` AND (${namespaceLikes.join(' OR ')})`;
+        enabledExtensions.forEach(ext => params.push(`${ext}:%`));
     } else {
         query += " AND slug NOT LIKE '이미지:%'";
     }
@@ -577,6 +551,17 @@ wiki.get('/w/:slug', async (c) => {
         ? await db.prepare('SELECT name, picture FROM users WHERE id = ?').bind(page.author_id).first()
         : null;
 
+    // R2-only 네임스페이스인 경우, 본문이 비어있다면 최신 리비전에서 본문을 가져옵니다.
+    const origin = new URL(c.req.url).origin;
+    if (isR2OnlyNamespace(page.slug) && (!page.content || page.content === '')) {
+        if (page.last_revision_id) {
+            const lastRev = await db.prepare('SELECT content, r2_key FROM revisions WHERE id = ?').bind(page.last_revision_id).first<{ content: string, r2_key: string | null }>();
+            if (lastRev) {
+                page.content = await getRevisionContent(c.env.MEDIA, lastRev, origin);
+            }
+        }
+    }
+
     const result = safeJSON({ ...page, author, redirected_from: redirectedFrom });
 
     // 공개 문서인 경우에만 캐시 저장
@@ -749,6 +734,34 @@ wiki.put('/w/:slug', requireAuth, async (c) => {
 
         const newVersion = existing.version + 1;
 
+        // R2-only 네임스페이스 여부 확인
+        const isR2Only = isR2OnlyNamespace(slug);
+
+        // Optimistic Locking 체크 시, R2-only 문서인 경우 R2에서 실제 본문을 가져와 비교
+        if (body.expected_version !== undefined && body.expected_version !== existing.version) {
+            let currentActualContent = existing.content;
+            if (isR2Only && (!currentActualContent || currentActualContent === '')) {
+                if (existing.id) {
+                    const lastRev = await db.prepare('SELECT content, r2_key FROM revisions WHERE page_id = ? AND page_version = ?').bind(existing.id, existing.version).first<{ content: string, r2_key: string | null }>();
+                    if (lastRev) {
+                        currentActualContent = await getRevisionContent(c.env.MEDIA, lastRev, new URL(c.req.url).origin);
+                    }
+                }
+            }
+
+            // 내용이 완전히 동일하면 충돌로 보지 않고 진행 (Idempotent)
+            if (body.content !== currentActualContent) {
+                return c.json(
+                    {
+                        error: '편집 충돌이 발생했습니다. 다른 사용자가 문서를 수정했습니다.',
+                        current_version: existing.version,
+                        content: currentActualContent
+                    },
+                    409
+                );
+            }
+        }
+
         // 1. 리비전 본문을 R2에 먼저 업로드
         let r2Key: string;
         try {
@@ -775,7 +788,8 @@ wiki.put('/w/:slug', requireAuth, async (c) => {
             return c.json({ error: '리비전 저장에 실패했습니다. 잠시 후 다시 시도해주세요.' }, 500);
         }
 
-        // 3. 페이지 업데이트 (pages.content는 최신 본문 유지 → 빠른 조회 보장)
+        // 3. 페이지 업데이트 (pages.content는 R2-only가 아닐 때만 최신 본문 유지)
+        const contentToStore = isR2Only ? '' : body.content;
         await db
             .prepare(
                 `UPDATE pages
@@ -783,7 +797,7 @@ wiki.put('/w/:slug', requireAuth, async (c) => {
              version = ?, updated_at = unixepoch()
          WHERE id = ?`
             )
-            .bind(body.title, body.content, body.category || null, finalIsLocked, finalIsPrivate, body.redirect_to || null, user.id, revisionId, newVersion, existing.id)
+            .bind(body.title, contentToStore, body.category || null, finalIsLocked, finalIsPrivate, body.redirect_to || null, user.id, revisionId, newVersion, existing.id)
             .run();
 
         // page_links, page_categories 갱신 (비동기)
@@ -806,9 +820,11 @@ wiki.put('/w/:slug', requireAuth, async (c) => {
         );
 
         // 캐시 무효화 (API + SSR) + 최근 변경 즉시 갱신
+        // 콜론이 포함된 문서(틀, 익스텐션 등)인 경우 역링크 문서 캐시도 함께 무효화
         c.executionCtx.waitUntil(Promise.all([
             invalidatePageCache(c, slug),
             refreshRecentChangesCache(c),
+            invalidateBacklinkCaches(c, slug, db),
         ]));
 
         return c.json(safeJSON({ slug, version: newVersion, revision_id: revisionId }));
@@ -817,11 +833,14 @@ wiki.put('/w/:slug', requireAuth, async (c) => {
         finalIsPrivate = isAdmin ? (body.is_private ?? 0) : 0;
 
         // ── 새 문서 생성 ──
+        const isR2Only = isR2OnlyNamespace(slug);
+        const contentToStore = isR2Only ? '' : body.content;
+
         const pageResult = await db
             .prepare(
                 'INSERT INTO pages (slug, title, content, category, is_locked, is_private, redirect_to, author_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
             )
-            .bind(slug, body.title, body.content, body.category || null, finalIsLocked, finalIsPrivate, body.redirect_to || null, user.id)
+            .bind(slug, body.title, contentToStore, body.category || null, finalIsLocked, finalIsPrivate, body.redirect_to || null, user.id)
             .run();
 
         const pageId = pageResult.meta.last_row_id;
@@ -866,9 +885,11 @@ wiki.put('/w/:slug', requireAuth, async (c) => {
         c.executionCtx.waitUntil(db.batch(linkCatStmts).catch(e => console.error('Failed to update links/categories:', e)));
 
         // 캐시 무효화 (API + SSR) + 최근 변경 즉시 갱신
+        // 콜론이 포함된 문서(틀, 익스텐션 등)인 경우 역링크 문서 캐시도 함께 무효화
         c.executionCtx.waitUntil(Promise.all([
             invalidatePageCache(c, slug),
             refreshRecentChangesCache(c),
+            invalidateBacklinkCaches(c, slug, db),
         ]));
 
         return c.json(safeJSON({ slug, version: 1, revision_id: revisionId }), 201);
@@ -1436,8 +1457,9 @@ wiki.post('/w/:slug/revert', requireAuth, async (c) => {
         return c.json({ error: '리비전 저장에 실패했습니다. 잠시 후 다시 시도해주세요.' }, 500);
     }
 
+    const contentToStore = isR2OnlyNamespace(slug) ? '' : revertContent;
     await db.prepare('UPDATE pages SET content = ?, last_revision_id = ?, version = ?, updated_at = unixepoch() WHERE id = ?')
-        .bind(revertContent, newRevId, newVersion, page.id)
+        .bind(contentToStore, newRevId, newVersion, page.id)
         .run();
 
     // 캐시 무효화 (API + SSR) + 최근 변경 즉시 갱신
