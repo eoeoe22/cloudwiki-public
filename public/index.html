@@ -100,13 +100,13 @@
                 <li><button class="dropdown-item" onclick="shareCopyLink()">
                     <i class="bi bi-link"></i> 링크 복사하기
                   </button></li>
-                <li><button class="dropdown-item" onclick="shareCopyText()">
+                <li id="shareItemCopyText"><button class="dropdown-item" onclick="shareCopyText()">
                     <i class="bi bi-copy"></i> 문서 텍스트 복사
                   </button></li>
-                <li><button class="dropdown-item" onclick="shareCopyMarkdown()">
+                <li id="shareItemCopyMarkdown"><button class="dropdown-item" onclick="shareCopyMarkdown()">
                     <i class="bi bi-markdown"></i> 문서 복사 (마크다운)
                   </button></li>
-                <li><button class="dropdown-item" onclick="sharePrint()">
+                <li id="shareItemPrint"><button class="dropdown-item" onclick="sharePrint()">
                     <i class="bi bi-printer"></i> 인쇄하기
                   </button></li>
               </ul>
@@ -444,6 +444,12 @@
       const _tocFabBtn = document.getElementById('tocFabBtn');
       if (_tocFabBtn) _tocFabBtn.classList.remove('d-none');
 
+      // 공유하기 드롭다운 초기화 (이전 익스텐션 문서에서 숨겨진 경우 복원)
+      ['shareItemCopyText', 'shareItemCopyMarkdown', 'shareItemPrint'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.classList.remove('d-none');
+      });
+
       try {
         let page;
 
@@ -590,6 +596,7 @@
         const actionSlug = page.slug || slug;
 
         // 액션 버튼
+        const _hasColon = actionSlug.includes(':');
         let actionsHtml = `
       <li><a href="/w/${encodeURIComponent(actionSlug)}/revisions" class="dropdown-item">
         <i class="bi bi-clock-history"></i> 이력
@@ -600,7 +607,7 @@
       <li><button class="dropdown-item" onclick="scrollToBacklinks(); return false;">
         <i class="bi bi-link-45deg"></i> 역링크
       </button></li>
-      <li><button class="dropdown-item" data-slug="${escapeHtml(actionSlug)}" onclick="showSubdocs(this.dataset.slug); return false;">
+      <li><button class="dropdown-item${_hasColon ? ' disabled' : ''}" ${_hasColon ? 'disabled' : `data-slug="${escapeHtml(actionSlug)}" onclick="showSubdocs(this.dataset.slug); return false;"`}>
         <i class="bi bi-diagram-3"></i> 하위 문서 보기
       </button></li>
     `;
@@ -664,6 +671,12 @@
           document.getElementById('wikiAccordion').classList.add('d-none');
           const tocFabBtn = document.getElementById('tocFabBtn');
           if (tocFabBtn) tocFabBtn.classList.add('d-none');
+
+          // 공유하기 드롭다운에서 텍스트/마크다운 복사 및 인쇄 버튼 숨기기
+          ['shareItemCopyText', 'shareItemCopyMarkdown', 'shareItemPrint'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.classList.add('d-none');
+          });
 
           const contentEl = document.getElementById('articleContent');
           const rawId = `ext-raw-collapse-${Date.now()}`;
@@ -912,23 +925,28 @@
         confirmButtonText: '이동',
         cancelButtonText: '취소',
         inputValidator: (value) => {
-          if (!value) return '새 이름을 입력해주세요.';
-          if (value === slug) return '현재 이름과 동일합니다.';
+          const trimmed = value ? value.trim() : '';
+          if (!trimmed) return '새 이름을 입력해주세요.';
+          if (trimmed === slug) return '현재 이름과 동일합니다.';
+          const currentNs = slug.includes(':') ? slug.split(':')[0] : '';
+          const newNs = trimmed.includes(':') ? trimmed.split(':')[0] : '';
+          if (slug.includes(':') && currentNs !== newNs) return '네임스페이스가 있는 문서는 다른 네임스페이스로 이동할 수 없습니다.';
         }
       });
 
-      if (newSlug) {
+      const trimmedSlug = newSlug ? newSlug.trim() : '';
+      if (trimmedSlug) {
         try {
           const res = await fetch(`/api/w/${encodeURIComponent(slug)}/move`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ new_slug: newSlug })
+            body: JSON.stringify({ new_slug: trimmedSlug })
           });
           const data = await res.json();
           if (!res.ok) throw new Error(data.error || '이동 실패');
 
           Swal.fire('성공', '문서가 이동되었습니다.', 'success').then(() => {
-            navigateTo(`/w/${encodeURIComponent(newSlug)}`);
+            navigateTo(`/w/${encodeURIComponent(trimmedSlug)}`);
           });
         } catch (err) {
           Swal.fire('오류', err.message, 'error');
@@ -1100,7 +1118,11 @@
         return;
       }
       try {
-        await navigator.clipboard.writeText(currentPage.content);
+        const resolvedContent = await resolveTransclusionsForMarkdown(
+          currentPage.content,
+          currentPage.slug || currentSlug
+        );
+        await navigator.clipboard.writeText(resolvedContent);
         Swal.fire({ icon: 'success', title: '복사 완료', text: '마크다운 원문이 클립보드에 복사되었습니다.', timer: 1500, showConfirmButton: false });
       } catch (err) {
         console.error('복사 실패:', err);

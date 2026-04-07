@@ -124,6 +124,23 @@ function _processTimestampsInHtml(html) {
     return html;
 }
 
+// ── 위키 링크 보호 유틸리티 ──
+
+/** [[링크|텍스트]] 구문을 플레이스홀더로 치환하여 마크다운 파서로부터 보호 */
+function protectWikiLinks(text) {
+    const prot = [];
+    const protected_text = text.replace(/\[\[[^\]]+\]\]/g, (m) => {
+        prot.push(m);
+        return `\x00WLPROT${prot.length - 1}\x00`;
+    });
+    return { text: protected_text, prot };
+}
+
+/** protectWikiLinks 로 치환한 플레이스홀더를 원래 위키 링크로 복원 */
+function restoreWikiLinks(html, prot) {
+    return html.replace(/\x00WLPROT(\d+)\x00/g, (_, i) => prot[parseInt(i, 10)]);
+}
+
 // ── 문서 렌더링 통합 (index.html, edit.html 공통) ──
 async function renderWikiContent(content, slug, containerId, options = {}) {
     const containerEl = document.getElementById(containerId);
@@ -166,7 +183,10 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
             const idx = foldBlocks.length;
 
             const restoredContent = foldContent.replace(/WIKICODEFPH(\d+)XEND/g, (_, i) => codeBlocksForFold[parseInt(i, 10)]);
-            let rawContentHtml = (typeof marked !== 'undefined') ? marked.parse(restoredContent) : restoredContent;
+            // [[링크|텍스트]] 안의 | 가 마크다운 테이블 구분자와 충돌하지 않도록 보호
+            const { text: restoredContentProt, prot: foldWikiLinkProt } = protectWikiLinks(restoredContent);
+            let rawContentHtml = (typeof marked !== 'undefined') ? marked.parse(restoredContentProt) : restoredContentProt;
+            rawContentHtml = restoreWikiLinks(rawContentHtml, foldWikiLinkProt);
             let contentHtml = (typeof DOMPurify !== 'undefined') ? DOMPurify.sanitize(rawContentHtml, { ADD_TAGS: ['i', 'span', 'details', 'summary'], ADD_ATTR: ['class', 'style', 'data-bg', 'data-color', 'data-size', 'data-unix', 'colspan', 'rowspan', 'title'] }) : escapeHtml(rawContentHtml);
 
             foldBlocks.push({ summaryText, bgAttr, colorAttr, contentHtml });
@@ -175,7 +195,10 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
 
         preprocessed = preprocessed.replace(/WIKICODEFPH(\d+)XEND/g, (_, idx) => codeBlocksForFold[parseInt(idx, 10)]);
 
-        let rawHtml = (typeof marked !== 'undefined') ? marked.parse(preprocessed) : preprocessed;
+        // [[링크|텍스트]] 안의 | 가 마크다운 테이블 구분자와 충돌하지 않도록 보호
+        const { text: preprocessedProt, prot: mainWikiLinkProt } = protectWikiLinks(preprocessed);
+        let rawHtml = (typeof marked !== 'undefined') ? marked.parse(preprocessedProt) : preprocessedProt;
+        rawHtml = restoreWikiLinks(rawHtml, mainWikiLinkProt);
 
         rawHtml = rawHtml.replace(/(?:<p>)?WIKIFOLDPH(\d+)XEND(?:<\/p>)?/g, (m, idx) => {
             const block = foldBlocks[parseInt(idx, 10)];

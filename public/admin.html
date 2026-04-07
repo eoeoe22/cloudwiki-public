@@ -775,6 +775,39 @@
               <h5 class="mb-0">관리 활동 로그</h5>
             </div>
             <div class="card-body">
+              <div class="row g-2 mb-3">
+                <div class="col-sm-5">
+                  <div class="input-group input-group-sm">
+                    <input
+                      type="text"
+                      id="adminLogSearch"
+                      class="form-control"
+                      placeholder="관리자 또는 내용 검색"
+                      onkeydown="if(event.key==='Enter') loadAdminLogs()"
+                    />
+                    <button class="btn btn-outline-secondary" onclick="loadAdminLogs()">검색</button>
+                  </div>
+                </div>
+                <div class="col-sm-4">
+                  <select id="adminLogType" class="form-select form-select-sm" onchange="loadAdminLogs()">
+                    <option value="all">전체 유형</option>
+                    <option value="role_change">권한 변경</option>
+                    <option value="ban">차단/해제</option>
+                    <option value="signup_approve">가입 승인</option>
+                    <option value="signup_reject">가입 거절</option>
+                    <option value="signup_block">가입 차단</option>
+                    <option value="settings">설정 변경</option>
+                    <option value="category_add">카테고리 추가</option>
+                    <option value="category_delete">카테고리 삭제</option>
+                    <option value="media_delete">미디어 삭제</option>
+                    <option value="media_gc">미디어 GC</option>
+                    <option value="soft_delete">문서 삭제</option>
+                    <option value="hard_delete">문서 영구 삭제</option>
+                    <option value="restore">문서 복원</option>
+                    <option value="doc_move">문서 이동</option>
+                  </select>
+                </div>
+              </div>
               <div class="table-responsive">
                 <table class="table table-hover table-sm">
                   <thead class="table-light">
@@ -1258,25 +1291,38 @@
         adminLogLoaded = true;
         adminLogOffset = 0;
         document.getElementById("adminLogBody").innerHTML = "";
+        document.getElementById("adminLogMore").style.display = "none";
         await fetchAdminLogs();
       }
       async function fetchAdminLogs() {
-        const res = await fetch(`/api/admin/logs?offset=${adminLogOffset}`);
+        const search = document.getElementById("adminLogSearch")?.value.trim() || "";
+        const type = document.getElementById("adminLogType")?.value || "all";
+        const params = new URLSearchParams({ offset: adminLogOffset });
+        if (search) params.set("search", search);
+        if (type && type !== "all") params.set("type", type);
+        const res = await fetch(`/api/admin/logs?${params}`);
         const data = await res.json();
         const html = data.logs
           .map(
             (log) => `<tr>
-                <td class="small text-muted">${new Date(log.created_at * 1000).toLocaleTimeString()}</td>
-                <td><span class="badge bg-secondary">${log.type}</span></td>
+                <td class="small text-muted">${new Date(log.created_at * 1000).toLocaleString()}</td>
+                <td><span class="badge bg-secondary">${escapeHtml(log.type)}</span></td>
                 <td class="small">${escapeHtml(log.log)}</td>
                 <td class="small">${escapeHtml(log.user_name || "Admin")}</td>
             </tr>`,
           )
           .join("");
-        document
-          .getElementById("adminLogBody")
-          .insertAdjacentHTML("beforeend", html);
+        if (!html && adminLogOffset === 0) {
+          document.getElementById("adminLogBody").innerHTML =
+            `<tr><td colspan="4" class="text-center text-muted py-3">로그가 없습니다.</td></tr>`;
+        } else {
+          document.getElementById("adminLogBody").insertAdjacentHTML("beforeend", html);
+        }
         adminLogOffset += data.logs.length;
+        document.getElementById("adminLogMore").style.display = data.hasMore ? "" : "none";
+      }
+      async function loadMoreAdminLogs() {
+        await fetchAdminLogs();
       }
 
       async function loadAnalyticsDashboard() {

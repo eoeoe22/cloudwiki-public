@@ -1342,20 +1342,30 @@ wiki.post('/w/:slug/move', requireAuth, async (c) => {
         return c.json({ error: '새 문서 이름을 입력해주세요.' }, 400);
     }
 
+    const trimmedNewSlug = new_slug.trim();
+
     // 보안: 문서 제목 금지 문자 점검
-    if (/[\[\]()#%|<>^\x00-\x1F\x7F]/.test(new_slug)) {
+    if (/[\[\]()#%|<>^\x00-\x1F\x7F]/.test(trimmedNewSlug)) {
         return c.json({ error: '문서 제목에 사용할 수 없는 특수문자가 포함되어 있습니다.' }, 400);
+    }
+
+    // 네임스페이스 이동 제한: 콜론이 포함된 문서는 다른 네임스페이스로 이동 불가
+    const isNamespaceDocument = currentSlug.includes(':');
+    const currentNamespace = isNamespaceDocument ? currentSlug.split(':')[0] : '';
+    const newNamespace = trimmedNewSlug.includes(':') ? trimmedNewSlug.split(':')[0] : '';
+    if (isNamespaceDocument && currentNamespace !== newNamespace) {
+        return c.json({ error: '네임스페이스가 있는 문서는 다른 네임스페이스로 이동할 수 없습니다.' }, 400);
     }
 
     // new_slug validation logic same as create (e.g. valid chars) - skip for brevity or assume client sends valid slug
     // Check if target exists
-    const targetExists = await db.prepare('SELECT id FROM pages WHERE slug = ? AND deleted_at IS NULL').bind(new_slug).first();
+    const targetExists = await db.prepare('SELECT id FROM pages WHERE slug = ? AND deleted_at IS NULL').bind(trimmedNewSlug).first();
     if (targetExists) {
         return c.json({ error: '이미 존재하는 문서 이름입니다.' }, 409);
     }
 
     // Check if target is a redirect source
-    const redirectExists = await db.prepare('SELECT id FROM redirects WHERE source_slug = ?').bind(new_slug).first();
+    const redirectExists = await db.prepare('SELECT id FROM redirects WHERE source_slug = ?').bind(trimmedNewSlug).first();
     if (redirectExists) {
         return c.json({ error: '해당 이름은 다른 문서로의 넘겨주기(Redirect)로 사용되고 있어 이동할 수 없습니다.' }, 409);
     }
@@ -1372,24 +1382,24 @@ wiki.post('/w/:slug/move', requireAuth, async (c) => {
 
     // Update Page Slug and Title
     await db.prepare('UPDATE pages SET slug = ?, title = ? WHERE id = ?')
-        .bind(new_slug, new_slug, page.id)
+        .bind(trimmedNewSlug, trimmedNewSlug, page.id)
         .run();
 
     // 관리자 로그 기록
     c.executionCtx.waitUntil(
         db.prepare('INSERT INTO admin_log (type, log, user) VALUES (?, ?, ?)')
-            .bind('doc_move', `문서 이름변경: ${currentSlug} → ${new_slug}`, user.id)
+            .bind('doc_move', `문서 이름변경: ${currentSlug} → ${trimmedNewSlug}`, user.id)
             .run().catch((e: any) => console.error('Failed to write admin log:', e))
     );
 
     // 캐시 무효화 (API + SSR) + 최근 변경 즉시 갱신
     c.executionCtx.waitUntil(Promise.all([
         invalidatePageCache(c, currentSlug),
-        invalidatePageCache(c, new_slug),
+        invalidatePageCache(c, trimmedNewSlug),
         refreshRecentChangesCache(c),
     ]));
 
-    return c.json({ message: '문서가 이동되었습니다.', new_slug });
+    return c.json({ message: '문서가 이동되었습니다.', new_slug: trimmedNewSlug });
 });
 
 /**

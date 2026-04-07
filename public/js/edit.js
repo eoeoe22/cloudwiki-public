@@ -1,0 +1,3548 @@
+
+// ── 에디터 상태 ──
+let slug = null;
+let pageVersion = null;
+let originalContent = '';
+let editor = null;
+let AUTO_SAVE_KEY = '';
+let conflictEditor = null;
+let serverViewMode = 'raw';
+let serverViewer = null;
+let cachedDiffData = null;
+let diffViewMode = 'summary';
+let pageLeft = false;
+let isExtensionData = false;
+
+// ── Turnstile 상태 ──
+let turnstileToken = null;
+let turnstileWidgetId = null;
+let turnstileReady = false;
+
+function onTurnstileLoad() {
+    turnstileReady = true;
+    initTurnstile();
+}
+
+function initTurnstile() {
+    const siteKey = appConfig && appConfig.turnstileSiteKey;
+    if (!siteKey) {
+        // Turnstile 미설정 시 저장 버튼 활성화
+        const btn = document.getElementById('saveBtn');
+        if (btn) btn.disabled = false;
+        return;
+    }
+    if (!turnstileReady) return;
+    const container = document.getElementById('turnstile-container');
+    if (!container || turnstileWidgetId !== null) return;
+    turnstileWidgetId = turnstile.render(container, {
+        sitekey: siteKey,
+        callback: function (token) {
+            turnstileToken = token;
+            document.getElementById('saveBtn').disabled = false;
+        },
+        'expired-callback': function () {
+            turnstileToken = null;
+            document.getElementById('saveBtn').disabled = true;
+            refreshTurnstile();
+        },
+        'error-callback': function () {
+            turnstileToken = null;
+            document.getElementById('saveBtn').disabled = true;
+        },
+    });
+}
+
+function refreshTurnstile() {
+    if (turnstileWidgetId !== null) {
+        turnstileToken = null;
+        document.getElementById('saveBtn').disabled = true;
+        turnstile.reset(turnstileWidgetId);
+    }
+}
+
+// ── 아이콘 설정 변수 ──
+let selectedIconsOnly = false; // SELECTED_ICONS_ONLY 환경변수 (true: icons.json만 허용)
+let selectedIconsList = null;  // icons.json에서 로드된 아이콘 목록
+
+// ── 아이콘 피커 변수 ──
+let biIconList = null;       // Bootstrap Icons 목록 (지연 로딩됨)
+let mdiIconList = null;      // MDI 목록 (지연 로딩됨)
+let iconPickerSavedSelection = null; // 모달 열기 전 에디터 선택 위치
+let pendingIconInsertion = null;     // 모달에서 선택된 아이콘 삽입 대기
+let iconPickerToken = 0;             // 아이콘 피커 호출 토큰 (경쟁 조건 방지)
+
+// ── 이미지 사이즈 인라인 자동완성 상태 ──
+const imgSizeAc = {
+    visible: false,
+    selectedIndex: -1,
+    div: document.getElementById('imgsize-autocomplete'),
+    options: [
+        { id: 'icon', label: '아이콘', icon: 'mdi-square-medium-outline' },
+        { id: 'small', label: '작게', icon: 'mdi-arrow-collapse' },
+        { id: 'medium', label: '중간', icon: 'mdi-square-outline' },
+        { id: 'full', label: '크게(기본)', icon: 'mdi-arrow-expand-all' }
+    ]
+};
+
+function hideImgSizeAutocomplete() {
+    imgSizeAc.visible = false;
+    imgSizeAc.selectedIndex = -1;
+    if (imgSizeAc.div) imgSizeAc.div.style.display = 'none';
+}
+
+function showImgSizeAutocomplete() {
+    imgSizeAc.visible = true;
+    positionDropdownAtCursor(imgSizeAc.div, 200);
+    renderImgSizeAcResults();
+}
+
+function renderImgSizeAcResults() {
+    const gridEl = document.getElementById('imgsizeAcGrid');
+    if (!gridEl) return;
+
+    gridEl.innerHTML = imgSizeAc.options.map((opt, index) => `
+        <div class="list-group-item autocomplete-item" data-index="${index}" onclick="selectImgSizeAutocomplete(${index})" style="cursor:pointer; padding:8px 10px;">
+            <i class="mdi ${opt.icon}"></i>
+            <span>${escapeHtml(opt.label)}</span>
+            <span class="text-muted" style="font-size:0.8em; margin-left:4px;">${escapeHtml(opt.id)}</span>
+        </div>
+    `).join('');
+
+    imgSizeAc.selectedIndex = 0;
+    highlightImgSizeAcItem();
+}
+
+function highlightImgSizeAcItem() {
+    if (!imgSizeAc.div) return;
+    const items = imgSizeAc.div.querySelectorAll('.autocomplete-item');
+    items.forEach((item, idx) => {
+        if (idx === imgSizeAc.selectedIndex) {
+            item.classList.add('active');
+            item.scrollIntoView({ block: 'nearest' });
+        } else {
+            item.classList.remove('active');
+        }
+    });
+}
+
+function selectImgSizeAutocomplete(index) {
+    const opt = imgSizeAc.options[index];
+    if (!opt || !editor) return;
+
+    const selection = editor.getSelection();
+    if (!selection) { hideImgSizeAutocomplete(); return; }
+
+    const [from] = selection;
+    const line = from[0];
+    const col = from[1];
+
+    const md = editor.getMarkdown();
+    const lines = md.split('\n');
+    const lineText = lines[line - 1] || '';
+    const textBefore = lineText.substring(0, col - 1);
+
+    // `![...](...)` 의 마지막 `)` 위치를 찾는다
+    const match = textBefore.match(/!\[[^\]]*\]\([^)]+\)$/);
+
+    if (match) {
+        // 이미지가 바로 앞에 있을 때
+        if (opt.id !== 'full') {
+            editor.insertText(`{size:${opt.id}}`);
+        }
+    }
+    hideImgSizeAutocomplete();
+    editor.focus();
+}
+
+// ── 아이콘 인라인 자동완성 상태 ──
+const iconAc = {
+    visible: false,
+    type: 'bi',              // 'bi' | 'mdi' | 'icon'
+    query: '',
+    results: [],
+    selectedIndex: -1,
+    lastKey: null,
+    debounceTimer: null,
+    div: document.getElementById('icon-autocomplete'),
+    COLS: 5,                 // 인라인 자동완성 그리드 열 수
+};
+
+// ── 색상 피커 인라인 자동완성 상태 ──
+const colorAc = {
+    visible: false,
+    trigger: 'bg',           // 'bg' | 'color'
+    hue: 0,
+    saturation: 1,
+    brightness: 1,
+    selectedSwatchIndex: -1,
+    dragging: null,          // 'palette' | 'hue' | null
+    div: document.getElementById('color-autocomplete'),
+};
+const COLOR_SWATCHES = [
+    '#000000', '#FFFFFF', '#FF0000', '#FF8000', '#FFFF00',
+    '#00FF00', '#00FFFF', '#0080FF', '#0000FF', '#8000FF',
+    '#FF00FF', '#FF0080', '#808080', '#C0C0C0', '#800000',
+    '#808000', '#008000', '#008080', '#000080', '#800080'
+];
+
+// ── 다크모드 감지 유틸리티 ──
+function getIsDarkMode() {
+    return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+}
+
+// ── 커서 위치 기반 드롭다운 포지셔닝 공통 함수 ──
+function positionDropdownAtCursor(dropdownEl, dropdownWidth) {
+    if (!dropdownEl) return;
+    let positioned = false;
+    const sel = window.getSelection();
+    if (sel && sel.rangeCount > 0) {
+        const range = sel.getRangeAt(0).cloneRange();
+        range.collapse(true);
+        const rect = range.getBoundingClientRect();
+        if (rect.height > 0) {
+            let left = rect.left + window.scrollX;
+            let top = rect.bottom + window.scrollY + 4;
+            if (left + dropdownWidth > window.innerWidth) left = window.innerWidth - (dropdownWidth + 5);
+            if (left < 0) left = 4;
+            dropdownEl.style.left = `${left}px`;
+            dropdownEl.style.top = `${top}px`;
+            dropdownEl.style.display = 'block';
+            positioned = true;
+        }
+    }
+    if (!positioned) {
+        const editorEl = document.querySelector('#editor');
+        if (editorEl) {
+            const rect = editorEl.getBoundingClientRect();
+            dropdownEl.style.left = `${rect.left + 50 + window.scrollX}px`;
+            dropdownEl.style.top = `${rect.top + 80 + window.scrollY}px`;
+            dropdownEl.style.display = 'block';
+        }
+    }
+}
+
+// ── 색상 유틸리티 함수 ──
+function hsvToHex(h, s, v) {
+    let r, g, b;
+    const i = Math.floor(h / 60) % 6;
+    const f = h / 60 - Math.floor(h / 60);
+    const p = v * (1 - s);
+    const q = v * (1 - f * s);
+    const t = v * (1 - (1 - f) * s);
+    switch (i) {
+        case 0: r = v; g = t; b = p; break;
+        case 1: r = q; g = v; b = p; break;
+        case 2: r = p; g = v; b = t; break;
+        case 3: r = p; g = q; b = v; break;
+        case 4: r = t; g = p; b = v; break;
+        case 5: r = v; g = p; b = q; break;
+    }
+    const toHex = (c) => {
+        const hex = Math.round(c * 255).toString(16);
+        return hex.length === 1 ? '0' + hex : hex;
+    };
+    return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
+
+function hexToHsv(hex) {
+    hex = hex.replace('#', '');
+    const r = parseInt(hex.substring(0, 2), 16) / 255;
+    const g = parseInt(hex.substring(2, 4), 16) / 255;
+    const b = parseInt(hex.substring(4, 6), 16) / 255;
+    const max = Math.max(r, g, b), min = Math.min(r, g, b);
+    const d = max - min;
+    let h = 0, s = max === 0 ? 0 : d / max, v = max;
+    if (d !== 0) {
+        switch (max) {
+            case r: h = ((g - b) / d + (g < b ? 6 : 0)) * 60; break;
+            case g: h = ((b - r) / d + 2) * 60; break;
+            case b: h = ((r - g) / d + 4) * 60; break;
+        }
+    }
+    return { h, s, v };
+}
+
+// ── 색상 팔레트 캔버스 그리기 ──
+function drawColorPalette() {
+    const canvas = document.getElementById('colorPaletteCanvas');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const w = canvas.width, h = canvas.height;
+
+    // 배경: 왼→오 = 흰색→순색 (채도), 위→아래 = 밝음→검정 (명도)
+    for (let x = 0; x < w; x++) {
+        const s = x / w;
+        for (let y = 0; y < h; y++) {
+            const v = 1 - y / h;
+            ctx.fillStyle = hsvToHex(colorAc.hue, s, v);
+            ctx.fillRect(x, y, 1, 1);
+        }
+    }
+
+    // 선택 위치 표시
+    const cx = colorAc.saturation * w;
+    const cy = (1 - colorAc.brightness) * h;
+    ctx.beginPath();
+    ctx.arc(cx, cy, 6, 0, Math.PI * 2);
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(cx, cy, 7, 0, Math.PI * 2);
+    ctx.strokeStyle = '#000';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+}
+
+function drawHueSlider() {
+    const canvas = document.getElementById('colorHueSlider');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const w = canvas.width, h = canvas.height;
+
+    const gradient = ctx.createLinearGradient(0, 0, w, 0);
+    for (let i = 0; i <= 6; i++) {
+        gradient.addColorStop(i / 6, hsvToHex(i * 60, 1, 1));
+    }
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, w, h);
+
+    // 선택 위치 표시
+    const cx = (colorAc.hue / 360) * w;
+    ctx.beginPath();
+    ctx.rect(cx - 3, 0, 6, h);
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.rect(cx - 4, -1, 8, h + 2);
+    ctx.strokeStyle = '#000';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+}
+
+function updateColorPreview() {
+    const hex = hsvToHex(colorAc.hue, colorAc.saturation, colorAc.brightness);
+    const previewBox = document.getElementById('colorPreviewBox');
+    const hexInput = document.getElementById('colorHexInput');
+    if (previewBox) previewBox.style.backgroundColor = hex;
+    if (hexInput) hexInput.value = hex.toUpperCase();
+}
+
+// ── 색상 스와치 렌더링 ──
+function renderColorSwatches() {
+    const container = document.getElementById('colorAcSwatches');
+    if (!container) return;
+    container.innerHTML = COLOR_SWATCHES.map((color, i) =>
+        `<div class="color-swatch${i === colorAc.selectedSwatchIndex ? ' active' : ''}" data-index="${i}" style="background:${color};" title="${color}"></div>`
+    ).join('');
+
+    container.querySelectorAll('.color-swatch').forEach(el => {
+        el.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const idx = parseInt(el.dataset.index);
+            selectColorSwatch(idx);
+            applyColorAutocomplete();
+        });
+        el.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const idx = parseInt(el.dataset.index);
+            selectColorSwatch(idx);
+            applyColorAutocomplete();
+        });
+    });
+}
+
+function selectColorSwatch(index) {
+    colorAc.selectedSwatchIndex = index;
+    const hex = COLOR_SWATCHES[index];
+    const hsv = hexToHsv(hex);
+    colorAc.hue = hsv.h;
+    colorAc.saturation = hsv.s;
+    colorAc.brightness = hsv.v;
+    drawColorPalette();
+    drawHueSlider();
+    updateColorPreview();
+    renderColorSwatches();
+}
+
+// ── 캔버스 이벤트 처리 (마우스 + 터치) ──
+function getCanvasPos(canvas, e) {
+    const rect = canvas.getBoundingClientRect();
+    let clientX, clientY;
+    if (e.touches && e.touches.length > 0) {
+        clientX = e.touches[0].clientX;
+        clientY = e.touches[0].clientY;
+    } else {
+        clientX = e.clientX;
+        clientY = e.clientY;
+    }
+    return {
+        x: Math.max(0, Math.min(1, (clientX - rect.left) / rect.width)),
+        y: Math.max(0, Math.min(1, (clientY - rect.top) / rect.height))
+    };
+}
+
+function initColorPickerCanvasEvents() {
+    const paletteCanvas = document.getElementById('colorPaletteCanvas');
+    const hueCanvas = document.getElementById('colorHueSlider');
+    if (!paletteCanvas || !hueCanvas) return;
+
+    function handlePaletteInteraction(e) {
+        const pos = getCanvasPos(paletteCanvas, e);
+        colorAc.saturation = pos.x;
+        colorAc.brightness = 1 - pos.y;
+        colorAc.selectedSwatchIndex = -1;
+        drawColorPalette();
+        updateColorPreview();
+        renderColorSwatches();
+    }
+
+    function handleHueInteraction(e) {
+        const pos = getCanvasPos(hueCanvas, e);
+        colorAc.hue = pos.x * 360;
+        colorAc.selectedSwatchIndex = -1;
+        drawColorPalette();
+        drawHueSlider();
+        updateColorPreview();
+        renderColorSwatches();
+    }
+
+    // 마우스 이벤트
+    paletteCanvas.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        colorAc.dragging = 'palette';
+        handlePaletteInteraction(e);
+    });
+    hueCanvas.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        colorAc.dragging = 'hue';
+        handleHueInteraction(e);
+    });
+    document.addEventListener('mousemove', (e) => {
+        if (colorAc.dragging === 'palette') handlePaletteInteraction(e);
+        else if (colorAc.dragging === 'hue') handleHueInteraction(e);
+    });
+    document.addEventListener('mouseup', () => { colorAc.dragging = null; });
+
+    // 터치 이벤트
+    paletteCanvas.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        colorAc.dragging = 'palette';
+        handlePaletteInteraction(e);
+    }, { passive: false });
+    hueCanvas.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        colorAc.dragging = 'hue';
+        handleHueInteraction(e);
+    }, { passive: false });
+    document.addEventListener('touchmove', (e) => {
+        if (colorAc.dragging === 'palette') { e.preventDefault(); handlePaletteInteraction(e); }
+        else if (colorAc.dragging === 'hue') { e.preventDefault(); handleHueInteraction(e); }
+    }, { passive: false });
+    document.addEventListener('touchend', () => { colorAc.dragging = null; });
+
+    // Hex 입력 직접 수정
+    const hexInput = document.getElementById('colorHexInput');
+    if (hexInput) {
+        hexInput.addEventListener('input', () => {
+            const val = hexInput.value.trim();
+            if (/^#[0-9A-Fa-f]{6}$/.test(val)) {
+                const hsv = hexToHsv(val);
+                colorAc.hue = hsv.h;
+                colorAc.saturation = hsv.s;
+                colorAc.brightness = hsv.v;
+                colorAc.selectedSwatchIndex = -1;
+                drawColorPalette();
+                drawHueSlider();
+                updateColorPreview();
+                renderColorSwatches();
+            }
+        });
+        hexInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                e.stopPropagation();
+                applyColorAutocomplete();
+            }
+        });
+    }
+
+    // 적용 버튼
+    const applyBtn = document.getElementById('colorApplyBtn');
+    if (applyBtn) {
+        applyBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            applyColorAutocomplete();
+        });
+    }
+}
+
+// ── 색상 자동완성: 숨기기 ──
+function hideColorAutocomplete() {
+    colorAc.visible = false;
+    colorAc.dragging = null;
+    colorAc.selectedSwatchIndex = -1;
+    if (colorAc.div) colorAc.div.style.display = 'none';
+}
+
+// ── 색상 자동완성: 표시 ──
+function showColorAutocomplete(query, type) {
+    colorAc.trigger = type;
+    colorAc.visible = true;
+
+    const typeLabelEl = document.getElementById('colorAcTypeLabel');
+    if (typeLabelEl) {
+        typeLabelEl.textContent = type === 'bg' ? '배경색 선택' : '글자색 선택';
+    }
+
+    // 커서 위치에 드롭다운 표시
+    positionDropdownAtCursor(colorAc.div, 280);
+
+    // 쿼리에 이미 색상값이 있으면 반영
+    if (query && /^#[0-9A-Fa-f]{6}$/.test(query.trim())) {
+        const hsv = hexToHsv(query.trim());
+        colorAc.hue = hsv.h;
+        colorAc.saturation = hsv.s;
+        colorAc.brightness = hsv.v;
+        colorAc.selectedSwatchIndex = -1;
+    }
+
+    renderColorSwatches();
+    drawColorPalette();
+    drawHueSlider();
+    updateColorPreview();
+}
+
+// ── 색상 자동완성: 적용 ──
+function applyColorAutocomplete() {
+    if (!editor) { hideColorAutocomplete(); return; }
+
+    const hex = hsvToHex(colorAc.hue, colorAc.saturation, colorAc.brightness).toUpperCase();
+    const selection = editor.getSelection();
+    if (!selection) { hideColorAutocomplete(); return; }
+
+    const [from] = selection;
+    const line = from[0];
+    const col = from[1];
+
+    const md = editor.getMarkdown();
+    const lines = md.split('\n');
+    const lineText = lines[line - 1] || '';
+    const textBefore = lineText.substring(0, col - 1);
+
+    const prefix = colorAc.trigger === 'bg' ? '{bg:' : '{color:';
+    const lastTriggerIndex = textBefore.lastIndexOf(prefix);
+
+    if (lastTriggerIndex !== -1) {
+        editor.setSelection([line, lastTriggerIndex + 1], [line, col]);
+        editor.insertText(`${prefix}${hex}}`);
+    }
+
+    hideColorAutocomplete();
+    editor.focus();
+}
+
+// 캔버스 이벤트 초기화
+initColorPickerCanvasEvents();
+
+// ── 타임스탬프 인라인 자동완성 ──
+const timestampAc = {
+    visible: false,
+    trigger: 'dday',   // 'age' | 'dday' | 'time' | 'timer'
+    div: document.getElementById('timestamp-autocomplete'),
+};
+
+// ── 달력 상태 ──
+const cal = {
+    year: new Date().getFullYear(),
+    month: new Date().getMonth() + 1, // 1~12
+    selectedDate: null,               // 'YYYY-MM-DD'
+    yearPanelBase: Math.floor(new Date().getFullYear() / 12) * 12,
+    showingYearPanel: false,
+};
+
+function _calPad(n) { return String(n).padStart(2, '0'); }
+
+function _renderCalendar() {
+    const grid = document.getElementById('tsCalGrid');
+    const ymBtn = document.getElementById('tsCalYearMonth');
+    const yearRangeEl = document.getElementById('tsCalYearRange');
+    const yearGrid = document.getElementById('tsCalYearGrid');
+    const calSection = document.getElementById('tsCalSection');
+    const yearPanel = document.getElementById('tsCalYearPanel');
+    if (!grid || !ymBtn) return;
+
+    ymBtn.textContent = `${cal.year}년 ${_calPad(cal.month)}월`;
+
+    if (cal.showingYearPanel) {
+        calSection.style.display = 'none';
+        yearPanel.style.display = 'block';
+        const base = cal.yearPanelBase;
+        if (yearRangeEl) yearRangeEl.textContent = `${base} – ${base + 11}`;
+        if (yearGrid) {
+            yearGrid.innerHTML = '';
+            for (let y = base; y < base + 12; y++) {
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'ts-cal-year-btn' + (y === cal.year ? ' selected' : '');
+                btn.textContent = y;
+                btn.addEventListener('mousedown', (e) => {
+                    e.preventDefault();
+                    cal.year = y;
+                    cal.showingYearPanel = false;
+                    _renderCalendar();
+                });
+                yearGrid.appendChild(btn);
+            }
+        }
+        return;
+    }
+
+    calSection.style.display = 'block';
+    yearPanel.style.display = 'none';
+
+    const firstDay = new Date(cal.year, cal.month - 1, 1).getDay(); // 0=Sun
+    const daysInMonth = new Date(cal.year, cal.month, 0).getDate();
+    const today = new Date();
+    const todayStr = `${today.getFullYear()}-${_calPad(today.getMonth() + 1)}-${_calPad(today.getDate())}`;
+
+    grid.innerHTML = '';
+    // 빈 칸
+    for (let i = 0; i < firstDay; i++) {
+        const empty = document.createElement('div');
+        empty.className = 'ts-cal-cell empty';
+        grid.appendChild(empty);
+    }
+    // 날짜 칸
+    for (let d = 1; d <= daysInMonth; d++) {
+        const dateStr = `${cal.year}-${_calPad(cal.month)}-${_calPad(d)}`;
+        const cell = document.createElement('button');
+        cell.type = 'button';
+        cell.className = 'ts-cal-cell';
+        if (dateStr === todayStr) cell.classList.add('today');
+        if (dateStr === cal.selectedDate) cell.classList.add('selected');
+        cell.textContent = d;
+        cell.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            cal.selectedDate = dateStr;
+            const inputEl = document.getElementById('tsAcInput');
+            if (inputEl) inputEl.value = dateStr;
+            applyTimestampAutocomplete();
+        });
+        grid.appendChild(cell);
+    }
+}
+
+function _initCalendarEvents() {
+    document.getElementById('tsCalPrev').addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        if (cal.showingYearPanel) { cal.yearPanelBase -= 12; }
+        else { cal.month--; if (cal.month < 1) { cal.month = 12; cal.year--; } }
+        _renderCalendar();
+    });
+    document.getElementById('tsCalNext').addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        if (cal.showingYearPanel) { cal.yearPanelBase += 12; }
+        else { cal.month++; if (cal.month > 12) { cal.month = 1; cal.year++; } }
+        _renderCalendar();
+    });
+    document.getElementById('tsCalYearMonth').addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        cal.yearPanelBase = Math.floor(cal.year / 12) * 12;
+        cal.showingYearPanel = !cal.showingYearPanel;
+        _renderCalendar();
+    });
+    document.getElementById('tsCalYearPrev').addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        cal.yearPanelBase -= 12;
+        _renderCalendar();
+    });
+    document.getElementById('tsCalYearNext').addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        cal.yearPanelBase += 12;
+        _renderCalendar();
+    });
+}
+_initCalendarEvents();
+
+function hideTimestampAutocomplete() {
+    timestampAc.visible = false;
+    if (timestampAc.div) timestampAc.div.style.display = 'none';
+}
+
+function showTimestampAutocomplete(trigger) {
+    timestampAc.trigger = trigger;
+    timestampAc.visible = true;
+
+    const iconEl = document.getElementById('tsAcIcon');
+    const labelEl = document.getElementById('tsAcTypeLabel');
+    const inputEl = document.getElementById('tsAcInput');
+    const presetsEl = document.getElementById('tsAcPresets');
+    const calSec = document.getElementById('tsCalSection');
+    const yearPanel = document.getElementById('tsCalYearPanel');
+
+    const isDate = (trigger === 'age' || trigger === 'dday');
+
+    // 섹션 전환
+    if (calSec) calSec.style.display = isDate ? 'block' : 'none';
+    if (yearPanel) yearPanel.style.display = 'none';
+    if (presetsEl) presetsEl.style.display = isDate ? 'none' : 'flex';
+
+    const today = new Date();
+    function _offsetDate(days) {
+        const d = new Date(today);
+        d.setDate(d.getDate() + days);
+        return d.toISOString().slice(0, 10);
+    }
+    function _offsetYear(years) {
+        const d = new Date(today);
+        d.setFullYear(d.getFullYear() + years);
+        return d.toISOString().slice(0, 10);
+    }
+
+    if (trigger === 'age') {
+        if (iconEl) iconEl.className = 'mdi mdi-cake-variant-outline';
+        if (labelEl) labelEl.textContent = '만 나이 생년월일';
+        if (inputEl) { inputEl.type = 'text'; inputEl.placeholder = 'YYYY-MM-DD'; inputEl.readOnly = true; }
+        const initDate = _offsetYear(-20);
+        cal.year = parseInt(initDate.slice(0, 4), 10);
+        cal.month = parseInt(initDate.slice(5, 7), 10);
+        cal.selectedDate = initDate;
+        cal.showingYearPanel = false;
+        if (inputEl) inputEl.value = initDate;
+    } else if (trigger === 'dday') {
+        if (iconEl) iconEl.className = 'mdi mdi-calendar';
+        if (labelEl) labelEl.textContent = 'D-Day 날짜 선택';
+        if (inputEl) { inputEl.type = 'text'; inputEl.placeholder = 'YYYY-MM-DD'; inputEl.readOnly = true; }
+        const initDate = _offsetDate(0);
+        cal.year = parseInt(initDate.slice(0, 4), 10);
+        cal.month = parseInt(initDate.slice(5, 7), 10);
+        cal.selectedDate = initDate;
+        cal.showingYearPanel = false;
+        if (inputEl) inputEl.value = initDate;
+    } else {
+        // time / timer
+        if (iconEl) iconEl.className = trigger === 'timer' ? 'mdi mdi-timer-outline' : 'mdi mdi-clock-outline';
+        if (labelEl) labelEl.textContent = trigger === 'timer' ? '타이머 시간 선택' : '표시 시간 선택';
+        if (inputEl) { inputEl.type = 'text'; inputEl.placeholder = 'Unix 타임스탬프 (초)'; inputEl.readOnly = false; }
+        const now = Math.floor(Date.now() / 1000);
+        const presets = [
+            { label: '지금', value: now },
+            { label: '+1시간', value: now + 3600 },
+            { label: '+1일', value: now + 86400 },
+            { label: '+1주', value: now + 7 * 86400 },
+            { label: '+1달', value: now + 30 * 86400 },
+            { label: '+1년', value: now + 365 * 86400 },
+        ];
+        if (presetsEl) {
+            presetsEl.innerHTML = presets.map(p =>
+                `<button type="button" class="ts-ac-preset-btn" data-value="${p.value}">${escapeHtml(p.label)}</button>`
+            ).join('');
+            presetsEl.querySelectorAll('.ts-ac-preset-btn').forEach(btn => {
+                btn.addEventListener('mousedown', (e) => {
+                    e.preventDefault();
+                    if (inputEl) inputEl.value = btn.dataset.value;
+                    applyTimestampAutocomplete();
+                });
+            });
+        }
+        if (inputEl) inputEl.value = String(now);
+    }
+
+    if (isDate) _renderCalendar();
+    positionDropdownAtCursor(timestampAc.div, 294);
+}
+
+function applyTimestampAutocomplete() {
+    if (!editor) { hideTimestampAutocomplete(); return; }
+
+    const inputEl = document.getElementById('tsAcInput');
+    if (!inputEl) { hideTimestampAutocomplete(); return; }
+    const val = inputEl.value.trim();
+    if (!val) { hideTimestampAutocomplete(); return; }
+
+    const selection = editor.getSelection();
+    if (!selection) { hideTimestampAutocomplete(); return; }
+
+    const [from] = selection;
+    const line = from[0];
+    const col = from[1];
+
+    const md = editor.getMarkdown();
+    const lines = md.split('\n');
+    const lineText = lines[line - 1] || '';
+    const textBefore = lineText.substring(0, col - 1);
+
+    const prefix = `{${timestampAc.trigger}:`;
+    const lastTriggerIndex = textBefore.lastIndexOf(prefix);
+    if (lastTriggerIndex !== -1) {
+        editor.setSelection([line, lastTriggerIndex + 1], [line, col]);
+        editor.insertText(`${prefix}${val}}`);
+    }
+
+    hideTimestampAutocomplete();
+    editor.focus();
+}
+
+// 적용 버튼 / 입력창 키보드
+(function () {
+    const applyBtn = document.getElementById('tsAcApplyBtn');
+    if (applyBtn) {
+        applyBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            applyTimestampAutocomplete();
+        });
+    }
+    const inputEl = document.getElementById('tsAcInput');
+    if (inputEl) {
+        inputEl.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                e.stopPropagation();
+                applyTimestampAutocomplete();
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                hideTimestampAutocomplete();
+                if (editor) editor.focus();
+            }
+        });
+    }
+})();
+
+// ── Bootstrap Icons 목록 로딩 (지연 로딩, 캐시됨) ──
+async function loadBiIcons() {
+    if (biIconList) return biIconList;
+    try {
+        const res = await fetch('https://cdn.jsdelivr.net/npm/bootstrap-icons@1.13.1/font/bootstrap-icons.json');
+        const data = await res.json();
+        biIconList = Object.keys(data).sort();
+    } catch (e) {
+        console.error('BI icon list load failed:', e);
+        biIconList = [];
+    }
+    return biIconList;
+}
+
+// ── MDI 목록 로딩 (지연 로딩, 캐시됨) - CSS에서 아이콘명 추출 ──
+async function loadMdiIcons() {
+    if (mdiIconList) return mdiIconList;
+    try {
+        const res = await fetch('https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css');
+        const css = await res.text();
+        const matches = [...css.matchAll(/\.mdi-([\w-]+)::before/g)];
+        mdiIconList = [...new Set(matches.map(m => m[1]))].sort();
+    } catch (e) {
+        console.error('MDI icon list load failed:', e);
+        mdiIconList = [];
+    }
+    return mdiIconList;
+}
+
+// ── 선택된 아이콘 목록 로딩 (icons.json) ──
+async function loadSelectedIcons() {
+    if (selectedIconsList) return selectedIconsList;
+    try {
+        const res = await fetch('/icons.json');
+        selectedIconsList = await res.json();
+    } catch (e) {
+        console.error('icons.json load failed:', e);
+        selectedIconsList = [];
+    }
+    return selectedIconsList;
+}
+
+// ── 아이콘 필터링 (우선순위: 정확일치 → startsWith → contains) ──
+function filterIcons(iconList, query, limit = 200) {
+    if (!iconList || iconList.length === 0) return [];
+    if (!query || !query.trim()) return iconList.slice(0, limit);
+    const q = query.toLowerCase().trim();
+    const exact = iconList.filter(n => n === q);
+    const sw = iconList.filter(n => n !== q && n.startsWith(q));
+    const inc = iconList.filter(n => !n.startsWith(q) && n.includes(q));
+    return [...exact, ...sw, ...inc].slice(0, limit);
+}
+
+// ── 선택된 아이콘 전체 피커 열기 (icons.json의 mdi+bi 모두 표시) ──
+async function openSelectedIconsPicker() {
+    if (editor) {
+        iconPickerSavedSelection = editor.getSelection();
+    }
+    pendingIconInsertion = null;
+    const myToken = ++iconPickerToken;
+
+    const titleEl = document.getElementById('iconPickerTitle');
+    const typeIconEl = document.getElementById('iconPickerTypeIcon');
+    const gridEl = document.getElementById('iconPickerGrid');
+    const spinner = document.getElementById('iconLoadingSpinner');
+    const searchInput = document.getElementById('iconSearchInput');
+    const emptyEl = document.getElementById('iconPickerEmpty');
+
+    titleEl.textContent = '아이콘 선택';
+    typeIconEl.className = 'mdi mdi-vector-square me-2';
+
+    const modalEl = document.getElementById('iconPickerModal');
+    const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+    modal.show();
+
+    searchInput.value = '';
+    gridEl.innerHTML = '';
+    emptyEl.style.display = 'none';
+    spinner.style.display = 'block';
+
+    const allIcons = await loadSelectedIcons();
+    if (myToken !== iconPickerToken) return;
+    spinner.style.display = 'none';
+    renderMixedIconGrid(gridEl, emptyEl, allIcons, '');
+
+    let searchTimer;
+    searchInput.oninput = () => {
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(() => {
+            renderMixedIconGrid(gridEl, emptyEl, allIcons, searchInput.value);
+        }, 200);
+    };
+    searchInput.onkeydown = (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            renderMixedIconGrid(gridEl, emptyEl, allIcons, searchInput.value);
+        }
+    };
+
+    setTimeout(() => searchInput.focus(), 300);
+}
+
+// ── 혼합 아이콘 그리드 렌더링 (mdi + bi) ──
+function renderMixedIconGrid(gridEl, emptyEl, iconList, query) {
+    const filtered = filterIcons(iconList, query, 200);
+    gridEl.innerHTML = '';
+
+    if (filtered.length === 0) {
+        emptyEl.style.display = 'block';
+        return;
+    }
+    emptyEl.style.display = 'none';
+
+    filtered.forEach(fullName => {
+        let cssClass, type, iconName;
+        if (fullName.startsWith('bi-')) {
+            type = 'bi';
+            iconName = fullName.slice(3);
+            cssClass = 'bi bi-' + iconName;
+        } else if (fullName.startsWith('mdi-')) {
+            type = 'mdi';
+            iconName = fullName.slice(4);
+            cssClass = 'mdi mdi-' + iconName;
+        } else {
+            return;
+        }
+        const item = document.createElement('button');
+        item.type = 'button';
+        item.className = 'icon-grid-modal-item';
+        item.title = fullName;
+        item.innerHTML = `<i class="${cssClass}"></i><span>${escapeHtml(fullName)}</span>`;
+        item.addEventListener('click', () => {
+            pendingIconInsertion = `{${type}:${iconName}}`;
+            bootstrap.Modal.getOrCreateInstance(document.getElementById('iconPickerModal')).hide();
+        });
+        gridEl.appendChild(item);
+    });
+}
+
+// ── 아이콘 피커 모달 열기 ──
+async function openIconPicker(type) {
+    if (editor) {
+        iconPickerSavedSelection = editor.getSelection();
+    }
+    pendingIconInsertion = null;
+    const myToken = ++iconPickerToken;
+
+    const titleEl = document.getElementById('iconPickerTitle');
+    const typeIconEl = document.getElementById('iconPickerTypeIcon');
+    const gridEl = document.getElementById('iconPickerGrid');
+    const spinner = document.getElementById('iconLoadingSpinner');
+    const searchInput = document.getElementById('iconSearchInput');
+    const emptyEl = document.getElementById('iconPickerEmpty');
+
+    if (type === 'bi') {
+        titleEl.textContent = 'Bootstrap Icons 선택';
+        typeIconEl.className = 'bi bi-bootstrap me-2';
+    } else {
+        titleEl.textContent = 'Material Design Icons 선택';
+        typeIconEl.className = 'mdi mdi-material-design me-2';
+    }
+
+    // 모달 표시
+    const modalEl = document.getElementById('iconPickerModal');
+    const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+    modal.show();
+
+    // 상태 초기화
+    searchInput.value = '';
+    gridEl.innerHTML = '';
+    emptyEl.style.display = 'none';
+    spinner.style.display = 'block';
+
+    // 아이콘 목록 로딩
+    let icons;
+    if (selectedIconsOnly) {
+        const all = await loadSelectedIcons();
+        const prefix = type === 'bi' ? 'bi-' : 'mdi-';
+        icons = all.filter(n => n.startsWith(prefix)).map(n => n.slice(prefix.length));
+    } else {
+        icons = type === 'bi' ? await loadBiIcons() : await loadMdiIcons();
+    }
+    if (myToken !== iconPickerToken) return;
+    spinner.style.display = 'none';
+    renderIconPickerGrid(gridEl, emptyEl, icons, '', type);
+
+    // 검색 핸들러
+    let searchTimer;
+    searchInput.oninput = () => {
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(() => {
+            renderIconPickerGrid(gridEl, emptyEl, icons, searchInput.value, type);
+        }, 200);
+    };
+    searchInput.onkeydown = (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            renderIconPickerGrid(gridEl, emptyEl, icons, searchInput.value, type);
+        }
+    };
+
+    // 검색창 자동 포커스
+    setTimeout(() => searchInput.focus(), 300);
+}
+
+// ── 아이콘 피커 그리드 렌더링 ──
+function renderIconPickerGrid(gridEl, emptyEl, iconList, query, type) {
+    const filtered = filterIcons(iconList, query, 200);
+    gridEl.innerHTML = '';
+
+    if (filtered.length === 0) {
+        emptyEl.style.display = 'block';
+        return;
+    }
+    emptyEl.style.display = 'none';
+
+    const prefix = type === 'bi' ? 'bi bi-' : 'mdi mdi-';
+    filtered.forEach(iconName => {
+        const item = document.createElement('button');
+        item.type = 'button';
+        item.className = 'icon-grid-modal-item';
+        item.title = iconName;
+        item.innerHTML = `<i class="${prefix}${iconName}"></i><span>${escapeHtml(iconName)}</span>`;
+        item.addEventListener('click', () => {
+            pendingIconInsertion = `{${type}:${iconName}}`;
+            bootstrap.Modal.getOrCreateInstance(document.getElementById('iconPickerModal')).hide();
+        });
+        gridEl.appendChild(item);
+    });
+}
+
+// ── 아이콘 인라인 자동완성: 숨기기 ──
+function hideIconAutocomplete() {
+    iconAc.visible = false;
+    iconAc.results = [];
+    iconAc.selectedIndex = -1;
+    iconAc.lastKey = null;
+    if (iconAc.div) iconAc.div.style.display = 'none';
+}
+
+// ── 아이콘 인라인 자동완성: 표시 ──
+function showIconAutocomplete(query, type) {
+    iconAc.query = query;
+    iconAc.type = type;
+    iconAc.visible = true;
+
+    const typeIconEl = document.getElementById('iconAc.typeIcon');
+    const typeLabelEl = document.getElementById('iconAc.typeLabel');
+    if (typeIconEl) {
+        typeIconEl.className = type === 'icon' ? 'bi bi-search' : (type === 'bi' ? 'bi bi-bootstrap' : 'mdi mdi-material-design');
+    }
+    if (typeLabelEl) {
+        typeLabelEl.textContent = type === 'icon' ? '아이콘 검색' : (type === 'bi' ? 'Bootstrap Icons' : 'Material Design Icons');
+    }
+
+    // 커서 위치에 드롭다운 표시
+    positionDropdownAtCursor(iconAc.div, 330);
+
+    const iconAcKey = `${type}:${query}`;
+    if (iconAcKey === iconAc.lastKey) return;
+    iconAc.lastKey = iconAcKey;
+
+    // 로딩 표시
+    const gridEl = document.getElementById('iconAcGrid');
+    const emptyEl = document.getElementById('iconAcEmpty');
+    const loadingEl = document.getElementById('iconAcLoading');
+    if (gridEl) gridEl.innerHTML = '';
+    if (emptyEl) emptyEl.style.display = 'none';
+    if (loadingEl) loadingEl.style.display = 'block';
+
+    clearTimeout(iconAc.debounceTimer);
+    iconAc.debounceTimer = setTimeout(async () => {
+        const requestedType = type;
+        const requestedQuery = query;
+        if (!iconAc.visible) return;
+
+        let icons;
+        if (requestedType === 'icon') {
+            // {icon:} 자동완성 - icons.json에서 로드
+            icons = await loadSelectedIcons();
+        } else if (selectedIconsOnly) {
+            // selectedIconsOnly 모드에서 {bi:}, {mdi:} 자동완성도 icons.json 기반
+            const all = await loadSelectedIcons();
+            const prefix = requestedType === 'bi' ? 'bi-' : 'mdi-';
+            icons = all.filter(n => n.startsWith(prefix)).map(n => n.slice(prefix.length));
+        } else {
+            icons = requestedType === 'bi' ? await loadBiIcons() : await loadMdiIcons();
+        }
+
+        if (!iconAc.visible) return;
+        if (iconAc.type !== requestedType || iconAc.query !== requestedQuery) return;
+        if (loadingEl) loadingEl.style.display = 'none';
+        iconAc.results = filterIcons(icons, requestedQuery, 30);
+        renderIconAcResults();
+    }, 150);
+}
+
+// ── 아이콘 인라인 자동완성: 결과 렌더링 ──
+function renderIconAcResults() {
+    const gridEl = document.getElementById('iconAcGrid');
+    const emptyEl = document.getElementById('iconAcEmpty');
+    if (!gridEl) return;
+
+    if (iconAc.results.length === 0) {
+        gridEl.innerHTML = '';
+        if (emptyEl) emptyEl.style.display = 'block';
+        return;
+    }
+    if (emptyEl) emptyEl.style.display = 'none';
+
+    const getIconClass = (iconName) => {
+        if (iconAc.type === 'icon') {
+            // {icon:} 타입: 아이콘코드에 bi- 또는 mdi- 접두사 포함
+            if (iconName.startsWith('bi-')) return `bi ${iconName}`;
+            if (iconName.startsWith('mdi-')) return `mdi ${iconName}`;
+            return iconName;
+        }
+        return iconAc.type === 'bi' ? `bi bi-${iconName}` : `mdi mdi-${iconName}`;
+    };
+    gridEl.innerHTML = iconAc.results.map((iconName, index) => `
+        <div class="icon-ac-item" data-index="${index}" onclick="selectIconAutocomplete(${index})">
+            <i class="${getIconClass(escapeHtml(iconName))}"></i>
+            <span>${escapeHtml(iconName)}</span>
+        </div>
+    `).join('');
+
+    iconAc.selectedIndex = 0;
+    highlightIconAcItem();
+}
+
+// ── 아이콘 인라인 자동완성: 선택 항목 하이라이트 ──
+function highlightIconAcItem() {
+    if (!iconAc.div) return;
+    const items = iconAc.div.querySelectorAll('.icon-ac-item');
+    items.forEach((item, idx) => {
+        if (idx === iconAc.selectedIndex) {
+            item.classList.add('active');
+            item.scrollIntoView({ block: 'nearest' });
+        } else {
+            item.classList.remove('active');
+        }
+    });
+}
+
+// ── 아이콘 인라인 자동완성: 선택 ──
+function selectIconAutocomplete(index) {
+    const iconName = iconAc.results[index];
+    if (!iconName || !editor) return;
+
+    const selection = editor.getSelection();
+    if (!selection) { hideIconAutocomplete(); return; }
+
+    const [from] = selection;
+    const line = from[0];
+    const col = from[1];
+
+    const md = editor.getMarkdown();
+    const lines = md.split('\n');
+    const lineText = lines[line - 1] || '';
+    const textBefore = lineText.substring(0, col - 1);
+
+    const prefix = iconAc.type === 'icon' ? '{icon:' : (iconAc.type === 'bi' ? '{bi:' : '{mdi:');
+    const lastTriggerIndex = textBefore.lastIndexOf(prefix);
+
+    if (lastTriggerIndex !== -1) {
+        editor.setSelection([line, lastTriggerIndex + 1], [line, col]);
+        editor.insertText(`${prefix}${iconName}}`);
+    }
+
+    hideIconAutocomplete();
+    editor.focus();
+}
+
+function startAutoSave() {
+    setInterval(() => {
+        if (editor && slug && AUTO_SAVE_KEY) {
+            const content = editor.getMarkdown();
+            if (content && content.trim().length > 0) {
+                localStorage.setItem(AUTO_SAVE_KEY, content);
+            }
+        }
+    }, 10000); // 10초마다 자동 저장
+}
+
+// ── 카테고리 태그 UI 로직 ──
+const categoryInputHidden = document.getElementById('categoryInput');
+const categoryTagContainer = document.getElementById('categoryTagContainer');
+const categoryTagInput = document.getElementById('categoryTagInput');
+let categoryTags = [];
+
+// ── 카테고리 자동완성 상태 ──
+const categoryAc = {
+    visible: false,
+    results: [],
+    selectedIndex: -1,
+    query: '',
+    lastQuery: null,
+    debounceTimer: null,
+    div: document.getElementById('category-autocomplete'),
+};
+
+function hideCategoryAutocomplete() {
+    categoryAc.visible = false;
+    categoryAc.results = [];
+    categoryAc.selectedIndex = -1;
+    categoryAc.lastQuery = null;
+    if (categoryAc.div) categoryAc.div.style.display = 'none';
+}
+
+function showCategoryAutocomplete(query) {
+    categoryAc.query = query;
+    categoryAc.visible = true;
+
+    if (categoryAc.div) {
+        const rect = categoryTagContainer.getBoundingClientRect();
+        categoryAc.div.style.left = rect.left + 'px';
+        categoryAc.div.style.top = (rect.bottom + 2) + 'px';
+        categoryAc.div.style.width = rect.width + 'px';
+        categoryAc.div.style.display = 'block';
+    }
+
+    if (categoryAc.query === categoryAc.lastQuery) return;
+    categoryAc.lastQuery = categoryAc.query;
+
+    clearTimeout(categoryAc.debounceTimer);
+    categoryAc.debounceTimer = setTimeout(async () => {
+        if (!categoryAc.visible) return;
+        try {
+            const res = await fetch(`/api/w/search-categories?q=${encodeURIComponent(categoryAc.query)}`);
+            if (!res.ok) return;
+            const data = await res.json();
+            categoryAc.results = data.results || [];
+            renderCategoryAcResults();
+        } catch (e) {
+            console.error('Category autocomplete fetch error:', e);
+        }
+    }, 200);
+}
+
+function renderCategoryAcResults() {
+    if (!categoryAc.div) return;
+    if (categoryAc.results.length === 0) {
+        hideCategoryAutocomplete();
+        return;
+    }
+    categoryAc.div.innerHTML = categoryAc.results.map((item, index) => `
+        <div class="list-group-item cat-ac-item" data-index="${index}" onmousedown="selectCategoryAcByIndex(${index})">
+            <i class="mdi mdi-tag-outline"></i>
+            <span>${escapeHtml(item)}</span>
+        </div>
+    `).join('');
+    categoryAc.selectedIndex = -1;
+    highlightCategoryAcItem();
+}
+
+function highlightCategoryAcItem() {
+    if (!categoryAc.div) return;
+    const items = categoryAc.div.querySelectorAll('.cat-ac-item');
+    items.forEach((item, idx) => {
+        if (idx === categoryAc.selectedIndex) {
+            item.classList.add('active');
+            item.scrollIntoView({ block: 'nearest' });
+        } else {
+            item.classList.remove('active');
+        }
+    });
+}
+
+function selectCategoryAc(index) {
+    const item = categoryAc.results[index];
+    if (!item) return;
+    addCategoryTag(item);
+    categoryTagInput.value = '';
+    hideCategoryAutocomplete();
+    categoryTagInput.focus();
+}
+
+window.selectCategoryAcByIndex = selectCategoryAc;
+
+function renderCategoryTags() {
+    // 기존 렌더링 된 태그 요소들만 삭제
+    const tags = categoryTagContainer.querySelectorAll('.category-tag');
+    tags.forEach(tag => tag.remove());
+
+    categoryTags.forEach((tagText, index) => {
+        const tagEl = document.createElement('span');
+        tagEl.className = 'category-tag';
+        tagEl.innerHTML = `<span>${escapeHtml(tagText)}</span> <i class="mdi mdi-close" onclick="removeCategoryTag(${index})"></i>`;
+        categoryTagContainer.insertBefore(tagEl, categoryTagInput);
+    });
+    categoryInputHidden.value = categoryTags.join(',');
+    // 이벤트 강제 트리거 (관리자 전용 체크 로직 동작을 위해)
+    categoryInputHidden.dispatchEvent(new Event('input'));
+}
+
+function addCategoryTag(tag) {
+    const cleanTag = tag.trim();
+    if (cleanTag && !categoryTags.includes(cleanTag) && /^[가-힣a-zA-Z0-9\s_.-]+$/.test(cleanTag)) {
+        categoryTags.push(cleanTag);
+        renderCategoryTags();
+    } else if (cleanTag && !/^[가-힣a-zA-Z0-9\s_.-]+$/.test(cleanTag)) {
+        Swal.fire({
+            icon: 'warning',
+            title: '특수문자 제외',
+            text: '특수문자를 제외한 카테고리 이름을 입력해 주세요.',
+            toast: true,
+            position: 'top-end',
+            timer: 2000,
+            showConfirmButton: false
+        });
+    }
+}
+
+window.removeCategoryTag = function (index) {
+    categoryTags.splice(index, 1);
+    renderCategoryTags();
+};
+
+if (categoryTagInput) {
+    categoryTagInput.addEventListener('keydown', (e) => {
+        // 한글 조합 중 엔터 등 처리 방지
+        if (e.isComposing) return;
+
+        // 자동완성 키 처리
+        if (categoryAc.visible) {
+            if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                if (categoryAc.results.length > 0) {
+                    categoryAc.selectedIndex = (categoryAc.selectedIndex + 1) % categoryAc.results.length;
+                    highlightCategoryAcItem();
+                }
+                return;
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                if (categoryAc.results.length > 0) {
+                    categoryAc.selectedIndex = (categoryAc.selectedIndex - 1 + categoryAc.results.length) % categoryAc.results.length;
+                    highlightCategoryAcItem();
+                }
+                return;
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                hideCategoryAutocomplete();
+                return;
+            } else if (e.key === 'Enter' && categoryAc.selectedIndex >= 0) {
+                e.preventDefault();
+                selectCategoryAc(categoryAc.selectedIndex);
+                return;
+            }
+        }
+
+        if (e.key === 'Enter' || e.key === ',') {
+            e.preventDefault();
+            if (categoryTagInput.value.trim()) {
+                const tags = categoryTagInput.value.split(','); // 복붙 등에 의한 다중입력 대비
+                tags.forEach(t => addCategoryTag(t));
+                categoryTagInput.value = '';
+                hideCategoryAutocomplete();
+            }
+        } else if (e.key === 'Backspace' && categoryTagInput.value === '') {
+            if (categoryTags.length > 0) {
+                categoryTags.pop();
+                renderCategoryTags();
+            }
+        }
+    });
+
+    categoryTagInput.addEventListener('blur', () => {
+        // 자동완성 항목 클릭(onmousedown) 처리 후 닫기
+        setTimeout(() => {
+            hideCategoryAutocomplete();
+            if (categoryTagInput.value.trim()) {
+                const tags = categoryTagInput.value.split(',');
+                tags.forEach(t => addCategoryTag(t));
+                categoryTagInput.value = '';
+            }
+        }, 150);
+    });
+
+    // 쉼표 입력시 블러나 다른 이벤트에서 쉼표가 방해될 수 있으므로 input 이벤트에서도 쉼표 감지
+    categoryTagInput.addEventListener('input', (e) => {
+        if (categoryTagInput.value.includes(',')) {
+            const tags = categoryTagInput.value.split(',');
+            const lastFragment = tags.pop(); // 아직 입력중인 텍스트
+            tags.forEach(t => addCategoryTag(t));
+            categoryTagInput.value = lastFragment;
+            hideCategoryAutocomplete();
+            return;
+        }
+        // 자동완성 표시
+        showCategoryAutocomplete(categoryTagInput.value.trim());
+    });
+}
+
+
+async function checkAutoSave() {
+    if (!AUTO_SAVE_KEY) return;
+
+    const savedContent = localStorage.getItem(AUTO_SAVE_KEY);
+    if (savedContent) {
+        // 로드된 내용과 동일하면 묻지 않고 삭제
+        if (savedContent.trim() === currentContent.trim()) {
+            localStorage.removeItem(AUTO_SAVE_KEY);
+            return;
+        }
+
+        const result = await Swal.fire({
+            title: '작성 중인 내용이 있습니다',
+            text: '이전에 작성하던 내용을 불러오시겠습니까?',
+            icon: 'info',
+            showCancelButton: true,
+            confirmButtonText: '예, 불러오기',
+            cancelButtonText: '아니오, 삭제'
+        });
+
+        if (result.isConfirmed) {
+            editor.setMarkdown(savedContent);
+            scrollToBottom();
+            Swal.fire({
+                icon: 'success',
+                title: '불러옴',
+                text: '저장된 내용을 불러왔습니다.',
+                timer: 1000,
+                showConfirmButton: false
+            });
+        } else {
+            localStorage.removeItem(AUTO_SAVE_KEY);
+        }
+    }
+}
+
+// ── 커스텀 프리뷰 렌더링 (common.js의 renderWikiContent 모듈 사용) ──
+let previewDebounce;
+async function updateCustomPreview() {
+    if (!editor) return;
+    // 마크다운 프리뷰 영역만 대상으로 함 (위지윅 편집 영역은 건드리지 않음)
+    const mdPreview = document.querySelector('#editor .toastui-editor-md-preview');
+    if (!mdPreview) return;
+
+    const defaultContents = mdPreview.querySelectorAll('.toastui-editor-contents:not(#custom-wiki-preview)');
+    defaultContents.forEach(el => el.style.display = 'none');
+
+    let customPreview = document.getElementById('custom-wiki-preview');
+    if (!customPreview) {
+        customPreview = document.createElement('div');
+        customPreview.id = 'custom-wiki-preview';
+        customPreview.className = 'wiki-content';
+
+        if (defaultContents.length > 0) {
+            defaultContents[0].parentNode.appendChild(customPreview);
+        } else {
+            mdPreview.appendChild(customPreview);
+        }
+    }
+
+    const md = editor.getMarkdown();
+    // 익스텐션 데이터 문서는 프리뷰 렌더링 비활성화
+    const enabledExts = (appConfig && appConfig.enabledExtensions) || [];
+    const extPrefix = enabledExts.find(ext => slug && slug.startsWith(ext + ':'));
+    if (extPrefix) {
+        customPreview.innerHTML = `<div class="wiki-ext-raw-data">
+        <div class="wiki-ext-raw-badge"><i class="bi bi-database"></i> ${escapeHtml(extPrefix)} 익스텐션 데이터 (프리뷰 비활성화)</div>
+        <pre class="wiki-ext-raw-pre">${escapeHtml(md)}</pre>
+    </div>`;
+    } else {
+        await renderWikiContent(md, slug, 'custom-wiki-preview');
+    }
+}
+
+// ── 문서 하단으로 스크롤 (에디터 + 프리뷰) ──
+function scrollToBottom() {
+    if (!editor) return;
+    if (isExtensionData) {
+        const rawTextarea = document.getElementById('rawExtTextarea');
+        if (rawTextarea) {
+            rawTextarea.scrollTop = rawTextarea.scrollHeight;
+        }
+    } else {
+        // Toast UI Editor scroll (Markdown mode)
+        // MD 에디터 스크롤 (이중 안전장치)
+        editor.setScrollTop(9999999);
+
+        // MD 에디터 자체 텍스트 커서도 끝으로 이동
+        if (typeof editor.moveCursorToEnd === 'function') {
+            editor.moveCursorToEnd();
+        }
+
+        // 프리뷰 스크롤 (커스텀 프리뷰 포함)
+        const mdPreview = document.querySelector('#editor .toastui-editor-md-preview');
+        if (mdPreview) {
+            mdPreview.scrollTop = mdPreview.scrollHeight;
+        }
+        const customPreview = document.getElementById('custom-wiki-preview');
+        if (customPreview) {
+            customPreview.scrollTop = customPreview.scrollHeight;
+        }
+    }
+}
+
+document.addEventListener('DOMContentLoaded', async () => {
+    await loadConfig();
+    selectedIconsOnly = !!(appConfig && appConfig.selectedIconsOnly);
+    initTurnstile();
+    // 인증 확인
+    try {
+        const res = await fetch('/api/me');
+        if (res.ok) {
+            currentUser = await res.json();
+            document.querySelectorAll('#navUserName, #userName').forEach(el => el.textContent = currentUser.name);
+            document.querySelectorAll('#userAvatar').forEach(el => el.src = currentUser.picture || '');
+            document.querySelectorAll('#navLogin').forEach(el => el.classList.add('d-none'));
+            document.querySelectorAll('#navUser').forEach(el => el.classList.remove('d-none'));
+            if (currentUser.role === 'admin' || currentUser.role === 'super_admin') {
+                document.querySelectorAll('#navAdminConsole').forEach(el => el.classList.remove('d-none'));
+            }
+        } else {
+            Swal.fire({
+                icon: 'warning',
+                title: '로그인 필요',
+                text: '문서를 편집하려면 로그인이 필요합니다.',
+                confirmButtonText: '로그인',
+            }).then(() => {
+                window.location.href = '/auth/google';
+            });
+            return;
+        }
+    } catch (e) {
+        window.location.href = '/auth/google';
+        return;
+    }
+
+    // slug 파싱
+    const params = new URLSearchParams(window.location.search);
+    slug = params.get('slug');
+    if (slug) AUTO_SAVE_KEY = 'wiki_autosave_' + slug;
+
+    if (!slug) {
+        Swal.fire('오류', '문서 제목이 지정되지 않았습니다.', 'error').then(() => {
+            window.location.href = '/';
+        });
+        return;
+    }
+
+    // 익스텐션 데이터 문서 감지 (freq: 등)
+    const enabledExts = (appConfig && appConfig.enabledExtensions) || [];
+    const extPrefix = enabledExts.find(ext => slug.startsWith(ext + ':'));
+    isExtensionData = !!extPrefix;
+
+    if (isExtensionData) {
+        // Toast UI Editor 대신 raw textarea 사용 (대용량 데이터 지원)
+        const editorContainer = document.getElementById('editor');
+        editorContainer.innerHTML = `
+            <div class="wiki-ext-raw-editor">
+                <div class="wiki-ext-raw-editor-badge">
+                    <i class="bi bi-database"></i> ${escapeHtml(extPrefix)} 익스텐션 데이터
+                    <span class="wiki-ext-raw-editor-hint">마크다운 렌더링이 비활성화된 원시 데이터 편집 모드입니다</span>
+                </div>
+                <textarea id="rawExtTextarea" class="wiki-ext-raw-textarea" spellcheck="false"></textarea>
+                <div class="wiki-ext-raw-editor-footer">
+                    <span id="rawExtCharCount">0자</span>
+                    <span id="rawExtLineCount">0행</span>
+                </div>
+            </div>
+        `;
+
+        const rawTextarea = document.getElementById('rawExtTextarea');
+        const charCountEl = document.getElementById('rawExtCharCount');
+        const lineCountEl = document.getElementById('rawExtLineCount');
+
+        function updateRawCounts() {
+            const val = rawTextarea.value;
+            charCountEl.textContent = val.length.toLocaleString() + '자';
+            lineCountEl.textContent = (val.split('\n').length).toLocaleString() + '행';
+        }
+        rawTextarea.addEventListener('input', updateRawCounts);
+
+        // editor 심(shim) 객체: 기존 코드(save, cancel, diff, autosave 등)가
+        // editor.getMarkdown() / editor.setMarkdown()을 통해 동작하도록 호환 유지
+        editor = {
+            getMarkdown: () => rawTextarea.value,
+            setMarkdown: (md) => { rawTextarea.value = md; updateRawCounts(); },
+            on: () => { },           // change 이벤트 등 무시
+            focus: () => rawTextarea.focus(),
+            insertText: (t) => {
+                const start = rawTextarea.selectionStart;
+                const end = rawTextarea.selectionEnd;
+                rawTextarea.value = rawTextarea.value.substring(0, start) + t + rawTextarea.value.substring(end);
+                rawTextarea.selectionStart = rawTextarea.selectionEnd = start + t.length;
+                updateRawCounts();
+            },
+            changePreviewStyle: () => { },
+            // 프리뷰, diff 등에서 참조하는 메서드 추가 방지
+        };
+
+        // 변경 사항 미리보기, 스크롤 동기화, 자동 프리뷰 등 건너뜀
+        startAutoSave();
+    } else {
+        // Toast UI Editor 초기화
+        const isMobile = window.innerWidth <= 768;
+
+        // 커스텀 툴바 버튼 생성
+        function createCustomButton(text, tooltip, onClick) {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'toastui-editor-toolbar-icons';
+            btn.style.backgroundImage = 'none';
+            btn.style.margin = '0';
+            btn.style.fontSize = '12px';
+            btn.style.fontWeight = '700';
+            btn.style.color = 'var(--wiki-text)';
+            btn.style.width = '32px';
+            btn.style.padding = '0';
+            btn.style.lineHeight = '24px';
+            btn.style.display = 'inline-flex';
+            btn.style.alignItems = 'center';
+            btn.style.justifyContent = 'center';
+            btn.innerHTML = text;
+            btn.setAttribute('aria-label', tooltip);
+            btn.addEventListener('click', onClick);
+            return btn;
+        }
+
+        const wikiLinkBtn = createCustomButton('[[ ]]', '위키 링크 삽입', () => {
+            editor.insertText('[[문서제목]]');
+        });
+
+        const transclusionBtn = createCustomButton('{{ }}', '틀 삽입', () => {
+            editor.insertText('{{틀제목}}');
+        });
+
+        const mdiBtn = createCustomButton('<i class="mdi mdi-vector-square" style="font-size:16px"></i>', 'MDI 아이콘 삽입', () => {
+            openIconPicker('mdi');
+        });
+
+        const biBtn = createCustomButton('<i class="bi bi-bootstrap-fill" style="font-size:16px"></i>', 'Bootstrap Icon 삽입', () => {
+            openIconPicker('bi');
+        });
+
+        const selectedIconsBtn = createCustomButton('<i class="mdi mdi-vector-square" style="font-size:16px"></i>', '아이콘 삽입', () => {
+            openSelectedIconsPicker();
+        });
+
+        const footnoteBtn = createCustomButton('[*]', '각주 삽입', () => {
+            editor.insertText('[* 각주 내용]');
+        });
+
+        const foldingBtn = createCustomButton('<i class="mdi mdi-form-dropdown" style="font-size:16px"></i>', '펼치기 접기 삽입', () => {
+            editor.insertText('[+ 펼치기/접기 제목]\n여기에 숨겨진 내용이 들어갑니다.\n[-]');
+        });
+
+        const subdocBtn = createCustomButton('<i class="bi bi-diagram-3-fill" style="font-size:16px"></i>', '하위 문서 구조 삽입', () => {
+            openSubdocInsertModal();
+        });
+
+        // 커스텀 이미지 업로드 버튼 (드래그앤드롭 팝업)
+        const imageUploadBtn = createCustomButton('<i class="mdi mdi-image-plus" style="font-size:16px"></i>', '이미지 업로드', () => { });
+
+        // 드래그앤드롭 팝업 생성
+        const imgUploadPopup = document.createElement('div');
+        imgUploadPopup.className = 'img-upload-popup';
+        imgUploadPopup.innerHTML = `
+        <div class="img-upload-dropzone">
+            <i class="mdi mdi-cloud-upload-outline"></i>
+            <div class="drop-main-text">이미지를 여기에 드래그하세요</div>
+            <div class="drop-sub-text">또는 클릭하여 파일 선택</div>
+        </div>
+    `;
+        document.body.appendChild(imgUploadPopup);
+
+        const imgDropzone = imgUploadPopup.querySelector('.img-upload-dropzone');
+        const imgFileInput = document.createElement('input');
+        imgFileInput.type = 'file';
+        imgFileInput.accept = 'image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm,video/ogg';
+        imgFileInput.style.display = 'none';
+        imgUploadPopup.appendChild(imgFileInput);
+
+        // 팝업 토글
+        imageUploadBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const isActive = imgUploadPopup.classList.contains('active');
+            imgUploadPopup.classList.toggle('active');
+            if (!isActive) {
+                const rect = imageUploadBtn.getBoundingClientRect();
+                imgUploadPopup.style.top = (rect.bottom + window.scrollY + 6) + 'px';
+                imgUploadPopup.style.left = Math.max(8, rect.left + window.scrollX - 140) + 'px';
+            }
+        });
+
+        // 바깥 클릭시 닫기
+        document.addEventListener('click', (e) => {
+            if (!imgUploadPopup.contains(e.target) && !imageUploadBtn.contains(e.target)) {
+                imgUploadPopup.classList.remove('active');
+            }
+        });
+
+        // 드롭존 클릭 → 파일 선택
+        imgDropzone.addEventListener('click', () => {
+            imgFileInput.click();
+        });
+
+        // 파일 선택 처리
+        imgFileInput.addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            imgUploadPopup.classList.remove('active');
+            await handleImageUpload(file, (url, alt, size) => {
+                let insertTxt = `![${alt}](${url})`;
+                if (size && size !== 'full') {
+                    insertTxt += `{size:${size}}`;
+                }
+                editor.insertText(insertTxt);
+            });
+            imgFileInput.value = '';
+        });
+
+        // 드래그앤드롭 처리
+        imgDropzone.addEventListener('dragenter', (e) => {
+            e.preventDefault();
+            imgDropzone.classList.add('dragover');
+        });
+        imgDropzone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'copy';
+        });
+        imgDropzone.addEventListener('dragleave', (e) => {
+            e.preventDefault();
+            imgDropzone.classList.remove('dragover');
+        });
+        imgDropzone.addEventListener('drop', async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            imgDropzone.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (!files || files.length === 0) return;
+            const file = files[0];
+            const acceptTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp',
+                'video/mp4', 'video/webm', 'video/ogg'];
+            if (!acceptTypes.includes(file.type)) {
+                Swal.fire('오류', '지원하지 않는 파일 형식입니다.', 'warning');
+                return;
+            }
+            imgUploadPopup.classList.remove('active');
+            await handleImageUpload(file, (url, alt, size) => {
+                let insertTxt = `![${alt}](${url})`;
+                if (size && size !== 'full') {
+                    insertTxt += `{size:${size}}`;
+                }
+                editor.insertText(insertTxt);
+            });
+        });
+
+        const isDarkMode = getIsDarkMode();
+
+        editor = new toastui.Editor({
+            el: document.querySelector('#editor'),
+            height: '600px',
+            initialEditType: 'markdown',
+            previewStyle: isMobile ? 'tab' : 'vertical',
+            language: 'ko-KR',
+            theme: isDarkMode ? 'dark' : 'light',
+            usageStatistics: false,
+            hideModeSwitch: true,
+            scrollSync: false,
+            toolbarItems: [
+                ['heading', 'bold', 'italic', 'strike'],
+                ['hr', 'quote'],
+                ['ul', 'ol', 'task'],
+                ['table', 'link'],
+                [
+                    { name: 'wikiLink', tooltip: '위키 링크 삽입', el: wikiLinkBtn },
+                    { name: 'transclusion', tooltip: '틀 삽입', el: transclusionBtn },
+                    ...(selectedIconsOnly
+                        ? [{ name: 'selectedIcons', tooltip: '아이콘 삽입', el: selectedIconsBtn }]
+                        : [
+                            { name: 'mdiIcon', tooltip: 'MDI 아이콘', el: mdiBtn },
+                            { name: 'biIcon', tooltip: 'Bootstrap 아이콘', el: biBtn },
+                        ]),
+                    { name: 'footnote', tooltip: '각주 삽입', el: footnoteBtn },
+                    { name: 'folding', tooltip: '펼치기 접기 삽입', el: foldingBtn },
+                    { name: 'subdocInsert', tooltip: '하위 문서 구조 삽입', el: subdocBtn },
+                    { name: 'imageUpload', tooltip: '이미지 업로드', el: imageUploadBtn }
+                ],
+                ['code', 'codeblock']
+            ],
+            hooks: {
+                addImageBlobHook: async (blob, callback) => {
+                    // 에디터 내부 드래그앤드롭 무시 (팝업 드롭존에서만 허용)
+                    return;
+                }
+            }
+        });
+
+        // ── 아이콘 피커 모달 닫힘 후 아이콘 삽입 ──
+        document.getElementById('iconPickerModal').addEventListener('hidden.bs.modal', () => {
+            if (pendingIconInsertion && editor) {
+                editor.focus();
+                if (iconPickerSavedSelection) {
+                    editor.setSelection(iconPickerSavedSelection[0], iconPickerSavedSelection[1]);
+                }
+                editor.insertText(pendingIconInsertion);
+                pendingIconInsertion = null;
+            }
+        });
+
+        // ── 하위 문서 구조 삽입 모달 ──
+        async function openSubdocInsertModal() {
+            let subdocSelectedSlug = null;
+            let subdocPreviewText = '';
+            let subdocDebounceTimer = null;
+            let subdocActiveIdx = -1;
+
+            const result = await Swal.fire({
+                title: '<i class="bi bi-diagram-3-fill me-2"></i>하위 문서 구조 삽입',
+                html: `
+                <div class="text-start">
+                    <label class="form-label">문서 검색</label>
+                    <input type="text" id="subdocSearchInput" class="form-control"
+                        placeholder="문서 제목 입력..." autocomplete="off">
+                    <ul id="subdocSuggestions" class="list-unstyled mt-1 mb-0 border rounded"
+                        style="display:none; padding:4px 0; max-height:none; background: var(--wiki-card-bg); border-color: var(--wiki-border) !important;"></ul>
+                    <div id="subdocPreview" class="mt-3" style="display:none;">
+                        <label class="form-label text-muted small">미리보기</label>
+                        <pre id="subdocPreviewContent"
+                            class="border rounded p-2 small"
+                            style="max-height:200px;overflow-y:auto;font-size:0.85rem;margin:0;text-align:left; background: var(--wiki-code-bg); border-color: var(--wiki-border) !important; color: var(--wiki-text);"></pre>
+                        </div>
+                        </div>
+                        `, width: 600,
+                showCancelButton: true,
+                cancelButtonText: '취소',
+                confirmButtonText: '삽입',
+                didOpen: () => {
+                    Swal.getConfirmButton().disabled = true;
+
+                    const input = document.getElementById('subdocSearchInput');
+                    const sugBox = document.getElementById('subdocSuggestions');
+
+                    input.addEventListener('input', function () {
+                        clearTimeout(subdocDebounceTimer);
+                        const q = this.value.trim();
+                        if (q.length < 2) {
+                            sugBox.style.display = 'none';
+                            sugBox.innerHTML = '';
+                            return;
+                        }
+                        subdocDebounceTimer = setTimeout(() => fetchSubdocSuggestions(q), 250);
+                    });
+
+                    async function fetchSubdocSuggestions(q) {
+                        try {
+                            const res = await fetch('/api/search/suggest?q=' + encodeURIComponent(q));
+                            if (!res.ok) return;
+                            const data = await res.json();
+                            renderSubdocSuggestions(data.suggestions || []);
+                        } catch (e) { }
+                    }
+
+                    function renderSubdocSuggestions(items) {
+                        subdocActiveIdx = -1;
+                        // 네임스페이스 문서(슬러그에 ':' 포함) 제외
+                        const filtered = items.filter(item => !item.slug.includes(':'));
+                        if (!filtered.length) {
+                            sugBox.style.display = 'none';
+                            sugBox.innerHTML = '';
+                            return;
+                        }
+                        sugBox.innerHTML = filtered.map((item) =>
+                            '<li class="search-suggestion-item" data-slug="' + escapeHtml(item.slug) +
+                            '" data-title="' + escapeHtml(item.title) + '">' +
+                            '<i class="mdi mdi-file-document-outline"></i> ' +
+                            escapeHtml(item.title) + '</li>'
+                        ).join('');
+                        sugBox.style.display = 'block';
+                        sugBox.querySelectorAll('.search-suggestion-item').forEach(el => {
+                            el.addEventListener('mousedown', function (e) {
+                                e.preventDefault();
+                                selectSubdocItem(this.dataset.slug, this.dataset.title);
+                            });
+                        });
+                    }
+
+                    function selectSubdocItem(slug, title) {
+                        subdocSelectedSlug = slug;
+                        input.value = title;
+                        sugBox.style.display = 'none';
+                        sugBox.innerHTML = '';
+                        loadSubdocPreview(slug);
+                    }
+
+                    input.addEventListener('keydown', function (e) {
+                        const items = sugBox.querySelectorAll('.search-suggestion-item');
+                        if (sugBox.style.display !== 'none' && items.length) {
+                            if (e.key === 'ArrowDown') {
+                                e.preventDefault();
+                                subdocActiveIdx = Math.min(subdocActiveIdx + 1, items.length - 1);
+                                items.forEach((el, i) => el.classList.toggle('active', i === subdocActiveIdx));
+                            } else if (e.key === 'ArrowUp') {
+                                e.preventDefault();
+                                subdocActiveIdx = Math.max(subdocActiveIdx - 1, -1);
+                                items.forEach((el, i) => el.classList.toggle('active', i === subdocActiveIdx));
+                            } else if (e.key === 'Enter' && subdocActiveIdx >= 0) {
+                                e.preventDefault();
+                                const el = items[subdocActiveIdx];
+                                selectSubdocItem(el.dataset.slug, el.dataset.title);
+                            } else if (e.key === 'Escape') {
+                                sugBox.style.display = 'none';
+                            }
+                        }
+                    });
+
+                    input.addEventListener('blur', function () {
+                        setTimeout(() => { sugBox.style.display = 'none'; }, 150);
+                    });
+
+                    input.focus();
+                },
+                preConfirm: () => {
+                    if (!subdocPreviewText) return false;
+                    return subdocPreviewText;
+                }
+            });
+
+            if (result.isConfirmed && result.value) {
+                editor.insertText(result.value);
+                editor.focus();
+            }
+
+            async function loadSubdocPreview(slug) {
+                try {
+                    const res = await fetch('/api/w/' + encodeURIComponent(slug) + '/subdocs');
+                    const data = await res.json();
+                    const subdocs = data.subdocs || [];
+
+                    const tree = {};
+                    for (const doc of subdocs) {
+                        const relative = doc.slug.substring(slug.length + 1);
+                        const parts = relative.split('/');
+                        let node = tree;
+                        for (const part of parts) {
+                            if (!node[part]) node[part] = { _children: {}, _doc: null };
+                            node = node[part]._children;
+                        }
+                        let target = tree;
+                        for (let i = 0; i < parts.length; i++) {
+                            if (i === parts.length - 1) {
+                                target[parts[i]]._doc = doc;
+                            } else {
+                                target = target[parts[i]]._children;
+                            }
+                        }
+                    }
+
+                    function renderTree(nodes, parentPrefix) {
+                        const entries = Object.keys(nodes).sort();
+                        let text = '';
+                        entries.forEach((key, idx) => {
+                            const node = nodes[key];
+                            const isLast = idx === entries.length - 1;
+                            const connector = isLast ? '└── ' : '├── ';
+                            const childPrefix = parentPrefix + (isLast ? '    ' : '│   ');
+                            if (node._doc) {
+                                text += parentPrefix + connector + '[[' + node._doc.slug + '|' + key + ']]\n';
+                            } else {
+                                text += parentPrefix + connector + key + '\n';
+                            }
+                            if (Object.keys(node._children).length > 0) {
+                                text += renderTree(node._children, childPrefix);
+                            }
+                        });
+                        return text;
+                    }
+
+                    subdocPreviewText = '[[' + slug + ']]\n' + renderTree(tree, '');
+
+                    const previewEl = document.getElementById('subdocPreview');
+                    const previewContent = document.getElementById('subdocPreviewContent');
+                    if (previewEl && previewContent) {
+                        previewContent.textContent = subdocPreviewText;
+                        previewEl.style.display = '';
+                    }
+                    Swal.getConfirmButton().disabled = false;
+                } catch (e) {
+                    console.error(e);
+                }
+            }
+        }
+
+        // ── 붙여넣기 시 화면 스크롤 이동 방지 ──
+        const editorEl = document.querySelector('#editor');
+        if (editorEl) {
+            editorEl.addEventListener('paste', () => {
+                // 현재 스크롤 위치 저장
+                const currentScrollY = window.scrollY;
+                const currentScrollX = window.scrollX;
+                // 붙여넣기 완료 직후 원래 위치로 원복
+                requestAnimationFrame(() => {
+                    window.scrollTo(currentScrollX, currentScrollY);
+                    // 혹시 늦게 렌더링되며 튀는 경우를 대비해 약간의 지연 후 한 번 더 복구
+                    setTimeout(() => window.scrollTo(currentScrollX, currentScrollY), 10);
+                });
+            }, true); // 캡처링 단계에서 먼저 감지
+        }
+
+        // ── 실시간 프리뷰 ──
+        editor.on('change', () => {
+            clearTimeout(previewDebounce);
+            previewDebounce = setTimeout(() => {
+                updateCustomPreview();
+            }, 300);
+        });
+        setTimeout(async () => {
+            await updateCustomPreview();
+            scrollToBottom();
+        }, 300);
+
+        // ── 스크롤 동기화 강제 제거 ──
+        // Toast UI Editor가 내부적으로 스크롤 동기화를 수행하므로,
+        // 에디터/프리뷰 패널의 scroll 이벤트를 가로채서 동기화 차단
+        setTimeout(() => {
+            const mdEditor = document.querySelector('#editor .toastui-editor-md-editor .ProseMirror');
+            const mdPreview = document.querySelector('#editor .toastui-editor-md-preview');
+            if (mdEditor) {
+                mdEditor.addEventListener('scroll', (e) => { e.stopPropagation(); }, true);
+            }
+            if (mdPreview) {
+                mdPreview.addEventListener('scroll', (e) => { e.stopPropagation(); }, true);
+            }
+            // 내부 scrollSync 객체가 있으면 비활성화
+            try {
+                const editorInst = editor;
+                if (editorInst.scrollSync) {
+                    editorInst.scrollSync.destroy && editorInst.scrollSync.destroy();
+                    editorInst.scrollSync = null;
+                }
+                // eventEmitter에서 scroll 관련 이벤트 제거 시도
+                if (editorInst.eventEmitter) {
+                    editorInst.eventEmitter.removeEventHandler('scroll');
+                    editorInst.eventEmitter.removeEventHandler('previewScroll');
+                }
+            } catch (e) { /* 무시 */ }
+        }, 500);
+
+        startAutoSave();
+    } // ── isExtensionData else 블록 종료 ──
+
+    // 다크 모드 테마 토글 (OS 설정 변경 시)
+    if (window.matchMedia) {
+        window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
+            if (!editor) return;
+            const el = document.querySelector('.toastui-editor-defaultUI');
+            if (el) {
+                if (e.matches) {
+                    el.classList.add('toastui-editor-dark');
+                } else {
+                    el.classList.remove('toastui-editor-dark');
+                }
+            }
+        });
+    }
+
+    // 반응형 Preview Style 변경
+    window.addEventListener('resize', () => {
+        if (!editor) return;
+        const isMobileNow = window.innerWidth <= 768;
+        const targetStyle = isMobileNow ? 'tab' : 'vertical';
+        editor.changePreviewStyle(targetStyle);
+    });
+
+    // 관리자면 Lock ui 노출
+    if (currentUser.role === 'admin' || currentUser.role === 'super_admin') {
+        document.getElementById('adminLockContainer').style.display = 'block';
+    }
+
+    // 관리자 전용 카테고리 목록 불러오기
+    let adminCategories = [];
+    try {
+        const catRes = await fetch('/api/w/admin-categories');
+        if (catRes.ok) {
+            const catData = await catRes.json();
+            adminCategories = catData.categories || [];
+        }
+    } catch (e) { }
+
+    // 카테고리 입력 시 관리자 전용 여부 경고
+    const catInput = document.getElementById('categoryInput');
+    const catWarning = document.createElement('div');
+    catWarning.className = 'text-danger small mt-1 d-none';
+    catWarning.id = 'categoryWarning';
+    catWarning.innerHTML = '<i class="mdi mdi-alert"></i> 이 카테고리는 관리자만 적용할 수 있습니다.';
+    catInput.parentNode.appendChild(catWarning);
+
+    catInput.addEventListener('input', () => {
+        const isAdmin = currentUser.role === 'admin' || currentUser.role === 'super_admin';
+        const cats = catInput.value.split(',').map(c => c.trim()).filter(c => c);
+        const blockedCat = !isAdmin && cats.find(c => adminCategories.includes(c));
+        if (blockedCat) {
+            catWarning.innerHTML = `<i class="mdi mdi-alert"></i> "${blockedCat}" 카테고리는 관리자만 적용할 수 있습니다.`;
+            catWarning.classList.remove('d-none');
+        } else {
+            catWarning.classList.add('d-none');
+        }
+    });
+    // 기존 문서 불러오기
+    try {
+        const res = await fetch(`/api/w/${encodeURIComponent(slug)}?redirect=no&nocache=true`);
+
+        if (res.status === 410) {
+            // 로딩 오버레이 먼저 숨김
+            const overlay = document.getElementById('initLoadingOverlay');
+            if (overlay) {
+                overlay.classList.add('hidden');
+                overlay.style.display = 'none';
+            }
+            Swal.fire({
+                icon: 'error',
+                title: '삭제된 문서',
+                text: '삭제된 문서는 열람하거나 편집할 수 없습니다.',
+                confirmButtonText: '홈으로'
+            }).then(() => {
+                window.location.href = '/';
+            });
+            return;
+        }
+
+        if (res.ok) {
+            const page = await res.json();
+            document.getElementById('titleInput').value = page.title;
+            if (page.category) {
+                document.getElementById('categoryInput').value = page.category;
+                categoryTags = page.category.split(',').map(c => c.trim()).filter(c => c);
+                renderCategoryTags();
+            }
+            if (page.redirect_to) document.getElementById('redirectInput').value = page.redirect_to;
+            if (page.is_locked) document.getElementById('isLockedCheck').checked = true;
+
+            let initialContent = page.content || '';
+            if (!isExtensionData) {
+                if (!initialContent.endsWith('\n')) {
+                    initialContent += '\n\n';
+                } else if (!initialContent.endsWith('\n\n')) {
+                    initialContent += '\n';
+                }
+            }
+            originalContent = initialContent;
+            editor.setMarkdown(initialContent);
+            scrollToBottom();
+
+            pageVersion = page.version;
+            document.getElementById('editPageTitle').innerHTML =
+                `<i class="mdi mdi-pencil-box-multiple"></i> 편집: ${escapeHtml(page.title)}`;
+            document.title = `편집: ${page.title} - ${appConfig.wikiName}`;
+            document.getElementById('diffPreviewSection').style.display = 'block'; // 편집일 때만 노출
+            checkAutoSave();
+        } else {
+            // 새 문서
+            originalContent = '';
+            document.getElementById('titleInput').value = decodeURIComponent(slug).replace(/-/g, ' ');
+            document.getElementById('editPageTitle').innerHTML =
+                `<i class="mdi mdi-plus-circle"></i> 새 문서 만들기`;
+            document.title = `새 문서 - ${appConfig.wikiName}`;
+
+            // 템플릿 불러오기 버튼 추가
+            const templateBtn = document.createElement('button');
+            templateBtn.className = 'btn btn-sm btn-outline-primary ms-3';
+            templateBtn.innerHTML = '<i class="mdi mdi-content-copy"></i> 템플릿으로 시작하기';
+            templateBtn.onclick = openTemplateModal;
+            document.getElementById('editPageTitle').appendChild(templateBtn);
+            checkAutoSave();
+        }
+    } catch (e) {
+        // 새 문서로 취급
+        originalContent = '';
+    }
+
+    // 변경 사항 미리보기 이벤트 연동
+    const diffDetails = document.getElementById('diffPreviewDetails');
+    if (diffDetails) {
+        diffDetails.addEventListener('toggle', (e) => {
+            if (diffDetails.open) {
+                renderLocalDiff();
+            }
+        });
+    }
+
+    // 동시편집 감지: 하트비트 전송 + 편집자 체크 시작
+    startEditingHeartbeat();
+    checkConcurrentEditors();
+
+    // 미저장 변경사항 이탈 경고
+    window.addEventListener('beforeunload', (e) => {
+        if (pageLeft || !editor) return;
+        if (editor.getMarkdown() !== originalContent) {
+            e.preventDefault();
+            e.returnValue = '';
+        }
+    });
+
+    // 로딩 오버레이 숨기기
+    const overlay = document.getElementById('initLoadingOverlay');
+    if (overlay) {
+        overlay.classList.add('hidden');
+        // 트랜지션 완료 후 DOM에서 완전히 숨김 처리
+        setTimeout(() => {
+            overlay.style.display = 'none';
+        }, 300);
+    }
+});
+
+// ── Diff HTML 생성 공통 함수 ──
+function buildDiffHtml(diffData, contextLines) {
+    let html = '';
+    diffData.forEach((part, i) => {
+        if (part.added || part.removed) {
+            const cls = part.added ? 'diff-added' : 'diff-removed';
+            html += `<span class="${cls}">${escapeHtml(part.value)}</span>`;
+        } else {
+            let lines = part.value.split('\n');
+            let hasTrailingNewline = false;
+            if (lines[lines.length - 1] === '') {
+                lines.pop();
+                hasTrailingNewline = true;
+            }
+
+            let showTop = (i !== 0);
+            let showBottom = (i !== diffData.length - 1);
+
+            if (!showTop && !showBottom) {
+                html += `<span>${escapeHtml(part.value)}</span>`;
+            } else if (lines.length <= contextLines * 2 + 1) {
+                html += `<span>${escapeHtml(part.value)}</span>`;
+            } else {
+                if (showTop) {
+                    html += `<span>${escapeHtml(lines.slice(0, contextLines).join('\n') + '\n')}</span>`;
+                }
+                html += `<span style="color: grey; font-style: italic; background: #e9ecef; border-radius: 4px; padding: 0 4px;">... (생략됨) ...</span>\n`;
+                if (showBottom) {
+                    html += `<span>${escapeHtml(lines.slice(-contextLines).join('\n') + (hasTrailingNewline ? '\n' : ''))}</span>`;
+                }
+            }
+        }
+    });
+    return html;
+}
+
+// ── 변경 사항 (내 수정본) 렌더링 ──
+function renderLocalDiff() {
+    const container = document.getElementById('diffPreviewContainer');
+    if (!container) return;
+
+    const currentContent = editor ? editor.getMarkdown() : '';
+    if (originalContent === currentContent) {
+        container.innerHTML = '<span class="text-muted">변경 사항이 없습니다.</span>';
+        return;
+    }
+
+    const diffData = Diff.diffLines(originalContent, currentContent);
+    container.innerHTML = buildDiffHtml(diffData, 3);
+}
+
+// ── 템플릿 모달 ──
+async function openTemplateModal() {
+    try {
+        Swal.fire({
+            title: '템플릿 불러오기',
+            html: `
+                <div class="input-group mb-3">
+                    <input type="text" id="templateSearchInput" class="form-control" placeholder="템플릿 검색어 입력">
+                    <button class="btn btn-primary" id="templateSearchBtn" type="button"><i class="mdi mdi-magnify"></i> 검색</button>
+                </div>
+                <div id="templateList" class="list-group text-start" style="max-height: 300px; overflow-y: auto;">
+                    <!-- Templates will be rendered here -->
+                </div>
+            `,
+            showConfirmButton: false,
+            showCloseButton: true,
+            didOpen: async () => {
+                const searchInput = document.getElementById('templateSearchInput');
+                const searchBtn = document.getElementById('templateSearchBtn');
+                const listContainer = document.getElementById('templateList');
+
+                const renderTemplates = (templates) => {
+                    listContainer.innerHTML = '';
+                    if (!templates || templates.length === 0) {
+                        listContainer.innerHTML = '<div class="p-3 text-center text-muted">검색 결과가 없습니다.</div>';
+                        return;
+                    }
+
+                    templates.forEach(t => {
+                        // 템플릿: 틀: template: 등의 접두사를 제외한 제목 표시
+                        const displayTitle = t.title.replace(/^(틀|template|템플릿):/i, '');
+                        const btn = document.createElement('button');
+                        btn.className = 'list-group-item list-group-item-action';
+                        btn.textContent = displayTitle;
+                        btn.onclick = async () => {
+                            Swal.close();
+                            await applyTemplate(t.slug);
+                        };
+                        listContainer.appendChild(btn);
+                    });
+                };
+
+                const fetchTemplates = async (query = '') => {
+                    listContainer.innerHTML = '<div class="p-3 text-center"><span class="spinner-border spinner-border-sm text-primary" role="status"></span> 불러오는 중...</div>';
+                    try {
+                        const res = await fetch(`/api/w/templates${query ? `?q=${encodeURIComponent(query)}` : ''}`);
+                        if (!res.ok) throw new Error('템플릿 목록을 불러올 수 없습니다.');
+                        const data = await res.json();
+                        renderTemplates(data.templates);
+                    } catch (err) {
+                        listContainer.innerHTML = `<div class="p-3 text-center text-danger">${err.message}</div>`;
+                    }
+                };
+
+                // 초기 로딩 (최신 템플릿 10개)
+                await fetchTemplates();
+
+                // 검색 이벤트
+                searchBtn.onclick = () => fetchTemplates(searchInput.value.trim());
+                searchInput.onkeypress = (e) => {
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        fetchTemplates(searchInput.value.trim());
+                    }
+                };
+            }
+        });
+
+        async function applyTemplate(selectedSlug) {
+            try {
+                const tRes = await fetch(`/api/w/${encodeURIComponent(selectedSlug)}`);
+                if (!tRes.ok) throw new Error('템플릿 내용을 불러올 수 없습니다.');
+                const tPage = await tRes.json();
+
+                if (editor.getMarkdown().trim()) {
+                    const confirm = await Swal.fire({
+                        title: '내용 덮어쓰기',
+                        text: '현재 작성 중인 내용이 사라집니다. 계속하시겠습니까?',
+                        icon: 'warning',
+                        showCancelButton: true,
+                        confirmButtonText: '예, 덮어씁니다',
+                        cancelButtonText: '아니오'
+                    });
+                    if (!confirm.isConfirmed) return;
+                }
+
+                let tContent = tPage.content || '';
+                if (!tContent.endsWith('\n')) {
+                    tContent += '\n\n';
+                } else if (!tContent.endsWith('\n\n')) {
+                    tContent += '\n';
+                }
+                editor.setMarkdown(tContent);
+                scrollToBottom();
+                Swal.fire('완료', '템플릿을 불러왔습니다.', 'success');
+            } catch (err) {
+                Swal.fire('오류', err.message, 'error');
+            }
+        }
+    } catch (err) {
+        Swal.fire('오류', err.message, 'error');
+    }
+}
+
+// ── 저장 ──
+async function savePage() {
+    const title = document.getElementById('titleInput').value.trim();
+    const category = document.getElementById('categoryInput').value.trim();
+    const redirect_to = document.getElementById('redirectInput').value.trim();
+    const is_locked = document.getElementById('isLockedCheck').checked ? 1 : 0;
+    const content = editor.getMarkdown();
+    const summary = document.getElementById('summaryInput').value.trim();
+
+    if (!title) {
+        Swal.fire('오류', '제목을 입력해주세요.', 'warning');
+        return;
+    }
+    if (/[\[\]()#%|<>^\x00-\x1F\x7F]/.test(title)) {
+        Swal.fire('오류', '문서 제목에 사용할 수 없는 특수문자가 포함되어 있습니다.', 'warning');
+        return;
+    }
+    if (title.length > 30) {
+        Swal.fire('오류', '문서 제목은 최대 30자까지 입력할 수 있습니다.', 'warning');
+        return;
+    }
+    if (category && !/^[가-힣a-zA-Z0-9\s,]+$/.test(category)) {
+        Swal.fire('오류', '카테고리에는 특수문자를 사용할 수 없습니다.', 'warning');
+        return;
+    }
+    if (summary && summary.length > 50) {
+        Swal.fire('오류', '편집 요약은 최대 50자까지 입력할 수 있습니다.', 'warning');
+        return;
+    }
+
+    if (appConfig.turnstileSiteKey && !turnstileToken) {
+        Swal.fire('오류', 'Turnstile 검증을 완료해주세요.', 'warning');
+        return;
+    }
+
+    const saveBtn = document.getElementById('saveBtn');
+    saveBtn.disabled = true;
+    saveBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 저장 중...';
+
+    let isSuccess = false;
+
+    try {
+        const body = {
+            title,
+            content,
+            category: category || undefined,
+            redirect_to: redirect_to || undefined,
+            is_locked,
+            summary: summary || undefined,
+            turnstileToken,
+        };
+
+        if (pageVersion !== null) {
+            body.expected_version = pageVersion;
+        }
+
+        const res = await fetch(`/api/w/${encodeURIComponent(slug)}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+
+        if (res.status === 409) {
+            const data = await res.json();
+
+            // 버전 충돌 (Optimistic Locking Failure)
+            showConflictModal(data);
+
+            saveBtn.innerHTML = '<i class="mdi mdi-check"></i> 저장';
+            return;
+        }
+
+        if (!res.ok) {
+            const data = await res.json();
+            throw new Error(data.error || '저장 실패');
+        }
+
+        if (AUTO_SAVE_KEY) localStorage.removeItem(AUTO_SAVE_KEY);
+
+        isSuccess = true;
+        originalContent = content;
+        Swal.fire({
+            icon: 'success',
+            title: '저장 완료!',
+            text: '문서가 성공적으로 저장되었습니다.',
+            timer: 1500,
+            showConfirmButton: false,
+        }).then(() => {
+            window.location.href = `/w/${encodeURIComponent(slug)}`;
+        });
+
+    } catch (err) {
+        Swal.fire('오류', err.message, 'error');
+    } finally {
+        if (!isSuccess) {
+            saveBtn.innerHTML = '<i class="mdi mdi-check"></i> 저장';
+            if (turnstileWidgetId !== null) {
+                refreshTurnstile();
+            } else {
+                saveBtn.disabled = false;
+            }
+        }
+    }
+}
+
+// ── 충돌 해결 UI ──
+function showConflictModal(data) {
+    pageVersion = data.current_version;
+    const serverContent = data.content || '';
+    const localContent = editor.getMarkdown();
+
+    // ── 최신본: raw div에 텍스트 세팅 ──
+    document.getElementById('conflict-server-raw').textContent = serverContent;
+    // 뷰 상태 초기화 (raw로 리셋)
+    document.getElementById('conflict-server-raw').style.display = 'block';
+    document.getElementById('conflict-server-preview').style.display = 'none';
+    document.getElementById('serverViewToggle').innerHTML = '<i class="mdi mdi-eye"></i> 프리뷰 보기';
+    serverViewMode = 'raw';
+    // viewer가 이미 있으면 내용만 갱신
+    if (serverViewer) {
+        serverViewer.setMarkdown(serverContent);
+    }
+
+    // ── 내 수정본: conflict-ui가 block된 후 에디터 초기화 ──
+    document.getElementById('conflict-ui').style.display = 'block';
+    document.getElementById('main-editor-container').style.display = 'none';
+    window.scrollTo(0, 0);
+
+    if (isExtensionData) {
+        // 익스텐션 데이터: Toast UI 대신 textarea 사용
+        const conflictEl = document.querySelector('#conflict-local-editor');
+        if (!conflictEditor) {
+            conflictEl.innerHTML = '<textarea id="conflictRawTextarea" class="wiki-ext-raw-textarea" spellcheck="false" style="min-height:400px;"></textarea>';
+            const conflictTextarea = document.getElementById('conflictRawTextarea');
+            conflictTextarea.value = localContent;
+            conflictEditor = {
+                getMarkdown: () => conflictTextarea.value,
+                setMarkdown: (md) => { conflictTextarea.value = md; },
+            };
+        } else {
+            conflictEditor.setMarkdown(localContent);
+        }
+    } else {
+        if (!conflictEditor) {
+            const isDarkMode = getIsDarkMode();
+            conflictEditor = new toastui.Editor({
+                el: document.querySelector('#conflict-local-editor'),
+                height: '500px',
+                initialEditType: 'markdown',
+                previewStyle: 'tab',          // 충돌 UI는 공간 절약을 위해 tab
+                initialValue: localContent,
+                language: 'ko-KR',
+                theme: isDarkMode ? 'dark' : 'light',
+                usageStatistics: false,
+                hideModeSwitch: true,
+                toolbarItems: [               // 최소한의 툴바만
+                    ['heading', 'bold', 'italic', 'strike'],
+                    ['ul', 'ol', 'task'],
+                    ['table', 'link'],
+                    ['code', 'codeblock'],
+                ],
+            });
+        } else {
+            conflictEditor.setMarkdown(localContent);
+        }
+    }
+
+    // ── Diff 렌더링 (요약/전체 보기를 위해 데이터 보관 후 렌더링 호출) ──
+    cachedDiffData = Diff.diffLines(serverContent, localContent);
+
+    // 토글 버튼 상태 초기화
+    diffViewMode = 'summary';
+    document.getElementById('diffViewToggle').innerHTML = '<i class="mdi mdi-filter-variant"></i> 전체 보기';
+
+    renderDiffView();
+}
+
+function toggleDiffView() {
+    diffViewMode = (diffViewMode === 'summary') ? 'all' : 'summary';
+    const btn = document.getElementById('diffViewToggle');
+    if (diffViewMode === 'all') {
+        btn.innerHTML = '<i class="mdi mdi-filter"></i> 요약 보기';
+    } else {
+        btn.innerHTML = '<i class="mdi mdi-filter-variant"></i> 전체 보기';
+    }
+    renderDiffView();
+}
+
+function renderDiffView() {
+    if (!cachedDiffData) return;
+    let diffHtml;
+
+    if (diffViewMode === 'all') {
+        diffHtml = '';
+        cachedDiffData.forEach(part => {
+            const cls = part.added ? 'diff-added' : part.removed ? 'diff-removed' : '';
+            diffHtml += `<span class="${cls}">${escapeHtml(part.value)}</span>`;
+        });
+    } else {
+        diffHtml = buildDiffHtml(cachedDiffData, 2);
+    }
+    document.getElementById('conflict-diff-view').innerHTML = diffHtml;
+}
+
+function toggleServerView() {
+    const raw = document.getElementById('conflict-server-raw');
+    const preview = document.getElementById('conflict-server-preview');
+    const btn = document.getElementById('serverViewToggle');
+
+    if (serverViewMode === 'raw') {
+        if (!serverViewer) {
+            const isDarkMode = getIsDarkMode();
+            serverViewer = toastui.Editor.factory({
+                el: preview,
+                viewer: true,
+                initialValue: raw.textContent,
+                language: 'ko-KR',
+                theme: isDarkMode ? 'dark' : 'light',
+            });
+        } else {
+            serverViewer.setMarkdown(raw.textContent); // 최신 값 반영
+        }
+        raw.style.display = 'none';
+        preview.style.display = 'block';
+        btn.innerHTML = '<i class="mdi mdi-code-tags"></i> Raw 보기';
+        serverViewMode = 'preview';
+    } else {
+        raw.style.display = 'block';
+        preview.style.display = 'none';
+        btn.innerHTML = '<i class="mdi mdi-eye"></i> 프리뷰 보기';
+        serverViewMode = 'raw';
+    }
+}
+
+function resolveConflict() {
+    // textarea 대신 conflictEditor에서 값 읽기
+    const finalContent = conflictEditor ? conflictEditor.getMarkdown() : '';
+
+    // 메인 에디터 업데이트
+    editor.setMarkdown(finalContent);
+    scrollToBottom();
+
+    // 충돌 해결 UI 숨기기
+    document.getElementById('conflict-ui').style.display = 'none';
+    document.getElementById('main-editor-container').style.display = 'block';
+
+    // 저장 다시 시도
+    savePage();
+}
+
+function cancelConflict() {
+    Swal.fire({
+        title: '충돌 해결 취소',
+        text: '편집 내용을 버리고 최신 버전으로 새로고침 하시겠습니까?',
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonText: '새로고침 (내용 버림)',
+        cancelButtonText: '계속 해결하기'
+    }).then((result) => {
+        if (result.isConfirmed) {
+            window.location.reload();
+        }
+    });
+}
+
+
+// ── 미디어 업로드 처리 (Toast UI Hook) ──
+async function handleImageUpload(blob, callback) {
+    if (!blob) return;
+
+    if (blob.size > 15 * 1024 * 1024) {
+        Swal.fire('오류', '파일 크기는 15MB 이하만 허용됩니다.', 'warning');
+        return;
+    }
+
+    let selectedSize = 'full';
+
+    // 이미지인 경우 편집기를 먼저 실행 (동영상은 바로 업로드)
+    if (blob.type && !blob.type.startsWith('video/') && typeof ImageEditor !== 'undefined') {
+        const editResult = await ImageEditor.open(blob);
+        if (!editResult) return; // 편집 취소
+        blob = new File([editResult.blob], blob.name || 'image', { type: editResult.blob.type });
+        selectedSize = editResult.size || 'full';
+    }
+
+    // 사용자에게 파일명 입력 요청
+    const originalName = blob.name || 'image';
+    const nameWithoutExt = originalName.replace(/\.[^.]+$/, '');
+    const { value: customFilename, isConfirmed } = await Swal.fire({
+        title: '이미지 파일명 입력',
+        input: 'text',
+        inputLabel: '파일명 (확장자 제외)',
+        inputValue: nameWithoutExt,
+        inputPlaceholder: '파일명을 입력하세요',
+        showCancelButton: true,
+        confirmButtonText: '업로드',
+        cancelButtonText: '취소',
+        inputValidator: (value) => {
+            if (!value || !value.trim()) {
+                return '파일명을 입력해주세요.';
+            }
+        }
+    });
+
+    if (!isConfirmed || !customFilename) return;
+
+    const formData = new FormData();
+    formData.append('file', blob);
+    formData.append('filename', customFilename.trim());
+
+    try {
+        const res = await fetch('/api/media', {
+            method: 'POST',
+            body: formData,
+        });
+
+        if (!res.ok) {
+            const data = await res.json();
+            throw new Error(data.error || '업로드 실패');
+        }
+
+        const data = await res.json();
+
+        // callback(url, altText, size)
+        callback(data.url, data.filename, selectedSize);
+
+    } catch (err) {
+        console.error(err);
+        Swal.fire('오류', err.message, 'error');
+    }
+}
+
+// ── 취소 ──
+function cancelEdit() {
+    if (editor && editor.getMarkdown().trim()) {
+        // 내용 변경 여부 확인 (Toast UI는 변경 상태 추적이 까다로워 내용 존재 여부로 판단)
+        Swal.fire({
+            title: '편집을 취소하시겠습니까?',
+            text: '저장하지 않은 변경사항이 사라집니다.',
+            icon: 'question',
+            showCancelButton: true,
+            confirmButtonText: '나가기',
+            cancelButtonText: '계속 편집',
+        }).then(result => {
+            if (result.isConfirmed) {
+                pageLeft = true;
+                window.location.href = slug ? `/w/${encodeURIComponent(slug)}` : '/';
+            }
+        });
+    } else {
+        pageLeft = true;
+        window.location.href = slug ? `/w/${encodeURIComponent(slug)}` : '/';
+    }
+}
+
+// ── 동시편집 감지 ──
+const heartbeat = {
+    interval: null,
+    editorCheckInterval: null,
+};
+
+function startEditingHeartbeat() {
+    if (!slug) return;
+
+    // 즉시 첫 하트비트 전송
+    sendHeartbeat();
+
+    // 30초마다 하트비트 전송
+    heartbeat.interval = setInterval(sendHeartbeat, 30000);
+
+    // 30초마다 편집자 목록 확인
+    heartbeat.editorCheckInterval = setInterval(checkConcurrentEditors, 30000);
+
+    // 페이지 이탈 시 인터벌 정리
+    window.addEventListener('beforeunload', stopEditingHeartbeat);
+}
+
+function stopEditingHeartbeat() {
+    if (heartbeat.interval) {
+        clearInterval(heartbeat.interval);
+        heartbeat.interval = null;
+    }
+    if (heartbeat.editorCheckInterval) {
+        clearInterval(heartbeat.editorCheckInterval);
+        heartbeat.editorCheckInterval = null;
+    }
+}
+
+async function sendHeartbeat() {
+    if (!slug) return;
+    try {
+        await fetch(`/api/w/${encodeURIComponent(slug)}/editing`, {
+            method: 'POST',
+        });
+    } catch (e) {
+        // 하트비트 실패는 무시
+    }
+}
+
+async function checkConcurrentEditors() {
+    if (!slug) return;
+    try {
+        const res = await fetch(`/api/w/${encodeURIComponent(slug)}/editors`);
+        if (!res.ok) return;
+        const data = await res.json();
+
+        const banner = document.getElementById('concurrent-edit-banner');
+        const textEl = document.getElementById('concurrent-edit-text');
+        if (!banner || !textEl) return;
+
+        if (data.editors && data.editors.length > 0) {
+            const editorNames = data.editors.map(e => {
+                const avatar = e.picture
+                    ? `<img src="${escapeHtml(e.picture)}" class="editor-avatar" alt="" loading="lazy">`
+                    : '';
+                return `${avatar}<strong>${escapeHtml(e.name)}</strong>`;
+            }).join(', ');
+
+            textEl.innerHTML = `이 문서를 ${editorNames}님이 동시에 편집 중입니다. 편집 충돌이 발생할 수 있습니다.`;
+            banner.style.display = 'flex';
+        } else {
+            banner.style.display = 'none';
+        }
+    } catch (e) {
+        // 조회 실패는 무시
+    }
+}
+
+// ── 위키 자동완성 (Autocomplete) ──
+const wikiAc = {
+    visible: false,
+    type: 'link',            // 'link' | 'template'
+    results: [],
+    selectedIndex: -1,
+    query: '',
+    lastQuery: null,
+    debounceTimer: null,
+    div: document.getElementById('wiki-autocomplete'),
+};
+
+function hideAutocomplete() {
+    wikiAc.visible = false;
+    wikiAc.results = [];
+    wikiAc.selectedIndex = -1;
+    wikiAc.lastQuery = null;
+    if (wikiAc.div) wikiAc.div.style.display = 'none';
+}
+
+function showAutocomplete(query, type) {
+    wikiAc.query = query;
+    wikiAc.type = type;
+    wikiAc.visible = true;
+
+    // 커서 위치에 드롭다운 표시
+    positionDropdownAtCursor(wikiAc.div, 250);
+
+    if (wikiAc.query === wikiAc.lastQuery) return;
+    wikiAc.lastQuery = wikiAc.query;
+
+    clearTimeout(wikiAc.debounceTimer);
+    wikiAc.debounceTimer = setTimeout(async () => {
+        if (!wikiAc.visible) return;
+        try {
+            // 쿼리가 비어있어도 API 호출 (최신순 등 반환 가능)
+            let acUrl = `/api/w/search-titles?q=${encodeURIComponent(wikiAc.query)}&type=${wikiAc.type}`;
+            // 틀 자동완성에서 자기 자신 문서 제외
+            if (wikiAc.type === 'template' && slug) {
+                acUrl += `&exclude=${encodeURIComponent(slug)}`;
+            }
+            const res = await fetch(acUrl);
+            if (!res.ok) return;
+            const data = await res.json();
+            wikiAc.results = data.results || [];
+            renderAutocompleteResults();
+        } catch (e) {
+            console.error('Autocomplete fetch error:', e);
+        }
+    }, 300);
+}
+
+function renderAutocompleteResults() {
+    if (!wikiAc.div) return;
+
+    if (wikiAc.results.length === 0) {
+        wikiAc.div.innerHTML = '<div class="list-group-item text-muted" style="font-size:0.85rem">결과 없음</div>';
+        return;
+    }
+
+    wikiAc.div.innerHTML = wikiAc.results.map((item, index) => `
+        <div class="list-group-item autocomplete-item" data-index="${index}" onclick="selectAutocomplete(${index})">
+            <i class="mdi ${wikiAc.type === 'template' ? 'mdi-toy-brick-outline' : 'mdi-file-document-outline'}"></i>
+            <span class="item-title">${escapeHtml(item.title)}</span>
+            <span class="item-type">${wikiAc.type === 'template' ? '틀' : '문서'}</span>
+        </div>
+    `).join('');
+
+    wikiAc.selectedIndex = 0;
+    highlightAutocompleteItem();
+}
+
+function highlightAutocompleteItem() {
+    const items = wikiAc.div.querySelectorAll('.autocomplete-item');
+    items.forEach((item, idx) => {
+        if (idx === wikiAc.selectedIndex) {
+            item.classList.add('active');
+            item.scrollIntoView({ block: 'nearest' });
+        } else {
+            item.classList.remove('active');
+        }
+    });
+}
+
+function selectAutocomplete(index) {
+    const item = wikiAc.results[index];
+    if (!item || !editor) return;
+
+    const selection = editor.getSelection();
+    if (!selection) { hideAutocomplete(); return; }
+
+    const [from] = selection;
+    const line = from[0];
+    const col = from[1];
+
+    const md = editor.getMarkdown();
+    const lines = md.split('\n');
+    const lineText = lines[line - 1] || '';
+    const textBefore = lineText.substring(0, col - 1);
+
+    const trigger = wikiAc.type === 'template' ? '{{' : '[[';
+    const close = wikiAc.type === 'template' ? '}}' : ']]';
+    const lastTriggerIndex = textBefore.lastIndexOf(trigger);
+
+    if (lastTriggerIndex !== -1) {
+        // [[query 부분을 선택 후 교체 (setMarkdown 전체 교체 방지)
+        editor.setSelection([line, lastTriggerIndex + 1], [line, col]);
+        editor.insertText(`${trigger}${item.title}${close}`);
+    }
+
+    hideAutocomplete();
+}
+
+// ── 자동완성 통합 키보드 네비게이션 (단일 Capturing 핸들러) ──
+window.addEventListener('keydown', (e) => {
+    // 한글 IME 등에서 Process 키가 들어올 때 무시
+    if (e.key === 'Process') return;
+
+    // 현재 활성 자동완성 타입 판별
+    const activeAc = wikiAc.visible ? 'wiki'
+        : iconAc.visible ? 'icon'
+            : colorAc.visible ? 'color'
+                : imgSizeAc.visible ? 'imgsize'
+                    : timestampAc.visible ? 'timestamp'
+                        : null;
+    if (!activeAc) return;
+
+    const key = e.key;
+    const isDown = key === 'ArrowDown' || e.keyCode === 40;
+    const isUp = key === 'ArrowUp' || e.keyCode === 38;
+    const isRight = key === 'ArrowRight' || e.keyCode === 39;
+    const isLeft = key === 'ArrowLeft' || e.keyCode === 37;
+    const isEnter = key === 'Enter' || e.keyCode === 13;
+    const isEsc = key === 'Escape' || e.keyCode === 27;
+
+    if (activeAc === 'wiki') {
+        if (isDown) {
+            if (wikiAc.results.length > 0) {
+                e.preventDefault(); e.stopPropagation();
+                wikiAc.selectedIndex = (wikiAc.selectedIndex + 1) % wikiAc.results.length;
+                highlightAutocompleteItem();
+            } else { hideAutocomplete(); }
+        } else if (isUp) {
+            if (wikiAc.results.length > 0) {
+                e.preventDefault(); e.stopPropagation();
+                wikiAc.selectedIndex = (wikiAc.selectedIndex - 1 + wikiAc.results.length) % wikiAc.results.length;
+                highlightAutocompleteItem();
+            } else { hideAutocomplete(); }
+        } else if (isLeft || isRight) {
+            hideAutocomplete();
+        } else if (isEnter) {
+            if (wikiAc.results.length > 0 && wikiAc.selectedIndex >= 0) {
+                e.preventDefault(); e.stopPropagation();
+                selectAutocomplete(wikiAc.selectedIndex);
+            } else { hideAutocomplete(); }
+        } else if (isEsc) {
+            e.preventDefault(); e.stopPropagation();
+            hideAutocomplete();
+        }
+    } else if (activeAc === 'icon') {
+        if (isDown) {
+            if (iconAc.results.length > 0) {
+                e.preventDefault(); e.stopPropagation();
+                iconAc.selectedIndex = Math.min(iconAc.selectedIndex + iconAc.COLS, iconAc.results.length - 1);
+                highlightIconAcItem();
+            } else { hideIconAutocomplete(); }
+        } else if (isUp) {
+            if (iconAc.results.length > 0) {
+                e.preventDefault(); e.stopPropagation();
+                iconAc.selectedIndex = Math.max(iconAc.selectedIndex - iconAc.COLS, 0);
+                highlightIconAcItem();
+            } else { hideIconAutocomplete(); }
+        } else if (isRight) {
+            if (iconAc.results.length > 0) {
+                e.preventDefault(); e.stopPropagation();
+                iconAc.selectedIndex = (iconAc.selectedIndex + 1) % iconAc.results.length;
+                highlightIconAcItem();
+            }
+        } else if (isLeft) {
+            if (iconAc.results.length > 0) {
+                e.preventDefault(); e.stopPropagation();
+                iconAc.selectedIndex = (iconAc.selectedIndex - 1 + iconAc.results.length) % iconAc.results.length;
+                highlightIconAcItem();
+            }
+        } else if (isEnter) {
+            if (iconAc.results.length > 0 && iconAc.selectedIndex >= 0) {
+                e.preventDefault(); e.stopPropagation();
+                selectIconAutocomplete(iconAc.selectedIndex);
+            } else { hideIconAutocomplete(); }
+        } else if (isEsc) {
+            e.preventDefault(); e.stopPropagation();
+            hideIconAutocomplete();
+        }
+    } else if (activeAc === 'imgsize') {
+        if (isDown) {
+            e.preventDefault(); e.stopPropagation();
+            imgSizeAc.selectedIndex = (imgSizeAc.selectedIndex + 1) % imgSizeAc.options.length;
+            highlightImgSizeAcItem();
+        } else if (isUp) {
+            e.preventDefault(); e.stopPropagation();
+            imgSizeAc.selectedIndex = (imgSizeAc.selectedIndex - 1 + imgSizeAc.options.length) % imgSizeAc.options.length;
+            highlightImgSizeAcItem();
+        } else if (isLeft || isRight) {
+            hideImgSizeAutocomplete();
+        } else if (isEnter) {
+            if (imgSizeAc.selectedIndex >= 0) {
+                e.preventDefault(); e.stopPropagation();
+                selectImgSizeAutocomplete(imgSizeAc.selectedIndex);
+            } else { hideImgSizeAutocomplete(); }
+        } else if (isEsc) {
+            e.preventDefault(); e.stopPropagation();
+            hideImgSizeAutocomplete();
+        }
+    } else if (activeAc === 'color') {
+        const swatchCount = COLOR_SWATCHES.length;
+        const SWATCH_COLS = 10;
+
+        if (isRight) {
+            if (swatchCount > 0) {
+                e.preventDefault(); e.stopPropagation();
+                colorAc.selectedSwatchIndex = (colorAc.selectedSwatchIndex + 1) % swatchCount;
+                selectColorSwatch(colorAc.selectedSwatchIndex);
+            }
+        } else if (isLeft) {
+            if (swatchCount > 0) {
+                e.preventDefault(); e.stopPropagation();
+                colorAc.selectedSwatchIndex = (colorAc.selectedSwatchIndex - 1 + swatchCount) % swatchCount;
+                selectColorSwatch(colorAc.selectedSwatchIndex);
+            }
+        } else if (isDown) {
+            if (swatchCount > 0) {
+                e.preventDefault(); e.stopPropagation();
+                colorAc.selectedSwatchIndex = Math.min(colorAc.selectedSwatchIndex + SWATCH_COLS, swatchCount - 1);
+                selectColorSwatch(colorAc.selectedSwatchIndex);
+            }
+        } else if (isUp) {
+            if (swatchCount > 0) {
+                e.preventDefault(); e.stopPropagation();
+                colorAc.selectedSwatchIndex = Math.max(colorAc.selectedSwatchIndex - SWATCH_COLS, 0);
+                selectColorSwatch(colorAc.selectedSwatchIndex);
+            }
+        } else if (isEnter) {
+            e.preventDefault(); e.stopPropagation();
+            applyColorAutocomplete();
+        } else if (isEsc) {
+            e.preventDefault(); e.stopPropagation();
+            hideColorAutocomplete();
+        }
+    } else if (activeAc === 'timestamp') {
+        if (isEsc) {
+            e.preventDefault(); e.stopPropagation();
+            hideTimestampAutocomplete();
+            if (editor) editor.focus();
+        } else if (isEnter) {
+            e.preventDefault(); e.stopPropagation();
+            applyTimestampAutocomplete();
+        }
+    }
+}, true);
+
+// 전역 클릭 시 자동완성 닫기
+document.addEventListener('mousedown', (e) => {
+    if (wikiAc.div && !wikiAc.div.contains(e.target)) {
+        setTimeout(hideAutocomplete, 100);
+    }
+    if (iconAc.div && !iconAc.div.contains(e.target)) {
+        setTimeout(hideIconAutocomplete, 100);
+    }
+    if (colorAc.div && !colorAc.div.contains(e.target)) {
+        setTimeout(hideColorAutocomplete, 100);
+    }
+    if (imgSizeAc.div && !imgSizeAc.div.contains(e.target)) {
+        setTimeout(hideImgSizeAutocomplete, 100);
+    }
+    if (timestampAc.div && !timestampAc.div.contains(e.target)) {
+        setTimeout(hideTimestampAutocomplete, 100);
+    }
+});
+
+// 에디터 변경 감지 및 트리거 실행
+function attachAutocomplete() {
+    if (!editor) {
+        setTimeout(attachAutocomplete, 100);
+        return;
+    }
+
+    editor.on('change', () => {
+        // change 이벤트 직후 selection이 확정되도록 한 프레임 뒤에 처리
+        requestAnimationFrame(() => {
+            const selection = editor.getSelection();
+            if (!selection) { hideAutocomplete(); return; }
+
+            // 커서(드래그 없음)인지 확인
+            const [from, to] = selection;
+            if (from[0] !== to[0] || from[1] !== to[1]) {
+                hideAutocomplete();
+                return;
+            }
+
+            const md = editor.getMarkdown();
+            const lines = md.split('\n');
+            const lineText = lines[from[0] - 1] || '';
+            const textBefore = lineText.substring(0, from[1] - 1);
+
+            const linkMatch = textBefore.match(/\[\[([^\]\[|]*)$/);
+            const templateMatch = textBefore.match(/\{\{([^\}\{]*)$/);
+            const biIconMatch = textBefore.match(/\{bi:([^}]*)$/);
+            const mdiIconMatch = textBefore.match(/\{mdi:([^}]*)$/);
+            const iconMatch = textBefore.match(/\{icon:([^}]*)$/);
+            const bgColorMatch = textBefore.match(/\{bg:([^}]*)$/);
+            const textColorMatch = textBefore.match(/\{color:([^}]*)$/);
+            const imgMatch = textBefore.match(/!\[[^\]]*\]\([^)]+\)$/);
+            const ddayMatch = textBefore.match(/\{dday:([^}]*)$/);
+            const timeMatch = textBefore.match(/\{time:([^}]*)$/);
+            const timerMatch = textBefore.match(/\{timer:([^}]*)$/);
+            const ageMatch = textBefore.match(/\{age:([^}]*)$/);
+
+            if (linkMatch) {
+                hideIconAutocomplete();
+                hideColorAutocomplete();
+                hideTimestampAutocomplete();
+                showAutocomplete(linkMatch[1], 'link');
+            } else if (templateMatch) {
+                hideIconAutocomplete();
+                hideColorAutocomplete();
+                hideTimestampAutocomplete();
+                showAutocomplete(templateMatch[1], 'template');
+            } else if (iconMatch) {
+                hideAutocomplete();
+                hideColorAutocomplete();
+                hideTimestampAutocomplete();
+                showIconAutocomplete(iconMatch[1], 'icon');
+            } else if (biIconMatch) {
+                hideAutocomplete();
+                hideColorAutocomplete();
+                hideTimestampAutocomplete();
+                showIconAutocomplete(biIconMatch[1], 'bi');
+            } else if (mdiIconMatch) {
+                hideAutocomplete();
+                hideColorAutocomplete();
+                hideTimestampAutocomplete();
+                showIconAutocomplete(mdiIconMatch[1], 'mdi');
+            } else if (bgColorMatch) {
+                hideAutocomplete();
+                hideIconAutocomplete();
+                hideTimestampAutocomplete();
+                showColorAutocomplete(bgColorMatch[1], 'bg');
+            } else if (textColorMatch) {
+                hideAutocomplete();
+                hideIconAutocomplete();
+                hideTimestampAutocomplete();
+                showColorAutocomplete(textColorMatch[1], 'color');
+            } else if (ageMatch) {
+                hideAutocomplete();
+                hideIconAutocomplete();
+                hideColorAutocomplete();
+                showTimestampAutocomplete('age');
+            } else if (ddayMatch) {
+                hideAutocomplete();
+                hideIconAutocomplete();
+                hideColorAutocomplete();
+                showTimestampAutocomplete('dday');
+            } else if (timerMatch) {
+                hideAutocomplete();
+                hideIconAutocomplete();
+                hideColorAutocomplete();
+                showTimestampAutocomplete('timer');
+            } else if (timeMatch) {
+                hideAutocomplete();
+                hideIconAutocomplete();
+                hideColorAutocomplete();
+                showTimestampAutocomplete('time');
+            } else if (imgMatch) {
+                // 이미지 마크다운 `)` 입력 직후 트리거
+                hideAutocomplete();
+                hideIconAutocomplete();
+                hideColorAutocomplete();
+                hideTimestampAutocomplete();
+                showImgSizeAutocomplete();
+            } else {
+                hideAutocomplete();
+                hideIconAutocomplete();
+                hideColorAutocomplete();
+                hideImgSizeAutocomplete();
+                hideTimestampAutocomplete();
+            }
+        });
+    });
+
+    // 포커스 잃으면 닫기
+    editor.on('blur', () => {
+        setTimeout(() => {
+            if (!document.activeElement.closest('#wiki-autocomplete')) {
+                hideAutocomplete();
+            }
+            if (!document.activeElement.closest('#icon-autocomplete')) {
+                hideIconAutocomplete();
+            }
+            if (!document.activeElement.closest('#color-autocomplete')) {
+                hideColorAutocomplete();
+            }
+            if (!document.activeElement.closest('#imgsize-autocomplete')) {
+                hideImgSizeAutocomplete();
+            }
+            if (!document.activeElement.closest('#timestamp-autocomplete')) {
+                hideTimestampAutocomplete();
+            }
+        }, 200);
+    });
+}
+
+// 에디터 초기화 대기 후 연결
+setTimeout(attachAutocomplete, 500);
+
+// 에디터 영역 드래그앤드롭 비활성화 (팝업 드롭존에서만 허용)
+(function disableEditorDragDrop() {
+    function setup() {
+        const editorEl = document.querySelector('#editor');
+        if (!editorEl) return setTimeout(setup, 300);
+        const wrap = editorEl.closest('.toastui-editor-defaultUI') || editorEl;
+        wrap.addEventListener('dragover', (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'none'; });
+        wrap.addEventListener('drop', (e) => { e.preventDefault(); e.stopPropagation(); });
+    }
+    setTimeout(setup, 600);
+})();
+
+// ══════════════════════════════════════════════════
+// ── 이미지 편집기 (크롭 + 90도 회전, 터치 지원) ──
+// ══════════════════════════════════════════════════
+const ImageEditor = (() => {
+    let modal, canvas, ctx;
+    let originalImg = null;       // 원본 Image 객체
+    let currentImg = null;        // 현재 편집 상태 Image
+    let rotation = 0;             // 누적 회전 (0, 90, 180, 270)
+    let cropMode = false;
+    let crop = { x: 0, y: 0, w: 0, h: 0 }; // 캔버스 좌표 기준
+    let resolvePromise = null;
+    let originalBlob = null;
+    let selectedSize = 'full';
+
+    function init() {
+        modal = new bootstrap.Modal(document.getElementById('imageEditorModal'));
+        canvas = document.getElementById('imgEditorCanvas');
+        ctx = canvas.getContext('2d');
+
+        document.getElementById('btnRotateLeft').addEventListener('click', () => rotate(-90));
+        document.getElementById('btnRotateRight').addEventListener('click', () => rotate(90));
+        document.getElementById('btnCropToggle').addEventListener('click', toggleCrop);
+        document.getElementById('btnCropApply').addEventListener('click', applyCrop);
+        document.getElementById('btnImgReset').addEventListener('click', resetImage);
+        document.getElementById('btnImgEditorDone').addEventListener('click', finishEdit);
+
+        // 사이즈 드롭다운 이벤트 연동
+        const dropdownItems = document.querySelectorAll('#imgEditorSizeDropdown .dropdown-item');
+        if (dropdownItems.length) {
+            dropdownItems.forEach(item => {
+                item.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    const size = e.currentTarget.dataset.size;
+                    const label = e.currentTarget.innerHTML;
+                    selectedSize = size;
+                    document.getElementById('btnImgEditorSizeToggle').innerHTML = label;
+                });
+            });
+        }
+
+        document.getElementById('imageEditorModal').addEventListener('hidden.bs.modal', () => {
+            if (resolvePromise) {
+                resolvePromise(null);
+                resolvePromise = null;
+            }
+        });
+
+        initCropInteraction();
+    }
+
+    // 외부에서 호출: 이미지 파일 → 편집 모달 → 편집된 Blob 반환
+    function open(blob) {
+        originalBlob = blob;
+        rotation = 0;
+        cropMode = false;
+        selectedSize = 'full';
+        const toggleBtn = document.getElementById('btnImgEditorSizeToggle');
+        if (toggleBtn) {
+            toggleBtn.innerHTML = '<i class="mdi mdi-arrow-expand-all me-1"></i>크게(기본)';
+        }
+        document.getElementById('cropOverlay').style.display = 'none';
+        document.getElementById('btnCropToggle').classList.remove('active');
+        document.getElementById('btnCropApply').style.display = 'none';
+
+        return new Promise((resolve) => {
+            resolvePromise = resolve;
+            const url = URL.createObjectURL(blob);
+            const img = new Image();
+            img.onload = () => {
+                URL.revokeObjectURL(url);
+                originalImg = img;
+                currentImg = img;
+                drawImage();
+                updateInfo();
+                modal.show();
+            };
+            img.onerror = () => {
+                URL.revokeObjectURL(url);
+                resolve(null);
+            };
+            img.src = url;
+        });
+    }
+
+    function drawImage() {
+        if (!currentImg) return;
+        const w = currentImg.width;
+        const h = currentImg.height;
+
+        // 회전 고려
+        const rad = (rotation % 360) * Math.PI / 180;
+        const abs90 = (rotation % 360 + 360) % 360;
+        const swap = abs90 === 90 || abs90 === 270;
+        const cw = swap ? h : w;
+        const ch = swap ? w : h;
+
+        canvas.width = cw;
+        canvas.height = ch;
+
+        ctx.save();
+        ctx.translate(cw / 2, ch / 2);
+        ctx.rotate(rad);
+        ctx.drawImage(currentImg, -w / 2, -h / 2);
+        ctx.restore();
+
+        // 캔버스 wrap 크기 자동 조절
+        updateInfo();
+    }
+
+    function rotate(deg) {
+        exitCropMode();
+        rotation = (rotation + deg + 360) % 360;
+        drawImage();
+    }
+
+    function resetImage() {
+        exitCropMode();
+        currentImg = originalImg;
+        rotation = 0;
+        drawImage();
+    }
+
+    function toggleCrop() {
+        if (cropMode) {
+            exitCropMode();
+        } else {
+            enterCropMode();
+        }
+    }
+
+    function enterCropMode() {
+        cropMode = true;
+        document.getElementById('btnCropToggle').classList.add('active');
+        document.getElementById('btnCropApply').style.display = '';
+
+        const overlay = document.getElementById('cropOverlay');
+        const wrap = document.getElementById('imgEditorCanvasWrap');
+        overlay.style.display = '';
+
+        // 캔버스의 실제 표시 크기 계산
+        const rect = canvas.getBoundingClientRect();
+        const wrapRect = wrap.getBoundingClientRect();
+
+        // overlay를 canvas와 동일 위치/크기로 맞춤
+        overlay.style.left = (rect.left - wrapRect.left) + 'px';
+        overlay.style.top = (rect.top - wrapRect.top) + 'px';
+        overlay.style.width = rect.width + 'px';
+        overlay.style.height = rect.height + 'px';
+
+        // 기본 크롭 영역: 가운데 80%
+        const margin = 0.1;
+        crop.x = rect.width * margin;
+        crop.y = rect.height * margin;
+        crop.w = rect.width * (1 - 2 * margin);
+        crop.h = rect.height * (1 - 2 * margin);
+
+        updateCropBox();
+    }
+
+    function exitCropMode() {
+        cropMode = false;
+        document.getElementById('btnCropToggle').classList.remove('active');
+        document.getElementById('btnCropApply').style.display = 'none';
+        document.getElementById('cropOverlay').style.display = 'none';
+    }
+
+    function updateCropBox() {
+        const box = document.getElementById('cropBox');
+        box.style.left = crop.x + 'px';
+        box.style.top = crop.y + 'px';
+        box.style.width = crop.w + 'px';
+        box.style.height = crop.h + 'px';
+    }
+
+    function applyCrop() {
+        if (!cropMode) return;
+
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = canvas.width / rect.width;
+        const scaleY = canvas.height / rect.height;
+
+        const sx = Math.round(crop.x * scaleX);
+        const sy = Math.round(crop.y * scaleY);
+        const sw = Math.round(crop.w * scaleX);
+        const sh = Math.round(crop.h * scaleY);
+
+        if (sw < 10 || sh < 10) {
+            Swal.fire('오류', '크롭 영역이 너무 작습니다.', 'warning');
+            return;
+        }
+
+        // 현재 캔버스 → 크롭 데이터 추출
+        const tmpCanvas = document.createElement('canvas');
+        tmpCanvas.width = sw;
+        tmpCanvas.height = sh;
+        const tmpCtx = tmpCanvas.getContext('2d');
+        tmpCtx.drawImage(canvas, sx, sy, sw, sh, 0, 0, sw, sh);
+
+        // 결과를 새 이미지로
+        const img = new Image();
+        img.onload = () => {
+            currentImg = img;
+            rotation = 0;
+            exitCropMode();
+            drawImage();
+        };
+        img.src = tmpCanvas.toDataURL();
+    }
+
+    // ── 크롭 인터랙션 (마우스 + 터치) ──
+    function initCropInteraction() {
+        const overlay = document.getElementById('cropOverlay');
+        const cropBox = document.getElementById('cropBox');
+        let dragging = null; // null | 'move' | 'tl' | 'tr' | 'bl' | 'br'
+        let startPos = { x: 0, y: 0 };
+        let startCrop = {};
+
+        function getPos(e) {
+            const t = e.touches ? e.touches[0] : e;
+            const rect = overlay.getBoundingClientRect();
+            return { x: t.clientX - rect.left, y: t.clientY - rect.top };
+        }
+
+        function onStart(e) {
+            const target = e.target;
+            if (target.classList.contains('crop-handle')) {
+                dragging = target.dataset.handle;
+            } else if (target.id === 'cropBox' || target.closest('#cropBox')) {
+                dragging = 'move';
+            } else {
+                return;
+            }
+            e.preventDefault();
+            startPos = getPos(e);
+            startCrop = { ...crop };
+        }
+
+        function onMove(e) {
+            if (!dragging) return;
+            e.preventDefault();
+            const pos = getPos(e);
+            const dx = pos.x - startPos.x;
+            const dy = pos.y - startPos.y;
+
+            const overlayRect = overlay.getBoundingClientRect();
+            const maxW = overlayRect.width;
+            const maxH = overlayRect.height;
+            const minSize = 20;
+
+            if (dragging === 'move') {
+                crop.x = Math.max(0, Math.min(maxW - crop.w, startCrop.x + dx));
+                crop.y = Math.max(0, Math.min(maxH - crop.h, startCrop.y + dy));
+            } else if (dragging === 'tl') {
+                crop.x = Math.max(0, Math.min(startCrop.x + startCrop.w - minSize, startCrop.x + dx));
+                crop.y = Math.max(0, Math.min(startCrop.y + startCrop.h - minSize, startCrop.y + dy));
+                crop.w = startCrop.w - (crop.x - startCrop.x);
+                crop.h = startCrop.h - (crop.y - startCrop.y);
+            } else if (dragging === 'tr') {
+                crop.w = Math.max(minSize, Math.min(maxW - startCrop.x, startCrop.w + dx));
+                crop.y = Math.max(0, Math.min(startCrop.y + startCrop.h - minSize, startCrop.y + dy));
+                crop.h = startCrop.h - (crop.y - startCrop.y);
+            } else if (dragging === 'bl') {
+                crop.x = Math.max(0, Math.min(startCrop.x + startCrop.w - minSize, startCrop.x + dx));
+                crop.w = startCrop.w - (crop.x - startCrop.x);
+                crop.h = Math.max(minSize, Math.min(maxH - startCrop.y, startCrop.h + dy));
+            } else if (dragging === 'br') {
+                crop.w = Math.max(minSize, Math.min(maxW - startCrop.x, startCrop.w + dx));
+                crop.h = Math.max(minSize, Math.min(maxH - startCrop.y, startCrop.h + dy));
+            }
+
+            updateCropBox();
+        }
+
+        function onEnd() {
+            dragging = null;
+        }
+
+        // 마우스 이벤트
+        overlay.addEventListener('mousedown', onStart);
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onEnd);
+
+        // 터치 이벤트
+        overlay.addEventListener('touchstart', onStart, { passive: false });
+        document.addEventListener('touchmove', onMove, { passive: false });
+        document.addEventListener('touchend', onEnd);
+    }
+
+    function finishEdit() {
+        // 캔버스 → Blob
+        const mimeType = originalBlob.type && originalBlob.type.startsWith('image/')
+            ? originalBlob.type : 'image/png';
+        const quality = mimeType === 'image/jpeg' ? 0.92 : undefined;
+
+        canvas.toBlob((blob) => {
+            if (resolvePromise) {
+                resolvePromise({ blob, size: selectedSize });
+                resolvePromise = null;
+            }
+            modal.hide();
+        }, mimeType, quality);
+    }
+
+    function updateInfo() {
+        const info = document.getElementById('imgEditorInfo');
+        if (canvas.width && canvas.height) {
+            info.textContent = `${canvas.width} × ${canvas.height}px`;
+        }
+    }
+
+    // DOM 로드 후 초기화
+    setTimeout(init, 300);
+
+    return { open };
+})();
+
