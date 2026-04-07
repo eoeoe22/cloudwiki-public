@@ -216,6 +216,34 @@ async function loadConfig() {
                     logoContainer.appendChild(img);
                 }
             });
+
+            // 익스텐션 동적 로드 (JS/CSS)
+            if (appConfig.enabledExtensions && Array.isArray(appConfig.enabledExtensions)) {
+                appConfig.enabledExtensions.forEach(ext => {
+                    const extName = ext.trim();
+                    if (!extName) return;
+
+                    // JS 파일 로드
+                    const jsId = `ext-js-${extName}`;
+                    if (!document.getElementById(jsId)) {
+                        const script = document.createElement('script');
+                        script.id = jsId;
+                        script.src = `/ext/${extName}/${extName}.js`;
+                        script.async = true;
+                        document.head.appendChild(script);
+                    }
+
+                    // CSS 파일 로드
+                    const cssId = `ext-css-${extName}`;
+                    if (!document.getElementById(cssId)) {
+                        const link = document.createElement('link');
+                        link.id = cssId;
+                        link.rel = 'stylesheet';
+                        link.href = `/ext/${extName}/${extName}.css`;
+                        document.head.appendChild(link);
+                    }
+                });
+            }
         }
     } catch (e) {
         console.error('설정 로드 실패', e);
@@ -701,10 +729,25 @@ async function sendMessage(receiverId, receiverName) {
     }
 }
 
-// ── 틀(Transclusion) 처리 ──
+// ── 익스텐션 데이터 임시 저장소 (렌더링 시 render.js에서 참조) ──
+var _wikiExtensionData = [];
+
+/**
+ * 이름에 ':'가 포함되어 있고 틀 접두사(틀:/template:/템플릿:)가 아닌 경우 → 익스텐션 호출
+ */
+function _isExtensionCall(name) {
+    const colonIdx = name.indexOf(':');
+    if (colonIdx <= 0) return false;
+    if (name.startsWith('틀:') || name.startsWith('template:') || name.startsWith('템플릿:')) return false;
+    return true;
+}
+
+// ── 틀(Transclusion) 및 익스텐션 처리 ──
 async function resolveTransclusions(content, pageSlug) {
     const MAX_DEPTH = 3;
     const cache = new Map();
+    // 매 호출 시 익스텐션 데이터 초기화
+    _wikiExtensionData = [];
 
     async function resolve(text, depth) {
         if (depth > MAX_DEPTH) return text;
@@ -730,47 +773,79 @@ async function resolveTransclusions(content, pageSlug) {
         if (matches.length === 0) return text;
 
         const slugsToFetch = new Set();
+        const extensionSlugs = new Set();
         matches.forEach(m => {
             const name = m[1].trim();
-            let slug = name;
-            if (!slug.startsWith('template:') && !slug.startsWith('틀:') && !slug.startsWith('템플릿:')) {
-                slug = '틀:' + slug;
+            if (_isExtensionCall(name)) {
+                // 익스텐션: slug를 그대로 사용 (예: "freq:AirPods_Pro_2")
+                extensionSlugs.add(name);
+                slugsToFetch.add(name);
+            } else {
+                let slug = name;
+                if (!slug.startsWith('template:') && !slug.startsWith('틀:') && !slug.startsWith('템플릿:')) {
+                    slug = '틀:' + slug;
+                }
+                slugsToFetch.add(slug);
             }
-            slugsToFetch.add(slug);
         });
 
         const fetchPromises = [];
         for (const slug of slugsToFetch) {
             if (!cache.has(slug)) {
-                // 자기 자신을 참조하는 틀은 가져오지 않고 경고 표시
                 if (pageSlug && slug === pageSlug) {
                     cache.set(slug, `⚠️ [자기 자신을 참조하는 틀은 사용할 수 없습니다: ${slug}]`);
                     continue;
                 }
+
+                // 익스텐션인 경우: 활성화 여부 확인
+                if (extensionSlugs.has(slug)) {
+                    const extName = slug.substring(0, slug.indexOf(':'));
+                    const enabledExts = (appConfig && appConfig.enabledExtensions) || [];
+                    if (!enabledExts.includes(extName)) {
+                        cache.set(slug, { _ext: true, _disabled: true, extName, slug });
+                        continue;
+                    }
+                }
+
                 fetchPromises.push(
                     fetch(`/api/w/${encodeURIComponent(slug)}`)
                         .then(res => res.ok ? res.json() : null)
                         .then(data => {
-                            if (data) {
-                                // 틀 내용에서 자기 자신을 참조하는 부분을 경고 메시지로 치환
-                                const selfSlug = slug;
-                                const tplContent = data.content.replace(/\{\{\s*([^\}]+?)\s*\}\}/g, (match, name) => {
-                                    let refSlug = name.trim();
-                                    if (!refSlug.startsWith('template:') && !refSlug.startsWith('틀:') && !refSlug.startsWith('템플릿:')) {
-                                        refSlug = '틀:' + refSlug;
-                                    }
-                                    if (refSlug === selfSlug) {
-                                        return `⚠️ [자기 자신을 참조하는 틀은 사용할 수 없습니다: ${selfSlug}]`;
-                                    }
-                                    return match;
-                                });
-                                cache.set(slug, tplContent);
+                            if (extensionSlugs.has(slug)) {
+                                // 익스텐션: 원본 데이터를 저장 (마크다운으로 인라인하지 않음)
+                                if (data) {
+                                    const extName = slug.substring(0, slug.indexOf(':'));
+                                    cache.set(slug, { _ext: true, extName, slug, content: data.content, title: data.title });
+                                } else {
+                                    cache.set(slug, `⚠️ [익스텐션 문서를 찾을 수 없음: ${slug}]`);
+                                }
                             } else {
-                                cache.set(slug, `⚠️ [틀을 찾을 수 없음: ${slug}]`);
+                                // 틀: 기존 로직
+                                if (data) {
+                                    const selfSlug = slug;
+                                    const tplContent = data.content.replace(/\{\{\s*([^\}]+?)\s*\}\}/g, (match, name) => {
+                                        let refSlug = name.trim();
+                                        if (_isExtensionCall(refSlug)) return match; // 틀 내부 익스텐션은 그대로 유지
+                                        if (!refSlug.startsWith('template:') && !refSlug.startsWith('틀:') && !refSlug.startsWith('템플릿:')) {
+                                            refSlug = '틀:' + refSlug;
+                                        }
+                                        if (refSlug === selfSlug) {
+                                            return `⚠️ [자기 자신을 참조하는 틀은 사용할 수 없습니다: ${selfSlug}]`;
+                                        }
+                                        return match;
+                                    });
+                                    cache.set(slug, tplContent);
+                                } else {
+                                    cache.set(slug, `⚠️ [틀을 찾을 수 없음: ${slug}]`);
+                                }
                             }
                         })
                         .catch(() => {
-                            cache.set(slug, `⚠️ [틀 로딩 실패: ${slug}]`);
+                            if (extensionSlugs.has(slug)) {
+                                cache.set(slug, `⚠️ [익스텐션 로딩 실패: ${slug}]`);
+                            } else {
+                                cache.set(slug, `⚠️ [틀 로딩 실패: ${slug}]`);
+                            }
                         })
                 );
             }
@@ -778,11 +853,23 @@ async function resolveTransclusions(content, pageSlug) {
         await Promise.all(fetchPromises);
 
         let newText = protectedText.replace(regex, (match, name) => {
-            let slug = name.trim();
-            if (!slug.startsWith('template:') && !slug.startsWith('틀:') && !slug.startsWith('템플릿:')) {
-                slug = '틀:' + slug;
+            const trimmed = name.trim();
+            if (_isExtensionCall(trimmed)) {
+                const cached = cache.get(trimmed);
+                if (!cached) return match;
+                if (typeof cached === 'string') return cached; // 에러 메시지
+                if (cached._disabled) return `⚠️ [비활성화된 익스텐션: ${cached.extName}]`;
+                // 플레이스홀더를 삽입하고 데이터는 전역 배열에 저장
+                const idx = _wikiExtensionData.length;
+                _wikiExtensionData.push({ extName: cached.extName, slug: cached.slug, content: cached.content, title: cached.title });
+                return `\n\nWIKIEXTPH_${cached.extName}_${idx}_XEND\n\n`;
+            } else {
+                let slug = trimmed;
+                if (!slug.startsWith('template:') && !slug.startsWith('틀:') && !slug.startsWith('템플릿:')) {
+                    slug = '틀:' + slug;
+                }
+                return cache.get(slug) || match;
             }
-            return cache.get(slug) || match;
         });
 
         newText = newText.replace(/\x00CODEBLOCK_(\d+)\x00/g, (_, idx) => codeBlocks[parseInt(idx, 10)]);

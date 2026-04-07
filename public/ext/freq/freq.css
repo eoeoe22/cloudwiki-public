@@ -1,0 +1,106 @@
+/* ── 익스텐션: freq 주파수 응답 그래프 ── */
+.wiki-freq-graph {
+  background: var(--wiki-card-bg);
+  border: 1px solid var(--wiki-border);
+  border-radius: 10px;
+  padding: 0;
+  margin: 1.5rem 0;
+  overflow: hidden;
+  box-shadow: var(--wiki-shadow-sm);
+  transition: box-shadow 0.2s ease;
+}
+
+.wiki-freq-graph:hover {
+  box-shadow: var(--wiki-shadow);
+}
+
+.wiki-freq-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--wiki-border);
+  background: var(--wiki-bg);
+  gap: 0.5rem;
+}
+
+.wiki-freq-title {
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: var(--wiki-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.wiki-freq-controls {
+  display: flex;
+  gap: 0.375rem;
+  flex-shrink: 0;
+}
+
+.wiki-freq-toggle-phase {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0.25rem 0.6rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--wiki-text-muted);
+  background: var(--wiki-card-bg);
+  border: 1px solid var(--wiki-border);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.wiki-freq-toggle-phase:hover {
+  color: var(--wiki-text);
+  border-color: var(--wiki-border-focus);
+  background: var(--wiki-bg);
+}
+
+.wiki-freq-toggle-phase.active {
+  color: #ea580c;
+  border-color: #ea580c;
+  background: rgba(234, 88, 12, 0.08);
+}
+
+@media (prefers-color-scheme: dark) {
+  .wiki-freq-toggle-phase.active {
+    color: #f97316;
+    border-color: #f97316;
+    background: rgba(249, 115, 22, 0.12);
+  }
+}
+
+.wiki-freq-canvas-wrap {
+  position: relative;
+  height: 320px;
+  padding: 0.75rem 0.5rem 0.5rem;
+}
+
+@media (max-width: 576px) {
+  .wiki-freq-canvas-wrap {
+    height: 240px;
+  }
+}
+
+.wiki-freq-canvas-wrap canvas {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.wiki-freq-meta {
+  padding: 0.5rem 1rem;
+  font-size: 0.7rem;
+  color: var(--wiki-text-muted);
+  border-top: 1px solid var(--wiki-border);
+  background: var(--wiki-bg);
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

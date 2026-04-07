@@ -72,17 +72,28 @@ function extractLinks(content: string): { target_slug: string; link_type: string
         }
     }
 
-    // 2) {{틀 트랜스클루전}}
+    // 2) {{틀 트랜스클루전}} 또는 {{익스텐션:문서}}
     const templateRegex = /\{\{([^}]+?)\}\}/g;
     for (const m of cleaned.matchAll(templateRegex)) {
         let slug = m[1].trim();
-        if (!slug.startsWith('틀:') && !slug.startsWith('template:') && !slug.startsWith('템플릿:')) {
-            slug = '틀:' + slug;
-        }
-        const key = `template:${slug}`;
-        if (!seen.has(key)) {
-            seen.add(key);
-            links.push({ target_slug: slug, link_type: 'template' });
+        // 익스텐션 패턴: 첫 번째 ':' 앞이 익스텐션 이름 (틀/template/템플릿 접두사가 아닌 경우)
+        const colonIdx = slug.indexOf(':');
+        if (colonIdx > 0 && !slug.startsWith('틀:') && !slug.startsWith('template:') && !slug.startsWith('템플릿:')) {
+            // 익스텐션 링크 (예: freq:AirPods_Pro_2)
+            const key = `extension:${slug}`;
+            if (!seen.has(key)) {
+                seen.add(key);
+                links.push({ target_slug: slug, link_type: 'extension' });
+            }
+        } else {
+            if (!slug.startsWith('틀:') && !slug.startsWith('template:') && !slug.startsWith('템플릿:')) {
+                slug = '틀:' + slug;
+            }
+            const key = `template:${slug}`;
+            if (!seen.has(key)) {
+                seen.add(key);
+                links.push({ target_slug: slug, link_type: 'template' });
+            }
         }
     }
 
@@ -216,6 +227,7 @@ wiki.get('/config', (c) => {
         wikiFaviconUrl: c.env.WIKI_FAVICON_URL || '',
         selectedIconsOnly: c.env.SELECTED_ICONS_ONLY === 'true',
         turnstileSiteKey: c.env.TURNSTILE_SITE_KEY || '',
+        enabledExtensions: (c.env.ENABLED_EXTENSIONS || '').split(',').map((s: string) => s.trim()).filter(Boolean),
     });
 });
 

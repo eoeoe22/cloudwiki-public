@@ -650,12 +650,24 @@
         }
 
         // Markdown → HTML 렌더링 (common.js의 renderWikiContent 모듈 사용)
-        await renderWikiContent(page.content || '', slug, 'articleContent', {
-          showCategory: true,
-          tocContainerId: 'tocContainer',
-          tocNavId: 'tocNav',
-          collapsibleSections: true
-        });
+        // 익스텐션 데이터 문서(freq: 등)는 마크다운 렌더링 비활성화 — 원본 데이터 표시
+        const decodedSlugForExt = decodeURIComponent(slug);
+        const enabledExts = (appConfig && appConfig.enabledExtensions) || [];
+        const extPrefix = enabledExts.find(ext => decodedSlugForExt.startsWith(ext + ':'));
+        if (extPrefix) {
+          const contentEl = document.getElementById('articleContent');
+          contentEl.innerHTML = `<div class="wiki-ext-raw-data">
+            <div class="wiki-ext-raw-badge"><i class="bi bi-database"></i> ${escapeHtml(extPrefix)} 익스텐션 데이터</div>
+            <pre class="wiki-ext-raw-pre">${escapeHtml(page.content || '')}</pre>
+          </div>`;
+        } else {
+          await renderWikiContent(page.content || '', slug, 'articleContent', {
+            showCategory: true,
+            tocContainerId: 'tocContainer',
+            tocNavId: 'tocNav',
+            collapsibleSections: true
+          });
+        }
 
         // 틀(Template) 문서인 경우 자동으로 역링크 로드
         // 템플릿: 접두사는 역링크 추적이 불가능하므로 섹션 노출 안 함

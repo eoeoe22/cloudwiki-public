@@ -32,6 +32,7 @@ export type Env = {
         CF_API_TOKEN?: string;
         EMAIL_RESTRICTION: string;
         EMAIL_LIST: string;
+        ENABLED_EXTENSIONS: string;
     };
     Variables: {
         user: User | null;

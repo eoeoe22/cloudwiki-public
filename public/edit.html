@@ -306,6 +306,7 @@
         let cachedDiffData = null;
         let diffViewMode = 'summary';
         let pageLeft = false;
+        let isExtensionData = false;
 
         // ── Turnstile 상태 ──
         let turnstileToken = null;
@@ -1762,7 +1763,17 @@
             }
 
             const md = editor.getMarkdown();
-            await renderWikiContent(md, slug, 'custom-wiki-preview');
+            // 익스텐션 데이터 문서는 프리뷰 렌더링 비활성화
+            const enabledExts = (appConfig && appConfig.enabledExtensions) || [];
+            const extPrefix = enabledExts.find(ext => slug && slug.startsWith(ext + ':'));
+            if (extPrefix) {
+              customPreview.innerHTML = `<div class="wiki-ext-raw-data">
+                <div class="wiki-ext-raw-badge"><i class="bi bi-database"></i> ${escapeHtml(extPrefix)} 익스텐션 데이터 (프리뷰 비활성화)</div>
+                <pre class="wiki-ext-raw-pre">${escapeHtml(md)}</pre>
+              </div>`;
+            } else {
+              await renderWikiContent(md, slug, 'custom-wiki-preview');
+            }
         }
 
         document.addEventListener('DOMContentLoaded', async () => {
@@ -1809,6 +1820,60 @@
                 return;
             }
 
+            // 익스텐션 데이터 문서 감지 (freq: 등)
+            const enabledExts = (appConfig && appConfig.enabledExtensions) || [];
+            const extPrefix = enabledExts.find(ext => slug.startsWith(ext + ':'));
+            isExtensionData = !!extPrefix;
+
+            if (isExtensionData) {
+                // Toast UI Editor 대신 raw textarea 사용 (대용량 데이터 지원)
+                const editorContainer = document.getElementById('editor');
+                editorContainer.innerHTML = `
+                    <div class="wiki-ext-raw-editor">
+                        <div class="wiki-ext-raw-editor-badge">
+                            <i class="bi bi-database"></i> ${escapeHtml(extPrefix)} 익스텐션 데이터
+                            <span class="wiki-ext-raw-editor-hint">마크다운 렌더링이 비활성화된 원시 데이터 편집 모드입니다</span>
+                        </div>
+                        <textarea id="rawExtTextarea" class="wiki-ext-raw-textarea" spellcheck="false"></textarea>
+                        <div class="wiki-ext-raw-editor-footer">
+                            <span id="rawExtCharCount">0자</span>
+                            <span id="rawExtLineCount">0행</span>
+                        </div>
+                    </div>
+                `;
+
+                const rawTextarea = document.getElementById('rawExtTextarea');
+                const charCountEl = document.getElementById('rawExtCharCount');
+                const lineCountEl = document.getElementById('rawExtLineCount');
+
+                function updateRawCounts() {
+                    const val = rawTextarea.value;
+                    charCountEl.textContent = val.length.toLocaleString() + '자';
+                    lineCountEl.textContent = (val.split('\n').length).toLocaleString() + '행';
+                }
+                rawTextarea.addEventListener('input', updateRawCounts);
+
+                // editor 심(shim) 객체: 기존 코드(save, cancel, diff, autosave 등)가
+                // editor.getMarkdown() / editor.setMarkdown()을 통해 동작하도록 호환 유지
+                editor = {
+                    getMarkdown: () => rawTextarea.value,
+                    setMarkdown: (md) => { rawTextarea.value = md; updateRawCounts(); },
+                    on: () => {},           // change 이벤트 등 무시
+                    focus: () => rawTextarea.focus(),
+                    insertText: (t) => {
+                        const start = rawTextarea.selectionStart;
+                        const end = rawTextarea.selectionEnd;
+                        rawTextarea.value = rawTextarea.value.substring(0, start) + t + rawTextarea.value.substring(end);
+                        rawTextarea.selectionStart = rawTextarea.selectionEnd = start + t.length;
+                        updateRawCounts();
+                    },
+                    changePreviewStyle: () => {},
+                    // 프리뷰, diff 등에서 참조하는 메서드 추가 방지
+                };
+
+                // 변경 사항 미리보기, 스크롤 동기화, 자동 프리뷰 등 건너뜀
+                startAutoSave();
+            } else {
             // Toast UI Editor 초기화
             const isMobile = window.innerWidth <= 768;
 
@@ -2253,6 +2318,7 @@
             }, 500);
 
             startAutoSave();
+            } // ── isExtensionData else 블록 종료 ──
 
             // 다크 모드 테마 토글 (OS 설정 변경 시)
             if (window.matchMedia) {
@@ -2345,10 +2411,12 @@
                     if (page.is_locked) document.getElementById('isLockedCheck').checked = true;
 
                     let initialContent = page.content || '';
-                    if (!initialContent.endsWith('\n')) {
-                        initialContent += '\n\n';
-                    } else if (!initialContent.endsWith('\n\n')) {
-                        initialContent += '\n';
+                    if (!isExtensionData) {
+                        if (!initialContent.endsWith('\n')) {
+                            initialContent += '\n\n';
+                        } else if (!initialContent.endsWith('\n\n')) {
+                            initialContent += '\n';
+                        }
                     }
                     originalContent = initialContent;
                     editor.setMarkdown(initialContent);
@@ -2696,6 +2764,21 @@
             document.getElementById('main-editor-container').style.display = 'none';
             window.scrollTo(0, 0);
 
+            if (isExtensionData) {
+                // 익스텐션 데이터: Toast UI 대신 textarea 사용
+                const conflictEl = document.querySelector('#conflict-local-editor');
+                if (!conflictEditor) {
+                    conflictEl.innerHTML = '<textarea id="conflictRawTextarea" class="wiki-ext-raw-textarea" spellcheck="false" style="min-height:400px;"></textarea>';
+                    const conflictTextarea = document.getElementById('conflictRawTextarea');
+                    conflictTextarea.value = localContent;
+                    conflictEditor = {
+                        getMarkdown: () => conflictTextarea.value,
+                        setMarkdown: (md) => { conflictTextarea.value = md; },
+                    };
+                } else {
+                    conflictEditor.setMarkdown(localContent);
+                }
+            } else {
             if (!conflictEditor) {
                 const isDarkMode = getIsDarkMode();
                 conflictEditor = new toastui.Editor({
@@ -2717,6 +2800,7 @@
                 });
             } else {
                 conflictEditor.setMarkdown(localContent);
+            }
             }
 
             // ── Diff 렌더링 (요약/전체 보기를 위해 데이터 보관 후 렌더링 호출) ──

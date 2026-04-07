@@ -236,7 +236,18 @@
         document.getElementById('revisionViewTitle').textContent = document.getElementById('revPageTitle').textContent || slug;
         document.getElementById('revisionViewContent').innerHTML = '';
 
-        await renderWikiContent(rev.content || '', slug, 'revisionViewContent');
+        // 익스텐션 데이터 문서는 렌더링 비활성화
+        const decodedSlugForExt = decodeURIComponent(slug);
+        const enabledExts = (appConfig && appConfig.enabledExtensions) || [];
+        const extPrefix = enabledExts.find(ext => decodedSlugForExt.startsWith(ext + ':'));
+        if (extPrefix) {
+          document.getElementById('revisionViewContent').innerHTML = `<div class="wiki-ext-raw-data">
+            <div class="wiki-ext-raw-badge"><i class="bi bi-database"></i> ${escapeHtml(extPrefix)} 익스텐션 데이터</div>
+            <pre class="wiki-ext-raw-pre">${escapeHtml(rev.content || '')}</pre>
+          </div>`;
+        } else {
+          await renderWikiContent(rev.content || '', slug, 'revisionViewContent');
+        }
 
         document.getElementById('revisionsPage').classList.add('d-none');
         document.getElementById('revisionViewPage').classList.remove('d-none');

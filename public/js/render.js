@@ -185,8 +185,12 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
                 `<div class="wiki-fold-content p-3 border-top">${block.contentHtml}</div>` +
                 `</details>`;
         });
+        // 익스텐션 플레이스홀더를 div 태그로 변환 (DOMPurify 전에)
+        rawHtml = rawHtml.replace(/(?:<p>)?WIKIEXTPH_([a-zA-Z0-9]+)_(\d+)_XEND(?:<\/p>)?/g, (m, extName, idx) => {
+            return `<div class="wiki-ext wiki-ext-${escapeHtml(extName)}" data-ext-name="${escapeHtml(extName)}" data-ext-idx="${escapeHtml(idx)}"></div>`;
+        });
 
-        let html = (typeof DOMPurify !== 'undefined') ? DOMPurify.sanitize(rawHtml, { ADD_TAGS: ['i', 'span', 'details', 'summary'], ADD_ATTR: ['class', 'style', 'data-bg', 'data-color', 'data-size', 'data-unix', 'colspan', 'rowspan', 'title'] }) : escapeHtml(rawHtml);
+        let html = (typeof DOMPurify !== 'undefined') ? DOMPurify.sanitize(rawHtml, { ADD_TAGS: ['i', 'span', 'details', 'summary', 'div', 'canvas'], ADD_ATTR: ['class', 'style', 'data-bg', 'data-color', 'data-size', 'data-unix', 'data-ext-name', 'data-ext-idx', 'colspan', 'rowspan', 'title'] }) : escapeHtml(rawHtml);
 
         if (options.showCategory && slug) {
             const decodedSlug = decodeURIComponent(slug);
@@ -697,7 +701,40 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
         // {timer:} 요소 실시간 업데이트
         _initTimers(containerEl, containerId);
 
+        // 익스텐션 렌더링 (Chart.js 등)
+        _processExtensions(containerEl);
+
     } catch (err) {
         console.error('renderWikiContent error:', err);
     }
 }
+
+// ── 익스텐션 렌더링 시스템 ──
+
+/** 익스텐션 모듈별 렌더러 맵 (각 익스텐션 파일이 로드 시 자동 등록) */
+if (!window._extensionRenderers) window._extensionRenderers = {};
+
+/** 컨테이너 내 모든 익스텐션 요소를 찾아 렌더러 실행 */
+function _processExtensions(containerEl) {
+    const extElements = containerEl.querySelectorAll('.wiki-ext[data-ext-name]');
+    if (extElements.length === 0) return;
+
+    extElements.forEach(el => {
+        const extName = el.getAttribute('data-ext-name');
+        const extIdx = parseInt(el.getAttribute('data-ext-idx'), 10);
+        const extData = (typeof _wikiExtensionData !== 'undefined') ? _wikiExtensionData[extIdx] : null;
+
+        if (!extData) {
+            el.innerHTML = '<div class="alert alert-warning">⚠️ 익스텐션 데이터를 찾을 수 없습니다.</div>';
+            return;
+        }
+
+        const renderer = window._extensionRenderers[extName];
+        if (renderer) {
+            renderer(el, extData);
+        } else {
+            el.innerHTML = `<div class="alert alert-warning">⚠️ 알 수 없는 익스텐션: ${escapeHtml(extName)}</div>`;
+        }
+    });
+}
+
