@@ -8,9 +8,13 @@ export type Env = {
         KV: KVNamespace;
         ASSETS: Fetcher;
         ANALYTICS?: AnalyticsEngineDataset;
+        AUTH_PROVIDERS: string;            // "google,discord"
         GOOGLE_CLIENT_ID: string;
         GOOGLE_CLIENT_SECRET: string;
         GOOGLE_REDIRECT_URI: string;
+        DISCORD_CLIENT_ID: string;
+        DISCORD_CLIENT_SECRET: string;
+        DISCORD_REDIRECT_URI: string;
         MEDIA_PUBLIC_URL: string;
         MAX_UPLOAD_SIZE: string;
         SUPER_ADMIN_EMAILS: string;
@@ -25,7 +29,7 @@ export type Env = {
         MCP_MODE: 'disabled' | 'open';
         ALLOW_CRAWL: string;
         WIKI_VISIBILITY: 'open' | 'closed';
-        CLOSED_WIKI_MESSAGE: string;
+        LOGIN_MESSAGE: string;
         TURNSTILE_SITE_KEY: string;
         TURNSTILE_SECRET_KEY: string;
         CF_ACCOUNT_ID?: string;
@@ -33,6 +37,8 @@ export type Env = {
         EMAIL_RESTRICTION: string;
         EMAIL_LIST: string;
         ENABLED_EXTENSIONS: string;
+        TERMS_OF_SERVICE: string;
+        PRIVACY_POLICY: string;
     };
     Variables: {
         user: User | null;
@@ -49,7 +55,8 @@ export interface Settings {
 // DB 모델 타입
 export interface User {
     id: number;
-    google_id: string;
+    provider: string;    // 'google' | 'github' | 'discord' | ...
+    uid: string;         // 공급자 측 사용자 ID
     email: string;
     name: string;
     picture: string | null;

@@ -4,16 +4,17 @@
 -- 사용자 테이블
 CREATE TABLE IF NOT EXISTS users (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
-  google_id  TEXT NOT NULL UNIQUE,
-  email      TEXT NOT NULL,
+  provider   TEXT NOT NULL,
+  uid        TEXT NOT NULL,              -- 공급자 측 사용자 ID
+  email      TEXT NOT NULL UNIQUE,       -- 이메일 중복 체크 (공급자 간 중복 방지)
   name       TEXT NOT NULL,
   picture    TEXT,
   created_at INTEGER DEFAULT (unixepoch()),
   role TEXT DEFAULT 'user',  -- 'user', 'discussion_manager', 'admin', 'super_admin', 'banned', 'deleted'
   banned_until INTEGER,
-  last_namechange INTEGER
+  last_namechange INTEGER,
+  UNIQUE(provider, uid)                  -- 같은 공급자+ID 중복 방지
 );
-CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_users_created ON users(created_at DESC);
 
 -- 세션 테이블
@@ -252,7 +253,8 @@ CREATE INDEX IF NOT EXISTS idx_page_categories_category ON page_categories(categ
 -- 가입 신청 테이블 (승인제 회원가입용)
 CREATE TABLE IF NOT EXISTS signup_requests (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
-  google_id   TEXT NOT NULL,
+  provider    TEXT NOT NULL DEFAULT 'google',  -- 'google' | 'github' | 'discord' | ...
+  uid         TEXT NOT NULL,
   email       TEXT NOT NULL,
   name        TEXT NOT NULL,
   picture     TEXT,
@@ -264,7 +266,7 @@ CREATE TABLE IF NOT EXISTS signup_requests (
   FOREIGN KEY (reviewed_by) REFERENCES users(id)
 );
 CREATE INDEX IF NOT EXISTS idx_signup_requests_status ON signup_requests(status);
-CREATE INDEX IF NOT EXISTS idx_signup_requests_google ON signup_requests(google_id);
+CREATE INDEX IF NOT EXISTS idx_signup_requests_provider_uid ON signup_requests(provider, uid);
 CREATE INDEX IF NOT EXISTS idx_signup_requests_created ON signup_requests(created_at DESC);
 
 -- 개별 토론 알림 뮤트 테이블
@@ -288,3 +290,7 @@ CREATE TABLE IF NOT EXISTS page_watches (
     FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_page_watches_page ON page_watches(page_id);
+
+-- 기존 google_id 컬럼에서 provider + uid로 업그레이드하는 마이그레이션은
+-- migrations/migrate_google_to_provider.sql 을 참고하세요.
+-- 새로 설치한 경우 이 schema.sql만 실행하면 됩니다.

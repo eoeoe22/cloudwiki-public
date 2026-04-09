@@ -134,6 +134,10 @@
             </div>
           </div>
 
+          <!-- 상위 문서 (하위 문서인 경우) -->
+          <div id="parentDocsNav" class="d-none parent-docs-nav mb-0"></div>
+          <hr id="parentDocsNavDivider" class="d-none mt-2 mb-3">
+
           <!-- 본문 -->
           <div class="wiki-content" id="articleContent"></div>
 
@@ -765,6 +769,30 @@
           // 배너 로딩 실패는 조용히 무시
         }
 
+        // 상위 문서 네비게이션 (하위 문서인 경우)
+        const parentDocsEl = document.getElementById('parentDocsNav');
+        if (actionSlug.includes('/')) {
+          const parts = actionSlug.split('/');
+          const parentLinks = [];
+          for (let i = 0; i < parts.length - 1; i++) {
+            const parentSlug = parts.slice(0, i + 1).join('/');
+            parentLinks.push(`<a href="/w/${encodeURIComponent(parentSlug)}" class="text-decoration-none wiki-spa-link">${escapeHtml(parts[i])}</a>`);
+          }
+          parentDocsEl.innerHTML = `<span class="text-muted me-1">상위 문서:</span>${parentLinks.join(' <span class="text-muted mx-1">/</span> ')}`;
+          parentDocsEl.querySelectorAll('.wiki-spa-link').forEach(link => {
+            link.addEventListener('click', function (event) {
+              event.preventDefault();
+              navigateTo(this.getAttribute('href'));
+            });
+          });
+          parentDocsEl.classList.remove('d-none');
+          document.getElementById('parentDocsNavDivider').classList.remove('d-none');
+        } else {
+          parentDocsEl.classList.add('d-none');
+          parentDocsEl.innerHTML = '';
+          document.getElementById('parentDocsNavDivider').classList.add('d-none');
+        }
+
         hideAllPages();
         document.getElementById('articlePage').classList.remove('d-none');
         if (typeof window.__sidebarLayoutUpdate === 'function') window.__sidebarLayoutUpdate();
@@ -794,6 +822,8 @@
       document.getElementById('articleContent').innerHTML = listHtml;
       document.getElementById('tocContainer').classList.add('d-none');
       document.getElementById('backlinksSection').classList.add('d-none');
+      document.getElementById('parentDocsNav').classList.add('d-none');
+      document.getElementById('parentDocsNavDivider').classList.add('d-none');
 
       hideAllPages();
       document.getElementById('articlePage').classList.remove('d-none');
@@ -1104,7 +1134,9 @@
       const content = document.getElementById('articleContent');
       if (!content) return;
       try {
-        await navigator.clipboard.writeText(content.innerText);
+        const pageTitle = currentPage && currentPage.title ? currentPage.title : '';
+        const textWithTitle = pageTitle ? pageTitle + '\n' + content.innerText : content.innerText;
+        await navigator.clipboard.writeText(textWithTitle);
         Swal.fire({ icon: 'success', title: '복사 완료', text: '문서 내용이 클립보드에 복사되었습니다.', timer: 1500, showConfirmButton: false });
       } catch (err) {
         console.error('복사 실패:', err);
@@ -1122,7 +1154,9 @@
           currentPage.content,
           currentPage.slug || currentSlug
         );
-        await navigator.clipboard.writeText(resolvedContent);
+        const pageTitle = currentPage.title ? currentPage.title : '';
+        const markdownWithTitle = pageTitle ? pageTitle + '\n\n' + resolvedContent : resolvedContent;
+        await navigator.clipboard.writeText(markdownWithTitle);
         Swal.fire({ icon: 'success', title: '복사 완료', text: '마크다운 원문이 클립보드에 복사되었습니다.', timer: 1500, showConfirmButton: false });
       } catch (err) {
         console.error('복사 실패:', err);
@@ -1136,8 +1170,9 @@
 
     // ── 네비게이션 ──
     function navigateTo(url) {
-      // 토론/리비전은 별도 호환용
-      if (url.match(/\/w\/[^/]+\/discussions/) || url.match(/\/w\/[^/]+\/revisions$/)) {
+      // SPA는 위키 문서(/w/slug)와 루트(/)만 처리; 나머지는 풀 내비게이션
+      const path = new URL(url, window.location.origin).pathname;
+      if (!path.match(/^\/w\/[^/]+$/) && path !== '/' && path !== '') {
         window.location.href = url;
         return;
       }
@@ -1156,7 +1191,7 @@
           text: '문서를 만들려면 먼저 로그인해주세요.',
           confirmButtonText: '로그인',
         }).then(result => {
-          if (result.isConfirmed) window.location.href = '/auth/google';
+          if (result.isConfirmed) window.location.href = '/login';
         });
         return;
       }

@@ -55,7 +55,7 @@ adminRoutes.get('/users', async (c) => {
     const search = c.req.query('search')?.trim() || '';
     const offset = (page - 1) * limit;
 
-    let queryStr = `SELECT id, google_id, email, name, picture, role, banned_until, created_at FROM users`;
+    let queryStr = `SELECT id, provider, uid, email, name, picture, role, banned_until, created_at FROM users`;
     let countQueryStr = `SELECT COUNT(*) as count FROM users`;
     const params: any[] = [];
     const conditions: string[] = [];
@@ -352,13 +352,22 @@ adminRoutes.put('/signup-requests/:id/approve', async (c) => {
 
     const request = await db.prepare('SELECT * FROM signup_requests WHERE id = ?')
         .bind(requestId)
-        .first<{ id: number; google_id: string; email: string; name: string; picture: string; status: string }>();
+        .first<{ id: number; provider: string; uid: string; email: string; name: string; picture: string | null; status: string }>();
 
     if (!request) {
         return c.json({ error: '가입 신청을 찾을 수 없습니다.' }, 404);
     }
     if (request.status !== 'pending') {
         return c.json({ error: '이미 처리된 신청입니다.' }, 400);
+    }
+
+    // 이메일 중복 체크 (다른 공급자로 이미 가입된 이메일)
+    const emailDup = await db
+        .prepare('SELECT id FROM users WHERE email = ?')
+        .bind(request.email)
+        .first<{ id: number }>();
+    if (emailDup) {
+        return c.json({ error: '이미 동일한 이메일로 가입된 사용자가 있습니다.' }, 409);
     }
 
     // 중복 이름 확인
@@ -386,8 +395,8 @@ adminRoutes.put('/signup-requests/:id/approve', async (c) => {
 
     // users 테이블에 유저 생성
     await db.prepare(
-        'INSERT INTO users (google_id, email, name, picture) VALUES (?, ?, ?, ?)'
-    ).bind(request.google_id, request.email, finalName, request.picture).run();
+        'INSERT INTO users (provider, uid, email, name, picture) VALUES (?, ?, ?, ?, ?)'
+    ).bind(request.provider, request.uid, request.email, finalName, request.picture).run();
 
     // 신청 상태 업데이트
     const now = Math.floor(Date.now() / 1000);

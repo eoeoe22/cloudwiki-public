@@ -2002,6 +2002,16 @@ div:where(.swal2-container) .swal2-html-container {
   color: var(--wiki-text-muted) !important;
 }
 
+/* ── Parent Docs Navigation (breadcrumb) ── */
+.parent-docs-nav {
+  font-size: 0.9rem;
+  color: var(--wiki-text-muted);
+}
+
+.parent-docs-nav a {
+  color: var(--wiki-primary);
+}
+
 /* ── Backlinks Section ── */
 .backlinks-section {
   margin-top: 2rem;

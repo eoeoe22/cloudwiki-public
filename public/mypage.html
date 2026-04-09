@@ -309,7 +309,7 @@
         document.addEventListener('DOMContentLoaded', async () => {
             await Promise.all([loadConfig(), checkAuth()]);
             if (!currentUser) {
-                window.location.href = '/auth/google';
+                window.location.href = '/login';
                 return;
             }
             renderProfile();

@@ -7,7 +7,7 @@ import { sessionMiddleware } from './middleware/session';
 import { applyPageSSR, extractMetaDescription } from './middleware/ssr';
 import { safeJSON } from './utils/json';
 import { escapeHtml, sanitizeUrl } from './utils/html';
-import authRoutes from './routes/auth';
+import authRoutes from './routes/auth/index';
 import wikiRoutes from './routes/wiki';
 import searchRoutes from './routes/search';
 import mediaRoutes from './routes/media';
@@ -519,9 +519,18 @@ app.get('/login', async (c) => {
     if (c.get('user')) {
         return c.redirect('/');
     }
+    const db = c.env.DB;
+    const tosSlug = c.env.TERMS_OF_SERVICE || '';
+    const ppSlug = c.env.PRIVACY_POLICY || '';
+    const [tosPage, ppPage] = await Promise.all([
+        tosSlug ? db.prepare('SELECT content FROM pages WHERE slug = ? AND deleted_at IS NULL LIMIT 1').bind(tosSlug).first<{ content: string }>() : Promise.resolve(null),
+        ppSlug ? db.prepare('SELECT content FROM pages WHERE slug = ? AND deleted_at IS NULL LIMIT 1').bind(ppSlug).first<{ content: string }>() : Promise.resolve(null),
+    ]);
     return renderHtml(c, '/login.html', {
         _ssrTitle: '로그인 - ' + (c.env.WIKI_NAME || 'Cloudwiki'),
-        closedWikiMessage: c.env.CLOSED_WIKI_MESSAGE || '비공개 위키입니다. 로그인 후 이용해주세요.',
+        loginMessage: c.env.LOGIN_MESSAGE || '비공개 위키입니다. 로그인 후 이용해주세요.',
+        termsOfService: tosPage?.content || '',
+        privacyPolicy: ppPage?.content || '',
     });
 });
 

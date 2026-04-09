@@ -1,231 +1,66 @@
 import { Hono } from 'hono';
 import { getCookie } from 'hono/cookie';
-import type { Env } from '../types';
-import { requireAuth } from '../middleware/session';
-import { isSuperAdmin, getSuperAdmins, isEmailDomainAllowed } from '../utils/auth';
+import type { Env } from '../../types';
+import { requireAuth } from '../../middleware/session';
+import { getSuperAdmins } from '../../utils/auth';
+import type { OAuthProvider } from './providers/base';
+import { googleProvider } from './providers/google';
+import { discordProvider } from './providers/discord';
+import { handleOAuthLogin } from './common';
 
 const auth = new Hono<Env>();
 
-/**
- * GET /auth/google
- * Google OAuth 2.0 인증 페이지로 리다이렉트
- */
-auth.get('/auth/google', async (c) => {
-    // CSRF 방지: 랜덤 state 생성 후 KV에 저장 (TTL 5분)
-    const state = crypto.randomUUID();
-    await c.env.KV.put(`oauth_state:${state}`, '1', { expirationTtl: 300 });
-
-    const params = new URLSearchParams({
-        client_id: c.env.GOOGLE_CLIENT_ID,
-        redirect_uri: c.env.GOOGLE_REDIRECT_URI,
-        response_type: 'code',
-        scope: 'openid email profile',
-        access_type: 'offline',
-        prompt: 'consent',
-        state,
-    });
-    return c.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`);
-});
+// ── 사용 가능한 공급자 레지스트리 ──
+const providerRegistry: Record<string, OAuthProvider> = {
+    google: googleProvider,
+    discord: discordProvider,
+};
 
 /**
- * GET /auth/google/callback
- * Google에서 받은 code를 access_token으로 교환하고 유저 정보를 가져온다.
- * users 테이블에 upsert하고 sessions 테이블에 세션을 생성한 뒤 쿠키를 발급한다.
+ * AUTH_PROVIDERS 환경변수를 파싱하여 활성화된 공급자 목록을 반환
  */
-auth.get('/auth/google/callback', async (c) => {
-    const code = c.req.query('code');
-    const state = c.req.query('state');
+function parseProviders(authProviders: string): string[] {
+    return (authProviders || '')
+        .split(',')
+        .map(p => p.trim().toLowerCase())
+        .filter(Boolean);
+}
 
-    // CSRF 검증: state 파라미터 확인
-    if (!state) {
-        return c.json({ error: 'Missing state parameter' }, 403);
-    }
-    const storedState = await c.env.KV.get(`oauth_state:${state}`);
-    if (!storedState) {
-        return c.json({ error: 'Invalid or expired state parameter' }, 403);
-    }
-    // 사용한 state 삭제 (replay 방지)
-    await c.env.KV.delete(`oauth_state:${state}`);
-
-    if (!code) {
-        return c.json({ error: 'Missing code parameter' }, 400);
-    }
-
-    // 1. code → access_token 교환
-    const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-            code,
-            client_id: c.env.GOOGLE_CLIENT_ID,
-            client_secret: c.env.GOOGLE_CLIENT_SECRET,
-            redirect_uri: c.env.GOOGLE_REDIRECT_URI,
-            grant_type: 'authorization_code',
-        }),
+// AUTH_PROVIDERS는 요청 시점에 env에서 가져와야 하므로, 모든 가능한 공급자 라우트를 등록하되
+// 활성화 여부를 라우트 핸들러에서 체크한다.
+for (const [name, provider] of Object.entries(providerRegistry)) {
+    auth.get(`/auth/${name}`, async (c) => {
+        const active = parseProviders(c.env.AUTH_PROVIDERS);
+        if (!active.includes(name)) {
+            return c.json({ error: 'This auth provider is not enabled' }, 404);
+        }
+        return provider.handleLogin(c);
     });
 
-    if (!tokenRes.ok) {
-        const err = await tokenRes.text();
-        console.error('Token exchange failed:', err);
-        return c.json({ error: 'Token exchange failed' }, 500);
-    }
-
-    const tokenData = (await tokenRes.json()) as { access_token: string };
-
-    // 2. access_token → userinfo 조회
-    const userRes = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
-        headers: { Authorization: `Bearer ${tokenData.access_token}` },
+    auth.get(`/auth/${name}/callback`, async (c) => {
+        const active = parseProviders(c.env.AUTH_PROVIDERS);
+        if (!active.includes(name)) {
+            return c.json({ error: 'This auth provider is not enabled' }, 404);
+        }
+        const result = await provider.handleCallback(c);
+        if (result instanceof Response) return result;
+        return handleOAuthLogin(c, result);
     });
+}
 
-    if (!userRes.ok) {
-        return c.json({ error: 'Failed to fetch user info' }, 500);
-    }
-
-    const userInfo = (await userRes.json()) as {
-        id: string;
-        email: string;
-        name: string;
-        picture: string;
-        verified_email?: boolean;
-        email_verified?: boolean;
-    };
-
-    if (!userInfo.verified_email && !userInfo.email_verified) {
-        return c.json({ error: 'Google email not verified' }, 403);
-    }
-
-    const db = c.env.DB;
-
-    let isNewUser = false;
-
-    // 3. 기존 유저 확인
-    const existingUser = await db
-        .prepare('SELECT id, role FROM users WHERE google_id = ?')
-        .bind(userInfo.id)
-        .first<{ id: number; role: string }>();
-
-    if (existingUser && existingUser.role === 'deleted') {
-        return c.redirect('/?error=deleted_account');
-    }
-
-    if (existingUser) {
-        // 기존 유저: 이름은 유지 (수동으로 변경한 이름이 로그인마다 초기화되지 않도록)
-        await db
-            .prepare(
-                `UPDATE users SET email = ?, picture = ? WHERE google_id = ?`
-            )
-            .bind(userInfo.email, userInfo.picture, userInfo.id)
-            .run();
-    } else {
-        isNewUser = true;
-
-        // 이메일 도메인 필터링
-        if (!isEmailDomainAllowed(userInfo.email, c.env.EMAIL_RESTRICTION, c.env.EMAIL_LIST)) {
-            return c.redirect('/?error=email_domain_not_allowed');
-        }
-
-        const settingsRow = await db
-            .prepare('SELECT signup_policy FROM settings WHERE id = 1')
-            .first<{ signup_policy: string }>();
-        const signupPolicy = settingsRow?.signup_policy || 'open';
-
-        // 차단: 신규 유저 가입 완전 차단
-        if (signupPolicy === 'blocked') {
-            return c.redirect('/?error=signup_blocked');
-        }
-
-        // 승인제: 신규 유저는 바로 가입하지 않고 가입 신청 절차를 거침
-        if (signupPolicy === 'approval') {
-            // 기존 가입 신청 확인
-            const existingRequest = await db
-                .prepare('SELECT id, status FROM signup_requests WHERE google_id = ? ORDER BY created_at DESC LIMIT 1')
-                .bind(userInfo.id)
-                .first<{ id: number; status: string }>();
-
-            if (existingRequest) {
-                if (existingRequest.status === 'pending') {
-                    return c.redirect('/?error=signup_pending');
-                }
-                if (existingRequest.status === 'blocked') {
-                    return c.redirect('/?error=signup_blocked');
-                }
-                // rejected: 재신청 가능 → 아래로 진행
-            }
-
-            // 임시 토큰 발급하여 KV에 저장 (10분 TTL)
-            const signupToken = crypto.randomUUID();
-            await c.env.KV.put(`signup_token:${signupToken}`, JSON.stringify({
-                google_id: userInfo.id,
-                email: userInfo.email,
-                name: userInfo.name,
-                picture: userInfo.picture,
-            }), { expirationTtl: 600 });
-
-            return c.redirect(`/setup-profile?mode=approval&token=${signupToken}`);
-        }
-
-        // 모두 허용: 기존 로직대로 바로 유저 생성
-        let finalName = userInfo.name;
-        const nameExists = await db
-            .prepare('SELECT COUNT(*) as cnt FROM users WHERE name = ?')
-            .bind(finalName)
-            .first<{ cnt: number }>();
-
-        if (nameExists && nameExists.cnt > 0) {
-            let suffix = 2;
-            while (true) {
-                const candidateName = `${userInfo.name} ${suffix}`;
-                const dupCheck = await db
-                    .prepare('SELECT COUNT(*) as cnt FROM users WHERE name = ?')
-                    .bind(candidateName)
-                    .first<{ cnt: number }>();
-                if (!dupCheck || dupCheck.cnt === 0) {
-                    finalName = candidateName;
-                    break;
-                }
-                suffix++;
-            }
-        }
-
-        await db
-            .prepare(
-                `INSERT INTO users (google_id, email, name, picture) VALUES (?, ?, ?, ?)`
-            )
-            .bind(userInfo.id, userInfo.email, finalName, userInfo.picture)
-            .run();
-    }
-
-    // 4. user id 조회
-    const user = await db
-        .prepare('SELECT id FROM users WHERE google_id = ?')
-        .bind(userInfo.id)
-        .first<{ id: number }>();
-
-    if (!user) {
-        return c.json({ error: 'User creation failed' }, 500);
-    }
-
-    // 5. 세션 생성 (User-Agent 기록)
-    const sessionId = crypto.randomUUID();
-    const expiresAt = Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 7; // 7일
-    const userAgent = c.req.header('User-Agent') || null;
-
-    await db
-        .prepare('INSERT INTO sessions (id, user_id, expires_at, user_agent) VALUES (?, ?, ?, ?)')
-        .bind(sessionId, user.id, expiresAt, userAgent)
-        .run();
-
-    // 6. 세션 쿠키 발급 + 홈으로 리다이렉트
-    c.header(
-        'Set-Cookie',
-        `wiki_session=${sessionId}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${60 * 60 * 24 * 7}`
-    );
-
-    if (isNewUser) {
-        return c.redirect('/setup-profile');
-    }
-
-    return c.redirect('/');
+/**
+ * GET /api/auth/providers
+ * 활성화된 공급자 목록 반환 (login.html 동적 렌더링용)
+ */
+auth.get('/api/auth/providers', (c) => {
+    const active = parseProviders(c.env.AUTH_PROVIDERS);
+    const providers = active
+        .filter(name => providerRegistry[name])
+        .map(name => ({
+            name,
+            label: providerRegistry[name].label,
+        }));
+    return c.json({ providers });
 });
 
 /**
@@ -257,7 +92,8 @@ auth.post('/api/auth/signup-request', async (c) => {
     }
 
     const userInfo = JSON.parse(tokenData) as {
-        google_id: string;
+        provider: string;
+        uid: string;
         email: string;
         name: string;
         picture: string;
@@ -274,8 +110,8 @@ auth.post('/api/auth/signup-request', async (c) => {
 
     // 이미 pending 신청이 있는지 확인
     const existingPending = await db
-        .prepare("SELECT id FROM signup_requests WHERE google_id = ? AND status = 'pending'")
-        .bind(userInfo.google_id)
+        .prepare("SELECT id FROM signup_requests WHERE provider = ? AND uid = ? AND status = 'pending'")
+        .bind(userInfo.provider, userInfo.uid)
         .first();
     if (existingPending) {
         await c.env.KV.delete(`signup_token:${token}`);
@@ -284,8 +120,8 @@ auth.post('/api/auth/signup-request', async (c) => {
 
     // 차단 상태 확인
     const blockedRequest = await db
-        .prepare("SELECT id FROM signup_requests WHERE google_id = ? AND status = 'blocked'")
-        .bind(userInfo.google_id)
+        .prepare("SELECT id FROM signup_requests WHERE provider = ? AND uid = ? AND status = 'blocked'")
+        .bind(userInfo.provider, userInfo.uid)
         .first();
     if (blockedRequest) {
         await c.env.KV.delete(`signup_token:${token}`);
@@ -294,9 +130,10 @@ auth.post('/api/auth/signup-request', async (c) => {
 
     // 가입 신청 INSERT
     const result = await db.prepare(
-        'INSERT INTO signup_requests (google_id, email, name, picture, message) VALUES (?, ?, ?, ?, ?)'
+        'INSERT INTO signup_requests (provider, uid, email, name, picture, message) VALUES (?, ?, ?, ?, ?, ?)'
     ).bind(
-        userInfo.google_id,
+        userInfo.provider,
+        userInfo.uid,
         userInfo.email,
         name.trim(),
         userInfo.picture || null,
@@ -359,15 +196,15 @@ auth.get('/api/auth/signup-policy', async (c) => {
 
 /**
  * GET /auth/logout
- * 세션 삭제 + 쿠키 제거
+ * 세션 삭제 + KV 캐시 무효화 + 쿠키 제거
  */
 auth.get('/auth/logout', async (c) => {
-    const cookie = c.req.header('Cookie');
-    const match = cookie?.match(/(?:^|;\s*)wiki_session=([^;]*)/);
-    const sessionId = match ? decodeURIComponent(match[1]) : null;
+    const sessionId = getCookie(c, 'wiki_session');
 
     if (sessionId) {
         await c.env.DB.prepare('DELETE FROM sessions WHERE id = ?').bind(sessionId).run();
+        // KV 세션 캐시 무효화 (캐시된 세션으로 인한 로그아웃 지연 방지)
+        await c.env.KV.delete(`session:${sessionId}`);
     }
 
     c.header('Set-Cookie', 'wiki_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0');
@@ -613,15 +450,17 @@ auth.get('/api/users/:id/contributions', async (c) => {
 /**
  * DELETE /api/me/account
  * 회원탈퇴: role을 'deleted'로, 표시명을 '탈퇴한 사용자'로 변경하고 세션 삭제
- * google_id는 유지하여 재가입 차단
+ * provider + uid는 유지하여 재가입 차단
  */
 auth.delete('/api/me/account', requireAuth, async (c) => {
     const user = c.get('user')!;
     const db = c.env.DB;
 
     // 1. role을 'deleted'로, 이름을 '탈퇴한 사용자'로, picture 제거
+    //    email은 UNIQUE 제약이 있으므로 id 기반의 유일한 placeholder로 설정
+    //    (다수 유저 탈퇴 시 UNIQUE 충돌 방지)
     await db.prepare(
-        `UPDATE users SET role = 'deleted', name = '탈퇴한 사용자', picture = NULL, email = '' WHERE id = ?`
+        `UPDATE users SET role = 'deleted', name = '탈퇴한 사용자', picture = NULL, email = 'deleted:' || id WHERE id = ?`
     ).bind(user.id).run();
 
     // 2. 해당 유저의 모든 세션 삭제

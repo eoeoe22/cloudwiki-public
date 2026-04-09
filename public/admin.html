@@ -422,6 +422,7 @@
                   <option value="all">모든 권한</option>
                   <option value="super_admin">최고 관리자</option>
                   <option value="admin">관리자</option>
+                  <option value="discussion_manager">토론 관리자</option>
                   <option value="user">일반 유저</option>
                 </select>
                 <button class="btn btn-sm btn-primary" onclick="searchUsers()">
@@ -744,7 +745,7 @@
                     <div class="col-12 mt-3">
                       <h6>최근 에러 (HTTP 오류)</h6>
                       <div class="table-responsive">
-                        <table class="table table-sm">
+                        <table class="table table-sm" style="white-space:nowrap;">
                           <thead>
                             <tr>
                               <th>경로</th>
@@ -880,7 +881,7 @@
         await loadConfig();
 
         if (!currentUser) {
-          window.location.href = "/auth/google";
+          window.location.href = "/login";
           return;
         }
 
@@ -986,6 +987,8 @@
               roleBadge = '<span class="badge bg-dark">최고 관리자</span>';
             else if (u.role === "admin")
               roleBadge = '<span class="badge bg-primary">관리자</span>';
+            else if (u.role === "discussion_manager")
+              roleBadge = '<span class="badge bg-success">토론 관리자</span>';
 
             let roleSelect = "";
             if (
@@ -994,6 +997,7 @@
             ) {
               roleSelect = `<select class="form-select form-select-sm w-auto d-inline" onchange="changeRole(${u.id}, this.value)">
                         <option value="user" ${u.role === "user" ? "selected" : ""}>유저</option>
+                        <option value="discussion_manager" ${u.role === "discussion_manager" ? "selected" : ""}>토론 관리자</option>
                         <option value="admin" ${u.role === "admin" ? "selected" : ""}>관리자</option>
                     </select>`;
             } else roleSelect = roleBadge;
@@ -1188,8 +1192,8 @@
                 <td class="small">${escapeHtml(r.email)}</td>
                 <td><span class="badge bg-info">${r.status}</span></td>
                 <td>
-                    <button class="btn btn-xs btn-success" onclick="approveSignup(${r.id})">승인</button>
-                    <button class="btn btn-xs btn-danger" onclick="rejectSignup(${r.id})">거절</button>
+                    <button class="btn btn-xs btn-outline-success" onclick="approveSignup(${r.id})">승인</button>
+                    <button class="btn btn-xs btn-outline-danger" onclick="rejectSignup(${r.id})">거절</button>
                 </td>
             </tr>`,
           )
@@ -1201,12 +1205,34 @@
             '<tr><td colspan="5" class="text-center py-3">신청 없음</td></tr>';
       }
       async function approveSignup(id) {
-        if (
-          await fetch(`/api/admin/signup-requests/${id}/approve`, {
+        try {
+          const res = await fetch(`/api/admin/signup-requests/${id}/approve`, {
             method: "PUT",
-          })
-        )
-          loadSignupRequests();
+          });
+          if (res.ok) {
+            loadSignupRequests();
+          } else {
+            const data = await res.json().catch(() => ({}));
+            Swal.fire("오류", data.error || "승인 처리 중 오류가 발생했습니다.", "error");
+          }
+        } catch (err) {
+          Swal.fire("오류", err.message, "error");
+        }
+      }
+      async function rejectSignup(id) {
+        try {
+          const res = await fetch(`/api/admin/signup-requests/${id}/reject`, {
+            method: "PUT",
+          });
+          if (res.ok) {
+            loadSignupRequests();
+          } else {
+            const data = await res.json().catch(() => ({}));
+            Swal.fire("오류", data.error || "거절 처리 중 오류가 발생했습니다.", "error");
+          }
+        } catch (err) {
+          Swal.fire("오류", err.message, "error");
+        }
       }
 
       // ── 삭제된 문서 ──
@@ -1393,8 +1419,8 @@
             .map(
               (e) => `
                     <tr>
-                        <td class="text-truncate" style="max-width:150px;" title="${escapeHtml(e.path)}">${escapeHtml(e.path)}</td>
-                        <td class="text-truncate" style="max-width:200px;" title="${escapeHtml(e.error_message)}">${escapeHtml(e.error_message)}</td>
+                        <td>${escapeHtml(e.path)}</td>
+                        <td>${escapeHtml(e.error_message)}</td>
                         <td><span class="badge ${e.status_code >= 500 ? "bg-danger" : "bg-warning text-dark"}">${e.status_code}</span></td>
                         <td>${e.count}</td>
                     </tr>

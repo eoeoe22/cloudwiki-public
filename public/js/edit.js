@@ -1446,6 +1446,7 @@ async function checkAutoSave() {
 
 // ── 커스텀 프리뷰 렌더링 (common.js의 renderWikiContent 모듈 사용) ──
 let previewDebounce;
+
 async function updateCustomPreview() {
     if (!editor) return;
     // 마크다운 프리뷰 영역만 대상으로 함 (위지윅 편집 영역은 건드리지 않음)
@@ -1535,12 +1536,12 @@ document.addEventListener('DOMContentLoaded', async () => {
                 text: '문서를 편집하려면 로그인이 필요합니다.',
                 confirmButtonText: '로그인',
             }).then(() => {
-                window.location.href = '/auth/google';
+                window.location.href = '/login';
             });
             return;
         }
     } catch (e) {
-        window.location.href = '/auth/google';
+        window.location.href = '/login';
         return;
     }
 
@@ -2027,33 +2028,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             await updateCustomPreview();
             scrollToBottom();
         }, 300);
-
-        // ── 스크롤 동기화 강제 제거 ──
-        // Toast UI Editor가 내부적으로 스크롤 동기화를 수행하므로,
-        // 에디터/프리뷰 패널의 scroll 이벤트를 가로채서 동기화 차단
-        setTimeout(() => {
-            const mdEditor = document.querySelector('#editor .toastui-editor-md-editor .ProseMirror');
-            const mdPreview = document.querySelector('#editor .toastui-editor-md-preview');
-            if (mdEditor) {
-                mdEditor.addEventListener('scroll', (e) => { e.stopPropagation(); }, true);
-            }
-            if (mdPreview) {
-                mdPreview.addEventListener('scroll', (e) => { e.stopPropagation(); }, true);
-            }
-            // 내부 scrollSync 객체가 있으면 비활성화
-            try {
-                const editorInst = editor;
-                if (editorInst.scrollSync) {
-                    editorInst.scrollSync.destroy && editorInst.scrollSync.destroy();
-                    editorInst.scrollSync = null;
-                }
-                // eventEmitter에서 scroll 관련 이벤트 제거 시도
-                if (editorInst.eventEmitter) {
-                    editorInst.eventEmitter.removeEventHandler('scroll');
-                    editorInst.eventEmitter.removeEventHandler('previewScroll');
-                }
-            } catch (e) { /* 무시 */ }
-        }, 500);
 
         startAutoSave();
     } // ── isExtensionData else 블록 종료 ──
@@ -3545,4 +3519,3 @@ const ImageEditor = (() => {
 
     return { open };
 })();
-

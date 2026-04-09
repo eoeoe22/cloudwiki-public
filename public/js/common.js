@@ -1455,6 +1455,32 @@ async function loadRecentChanges() {
 
         document.querySelectorAll('.recent-changes-container').forEach(el => {
             el.innerHTML = content;
+            const section = el.closest('.sidebar-section');
+            if (section) {
+                const title = section.querySelector('.sidebar-title');
+                if (title && !title.querySelector('a')) {
+                    const link = document.createElement('a');
+                    link.href = '/recent-changes';
+                    link.className = 'text-decoration-none text-reset';
+                    link.addEventListener('click', function (e) {
+                        e.preventDefault();
+                        if (typeof navigateTo === 'function') {
+                            navigateTo(this.href);
+                            const sidebar = document.getElementById('mobileSidebar');
+                            if (sidebar) {
+                                const bsOffcanvas = bootstrap?.Offcanvas?.getInstance(sidebar);
+                                if (bsOffcanvas) bsOffcanvas.hide();
+                            }
+                        } else {
+                            window.location.href = this.href;
+                        }
+                    });
+                    while (title.firstChild) {
+                        link.appendChild(title.firstChild);
+                    }
+                    title.appendChild(link);
+                }
+            }
         });
     } catch (e) {
         // 무시

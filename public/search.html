@@ -49,6 +49,36 @@
 
                 <!-- 결과 목록 -->
                 <div id="resultsList"></div>
+
+                <!-- 모바일 최근 변경 (모바일 전용) -->
+                <div class="mt-4 d-lg-none">
+                    <div class="sidebar-section">
+                        <h6 class="sidebar-title"><a href="/recent-changes" class="text-decoration-none text-reset"><i class="bi bi-clock-history"></i> 최근 변경</a></h6>
+                        <div class="recent-changes-list recent-changes-container"></div>
+                    </div>
+                </div>
+
+                <script>
+                    document.addEventListener('DOMContentLoaded', async function () {
+                        if (!document.querySelector('.recent-changes-container') || window.__searchRecentChangesLoaded) {
+                            return;
+                        }
+
+                        window.__searchRecentChangesLoaded = true;
+
+                        if (typeof loadConfig === 'function') {
+                            await loadConfig();
+                        }
+
+                        if (typeof checkAuth === 'function') {
+                            await checkAuth();
+                        }
+
+                        if (typeof loadRecentChanges === 'function') {
+                            await loadRecentChanges();
+                        }
+                    });
+                </script>
             </div>
         </div>
 

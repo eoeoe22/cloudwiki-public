@@ -17,3 +17,19 @@ export function isR2OnlyNamespace(slug: string): boolean {
     if (namespace === '틀' || namespace === '템플릿') return false; // 제외 대상
     return true; // 그 외 네임스페이스
 }
+
+/** MCP raw 읽기 허용 네임스페이스 목록 */
+const MCP_READABLE_NAMESPACES = ['틀', '템플릿', '유저'];
+
+/**
+ * MCP 도구(get_toc/read_document/read_section)에서 해당 slug의 raw 데이터를
+ * 읽을 수 있는지 여부를 반환합니다.
+ * 콜론이 없는 일반 문서는 허용, 허용 네임스페이스(틀/템플릿/유저)도 허용,
+ * 그 외 네임스페이스는 차단합니다.
+ */
+export function isMcpReadableSlug(slug: string): boolean {
+    const colonIndex = slug.indexOf(':');
+    if (colonIndex === -1) return true; // 일반 문서는 허용
+    const namespace = slug.substring(0, colonIndex);
+    return MCP_READABLE_NAMESPACES.includes(namespace);
+}

@@ -2,7 +2,7 @@ import { Hono, Context } from 'hono';
 import { cors } from 'hono/cors';
 import type { Env } from '../types';
 import { renderForAI, extractTOC, extractSection, findSectionForSnippet } from '../utils/aiParser';
-import { normalizeSlug, isR2OnlyNamespace } from '../utils/slug';
+import { normalizeSlug, isR2OnlyNamespace, isMcpReadableSlug } from '../utils/slug';
 import { getRevisionContent } from '../utils/r2';
 
 const mcpRoutes = new Hono<Env>();
@@ -250,6 +250,9 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
             }
             if (toolName === 'get_toc' || toolName === 'read_document' || toolName === 'read_section') {
                 const slug = normalizeSlug(args.title || '');
+                if (!isMcpReadableSlug(slug)) {
+                    return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: 'raw 데이터는 읽을 수 없습니다.' }], isError: true } };
+                }
                 const page = await db.prepare('SELECT slug, content, last_revision_id FROM pages WHERE slug = ? AND deleted_at IS NULL AND is_private = 0').bind(slug).first<{slug: string, content: string, last_revision_id: number | null}>();
                 if (!page) return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: 'Error: 문서를 찾을 수 없거나 비공개/삭제 상태입니다.' }], isError: true } };
                 
