@@ -5,7 +5,8 @@ compatibility_date = "2026-03-01"
 [assets]
 directory = "public"
 binding = "ASSETS"
-run_worker_first = ["/", "/w/*", "/wiki/*", "/mypage", "/edit", "/profile/*", "/search", "/admin", "/admin-media", "/tickets", "/tickets/*", "/setup-profile", "/sitemap.xml", "/robots.txt", "/login"]
+run_worker_first = ["/", "/w/*", "/wiki/*", "/mypage", "/edit", "/profile/*", "/search", "/admin", "/admin-media", "/tickets", "/tickets/*", "/setup-profile", "/sitemap.xml", "/robots.txt", "/login", "/recent-changes", "/auth/discord", "/auth/discord/callback"]
+
 
 [[d1_databases]]
 binding = "DB"
@@ -30,9 +31,20 @@ head_sampling_rate = 1.0
 
 [vars]
 WIKI_HOME_PAGE = "" #위키 홈페이지로 쓸 문서 제목
+
+# 활성화할 공급자를 쉼표로 구분하여 나열 (예: "google,discord")
+# ⚠️ 주의: 이미 사용자가 가입시 이용한 공급자를 목록에서 제거하면 오류가 발생합니다.
+AUTH_PROVIDERS = "google,discord"
+# Google OAuth
 GOOGLE_CLIENT_ID = ""
 GOOGLE_REDIRECT_URI = "https://도메인/auth/google/callback"
-# GOOGLE_CLIENT_SECRET은 Cloudflare Workers 대시보드에서 Secret에 저장
+# GOOGLE_CLIENT_SECRET은 Cloudflare Workers 대시보드에서 비밀 변수로 저장
+
+# Discord OAuth
+DISCORD_CLIENT_ID = ""
+DISCORD_REDIRECT_URI = "https://도메인/auth/discord/callback"
+# DISCORD_CLIENT_SECRET → Cloudflare Workers 대시보드에서 비밀 변수로 저장
+
 TURNSTILE_SITE_KEY = ""
 # TURNSTILE_SECRET_KEY 는 Cloudflare Workers 대시보드에서 Secret에 저장
 
@@ -43,23 +55,32 @@ TURNSTILE_SITE_KEY = ""
 MEDIA_PUBLIC_URL = "https://도메인/media"
 MAX_UPLOAD_SIZE = "15728640" # 15MB, 변경 가능
 WIKI_NAME = "Testwiki" # 변경 가능, 사이트 전역에 적용되는 위키 이름
+
+# Public 폴더에서 해당 이미지들을 교체하세요.
 WIKI_LOGO_URL = "/favicon.jpg"
-WIKI_FAVICON_URL = "/favicon.jpg" # public 폴더에 있는 favicon.jpg를 본인의 로고로 교체하세요.
+WIKI_FAVICON_URL = "/favicon.ico"
+
 SUPER_ADMIN_EMAILS = "test@example.com, test2@example.com" # 콤마로 구분하여 여러 명 지정 가능
 SELECTED_ICONS_ONLY = "false" # false 권장, true시 public/icons.json에 있는 아이콘만 자동완성에 들어감. (성능 개선 용도가 아님)
 # 아이콘 선택 json 추출기 : https://vialinks.xyz/icons
-SIGNUP_POLICY = "open" # 회원가입 정책: "open" (모두 허용, 기본값), "approval" (관리자 승인제)
 MCP_MODE = "open" # MCP 서버 모드: "disabled" (사용 안 함, 기본값), "open" (전체 개방)
 ALLOW_CRAWL = "true" # robots.txt/사이트맵 관리: "true" (크롤링 허용, 사이트맵 자동 생성, 봇 정책은 src/robots-txt.ts 직접 수정), "false" (전체 차단, 사이트맵 비활성화)
 WIKI_VISIBILITY = "open" # 문서 열람 권한: "open" (비로그인 사용자도 열람 가능), "closed" (로그인 필요)
-CLOSED_WIKI_MESSAGE = "비공개 위키입니다. 로그인 후 이용해주세요." # WIKI_VISIBILITY 가 closed일때, 비로그인 사용자가 로그인페이지에서 볼 메시지
 EMAIL_RESTRICTION = "" # 이메일 도메인 가입 제한 설정: "" 또는 "none" (제한 없음), "whitelist" (허용 도메인만), "blacklist" (차단 도메인 제외)
 EMAIL_LIST = "example.com, example.example.com" # 콤마로 구분된 도메인 목록 (EMAIL_RESTRICTION이 whitelist 또는 blacklist일 때 사용)
-ENABLED_EXTENSIONS = "" # 확장  기능 활성화
+ENABLED_EXTENSIONS = "" # 확장  기능 활성화, 쉼표로 구분. 예 : "freq,extension1,extension2"
+
+# 로그인 페이지에서 노출할 메시지 및 약관
+LOGIN_MESSAGE = ""
+# 로그인 페이지에서 해당하는 버튼 클릭시 아래에 설정된 문서를 위키 문법 렌더링 없이 텍스트 원문으로 표시
+PRIVACY_POLICY = "위키/개인정보처리방침"
+TERMS_OF_SERVICE = "위키/이용약관"
+
+# 구글 애널리스틱스, 애드센스등 외부 스크립트 삽입용
+
 CUSTOM_HEADER = """
 
 """
-# 구글 애널리스틱스, 애드센스등 외부 스크립트 삽입용
 
 # 사이드바 / 푸터 내용 커스터마이징
 # 아래 링크에서 제작 후 나온 결과물 json을 붙여넣으세요
