@@ -93,5 +93,12 @@ FOOTER = """
 
 """
 
+# ROLE_PERMISSIONS_JSON: 역할 기반 권한 제어 설정
+# 기본값 설정 사용을 권장합니다.
+# 수정이 필요하다면 https://vialinks.xyz/role-json-builder 에서 제작후 붙여넣기. minify 옵션 사용을 권장합니다.
+ROLE_PERMISSIONS_JSON = """
+{"roles":{"user":{"permissions":["wiki:read","wiki:edit","comment:create","ticket:create","media:upload"],"inherits":[]},"discussion_manager":{"permissions":["discussion:manage"],"inherits":["user"]},"admin":{"permissions":["admin:access","wiki:delete","wiki:lock","wiki:private","user:manage","ticket:manage"],"inherits":["discussion_manager"]},"super_admin":{"permissions":["*"],"inherits":["admin"]},"banned":{"permissions":[],"inherits":[]},"deleted":{"permissions":[],"inherits":[]}}}
+"""
+
 [triggers]
 crons = ["0 0 * * *"] # 매일 자정 (UTC 기준)에 실행
