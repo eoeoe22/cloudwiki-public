@@ -1,9 +1,9 @@
 import { Hono } from 'hono';
 import type { Env, Page, Revision } from '../types';
-import { requireAuth } from '../middleware/session';
+import { requireAuth, requirePermission } from '../middleware/session';
 import { normalizeSlug, isR2OnlyNamespace } from '../utils/slug';
 import { safeJSON } from '../utils/json';
-import { ROLE_CASE_SQL, enrichRoles } from '../utils/role';
+import { ROLE_CASE_SQL, enrichRoles, RBAC } from '../utils/role';
 
 const wiki = new Hono<Env>();
 
@@ -216,7 +216,8 @@ wiki.get('/w/search-titles', async (c) => {
     const type = c.req.query('type') || 'link';
     const exclude = c.req.query('exclude') || '';
     const user = c.get('user');
-    const isAdmin = user && (user.role === 'admin' || user.role === 'super_admin');
+    const rbac = c.get('rbac') as RBAC;
+    const isAdmin = user && rbac.can(user.role, 'admin:access');
 
     let query = `SELECT title, slug FROM pages WHERE deleted_at IS NULL`;
     const params: any[] = [];
@@ -296,7 +297,8 @@ wiki.get('/w/recent-changes', async (c) => {
     }
     const db = c.env.DB;
     const user = c.get('user');
-    const isAdmin = user && (user.role === 'admin' || user.role === 'super_admin');
+    const rbac = c.get('rbac') as RBAC;
+    const isAdmin = user && rbac.can(user.role, 'admin:access');
 
     // 비관리자(공개 결과)는 Cache API로 24시간 캐싱
     if (!isAdmin) {
@@ -383,7 +385,8 @@ wiki.get('/w/random', async (c) => {
     }
     const db = c.env.DB;
     const user = c.get('user');
-    const isAdmin = user && (user.role === 'admin' || user.role === 'super_admin');
+    const rbac = c.get('rbac') as RBAC;
+    const isAdmin = user && rbac.can(user.role, 'admin:access');
 
     let query = `
         SELECT slug, title
@@ -420,7 +423,8 @@ wiki.get('/w/recent-revisions', async (c) => {
     }
     const db = c.env.DB;
     const user = c.get('user');
-    const isAdmin = user && (user.role === 'admin' || user.role === 'super_admin');
+    const rbac = c.get('rbac') as RBAC;
+    const isAdmin = user && rbac.can(user.role, 'admin:access');
     const offset = Math.max(0, parseInt(c.req.query('offset') || '0', 10));
     const limit = Math.min(50, Math.max(1, parseInt(c.req.query('limit') || '10', 10)));
 
@@ -454,6 +458,80 @@ wiki.get('/w/recent-revisions', async (c) => {
 });
 
 /**
+ * GET /w/all-pages
+ * 모든 문서 목록 (정렬 + 페이지네이션)
+ * Query: offset (기본 0), limit (기본 20, 최대 50),
+ *        sort (title_asc, title_desc, created_asc, created_desc,
+ *              updated_asc, updated_desc, category_asc, category_desc)
+ */
+wiki.get('/w/all-pages', async (c) => {
+    if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) {
+        return c.json({ error: '로그인이 필요합니다.' }, 401);
+    }
+    const db = c.env.DB;
+    const user = c.get('user');
+    const rbac = c.get('rbac') as RBAC;
+    const isAdmin = user && rbac.can(user.role, 'admin:access');
+    const offset = Math.max(0, parseInt(c.req.query('offset') || '0', 10));
+    const limit = Math.min(50, Math.max(1, parseInt(c.req.query('limit') || '20', 10)));
+    const sort = c.req.query('sort') || 'title_asc';
+
+    const sortMap: Record<string, string> = {
+        title_asc: 'p.title COLLATE NOCASE ASC',
+        title_desc: 'p.title COLLATE NOCASE DESC',
+        created_asc: 'p.created_at ASC',
+        created_desc: 'p.created_at DESC',
+        updated_asc: 'p.updated_at ASC',
+        updated_desc: 'p.updated_at DESC',
+        category_asc: 'p.category COLLATE NOCASE ASC, p.title COLLATE NOCASE ASC',
+        category_desc: 'p.category COLLATE NOCASE DESC, p.title COLLATE NOCASE ASC',
+    };
+    const orderBy = sortMap[sort] || sortMap['title_asc'];
+
+    let query = `
+        SELECT p.slug, p.title, p.category, p.created_at, p.updated_at
+        FROM pages p
+        WHERE p.deleted_at IS NULL
+    `;
+    if (!isAdmin) {
+        query += ' AND p.is_private = 0';
+    }
+    query += ` ORDER BY ${orderBy} LIMIT ? OFFSET ?`;
+
+    const { results } = await db.prepare(query).bind(limit + 1, offset).all();
+
+    let has_more = false;
+    if (results.length > limit) {
+        has_more = true;
+        results.pop();
+    }
+
+    return c.json(safeJSON({ pages: results, has_more }));
+});
+
+/**
+ * GET /w/wiki-stats
+ * 위키 통계 (문서 개수, 편집 횟수)
+ * sqlite_sequence 테이블의 pages, revisions 데이터 참조
+ */
+wiki.get('/w/wiki-stats', async (c) => {
+    if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) {
+        return c.json({ error: '로그인이 필요합니다.' }, 401);
+    }
+    const db = c.env.DB;
+
+    const [pageCountRow, revisionCountRow] = await Promise.all([
+        db.prepare(`SELECT seq FROM sqlite_sequence WHERE name = 'pages'`).first<{ seq: number }>(),
+        db.prepare(`SELECT seq FROM sqlite_sequence WHERE name = 'revisions'`).first<{ seq: number }>(),
+    ]);
+
+    return c.json({
+        page_count: pageCountRow?.seq ?? 0,
+        revision_count: revisionCountRow?.seq ?? 0,
+    });
+});
+
+/**
  * GET /w/:slug
  * 문서 조회 (공개)
  * - 리다이렉트 처리: 문서가 없고 리다이렉트가 존재하면 대상 문서 반환 (redirected_from 포함)
@@ -482,7 +560,8 @@ wiki.get('/w/:slug', async (c) => {
         .bind(slug)
         .first<Page>();
 
-    const isAdmin = user && (user.role === 'admin' || user.role === 'super_admin');
+    const rbac = c.get("rbac") as RBAC;
+    const isAdmin = user && rbac.can(user.role, 'admin:access');
 
     if (page && page.deleted_at && !isAdmin) {
         return c.json({ error: '삭제된 문서입니다.', is_deleted: true }, 410);
@@ -553,7 +632,8 @@ wiki.get('/w/:slug', async (c) => {
 
     // R2-only 네임스페이스인 경우, 본문이 비어있다면 최신 리비전에서 본문을 가져옵니다.
     const origin = new URL(c.req.url).origin;
-    if (isR2OnlyNamespace(page.slug) && (!page.content || page.content === '')) {
+    const enabledExtensionsRead = (c.env.ENABLED_EXTENSIONS || '').split(',').map((s: string) => s.trim()).filter(Boolean);
+    if (isR2OnlyNamespace(page.slug, enabledExtensionsRead) && (!page.content || page.content === '')) {
         if (page.last_revision_id) {
             const lastRev = await db.prepare('SELECT content, r2_key FROM revisions WHERE id = ?').bind(page.last_revision_id).first<{ content: string, r2_key: string | null }>();
             if (lastRev) {
@@ -580,9 +660,10 @@ wiki.get('/w/:slug', async (c) => {
  * 문서 생성 또는 수정 (로그인 필수)
  * Body: { title, content, summary, expected_version? }
  */
-wiki.put('/w/:slug', requireAuth, async (c) => {
+wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
     const slug = c.req.param('slug');
     const user = c.get('user')!;
+    const rbac = c.get('rbac') as RBAC;
     const body = await c.req.json<{
         title: string;
         content: string;
@@ -615,7 +696,7 @@ wiki.put('/w/:slug', requireAuth, async (c) => {
         }
     }
 
-    const isAdmin = user.role === 'admin' || user.role === 'super_admin';
+    const isAdmin = rbac.can(user.role, 'admin:access');
     const db = c.env.DB;
 
     if (body.title) {
@@ -650,7 +731,7 @@ wiki.put('/w/:slug', requireAuth, async (c) => {
     }
 
     // 비공개 설정 검증
-    if (body.is_private !== undefined && !isAdmin) {
+    if (body.is_private !== undefined && !rbac.can(user.role, 'wiki:private')) {
         return c.json({ error: '비공개 설정은 관리자만 변경할 수 있습니다.' }, 403);
     }
 
@@ -703,18 +784,18 @@ wiki.put('/w/:slug', requireAuth, async (c) => {
 
     if (existing) {
         // 기존 문서가 잠겨있을 경우
-        if (existing.is_locked === 1 && !isAdmin) {
+        if (existing.is_locked === 1 && !rbac.can(user.role, 'wiki:lock')) {
             return c.json({ error: '이 문서는 관리자만 편집할 수 있습니다.' }, 403);
         }
 
         // 비공개 문서 편집 권한 체크
-        if (existing.is_private === 1 && !isAdmin) {
+        if (existing.is_private === 1 && !rbac.can(user.role, 'wiki:private')) {
             return c.json({ error: '비공개 문서는 관리자만 편집할 수 있습니다.' }, 403);
         }
 
         // 권한에 따른 잠금/비공개 상태 결정
-        finalIsLocked = isAdmin ? (body.is_locked ?? existing.is_locked) : existing.is_locked;
-        finalIsPrivate = isAdmin ? (body.is_private ?? existing.is_private) : existing.is_private;
+        finalIsLocked = rbac.can(user.role, 'wiki:lock') ? (body.is_locked ?? existing.is_locked) : existing.is_locked;
+        finalIsPrivate = rbac.can(user.role, 'wiki:private') ? (body.is_private ?? existing.is_private) : existing.is_private;
 
         // ── 기존 문서 수정 ──
         // Optimistic Locking 체크
@@ -735,7 +816,8 @@ wiki.put('/w/:slug', requireAuth, async (c) => {
         const newVersion = existing.version + 1;
 
         // R2-only 네임스페이스 여부 확인
-        const isR2Only = isR2OnlyNamespace(slug);
+        const enabledExtensionsEdit = (c.env.ENABLED_EXTENSIONS || '').split(',').map((s: string) => s.trim()).filter(Boolean);
+        const isR2Only = isR2OnlyNamespace(slug, enabledExtensionsEdit);
 
         // Optimistic Locking 체크 시, R2-only 문서인 경우 R2에서 실제 본문을 가져와 비교
         if (body.expected_version !== undefined && body.expected_version !== existing.version) {
@@ -829,11 +911,12 @@ wiki.put('/w/:slug', requireAuth, async (c) => {
 
         return c.json(safeJSON({ slug, version: newVersion, revision_id: revisionId }));
     } else {
-        finalIsLocked = isAdmin ? (body.is_locked ?? 0) : 0;
-        finalIsPrivate = isAdmin ? (body.is_private ?? 0) : 0;
+        finalIsLocked = rbac.can(user.role, 'wiki:lock') ? (body.is_locked ?? 0) : 0;
+        finalIsPrivate = rbac.can(user.role, 'wiki:private') ? (body.is_private ?? 0) : 0;
 
         // ── 새 문서 생성 ──
-        const isR2Only = isR2OnlyNamespace(slug);
+        const enabledExtensionsCreate = (c.env.ENABLED_EXTENSIONS || '').split(',').map((s: string) => s.trim()).filter(Boolean);
+        const isR2Only = isR2OnlyNamespace(slug, enabledExtensionsCreate);
         const contentToStore = isR2Only ? '' : body.content;
 
         const pageResult = await db
@@ -904,7 +987,8 @@ wiki.get('/w/category/:category', async (c) => {
     const category = c.req.param('category');
     const db = c.env.DB;
     const user = c.get('user');
-    const isAdmin = user && (user.role === 'admin' || user.role === 'super_admin');
+    const rbac = c.get('rbac') as RBAC;
+    const isAdmin = user && rbac.can(user.role, 'admin:access');
 
     let query = `
         SELECT p.slug, p.title, p.is_locked, p.updated_at
@@ -936,7 +1020,8 @@ wiki.get('/w/:slug/revisions', async (c) => {
     const limit = 10;
     const db = c.env.DB;
     const user = c.get('user');
-    const isAdmin = user && (user.role === 'admin' || user.role === 'super_admin');
+    const rbac = c.get('rbac') as RBAC;
+    const isAdmin = user && rbac.can(user.role, 'admin:access');
 
     const page = await db
         .prepare('SELECT id, is_private, deleted_at FROM pages WHERE slug = ?')
@@ -985,7 +1070,8 @@ wiki.get('/w/:slug/revisions/:id', async (c) => {
     const slug = c.req.param('slug');
     const db = c.env.DB;
     const user = c.get('user');
-    const isAdmin = user && (user.role === 'admin' || user.role === 'super_admin');
+    const rbac = c.get('rbac') as RBAC;
+    const isAdmin = user && rbac.can(user.role, 'admin:access');
 
     const page = await db
         .prepare('SELECT id, is_private, deleted_at FROM pages WHERE slug = ?')
@@ -1031,7 +1117,8 @@ wiki.get('/w/:slug/revisions/:id/diff', async (c) => {
     const slug = c.req.param('slug');
     const db = c.env.DB;
     const user = c.get('user');
-    const isAdmin = user && (user.role === 'admin' || user.role === 'super_admin');
+    const rbac = c.get('rbac') as RBAC;
+    const isAdmin = user && rbac.can(user.role, 'admin:access');
 
     const page = await db
         .prepare('SELECT id, is_private, deleted_at FROM pages WHERE slug = ?')
@@ -1095,7 +1182,8 @@ wiki.get('/w/:slug/subdocs', async (c) => {
     const slug = c.req.param('slug');
     const db = c.env.DB;
     const user = c.get('user');
-    const isAdmin = user && (user.role === 'admin' || user.role === 'super_admin');
+    const rbac = c.get('rbac') as RBAC;
+    const isAdmin = user && rbac.can(user.role, 'admin:access');
 
     let query = `
         SELECT slug, title, updated_at
@@ -1126,7 +1214,8 @@ wiki.get('/w/:slug/backlinks', async (c) => {
     const slug = c.req.param('slug');
     const db = c.env.DB;
     const user = c.get('user');
-    const isAdmin = user && (user.role === 'admin' || user.role === 'super_admin');
+    const rbac = c.get('rbac') as RBAC;
+    const isAdmin = user && rbac.can(user.role, 'admin:access');
 
     // page_links 테이블에서 target_slug로 검색
     const targetSlugs: string[] = [slug];
@@ -1165,18 +1254,19 @@ wiki.get('/w/:slug/backlinks', async (c) => {
 
 /**
  * DELETE /w/:slug
- * 문서 삭제 (로그인 필수)
- * - 관리자: ?hard=true 시 영구 삭제 (문서, 리비전, 리다이렉트)
- * - 일반: Soft Delete
+ * 문서 삭제 (관리자 전용)
+ * - super_admin: ?hard=true 시 영구 삭제 (문서, 리비전, 리다이렉트)
+ * - admin/super_admin: Soft Delete
  * - 이미지: 접두사 문서의 경우 R2 파일 및 media 레코드도 함께 삭제
  */
 wiki.delete('/w/:slug', requireAuth, async (c) => {
     const slug = c.req.param('slug');
     const user = c.get('user')!;
+    const rbac = c.get('rbac') as RBAC;
     const db = c.env.DB;
     const hard = c.req.query('hard') === 'true';
 
-    const isAdmin = user.role === 'admin' || user.role === 'super_admin';
+    const isAdmin = rbac.can(user.role, 'admin:access');
 
     // Fetch page first to check permissions
     const page = await db.prepare('SELECT id, is_locked, is_private FROM pages WHERE slug = ? AND deleted_at IS NULL')
@@ -1187,7 +1277,7 @@ wiki.delete('/w/:slug', requireAuth, async (c) => {
     }
 
     if (hard) {
-        if (user.role !== 'super_admin') {
+        if (!rbac.can(user.role, '*')) {
             return c.json({ error: '영구 삭제는 최고 관리자만 가능합니다.' }, 403);
         }
 
@@ -1240,9 +1330,9 @@ wiki.delete('/w/:slug', requireAuth, async (c) => {
 
         return c.json({ message: '문서가 영구 삭제되었습니다.' });
     } else {
-        // Check permissions for soft delete
-        if ((page.is_locked === 1 || page.is_private === 1) && !isAdmin) {
-            return c.json({ error: '권한이 없습니다.' }, 403);
+        // Soft delete requires wiki:delete permission
+        if (!rbac.can(user.role, 'wiki:delete')) {
+            return c.json({ error: '문서 삭제 권한이 없습니다.' }, 403);
         }
 
         // 이미지: 접두사 문서의 soft delete 시에도 R2 파일과 media 레코드 삭제
@@ -1289,10 +1379,10 @@ wiki.delete('/w/:slug', requireAuth, async (c) => {
 wiki.post('/w/:slug/restore', requireAuth, async (c) => {
     const slug = c.req.param('slug');
     const user = c.get('user')!;
+    const rbac = c.get('rbac') as RBAC;
     const db = c.env.DB;
 
-    const isAdmin = user.role === 'admin' || user.role === 'super_admin';
-    if (!isAdmin) {
+    if (!rbac.can(user.role, 'wiki:delete')) {
         return c.json({ error: '권한이 없습니다.' }, 403);
     }
 
@@ -1336,6 +1426,7 @@ wiki.post('/w/:slug/move', requireAuth, async (c) => {
     const currentSlug = c.req.param('slug');
     const { new_slug } = await c.req.json<{ new_slug: string }>();
     const user = c.get('user')!;
+    const rbac = c.get('rbac') as RBAC;
     const db = c.env.DB;
 
     if (!new_slug || new_slug.trim().length === 0) {
@@ -1375,9 +1466,12 @@ wiki.post('/w/:slug/move', requireAuth, async (c) => {
         return c.json({ error: '문서를 찾을 수 없습니다.' }, 404);
     }
 
-    const isAdmin = user.role === 'admin' || user.role === 'super_admin';
-    if ((page.is_locked === 1 || page.is_private === 1) && !isAdmin) {
-        return c.json({ error: '이동 권한이 없습니다.' }, 403);
+    const isAdmin = rbac.can(user.role, 'admin:access');
+    if (page.is_locked === 1 && !rbac.can(user.role, 'wiki:lock')) {
+        return c.json({ error: '잠긴 문서는 관리자만 이동할 수 있습니다.' }, 403);
+    }
+    if (page.is_private === 1 && !rbac.can(user.role, 'wiki:private')) {
+        return c.json({ error: '비공개 문서는 관리자만 이동할 수 있습니다.' }, 403);
     }
 
     // Update Page Slug and Title
@@ -1410,6 +1504,7 @@ wiki.post('/w/:slug/revert', requireAuth, async (c) => {
     const slug = c.req.param('slug');
     const { revision_id } = await c.req.json<{ revision_id: number }>();
     const user = c.get('user')!;
+    const rbac = c.get('rbac') as RBAC;
     const db = c.env.DB;
 
     const page = await db.prepare('SELECT id, version, is_locked FROM pages WHERE slug = ? AND deleted_at IS NULL')
@@ -1419,7 +1514,7 @@ wiki.post('/w/:slug/revert', requireAuth, async (c) => {
         return c.json({ error: '문서를 찾을 수 없습니다.' }, 404);
     }
 
-    if (page.is_locked === 1 && user.role !== 'admin' && user.role !== 'super_admin') {
+    if (page.is_locked === 1 && !rbac.can(user.role, 'wiki:lock')) {
         return c.json({ error: '잠긴 문서는 관리자만 되돌릴 수 있습니다.' }, 403);
     }
 
@@ -1467,7 +1562,8 @@ wiki.post('/w/:slug/revert', requireAuth, async (c) => {
         return c.json({ error: '리비전 저장에 실패했습니다. 잠시 후 다시 시도해주세요.' }, 500);
     }
 
-    const contentToStore = isR2OnlyNamespace(slug) ? '' : revertContent;
+    const enabledExtensionsRevert = (c.env.ENABLED_EXTENSIONS || '').split(',').map((s: string) => s.trim()).filter(Boolean);
+    const contentToStore = isR2OnlyNamespace(slug, enabledExtensionsRevert) ? '' : revertContent;
     await db.prepare('UPDATE pages SET content = ?, last_revision_id = ?, version = ?, updated_at = unixepoch() WHERE id = ?')
         .bind(contentToStore, newRevId, newVersion, page.id)
         .run();

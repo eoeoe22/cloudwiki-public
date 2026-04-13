@@ -16,12 +16,25 @@
         href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Outfit:wght@500;600;700;800;900&family=Inter:wght@400;500;700;800&display=swap"
         rel="stylesheet">
 
-    <!-- Toast UI 에디터 -->
-    <link rel="stylesheet" href="https://uicdn.toast.com/editor/latest/toastui-editor.min.css" />
-    <link rel="stylesheet" href="https://uicdn.toast.com/editor/latest/theme/toastui-editor-dark.min.css" />
-
     <link rel="stylesheet" href="/style.css">
     <link rel="stylesheet" href="/edit.css">
+
+    <!-- CodeMirror 6 Import Map (ESM CDN) -->
+    <script type="importmap">
+    {
+        "imports": {
+            "@codemirror/state": "https://esm.sh/@codemirror/state@6",
+            "@codemirror/view": "https://esm.sh/@codemirror/view@6",
+            "@codemirror/commands": "https://esm.sh/@codemirror/commands@6",
+            "@codemirror/language": "https://esm.sh/@codemirror/language@6",
+            "@codemirror/lang-markdown": "https://esm.sh/@codemirror/lang-markdown@6",
+            "@codemirror/language-data": "https://esm.sh/@codemirror/language-data@6",
+            "@codemirror/theme-one-dark": "https://esm.sh/@codemirror/theme-one-dark@6",
+            "@codemirror/search": "https://esm.sh/@codemirror/search@6",
+            "@lezer/highlight": "https://esm.sh/@lezer/highlight@1"
+        }
+    }
+    </script>
     <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?onload=onTurnstileLoad" async defer></script>
     <!-- Diff (비교) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jsdiff/5.1.0/diff.min.js"></script>
@@ -287,10 +300,6 @@
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
-    <!-- Toast UI 에디터 -->
-    <script src="https://uicdn.toast.com/editor/latest/toastui-editor-all.min.js"></script>
-    <script src="https://uicdn.toast.com/editor/latest/i18n/ko-kr.min.js"></script>
-
     <script src="/js/common.js"></script>
     <script src="/js/render.js"></script>
     <script src="/js/edit.js"></script>
@@ -362,6 +371,96 @@
             </div>
         </div>
     </div>
+
+    <script>
+        function toggleEditorFloatingToc() {
+            const panel = document.getElementById('editorTocFloatingPanel');
+            const floatingNav = document.getElementById('editorTocFloatingNav');
+            if (!panel || !floatingNav) return;
+            const isVisible = panel.classList.contains('visible');
+
+            if (!isVisible) {
+                const preview = document.getElementById('custom-wiki-preview');
+                if (!preview) return;
+                const headings = preview.querySelectorAll('h1, h2, h3, h4, h5, h6');
+                if (!headings.length) return;
+
+                const ul = document.createElement('ul');
+                headings.forEach((h, i) => {
+                    if (!h.id) h.id = 'editor-toc-' + i;
+                    const level = parseInt(h.tagName[1]);
+                    const li = document.createElement('li');
+                    li.style.paddingLeft = ((level - 1) * 12) + 'px';
+                    const a = document.createElement('a');
+                    a.href = '#';
+                    a.dataset.hid = h.id;
+                    // numberHeadings가 삽입한 숫자 prefix(.wiki-heading-num)를 제거한 원문 텍스트 저장
+                    const numSpan = h.querySelector('.wiki-heading-num');
+                    const rawText = numSpan
+                        ? h.textContent.slice(numSpan.textContent.length).trim()
+                        : h.textContent.trim();
+                    a.dataset.rawText = rawText;
+                    a.textContent = h.textContent.trim();
+                    li.appendChild(a);
+                    ul.appendChild(li);
+                });
+                floatingNav.innerHTML = '';
+                floatingNav.appendChild(ul);
+
+                floatingNav.querySelectorAll('a[data-hid]').forEach(a => {
+                    a.addEventListener('click', e => {
+                        e.preventDefault();
+                        panel.classList.remove('visible');
+                        const hid = a.getAttribute('data-hid');
+                        const rawText = a.dataset.rawText || '';
+
+                        // 1. 에디터(CM6) 스크롤 — 탭 전환 전에 실행해야 coordsAtPos 동작
+                        const view = window._cmView;
+                        if (view && rawText) {
+                            const doc = view.state.doc;
+                            for (let ln = 1; ln <= doc.lines; ln++) {
+                                const line = doc.line(ln);
+                                const m = line.text.match(/^(#{1,6})\s+(.*)/);
+                                if (m && m[2].trim() === rawText) {
+                                    const coords = view.coordsAtPos(line.from, -1);
+                                    if (coords) {
+                                        const scrollEl = view.scrollDOM;
+                                        const scrollRect = scrollEl.getBoundingClientRect();
+                                        scrollEl.scrollTo({
+                                            top: scrollEl.scrollTop + coords.top - scrollRect.top - 10,
+                                            behavior: 'instant'
+                                        });
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+
+                        // 2. 모바일: 프리뷰 탭으로 전환
+                        const previewTabBtn = document.querySelector('.cm-tab-btn[data-tab="preview"]');
+                        if (previewTabBtn) previewTabBtn.click();
+
+                        // 3. 프리뷰 스크롤 (탭 전환 후 레이아웃 확정 시점)
+                        requestAnimationFrame(() => {
+                            const preview = document.getElementById('custom-wiki-preview');
+                            if (!preview) return;
+                            const target = preview.querySelector('#' + CSS.escape(hid));
+                            if (target) {
+                                const pRect = preview.getBoundingClientRect();
+                                const hRect = target.getBoundingClientRect();
+                                preview.scrollTo({
+                                    top: preview.scrollTop + hRect.top - pRect.top - 10,
+                                    behavior: 'smooth'
+                                });
+                            }
+                        });
+                    });
+                });
+            }
+
+            panel.classList.toggle('visible');
+        }
+    </script>
 
     <!-- ── 푸터 Placeholder ── -->
     <div id="app-footer-placeholder"></div>

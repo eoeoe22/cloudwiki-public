@@ -30,13 +30,13 @@ export const googleProvider: OAuthProvider = {
         const code = c.req.query('code');
         const state = c.req.query('state');
 
-        // CSRF 검증 (상태 관련 에러는 technical한 공격 지표일 수 있으므로 JSON 403 유지)
+        // CSRF 검증
         if (!state) {
-            return c.json({ error: 'Missing state parameter' }, 403);
+            return c.redirect('/error?reason=' + encodeURIComponent('로그인 요청이 올바르지 않습니다. 다시 시도해주세요.'));
         }
         const storedState = await c.env.KV.get(`oauth_state:${state}`);
         if (storedState !== 'google') {
-            return c.json({ error: 'Invalid or expired state parameter' }, 403);
+            return c.redirect('/error?reason=' + encodeURIComponent('로그인 세션이 만료되었거나 유효하지 않습니다. 다시 시도해주세요.'));
         }
         await c.env.KV.delete(`oauth_state:${state}`);
 

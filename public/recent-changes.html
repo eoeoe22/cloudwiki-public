@@ -32,17 +32,74 @@
         <span>불러오는 중...</span>
       </div>
 
-      <!-- 최근 수정 내역 목록 -->
-      <div id="recentRevisionsPage" class="d-none">
+      <!-- 메인 콘텐츠 -->
+      <div id="mainContent" class="d-none">
         <div class="wiki-article" style="width: 100%; max-width: 100vw; overflow-x: hidden;">
-          <h2 class="text-break"><i class="bi bi-clock-history"></i> 최근 수정 내역</h2>
-          <div class="table-responsive"
-            style="width: 100%; max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch;">
-            <div class="revision-list" id="revisionsList" style="min-width: 700px;"></div>
+
+          <!-- 위키 통계 -->
+          <div id="wikiStatsBar" class="d-flex gap-3 mb-3 flex-wrap">
+            <span class="badge bg-primary bg-opacity-10 text-primary border px-3 py-2" style="font-size: 0.9rem;">
+              <i class="bi bi-file-earmark-text"></i> 문서 <strong id="statPageCount">-</strong>개
+            </span>
+            <span class="badge bg-success bg-opacity-10 text-success border px-3 py-2" style="font-size: 0.9rem;">
+              <i class="bi bi-pencil-square"></i> 편집 <strong id="statRevisionCount">-</strong>회
+            </span>
           </div>
-          <button id="loadMoreBtn" class="btn btn-outline-secondary w-100 mt-3 d-none" onclick="loadMore()">
-            <i class="bi bi-chevron-down"></i> 더 로드하기
-          </button>
+
+          <!-- 탭 네비게이션 -->
+          <ul class="nav nav-tabs mb-3" role="tablist">
+            <li class="nav-item" role="presentation">
+              <button class="nav-link active" id="tab-recent" data-bs-toggle="tab" data-bs-target="#pane-recent"
+                type="button" role="tab" aria-selected="true">
+                <i class="bi bi-clock-history"></i> 최근 수정 내역
+              </button>
+            </li>
+            <li class="nav-item" role="presentation">
+              <button class="nav-link" id="tab-allpages" data-bs-toggle="tab" data-bs-target="#pane-allpages"
+                type="button" role="tab" aria-selected="false">
+                <i class="bi bi-journals"></i> 모든 문서 목록
+              </button>
+            </li>
+          </ul>
+
+          <!-- 탭 콘텐츠 -->
+          <div class="tab-content">
+            <!-- 최근 수정 내역 탭 -->
+            <div class="tab-pane fade show active" id="pane-recent" role="tabpanel">
+              <div class="table-responsive"
+                style="width: 100%; max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch;">
+                <div class="revision-list" id="revisionsList" style="min-width: 700px;"></div>
+              </div>
+              <button id="loadMoreBtn" class="btn btn-outline-secondary w-100 mt-3 d-none" onclick="loadMore()">
+                <i class="bi bi-chevron-down"></i> 더 로드하기
+              </button>
+            </div>
+
+            <!-- 모든 문서 목록 탭 -->
+            <div class="tab-pane fade" id="pane-allpages" role="tabpanel">
+              <!-- 정렬 드롭다운 -->
+              <div class="d-flex justify-content-end mb-3">
+                <select id="allPagesSortSelect" class="form-select form-select-sm" style="width: auto;" onchange="changeSort()">
+                  <option value="title_asc">문서 제목 가나다순</option>
+                  <option value="title_desc">문서 제목 가나다 역순</option>
+                  <option value="created_desc">생성일 최신순</option>
+                  <option value="created_asc">생성일 오래된순</option>
+                  <option value="updated_desc">마지막 수정 최신순</option>
+                  <option value="updated_asc">마지막 수정 오래된순</option>
+                  <option value="category_asc">카테고리 가나다순</option>
+                  <option value="category_desc">카테고리 가나다 역순</option>
+                </select>
+              </div>
+              <!-- 문서 목록 (가로 스크롤 래퍼) -->
+              <div class="table-responsive" style="width: 100%; max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch;">
+                <div id="allPagesList" style="min-width: 560px;"></div>
+              </div>
+              <button id="loadMorePagesBtn" class="btn btn-outline-secondary w-100 mt-3 d-none" onclick="loadMorePages()">
+                <i class="bi bi-chevron-down"></i> 더 로드하기
+              </button>
+            </div>
+          </div>
+
         </div>
       </div>
     </div>
@@ -97,21 +154,49 @@
     let currentOffset = 0;
     const PAGE_SIZE = 10;
 
+    // 모든 문서 목록 상태
+    let allPagesOffset = 0;
+    const ALL_PAGES_SIZE = 20;
+    let allPagesLoaded = false; // 탭 최초 로드 여부
+    let currentSort = 'title_asc';
+
     // ── 초기화 ──
     document.addEventListener('DOMContentLoaded', async () => {
       await loadConfig();
       await checkAuth();
       loadRecentRevisions();
+      loadWikiStats();
       loadTrending();
       loadRecentChanges();
+
+      // 모든 문서 목록 탭 클릭 시 최초 1회 로드
+      document.getElementById('tab-allpages').addEventListener('shown.bs.tab', () => {
+        if (!allPagesLoaded) {
+          loadAllPages();
+          allPagesLoaded = true;
+        }
+      });
     });
+
+    // ── 위키 통계 로드 ──
+    async function loadWikiStats() {
+      try {
+        const res = await fetch('/api/w/wiki-stats');
+        if (!res.ok) return;
+        const data = await res.json();
+        document.getElementById('statPageCount').textContent = Number(data.page_count).toLocaleString();
+        document.getElementById('statRevisionCount').textContent = Number(data.revision_count).toLocaleString();
+      } catch (e) {
+        console.error('통계 로드 실패:', e);
+      }
+    }
 
     // ── 최근 수정 내역 로드 ──
     async function loadRecentRevisions(append = false) {
       try {
         if (!append) {
           document.getElementById('loading').classList.remove('d-none');
-          document.getElementById('recentRevisionsPage').classList.add('d-none');
+          document.getElementById('mainContent').classList.add('d-none');
           currentOffset = 0;
         }
 
@@ -166,7 +251,7 @@
         }
 
         document.getElementById('loading').classList.add('d-none');
-        document.getElementById('recentRevisionsPage').classList.remove('d-none');
+        document.getElementById('mainContent').classList.remove('d-none');
         initRoleIconPopovers(listEl);
 
         currentOffset += data.revisions.length;
@@ -178,9 +263,89 @@
       }
     }
 
-    // ── 더 로드하기 ──
+    // ── 더 로드하기 (최근 수정 내역) ──
     function loadMore() {
       loadRecentRevisions(true);
+    }
+
+    // ── 모든 문서 목록 로드 ──
+    async function loadAllPages(append = false) {
+      try {
+        const listEl = document.getElementById('allPagesList');
+        const loadBtn = document.getElementById('loadMorePagesBtn');
+
+        if (!append) {
+          allPagesOffset = 0;
+          listEl.innerHTML = '<div class="text-center py-4"><div class="spinner-border spinner-border-sm text-primary" role="status"></div> 불러오는 중...</div>';
+          loadBtn.classList.add('d-none');
+        }
+
+        const res = await fetch(`/api/w/all-pages?offset=${allPagesOffset}&limit=${ALL_PAGES_SIZE}&sort=${currentSort}`);
+        if (!res.ok) throw new Error('문서 목록 로딩 실패');
+
+        const data = await res.json();
+
+        const showCategory = currentSort.startsWith('category');
+
+        const itemsHtml = data.pages.map(page => {
+          const createdDate = new Date(page.created_at * 1000).toLocaleDateString('ko-KR');
+          const updatedDate = new Date(page.updated_at * 1000).toLocaleDateString('ko-KR');
+          const categoryBadge = page.category
+            ? `<span class="badge bg-secondary bg-opacity-10 text-secondary border">${escapeHtml(page.category)}</span>`
+            : `<span class="badge bg-light text-muted border">미분류</span>`;
+
+          return `
+            <div class="revision-item d-flex align-items-center justify-content-between">
+              <div class="d-flex align-items-center gap-2">
+                ${showCategory ? categoryBadge : ''}
+                <a href="/w/${encodeURIComponent(page.slug)}" class="text-decoration-none fw-medium"
+                   title="${escapeHtml(page.title)}"
+                   onclick="event.preventDefault(); window.location.href=this.href;">
+                  ${escapeHtml(page.title)}
+                </a>
+              </div>
+              <div class="d-flex gap-3 ms-4 text-muted small" style="white-space: nowrap;">
+                ${!showCategory ? categoryBadge : ''}
+                <span title="생성일"><i class="bi bi-plus-circle"></i> ${createdDate}</span>
+                <span title="마지막 수정"><i class="bi bi-pencil"></i> ${updatedDate}</span>
+              </div>
+            </div>
+          `;
+        }).join('');
+
+        if (append) {
+          listEl.insertAdjacentHTML('beforeend', itemsHtml);
+        } else {
+          listEl.innerHTML = itemsHtml;
+        }
+
+        if (data.pages.length === 0 && !append) {
+          listEl.innerHTML = '<div class="text-center text-muted py-5"><i class="bi bi-inbox fs-1 d-block mb-2"></i>문서가 없습니다.</div>';
+        }
+
+        if (data.has_more) {
+          loadBtn.classList.remove('d-none');
+        } else {
+          loadBtn.classList.add('d-none');
+        }
+
+        allPagesOffset += data.pages.length;
+
+      } catch (err) {
+        console.error(err);
+        Swal.fire('오류', '문서 목록을 불러오는 데 실패했습니다.', 'error');
+      }
+    }
+
+    // ── 정렬 변경 ──
+    function changeSort() {
+      currentSort = document.getElementById('allPagesSortSelect').value;
+      loadAllPages();
+    }
+
+    // ── 더 로드하기 (모든 문서) ──
+    function loadMorePages() {
+      loadAllPages(true);
     }
   </script>
 

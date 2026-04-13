@@ -1,7 +1,17 @@
 import { createMiddleware } from 'hono/factory';
 import { getCookie } from 'hono/cookie';
 import { isSuperAdmin } from '../utils/auth';
+import { RBAC } from '../utils/role';
 import type { Env, User } from '../types';
+
+/**
+ * RBAC 인스턴스를 초기화하여 Context에 주입하는 미들웨어
+ */
+export const rbacMiddleware = createMiddleware<Env>(async (c, next) => {
+    const json = c.env.ROLE_PERMISSIONS_JSON || JSON.stringify(RBAC.getDefaultPermissions());
+    c.set('rbac', new RBAC(json));
+    await next();
+});
 
 /**
  * 세션 미들웨어: wiki_session 쿠키에서 세션 토큰을 읽고 DB에서 검증한다.
@@ -142,8 +152,30 @@ export const requireAuthAllowBanned = createMiddleware<Env>(async (c, next) => {
  */
 export const requireAdmin = createMiddleware<Env>(async (c, next) => {
     const user = c.get('user');
-    if (!user || (user.role !== 'admin' && user.role !== 'super_admin')) {
+    const rbac = c.get('rbac') as RBAC;
+    if (!user || !rbac.can(user.role, 'admin:access')) {
         return c.json({ error: '관리자 권한이 필요합니다.' }, 403);
     }
     return next();
 });
+
+/**
+ * 특정 권한 필수 미들웨어: 지정된 권한을 가진 사용자만 접근 가능
+ */
+export function requirePermission(permission: string) {
+    return createMiddleware<Env>(async (c, next) => {
+        const user = c.get('user');
+        const rbac = c.get('rbac') as RBAC;
+
+        // 비로그인 사용자는 'guest' 역할로 취급 (필요시)
+        const role = user ? user.role : 'guest';
+
+        if (!rbac.can(role, permission)) {
+            if (!user) {
+                return c.json({ error: '로그인이 필요합니다.' }, 401);
+            }
+            return c.json({ error: `권한이 부족합니다. (${permission})` }, 403);
+        }
+        return next();
+    });
+}

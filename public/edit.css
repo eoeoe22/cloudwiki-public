@@ -38,7 +38,7 @@
     line-height: 1.7;
 }
 
-#custom-wiki-preview li > p {
+#custom-wiki-preview li>p {
     margin-bottom: 0.4rem;
     line-height: 1.7;
 }
@@ -93,19 +93,320 @@
     color: var(--wiki-text);
 }
 
-/* Mobile Optimization for Toast UI Editor Toolbar */
+/* ── CodeMirror 6 스플릿 뷰 레이아웃 ── */
+.wiki-editor-layout {
+    display: flex;
+    gap: 0;
+    height: 600px;
+    border: 1px solid var(--wiki-border);
+    border-radius: 6px;
+    overflow: hidden;
+    flex-direction: column;
+    /* mobile-tabs / toolbar / split-row */
+}
+
+/* 모바일 탭 버튼 (데스크톱에서는 숨김) */
+.cm-mobile-tabs {
+    display: none;
+}
+
+/* 에디터 + 프리뷰 수평 분할 행 */
+.wiki-editor-split-row {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    position: relative;
+    /* FAB/TOC 패널의 절대 위치 기준 */
+}
+
+/* PC: 수평 분할 */
+@media (min-width: 769px) {
+    .wiki-editor-split-row {
+        flex-direction: row;
+    }
+}
+
+/* 모바일: 수직 (탭 전환 방식) */
 @media (max-width: 768px) {
-    .toastui-editor-popup {
-        max-width: 90vw !important;
-        left: 5% !important;
-        margin-left: 0 !important;
+    .wiki-editor-split-row {
+        flex-direction: column;
+        flex: 1;
+        min-height: 0;
+    }
+}
+
+.wiki-editor-pane {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    overflow: hidden;
+    border-right: 1px solid var(--wiki-border);
+    /* PC에서는 항상 표시 */
+}
+
+.wiki-preview-pane {
+    flex: 1;
+    overflow-y: auto;
+    min-width: 0;
+    background: var(--wiki-bg);
+    /* PC에서는 항상 표시 */
+}
+
+/* ── 모바일: 탭 기반 UI ── */
+@media (max-width: 768px) {
+    .wiki-editor-layout {
+        flex-direction: column;
+        height: 600px;
     }
 
-    /* Fix toolbar dropdown (More button) overflow */
-    .toastui-editor-dropdown-toolbar {
-        flex-wrap: wrap;
-        height: auto !important;
-        overflow: visible !important;
+    /* 프리뷰 탭 활성 시 툴바 숨김 */
+    .wiki-editor-layout[data-active-tab="preview"] .cm-toolbar {
+        display: none;
+    }
+
+    /* 탭 버튼 영역 */
+    .cm-mobile-tabs {
+        display: flex;
+        flex-shrink: 0;
+        background: var(--wiki-bg-alt, #f8f9fa);
+        border-bottom: 1px solid var(--wiki-border);
+    }
+
+    .cm-tab-btn {
+        flex: 1;
+        padding: 8px 12px;
+        border: none;
+        background: transparent;
+        color: var(--wiki-text-muted, #6c757d);
+        font-size: 0.9rem;
+        font-weight: 500;
+        cursor: pointer;
+        border-bottom: 2px solid transparent;
+        transition: color 0.15s, border-color 0.15s;
+    }
+
+    .cm-tab-btn.active {
+        color: var(--wiki-primary, #0d6efd);
+        border-bottom-color: var(--wiki-primary, #0d6efd);
+        background: transparent;
+        font-weight: 600;
+    }
+
+    .cm-tab-btn:hover:not(.active) {
+        background: var(--wiki-border);
+    }
+
+    /* 비활성 탭 패널 숨김 */
+    .wiki-editor-pane,
+    .wiki-preview-pane {
+        display: none;
+        border-right: none;
+    }
+
+    .wiki-editor-pane.cm-tab-active {
+        display: flex;
+        flex-direction: column;
+        flex: 1;
+        height: auto;
+    }
+
+    .wiki-preview-pane.cm-tab-active {
+        display: block;
+        flex: 1;
+        overflow-y: auto;
+    }
+}
+
+/* ── CM6 에디터 커스텀 스타일 ── */
+#cm-editor {
+    flex: 1;
+    overflow: hidden;
+    min-height: 0;
+}
+
+#cm-editor .cm-editor {
+    height: 100%;
+}
+
+#cm-editor .cm-scroller {
+    overflow: auto;
+}
+
+/* ── CM6 커스텀 툴바 ── */
+.cm-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 2px;
+    padding: 4px 6px;
+    background: var(--wiki-bg-alt, #f8f9fa);
+    border-bottom: 1px solid var(--wiki-border);
+    min-height: 36px;
+    flex-shrink: 0;
+}
+
+/* 툴바 오른쪽 끝 설정 버튼 영역 */
+.cm-toolbar-spacer {
+    flex: 1;
+}
+
+/* ── 에디터 설정 패널 ── */
+.editor-settings-panel {
+    position: absolute;
+    z-index: 3000;
+    background: var(--wiki-card-bg);
+    border: 1px solid var(--wiki-border);
+    border-radius: 10px;
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.15);
+    width: 230px;
+    padding: 6px 0;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+.editor-settings-title {
+    padding: 6px 14px 8px;
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: var(--wiki-text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    border-bottom: 1px solid var(--wiki-border);
+    margin-bottom: 4px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.editor-settings-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 14px;
+    cursor: pointer;
+    font-size: 0.88rem;
+    color: var(--wiki-text);
+    transition: background 0.12s;
+    margin: 0;
+    gap: 10px;
+}
+
+.editor-settings-item:hover {
+    background: var(--wiki-bg);
+}
+
+.editor-settings-item input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+    flex-shrink: 0;
+    accent-color: var(--wiki-primary);
+}
+
+.editor-settings-item input[type="radio"] {
+    cursor: pointer;
+    accent-color: var(--wiki-primary);
+    flex-shrink: 0;
+    margin-right: 4px;
+}
+
+.editor-settings-divider {
+    height: 1px;
+    background: var(--wiki-border);
+    margin: 4px 0;
+}
+
+.editor-settings-section-title {
+    padding: 4px 14px 2px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--wiki-text-muted);
+}
+
+@media (prefers-color-scheme: dark) {
+    .editor-settings-panel {
+        box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4);
+    }
+}
+
+/* 설정 버튼 활성 상태 */
+.cm-toolbar-btn.active {
+    background: var(--wiki-primary);
+    color: #fff;
+}
+
+.cm-toolbar-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    background: transparent;
+    color: var(--wiki-text);
+    cursor: pointer;
+    width: 30px;
+    height: 28px;
+    border-radius: 4px;
+    font-size: 13px;
+    font-weight: 600;
+    padding: 0;
+    line-height: 1;
+    transition: background-color 0.15s;
+}
+
+.cm-toolbar-btn:hover {
+    background: var(--wiki-border);
+}
+
+.cm-toolbar-btn i {
+    font-size: 16px;
+}
+
+.cm-toolbar-sep {
+    display: inline-block;
+    width: 1px;
+    height: 18px;
+    background: var(--wiki-border);
+    margin: 0 4px;
+}
+
+/* ── 위키 문법 에디터 내 하이라이팅 ── */
+.cm-wiki-link {
+    color: #007bff;
+    font-weight: bold;
+    background: rgba(0, 123, 255, 0.08);
+    border-radius: 3px;
+    padding: 0 2px;
+}
+
+.cm-wiki-template {
+    color: #28a745;
+    font-weight: bold;
+    background: rgba(40, 167, 69, 0.08);
+    border-radius: 3px;
+    padding: 0 2px;
+}
+
+.cm-bg-color {
+    border: 1px solid #ccc;
+    border-radius: 3px;
+    padding: 0 2px;
+}
+
+@media (prefers-color-scheme: dark) {
+    .cm-toolbar {
+        background: var(--wiki-bg-alt, #1e1e1e);
+    }
+
+    .cm-wiki-link {
+        color: #58a6ff;
+        background: rgba(88, 166, 255, 0.1);
+    }
+
+    .cm-wiki-template {
+        color: #56d364;
+        background: rgba(86, 211, 100, 0.1);
     }
 }
 
@@ -118,9 +419,17 @@
 }
 
 /* 에디터 내부 높이를 conflict-textarea와 맞춤 */
-#conflict-local-editor .ProseMirror,
-#conflict-local-editor .toastui-editor {
+#conflict-local-editor textarea {
     height: 440px !important;
+    width: 100%;
+    font-family: monospace;
+    font-size: 0.9rem;
+    resize: none;
+    border: 1px solid var(--wiki-border);
+    border-radius: 4px;
+    padding: 8px;
+    background: var(--wiki-bg);
+    color: var(--wiki-text);
 }
 
 /* 동시편집 경고 배너 */
@@ -609,10 +918,29 @@
     z-index: 1;
 }
 
-.crop-overlay .crop-handle.tl { top: -10px; left: -10px; cursor: nw-resize; }
-.crop-overlay .crop-handle.tr { top: -10px; right: -10px; cursor: ne-resize; }
-.crop-overlay .crop-handle.bl { bottom: -10px; left: -10px; cursor: sw-resize; }
-.crop-overlay .crop-handle.br { bottom: -10px; right: -10px; cursor: se-resize; }
+.crop-overlay .crop-handle.tl {
+    top: -10px;
+    left: -10px;
+    cursor: nw-resize;
+}
+
+.crop-overlay .crop-handle.tr {
+    top: -10px;
+    right: -10px;
+    cursor: ne-resize;
+}
+
+.crop-overlay .crop-handle.bl {
+    bottom: -10px;
+    left: -10px;
+    cursor: sw-resize;
+}
+
+.crop-overlay .crop-handle.br {
+    bottom: -10px;
+    right: -10px;
+    cursor: se-resize;
+}
 
 .img-editor-toolbar {
     display: flex;
@@ -815,8 +1143,13 @@
     font-weight: 600;
 }
 
-#timestamp-autocomplete .ts-cal-weekdays span:first-child { color: #e55; }
-#timestamp-autocomplete .ts-cal-weekdays span:last-child  { color: var(--wiki-primary, #3b82f6); }
+#timestamp-autocomplete .ts-cal-weekdays span:first-child {
+    color: #e55;
+}
+
+#timestamp-autocomplete .ts-cal-weekdays span:last-child {
+    color: var(--wiki-primary, #3b82f6);
+}
 
 #timestamp-autocomplete .ts-cal-grid {
     display: grid;
@@ -907,13 +1240,176 @@
     font-weight: 700;
 }
 
-/* ── 모바일 환경 에디터 입력 버그(마지막 줄 코드블럭 이후 커서 갇힘) 방지용 하단 여백 ── */
-.toastui-editor-md-editor .ProseMirror,
-.toastui-editor-ww-container .ProseMirror {
-    padding-bottom: 25vh !important;
-}
+/* CM6 에디터 하단 여백은 JS 테마에서 설정 */
 
 /* Hide mobile hamburger menu since sidebar is completely hidden on the edit page */
 .navbar-toggler[data-bs-target="#mobileSidebar"] {
     display: none !important;
+}
+
+/* ── 위키 문법 에디터 내 하이라이팅 (CM6 Custom Styles) ── */
+.cm-wiki-link,
+.cm-wiki-template {
+    color: #007bff !important;
+    font-weight: bold;
+}
+
+@media (prefers-color-scheme: dark) {
+
+    .cm-wiki-link,
+    .cm-wiki-template {
+        color: #58a6ff !important;
+    }
+}
+
+.cm-align-marker {
+    color: #ff0000 !important;
+    font-weight: bold;
+}
+
+.cm-quote-marker {
+    color: #007bff !important;
+    font-weight: bold;
+}
+
+@media (prefers-color-scheme: dark) {
+    .cm-quote-marker {
+        color: #58a6ff !important;
+    }
+}
+
+.cm-list-marker {
+    color: #87CEEB !important;
+    /* sky blue */
+    font-weight: bold;
+}
+
+.cm-icon-marker {
+    font-weight: bold !important;
+}
+
+.cm-color-badge::after {
+    content: '';
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    margin-left: 4px;
+    vertical-align: text-top;
+    background-color: var(--badge-color);
+    border: 1px solid rgba(128, 128, 128, 0.5);
+    border-radius: 2px;
+}
+
+.cm-highlight {
+    background-color: #ffff99 !important;
+    color: #000 !important;
+}
+
+@media (prefers-color-scheme: dark) {
+    .cm-highlight {
+        background-color: #bfa000 !important;
+        color: #fff !important;
+    }
+}
+
+.cm-time-marker {
+    color: #007bff !important;
+}
+
+@media (prefers-color-scheme: dark) {
+    .cm-time-marker {
+        color: #58a6ff !important;
+    }
+}
+
+.cm-inline-code {
+    background-color: #2d2d2d !important;
+    color: #e0e0e0 !important;
+    border-radius: 4px;
+    padding: 2px 4px;
+    font-family: monospace;
+}
+
+.cm-code-block {
+    background-color: #3a3a3a !important;
+    /* 좀 더 연한 어두운 색 */
+}
+
+.cm-code-block,
+.cm-code-block * {
+    color: #e0e0e0 !important;
+    font-family: monospace;
+}
+
+/* ── 백틱, 코드블럭 내부에서 위키 문법 렌더링 차단 (CSS Reset) ── */
+.cm-code-block .cm-inline-code {
+    background-color: transparent !important;
+    padding: 0 !important;
+    border-radius: 0 !important;
+}
+
+.cm-inline-code.cm-wiki-link,
+.cm-inline-code.cm-wiki-template,
+.cm-inline-code.cm-align-marker,
+.cm-inline-code.cm-icon-marker,
+.cm-inline-code.cm-color-badge,
+.cm-inline-code.cm-highlight,
+.cm-inline-code.cm-time-marker,
+.cm-inline-code.cm-quote-marker,
+.cm-inline-code.cm-list-marker,
+.cm-code-block .cm-wiki-link,
+.cm-code-block .cm-wiki-template,
+.cm-code-block .cm-align-marker,
+.cm-code-block .cm-icon-marker,
+.cm-code-block .cm-color-badge,
+.cm-code-block .cm-highlight,
+.cm-code-block .cm-time-marker,
+.cm-code-block .cm-quote-marker,
+.cm-code-block .cm-list-marker {
+    color: #e0e0e0 !important;
+    background-color: transparent !important;
+    font-weight: normal !important;
+    border: none !important;
+    padding: 0 !important;
+}
+
+.cm-inline-code.cm-color-badge::after,
+.cm-code-block .cm-color-badge::after {
+    display: none !important;
+}
+
+.cm-fold-block {
+    background-color: rgba(100, 100, 100, 0.12) !important;
+    /* 좀 더 진하게 */
+}
+
+@media (prefers-color-scheme: dark) {
+    .cm-fold-block {
+        background-color: rgba(255, 255, 255, 0.12) !important;
+        /* 좀 더 진하게 */
+    }
+}
+
+/* 마크다운 일반 링크 대괄호/괄호 회색 처리 */
+.cm-md-link-bracket {
+    color: #8b949e !important;
+    /* 회색 */
+}
+
+/* ── 에디터 전용 FAB/TOC: split-row 내부 절대 위치 ── */
+#editorScrollFabGroup {
+    position: absolute;
+    bottom: 0.75rem;
+    right: 0.75rem;
+    opacity: 1;
+    pointer-events: auto;
+    z-index: 10;
+}
+
+#editorTocFloatingPanel {
+    position: absolute;
+    bottom: 3.5rem;
+    right: 0.75rem;
+    max-height: calc(100% - 4.5rem);
+    z-index: 9;
 }

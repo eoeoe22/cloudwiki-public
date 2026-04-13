@@ -3,7 +3,8 @@ import robotsTxtBase from './robots-txt';
 import { csrf } from 'hono/csrf';
 import { secureHeaders } from 'hono/secure-headers';
 import type { Env, Page } from './types';
-import { sessionMiddleware } from './middleware/session';
+import { sessionMiddleware, rbacMiddleware } from './middleware/session';
+import { RBAC } from './utils/role';
 import { applyPageSSR, extractMetaDescription } from './middleware/ssr';
 import { safeJSON } from './utils/json';
 import { escapeHtml, sanitizeUrl } from './utils/html';
@@ -37,7 +38,8 @@ app.use('*', (c, next) => {
     return csrf()(c, next);
 });
 
-// 세션 미들웨어 (모든 요청에서 유저 정보를 주입)
+// RBAC 초기화 및 세션 미들웨어 (모든 요청에서 유저 정보를 주입)
+app.use('*', rbacMiddleware);
 app.use('*', sessionMiddleware);
 
 // ── 라우트 등록 ──
@@ -287,11 +289,14 @@ async function renderHtml(c: Context<Env>, targetHtmlPath: string, pageData: Rec
         componentCache = { header: headerHtml, sidebar: sidebarHtml, footer: footerHtml, timestamp: now };
     }
 
+    // CUSTOM_HEADER는 /w/* (문서 열람, 리비전, 토론) 페이지에만 삽입
+    const shouldInjectCustomHeader = c.req.path.startsWith('/w/');
+
     return applyPageSSR(htmlResponse, pageData, {
         WIKI_NAME: wikiName,
         WIKI_LOGO_URL: wikiLogoUrl,
         WIKI_FAVICON_URL: wikiFaviconUrl,
-        CUSTOM_HEADER: c.env.CUSTOM_HEADER || '',
+        CUSTOM_HEADER: shouldInjectCustomHeader ? (c.env.CUSTOM_HEADER || '') : '',
     }, headerHtml, sidebarHtml, footerHtml);
 }
 
@@ -354,8 +359,9 @@ app.get('/w/:slug', async (c) => {
     const slug = c.req.param('slug');
     const db = c.env.DB;
     const user = c.get('user');
+    const rbac = c.get('rbac') as RBAC;
     const redirectParam = c.req.query('redirect');
-    const isAdmin = user && (user.role === 'admin' || user.role === 'super_admin');
+    const isAdmin = user && rbac.can(user.role, 'admin:access');
     const startTime = Date.now();
 
     // ── 캐시 확인 (비관리자 + redirect=no가 아닌 일반 요청만) ──
@@ -464,7 +470,8 @@ app.get('/w/:slug', async (c) => {
 
             // R2-only 네임스페이스인 경우, 본문이 비어있다면 최신 리비전에서 본문을 가져옵니다.
             const origin = new URL(c.req.url).origin;
-            if (isR2OnlyNamespace(page.slug) && (!page.content || page.content === '')) {
+            const enabledExtSSR = (c.env.ENABLED_EXTENSIONS || '').split(',').map((s: string) => s.trim()).filter(Boolean);
+            if (isR2OnlyNamespace(page.slug, enabledExtSSR) && (!page.content || page.content === '')) {
                 if (page.last_revision_id) {
                     const lastRev = await db.prepare('SELECT content, r2_key FROM revisions WHERE id = ?').bind(page.last_revision_id).first<{ content: string, r2_key: string | null }>();
                     if (lastRev) {
@@ -556,7 +563,8 @@ app.get('/search', async (c) => {
 // /admin 접근 시 서버사이드 권한 체크 후 admin.html 서빙
 app.get('/admin', async (c) => {
     const user = c.get('user');
-    if (!user || (user.role !== 'admin' && user.role !== 'super_admin')) {
+    const rbac = c.get('rbac') as RBAC;
+    if (!user || !rbac.can(user.role, 'admin:access')) {
         return c.redirect('/');
     }
     return renderHtml(c, '/admin.html');
@@ -565,7 +573,8 @@ app.get('/admin', async (c) => {
 // /admin-media 접근 시 서버사이드 권한 체크 후 admin-media.html 서빙
 app.get('/admin-media', async (c) => {
     const user = c.get('user');
-    if (!user || (user.role !== 'admin' && user.role !== 'super_admin')) {
+    const rbac = c.get('rbac') as RBAC;
+    if (!user || !rbac.can(user.role, 'admin:access')) {
         return c.redirect('/');
     }
     return renderHtml(c, '/admin-media.html');
@@ -595,6 +604,16 @@ app.get('/edit', async (c) => {
 // /setup-profile 접근 시 서빙
 app.get('/setup-profile', async (c) => {
     return renderHtml(c, '/setup-profile.html');
+});
+
+// /error 접근 시 error.html 서빙 (SSR 브랜딩 + reason 쿼리 파라미터 주입)
+app.get('/error', async (c) => {
+    const reason = c.req.query('reason') || '알 수 없는 오류가 발생했습니다.';
+    const res = await renderHtml(c, '/error.html', {
+        _ssrTitle: '오류가 발생했습니다 - ' + (c.env.WIKI_NAME || 'CloudWiki'),
+        _ssrReason: reason,
+    });
+    return new Response(res.body, { status: 400, headers: res.headers });
 });
 
 // /profile/:id 접근 시 user-profile.html 서빙 (SSR 브랜딩)

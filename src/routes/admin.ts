@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { requireAdmin } from '../middleware/session';
 import { isSuperAdmin, getSuperAdmins } from '../utils/auth';
+import { RBAC } from '../utils/role';
 import type { Env, User } from '../types';
 
 const adminRoutes = new Hono<Env>();
@@ -145,6 +146,7 @@ adminRoutes.put('/users/:id/role', async (c) => {
     const targetUserId = c.req.param('id');
     const { role } = await c.req.json();
     const currentUser = c.get('user')!;
+    const rbac = c.get('rbac') as RBAC;
 
     if (role !== 'user' && role !== 'discussion_manager' && role !== 'admin') {
         return c.json({ error: '잘못된 권한입니다.' }, 400);
@@ -161,7 +163,7 @@ adminRoutes.put('/users/:id/role', async (c) => {
     }
 
     // 오직 최고 관리자만 다른 사람을 관리자로 만들거나 내릴 수 있음
-    if (currentUser.role !== 'super_admin') {
+    if (!rbac.can(currentUser.role, '*')) {
         return c.json({ error: '관리자 임명/해제는 최고 관리자만 가능합니다.' }, 403);
     }
 
@@ -184,6 +186,7 @@ adminRoutes.put('/users/:id/ban', async (c) => {
     const targetUserId = c.req.param('id');
     const { days } = await c.req.json();
     const currentUser = c.get('user')!;
+    const rbac = c.get('rbac') as RBAC;
 
     if (typeof days !== 'number' || days < 0) {
         return c.json({ error: '올바른 기간을 입력하세요.' }, 400);
@@ -199,7 +202,8 @@ adminRoutes.put('/users/:id/ban', async (c) => {
         return c.json({ error: '최고 관리자는 차단할 수 없습니다.' }, 400);
     }
 
-    if (currentUser.role === 'admin' && targetUser.role === 'admin') {
+    // 관리자는 다른 관리자를 차단할 수 없음 (최고 관리자 제외)
+    if (!rbac.can(currentUser.role, '*') && rbac.can(targetUser.role, 'admin:access')) {
         return c.json({ error: '관리자는 다른 관리자를 차단할 수 없습니다.' }, 403);
     }
 

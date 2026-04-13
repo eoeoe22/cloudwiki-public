@@ -872,6 +872,57 @@ div:where(.swal2-container) .swal2-html-container {
   flex-wrap: wrap;
 }
 
+/* ── Document Actions Button Group ── */
+#articleMainActions .btn,
+#shareDropdown,
+#docToolsDropdown {
+  background: var(--wiki-card-bg) !important;
+  color: var(--wiki-text) !important;
+  border: 1px solid var(--wiki-border) !important;
+  font-weight: 600;
+  font-size: 0.85rem;
+  padding: 0.5rem 0.9rem;
+  box-shadow: var(--wiki-shadow-sm);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+#articleMainActions .btn:hover,
+#shareDropdown:hover,
+#docToolsDropdown:hover {
+  background: var(--wiki-bg) !important;
+  color: var(--wiki-primary) !important;
+  border-color: var(--wiki-primary) !important;
+  z-index: 2; /* Ensure border is visible in group */
+  transform: translateY(-1px);
+  box-shadow: var(--wiki-shadow);
+}
+
+#articleMainActions .btn:active,
+#shareDropdown:active,
+#docToolsDropdown:active {
+  transform: translateY(0);
+}
+
+#articleMainActions .btn i,
+#shareDropdown i,
+#docToolsDropdown i {
+  font-size: 1rem;
+}
+
+#articleMainActions .btn.disabled {
+  opacity: 0.5 !important;
+  background: var(--wiki-bg) !important;
+  border-color: var(--wiki-border) !important;
+  color: var(--wiki-text-muted) !important;
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+.no-caret::after { display: none !important; }
+
 /* ── TOC (Table of Contents) ── */
 .wiki-toc {
   background: var(--wiki-card-bg);
@@ -1006,6 +1057,14 @@ div:where(.swal2-container) .swal2-html-container {
   height: auto;
   border: 1px solid var(--wiki-border);
   /* 이미지 테두리 처리 */
+}
+
+.wiki-content img[data-size="icon"] {
+  border-radius: 0;
+  margin: 0;
+  box-shadow: none;
+  border: none;
+  vertical-align: middle;
 }
 
 /* 인라인 코드 블록 */
@@ -1380,6 +1439,37 @@ div:where(.swal2-container) .swal2-html-container {
 
 .search-result-item h4 a {
   color: var(--wiki-primary);
+  font-weight: 700;
+}
+
+/* ── Nav Tabs (위키 스타일 통합) ── */
+.nav-tabs {
+  border-bottom: 1px solid var(--wiki-border);
+  gap: 0.25rem;
+}
+
+.nav-tabs .nav-link {
+  color: var(--wiki-text-muted) !important;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px 8px 0 0;
+  font-weight: 600;
+  padding: 0.5rem 1.1rem;
+  margin-bottom: -1px;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.nav-tabs .nav-link:hover,
+.nav-tabs .nav-link:focus {
+  color: var(--wiki-text) !important;
+  background: var(--wiki-card-bg);
+  border-color: var(--wiki-border) var(--wiki-border) transparent;
+}
+
+.nav-tabs .nav-link.active {
+  color: var(--wiki-primary) !important;
+  background: var(--wiki-card-bg);
+  border-color: var(--wiki-border) var(--wiki-border) var(--wiki-card-bg);
   font-weight: 700;
 }
 

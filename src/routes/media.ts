@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import type { Env } from '../types';
-import { requireAuth } from '../middleware/session';
+import { requireAuth, requirePermission } from '../middleware/session';
 
 const media = new Hono<Env>();
 
@@ -17,10 +17,10 @@ const ALLOWED_TYPES = new Set([
 
 /**
  * POST /api/media
- * 이미지 업로드 (로그인 필수)
+ * 이미지 업로드 (media:upload 권한 필요)
  * multipart/form-data, 필드명: file, filename (사용자 지정 파일명)
  */
-media.post('/api/media', requireAuth, async (c) => {
+media.post('/api/media', requireAuth, requirePermission('media:upload'), async (c) => {
     const user = c.get('user')!;
 
     let formData: FormData;

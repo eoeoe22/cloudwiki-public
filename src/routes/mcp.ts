@@ -231,9 +231,10 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                 const results = await db.prepare(query).bind(`"${args.query}"*`).all<{ slug: string; title: string; content: string; last_revision_id: number | null; snippet: string }>();
                 
                 const origin = new URL(c.req.url).origin;
+                const enabledExtMcp1 = (c.env.ENABLED_EXTENSIONS || '').split(',').map((s: string) => s.trim()).filter(Boolean);
                 const output = await Promise.all(results.results.map(async (row) => {
                     let actualContent = row.content;
-                    if (isR2OnlyNamespace(row.slug) && (!actualContent || actualContent === '')) {
+                    if (isR2OnlyNamespace(row.slug, enabledExtMcp1) && (!actualContent || actualContent === '')) {
                         if (row.last_revision_id) {
                             const lastRev = await db.prepare('SELECT content, r2_key FROM revisions WHERE id = ?').bind(row.last_revision_id).first<{ content: string, r2_key: string | null }>();
                             if (lastRev) {
@@ -258,7 +259,8 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                 
                 let actualContent = page.content;
                 const origin = new URL(c.req.url).origin;
-                if (isR2OnlyNamespace(page.slug) && (!actualContent || actualContent === '')) {
+                const enabledExtMcp2 = (c.env.ENABLED_EXTENSIONS || '').split(',').map((s: string) => s.trim()).filter(Boolean);
+                if (isR2OnlyNamespace(page.slug, enabledExtMcp2) && (!actualContent || actualContent === '')) {
                     if (page.last_revision_id) {
                         const lastRev = await db.prepare('SELECT content, r2_key FROM revisions WHERE id = ?').bind(page.last_revision_id).first<{ content: string, r2_key: string | null }>();
                         if (lastRev) {
@@ -338,7 +340,8 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                 if (catPage) {
                     let actualContent = catPage.content;
                     const origin = new URL(c.req.url).origin;
-                    if (isR2OnlyNamespace(catPage.slug) && (!actualContent || actualContent === '')) {
+                    const enabledExtMcp3 = (c.env.ENABLED_EXTENSIONS || '').split(',').map((s: string) => s.trim()).filter(Boolean);
+                    if (isR2OnlyNamespace(catPage.slug, enabledExtMcp3) && (!actualContent || actualContent === '')) {
                         if (catPage.last_revision_id) {
                             const lastRev = await db.prepare('SELECT content, r2_key FROM revisions WHERE id = ?').bind(catPage.last_revision_id).first<{ content: string, r2_key: string | null }>();
                             if (lastRev) {

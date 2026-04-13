@@ -1,21 +1,10 @@
 import { Hono } from 'hono';
 import type { Env, Discussion, DiscussionComment } from '../types';
-import { requireAuth } from '../middleware/session';
+import { requireAuth, requirePermission } from '../middleware/session';
 import { safeJSON } from '../utils/json';
-import { ROLE_CASE_SQL, enrichRoles, enrichRole } from '../utils/role';
+import { ROLE_CASE_SQL, enrichRoles, enrichRole, RBAC } from '../utils/role';
 
 const discussionRoutes = new Hono<Env>();
-
-// ── 역할 계층 헬퍼 ──
-function roleLevel(role: string): number {
-    switch (role) {
-        case 'super_admin': return 4;
-        case 'admin': return 3;
-        case 'discussion_manager': return 2;
-        case 'user': return 1;
-        default: return 0;
-    }
-}
 
 /**
  * GET /api/discussions/:pageId
@@ -53,7 +42,7 @@ discussionRoutes.get('/discussions/:pageId', async (c) => {
  * POST /api/discussions/:pageId
  * 새 토론 생성 (로그인 필수, 차단되지 않은 사용자)
  */
-discussionRoutes.post('/discussions/:pageId', requireAuth, async (c) => {
+discussionRoutes.post('/discussions/:pageId', requireAuth, requirePermission('comment:create'), async (c) => {
     const pageId = Number(c.req.param('pageId'));
     const user = c.get('user')!;
     const db = c.env.DB;
@@ -110,8 +99,10 @@ discussionRoutes.get('/discussions/thread/:id', async (c) => {
         return c.json({ error: '토론을 찾을 수 없습니다.' }, 404);
     }
 
+    const rbac = c.get('rbac') as RBAC;
+
     // soft delete된 토론은 admin 이상만 볼 수 있음
-    if (discussion.deleted_at && (!user || roleLevel(user.role) < 3)) {
+    if (discussion.deleted_at && (!user || !rbac.can(user.role, 'admin:access'))) {
         return c.json({ error: '삭제된 토론입니다.' }, 404);
     }
 
@@ -149,7 +140,7 @@ discussionRoutes.get('/discussions/thread/:id', async (c) => {
  * POST /api/discussions/thread/:id/comments
  * 댓글/답글 작성 (로그인 필수)
  */
-discussionRoutes.post('/discussions/thread/:id/comments', requireAuth, async (c) => {
+discussionRoutes.post('/discussions/thread/:id/comments', requireAuth, requirePermission('comment:create'), async (c) => {
     const discussionId = Number(c.req.param('id'));
     const user = c.get('user')!;
     const db = c.env.DB;
@@ -253,7 +244,8 @@ discussionRoutes.put('/discussions/thread/:id/status', requireAuth, async (c) =>
 
     // 권한 확인: 토론 생성자 또는 discussion_manager 이상
     const isAuthor = discussion.author_id === user.id;
-    const hasManagerRole = roleLevel(user.role) >= 2; // discussion_manager 이상
+    const rbac = c.get('rbac') as RBAC;
+    const hasManagerRole = rbac.can(user.role, 'discussion:manage');
 
     if (!isAuthor && !hasManagerRole) {
         return c.json({ error: '토론 상태를 변경할 권한이 없습니다.' }, 403);
@@ -283,15 +275,16 @@ discussionRoutes.put('/discussions/thread/:id/status', requireAuth, async (c) =>
 
 /**
  * DELETE /api/discussions/thread/:id
- * 토론 소프트 삭제 (admin 이상)
+ * 토론 소프트 삭제 (discussion:manage 권한 필요)
  */
 discussionRoutes.delete('/discussions/thread/:id', requireAuth, async (c) => {
     const discussionId = Number(c.req.param('id'));
     const user = c.get('user')!;
+    const rbac = c.get('rbac') as RBAC;
     const db = c.env.DB;
 
-    if (roleLevel(user.role) < 3) { // admin 이상만
-        return c.json({ error: '관리자 권한이 필요합니다.' }, 403);
+    if (!rbac.can(user.role, 'discussion:manage')) {
+        return c.json({ error: '권한이 부족합니다.' }, 403);
     }
 
     const discussion = await db.prepare(
@@ -333,9 +326,10 @@ discussionRoutes.delete('/discussions/thread/:id', requireAuth, async (c) => {
 discussionRoutes.delete('/discussions/thread/:id/hard', requireAuth, async (c) => {
     const discussionId = Number(c.req.param('id'));
     const user = c.get('user')!;
+    const rbac = c.get('rbac') as RBAC;
     const db = c.env.DB;
 
-    if (user.role !== 'super_admin') {
+    if (!rbac.can(user.role, '*')) {
         return c.json({ error: '최고 관리자만 완전 삭제할 수 있습니다.' }, 403);
     }
 
@@ -367,15 +361,16 @@ discussionRoutes.delete('/discussions/thread/:id/hard', requireAuth, async (c) =
 
 /**
  * DELETE /api/discussions/comment/:id
- * 댓글 소프트 삭제 (admin 이상)
+ * 댓글 소프트 삭제 (discussion:manage 권한 필요)
  */
 discussionRoutes.delete('/discussions/comment/:id', requireAuth, async (c) => {
     const commentId = Number(c.req.param('id'));
     const user = c.get('user')!;
+    const rbac = c.get('rbac') as RBAC;
     const db = c.env.DB;
 
-    if (roleLevel(user.role) < 3) {
-        return c.json({ error: '관리자 권한이 필요합니다.' }, 403);
+    if (!rbac.can(user.role, 'discussion:manage')) {
+        return c.json({ error: '권한이 부족합니다.' }, 403);
     }
 
     const comment = await db.prepare(
@@ -404,9 +399,10 @@ discussionRoutes.delete('/discussions/comment/:id', requireAuth, async (c) => {
 discussionRoutes.delete('/discussions/comment/:id/hard', requireAuth, async (c) => {
     const commentId = Number(c.req.param('id'));
     const user = c.get('user')!;
+    const rbac = c.get('rbac') as RBAC;
     const db = c.env.DB;
 
-    if (user.role !== 'super_admin') {
+    if (!rbac.can(user.role, '*')) {
         return c.json({ error: '최고 관리자만 완전 삭제할 수 있습니다.' }, 403);
     }
 

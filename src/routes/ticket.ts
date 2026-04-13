@@ -1,21 +1,10 @@
 import { Hono } from 'hono';
 import type { Env, Ticket, TicketComment } from '../types';
-import { requireAuth } from '../middleware/session';
+import { requireAuth, requirePermission } from '../middleware/session';
 import { safeJSON } from '../utils/json';
-import { ROLE_CASE_SQL, enrichRoles, enrichRole } from '../utils/role';
+import { ROLE_CASE_SQL, enrichRoles, enrichRole, RBAC } from '../utils/role';
 
 const ticketRoutes = new Hono<Env>();
-
-// ── 역할 계층 헬퍼 ──
-function roleLevel(role: string): number {
-    switch (role) {
-        case 'super_admin': return 4;
-        case 'admin': return 3;
-        case 'discussion_manager': return 2;
-        case 'user': return 1;
-        default: return 0;
-    }
-}
 
 // ── 타입 라벨 ──
 const typeLabels: Record<string, string> = {
@@ -26,17 +15,17 @@ const typeLabels: Record<string, string> = {
 };
 
 // ── 접근 권한 확인 헬퍼 ──
-function canAccessTicket(user: { id: number; role: string }, ticket: { user_id: number; type: string; deleted_at: number | null }): boolean {
-    // soft deleted → admin 이상만
+function canAccessTicket(rbac: RBAC, user: { id: number; role: string }, ticket: { user_id: number; type: string; deleted_at: number | null }): boolean {
+    // soft deleted → admin 이상만 (ticket:manage)
     if (ticket.deleted_at) {
-        return roleLevel(user.role) >= 3;
+        return rbac.can(user.role, 'ticket:manage');
     }
     // 티켓 작성자
     if (user.id === ticket.user_id) return true;
-    // admin/super_admin
-    if (roleLevel(user.role) >= 3) return true;
-    // type=discussion → discussion_manager도 접근 가능
-    if (ticket.type === 'discussion' && roleLevel(user.role) >= 2) return true;
+    // admin/super_admin (ticket:manage)
+    if (rbac.can(user.role, 'ticket:manage')) return true;
+    // type=discussion → discussion_manager도 접근 가능 (discussion:manage)
+    if (ticket.type === 'discussion' && rbac.can(user.role, 'discussion:manage')) return true;
     return false;
 }
 
@@ -46,6 +35,7 @@ function canAccessTicket(user: { id: number; role: string }, ticket: { user_id: 
  */
 ticketRoutes.get('/tickets', requireAuth, async (c) => {
     const user = c.get('user')!;
+    const rbac = c.get('rbac');
     const db = c.env.DB;
     const status = c.req.query('status');
     const type = c.req.query('type');
@@ -53,8 +43,8 @@ ticketRoutes.get('/tickets', requireAuth, async (c) => {
     const limit = 20;
     const offset = (page - 1) * limit;
 
-    const isAdmin = roleLevel(user.role) >= 3;
-    const isDiscManager = roleLevel(user.role) >= 2;
+    const isAdmin = rbac.can(user.role, 'ticket:manage');
+    const isDiscManager = rbac.can(user.role, 'discussion:manage');
 
     let query = `
         SELECT t.*, u.name as user_name, u.picture as user_picture,
@@ -124,7 +114,7 @@ ticketRoutes.get('/tickets', requireAuth, async (c) => {
  * POST /api/tickets
  * 새 티켓 생성
  */
-ticketRoutes.post('/tickets', requireAuth, async (c) => {
+ticketRoutes.post('/tickets', requireAuth, requirePermission('ticket:create'), async (c) => {
     const user = c.get('user')!;
     const db = c.env.DB;
     const { title, content, type } = await c.req.json<{ title: string; content: string; type: string }>();
@@ -201,8 +191,10 @@ ticketRoutes.get('/tickets/:id', requireAuth, async (c) => {
         return c.json({ error: '티켓을 찾을 수 없습니다.' }, 404);
     }
 
+    const rbac = c.get('rbac');
+
     // 접근 권한 확인
-    if (!canAccessTicket(user, ticket as any)) {
+    if (!canAccessTicket(rbac, user, ticket as any)) {
         return c.json({ error: '접근 권한이 없습니다.' }, 403);
     }
 
@@ -240,7 +232,7 @@ ticketRoutes.get('/tickets/:id', requireAuth, async (c) => {
  * POST /api/tickets/:id/comments
  * 댓글 작성
  */
-ticketRoutes.post('/tickets/:id/comments', requireAuth, async (c) => {
+ticketRoutes.post('/tickets/:id/comments', requireAuth, requirePermission('comment:create'), async (c) => {
     const ticketId = Number(c.req.param('id'));
     const user = c.get('user')!;
     const db = c.env.DB;
@@ -258,8 +250,10 @@ ticketRoutes.post('/tickets/:id/comments', requireAuth, async (c) => {
         return c.json({ error: '티켓을 찾을 수 없습니다.' }, 404);
     }
 
+    const rbac = c.get('rbac');
+
     // 접근 권한 확인
-    if (!canAccessTicket(user, ticket)) {
+    if (!canAccessTicket(rbac, user, ticket)) {
         return c.json({ error: '접근 권한이 없습니다.' }, 403);
     }
 
@@ -327,6 +321,7 @@ ticketRoutes.post('/tickets/:id/comments', requireAuth, async (c) => {
 ticketRoutes.put('/tickets/:id/status', requireAuth, async (c) => {
     const ticketId = Number(c.req.param('id'));
     const user = c.get('user')!;
+    const rbac = c.get('rbac');
     const db = c.env.DB;
     const { status } = await c.req.json<{ status: 'open' | 'closed' }>();
 
@@ -342,9 +337,9 @@ ticketRoutes.put('/tickets/:id/status', requireAuth, async (c) => {
         return c.json({ error: '티켓을 찾을 수 없습니다.' }, 404);
     }
 
-    // 권한: 티켓 작성자 또는 admin 이상
+    // 권한: 티켓 작성자 또는 ticket:manage 권한자
     const isAuthor = ticket.user_id === user.id;
-    const isAdmin = roleLevel(user.role) >= 3;
+    const isAdmin = rbac.can(user.role, 'ticket:manage');
 
     if (!isAuthor && !isAdmin) {
         return c.json({ error: '티켓 상태를 변경할 권한이 없습니다.' }, 403);
@@ -371,14 +366,9 @@ ticketRoutes.put('/tickets/:id/status', requireAuth, async (c) => {
  * DELETE /api/tickets/:id
  * 티켓 소프트 삭제 (admin 이상)
  */
-ticketRoutes.delete('/tickets/:id', requireAuth, async (c) => {
+ticketRoutes.delete('/tickets/:id', requireAuth, requirePermission('ticket:manage'), async (c) => {
     const ticketId = Number(c.req.param('id'));
-    const user = c.get('user')!;
     const db = c.env.DB;
-
-    if (roleLevel(user.role) < 3) {
-        return c.json({ error: '관리자 권한이 필요합니다.' }, 403);
-    }
 
     const ticket = await db.prepare(
         'SELECT id, deleted_at FROM tickets WHERE id = ?'
@@ -414,9 +404,10 @@ ticketRoutes.delete('/tickets/:id', requireAuth, async (c) => {
 ticketRoutes.delete('/tickets/:id/hard', requireAuth, async (c) => {
     const ticketId = Number(c.req.param('id'));
     const user = c.get('user')!;
+    const rbac = c.get('rbac');
     const db = c.env.DB;
 
-    if (user.role !== 'super_admin') {
+    if (!rbac.can(user.role, '*')) {
         return c.json({ error: '최고 관리자만 완전 삭제할 수 있습니다.' }, 403);
     }
 
@@ -442,14 +433,9 @@ ticketRoutes.delete('/tickets/:id/hard', requireAuth, async (c) => {
  * DELETE /api/tickets/comment/:id
  * 댓글 소프트 삭제 (admin 이상)
  */
-ticketRoutes.delete('/tickets/comment/:id', requireAuth, async (c) => {
+ticketRoutes.delete('/tickets/comment/:id', requireAuth, requirePermission('ticket:manage'), async (c) => {
     const commentId = Number(c.req.param('id'));
-    const user = c.get('user')!;
     const db = c.env.DB;
-
-    if (roleLevel(user.role) < 3) {
-        return c.json({ error: '관리자 권한이 필요합니다.' }, 403);
-    }
 
     const comment = await db.prepare(
         'SELECT id, deleted_at FROM ticket_comments WHERE id = ?'
@@ -477,9 +463,10 @@ ticketRoutes.delete('/tickets/comment/:id', requireAuth, async (c) => {
 ticketRoutes.delete('/tickets/comment/:id/hard', requireAuth, async (c) => {
     const commentId = Number(c.req.param('id'));
     const user = c.get('user')!;
+    const rbac = c.get('rbac');
     const db = c.env.DB;
 
-    if (user.role !== 'super_admin') {
+    if (!rbac.can(user.role, '*')) {
         return c.json({ error: '최고 관리자만 완전 삭제할 수 있습니다.' }, 403);
     }
 

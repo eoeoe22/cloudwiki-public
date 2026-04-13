@@ -74,21 +74,15 @@
           <div id="redirectMessage"></div>
           <div class="wiki-article-meta" id="articleMeta"></div>
 
-          <!-- 문서 도구 (드롭다운) -->
+          <!-- 문서 도구 -->
           <div class="d-flex justify-content-end mb-2 gap-2">
-            <div class="dropdown">
-              <button class="btn btn-secondary dropdown-toggle" type="button" id="docToolsDropdown"
-                data-bs-toggle="dropdown" data-bs-display="static" data-bs-flip="false" aria-expanded="false">
-                <i class="bi bi-pencil"></i> 문서 도구
-              </button>
-              <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="docToolsDropdown" id="articleActions">
-                <!-- 자바스크립트로 채워짐 -->
-              </ul>
+            <div class="btn-group" id="articleMainActions">
+              <!-- 자바스크립트로 채워짐: 편집, 이력, 토론, 역링크 -->
             </div>
             <div class="dropdown">
-              <button class="btn btn-secondary dropdown-toggle" type="button" id="shareDropdown"
-                data-bs-toggle="dropdown" data-bs-display="static" data-bs-flip="false" aria-expanded="false">
-                <i class="bi bi-share"></i> 공유하기
+              <button class="btn btn-secondary dropdown-toggle no-caret" type="button" id="shareDropdown"
+                data-bs-toggle="dropdown" data-bs-display="static" data-bs-flip="false" aria-expanded="false" title="공유하기">
+                <i class="bi bi-share"></i>
               </button>
               <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="shareDropdown">
                 <li><button class="dropdown-item" onclick="shareNative()">
@@ -109,6 +103,15 @@
                 <li id="shareItemPrint"><button class="dropdown-item" onclick="sharePrint()">
                     <i class="bi bi-printer"></i> 인쇄하기
                   </button></li>
+              </ul>
+            </div>
+            <div class="dropdown">
+              <button class="btn btn-secondary dropdown-toggle no-caret" type="button" id="docToolsDropdown"
+                data-bs-toggle="dropdown" data-bs-display="static" data-bs-flip="false" aria-expanded="false" title="문서 도구">
+                <i class="bi bi-three-dots-vertical"></i>
+              </button>
+              <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="docToolsDropdown" id="articleMoreActions">
+                <!-- 자바스크립트로 채워짐 -->
               </ul>
             </div>
           </div>
@@ -353,12 +356,17 @@
         return;
       }
 
-      list.innerHTML = '<div class="text-center py-3"><div class="spinner-border spinner-border-sm text-primary" role="status"></div> 역링크 조회 중...</div>';
-      section.classList.remove('d-none');
-
       const loaded = await loadBacklinks(currentSlug);
       if (loaded) {
         section.scrollIntoView({ behavior: 'smooth' });
+      } else {
+        Swal.fire({
+          icon: 'info',
+          title: '역링크',
+          text: '이 문서를 참조하는 역링크가 없습니다.',
+          timer: 2000,
+          showConfirmButton: false
+        });
       }
     }
 
@@ -601,43 +609,53 @@
 
         // 액션 버튼
         const _hasColon = actionSlug.includes(':');
-        let actionsHtml = `
-      <li><a href="/w/${encodeURIComponent(actionSlug)}/revisions" class="dropdown-item">
-        <i class="bi bi-clock-history"></i> 이력
-      </a></li>
-      <li><a href="/w/${encodeURIComponent(actionSlug)}/discussions" class="dropdown-item">
-        <i class="bi bi-chat-dots"></i> 토론
-      </a></li>
-      <li><button class="dropdown-item" onclick="scrollToBacklinks(); return false;">
-        <i class="bi bi-link-45deg"></i> 역링크
-      </button></li>
-      <li><button class="dropdown-item${_hasColon ? ' disabled' : ''}" ${_hasColon ? 'disabled' : `data-slug="${escapeHtml(actionSlug)}" onclick="showSubdocs(this.dataset.slug); return false;"`}>
-        <i class="bi bi-diagram-3"></i> 하위 문서 보기
-      </button></li>
-    `;
-        if (currentUser) {
-          const isAdmin = currentUser.role === 'admin' || currentUser.role === 'super_admin';
-          const isLocked = page.is_locked === 1;
-          const canEdit = isAdmin || !isLocked;
+        
+        // 편집 권한 확인
+        const isAdmin = currentUser && (currentUser.role === 'admin' || currentUser.role === 'super_admin');
+        const isLocked = page.is_locked === 1;
+        const canEdit = currentUser && (isAdmin || !isLocked);
 
-          actionsHtml = `
-          <li><a href="/edit.html?slug=${encodeURIComponent(actionSlug)}"
-             class="dropdown-item ${canEdit ? '' : 'disabled'}"
+        // 메인 액션 (편집, 이력, 토론, 역링크)
+        const mainActionsHtml = `
+          <a href="/edit.html?slug=${encodeURIComponent(actionSlug)}"
+             class="btn btn-outline-secondary ${canEdit ? '' : 'disabled'}"
              ${canEdit ? '' : 'tabindex="-1" aria-disabled="true"'}
-             title="${canEdit ? '이 문서 편집' : '이 문서는 관리자만 편집할 수 있습니다'}">
-            <i class="bi bi-pencil"></i> 편집
-          </a></li>
+             title="${canEdit ? '이 문서 편집' : '이 문서는 관리자만 편집할 수 있습니다'}"
+             aria-label="${canEdit ? '편집' : '편집 (잠김)'}">
+            <i class="bi bi-pencil" aria-hidden="true"></i><span class="d-none d-sm-inline"> 편집</span>
+          </a>
+          <a href="/w/${encodeURIComponent(actionSlug)}/revisions" class="btn btn-outline-secondary" aria-label="이력">
+            <i class="bi bi-clock-history" aria-hidden="true"></i><span class="d-none d-sm-inline"> 이력</span>
+          </a>
+          <a href="/w/${encodeURIComponent(actionSlug)}/discussions" class="btn btn-outline-secondary" aria-label="토론">
+            <i class="bi bi-chat-dots" aria-hidden="true"></i><span class="d-none d-sm-inline"> 토론</span>
+          </a>
+          <button class="btn btn-outline-secondary" onclick="scrollToBacklinks(); return false;" aria-label="역링크">
+            <i class="bi bi-link-45deg" aria-hidden="true"></i><span class="d-none d-sm-inline"> 역링크</span>
+          </button>
+        `;
+        document.getElementById('articleMainActions').innerHTML = mainActionsHtml;
+
+        // 더보기 액션
+        let moreActionsHtml = `
+          <li><button class="dropdown-item${_hasColon ? ' disabled' : ''}" ${_hasColon ? 'disabled' : `data-slug="${escapeHtml(actionSlug)}" onclick="showSubdocs(this.dataset.slug); return false;"`}>
+            <i class="bi bi-diagram-3"></i> 하위 문서 보기
+          </button></li>
+        `;
+
+        if (currentUser) {
+          moreActionsHtml += `
           <li>
             <button class="dropdown-item" id="watchToggleBtn" data-slug="${escapeHtml(actionSlug)}" onclick="toggleWatch(this.dataset.slug); return false;">
               <i class="bi bi-eye"></i> <span id="watchToggleText">주시하기</span>
             </button>
           </li>
-          <li><hr class="dropdown-divider"></li>
-        ` + actionsHtml;
+          `;
 
           if (canEdit) {
             if (page.deleted_at && isAdmin) {
-              actionsHtml += `
+              moreActionsHtml += `
+              <li><hr class="dropdown-divider"></li>
               <li><button class="dropdown-item text-success" data-slug="${escapeHtml(actionSlug)}" onclick="restorePage(this.dataset.slug); return false;">
                 <i class="bi bi-arrow-counterclockwise"></i> 문서 복원
               </button></li>
@@ -645,20 +663,24 @@
                 <i class="bi bi-trash-fill"></i> 영구 삭제 (최고 관리자)
               </button></li>
               `;
-            } else {
-              actionsHtml += `
+            } else if (!page.deleted_at) {
+              moreActionsHtml += `
               <li><button class="dropdown-item" data-slug="${escapeHtml(actionSlug)}" onclick="promptMove(this.dataset.slug); return false;">
                 <i class="bi bi-arrows-move"></i> 문서 주소 변경
               </button></li>
+              `;
+              if (isAdmin) {
+                moreActionsHtml += `
               <li><hr class="dropdown-divider"></li>
               <li><button class="dropdown-item text-danger" data-slug="${escapeHtml(actionSlug)}" onclick="confirmDelete(this.dataset.slug); return false;">
                 <i class="bi bi-trash"></i> 삭제
               </button></li>
-              `;
+                `;
+              }
             }
           }
         }
-        document.getElementById('articleActions').innerHTML = actionsHtml;
+        document.getElementById('articleMoreActions').innerHTML = moreActionsHtml;
 
         // 주시 상태 확인 (로그인 시)
         if (currentUser && document.getElementById('watchToggleBtn')) {
@@ -813,12 +835,13 @@
       document.getElementById('articleTitle').textContent = decodedSlug;
       document.getElementById('articleMeta').innerHTML = '<span class="text-muted">아직 작성되지 않은 카테고리 문서입니다.</span>';
 
-      let actions = `
-        <li><button class="dropdown-item" onclick="window.location.href='/edit.html?slug=${encodeURIComponent(slug).replace(/'/g, "%27")}'">
+      const actions = `
+        <button class="btn btn-outline-secondary" onclick="window.location.href='/edit.html?slug=${encodeURIComponent(slug).replace(/'/g, "%27")}'">
           <i class="bi bi-pencil-square"></i> 카테고리 설명 생성
-        </button></li>
+        </button>
       `;
-      document.getElementById('articleActions').innerHTML = actions;
+      document.getElementById('articleMainActions').innerHTML = actions;
+      document.getElementById('articleMoreActions').innerHTML = '';
       document.getElementById('articleContent').innerHTML = listHtml;
       document.getElementById('tocContainer').classList.add('d-none');
       document.getElementById('backlinksSection').classList.add('d-none');
@@ -862,7 +885,7 @@
           return true;
         } else {
           list.innerHTML = '<div class="text-muted text-center py-3">이 문서를 참조하는 문서가 없습니다.</div>';
-          section.classList.remove('d-none');
+          section.classList.add('d-none');
           return false;
         }
       } catch (e) {

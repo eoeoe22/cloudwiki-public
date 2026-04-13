@@ -194,22 +194,50 @@ function getIsDarkMode() {
 function positionDropdownAtCursor(dropdownEl, dropdownWidth) {
     if (!dropdownEl) return;
     let positioned = false;
-    const sel = window.getSelection();
-    if (sel && sel.rangeCount > 0) {
-        const range = sel.getRangeAt(0).cloneRange();
-        range.collapse(true);
-        const rect = range.getBoundingClientRect();
-        if (rect.height > 0) {
-            let left = rect.left + window.scrollX;
-            let top = rect.bottom + window.scrollY + 4;
+
+    // CM6 좌표 API 우선 사용
+    if (window._cmView) {
+        const coords = window._cmView.coordsAtPos(window._cmView.state.selection.main.head);
+        if (coords) {
+            let left = coords.left + window.scrollX;
+            let top = coords.bottom + window.scrollY + 4;
             if (left + dropdownWidth > window.innerWidth) left = window.innerWidth - (dropdownWidth + 5);
             if (left < 0) left = 4;
+            // 에디터 패인 오른쪽 경계 클리핑: 드롭다운이 프리뷰 영역으로 넘어가지 않도록
+            const editorPane = document.getElementById('cm-editor-pane');
+            if (editorPane) {
+                const paneRight = editorPane.getBoundingClientRect().right + window.scrollX;
+                if (left + dropdownWidth > paneRight) {
+                    left = Math.max(4, paneRight - dropdownWidth - 4);
+                }
+            }
             dropdownEl.style.left = `${left}px`;
             dropdownEl.style.top = `${top}px`;
             dropdownEl.style.display = 'block';
             positioned = true;
         }
     }
+
+    // 폴백: window.getSelection()
+    if (!positioned) {
+        const sel = window.getSelection();
+        if (sel && sel.rangeCount > 0) {
+            const range = sel.getRangeAt(0).cloneRange();
+            range.collapse(true);
+            const rect = range.getBoundingClientRect();
+            if (rect.height > 0) {
+                let left = rect.left + window.scrollX;
+                let top = rect.bottom + window.scrollY + 4;
+                if (left + dropdownWidth > window.innerWidth) left = window.innerWidth - (dropdownWidth + 5);
+                if (left < 0) left = 4;
+                dropdownEl.style.left = `${left}px`;
+                dropdownEl.style.top = `${top}px`;
+                dropdownEl.style.display = 'block';
+                positioned = true;
+            }
+        }
+    }
+
     if (!positioned) {
         const editorEl = document.querySelector('#editor');
         if (editorEl) {
@@ -1449,24 +1477,13 @@ let previewDebounce;
 
 async function updateCustomPreview() {
     if (!editor) return;
-    // 마크다운 프리뷰 영역만 대상으로 함 (위지윅 편집 영역은 건드리지 않음)
-    const mdPreview = document.querySelector('#editor .toastui-editor-md-preview');
-    if (!mdPreview) return;
-
-    const defaultContents = mdPreview.querySelectorAll('.toastui-editor-contents:not(#custom-wiki-preview)');
-    defaultContents.forEach(el => el.style.display = 'none');
 
     let customPreview = document.getElementById('custom-wiki-preview');
-    if (!customPreview) {
-        customPreview = document.createElement('div');
-        customPreview.id = 'custom-wiki-preview';
-        customPreview.className = 'wiki-content';
+    if (!customPreview) return;
 
-        if (defaultContents.length > 0) {
-            defaultContents[0].parentNode.appendChild(customPreview);
-        } else {
-            mdPreview.appendChild(customPreview);
-        }
+    // wiki-content 클래스 보장
+    if (!customPreview.classList.contains('wiki-content')) {
+        customPreview.classList.add('wiki-content');
     }
 
     const md = editor.getMarkdown();
@@ -1484,28 +1501,38 @@ async function updateCustomPreview() {
 }
 
 // ── 문서 하단으로 스크롤 (에디터 + 프리뷰) ──
+let hasScrolledToBottom = false;
+
+
+function scrollPreviewToBottom() {
+    if (!editor) return;
+    const customPreview = document.getElementById('custom-wiki-preview');
+    if (customPreview) {
+        customPreview.scrollTop = customPreview.scrollHeight;
+    }
+}
+
+
+let hasScrolledPreviewToBottom = false;
+function scrollPreviewToBottomOnce() {
+    if (hasScrolledPreviewToBottom) return;
+    hasScrolledPreviewToBottom = true;
+    const customPreview = document.getElementById('custom-wiki-preview');
+    if (customPreview) customPreview.scrollTop = customPreview.scrollHeight;
+}
+
 function scrollToBottom() {
+    if (hasScrolledToBottom) return;
+    hasScrolledToBottom = true;
+
     if (!editor) return;
     if (isExtensionData) {
-        const rawTextarea = document.getElementById('rawExtTextarea');
-        if (rawTextarea) {
-            rawTextarea.scrollTop = rawTextarea.scrollHeight;
-        }
+        // const rawTextarea = document.getElementById('rawExtTextarea');
+        // if (rawTextarea) {
+        //     rawTextarea.scrollTop = rawTextarea.scrollHeight;
+        // }
     } else {
-        // Toast UI Editor scroll (Markdown mode)
-        // MD 에디터 스크롤 (이중 안전장치)
-        editor.setScrollTop(9999999);
-
-        // MD 에디터 자체 텍스트 커서도 끝으로 이동
-        if (typeof editor.moveCursorToEnd === 'function') {
-            editor.moveCursorToEnd();
-        }
-
-        // 프리뷰 스크롤 (커스텀 프리뷰 포함)
-        const mdPreview = document.querySelector('#editor .toastui-editor-md-preview');
-        if (mdPreview) {
-            mdPreview.scrollTop = mdPreview.scrollHeight;
-        }
+        // 프리뷰 스크롤
         const customPreview = document.getElementById('custom-wiki-preview');
         if (customPreview) {
             customPreview.scrollTop = customPreview.scrollHeight;
@@ -1563,7 +1590,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     isExtensionData = !!extPrefix;
 
     if (isExtensionData) {
-        // Toast UI Editor 대신 raw textarea 사용 (대용량 데이터 지원)
+        // 익스텐션 데이터: raw textarea 사용 (대용량 데이터 지원)
         const editorContainer = document.getElementById('editor');
         editorContainer.innerHTML = `
             <div class="wiki-ext-raw-editor">
@@ -1611,67 +1638,562 @@ document.addEventListener('DOMContentLoaded', async () => {
         // 변경 사항 미리보기, 스크롤 동기화, 자동 프리뷰 등 건너뜀
         startAutoSave();
     } else {
-        // Toast UI Editor 초기화
+        // ── CodeMirror 6 에디터 초기화 ──
         const isMobile = window.innerWidth <= 768;
 
-        // 커스텀 툴바 버튼 생성
-        function createCustomButton(text, tooltip, onClick) {
+        // 에디터 레이아웃 구성 (PC: 툴바 전체폭 + 좌우 스플릿 / 모바일: 탭)
+        const editorContainer = document.getElementById('editor');
+        editorContainer.innerHTML = `
+            <div class="wiki-editor-layout">
+                <div class="cm-mobile-tabs" id="cm-mobile-tabs">
+                    <button class="cm-tab-btn active" data-tab="editor"><i class="mdi mdi-pencil"></i> 에디터</button>
+                    <button class="cm-tab-btn" data-tab="preview"><i class="mdi mdi-eye"></i> 프리뷰</button>
+                </div>
+                <div id="cm-toolbar" class="cm-toolbar"></div>
+                <div class="wiki-editor-split-row" id="wiki-editor-split-row">
+                    <div class="wiki-editor-pane" id="cm-editor-pane">
+                        <div id="cm-editor"></div>
+                    </div>
+                    <div class="wiki-preview-pane" id="custom-wiki-preview"></div>
+                    <!-- 에디터 전용 플로팅 TOC 패널 -->
+                    <div class="toc-floating-panel" id="editorTocFloatingPanel">
+                        <div class="toc-floating-header">
+                            <span><i class="mdi mdi-format-list-bulleted-square me-1"></i> 목차</span>
+                            <button class="toc-floating-close" onclick="toggleEditorFloatingToc()" title="닫기">
+                                <i class="bi bi-x-lg"></i>
+                            </button>
+                        </div>
+                        <nav class="toc-floating-body" id="editorTocFloatingNav"></nav>
+                    </div>
+                    <!-- 에디터 전용 스크롤 FAB -->
+                    <div class="scroll-fab-group" id="editorScrollFabGroup">
+                        <button class="scroll-fab" id="editorTocFabBtn" onclick="toggleEditorFloatingToc()" title="목차">
+                            <i class="mdi mdi-format-list-bulleted-square"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        // CM6 모듈 동적 import (Import Map으로 해석)
+        const [cmState, cmViewMod, cmCommands, cmMarkdown, cmLangData, cmOneDark, cmLanguage, cmLezer] = await Promise.all([
+            import("@codemirror/state"),
+            import("@codemirror/view"),
+            import("@codemirror/commands"),
+            import("@codemirror/lang-markdown"),
+            import("@codemirror/language-data"),
+            import("@codemirror/theme-one-dark"),
+            import("@codemirror/language"),
+            import("@lezer/highlight"),
+        ]);
+
+        const { EditorState, Compartment, RangeSetBuilder } = cmState;
+        const { EditorView, keymap: cmKeymap, lineNumbers, highlightActiveLineGutter, drawSelection,
+            MatchDecorator, ViewPlugin, Decoration } = cmViewMod;
+        const { defaultKeymap, history, historyKeymap, indentWithTab } = cmCommands;
+        const { markdown, markdownLanguage } = cmMarkdown;
+        const { languages } = cmLangData;
+        const { oneDark } = cmOneDark;
+        const { syntaxHighlighting, defaultHighlightStyle, indentOnInput, bracketMatching, HighlightStyle, syntaxTree } = cmLanguage;
+        const { tags: t } = cmLezer;
+
+        // 이벤트 핸들러 저장소 (shim의 editor.on() 용)
+        const editorEventHandlers = { change: [], blur: [] };
+
+        // 다크모드 감지
+        const isDarkMode = getIsDarkMode();
+
+        // ── 에디터 설정 (localStorage에서 불러오기) ──
+        const editorSettings = {
+            showLineNumbers: localStorage.getItem('editor_show_line_numbers') !== 'false',
+            scrollSync: localStorage.getItem('editor_scroll_sync') === 'true',
+            wordWrap: localStorage.getItem('editor_word_wrap') !== 'false',
+        };
+
+        // ── CM6 동적 재설정용 Compartment ──
+        const lineNumbersCompartment = new Compartment();
+        const lineWrappingCompartment = new Compartment();
+
+        // ── 마크다운 문법 하이라이트 스타일 ──
+        const markdownLightStyle = HighlightStyle.define([
+            // 헤딩 (레벨별 구분)
+            { tag: t.heading1, color: "#0550ae", fontWeight: "700", fontSize: "2em" },
+            { tag: t.heading2, color: "#0550ae", fontWeight: "700", fontSize: "1.75em" },
+            { tag: t.heading3, color: "#0a3069", fontWeight: "700", fontSize: "1.5em" },
+            { tag: t.heading4, color: "#0a3069", fontWeight: "600", fontSize: "1.25em" },
+            { tag: t.heading5, color: "#0a3069", fontWeight: "600", fontSize: "1.1em" },
+            { tag: t.heading6, color: "#0a3069", fontWeight: "600", fontSize: "1em" },
+            // 인라인 서식
+            { tag: t.strong, fontWeight: "700" },
+            { tag: t.emphasis, fontStyle: "italic" },
+            { tag: t.strikethrough, textDecoration: "line-through", color: "#6e7781" },
+            // 링크 & URL
+            { tag: t.link, color: "#0969da" },
+            { tag: t.url, color: "#0969da" },
+            // 인라인 코드
+            { tag: t.monospace, class: "cm-inline-code" },
+            // 인용
+            { tag: t.quote, color: "inherit", fontStyle: "normal" },
+            // 마크업 메타문자 (# * _ ~ ` > - 등)
+            { tag: t.meta, color: "#6e7781" },
+            { tag: t.processingInstruction, color: "#6e7781" },
+            // 구분선 / 리스트 마커
+            { tag: t.contentSeparator, color: "#6e7781" },
+            { tag: t.list, color: "inherit" },
+            // 코드 블록 내부 토큰
+            { tag: t.keyword, color: "#cf222e", fontWeight: "500" },
+            { tag: [t.atom, t.bool], color: "#0550ae" },
+            { tag: t.number, color: "#0550ae" },
+            { tag: t.string, color: "#0a3069" },
+            { tag: [t.regexp, t.escape], color: "#e36209" },
+            { tag: t.comment, color: "#6e7781", fontStyle: "italic" },
+            { tag: t.variableName, color: "#953800" },
+            { tag: t.definition(t.variableName), color: "#116329" },
+            { tag: t.typeName, color: "#116329" },
+            { tag: t.tagName, color: "#116329" },
+            { tag: t.attributeName, color: "#953800" },
+            { tag: t.operator, color: "#cf222e" },
+            { tag: t.invalid, color: "#f85149" },
+        ]);
+
+        const markdownDarkStyle = HighlightStyle.define([
+            { tag: t.heading1, color: "#79c0ff", fontWeight: "700", fontSize: "2em" },
+            { tag: t.heading2, color: "#79c0ff", fontWeight: "700", fontSize: "1.75em" },
+            { tag: t.heading3, color: "#79c0ff", fontWeight: "700", fontSize: "1.5em" },
+            { tag: t.heading4, color: "#58a6ff", fontWeight: "600", fontSize: "1.25em" },
+            { tag: t.heading5, color: "#58a6ff", fontWeight: "600", fontSize: "1.1em" },
+            { tag: t.heading6, color: "#58a6ff", fontWeight: "600", fontSize: "1em" },
+            { tag: t.strong, fontWeight: "700" },
+            { tag: t.emphasis, fontStyle: "italic" },
+            { tag: t.strikethrough, textDecoration: "line-through", color: "#8b949e" },
+            { tag: t.link, color: "#58a6ff" },
+            { tag: t.url, color: "#58a6ff" },
+            { tag: t.monospace, class: "cm-inline-code" },
+            { tag: t.quote, color: "inherit", fontStyle: "normal" },
+            { tag: t.meta, color: "#8b949e" },
+            { tag: t.processingInstruction, color: "#8b949e" },
+            { tag: t.contentSeparator, color: "#8b949e" },
+            { tag: t.list, color: "inherit" },
+            { tag: t.keyword, color: "#ff7b72", fontWeight: "500" },
+            { tag: [t.atom, t.bool], color: "#79c0ff" },
+            { tag: t.number, color: "#79c0ff" },
+            { tag: t.string, color: "#a5d6ff" },
+            { tag: [t.regexp, t.escape], color: "#ffa657" },
+            { tag: t.comment, color: "#8b949e", fontStyle: "italic" },
+            { tag: t.variableName, color: "#ffa657" },
+            { tag: t.definition(t.variableName), color: "#7ee787" },
+            { tag: t.typeName, color: "#7ee787" },
+            { tag: t.tagName, color: "#7ee787" },
+            { tag: t.attributeName, color: "#ffa657" },
+            { tag: t.operator, color: "#ff7b72" },
+            { tag: t.invalid, color: "#f85149" },
+        ]);
+
+        // 라이트 모드 테마 (라이트 전용 색상 및 스타일)
+        const lightTheme = EditorView.theme({
+            "&": {
+                backgroundColor: "#ffffff",
+                color: "#24292f",
+                height: "100%",
+                fontSize: "14px",
+                fontFamily: "ui-monospace, SFMono-Regular, 'SF Mono', Consolas, 'Liberation Mono', Menlo, monospace"
+            },
+            ".cm-content": {
+                caretColor: "#24292f",
+                paddingBottom: "25vh"
+            },
+            ".cm-cursor, .cm-dropCursor": { borderLeftColor: "#24292f" },
+            "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection": {
+                backgroundColor: "#b4d5fe"
+            },
+            ".cm-gutters": {
+                backgroundColor: "#f6f8fa",
+                color: "#6e7781",
+                border: "none",
+                borderRight: "1px solid #d0d7de"
+            },
+            ".cm-activeLineGutter": { backgroundColor: "#dbeafe" },
+            ".cm-activeLine": { backgroundColor: "#f0f7ff" },
+            ".cm-scroller": { overflow: "auto" },
+            ".cm-lineNumbers .cm-gutterElement": { padding: "0 8px" },
+            ".cm-foldGutter .cm-gutterElement": { padding: "0 4px" },
+        }, { dark: false });
+
+        const themeExtension = isDarkMode ? oneDark : lightTheme;
+
+        // ── 위키 문법 에디터 내 하이라이팅 플러그인 ──
+        const makePlugin = (matcher) => ViewPlugin.fromClass(class {
+            constructor(view) { this.decorations = matcher.createDeco(view); }
+            update(update) { this.decorations = matcher.updateDeco(update, this.decorations); }
+        }, { decorations: v => v.decorations });
+
+        const wikiLinkMatcher = new MatchDecorator({
+            regexp: /\[\[([^\]]*)\]\]/g,
+            decoration: Decoration.mark({ class: "cm-wiki-link" })
+        });
+        const wikiLinkPlugin = makePlugin(wikiLinkMatcher);
+
+        const templateMatcher = new MatchDecorator({
+            regexp: /\{\{([^}]*)\}\}/g,
+            decoration: Decoration.mark({ class: "cm-wiki-template" })
+        });
+        const templatePlugin = makePlugin(templateMatcher);
+
+        const alignMatcher = new MatchDecorator({
+            regexp: /\{[<p^>><]+\}/g,
+            decoration: Decoration.mark({ class: "cm-align-marker" })
+        });
+        const alignPlugin = makePlugin(alignMatcher);
+
+        const iconMatcher = new MatchDecorator({
+            regexp: /\{(bi|mdi|icon):[^}]+\}/g,
+            decoration: Decoration.mark({ class: "cm-icon-marker" })
+        });
+        const iconPlugin = makePlugin(iconMatcher);
+
+        const colorBadgeMatcher = new MatchDecorator({
+            regexp: /\{(color|bg):\s*([^}]+)\}/g,
+            decoration: (match) => Decoration.mark({
+                class: "cm-color-badge",
+                attributes: { style: `--badge-color: ${match[2]};` }
+            })
+        });
+        const colorBadgePlugin = makePlugin(colorBadgeMatcher);
+
+        const highlightMatcher = new MatchDecorator({
+            regexp: /==([^=]+)==/g,
+            decoration: Decoration.mark({ class: "cm-highlight" })
+        });
+        const highlightPlugin = makePlugin(highlightMatcher);
+
+        const timeMatcher = new MatchDecorator({
+            regexp: /\{(time|timer|age|dday):[^}]+\}/g,
+            decoration: Decoration.mark({ class: "cm-time-marker" })
+        });
+        const timePlugin = makePlugin(timeMatcher);
+
+        const spoilerMatcher = new MatchDecorator({
+            regexp: /\|\|(.*?)\|\|/g,
+            decoration: Decoration.mark({ class: "cm-inline-code" })
+        });
+        const spoilerPlugin = makePlugin(spoilerMatcher);
+
+        const inlineCodeMatcher = new MatchDecorator({
+            regexp: /`([^`]+)`/g,
+            decoration: Decoration.mark({ class: "cm-inline-code" })
+        });
+        const inlineCodePlugin = makePlugin(inlineCodeMatcher);
+
+        const quoteListMatcher = new MatchDecorator({
+            regexp: /^[ \t]*(>|[-+*]|\d+\.)(?=[ \t])/gm,
+            decoration: (match) => {
+                if (match[1] === '>') return Decoration.mark({ class: "cm-quote-marker" });
+                return Decoration.mark({ class: "cm-list-marker" });
+            }
+        });
+        const quoteListPlugin = makePlugin(quoteListMatcher);
+
+        // 마크다운 일반 링크 대괄호/괄호 회색 처리
+        const mdLinkBracketsPlugin = ViewPlugin.fromClass(class {
+            constructor(view) { this.decorations = this.getDeco(view); }
+            update(update) {
+                if (update.docChanged || update.viewportChanged) {
+                    this.decorations = this.getDeco(update.view);
+                }
+            }
+            getDeco(view) {
+                let builder = new RangeSetBuilder();
+                let ranges = [];
+                for (let { from, to } of view.visibleRanges) {
+                    syntaxTree(view.state).iterate({
+                        from, to,
+                        enter: (node) => {
+                            if (node.name === "LinkMark" || node.name === "ImageMark") {
+                                ranges.push({ from: node.from, to: node.to });
+                            }
+                        }
+                    });
+                }
+                ranges.sort((a, b) => a.from - b.from);
+                const deco = Decoration.mark({ class: "cm-md-link-bracket" });
+                for (let r of ranges) {
+                    builder.add(r.from, r.to, deco);
+                }
+                return builder.finish();
+            }
+        }, { decorations: v => v.decorations });
+
+        // 줄 단위 블록 스타일링 (접기, 코드블록 등)
+        const lineStylePlugin = ViewPlugin.fromClass(class {
+            constructor(view) { this.decorations = this.getDeco(view); }
+            update(update) {
+                if (update.docChanged || update.viewportChanged) {
+                    this.decorations = this.getDeco(update.view);
+                }
+            }
+            getDeco(view) {
+                let builder = new RangeSetBuilder();
+                let doc = view.state.doc;
+                let maxLine = doc.lines;
+                let inFold = false;
+                let inCode = false;
+
+                for (let i = 1; i <= maxLine; i++) {
+                    let line = doc.line(i);
+                    let text = line.text;
+                    let classes = [];
+
+                    if (text.includes("[+")) inFold = true;
+                    if (inFold) classes.push("cm-fold-block");
+                    if (text.includes("[-]")) inFold = false;
+
+                    let isCodeFence = text.trim().startsWith("```");
+                    if (isCodeFence) {
+                        inCode = !inCode;
+                        classes.push("cm-code-block");
+                    } else if (inCode) {
+                        classes.push("cm-code-block");
+                    }
+
+                    if (classes.length > 0) {
+                        builder.add(line.from, line.from, Decoration.line({ class: classes.join(" ") }));
+                    }
+                }
+                return builder.finish();
+            }
+        }, { decorations: v => v.decorations });
+
+        // 문서 변경 감지 리스너
+        const updateListener = EditorView.updateListener.of((update) => {
+            if (update.docChanged) {
+                editorEventHandlers.change.forEach(cb => cb());
+            }
+        });
+
+        // blur 감지
+        const blurHandler = EditorView.domEventHandlers({
+            blur: () => {
+                editorEventHandlers.blur.forEach(cb => cb());
+            }
+        });
+
+        // ── CM6 EditorView 생성 ──
+        const cmEditorView = new EditorView({
+            state: EditorState.create({
+                doc: "",
+                extensions: [
+                    lineNumbersCompartment.of(
+                        editorSettings.showLineNumbers
+                            ? [lineNumbers(), highlightActiveLineGutter()]
+                            : []
+                    ),
+                    drawSelection(),
+                    indentOnInput(),
+                    bracketMatching(),
+                    history(),
+                    syntaxHighlighting(isDarkMode ? markdownDarkStyle : markdownLightStyle),
+                    cmKeymap.of([
+                        ...defaultKeymap,
+                        ...historyKeymap,
+                        indentWithTab
+                    ]),
+                    markdown({ base: markdownLanguage, codeLanguages: languages }),
+                    themeExtension,
+                    // 다크 모드에서도 높이/스크롤 보장 (oneDark는 이를 설정하지 않음) 및 전체 배경색 변경
+                    isDarkMode ? EditorView.theme({
+                        "&": { height: "100%", fontSize: "14px", backgroundColor: "#18181b" },
+                        ".cm-scroller": { overflow: "auto" },
+                        ".cm-content": { paddingBottom: "25vh" },
+                        ".cm-gutters": { backgroundColor: "#18181b", borderRight: "1px solid #333" },
+                        ".cm-activeLineGutter": { backgroundColor: "#2d2d2d" }
+                    }) : [],
+                    lineWrappingCompartment.of(
+                        editorSettings.wordWrap ? EditorView.lineWrapping : []
+                    ),
+                    updateListener,
+                    blurHandler,
+                    wikiLinkPlugin,
+                    templatePlugin,
+                    alignPlugin,
+                    iconPlugin,
+                    colorBadgePlugin,
+                    highlightPlugin,
+                    timePlugin,
+                    spoilerPlugin,
+                    inlineCodePlugin,
+                    quoteListPlugin,
+                    lineStylePlugin
+                ]
+            }),
+            parent: document.querySelector('#cm-editor')
+        });
+
+        // 전역 CM6 인스턴스 보관
+        window._cmView = cmEditorView;
+
+        // ── 에디터 Shim 객체 (기존 edit.js 코드와 호환) ──
+        editor = {
+            getMarkdown: () => cmEditorView.state.doc.toString(),
+            setMarkdown: (md) => {
+                cmEditorView.dispatch({
+                    changes: { from: 0, to: cmEditorView.state.doc.length, insert: md }
+                });
+            },
+            insertText: (text) => {
+                const { main } = cmEditorView.state.selection;
+                cmEditorView.dispatch({
+                    changes: { from: main.from, to: main.to, insert: text },
+                    selection: { anchor: main.from + text.length }
+                });
+                cmEditorView.focus();
+            },
+            getSelection: () => {
+                const { main } = cmEditorView.state.selection;
+                const fromLine = cmEditorView.state.doc.lineAt(main.from);
+                const toLine = cmEditorView.state.doc.lineAt(main.to);
+                return [
+                    [fromLine.number, main.from - fromLine.from + 1],
+                    [toLine.number, main.to - toLine.from + 1]
+                ];
+            },
+            setSelection: (fromArr, toArr) => {
+                try {
+                    const fromLine = cmEditorView.state.doc.line(fromArr[0]);
+                    const toLine = cmEditorView.state.doc.line(toArr[0]);
+                    const from = fromLine.from + fromArr[1] - 1;
+                    const to = toLine.from + toArr[1] - 1;
+                    cmEditorView.dispatch({
+                        selection: { anchor: from, head: to }
+                    });
+                } catch (e) {
+                    // 잘못된 위치 무시
+                }
+            },
+            focus: () => cmEditorView.focus(),
+            on: (event, callback) => {
+                if (editorEventHandlers[event]) {
+                    editorEventHandlers[event].push(callback);
+                }
+            },
+            changePreviewStyle: () => { /* CM6 스플릿 뷰에서는 불필요 */ },
+            getCursorCoords: () => {
+                const { main } = cmEditorView.state.selection;
+                return cmEditorView.coordsAtPos(main.head);
+            }
+        };
+
+        // ── 모바일 탭 전환 로직 ──
+        const cmTabBtns = document.querySelectorAll('.cm-tab-btn');
+        const cmEditorPane = document.getElementById('cm-editor-pane');
+        const cmPreviewPane = document.getElementById('custom-wiki-preview');
+
+        function activateCmTab(tab) {
+            cmTabBtns.forEach(btn => btn.classList.toggle('active', btn.dataset.tab === tab));
+            const layoutEl = document.querySelector('.wiki-editor-layout');
+            if (layoutEl) layoutEl.dataset.activeTab = tab;
+            if (tab === 'editor') {
+                cmEditorPane.classList.add('cm-tab-active');
+                cmPreviewPane.classList.remove('cm-tab-active');
+                // 에디터 크기 재계산
+                cmEditorView.requestMeasure();
+            } else {
+                cmEditorPane.classList.remove('cm-tab-active');
+                cmPreviewPane.classList.add('cm-tab-active');
+                // 프리뷰 탭으로 전환 시 즉시 렌더링
+                updateCustomPreview();
+            }
+        }
+
+        cmTabBtns.forEach(btn => {
+            btn.addEventListener('click', () => activateCmTab(btn.dataset.tab));
+        });
+
+        // 모바일이면 에디터 탭을 기본 활성화 (PC는 CSS로 항상 표시)
+        if (isMobile) {
+            activateCmTab('editor');
+        }
+
+        // ── 커스텀 툴바 구성 ──
+        const toolbar = document.getElementById('cm-toolbar');
+
+        function createToolbarBtn(icon, tooltip, onClick) {
             const btn = document.createElement('button');
             btn.type = 'button';
-            btn.className = 'toastui-editor-toolbar-icons';
-            btn.style.backgroundImage = 'none';
-            btn.style.margin = '0';
-            btn.style.fontSize = '12px';
-            btn.style.fontWeight = '700';
-            btn.style.color = 'var(--wiki-text)';
-            btn.style.width = '32px';
-            btn.style.padding = '0';
-            btn.style.lineHeight = '24px';
-            btn.style.display = 'inline-flex';
-            btn.style.alignItems = 'center';
-            btn.style.justifyContent = 'center';
-            btn.innerHTML = text;
-            btn.setAttribute('aria-label', tooltip);
+            btn.className = 'cm-toolbar-btn';
+            btn.innerHTML = icon;
+            btn.title = tooltip;
             btn.addEventListener('click', onClick);
             return btn;
         }
 
-        const wikiLinkBtn = createCustomButton('[[ ]]', '위키 링크 삽입', () => {
-            editor.insertText('[[문서제목]]');
-        });
+        function createToolbarSep() {
+            const sep = document.createElement('span');
+            sep.className = 'cm-toolbar-sep';
+            return sep;
+        }
 
-        const transclusionBtn = createCustomButton('{{ }}', '틀 삽입', () => {
-            editor.insertText('{{틀제목}}');
-        });
+        // 마크다운 서식 삽입 헬퍼
+        function wrapSelection(prefix, suffix) {
+            const { main } = cmEditorView.state.selection;
+            const selected = cmEditorView.state.sliceDoc(main.from, main.to);
+            const wrapped = prefix + (selected || '텍스트') + suffix;
+            cmEditorView.dispatch({
+                changes: { from: main.from, to: main.to, insert: wrapped },
+                selection: { anchor: main.from + prefix.length, head: main.from + wrapped.length - suffix.length }
+            });
+            cmEditorView.focus();
+        }
 
-        const mdiBtn = createCustomButton('<i class="mdi mdi-vector-square" style="font-size:16px"></i>', 'MDI 아이콘 삽입', () => {
-            openIconPicker('mdi');
-        });
+        function insertPrefix(prefix) {
+            const { main } = cmEditorView.state.selection;
+            const line = cmEditorView.state.doc.lineAt(main.from);
+            cmEditorView.dispatch({
+                changes: { from: line.from, to: line.from, insert: prefix }
+            });
+            cmEditorView.focus();
+        }
 
-        const biBtn = createCustomButton('<i class="bi bi-bootstrap-fill" style="font-size:16px"></i>', 'Bootstrap Icon 삽입', () => {
-            openIconPicker('bi');
-        });
+        // 포맷 버튼
+        toolbar.appendChild(createToolbarBtn('<b>H</b>', '제목', () => insertPrefix('## ')));
+        toolbar.appendChild(createToolbarBtn('<b>B</b>', '굵게', () => wrapSelection('**', '**')));
+        toolbar.appendChild(createToolbarBtn('<i>I</i>', '기울임', () => wrapSelection('*', '*')));
+        toolbar.appendChild(createToolbarBtn('<s>S</s>', '취소선', () => wrapSelection('~~', '~~')));
+        toolbar.appendChild(createToolbarSep());
+        toolbar.appendChild(createToolbarBtn('─', '구분선', () => editor.insertText('\n---\n')));
+        toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-format-quote-close"></i>', '인용', () => insertPrefix('> ')));
+        toolbar.appendChild(createToolbarSep());
+        toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-format-list-bulleted"></i>', '목록', () => insertPrefix('- ')));
+        toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-format-list-numbered"></i>', '번호 목록', () => insertPrefix('1. ')));
+        toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-checkbox-marked-outline"></i>', '체크리스트', () => insertPrefix('- [ ] ')));
+        toolbar.appendChild(createToolbarSep());
+        toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-table"></i>', '표', () => editor.insertText('\n| 제목1 | 제목2 |\n|---|---|\n| 내용1 | 내용2 |\n')));
+        toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-link-variant"></i>', '링크', () => wrapSelection('[', '](url)')));
+        toolbar.appendChild(createToolbarSep());
 
-        const selectedIconsBtn = createCustomButton('<i class="mdi mdi-vector-square" style="font-size:16px"></i>', '아이콘 삽입', () => {
-            openSelectedIconsPicker();
-        });
+        // 위키 커스텀 버튼
+        toolbar.appendChild(createToolbarBtn('[[ ]]', '위키 링크 삽입', () => editor.insertText('[[문서제목]]')));
+        toolbar.appendChild(createToolbarBtn('{{ }}', '틀 삽입', () => editor.insertText('{{틀제목}}')));
 
-        const footnoteBtn = createCustomButton('[*]', '각주 삽입', () => {
-            editor.insertText('[* 각주 내용]');
-        });
+        if (selectedIconsOnly) {
+            toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-vector-square"></i>', '아이콘 삽입', () => openSelectedIconsPicker()));
+        } else {
+            toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-vector-square"></i>', 'MDI 아이콘', () => openIconPicker('mdi')));
+            toolbar.appendChild(createToolbarBtn('<i class="bi bi-bootstrap-fill"></i>', 'Bootstrap 아이콘', () => openIconPicker('bi')));
+        }
 
-        const foldingBtn = createCustomButton('<i class="mdi mdi-form-dropdown" style="font-size:16px"></i>', '펼치기 접기 삽입', () => {
-            editor.insertText('[+ 펼치기/접기 제목]\n여기에 숨겨진 내용이 들어갑니다.\n[-]');
-        });
+        toolbar.appendChild(createToolbarBtn('[*]', '각주 삽입', () => editor.insertText('[* 각주 내용]')));
+        toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-form-dropdown"></i>', '펼치기 접기', () => editor.insertText('[+ 펼치기/접기 제목]\n여기에 숨겨진 내용이 들어갑니다.\n[-]')));
+        toolbar.appendChild(createToolbarBtn('<i class="bi bi-diagram-3-fill"></i>', '하위 문서', () => openSubdocInsertModal()));
+        toolbar.appendChild(createToolbarSep());
+        toolbar.appendChild(createToolbarBtn('<code>&lt;/&gt;</code>', '인라인 코드', () => wrapSelection('`', '`')));
+        toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-code-braces"></i>', '코드 블록', () => wrapSelection('\n```\n', '\n```\n')));
+        toolbar.appendChild(createToolbarSep());
+        toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-google-maps"></i>', '구글 지도 퍼가기', () => openGoogleMapsEmbedModal()));
 
-        const subdocBtn = createCustomButton('<i class="bi bi-diagram-3-fill" style="font-size:16px"></i>', '하위 문서 구조 삽입', () => {
-            openSubdocInsertModal();
-        });
+        // 이미지 업로드 버튼 + 드래그앤드롭 팝업
+        const imageUploadBtn = createToolbarBtn('<i class="mdi mdi-image-plus"></i>', '이미지 업로드', () => { });
+        toolbar.appendChild(imageUploadBtn);
 
-        // 커스텀 이미지 업로드 버튼 (드래그앤드롭 팝업)
-        const imageUploadBtn = createCustomButton('<i class="mdi mdi-image-plus" style="font-size:16px"></i>', '이미지 업로드', () => { });
-
-        // 드래그앤드롭 팝업 생성
         const imgUploadPopup = document.createElement('div');
         imgUploadPopup.className = 'img-upload-popup';
         imgUploadPopup.innerHTML = `
@@ -1690,7 +2212,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         imgFileInput.style.display = 'none';
         imgUploadPopup.appendChild(imgFileInput);
 
-        // 팝업 토글
         imageUploadBtn.addEventListener('click', (e) => {
             e.stopPropagation();
             const isActive = imgUploadPopup.classList.contains('active');
@@ -1702,46 +2223,29 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         });
 
-        // 바깥 클릭시 닫기
         document.addEventListener('click', (e) => {
             if (!imgUploadPopup.contains(e.target) && !imageUploadBtn.contains(e.target)) {
                 imgUploadPopup.classList.remove('active');
             }
         });
 
-        // 드롭존 클릭 → 파일 선택
-        imgDropzone.addEventListener('click', () => {
-            imgFileInput.click();
-        });
+        imgDropzone.addEventListener('click', () => { imgFileInput.click(); });
 
-        // 파일 선택 처리
         imgFileInput.addEventListener('change', async (e) => {
             const file = e.target.files[0];
             if (!file) return;
             imgUploadPopup.classList.remove('active');
             await handleImageUpload(file, (url, alt, size) => {
                 let insertTxt = `![${alt}](${url})`;
-                if (size && size !== 'full') {
-                    insertTxt += `{size:${size}}`;
-                }
+                if (size && size !== 'full') insertTxt += `{size:${size}}`;
                 editor.insertText(insertTxt);
             });
             imgFileInput.value = '';
         });
 
-        // 드래그앤드롭 처리
-        imgDropzone.addEventListener('dragenter', (e) => {
-            e.preventDefault();
-            imgDropzone.classList.add('dragover');
-        });
-        imgDropzone.addEventListener('dragover', (e) => {
-            e.preventDefault();
-            e.dataTransfer.dropEffect = 'copy';
-        });
-        imgDropzone.addEventListener('dragleave', (e) => {
-            e.preventDefault();
-            imgDropzone.classList.remove('dragover');
-        });
+        imgDropzone.addEventListener('dragenter', (e) => { e.preventDefault(); imgDropzone.classList.add('dragover'); });
+        imgDropzone.addEventListener('dragover', (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; });
+        imgDropzone.addEventListener('dragleave', (e) => { e.preventDefault(); imgDropzone.classList.remove('dragover'); });
         imgDropzone.addEventListener('drop', async (e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -1758,53 +2262,241 @@ document.addEventListener('DOMContentLoaded', async () => {
             imgUploadPopup.classList.remove('active');
             await handleImageUpload(file, (url, alt, size) => {
                 let insertTxt = `![${alt}](${url})`;
-                if (size && size !== 'full') {
-                    insertTxt += `{size:${size}}`;
-                }
+                if (size && size !== 'full') insertTxt += `{size:${size}}`;
                 editor.insertText(insertTxt);
             });
         });
 
-        const isDarkMode = getIsDarkMode();
+        // ── 툴바 오른쪽 끝: 설정 버튼 ──
+        const toolbarSpacer = document.createElement('span');
+        toolbarSpacer.className = 'cm-toolbar-spacer';
+        toolbar.appendChild(toolbarSpacer);
 
-        editor = new toastui.Editor({
-            el: document.querySelector('#editor'),
-            height: '600px',
-            initialEditType: 'markdown',
-            previewStyle: isMobile ? 'tab' : 'vertical',
-            language: 'ko-KR',
-            theme: isDarkMode ? 'dark' : 'light',
-            usageStatistics: false,
-            hideModeSwitch: true,
-            scrollSync: false,
-            toolbarItems: [
-                ['heading', 'bold', 'italic', 'strike'],
-                ['hr', 'quote'],
-                ['ul', 'ol', 'task'],
-                ['table', 'link'],
-                [
-                    { name: 'wikiLink', tooltip: '위키 링크 삽입', el: wikiLinkBtn },
-                    { name: 'transclusion', tooltip: '틀 삽입', el: transclusionBtn },
-                    ...(selectedIconsOnly
-                        ? [{ name: 'selectedIcons', tooltip: '아이콘 삽입', el: selectedIconsBtn }]
-                        : [
-                            { name: 'mdiIcon', tooltip: 'MDI 아이콘', el: mdiBtn },
-                            { name: 'biIcon', tooltip: 'Bootstrap 아이콘', el: biBtn },
-                        ]),
-                    { name: 'footnote', tooltip: '각주 삽입', el: footnoteBtn },
-                    { name: 'folding', tooltip: '펼치기 접기 삽입', el: foldingBtn },
-                    { name: 'subdocInsert', tooltip: '하위 문서 구조 삽입', el: subdocBtn },
-                    { name: 'imageUpload', tooltip: '이미지 업로드', el: imageUploadBtn }
-                ],
-                ['code', 'codeblock']
-            ],
-            hooks: {
-                addImageBlobHook: async (blob, callback) => {
-                    // 에디터 내부 드래그앤드롭 무시 (팝업 드롭존에서만 허용)
-                    return;
-                }
+        const settingsBtn = createToolbarBtn('<i class="mdi mdi-cog"></i>', '에디터 설정', () => toggleSettingsPanel());
+        settingsBtn.id = 'cm-settings-btn';
+        toolbar.appendChild(settingsBtn);
+
+        // ── 에디터 설정 패널 ──
+        const settingsPanel = document.createElement('div');
+        settingsPanel.id = 'editor-settings-panel';
+        settingsPanel.className = 'editor-settings-panel';
+        settingsPanel.style.display = 'none';
+        settingsPanel.innerHTML = `
+            <div class="editor-settings-title"><i class="mdi mdi-cog"></i> 에디터 설정</div>
+            <label class="editor-settings-item">
+                <span>줄 번호 표시</span>
+                <input type="checkbox" id="settingLineNumbers" ${editorSettings.showLineNumbers ? 'checked' : ''}>
+            </label>
+            <label class="editor-settings-item">
+                <span>스크롤 동기화</span>
+                <input type="checkbox" id="settingScrollSync" ${editorSettings.scrollSync ? 'checked' : ''}>
+            </label>
+            <div class="editor-settings-divider"></div>
+            <div class="editor-settings-section-title">줄바꿈 모드</div>
+            <label class="editor-settings-item">
+                <input type="radio" name="settingWrapMode" value="wrap" ${editorSettings.wordWrap ? 'checked' : ''}>
+                <span>자동 줄바꿈 (기본)</span>
+            </label>
+            <label class="editor-settings-item">
+                <input type="radio" name="settingWrapMode" value="scroll" ${!editorSettings.wordWrap ? 'checked' : ''}>
+                <span>가로 스크롤</span>
+            </label>
+        `;
+        document.body.appendChild(settingsPanel);
+
+        function toggleSettingsPanel() {
+            const isVisible = settingsPanel.style.display !== 'none';
+            if (isVisible) {
+                settingsPanel.style.display = 'none';
+                settingsBtn.classList.remove('active');
+            } else {
+                // 크기 측정을 위해 일단 보이지 않게 렌더링
+                settingsPanel.style.visibility = 'hidden';
+                settingsPanel.style.left = '-9999px';
+                settingsPanel.style.top = '-9999px';
+                settingsPanel.style.display = 'block';
+
+                const panelW = settingsPanel.offsetWidth;
+                const rect = settingsBtn.getBoundingClientRect();
+
+                // position:absolute → document 좌표 사용 (scrollX/Y 포함)
+                // 버튼 바로 아래, 오른쪽 정렬
+                const left = rect.right + window.scrollX - panelW;
+                const top = rect.bottom + window.scrollY + 4;
+
+                settingsPanel.style.left = `${left}px`;
+                settingsPanel.style.top = `${top}px`;
+                settingsPanel.style.visibility = '';
+                settingsBtn.classList.add('active');
+            }
+        }
+
+        // 설정 패널 외부 클릭 시 닫기
+        document.addEventListener('click', (e) => {
+            if (!settingsPanel.contains(e.target) && !settingsBtn.contains(e.target)) {
+                settingsPanel.style.display = 'none';
+                settingsBtn.classList.remove('active');
             }
         });
+
+        // ── 줄 번호 토글 ──
+        document.getElementById('settingLineNumbers').addEventListener('change', (e) => {
+            editorSettings.showLineNumbers = e.target.checked;
+            localStorage.setItem('editor_show_line_numbers', editorSettings.showLineNumbers);
+            cmEditorView.dispatch({
+                effects: lineNumbersCompartment.reconfigure(
+                    editorSettings.showLineNumbers
+                        ? [lineNumbers(), highlightActiveLineGutter()]
+                        : []
+                )
+            });
+        });
+
+        // ── 스크롤 동기화 토글 ──
+        document.getElementById('settingScrollSync').addEventListener('change', (e) => {
+            editorSettings.scrollSync = e.target.checked;
+            localStorage.setItem('editor_scroll_sync', editorSettings.scrollSync);
+            setScrollSync(editorSettings.scrollSync);
+        });
+
+        // ── 줄바꿈 모드 토글 ──
+        settingsPanel.querySelectorAll('input[name="settingWrapMode"]').forEach(radio => {
+            radio.addEventListener('change', (e) => {
+                if (e.target.checked) {
+                    editorSettings.wordWrap = (e.target.value === 'wrap');
+                    localStorage.setItem('editor_word_wrap', editorSettings.wordWrap);
+                    cmEditorView.dispatch({
+                        effects: lineWrappingCompartment.reconfigure(
+                            editorSettings.wordWrap ? EditorView.lineWrapping : []
+                        )
+                    });
+                }
+            });
+        });
+
+        // ── 스크롤 동기화 로직 ──
+        let _scrollSyncHandler = null;
+        let _previewScrollTarget = null;
+        let _previewLerpRAF = null;
+        let _lerpLastSetScrollTop = null;
+
+        function runPreviewLerp() {
+            const customPreview = document.getElementById('custom-wiki-preview');
+            if (!customPreview || _previewScrollTarget === null) {
+                _previewLerpRAF = null;
+                return;
+            }
+            // 우리가 마지막에 설정한 값과 현재 값이 다르면 사용자가 직접 스크롤한 것 → lerp 중단
+            if (_lerpLastSetScrollTop !== null && Math.abs(customPreview.scrollTop - _lerpLastSetScrollTop) > 2) {
+                _previewScrollTarget = null;
+                _previewLerpRAF = null;
+                _lerpLastSetScrollTop = null;
+                return;
+            }
+            const current = customPreview.scrollTop;
+            const diff = _previewScrollTarget - current;
+            if (Math.abs(diff) < 0.5) {
+                customPreview.scrollTop = _previewScrollTarget;
+                _previewScrollTarget = null;
+                _previewLerpRAF = null;
+                _lerpLastSetScrollTop = null;
+                return;
+            }
+            const newScrollTop = current + diff * 0.15;
+            customPreview.scrollTop = newScrollTop;
+            _lerpLastSetScrollTop = newScrollTop;
+            _previewLerpRAF = requestAnimationFrame(runPreviewLerp);
+        }
+
+        function smoothScrollPreviewTo(targetTop) {
+            _previewScrollTarget = Math.max(0, targetTop);
+            _lerpLastSetScrollTop = null; // 새 lerp 시작 시 초기화
+            if (!_previewLerpRAF) {
+                _previewLerpRAF = requestAnimationFrame(runPreviewLerp);
+            }
+        }
+
+        function syncEditorScrollToPreview() {
+            const customPreview = document.getElementById('custom-wiki-preview');
+            if (!customPreview || !window._cmView) return;
+
+            const view = window._cmView;
+            const scroller = view.scrollDOM;
+
+            // 에디터가 맨 아래에 도달하면 프리뷰를 마지막 헤딩으로 동기화 (끝부분 오차 보정)
+            if (scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 4) {
+                const allHeadings = customPreview.querySelectorAll('[id^="heading-"]');
+                if (allHeadings.length > 0) {
+                    const lastAnchor = allHeadings[allHeadings.length - 1];
+                    const previewRect = customPreview.getBoundingClientRect();
+                    const anchorRect = lastAnchor.getBoundingClientRect();
+                    smoothScrollPreviewTo(customPreview.scrollTop + (anchorRect.top - previewRect.top) - 10);
+                }
+                return;
+            }
+
+            // 1. 에디터 스크롤 영역 최상단(툴바 바로 아래)의 문서 위치(pos)를 정확하게 파악
+            const rect = scroller.getBoundingClientRect();
+            // 약간의 여백(10px)을 주어 최상단 텍스트 라인의 위치를 안전하게 잡음
+            let topPos = view.posAtCoords({ x: rect.left + 20, y: rect.top + 10 }, false);
+
+            // 화면 밖으로 벗어나는 등 좌표를 못 찾을 때의 폴백
+            if (topPos === null) {
+                if (!view.visibleRanges || !view.visibleRanges.length) return;
+                topPos = view.visibleRanges[0].from;
+            }
+
+            const topLineNum = view.state.doc.lineAt(topPos).number; // 1-indexed
+
+            const docLines = view.state.doc.toString().split('\n');
+            let currentHeadingIdx = -1;
+            let headingCount = 0;
+
+            for (let i = 0; i < docLines.length; i++) {
+                const lineNum = i + 1;
+                if (/^#{1,6}\s/.test(docLines[i])) {
+                    if (lineNum <= topLineNum) {
+                        currentHeadingIdx = headingCount;
+                    }
+                    headingCount++;
+                }
+            }
+
+            // 2. 프리뷰에서 해당 목차 엘리먼트를 찾아 정확한 오프셋만큼 스크롤
+            if (currentHeadingIdx >= 0) {
+                const anchor = customPreview.querySelector(`#heading-${currentHeadingIdx}`);
+                if (anchor) {
+                    // offsetTop 대신 getBoundingClientRect()를 사용하여
+                    // 중간에 위치한 컨테이너 패딩이나 마진의 영향 없이 절대 스크롤 높이를 정확히 계산
+                    const previewRect = customPreview.getBoundingClientRect();
+                    const anchorRect = anchor.getBoundingClientRect();
+
+                    // 현재 스크롤 위치 + (요소 Y - 뷰포트 Y) - 상단 여백
+                    const targetScrollTop = customPreview.scrollTop + (anchorRect.top - previewRect.top) - 10;
+                    smoothScrollPreviewTo(targetScrollTop);
+                }
+            } else {
+                smoothScrollPreviewTo(0);
+            }
+        }
+
+        function setScrollSync(enabled) {
+            const scroller = cmEditorView.scrollDOM;
+            if (!scroller) return;
+            if (_scrollSyncHandler) {
+                scroller.removeEventListener('scroll', _scrollSyncHandler);
+                _scrollSyncHandler = null;
+            }
+            if (enabled) {
+                _scrollSyncHandler = () => syncEditorScrollToPreview();
+                scroller.addEventListener('scroll', _scrollSyncHandler, { passive: true });
+            }
+        }
+
+        // 초기 스크롤 동기화 설정 적용
+        if (editorSettings.scrollSync) {
+            setScrollSync(true);
+        }
 
         // ── 아이콘 피커 모달 닫힘 후 아이콘 삽입 ──
         document.getElementById('iconPickerModal').addEventListener('hidden.bs.modal', () => {
@@ -1817,6 +2509,59 @@ document.addEventListener('DOMContentLoaded', async () => {
                 pendingIconInsertion = null;
             }
         });
+
+        // ── 구글 지도 퍼가기 모달 ──
+        function openGoogleMapsEmbedModal() {
+            Swal.fire({
+                title: '<i class="mdi mdi-google-maps me-2"></i>구글 지도 삽입',
+                width: 580,
+                html: `
+                    <p style="font-size:0.85em;color:#666;margin-bottom:8px;text-align:left;">
+                        구글 지도 → 공유 → <b>지도 퍼가기</b>에서 복사한 HTML을 붙여넣으세요.
+                    </p>
+                    <textarea id="swal-maps-input" class="swal2-textarea"
+                        placeholder='&lt;iframe src="https://www.google.com/maps/embed?pb=..." ...&gt;&lt;/iframe&gt;'
+                        style="font-size:0.82em;height:160px;font-family:monospace;resize:vertical;width:100%;box-sizing:border-box;"></textarea>
+                `,
+                showCancelButton: true,
+                confirmButtonText: '삽입',
+                cancelButtonText: '취소',
+                didOpen: () => {
+                    document.getElementById('swal-maps-input').focus();
+                },
+                preConfirm: () => {
+                    const input = document.getElementById('swal-maps-input').value.trim();
+                    if (!input) {
+                        Swal.showValidationMessage('iframe HTML을 입력해주세요.');
+                        return false;
+                    }
+                    const match = input.match(/src=["']([^"']+)["']/);
+                    if (!match) {
+                        Swal.showValidationMessage('유효한 iframe 코드가 아닙니다.');
+                        return false;
+                    }
+                    const src = match[1];
+                    try {
+                        const srcUrl = new URL(src);
+                        const h = srcUrl.hostname;
+                        const validHost = (h === 'www.google.com' || h === 'google.com' || h === 'maps.google.com') && srcUrl.pathname.startsWith('/maps');
+                        if (!validHost) {
+                            Swal.showValidationMessage('구글 지도 URL이 아닙니다.');
+                            return false;
+                        }
+                    } catch (e) {
+                        Swal.showValidationMessage('유효하지 않은 URL입니다.');
+                        return false;
+                    }
+                    return src;
+                }
+            }).then(result => {
+                if (result.isConfirmed && result.value) {
+                    editor.insertText(result.value + '\n');
+                    cmEditorView.focus();
+                }
+            });
+        }
 
         // ── 하위 문서 구조 삽입 모달 ──
         async function openSubdocInsertModal() {
@@ -1873,7 +2618,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
                     function renderSubdocSuggestions(items) {
                         subdocActiveIdx = -1;
-                        // 네임스페이스 문서(슬러그에 ':' 포함) 제외
                         const filtered = items.filter(item => !item.slug.includes(':'));
                         if (!filtered.length) {
                             sugBox.style.display = 'none';
@@ -2005,16 +2749,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         const editorEl = document.querySelector('#editor');
         if (editorEl) {
             editorEl.addEventListener('paste', () => {
-                // 현재 스크롤 위치 저장
                 const currentScrollY = window.scrollY;
                 const currentScrollX = window.scrollX;
-                // 붙여넣기 완료 직후 원래 위치로 원복
                 requestAnimationFrame(() => {
                     window.scrollTo(currentScrollX, currentScrollY);
-                    // 혹시 늦게 렌더링되며 튀는 경우를 대비해 약간의 지연 후 한 번 더 복구
                     setTimeout(() => window.scrollTo(currentScrollX, currentScrollY), 10);
                 });
-            }, true); // 캡처링 단계에서 먼저 감지
+            }, true);
         }
 
         // ── 실시간 프리뷰 ──
@@ -2024,26 +2765,27 @@ document.addEventListener('DOMContentLoaded', async () => {
                 updateCustomPreview();
             }, 300);
         });
+        let isInitialLoadScroll = true;
         setTimeout(async () => {
             await updateCustomPreview();
-            scrollToBottom();
+            if (isInitialLoadScroll) {
+                scrollPreviewToBottom();
+                isInitialLoadScroll = false;
+            } else {
+                // If it's not initial, we don't auto scroll preview
+            }
         }, 300);
 
         startAutoSave();
     } // ── isExtensionData else 블록 종료 ──
 
+
     // 다크 모드 테마 토글 (OS 설정 변경 시)
+    // CM6에서는 초기화 시 테마를 설정하므로 런타임 토글은 페이지 리로드로 대체
     if (window.matchMedia) {
-        window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
-            if (!editor) return;
-            const el = document.querySelector('.toastui-editor-defaultUI');
-            if (el) {
-                if (e.matches) {
-                    el.classList.add('toastui-editor-dark');
-                } else {
-                    el.classList.remove('toastui-editor-dark');
-                }
-            }
+        window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+            // CM6 테마는 초기화 시점에 결정되므로, 다크모드 변경 시 페이지 새로고침
+            // (편집 중 변경은 드물므로 실용적인 접근)
         });
     }
 
@@ -2132,7 +2874,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
             originalContent = initialContent;
             editor.setMarkdown(initialContent);
-            scrollToBottom();
+            scrollPreviewToBottom();
 
             pageVersion = page.version;
             document.getElementById('editPageTitle').innerHTML =
@@ -2479,7 +3221,7 @@ function showConflictModal(data) {
     window.scrollTo(0, 0);
 
     if (isExtensionData) {
-        // 익스텐션 데이터: Toast UI 대신 textarea 사용
+        // 익스텐션 데이터: textarea 사용
         const conflictEl = document.querySelector('#conflict-local-editor');
         if (!conflictEditor) {
             conflictEl.innerHTML = '<textarea id="conflictRawTextarea" class="wiki-ext-raw-textarea" spellcheck="false" style="min-height:400px;"></textarea>';
@@ -2493,25 +3235,16 @@ function showConflictModal(data) {
             conflictEditor.setMarkdown(localContent);
         }
     } else {
+        // CM6 환경: 충돌 해결용 에디터도 textarea + shim 사용
+        const conflictEl = document.querySelector('#conflict-local-editor');
         if (!conflictEditor) {
-            const isDarkMode = getIsDarkMode();
-            conflictEditor = new toastui.Editor({
-                el: document.querySelector('#conflict-local-editor'),
-                height: '500px',
-                initialEditType: 'markdown',
-                previewStyle: 'tab',          // 충돌 UI는 공간 절약을 위해 tab
-                initialValue: localContent,
-                language: 'ko-KR',
-                theme: isDarkMode ? 'dark' : 'light',
-                usageStatistics: false,
-                hideModeSwitch: true,
-                toolbarItems: [               // 최소한의 툴바만
-                    ['heading', 'bold', 'italic', 'strike'],
-                    ['ul', 'ol', 'task'],
-                    ['table', 'link'],
-                    ['code', 'codeblock'],
-                ],
-            });
+            conflictEl.innerHTML = '<textarea id="conflictTextarea" class="wiki-ext-raw-textarea" spellcheck="false" style="min-height:400px; width:100%; height:500px; font-family:monospace; font-size:0.9rem; resize:none; border:1px solid var(--wiki-border); border-radius:4px; padding:8px; background:var(--wiki-bg); color:var(--wiki-text);"></textarea>';
+            const conflictTextarea = document.getElementById('conflictTextarea');
+            conflictTextarea.value = localContent;
+            conflictEditor = {
+                getMarkdown: () => conflictTextarea.value,
+                setMarkdown: (md) => { conflictTextarea.value = md; },
+            };
         } else {
             conflictEditor.setMarkdown(localContent);
         }
@@ -2560,20 +3293,21 @@ function toggleServerView() {
     const btn = document.getElementById('serverViewToggle');
 
     if (serverViewMode === 'raw') {
-        if (!serverViewer) {
-            const isDarkMode = getIsDarkMode();
-            serverViewer = toastui.Editor.factory({
-                el: preview,
-                viewer: true,
-                initialValue: raw.textContent,
-                language: 'ko-KR',
-                theme: isDarkMode ? 'dark' : 'light',
-            });
-        } else {
-            serverViewer.setMarkdown(raw.textContent); // 최신 값 반영
-        }
-        raw.style.display = 'none';
+        // renderWikiContent를 사용하여 프리뷰 렌더링
+        preview.innerHTML = '';
         preview.style.display = 'block';
+        const previewContent = document.createElement('div');
+        previewContent.className = 'wiki-content';
+        previewContent.style.padding = '12px';
+        previewContent.style.maxHeight = '500px';
+        previewContent.style.overflowY = 'auto';
+        preview.appendChild(previewContent);
+        previewContent.id = 'conflict-server-preview-content';
+        renderWikiContent(raw.textContent, slug, 'conflict-server-preview-content');
+        serverViewer = {
+            setMarkdown: (md) => renderWikiContent(md, slug, 'conflict-server-preview-content')
+        };
+        raw.style.display = 'none';
         btn.innerHTML = '<i class="mdi mdi-code-tags"></i> Raw 보기';
         serverViewMode = 'preview';
     } else {
@@ -2616,7 +3350,7 @@ function cancelConflict() {
 }
 
 
-// ── 미디어 업로드 처리 (Toast UI Hook) ──
+// ── 미디어 업로드 처리 ──
 async function handleImageUpload(blob, callback) {
     if (!blob) return;
 
@@ -2685,7 +3419,7 @@ async function handleImageUpload(blob, callback) {
 // ── 취소 ──
 function cancelEdit() {
     if (editor && editor.getMarkdown().trim()) {
-        // 내용 변경 여부 확인 (Toast UI는 변경 상태 추적이 까다로워 내용 존재 여부로 판단)
+        // 내용 변경 여부 확인
         Swal.fire({
             title: '편집을 취소하시겠습니까?',
             text: '저장하지 않은 변경사항이 사라집니다.',
@@ -3197,7 +3931,7 @@ setTimeout(attachAutocomplete, 500);
     function setup() {
         const editorEl = document.querySelector('#editor');
         if (!editorEl) return setTimeout(setup, 300);
-        const wrap = editorEl.closest('.toastui-editor-defaultUI') || editorEl;
+        const wrap = editorEl;
         wrap.addEventListener('dragover', (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'none'; });
         wrap.addEventListener('drop', (e) => { e.preventDefault(); e.stopPropagation(); });
     }

@@ -3,19 +3,9 @@ import type { Env, Message } from '../types';
 import { requireAuth, requireAuthAllowBanned } from '../middleware/session';
 import { safeJSON } from '../utils/json';
 import { isSuperAdmin } from '../utils/auth';
+import { RBAC } from '../utils/role';
 
 const notificationRoutes = new Hono<Env>();
-
-// ── 역할 계층 헬퍼 ──
-function roleLevel(role: string): number {
-    switch (role) {
-        case 'super_admin': return 4;
-        case 'admin': return 3;
-        case 'discussion_manager': return 2;
-        case 'user': return 1;
-        default: return 0;
-    }
-}
 
 /**
  * GET /api/notifications
@@ -156,10 +146,12 @@ notificationRoutes.post('/messages', requireAuth, async (c) => {
     const settings = await db.prepare('SELECT allow_direct_message FROM settings WHERE id = 1')
         .first<{ allow_direct_message: number }>();
     const dmAllowed = settings?.allow_direct_message === 1;
-    const isAdmin = roleLevel(user.role) >= 2 || isSuperAdmin(user.email, c.env);
+    const rbac = c.get('rbac') as RBAC;
+    // 관리자(admin:access) 또는 토론 관리자(discussion:manage)는 DM 비활성 상태에서도 발송 가능
+    const canBypassDmGate = rbac.can(user.role, 'admin:access') || rbac.can(user.role, 'discussion:manage');
 
-    if (!dmAllowed && !isAdmin) {
-        // 비활성화 상태에서 일반 유저는 관리자 쪽지에 대한 답장만 가능
+    if (!dmAllowed && !canBypassDmGate) {
+        // 비활성화 상태에서 일반 유저는 관리자/토론관리자 쪽지에 대한 답장만 가능
         if (!reply_to) {
             return c.json({ error: '개인 쪽지가 비활성화 상태입니다.' }, 403);
         }
@@ -173,10 +165,16 @@ notificationRoutes.post('/messages', requireAuth, async (c) => {
             return c.json({ error: '답장 권한이 없습니다.' }, 403);
         }
 
-        // 원본 발신자의 역할 확인 (관리자가 보낸 쪽지여야 답장 가능)
+        // 원본 발신자의 역할 확인 (관리자/토론관리자가 보낸 쪽지여야 답장 가능)
+        // super_admin은 DB role 컬럼에 저장되지 않을 수 있으므로 이메일 기반으로도 확인
         const originalSender = await db.prepare('SELECT role, email FROM users WHERE id = ?')
             .bind(originalMsg.sender_id).first<{ role: string; email: string }>();
-        if (!originalSender || (roleLevel(originalSender.role) < 2 && !isSuperAdmin(originalSender.email, c.env))) {
+        const senderCanBypass = originalSender && (
+            rbac.can(originalSender.role, 'admin:access') ||
+            rbac.can(originalSender.role, 'discussion:manage') ||
+            isSuperAdmin(originalSender.email, c.env)
+        );
+        if (!senderCanBypass) {
             return c.json({ error: '개인 쪽지가 비활성화 상태입니다.' }, 403);
         }
     }

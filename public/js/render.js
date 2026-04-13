@@ -187,6 +187,7 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
             const { text: restoredContentProt, prot: foldWikiLinkProt } = protectWikiLinks(restoredContent);
             let rawContentHtml = (typeof marked !== 'undefined') ? marked.parse(restoredContentProt) : restoredContentProt;
             rawContentHtml = restoreWikiLinks(rawContentHtml, foldWikiLinkProt);
+            rawContentHtml = rawContentHtml.replace(/<img([^>]*)>\s*\{size:([a-zA-Z0-9_-]+)\}/g, (_, attrs, size) => `<img${attrs} data-size="${size.trim()}">`);
             let contentHtml = (typeof DOMPurify !== 'undefined') ? DOMPurify.sanitize(rawContentHtml, { ADD_TAGS: ['i', 'span', 'details', 'summary'], ADD_ATTR: ['class', 'style', 'data-bg', 'data-color', 'data-size', 'data-unix', 'colspan', 'rowspan', 'title'] }) : escapeHtml(rawContentHtml);
 
             foldBlocks.push({ summaryText, bgAttr, colorAttr, contentHtml });
@@ -199,6 +200,7 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
         const { text: preprocessedProt, prot: mainWikiLinkProt } = protectWikiLinks(preprocessed);
         let rawHtml = (typeof marked !== 'undefined') ? marked.parse(preprocessedProt) : preprocessedProt;
         rawHtml = restoreWikiLinks(rawHtml, mainWikiLinkProt);
+        rawHtml = rawHtml.replace(/<img([^>]*)>\s*\{size:([a-zA-Z0-9_-]+)\}/g, (_, attrs, size) => `<img${attrs} data-size="${size.trim()}">`);
 
         rawHtml = rawHtml.replace(/(?:<p>)?WIKIFOLDPH(\d+)XEND(?:<\/p>)?/g, (m, idx) => {
             const block = foldBlocks[parseInt(idx, 10)];
@@ -444,7 +446,13 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
 
             // Checking if the link display text looks like a URL instead of custom text
             const textContent = a.textContent.trim();
-            if (!textContent.includes('youtube.com') && !textContent.includes('youtu.be') && !textContent.includes('nicovideo.jp') && !textContent.includes('spotify.com')) return;
+            let textLooksLikeGoogleMaps = false;
+            try {
+                const tcUrl = new URL(textContent);
+                const h = tcUrl.hostname;
+                textLooksLikeGoogleMaps = (h === 'www.google.com' || h === 'google.com' || h === 'maps.google.com' || h === 'goo.gl' || h === 'maps.app.goo.gl');
+            } catch (e) { /* textContent가 URL 형식이 아닌 경우 무시 */ }
+            if (!textContent.includes('youtube.com') && !textContent.includes('youtu.be') && !textContent.includes('nicovideo.jp') && !textContent.includes('spotify.com') && !textLooksLikeGoogleMaps) return;
 
             // Spotify Embed Processing
             if (href.includes('open.spotify.com')) {
@@ -481,6 +489,46 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
                 } catch (e) {
                     console.error('Spotify embed error:', e);
                 }
+            }
+
+            // Google Maps Embed Processing
+            try {
+                const mapUrl = new URL(href);
+                const mh = mapUrl.hostname;
+                const isGoogleMapsHost = (
+                    ((mh === 'www.google.com' || mh === 'google.com' || mh === 'maps.google.com') && mapUrl.pathname.startsWith('/maps')) ||
+                    (mh === 'goo.gl' && mapUrl.pathname.startsWith('/maps')) ||
+                    mh === 'maps.app.goo.gl'
+                );
+                if (isGoogleMapsHost) {
+                    let embedUrl;
+                    if (mapUrl.pathname.startsWith('/maps/embed')) {
+                        embedUrl = href;
+                    } else {
+                        mapUrl.searchParams.set('output', 'embed');
+                        embedUrl = mapUrl.toString();
+                    }
+
+                    const container = document.createElement('div');
+                    container.className = 'maps-embed-container my-3';
+                    container.style.width = '100%';
+
+                    const iframe = document.createElement('iframe');
+                    iframe.setAttribute('src', embedUrl);
+                    iframe.setAttribute('width', '100%');
+                    iframe.setAttribute('height', '400');
+                    iframe.setAttribute('frameborder', '0');
+                    iframe.setAttribute('style', 'border:0; border-radius:8px;');
+                    iframe.setAttribute('allowfullscreen', '');
+                    iframe.setAttribute('loading', 'lazy');
+                    iframe.setAttribute('referrerpolicy', 'no-referrer-when-downgrade');
+
+                    container.appendChild(iframe);
+                    parent.replaceWith(container);
+                    return;
+                }
+            } catch (e) {
+                console.error('Google Maps embed error:', e);
             }
 
             // YouTube Embed Processing (Improved)

@@ -39,11 +39,22 @@ export type Env = {
         ENABLED_EXTENSIONS: string;
         TERMS_OF_SERVICE: string;
         PRIVACY_POLICY: string;
+        ROLE_PERMISSIONS_JSON?: string;
     };
     Variables: {
         user: User | null;
+        rbac?: any; // To be defined or used as a helper
     };
 };
+
+export interface RolePermissions {
+    roles: {
+        [role: string]: {
+            permissions: string[];
+            inherits?: string[];
+        };
+    };
+}
 
 export interface Settings {
     id: number;

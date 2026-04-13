@@ -8,14 +8,16 @@ export function normalizeSlug(text: string): string {
 }
 
 /**
- * 특정 네임스페이스(틀:, 템플릿: 제외)인 경우 본문을 DB에 저장하지 않고 R2에만 저장할지 여부를 반환합니다.
+ * ENABLED_EXTENSIONS에 등록된 네임스페이스인 경우에만 본문을 DB에 저장하지 않고 R2에만 저장할지 여부를 반환합니다.
+ * @param slug 문서 슬러그
+ * @param enabledExtensions 활성화된 익스텐션(네임스페이스) 목록
  */
-export function isR2OnlyNamespace(slug: string): boolean {
+export function isR2OnlyNamespace(slug: string, enabledExtensions: string[]): boolean {
+    if (enabledExtensions.length === 0) return false;
     const colonIndex = slug.indexOf(':');
     if (colonIndex === -1) return false; // 일반 문서
     const namespace = slug.substring(0, colonIndex);
-    if (namespace === '틀' || namespace === '템플릿') return false; // 제외 대상
-    return true; // 그 외 네임스페이스
+    return enabledExtensions.includes(namespace);
 }
 
 /** MCP raw 읽기 허용 네임스페이스 목록 */

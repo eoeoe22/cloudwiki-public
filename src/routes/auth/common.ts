@@ -121,7 +121,7 @@ export async function handleOAuthLogin(c: Context<Env>, profile: OAuthProfile): 
         .first<{ id: number }>();
 
     if (!user) {
-        return c.json({ error: 'User creation failed' }, 500);
+        return c.redirect('/error?reason=' + encodeURIComponent('계정 생성에 실패했습니다. 다시 시도해주세요.'));
     }
 
     // 3. 세션 생성 + 쿠키 발급

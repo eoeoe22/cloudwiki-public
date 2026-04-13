@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import type { Env } from '../types';
 import { trackSearch } from '../utils/analytics';
+import type { RBAC } from '../utils/role';
 
 const search = new Hono<Env>();
 
@@ -19,7 +20,8 @@ search.get('/search', async (c) => {
     }
 
     const db = c.env.DB;
-    const isAdmin = user && (user.role === 'admin' || user.role === 'super_admin');
+    const rbac = c.get('rbac') as RBAC;
+    const isAdmin = user && rbac.can(user.role, 'admin:access');
     const searchStartTime = Date.now();
 
     // 카테고리 검색 모드
@@ -170,7 +172,8 @@ search.get('/search/suggest', async (c) => {
 
     const db = c.env.DB;
     const user = c.get('user');
-    const isAdmin = user && (user.role === 'admin' || user.role === 'super_admin');
+    const rbac = c.get('rbac') as RBAC;
+    const isAdmin = user && rbac.can(user.role, 'admin:access');
     const trimmed = query.trim();
     const likePattern = `%${trimmed}%`;
     const startPattern = `${trimmed}%`;
