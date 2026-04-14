@@ -414,23 +414,28 @@
                         const hid = a.getAttribute('data-hid');
                         const rawText = a.dataset.rawText || '';
 
-                        // 1. 에디터(CM6) 스크롤 — 탭 전환 전에 실행해야 coordsAtPos 동작
+                        // 1. 에디터(CM6) 스크롤
                         const view = window._cmView;
-                        if (view && rawText) {
+                        const cmView = window.CodeMirrorView;
+                        if (view && cmView && rawText) {
                             const doc = view.state.doc;
+                            // 마크다운 문법 제거 유틸리티
+                            const stripMd = (t) => t.replace(/(\*\*|__)(.*?)\1/g, '$2')
+                                                    .replace(/(\*|_)(.*?)\1/g, '$2')
+                                                    .replace(/~~(.*?)~~/g, '$2')
+                                                    .replace(/==(.*?)==/g, '$2')
+                                                    .replace(/\[\[(?:[^|\]]*\|)?([^\]]+)\]\]/g, '$1')
+                                                    .replace(/`([^`]+)`/g, '$1').trim();
+                            const targetText = stripMd(rawText);
+
                             for (let ln = 1; ln <= doc.lines; ln++) {
                                 const line = doc.line(ln);
-                                const m = line.text.match(/^(#{1,6})\s+(.*)/);
-                                if (m && m[2].trim() === rawText) {
-                                    const coords = view.coordsAtPos(line.from, -1);
-                                    if (coords) {
-                                        const scrollEl = view.scrollDOM;
-                                        const scrollRect = scrollEl.getBoundingClientRect();
-                                        scrollEl.scrollTo({
-                                            top: scrollEl.scrollTop + coords.top - scrollRect.top - 10,
-                                            behavior: 'instant'
-                                        });
-                                    }
+                                const m = line.text.match(/^(#{1,6})(.*)/);
+                                if (m && stripMd(m[2]) === targetText) {
+                                    // idiomatic CM6 scrolling
+                                    view.dispatch({
+                                        effects: cmView.EditorView.scrollIntoView(line.from, { y: 'start', yMargin: 10 })
+                                    });
                                     break;
                                 }
                             }

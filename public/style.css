@@ -15,6 +15,7 @@
   --wiki-warning: #F59E0B;
   --wiki-danger: #EF4444;
 
+
   /* Misc */
   --wiki-code-bg: #f8fafc;
   --wiki-toc-bg: rgba(255, 255, 255, 0.6);
@@ -698,7 +699,8 @@ div:where(.swal2-container) .swal2-html-container {
   width: 260px;
   flex-shrink: 0;
   position: sticky;
-  top: 1.5rem !important; /* 화면 최상단과 약간의 여백 주기 (JS 덮어쓰기 방지) */
+  top: 1.5rem !important;
+  /* 화면 최상단과 약간의 여백 주기 (JS 덮어쓰기 방지) */
   align-self: flex-start;
   z-index: 1030;
 }
@@ -895,7 +897,8 @@ div:where(.swal2-container) .swal2-html-container {
   background: var(--wiki-bg) !important;
   color: var(--wiki-primary) !important;
   border-color: var(--wiki-primary) !important;
-  z-index: 2; /* Ensure border is visible in group */
+  z-index: 2;
+  /* Ensure border is visible in group */
   transform: translateY(-1px);
   box-shadow: var(--wiki-shadow);
 }
@@ -921,7 +924,9 @@ div:where(.swal2-container) .swal2-html-container {
   box-shadow: none !important;
 }
 
-.no-caret::after { display: none !important; }
+.no-caret::after {
+  display: none !important;
+}
 
 /* ── TOC (Table of Contents) ── */
 .wiki-toc {
@@ -1025,7 +1030,7 @@ div:where(.swal2-container) .swal2-html-container {
   transition: transform 0.25s ease;
 }
 
-.wiki-section-collapsed > .wiki-section-heading .wiki-section-toggle-icon i {
+.wiki-section-collapsed>.wiki-section-heading .wiki-section-toggle-icon i {
   transform: rotate(-90deg);
 }
 
@@ -1035,7 +1040,7 @@ div:where(.swal2-container) .swal2-html-container {
   transition: grid-template-rows 0.3s ease;
 }
 
-.wiki-section-collapsed > .wiki-section-body {
+.wiki-section-collapsed>.wiki-section-body {
   grid-template-rows: 0fr;
 }
 
@@ -1519,6 +1524,7 @@ div:where(.swal2-container) .swal2-html-container {
 .btn-rev-view:hover {
   color: var(--wiki-primary) !important;
 }
+
 .btn-rev-view:hover i {
   color: var(--wiki-primary);
 }
@@ -1527,6 +1533,7 @@ div:where(.swal2-container) .swal2-html-container {
 .btn-rev-diff:hover {
   color: var(--wiki-accent) !important;
 }
+
 .btn-rev-diff:hover i {
   color: var(--wiki-accent);
 }
@@ -1535,6 +1542,7 @@ div:where(.swal2-container) .swal2-html-container {
 .btn-rev-revert:hover {
   color: var(--wiki-danger) !important;
 }
+
 .btn-rev-revert:hover i {
   color: var(--wiki-danger);
 }
@@ -2514,7 +2522,7 @@ div:where(.swal2-container) .swal2-html-container {
   -webkit-backdrop-filter: var(--wiki-glass-blur);
   border: 1px solid var(--wiki-glass-border);
   border-radius: 8px;
-  box-shadow: var(--wiki-shadow-lg, 0 8px 32px rgba(0,0,0,0.12));
+  box-shadow: var(--wiki-shadow-lg, 0 8px 32px rgba(0, 0, 0, 0.12));
   z-index: 1049;
   opacity: 0;
   pointer-events: none;

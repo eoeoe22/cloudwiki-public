@@ -20,6 +20,7 @@ export type Env = {
         SUPER_ADMIN_EMAILS: string;
         WIKI_HOME_PAGE: string;
         WIKI_NAME: string;
+        ENABLE_CONCURRENT_EDIT_DETECTION: string;
         WIKI_LOGO_URL: string;
         WIKI_FAVICON_URL: string;
         CUSTOM_HEADER: string;

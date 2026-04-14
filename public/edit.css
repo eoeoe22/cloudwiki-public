@@ -1298,6 +1298,7 @@
     background-color: var(--badge-color);
     border: 1px solid rgba(128, 128, 128, 0.5);
     border-radius: 2px;
+    cursor: pointer;
 }
 
 .cm-highlight {
@@ -1323,22 +1324,39 @@
 }
 
 .cm-inline-code {
-    background-color: #2d2d2d !important;
-    color: #e0e0e0 !important;
+    background-color: #f6f8fa !important;
+    color: #24292f !important;
     border-radius: 4px;
     padding: 2px 4px;
     font-family: monospace;
 }
 
+@media (prefers-color-scheme: dark) {
+    .cm-inline-code {
+        background-color: #2d2d2d !important;
+        color: #e0e0e0 !important;
+    }
+}
+
 .cm-code-block {
-    background-color: #3a3a3a !important;
-    /* 좀 더 연한 어두운 색 */
+    background-color: #f6f8fa !important;
 }
 
 .cm-code-block,
 .cm-code-block * {
-    color: #e0e0e0 !important;
+    color: #24292f !important;
     font-family: monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+    .cm-code-block {
+        background-color: #1e1e1e !important;
+    }
+
+    .cm-code-block,
+    .cm-code-block * {
+        color: #e0e0e0 !important;
+    }
 }
 
 /* ── 백틱, 코드블럭 내부에서 위키 문법 렌더링 차단 (CSS Reset) ── */
@@ -1366,7 +1384,7 @@
 .cm-code-block .cm-time-marker,
 .cm-code-block .cm-quote-marker,
 .cm-code-block .cm-list-marker {
-    color: #e0e0e0 !important;
+    color: inherit !important;
     background-color: transparent !important;
     font-weight: normal !important;
     border: none !important;

@@ -197,6 +197,7 @@ wiki.get('/config', (c) => {
         wikiLogoUrl: c.env.WIKI_LOGO_URL || '',
         wikiFaviconUrl: c.env.WIKI_FAVICON_URL || '',
         selectedIconsOnly: c.env.SELECTED_ICONS_ONLY === 'true',
+        enableConcurrentEditDetection: c.env.ENABLE_CONCURRENT_EDIT_DETECTION !== 'false',
         turnstileSiteKey: c.env.TURNSTILE_SITE_KEY || '',
         enabledExtensions: (c.env.ENABLED_EXTENSIONS || '').split(',').map((s: string) => s.trim()).filter(Boolean),
     });
@@ -1718,9 +1719,12 @@ wiki.post('/w/:slug/watch', requireAuth, async (c) => {
 /**
  * POST /w/:slug/editing
  * 편집 하트비트 전송 (로그인 필수)
- * - KV에 편집 중 상태를 기록 (TTL 60초)
+ * - KV에 편집 중 상태를 기록 (TTL 80초)
  */
 wiki.post('/w/:slug/editing', requireAuth, async (c) => {
+    if (c.env.ENABLE_CONCURRENT_EDIT_DETECTION === 'false') {
+        return c.json({ ok: true, disabled: true });
+    }
     const slug = c.req.param('slug');
     const user = c.get('user')!;
     const kv = c.env.KV;
@@ -1728,7 +1732,8 @@ wiki.post('/w/:slug/editing', requireAuth, async (c) => {
     const key = `editing:${slug}:${user.id}`;
     const value = JSON.stringify({ name: user.name, picture: user.picture || '' });
 
-    await kv.put(key, value, { expirationTtl: 60 });
+    // 하트비트 주기가 50초이므로, TTL은 80초 정도로 설정하여 여유를 둠
+    await kv.put(key, value, { expirationTtl: 80 });
 
     return c.json({ ok: true });
 });

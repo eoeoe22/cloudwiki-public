@@ -1974,6 +1974,30 @@ document.addEventListener('DOMContentLoaded', async () => {
         const blurHandler = EditorView.domEventHandlers({
             blur: () => {
                 editorEventHandlers.blur.forEach(cb => cb());
+            },
+            mousedown: (event, view) => {
+                if (event.target.classList.contains('cm-color-badge')) {
+                    const rect = event.target.getBoundingClientRect();
+                    // 배지(가상 요소) 클릭 여부 확인 (우측 끝 18px 영역)
+                    if (event.clientX > rect.right - 18) {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        const text = event.target.textContent;
+                        const match = text.match(/\{(color|bg):\s*([^}]+)\}/);
+                        if (match) {
+                            const type = match[1];
+                            const colorCode = match[2];
+                            const pos = view.posAtDOM(event.target);
+                            if (pos !== null) {
+                                const endPos = pos + text.length;
+                                view.dispatch({ selection: { anchor: endPos } });
+                                showColorAutocomplete(colorCode, type);
+                                return true;
+                            }
+                        }
+                    }
+                }
+                return false;
             }
         });
 
@@ -2001,10 +2025,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                     themeExtension,
                     // 다크 모드에서도 높이/스크롤 보장 (oneDark는 이를 설정하지 않음) 및 전체 배경색 변경
                     isDarkMode ? EditorView.theme({
-                        "&": { height: "100%", fontSize: "14px", backgroundColor: "#18181b" },
+                        "&": { height: "100%", fontSize: "14px", backgroundColor: "#000000" },
                         ".cm-scroller": { overflow: "auto" },
                         ".cm-content": { paddingBottom: "25vh" },
-                        ".cm-gutters": { backgroundColor: "#18181b", borderRight: "1px solid #333" },
+                        ".cm-gutters": { backgroundColor: "#000000", borderRight: "1px solid #333" },
                         ".cm-activeLineGutter": { backgroundColor: "#2d2d2d" }
                     }) : [],
                     lineWrappingCompartment.of(
@@ -2030,6 +2054,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         // 전역 CM6 인스턴스 보관
         window._cmView = cmEditorView;
+        window.CodeMirrorView = cmViewMod;
 
         // ── 에디터 Shim 객체 (기존 edit.js 코드와 호환) ──
         editor = {
@@ -2516,12 +2541,14 @@ document.addEventListener('DOMContentLoaded', async () => {
                 title: '<i class="mdi mdi-google-maps me-2"></i>구글 지도 삽입',
                 width: 580,
                 html: `
-                    <p style="font-size:0.85em;color:#666;margin-bottom:8px;text-align:left;">
-                        구글 지도 → 공유 → <b>지도 퍼가기</b>에서 복사한 HTML을 붙여넣으세요.
-                    </p>
-                    <textarea id="swal-maps-input" class="swal2-textarea"
-                        placeholder='&lt;iframe src="https://www.google.com/maps/embed?pb=..." ...&gt;&lt;/iframe&gt;'
-                        style="font-size:0.82em;height:160px;font-family:monospace;resize:vertical;width:100%;box-sizing:border-box;"></textarea>
+                    <div class="text-start">
+                        <p style="font-size:0.85rem;color:var(--wiki-text-muted);margin-bottom:12px;">
+                            구글 지도 → 공유 → <b>지도 퍼가기</b>에서 복사한 HTML을 붙여넣으세요.
+                        </p>
+                        <textarea id="swal-maps-input" class="form-control"
+                            placeholder='&lt;iframe src="https://www.google.com/maps/embed?pb=..." ...&gt;&lt;/iframe&gt;'
+                            style="font-size:0.82rem;height:160px;font-family:monospace;resize:vertical;width:100%;box-sizing:border-box;background:var(--wiki-bg);color:var(--wiki-text);border-color:var(--wiki-border);"></textarea>
+                    </div>
                 `,
                 showCancelButton: true,
                 confirmButtonText: '삽입',
@@ -3447,15 +3474,16 @@ const heartbeat = {
 
 function startEditingHeartbeat() {
     if (!slug) return;
+    if (appConfig.enableConcurrentEditDetection === false) return;
 
     // 즉시 첫 하트비트 전송
     sendHeartbeat();
 
-    // 30초마다 하트비트 전송
-    heartbeat.interval = setInterval(sendHeartbeat, 30000);
+    // 50초마다 하트비트 전송
+    heartbeat.interval = setInterval(sendHeartbeat, 50000);
 
-    // 30초마다 편집자 목록 확인
-    heartbeat.editorCheckInterval = setInterval(checkConcurrentEditors, 30000);
+    // 50초마다 편집자 목록 확인
+    heartbeat.editorCheckInterval = setInterval(checkConcurrentEditors, 50000);
 
     // 페이지 이탈 시 인터벌 정리
     window.addEventListener('beforeunload', stopEditingHeartbeat);
