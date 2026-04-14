@@ -279,7 +279,22 @@
 
       // 브라우저 뒤로/앞으로 버튼 처리
       window.addEventListener('popstate', () => {
-        window.scrollTo({ top: 0, behavior: 'instant' });
+        const currentPath = window.location.pathname;
+        const currentSearch = window.location.search;
+        // 경로/쿼리가 그대로고 해시만 바뀐 경우(같은 페이지 섹션 이동) → 재페치/재렌더 없이 스크롤만
+        if (currentPath === _lastPath && currentSearch === _lastSearch) {
+          if (window.location.hash) {
+            scrollToHash();
+          } else {
+            window.scrollTo({ top: 0, behavior: 'instant' });
+          }
+          return;
+        }
+        _lastPath = currentPath;
+        _lastSearch = currentSearch;
+        if (!window.location.hash) {
+          window.scrollTo({ top: 0, behavior: 'instant' });
+        }
         route();
       });
 
@@ -318,6 +333,9 @@
     }
 
     let _initialLoadDone = false;
+    // popstate에서 해시만 바뀐 경우(같은 페이지 섹션 이동)를 감지하기 위한 직전 경로/쿼리
+    let _lastPath = window.location.pathname;
+    let _lastSearch = window.location.search;
 
     function hideAllPages() {
       document.getElementById('loading').classList.add('d-none');
@@ -819,6 +837,12 @@
         document.getElementById('articlePage').classList.remove('d-none');
         if (typeof window.__sidebarLayoutUpdate === 'function') window.__sidebarLayoutUpdate();
 
+        // 페이지가 d-none을 벗어난 다음 프레임에 해시 스크롤 수행 (초기 진입 시 hideAllPages
+        // 이후 articlePage가 노출되기 전이라 scrollIntoView가 no-op이 되는 문제 방지)
+        if (window.location.hash) {
+          requestAnimationFrame(() => scrollToHash());
+        }
+
       } catch (err) {
         console.error(err);
         Swal.fire('오류', '문서를 불러오는 데 실패했습니다.', 'error');
@@ -1218,14 +1242,36 @@
     // ── 네비게이션 ──
     function navigateTo(url) {
       // SPA는 위키 문서(/w/slug)와 루트(/)만 처리; 나머지는 풀 내비게이션
-      const path = new URL(url, window.location.origin).pathname;
+      const u = new URL(url, window.location.origin);
+      const path = u.pathname;
       if (!path.match(/^\/w\/[^/]+$/) && path !== '/' && path !== '') {
         window.location.href = url;
         return;
       }
       history.pushState(null, '', url);
-      window.scrollTo({ top: 0, behavior: 'instant' });
+      _lastPath = u.pathname;
+      _lastSearch = u.search;
+      // 해시가 있으면 렌더 완료 후 showArticle 내부에서 scrollToHash() 처리
+      if (!u.hash) {
+        window.scrollTo({ top: 0, behavior: 'instant' });
+      }
       route();
+    }
+
+    // 현재 URL의 해시에 해당하는 요소로 스크롤 (없으면 no-op)
+    function scrollToHash() {
+      const hash = window.location.hash;
+      if (!hash || hash.length < 2) return;
+      let id;
+      try {
+        id = decodeURIComponent(hash.slice(1));
+      } catch (_) {
+        id = hash.slice(1);
+      }
+      const el = id ? document.getElementById(id) : null;
+      if (el) {
+        el.scrollIntoView({ behavior: 'instant', block: 'start' });
+      }
     }
 
 

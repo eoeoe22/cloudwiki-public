@@ -2450,7 +2450,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             // 에디터가 맨 아래에 도달하면 프리뷰를 마지막 헤딩으로 동기화 (끝부분 오차 보정)
             if (scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 4) {
-                const allHeadings = customPreview.querySelectorAll('[id^="heading-"]');
+                const allHeadings = customPreview.querySelectorAll('[data-heading-idx]');
                 if (allHeadings.length > 0) {
                     const lastAnchor = allHeadings[allHeadings.length - 1];
                     const previewRect = customPreview.getBoundingClientRect();
@@ -2489,7 +2489,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             // 2. 프리뷰에서 해당 목차 엘리먼트를 찾아 정확한 오프셋만큼 스크롤
             if (currentHeadingIdx >= 0) {
-                const anchor = customPreview.querySelector(`#heading-${currentHeadingIdx}`);
+                const anchor = customPreview.querySelector(`[data-heading-idx="${currentHeadingIdx}"]`);
                 if (anchor) {
                     // offsetTop 대신 getBoundingClientRect()를 사용하여
                     // 중간에 위치한 컨테이너 패딩이나 마진의 영향 없이 절대 스크롤 높이를 정확히 계산

@@ -294,3 +294,16 @@ CREATE INDEX IF NOT EXISTS idx_page_watches_page ON page_watches(page_id);
 -- 기존 google_id 컬럼에서 provider + uid로 업그레이드하는 마이그레이션은
 -- migrations/migrate_google_to_provider.sql 을 참고하세요.
 -- 새로 설치한 경우 이 schema.sql만 실행하면 됩니다.
+
+-- 역링크 인덱스 정규화 (2026-04): extractLinks()가 '#섹션'을 제거한 뒤 저장하도록
+-- 변경됨에 따라, 기존에 target_slug='foo#섹션' 형태로 저장된 행을 정리한다.
+-- '#'이 없는 행은 instr()가 0을 반환하여 WHERE 절에서 제외되므로 반복 실행 안전(idempotent).
+-- page_links에는 UNIQUE 제약이 없어 중복 행이 생겨도 조회는 SELECT DISTINCT로 처리된다.
+-- TRIM: 'Foo #Section' 같은 레거시 행이 'Foo '로 남아 IN 매칭에서 누락되는 것을 방지.
+UPDATE page_links
+   SET target_slug = TRIM(substr(target_slug, 1, instr(target_slug, '#') - 1))
+ WHERE instr(target_slug, '#') > 0;
+
+-- 섹션만 있던 링크('[[#anchor]]', '{{#anchor}}')는 정규화 후 빈 문자열이 되므로 인덱스에서 제외.
+-- 현행 extractLinks()도 빈 slug는 저장하지 않는다(정책 일치).
+DELETE FROM page_links WHERE target_slug = '';

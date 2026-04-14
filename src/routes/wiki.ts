@@ -99,12 +99,15 @@ function extractLinks(content: string): { target_slug: string; link_type: string
     // 코드블럭 내부 제외를 위해 코드블럭을 먼저 제거
     const cleaned = content.replace(/```[\s\S]*?```/g, '').replace(/`[^`\n]+`/g, '');
 
-    // 1) [[위키링크]] 또는 [[위키링크|표시명]]
+    // 1) [[위키링크]] / [[위키링크|표시명]] / [[위키링크#섹션]]
     const wikiLinkRegex = /\[\[([^\]]+)\]\]/g;
     for (const m of cleaned.matchAll(wikiLinkRegex)) {
         const raw = m[1].trim();
         // '|' 앞부분만 slug로 사용 (표시명 무시)
-        const slug = raw.split('|')[0].trim();
+        // '#' 앞부분만 slug로 사용 (섹션 앵커 무시) — page_links는 문서간 참조 그래프이므로
+        // 페이지 내부 섹션 정보를 인덱스에 저장하지 않음
+        const slug = raw.split('|')[0].split('#')[0].trim();
+        if (!slug) continue; // '[[#로컬앵커]]'처럼 대상 문서가 없는 링크는 제외
         const key = `wikilink:${slug}`;
         if (!seen.has(key)) {
             seen.add(key);
@@ -116,6 +119,10 @@ function extractLinks(content: string): { target_slug: string; link_type: string
     const templateRegex = /\{\{([^}]+?)\}\}/g;
     for (const m of cleaned.matchAll(templateRegex)) {
         let slug = m[1].trim();
+        // '#' 앞부분만 slug로 사용 — wikilink와 동일한 정규화 정책.
+        // 슬러그 자체는 '#'을 포함할 수 없으므로(이동 API 입력검증 참고) 항상 안전하게 제거.
+        slug = slug.split('#')[0].trim();
+        if (!slug) continue;
         // 익스텐션 패턴: 첫 번째 ':' 앞이 익스텐션 이름 (틀/template/템플릿 접두사가 아닌 경우)
         const colonIdx = slug.indexOf(':');
         if (colonIdx > 0 && !slug.startsWith('틀:') && !slug.startsWith('template:') && !slug.startsWith('템플릿:')) {
@@ -1234,12 +1241,8 @@ wiki.get('/w/:slug/backlinks', async (c) => {
     }
 
     const placeholders = targetSlugs.map(() => '?').join(', ');
-    // 섹션 앵커(#섹션) 포함 링크도 매칭 — extractLinks는 '#' 이후를 제거하지 않으므로
-    // [[old#섹션]]은 page_links.target_slug='old#섹션'으로 저장됨
-    // LIKE 메타문자(_, %, \\)는 '\\'로 이스케이프하고 ESCAPE 절을 지정해야 slug의 '_'가 와일드카드로 오작동하지 않음
-    const escapeLike = (s: string) => s.replace(/[\\%_]/g, '\\$&');
-    const likeSlugs = targetSlugs.map(escapeLike);
-    const anchorConds = targetSlugs.map(() => "pl.target_slug LIKE ? || '#%' ESCAPE '\\'").join(' OR ');
+    // page_links.target_slug는 extractLinks()가 '#섹션'을 제거한 뒤 저장하므로
+    // 단순 IN 매칭만으로 섹션 앵커를 포함한 모든 위키링크가 포착됨
     // 관리자: soft delete된 문서도 is_deleted 플래그와 함께 반환
     // 일반 사용자: soft delete된 문서 제외 (접근 불가 + 메타데이터 노출 방지)
     let query = `
@@ -1248,7 +1251,7 @@ wiki.get('/w/:slug/backlinks', async (c) => {
         FROM page_links pl
         JOIN pages p ON pl.source_page_id = p.id
         WHERE p.slug != ?
-          AND (pl.target_slug IN (${placeholders}) OR ${anchorConds})
+          AND pl.target_slug IN (${placeholders})
     `;
     if (!isAdmin) {
         query += ' AND p.is_private = 0 AND p.deleted_at IS NULL';
@@ -1257,7 +1260,7 @@ wiki.get('/w/:slug/backlinks', async (c) => {
 
     const backlinks = await db
         .prepare(query)
-        .bind(slug, ...targetSlugs, ...likeSlugs)
+        .bind(slug, ...targetSlugs)
         .all();
 
     return c.json(safeJSON({ backlinks: backlinks.results }));

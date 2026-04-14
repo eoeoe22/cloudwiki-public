@@ -980,7 +980,6 @@ function numberHeadings(contentEl) {
 
     headings.forEach((h, i) => {
         const level = parseInt(h.tagName[1], 10);
-        h.id = h.id || `heading-${i}`;
 
         const relLevel = level - minLevel;
         counters[relLevel]++;
@@ -989,6 +988,25 @@ function numberHeadings(contentEl) {
         const numParts = [];
         for (let k = 0; k <= relLevel; k++) numParts.push(counters[k] || 1);
         const numStr = numParts.join('.');
+
+        // 섹션 링크 문법 [[문서#s-1.2]] 가 항상 동작하도록 s-{numStr} 앵커 보장.
+        // 단, 원본 마크다운/HTML이 부여한 기존 id (예: marked.js의 텍스트 기반 id,
+        // 명시적인 raw HTML id) 는 깊은 링크 호환을 위해 보존한다.
+        const sectionId = `s-${numStr}`;
+        if (!h.id) {
+            h.id = sectionId;
+        } else if (h.id !== sectionId) {
+            // 기존 id를 유지하면서 같은 위치에 섹션 앵커를 추가 삽입
+            const existingAnchor = h.querySelector(`:scope > .wiki-section-anchor[id="${sectionId}"]`);
+            if (!existingAnchor && !contentEl.querySelector(`#${CSS.escape(sectionId)}`)) {
+                const anchor = document.createElement('span');
+                anchor.className = 'wiki-section-anchor';
+                anchor.id = sectionId;
+                h.insertBefore(anchor, h.firstChild);
+            }
+        }
+        // 에디터 스크롤 동기화에서 마크다운 소스의 헤딩 순번과 매핑하기 위한 보조 인덱스
+        h.dataset.headingIdx = String(i);
 
         const existingPrefix = h.querySelector('.wiki-heading-num');
         if (!existingPrefix) {
@@ -1161,11 +1179,45 @@ function processWikiLinks(contentEl) {
                     displayText = innerContent.substring(pipeIndex + 1).trim();
                 }
 
+                // 섹션 링크 문법: [[slug#s-1.2]] 또는 [[#s-1.2]]
+                // 슬러그에 #가 포함된 기존 문서를 깨지 않도록, # 뒷부분이
+                // 섹션 앵커 패턴(s-N 또는 s-N.N...)일 때만 분리한다.
+                let anchor = '';
+                const hashIdx = linkText.indexOf('#');
+                if (hashIdx !== -1) {
+                    const candidate = linkText.substring(hashIdx + 1).trim();
+                    if (/^s-\d+(?:\.\d+)*$/.test(candidate)) {
+                        anchor = candidate;
+                        linkText = linkText.substring(0, hashIdx).trim();
+                    }
+                }
+
                 const a = document.createElement('a');
-                a.href = `/w/${encodeURIComponent(linkText)}`;
+                if (!linkText && anchor) {
+                    // 같은 페이지 앵커
+                    a.href = `#${anchor}`;
+                } else {
+                    a.href = `/w/${encodeURIComponent(linkText)}${anchor ? '#' + anchor : ''}`;
+                }
                 a.textContent = displayText;
                 a.onclick = (e) => {
                     e.preventDefault();
+                    const href = a.getAttribute('href');
+                    if (href && href.startsWith('#')) {
+                        // 같은 페이지 앵커: 재로드 없이 스크롤
+                        let id;
+                        try {
+                            id = decodeURIComponent(href.slice(1));
+                        } catch (_) {
+                            id = href.slice(1);
+                        }
+                        const target = id ? document.getElementById(id) : null;
+                        if (target) {
+                            history.pushState(null, '', href);
+                            target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                        }
+                        return;
+                    }
                     if (typeof navigateTo === 'function') {
                         navigateTo(a.href);
                     } else {
