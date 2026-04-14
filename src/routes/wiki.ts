@@ -99,10 +99,12 @@ function extractLinks(content: string): { target_slug: string; link_type: string
     // 코드블럭 내부 제외를 위해 코드블럭을 먼저 제거
     const cleaned = content.replace(/```[\s\S]*?```/g, '').replace(/`[^`\n]+`/g, '');
 
-    // 1) [[위키링크]]
+    // 1) [[위키링크]] 또는 [[위키링크|표시명]]
     const wikiLinkRegex = /\[\[([^\]]+)\]\]/g;
     for (const m of cleaned.matchAll(wikiLinkRegex)) {
-        const slug = m[1].trim();
+        const raw = m[1].trim();
+        // '|' 앞부분만 slug로 사용 (표시명 무시)
+        const slug = raw.split('|')[0].trim();
         const key = `wikilink:${slug}`;
         if (!seen.has(key)) {
             seen.add(key);
@@ -1232,16 +1234,18 @@ wiki.get('/w/:slug/backlinks', async (c) => {
     }
 
     const placeholders = targetSlugs.map(() => '?').join(', ');
+    // 관리자: soft delete된 문서도 is_deleted 플래그와 함께 반환
+    // 일반 사용자: soft delete된 문서 제외 (접근 불가 + 메타데이터 노출 방지)
     let query = `
-        SELECT DISTINCT p.slug, p.title, p.updated_at, p.is_locked
+        SELECT DISTINCT p.slug, p.title, p.updated_at, p.is_locked,
+            CASE WHEN p.deleted_at IS NOT NULL THEN 1 ELSE 0 END AS is_deleted
         FROM page_links pl
         JOIN pages p ON pl.source_page_id = p.id
-        WHERE p.deleted_at IS NULL
-          AND p.slug != ?
+        WHERE p.slug != ?
           AND pl.target_slug IN (${placeholders})
     `;
     if (!isAdmin) {
-        query += ' AND p.is_private = 0';
+        query += ' AND p.is_private = 0 AND p.deleted_at IS NULL';
     }
     query += ' ORDER BY p.updated_at DESC LIMIT 100';
 
@@ -1317,9 +1321,11 @@ wiki.delete('/w/:slug', requireAuth, async (c) => {
         await db.batch(batch);
 
         // 캐시 무효화 (API + SSR) + 최근 변경 즉시 갱신
+        // 틀: 등 콜론 포함 문서인 경우 역링크 문서 캐시도 함께 무효화
         c.executionCtx.waitUntil(Promise.all([
             invalidatePageCache(c, slug),
             refreshRecentChangesCache(c),
+            invalidateBacklinkCaches(c, slug, db),
         ]));
 
         // 관리자 로그 기록
@@ -1356,9 +1362,11 @@ wiki.delete('/w/:slug', requireAuth, async (c) => {
             .run();
 
         // 캐시 무효화 (API + SSR) + 최근 변경 즉시 갱신
+        // 틀: 등 콜론 포함 문서인 경우 역링크 문서 캐시도 함께 무효화
         c.executionCtx.waitUntil(Promise.all([
             invalidatePageCache(c, slug),
             refreshRecentChangesCache(c),
+            invalidateBacklinkCaches(c, slug, db),
         ]));
 
         // 관리자 로그 기록
@@ -1408,9 +1416,11 @@ wiki.post('/w/:slug/restore', requireAuth, async (c) => {
     );
 
     // 캐시 무효화 (API + SSR) + 최근 변경 즉시 갱신
+    // 틀: 등 콜론 포함 문서인 경우 역링크 문서 캐시도 함께 무효화
     c.executionCtx.waitUntil(Promise.all([
         invalidatePageCache(c, slug),
         refreshRecentChangesCache(c),
+        invalidateBacklinkCaches(c, slug, db),
     ]));
 
     return c.json({ message: '문서가 복원되었습니다.' });
@@ -1488,10 +1498,12 @@ wiki.post('/w/:slug/move', requireAuth, async (c) => {
     );
 
     // 캐시 무효화 (API + SSR) + 최근 변경 즉시 갱신
+    // 틀: 등 콜론 포함 문서인 경우 이동 전 슬러그의 역링크 문서 캐시도 함께 무효화
     c.executionCtx.waitUntil(Promise.all([
         invalidatePageCache(c, currentSlug),
         invalidatePageCache(c, trimmedNewSlug),
         refreshRecentChangesCache(c),
+        invalidateBacklinkCaches(c, currentSlug, db),
     ]));
 
     return c.json({ message: '문서가 이동되었습니다.', new_slug: trimmedNewSlug });

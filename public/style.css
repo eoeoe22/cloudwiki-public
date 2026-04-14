@@ -1176,6 +1176,47 @@ div:where(.swal2-container) .swal2-html-container {
   transform: translateY(1px);
 }
 
+/* 헤딩 섹션 복사 버튼 */
+.wiki-heading-copy-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5em;
+  height: 1.5em;
+  margin-left: 0.35em;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--wiki-text-muted);
+  font-size: 0.65em;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s, border-color 0.15s, color 0.15s;
+  vertical-align: middle;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+h1:hover .wiki-heading-copy-btn,
+h2:hover .wiki-heading-copy-btn,
+h3:hover .wiki-heading-copy-btn,
+h4:hover .wiki-heading-copy-btn {
+  opacity: 1;
+}
+
+.wiki-heading-copy-btn:hover,
+.wiki-heading-copy-btn:focus {
+  background: var(--wiki-card-bg);
+  border-color: var(--wiki-border);
+  color: var(--wiki-text);
+  opacity: 1;
+}
+
+.wiki-heading-copy-btn:active {
+  transform: translateY(1px);
+}
+
 /* 인용구 - 위키백과/나무위키 정석 스타일 */
 .wiki-content blockquote {
   border-left: 4px solid var(--wiki-primary);

@@ -1428,6 +1428,25 @@
     position: absolute;
     bottom: 3.5rem;
     right: 0.75rem;
+    /* 기본 너비는 유지하되 부모(에디터 영역)를 벗어나지 않도록 max-width 로 제한 */
+    width: 280px;
+    max-width: calc(100% - 1.5rem);
     max-height: calc(100% - 4.5rem);
     z-index: 9;
+}
+
+/* 모바일: 에디터 영역(split-row) 크기에 맞춰 너비 축소 */
+@media (max-width: 576px) {
+    #editorTocFloatingPanel {
+        width: calc(100% - 1.5rem);
+        max-width: calc(100% - 1.5rem);
+    }
+}
+
+/* 긴 목차 항목은 자동 줄바꿈 */
+#editorTocFloatingPanel .toc-floating-body a {
+    white-space: normal;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+    line-height: 1.35;
 }

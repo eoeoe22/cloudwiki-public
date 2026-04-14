@@ -1,12 +1,43 @@
 // ── 타임스탬프 유틸리티 ──
 
-/** {dday:YYYY-MM-DD} → "n일 남음" / "D-Day" / "n일 지남" */
+/**
+ * {dday:YYYY-MM-DD} → "n일 남음" / "D-Day" / "n일 지남"
+ * {dday:MM-DD}     → 다음 MM-DD까지 "n일 남음" / "D-Day" (해가 지나면 365일부터 다시)
+ */
 function _computeDdayText(dateStr) {
     const parts = dateStr.split('-');
-    if (parts.length !== 3) return null;
-    const target = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
     const today = new Date();
     today.setHours(0, 0, 0, 0);
+
+    if (parts.length === 2) {
+        const month = parseInt(parts[0], 10);
+        const day = parseInt(parts[1], 10);
+        if (isNaN(month) || isNaN(day)) return null;
+        if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+        // 달력상 존재할 수 없는 조합 거부 (02-30, 04-31 등). 02-29는 윤년에만 유효하므로 허용.
+        const maxDay = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
+        if (day > maxDay) return null;
+        // 오늘 이후의 가장 가까운 유효한 MM-DD 찾기 (02-29는 다음 윤년으로 스킵)
+        // 세기 경계(예: 2100은 비윤년)에서는 2096→2104처럼 최대 8년 간격이 발생하므로 i=8까지 포함.
+        let year = today.getFullYear();
+        let target = null;
+        for (let i = 0; i <= 8; i++) {
+            const candidate = new Date(year + i, month - 1, day);
+            candidate.setHours(0, 0, 0, 0);
+            const valid = candidate.getMonth() === month - 1 && candidate.getDate() === day;
+            if (valid && candidate >= today) {
+                target = candidate;
+                break;
+            }
+        }
+        if (target === null) return null;
+        const diff = Math.round((target - today) / (1000 * 60 * 60 * 24));
+        if (diff === 0) return 'D-Day';
+        return `${diff}일 남음`;
+    }
+
+    if (parts.length !== 3) return null;
+    const target = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
     target.setHours(0, 0, 0, 0);
     if (isNaN(target.getTime())) return null;
     const diff = Math.round((target - today) / (1000 * 60 * 60 * 24));
@@ -91,8 +122,8 @@ function _processTimestampsInHtml(html) {
         return `\x00TSPROT${prot.length - 1}\x00`;
     });
 
-    // {dday:YYYY-MM-DD}
-    html = html.replace(/\{dday:(\d{4}-\d{2}-\d{2})\}/g, (match, dateStr) => {
+    // {dday:YYYY-MM-DD} 또는 {dday:MM-DD}
+    html = html.replace(/\{dday:(\d{4}-\d{2}-\d{2}|\d{2}-\d{2})\}/g, (match, dateStr) => {
         const text = _computeDdayText(dateStr);
         if (text === null) return match;
         const cls = text === 'D-Day' ? 'wiki-dday wiki-dday-today'
@@ -769,6 +800,9 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
             makeCollapsibleSections(containerEl);
         }
 
+        // 헤딩 복사 버튼 추가 (makeCollapsibleSections 이후에 실행하여 토글 아이콘 위치 인식)
+        _addHeadingCopyButtons(containerEl, resolvedContent);
+
         // {timer:} 요소 실시간 업데이트
         _initTimers(containerEl, containerId);
 
@@ -778,6 +812,102 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
     } catch (err) {
         console.error('renderWikiContent error:', err);
     }
+}
+
+// ── 헤딩 복사 버튼 ──
+
+/**
+ * 마크다운 텍스트에서 h1~h4 헤딩 목록과 각 헤딩의 섹션 마크다운을 추출.
+ * 펜스 코드블록 내부의 '#' 라인은 헤딩으로 처리하지 않음.
+ * 반환값: 헤딩 순서에 대응하는 섹션 마크다운 문자열 배열.
+ */
+function _extractMarkdownSections(markdownText) {
+    const lines = markdownText.split('\n');
+    const headings = []; // { level, lineIdx }
+    let inFencedCode = false;
+    let fenceChar = '';
+    let fenceLen = 0;
+
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+
+        if (!inFencedCode) {
+            const fenceMatch = line.match(/^(`{3,}|~{3,})/);
+            if (fenceMatch) {
+                inFencedCode = true;
+                fenceChar = fenceMatch[1][0];
+                fenceLen = fenceMatch[1].length;
+                continue;
+            }
+            const hMatch = line.match(/^(#{1,4}) /);
+            if (hMatch) {
+                headings.push({ level: hMatch[1].length, lineIdx: i });
+            }
+        } else {
+            const trimmed = line.trim();
+            if (trimmed[0] === fenceChar && trimmed.replace(new RegExp('^' + fenceChar + '+'), '').trim() === '' && trimmed.length >= fenceLen) {
+                inFencedCode = false;
+            }
+        }
+    }
+
+    return headings.map((h, idx) => {
+        let endLine = lines.length;
+        for (let j = idx + 1; j < headings.length; j++) {
+            if (headings[j].level <= h.level) {
+                endLine = headings[j].lineIdx;
+                break;
+            }
+        }
+        // 섹션 끝의 빈 줄 제거
+        while (endLine > h.lineIdx && lines[endLine - 1].trim() === '') endLine--;
+        return lines.slice(h.lineIdx, endLine).join('\n');
+    });
+}
+
+/** 컨테이너 내 h1~h4 요소에 섹션 마크다운 복사 버튼을 추가 */
+function _addHeadingCopyButtons(containerEl, resolvedContent) {
+    const sections = _extractMarkdownSections(resolvedContent);
+    const headingEls = Array.from(containerEl.querySelectorAll('h1, h2, h3, h4'));
+
+    headingEls.forEach((h, idx) => {
+        const sectionContent = sections[idx];
+        if (sectionContent === undefined) return;
+
+        const copyBtn = document.createElement('button');
+        copyBtn.className = 'wiki-heading-copy-btn';
+        copyBtn.title = '섹션 마크다운 복사';
+        copyBtn.type = 'button';
+        copyBtn.innerHTML = '<i class="bi bi-copy"></i>';
+
+        copyBtn.onclick = async (e) => {
+            e.stopPropagation(); // 섹션 접기/펼치기 이벤트 전파 방지
+            try {
+                await navigator.clipboard.writeText(sectionContent);
+                copyBtn.innerHTML = '<i class="bi bi-check-lg"></i>';
+                setTimeout(() => { copyBtn.innerHTML = '<i class="bi bi-copy"></i>'; }, 2000);
+            } catch (err) {
+                const ta = document.createElement('textarea');
+                ta.value = sectionContent;
+                document.body.appendChild(ta);
+                ta.select();
+                try {
+                    document.execCommand('copy');
+                    copyBtn.innerHTML = '<i class="bi bi-check-lg"></i>';
+                    setTimeout(() => { copyBtn.innerHTML = '<i class="bi bi-copy"></i>'; }, 2000);
+                } catch (e2) { /* ignore */ }
+                document.body.removeChild(ta);
+            }
+        };
+
+        // 토글 아이콘이 있으면 그 앞에, 없으면 헤딩 끝에 삽입
+        const toggleIcon = h.querySelector('.wiki-section-toggle-icon');
+        if (toggleIcon) {
+            h.insertBefore(copyBtn, toggleIcon);
+        } else {
+            h.appendChild(copyBtn);
+        }
+    });
 }
 
 // ── 익스텐션 렌더링 시스템 ──
