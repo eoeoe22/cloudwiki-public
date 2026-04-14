@@ -969,6 +969,30 @@
 
     // ── 문서 이동/이름 변경 ──
     async function promptMove(slug) {
+      // 1) 역링크 조회 (있으면 경고 다이얼로그 표시)
+      let backlinks = [];
+      try {
+        const r = await fetch(`/api/w/${encodeURIComponent(slug)}/backlinks`);
+        if (r.ok) backlinks = (await r.json()).backlinks || [];
+      } catch (_) { /* 조회 실패 시 경고 없이 진행 (기존 동작 유지) */ }
+
+      if (backlinks.length > 0) {
+        // 반환된 모든 역링크(API는 최대 100개)를 스크롤 가능한 리스트로 표시
+        const listHtml = backlinks.map(b =>
+          `<li><a href="/w/${encodeURIComponent(b.slug)}" target="_blank" rel="noopener">${escapeHtml(b.title || b.slug)}</a></li>`
+        ).join('');
+        const ok = await Swal.fire({
+          title: '연결된 문서 경고',
+          html: `<p class="text-start">이 문서로 연결된 <b>${backlinks.length}개</b>의 문서가 있습니다.<br>이동 후 해당 링크들은 깨지게 됩니다. 직접 수정해야 합니다.</p>
+                 <ul class="text-start" style="max-height:240px;overflow:auto">${listHtml}</ul>`,
+          icon: 'warning',
+          showCancelButton: true,
+          confirmButtonText: '계속 진행',
+          cancelButtonText: '취소'
+        });
+        if (!ok.isConfirmed) return;
+      }
+
       const { value: newSlug } = await Swal.fire({
         title: '문서 이동/이름 변경',
         input: 'text',

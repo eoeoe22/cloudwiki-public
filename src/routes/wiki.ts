@@ -1234,6 +1234,12 @@ wiki.get('/w/:slug/backlinks', async (c) => {
     }
 
     const placeholders = targetSlugs.map(() => '?').join(', ');
+    // 섹션 앵커(#섹션) 포함 링크도 매칭 — extractLinks는 '#' 이후를 제거하지 않으므로
+    // [[old#섹션]]은 page_links.target_slug='old#섹션'으로 저장됨
+    // LIKE 메타문자(_, %, \\)는 '\\'로 이스케이프하고 ESCAPE 절을 지정해야 slug의 '_'가 와일드카드로 오작동하지 않음
+    const escapeLike = (s: string) => s.replace(/[\\%_]/g, '\\$&');
+    const likeSlugs = targetSlugs.map(escapeLike);
+    const anchorConds = targetSlugs.map(() => "pl.target_slug LIKE ? || '#%' ESCAPE '\\'").join(' OR ');
     // 관리자: soft delete된 문서도 is_deleted 플래그와 함께 반환
     // 일반 사용자: soft delete된 문서 제외 (접근 불가 + 메타데이터 노출 방지)
     let query = `
@@ -1242,7 +1248,7 @@ wiki.get('/w/:slug/backlinks', async (c) => {
         FROM page_links pl
         JOIN pages p ON pl.source_page_id = p.id
         WHERE p.slug != ?
-          AND pl.target_slug IN (${placeholders})
+          AND (pl.target_slug IN (${placeholders}) OR ${anchorConds})
     `;
     if (!isAdmin) {
         query += ' AND p.is_private = 0 AND p.deleted_at IS NULL';
@@ -1251,7 +1257,7 @@ wiki.get('/w/:slug/backlinks', async (c) => {
 
     const backlinks = await db
         .prepare(query)
-        .bind(slug, ...targetSlugs)
+        .bind(slug, ...targetSlugs, ...likeSlugs)
         .all();
 
     return c.json(safeJSON({ backlinks: backlinks.results }));

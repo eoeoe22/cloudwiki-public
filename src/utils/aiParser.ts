@@ -33,6 +33,13 @@ export async function renderForAI(content: string, db: D1Database, depth = 0, cu
         return key;
     });
 
+    // 3) {{틀 트랜스클루전}} 토큰을 아래 {...} 셀/아이콘 제거 정규식으로부터 보호
+    processed = processed.replace(/\{\{[^{}]+?\}\}/g, (match) => {
+        const key = `\x00TEMPLATE_${placeholderIndex++}\x00`;
+        placeholders.set(key, match);
+        return key;
+    });
+
     // 3. {중괄호} 문법 처리
     // {<}, {>}, {^}, {><} 등 표 셀 병합 문법이 포함되어 있으면 안내 문구 추가 후 제거
     if (/\{[<>^]{1,2}\}/.test(processed)) {
@@ -43,6 +50,14 @@ export async function renderForAI(content: string, db: D1Database, depth = 0, cu
     processed = processed.replace(/\{[^{}]*\}/g, '');
 
     // [[문서간 링크]]는 그대로 유지 (변환하지 않음)
+
+    // {{...}} 플레이스홀더만 먼저 복원 (코드블럭/인라인코드는 마지막 단계에서 복원)
+    for (const [key, value] of Array.from(placeholders.entries())) {
+        if (key.includes('TEMPLATE_')) {
+            processed = processed.split(key).join(value);
+            placeholders.delete(key);
+        }
+    }
 
     // 4. {{틀 트랜스클루전}} 처리
     if (depth < MAX_TEMPLATE_DEPTH) {
