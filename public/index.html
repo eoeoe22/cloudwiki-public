@@ -682,13 +682,11 @@
               </button></li>
               `;
             } else if (!page.deleted_at) {
-              moreActionsHtml += `
+              if (isAdmin) {
+                moreActionsHtml += `
               <li><button class="dropdown-item" data-slug="${escapeHtml(actionSlug)}" onclick="promptMove(this.dataset.slug); return false;">
                 <i class="bi bi-arrows-move"></i> 문서 주소 변경
               </button></li>
-              `;
-              if (isAdmin) {
-                moreActionsHtml += `
               <li><hr class="dropdown-divider"></li>
               <li><button class="dropdown-item text-danger" data-slug="${escapeHtml(actionSlug)}" onclick="confirmDelete(this.dataset.slug); return false;">
                 <i class="bi bi-trash"></i> 삭제
@@ -1000,6 +998,12 @@
         if (r.ok) backlinks = (await r.json()).backlinks || [];
       } catch (_) { /* 조회 실패 시 경고 없이 진행 (기존 동작 유지) */ }
 
+      // 역링크 자동 수정 여부 — 기본 true.
+      // /backlinks API는 self-link(WHERE p.slug != ?)을 제외하므로, 역링크 목록이 비어 있어도
+      // 이동되는 페이지 본문의 자기참조(예: [[oldSlug]])는 여전히 갱신되어야 한다.
+      // 따라서 기본값을 true로 두고, 경고 다이얼로그에서 사용자가 체크박스로 해제할 수 있게 한다.
+      let updateBacklinks = true;
+
       if (backlinks.length > 0) {
         // 반환된 모든 역링크(API는 최대 100개)를 스크롤 가능한 리스트로 표시
         const listHtml = backlinks.map(b =>
@@ -1007,14 +1011,23 @@
         ).join('');
         const ok = await Swal.fire({
           title: '연결된 문서 경고',
-          html: `<p class="text-start">이 문서로 연결된 <b>${backlinks.length}개</b>의 문서가 있습니다.<br>이동 후 해당 링크들은 깨지게 됩니다. 직접 수정해야 합니다.</p>
-                 <ul class="text-start" style="max-height:240px;overflow:auto">${listHtml}</ul>`,
+          html: `<p class="text-start">이 문서로 연결된 <b>${backlinks.length}개</b>의 문서가 있습니다.<br>아래 옵션을 해제하면 이동 후 해당 링크들은 깨지게 됩니다.</p>
+                 <ul class="text-start" style="max-height:200px;overflow:auto">${listHtml}</ul>
+                 <label class="d-flex align-items-center gap-2 mt-3 text-start" style="cursor:pointer">
+                   <input type="checkbox" id="rewriteBacklinksChk" checked />
+                   <span>역링크 <b>${backlinks.length}개</b> 문서 본문도 자동으로 수정</span>
+                 </label>`,
           icon: 'warning',
           showCancelButton: true,
           confirmButtonText: '계속 진행',
-          cancelButtonText: '취소'
+          cancelButtonText: '취소',
+          preConfirm: () => {
+            const chk = document.getElementById('rewriteBacklinksChk');
+            return { rewrite: chk ? chk.checked : false };
+          }
         });
         if (!ok.isConfirmed) return;
+        updateBacklinks = Boolean(ok.value && ok.value.rewrite);
       }
 
       const { value: newSlug } = await Swal.fire({
@@ -1041,12 +1054,41 @@
           const res = await fetch(`/api/w/${encodeURIComponent(slug)}/move`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ new_slug: trimmedSlug })
+            body: JSON.stringify({ new_slug: trimmedSlug, update_backlinks: updateBacklinks })
           });
           const data = await res.json();
           if (!res.ok) throw new Error(data.error || '이동 실패');
 
-          Swal.fire('성공', '문서가 이동되었습니다.', 'success').then(() => {
+          let summaryHtml = '문서가 이동되었습니다.';
+          let summaryIcon = 'success';
+          let summaryTitle = '성공';
+          if (data.backlinks_error) {
+            // 이동은 성공했지만 역링크 갱신이 실패한 경우 — 경고로 명확히 표시
+            summaryIcon = 'warning';
+            summaryTitle = '이동 완료 (역링크 갱신 실패)';
+            summaryHtml = `<p class="text-start">문서는 새 주소로 이동되었으나, <b>역링크 일괄 갱신 중 오류가 발생해 역링크 본문이 수정되지 않았습니다.</b><br>
+              <small class="text-muted">오류: ${escapeHtml(data.backlinks_error)}</small><br>
+              관리자 로그를 확인하고, 필요하면 역링크 문서를 수동으로 수정해주세요.</p>`;
+          } else if (data.backlinks && (data.backlinks.total > 0 || data.backlinks.updated > 0)) {
+            // 실제로 처리 대상이 있던 경우에만 요약 표시 (자동 갱신이 no-op였으면 기본 토스트 유지)
+            const b = data.backlinks;
+            const skippedList = (b.skipped && b.skipped.length)
+              ? `<details class="text-start mt-2"><summary>건너뛴 문서 ${b.skipped.length}개</summary><ul style="max-height:160px;overflow:auto">${b.skipped.map(s => `<li>${escapeHtml(s)}</li>`).join('')}</ul></details>`
+              : '';
+            const conflictList = (b.conflicts && b.conflicts.length)
+              ? `<details class="text-start mt-2"><summary>충돌 문서 ${b.conflicts.length}개 (수동 수정 필요)</summary><ul style="max-height:160px;overflow:auto">${b.conflicts.map(s => `<li>${escapeHtml(s)}</li>`).join('')}</ul></details>`
+              : '';
+            summaryHtml = `<p class="text-start">문서가 이동되었습니다.<br>
+              역링크 <b>${b.updated}개</b> 갱신 · 건너뜀 <b>${b.skipped.length}개</b> · 충돌 <b>${b.conflicts.length}개</b>
+              ${b.total > (b.updated + b.skipped.length + b.conflicts.length) ? `<br><small class="text-muted">총 ${b.total}개 중 상한으로 일부 처리</small>` : ''}
+              </p>${skippedList}${conflictList}`;
+            if (b.conflicts && b.conflicts.length > 0) {
+              summaryIcon = 'warning';
+              summaryTitle = '이동 완료 (일부 충돌)';
+            }
+          }
+
+          Swal.fire({ title: summaryTitle, html: summaryHtml, icon: summaryIcon }).then(() => {
             navigateTo(`/w/${encodeURIComponent(trimmedSlug)}`);
           });
         } catch (err) {

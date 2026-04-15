@@ -1179,17 +1179,30 @@ function processWikiLinks(contentEl) {
                     displayText = innerContent.substring(pipeIndex + 1).trim();
                 }
 
-                // 섹션 링크 문법: [[slug#s-1.2]] 또는 [[#s-1.2]]
-                // 슬러그에 #가 포함된 기존 문서를 깨지 않도록, # 뒷부분이
-                // 섹션 앵커 패턴(s-N 또는 s-N.N...)일 때만 분리한다.
+                // 섹션 링크 문법: [[slug#1.2]], [[slug#1.2|텍스트]], [[#1.2]]
+                // 슬러그에는 '#'이 금지 문자(서버/에디터에서 검증)이므로
+                // '#'을 발견하면 항상 앵커 구분자로 취급하고 슬러그에서 제거한다.
+                // '#' 뒷부분이 목차 번호 형식이면 내부 헤딩 ID(s-N.N...)로 매핑하고,
+                // 형식이 유효하지 않으면 앵커를 무시한다(스크롤 없이 문서만 이동).
                 let anchor = '';
                 const hashIdx = linkText.indexOf('#');
                 if (hashIdx !== -1) {
                     const candidate = linkText.substring(hashIdx + 1).trim();
-                    if (/^s-\d+(?:\.\d+)*$/.test(candidate)) {
+                    linkText = linkText.substring(0, hashIdx).trim();
+                    if (/^\d+(?:\.\d+)*$/.test(candidate)) {
+                        // 사용자 친화적 목차 번호 → 내부 헤딩 ID로 매핑
+                        anchor = `s-${candidate}`;
+                    } else if (/^s-\d+(?:\.\d+)*$/.test(candidate)) {
+                        // 내부 ID 직접 입력(하위 호환)
                         anchor = candidate;
-                        linkText = linkText.substring(0, hashIdx).trim();
                     }
+                    // 그 외 형식은 무시
+                }
+
+                if (!linkText && !anchor) {
+                    // 유효한 슬러그도 앵커도 없음 → 원본 텍스트 그대로 노출
+                    frag.appendChild(document.createTextNode(part));
+                    return;
                 }
 
                 const a = document.createElement('a');

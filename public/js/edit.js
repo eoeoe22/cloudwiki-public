@@ -3844,7 +3844,7 @@ function attachAutocomplete() {
             const lineText = lines[from[0] - 1] || '';
             const textBefore = lineText.substring(0, from[1] - 1);
 
-            const linkMatch = textBefore.match(/\[\[([^\]\[|]*)$/);
+            const linkMatch = textBefore.match(/\[\[([^\]\[|#]*)$/);
             const templateMatch = textBefore.match(/\{\{([^\}\{]*)$/);
             const biIconMatch = textBefore.match(/\{bi:([^}]*)$/);
             const mdiIconMatch = textBefore.match(/\{mdi:([^}]*)$/);

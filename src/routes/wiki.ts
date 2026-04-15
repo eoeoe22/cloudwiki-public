@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import type { Env, Page, Revision } from '../types';
-import { requireAuth, requirePermission } from '../middleware/session';
+import { requireAuth, requireAdmin, requirePermission } from '../middleware/session';
 import { normalizeSlug, isR2OnlyNamespace } from '../utils/slug';
 import { safeJSON } from '../utils/json';
 import { ROLE_CASE_SQL, enrichRoles, RBAC } from '../utils/role';
@@ -193,6 +193,302 @@ function buildLinkAndCategoryStatements(
     }
 
     return stmts;
+}
+
+/**
+ * 문서 주소 변경 시 사용될 본문 재작성 헬퍼.
+ * - 코드블럭(```...```)과 인라인 코드(`...`)는 마스킹하여 보존
+ * - `[[oldSlug]]`, `[[oldSlug|표시]]`, `[[oldSlug#섹션]]`, `[[oldSlug#섹션|표시]]`를 새 슬러그로 치환
+ * - isTemplateMove === true일 때만 `{{...}}` 치환 (`틀:`, `template:`, `템플릿:` 접두사 변형 포함)
+ * - 익스텐션 슬러그(콜론 포함, 틀 접두사 아님)는 `{{namespace:Name}}` 형태 치환
+ * - 원문과 결과가 동일하면 호출자가 새 리비전 생성을 생략할 수 있도록 문자열 비교로 판단
+ */
+function rewriteContentForRename(
+    content: string,
+    oldSlug: string,
+    newSlug: string
+): string {
+    if (!content || oldSlug === newSlug) return content;
+
+    // 1) 코드블럭 및 인라인 코드 마스킹 (extractLinks의 cleaned 정책과 일치)
+    const fences: string[] = [];
+    let masked = content.replace(/```[\s\S]*?```/g, (m) => {
+        fences.push(m);
+        return `\u0000FENCE${fences.length - 1}\u0000`;
+    });
+    const inlines: string[] = [];
+    masked = masked.replace(/`[^`\n]+`/g, (m) => {
+        inlines.push(m);
+        return `\u0000INLINE${inlines.length - 1}\u0000`;
+    });
+
+    const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+    const templatePrefixes = ['틀:', 'template:', '템플릿:'];
+    const matchedOldPrefix = templatePrefixes.find(p => oldSlug.startsWith(p));
+    const matchedNewPrefix = templatePrefixes.find(p => newSlug.startsWith(p));
+    const isTemplateMove = Boolean(matchedOldPrefix && matchedNewPrefix);
+
+    const oldHasColon = oldSlug.includes(':');
+    const isExtensionMove = oldHasColon && !matchedOldPrefix;
+
+    // 2) [[wikilink]] 치환
+    // - 접두사 간에는 별칭이 아니라 서로 다른 문서를 가리키므로(예: `template:Foo`와 `틀:Foo`는
+    //   서로 다른 페이지), 정확히 `[[oldSlug ...]]` 형태만 치환한다.
+    {
+        const re = new RegExp(
+            '\\[\\[\\s*' + escapeRe(oldSlug) + '\\s*(#[^\\]|]*)?(\\|[^\\]]*)?\\]\\]',
+            'g'
+        );
+        masked = masked.replace(re, (_m, sec, disp) => {
+            const secPart = sec ?? '';
+            const dispPart = disp ?? '';
+            return `[[${newSlug}${secPart}${dispPart}]]`;
+        });
+    }
+
+    // 3) {{template}} / {{extension}} 치환
+    if (isTemplateMove) {
+        // 접두사가 다른 `{{template:Foo}}` / `{{템플릿:Foo}}` 등은 각각 다른 문서를 가리키므로
+        // 건드리지 않는다. `{{Foo}}`(접두사 없음)는 파서가 항상 `틀:`을 붙여 해석하므로,
+        // `틀:` 네임스페이스 내부 이동일 때에만 bare 형태를 함께 갱신한다.
+        const variants: { from: string; to: string }[] = [
+            { from: oldSlug, to: newSlug },
+        ];
+        if (matchedOldPrefix === '틀:' && matchedNewPrefix === '틀:') {
+            const oldBase = oldSlug.substring(matchedOldPrefix.length);
+            const newBase = newSlug.substring(matchedNewPrefix.length);
+            variants.push({ from: oldBase, to: newBase });
+        }
+        for (const { from, to } of variants) {
+            const re = new RegExp(
+                '\\{\\{\\s*' + escapeRe(from) + '\\s*(#[^}]*)?\\}\\}',
+                'g'
+            );
+            masked = masked.replace(re, (_m, sec) => {
+                const secPart = sec ?? '';
+                return `{{${to}${secPart}}}`;
+            });
+        }
+    } else if (isExtensionMove) {
+        const re = new RegExp(
+            '\\{\\{\\s*' + escapeRe(oldSlug) + '\\s*(#[^}]*)?\\}\\}',
+            'g'
+        );
+        masked = masked.replace(re, (_m, sec) => {
+            const secPart = sec ?? '';
+            return `{{${newSlug}${secPart}}}`;
+        });
+    }
+    // 일반 문서 이동(Foo → Bar) 시에는 {{Foo}}는 `틀:Foo`를 의미하므로 변환하지 않음
+
+    // 4) 마스킹 역순 복원
+    masked = masked.replace(/\u0000INLINE(\d+)\u0000/g, (_m, i) => inlines[Number(i)]);
+    masked = masked.replace(/\u0000FENCE(\d+)\u0000/g, (_m, i) => fences[Number(i)]);
+
+    return masked;
+}
+
+/**
+ * 역링크 문서의 본문을 일괄 재작성한다.
+ * - page_links 테이블에서 정확히 oldSlug를 target_slug로 갖는 모든 문서를 찾아
+ *   최신 리비전의 본문을 R2에서 가져와 rewriteContentForRename으로 치환하고,
+ *   새 리비전 업로드 → revisions INSERT → pages UPDATE(낙관적 잠금) → page_links 재구축 순으로 처리.
+ * - 틀 접두사(`틀:`/`template:`/`템플릿:`) 간에는 서로 별칭이 아니므로 교차 접두사 변형은 대상에서 제외한다.
+ * - 최대 200개까지만 처리하며, 초과분은 skipped로 반환한다.
+ */
+async function rewriteBacklinksForRename(
+    c: any,
+    oldSlug: string,
+    newSlug: string,
+    user: { id: number; role: string },
+    rbac: RBAC
+): Promise<{ updated: string[]; skipped: string[]; conflicts: string[]; total: number }> {
+    const db: D1Database = c.env.DB;
+    const MAX_BACKLINKS = 200;
+
+    // 대상 target_slug: 정확히 oldSlug만 사용한다.
+    // `틀:`, `template:`, `템플릿:` 접두사는 이 코드베이스에서 별칭이 아니라 서로 다른 문서를
+    // 가리키므로(예: `template:Foo`는 `틀:Foo`와 별개 문서), 다른 접두사를 포함시키면 관계 없는
+    // 문서의 링크가 함께 재작성되어 본문이 손상될 수 있다. extractLinks()가 `{{Foo}}`를 항상
+    // `틀:Foo`로 저장하므로 `틀:Foo` 이동 시 bare 형태의 틀 호출도 자연스럽게 포함된다.
+    const targetSlugs: string[] = [oldSlug];
+
+    const placeholders = targetSlugs.map(() => '?').join(', ');
+    // 주의: 이 함수는 move 핸들러가 pages.slug를 newSlug로 UPDATE한 *이후*에 호출된다.
+    // 이동된 페이지 자체(now slug=newSlug)도 page_links에 oldSlug를 target_slug로 가진
+    // 자기참조 행이 남아 있을 수 있으므로, 그 페이지도 결과에 포함시켜 본문의
+    // [[oldSlug]] 자기참조를 [[newSlug]]로 갱신해야 한다. 따라서 slug 기반 제외는 두지 않는다.
+    const { results: sourcePages } = await db
+        .prepare(`
+            SELECT DISTINCT p.id, p.slug, p.version, p.content, p.category,
+                p.last_revision_id, p.is_locked, p.is_private
+            FROM page_links pl
+            JOIN pages p ON pl.source_page_id = p.id
+            WHERE p.deleted_at IS NULL
+              AND pl.target_slug IN (${placeholders})
+        `)
+        .bind(...targetSlugs)
+        .all<{
+            id: number; slug: string; version: number; content: string;
+            category: string | null; last_revision_id: number | null;
+            is_locked: number; is_private: number;
+        }>();
+
+    const total = sourcePages.length;
+    const updated: string[] = [];
+    const skipped: string[] = [];
+    const conflicts: string[] = [];
+
+    const targets = sourcePages.slice(0, MAX_BACKLINKS);
+    const overflow = sourcePages.slice(MAX_BACKLINKS);
+    for (const p of overflow) skipped.push(p.slug);
+
+    const origin = new URL(c.req.url).origin;
+    const enabledExtensions = (c.env.ENABLED_EXTENSIONS || '')
+        .split(',').map((s: string) => s.trim()).filter(Boolean);
+
+    for (const page of targets) {
+        // 안전망: 권한이 없는 경우 스킵 (정상 관리자는 통과)
+        if (page.is_locked === 1 && !rbac.can(user.role, 'wiki:lock')) {
+            skipped.push(page.slug);
+            continue;
+        }
+        if (page.is_private === 1 && !rbac.can(user.role, 'wiki:private')) {
+            skipped.push(page.slug);
+            continue;
+        }
+
+        // 최신 리비전 본문 추출
+        let currentContent = '';
+        try {
+            if (page.last_revision_id) {
+                const rev = await db
+                    .prepare('SELECT content, r2_key FROM revisions WHERE id = ?')
+                    .bind(page.last_revision_id)
+                    .first<{ content: string; r2_key: string | null }>();
+                if (rev) {
+                    currentContent = await getRevisionContent(c.env.MEDIA, rev, origin);
+                } else {
+                    currentContent = page.content || '';
+                }
+            } else {
+                currentContent = page.content || '';
+            }
+        } catch (e) {
+            console.error('Failed to read revision for backlink rewrite:', page.slug, e);
+            skipped.push(page.slug);
+            continue;
+        }
+
+        const rewritten = rewriteContentForRename(currentContent, oldSlug, newSlug);
+
+        // 변화 없음: revision 생성 없이 page_links만 재동기화
+        if (rewritten === currentContent) {
+            try {
+                const stmts = buildLinkAndCategoryStatements(db, page.id, rewritten, page.category);
+                await db.batch(stmts);
+            } catch (e) {
+                console.error('Failed to resync page_links:', page.slug, e);
+            }
+            continue;
+        }
+
+        const newVersion = page.version + 1;
+        const isR2Only = isR2OnlyNamespace(page.slug, enabledExtensions);
+
+        // 1) R2 업로드
+        let r2Key: string;
+        try {
+            r2Key = await uploadRevisionToR2(c.env.MEDIA, page.id, newVersion, rewritten);
+        } catch (e) {
+            console.error('R2 upload failed for backlink rewrite:', page.slug, e);
+            skipped.push(page.slug);
+            continue;
+        }
+
+        // 2) revisions INSERT
+        let revisionId: number;
+        try {
+            const revResult = await db
+                .prepare(
+                    'INSERT INTO revisions (page_id, page_version, content, r2_key, summary, author_id) VALUES (?, ?, ?, ?, ?, ?)'
+                )
+                .bind(page.id, newVersion, '', r2Key, `[자동] 주소 변경: ${oldSlug} → ${newSlug}`, user.id)
+                .run();
+            revisionId = revResult.meta.last_row_id as number;
+        } catch (e) {
+            console.error('revisions INSERT failed for backlink rewrite:', page.slug, e);
+            await c.env.MEDIA.delete(r2Key).catch(() => {});
+            skipped.push(page.slug);
+            continue;
+        }
+
+        // 3) pages UPDATE (낙관적 잠금)
+        // author_id도 같이 갱신해 최근 변경 / recent-changes 작성자 표기가 실제 편집자(이동 관리자)를
+        // 반영하도록 한다. (기존 편집 핸들러의 UPDATE 패턴과 일치)
+        const contentToStore = isR2Only ? '' : rewritten;
+        let pagesUpdated = 0;
+        try {
+            const upd = await db
+                .prepare(
+                    `UPDATE pages
+                     SET content = ?, last_revision_id = ?, version = ?, author_id = ?, updated_at = unixepoch()
+                     WHERE id = ? AND version = ?`
+                )
+                .bind(contentToStore, revisionId, newVersion, user.id, page.id, page.version)
+                .run();
+            pagesUpdated = (upd.meta?.changes ?? (upd as any).changes ?? 0) as number;
+        } catch (e) {
+            console.error('pages UPDATE failed for backlink rewrite:', page.slug, e);
+            pagesUpdated = 0;
+        }
+
+        if (!pagesUpdated) {
+            // 중간 편집 충돌: 롤백
+            await db.prepare('DELETE FROM revisions WHERE id = ?').bind(revisionId).run().catch(() => {});
+            await c.env.MEDIA.delete(r2Key).catch(() => {});
+            conflicts.push(page.slug);
+            continue;
+        }
+
+        // 4) page_links / page_categories 재구축
+        try {
+            const stmts = buildLinkAndCategoryStatements(db, page.id, rewritten, page.category);
+            // D1 배치 상한(약 50) 고려해 chunk 분할
+            const chunkSize = 40;
+            for (let i = 0; i < stmts.length; i += chunkSize) {
+                await db.batch(stmts.slice(i, i + chunkSize));
+            }
+        } catch (e) {
+            console.error('Failed to rebuild page_links after rewrite:', page.slug, e);
+        }
+
+        updated.push(page.slug);
+    }
+
+    // 5) 캐시 일괄 무효화
+    if (updated.length > 0) {
+        c.executionCtx.waitUntil(
+            Promise.allSettled(updated.map(slug => invalidatePageCache(c, slug)))
+        );
+    }
+
+    // 6) admin_log 기록
+    if (updated.length > 0) {
+        c.executionCtx.waitUntil(
+            db.prepare('INSERT INTO admin_log (type, log, user) VALUES (?, ?, ?)')
+                .bind(
+                    'doc_move_backlinks',
+                    `역링크 일괄 갱신: ${oldSlug} → ${newSlug} (${updated.length}개 갱신, ${skipped.length}개 건너뜀, ${conflicts.length}개 충돌)`,
+                    user.id
+                )
+                .run()
+                .catch((e: any) => console.error('Failed to write admin_log for backlinks:', e))
+        );
+    }
+
+    return { updated, skipped, conflicts, total };
 }
 
 import { uploadRevisionToR2, getRevisionContent } from '../utils/r2';
@@ -1437,14 +1733,15 @@ wiki.post('/w/:slug/restore', requireAuth, async (c) => {
 
 /**
  * POST /w/:slug/move
- * 문서 이동 (이름 변경)
+ * 문서 이동 (이름 변경) — 관리자 전용
  * - 기존 문서 이름(slug)을 새로운 이름으로 변경
  * - 기존 문서에 리디렉션을 생성하지 않음
  * - Backlinks FROM this page are updated to reflect the new source slug
+ * - update_backlinks: true인 경우, 이 문서를 가리키던 역링크 문서들의 본문도 일괄 재작성
  */
-wiki.post('/w/:slug/move', requireAuth, async (c) => {
+wiki.post('/w/:slug/move', requireAdmin, async (c) => {
     const currentSlug = c.req.param('slug');
-    const { new_slug } = await c.req.json<{ new_slug: string }>();
+    const { new_slug, update_backlinks } = await c.req.json<{ new_slug: string; update_backlinks?: boolean }>();
     const user = c.get('user')!;
     const rbac = c.get('rbac') as RBAC;
     const db = c.env.DB;
@@ -1506,6 +1803,30 @@ wiki.post('/w/:slug/move', requireAuth, async (c) => {
             .run().catch((e: any) => console.error('Failed to write admin log:', e))
     );
 
+    // 역링크 본문 일괄 재작성 (옵션)
+    let backlinksResult: { updated: string[]; skipped: string[]; conflicts: string[]; total: number } | undefined;
+    let backlinksError: string | undefined;
+    if (update_backlinks === true) {
+        try {
+            backlinksResult = await rewriteBacklinksForRename(c, currentSlug, trimmedNewSlug, user, rbac);
+        } catch (e) {
+            // 이동 자체는 이미 커밋되었으므로 200을 반환하되, 실패 사실을 응답 본문으로 명시해
+            // 관리자가 역링크가 갱신되지 않았음을 인지할 수 있게 한다.
+            console.error('rewriteBacklinksForRename failed:', e);
+            backlinksError = e instanceof Error ? e.message : String(e);
+            // 관리자 로그에도 실패 기록 남김
+            c.executionCtx.waitUntil(
+                db.prepare('INSERT INTO admin_log (type, log, user) VALUES (?, ?, ?)')
+                    .bind(
+                        'doc_move_backlinks_error',
+                        `역링크 일괄 갱신 실패: ${currentSlug} → ${trimmedNewSlug} (${backlinksError})`,
+                        user.id
+                    )
+                    .run().catch((logErr: any) => console.error('Failed to write admin_log for backlinks error:', logErr))
+            );
+        }
+    }
+
     // 캐시 무효화 (API + SSR) + 최근 변경 즉시 갱신
     // 틀: 등 콜론 포함 문서인 경우 이동 전 슬러그의 역링크 문서 캐시도 함께 무효화
     c.executionCtx.waitUntil(Promise.all([
@@ -1515,7 +1836,26 @@ wiki.post('/w/:slug/move', requireAuth, async (c) => {
         invalidateBacklinkCaches(c, currentSlug, db),
     ]));
 
-    return c.json({ message: '문서가 이동되었습니다.', new_slug: trimmedNewSlug });
+    const response: {
+        message: string;
+        new_slug: string;
+        backlinks?: { updated: number; skipped: string[]; conflicts: string[]; total: number };
+        backlinks_error?: string;
+    } = { message: '문서가 이동되었습니다.', new_slug: trimmedNewSlug };
+
+    if (backlinksResult) {
+        response.backlinks = {
+            updated: backlinksResult.updated.length,
+            skipped: backlinksResult.skipped,
+            conflicts: backlinksResult.conflicts,
+            total: backlinksResult.total,
+        };
+    }
+    if (backlinksError) {
+        response.backlinks_error = backlinksError;
+    }
+
+    return c.json(response);
 });
 
 /**
