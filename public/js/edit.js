@@ -1700,6 +1700,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         // 이벤트 핸들러 저장소 (shim의 editor.on() 용)
         const editorEventHandlers = { change: [], blur: [] };
 
+        // 스크롤 동기화 활성화 플래그 (커서 위치 기반)
+        let _scrollSyncEnabled = false;
+
         // 다크모드 감지
         const isDarkMode = getIsDarkMode();
 
@@ -1967,6 +1970,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         const updateListener = EditorView.updateListener.of((update) => {
             if (update.docChanged) {
                 editorEventHandlers.change.forEach(cb => cb());
+            }
+            // 커서(선택) 위치가 변하면 스크롤 동기화 (활성화된 경우)
+            // 단, 문서가 변경된 업데이트는 프리뷰가 아직 재렌더되기 전이므로 건너뛰고
+            // 디바운스된 updateCustomPreview() 완료 후에 동기화한다.
+            if (_scrollSyncEnabled && update.selectionSet && !update.docChanged) {
+                if (typeof syncEditorScrollToPreview === 'function') {
+                    syncEditorScrollToPreview('cursor');
+                }
             }
         });
 
@@ -2441,37 +2452,45 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         }
 
-        function syncEditorScrollToPreview() {
+        function syncEditorScrollToPreview(source) {
+            // source: 'cursor' (기본) | 'scroll'
+            //  - 'cursor' : 커서(선택의 head) 라인을 기준으로 헤딩 섹션 결정
+            //  - 'scroll' : 에디터 스크롤 영역 최상단 라인을 기준으로 결정 (휠/스크롤바 등으로
+            //               캐럿 이동 없이 읽어 내려갈 때 프리뷰가 따라오도록)
             const customPreview = document.getElementById('custom-wiki-preview');
             if (!customPreview || !window._cmView) return;
 
             const view = window._cmView;
             const scroller = view.scrollDOM;
 
-            // 에디터가 맨 아래에 도달하면 프리뷰를 마지막 헤딩으로 동기화 (끝부분 오차 보정)
-            if (scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 4) {
-                const allHeadings = customPreview.querySelectorAll('[data-heading-idx]');
-                if (allHeadings.length > 0) {
-                    const lastAnchor = allHeadings[allHeadings.length - 1];
-                    const previewRect = customPreview.getBoundingClientRect();
-                    const anchorRect = lastAnchor.getBoundingClientRect();
-                    smoothScrollPreviewTo(customPreview.scrollTop + (anchorRect.top - previewRect.top) - 10);
+            let refLineNum;
+
+            if (source === 'scroll') {
+                // 에디터가 맨 아래에 도달하면 프리뷰를 마지막 헤딩으로 동기화 (끝부분 오차 보정)
+                if (scroller && scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 4) {
+                    const allHeadings = customPreview.querySelectorAll('[data-heading-idx]');
+                    if (allHeadings.length > 0) {
+                        const lastAnchor = allHeadings[allHeadings.length - 1];
+                        const previewRect = customPreview.getBoundingClientRect();
+                        const anchorRect = lastAnchor.getBoundingClientRect();
+                        smoothScrollPreviewTo(customPreview.scrollTop + (anchorRect.top - previewRect.top) - 10);
+                    }
+                    return;
                 }
-                return;
+
+                // 에디터 스크롤 영역 최상단(툴바 바로 아래)의 문서 위치(pos) 파악
+                const rect = scroller.getBoundingClientRect();
+                let topPos = view.posAtCoords({ x: rect.left + 20, y: rect.top + 10 }, false);
+                if (topPos === null) {
+                    if (!view.visibleRanges || !view.visibleRanges.length) return;
+                    topPos = view.visibleRanges[0].from;
+                }
+                refLineNum = view.state.doc.lineAt(topPos).number; // 1-indexed
+            } else {
+                // 커서(선택의 head) 위치의 라인을 기준
+                const cursorPos = view.state.selection.main.head;
+                refLineNum = view.state.doc.lineAt(cursorPos).number; // 1-indexed
             }
-
-            // 1. 에디터 스크롤 영역 최상단(툴바 바로 아래)의 문서 위치(pos)를 정확하게 파악
-            const rect = scroller.getBoundingClientRect();
-            // 약간의 여백(10px)을 주어 최상단 텍스트 라인의 위치를 안전하게 잡음
-            let topPos = view.posAtCoords({ x: rect.left + 20, y: rect.top + 10 }, false);
-
-            // 화면 밖으로 벗어나는 등 좌표를 못 찾을 때의 폴백
-            if (topPos === null) {
-                if (!view.visibleRanges || !view.visibleRanges.length) return;
-                topPos = view.visibleRanges[0].from;
-            }
-
-            const topLineNum = view.state.doc.lineAt(topPos).number; // 1-indexed
 
             const docLines = view.state.doc.toString().split('\n');
             let currentHeadingIdx = -1;
@@ -2480,14 +2499,14 @@ document.addEventListener('DOMContentLoaded', async () => {
             for (let i = 0; i < docLines.length; i++) {
                 const lineNum = i + 1;
                 if (/^#{1,6}\s/.test(docLines[i])) {
-                    if (lineNum <= topLineNum) {
+                    if (lineNum <= refLineNum) {
                         currentHeadingIdx = headingCount;
                     }
                     headingCount++;
                 }
             }
 
-            // 2. 프리뷰에서 해당 목차 엘리먼트를 찾아 정확한 오프셋만큼 스크롤
+            // 프리뷰에서 해당 목차 엘리먼트를 찾아 정확한 오프셋만큼 스크롤
             if (currentHeadingIdx >= 0) {
                 const anchor = customPreview.querySelector(`[data-heading-idx="${currentHeadingIdx}"]`);
                 if (anchor) {
@@ -2506,15 +2525,21 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
 
         function setScrollSync(enabled) {
-            const scroller = cmEditorView.scrollDOM;
-            if (!scroller) return;
-            if (_scrollSyncHandler) {
+            // 트리거별 판단 기준:
+            //  - 커서 변경(updateListener) / 프리뷰 재렌더 후 → 커서 라인
+            //  - 에디터 스크롤 → 뷰포트 최상단 라인
+            _scrollSyncEnabled = !!enabled;
+
+            const scroller = cmEditorView && cmEditorView.scrollDOM;
+            if (scroller && _scrollSyncHandler) {
                 scroller.removeEventListener('scroll', _scrollSyncHandler);
                 _scrollSyncHandler = null;
             }
-            if (enabled) {
-                _scrollSyncHandler = () => syncEditorScrollToPreview();
+            if (_scrollSyncEnabled && scroller) {
+                _scrollSyncHandler = () => syncEditorScrollToPreview('scroll');
                 scroller.addEventListener('scroll', _scrollSyncHandler, { passive: true });
+                // 활성화 직후 한 번 동기화하여 현재 커서 위치에 맞춤
+                syncEditorScrollToPreview('cursor');
             }
         }
 
@@ -2788,8 +2813,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         // ── 실시간 프리뷰 ──
         editor.on('change', () => {
             clearTimeout(previewDebounce);
-            previewDebounce = setTimeout(() => {
-                updateCustomPreview();
+            previewDebounce = setTimeout(async () => {
+                await updateCustomPreview();
+                // 프리뷰 재렌더가 끝난 뒤에 커서 기준 스크롤 동기화
+                // (헤딩 추가/삭제 시 data-heading-idx 가 갱신된 후에 매칭되도록)
+                if (_scrollSyncEnabled && typeof syncEditorScrollToPreview === 'function') {
+                    syncEditorScrollToPreview('cursor');
+                }
             }, 300);
         });
         let isInitialLoadScroll = true;
