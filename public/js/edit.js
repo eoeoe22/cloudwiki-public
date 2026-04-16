@@ -13,6 +13,58 @@ let diffViewMode = 'summary';
 let pageLeft = false;
 let isExtensionData = false;
 
+// ── 섹션 편집 모드 상태 ──
+// URL에 ?section=N&h=... 이 있을 때 활성화: 특정 섹션만 편집기에 로드하고
+// 저장 시 전체 원본과 합성하여 PUT 한다.
+let sectionMode = false;
+let sectionIndex = -1;
+let sectionHeadingParam = '';
+// 서버에서 받아온 전체 본문(섹션 편집 시 합성을 위해 보관)
+let fullOriginalContent = '';
+// 섹션 라인 범위/헤딩 텍스트
+let sectionRange = null; // { lineIdx, endLine, headingText, level }
+// 섹션 모드에서는 제목/카테고리/잠금/리다이렉트를 현재 값으로 고정 송신
+let originalPageMeta = null;
+
+// ── 섹션 편집 유틸 ──
+// 전체 본문에서 section 인덱스 + 헤딩 텍스트로 해당 섹션 범위 탐색.
+// 1) 인덱스가 유효하고 headingText 일치 → 그대로 반환
+// 2) 인덱스는 무효하지만 headingText가 유일하게 매칭되면 그 섹션 반환
+// 3) 실패 시 null
+function findSectionRange(fullContent, idx, expectedHeading) {
+    if (typeof _extractMarkdownSectionRanges !== 'function') return null;
+    const ranges = _extractMarkdownSectionRanges(fullContent || '');
+    if (!ranges.length) return null;
+
+    const normalize = (s) => (s || '').trim();
+    const target = normalize(expectedHeading);
+
+    if (idx >= 0 && idx < ranges.length) {
+        if (!target || normalize(ranges[idx].headingText) === target) {
+            return ranges[idx];
+        }
+    }
+    if (target) {
+        const matches = ranges.filter(r => normalize(r.headingText) === target);
+        if (matches.length === 1) return matches[0];
+    }
+    return null;
+}
+
+// 섹션 텍스트 조각을 원본에 재주입하여 전체 본문 복원
+function mergeSectionIntoFull(fullContent, range, newSectionText) {
+    const lines = (fullContent || '').split('\n');
+    const before = lines.slice(0, range.lineIdx);
+    const after = lines.slice(range.endLine);
+    // 편집된 섹션 텍스트를 그대로 보존한다.
+    // 과거에는 .replace(/\s+$/, '') 로 후행 공백을 제거했는데, 이 경우 사용자가
+    // 의도한 두 칸 공백 하드 라인브레이크("foo  \n") 나 섹션 끝의 빈 줄 같은 유효한
+    // 마크다운이 조용히 사라져 주변만 편집해도 렌더링이 달라지는 문제가 있었다.
+    const section = String(newSectionText || '');
+    const merged = before.concat(section.split('\n')).concat(after);
+    return merged.join('\n');
+}
+
 // ── Turnstile 상태 ──
 let turnstileToken = null;
 let turnstileWidgetId = null;
@@ -1575,7 +1627,22 @@ document.addEventListener('DOMContentLoaded', async () => {
     // slug 파싱
     const params = new URLSearchParams(window.location.search);
     slug = params.get('slug');
-    if (slug) AUTO_SAVE_KEY = 'wiki_autosave_' + slug;
+
+    // 섹션 편집 모드 (?section=N&h=...)
+    const sectionParam = params.get('section');
+    if (sectionParam !== null && sectionParam !== '') {
+        const parsed = parseInt(sectionParam, 10);
+        if (!Number.isNaN(parsed) && parsed >= 0) {
+            sectionMode = true;
+            sectionIndex = parsed;
+            sectionHeadingParam = params.get('h') || '';
+        }
+    }
+
+    if (slug) {
+        AUTO_SAVE_KEY = 'wiki_autosave_' + slug
+            + (sectionMode ? ('#section=' + sectionIndex) : '');
+    }
 
     if (!slug) {
         Swal.fire('오류', '문서 제목이 지정되지 않았습니다.', 'error').then(() => {
@@ -1588,6 +1655,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     const enabledExts = (appConfig && appConfig.enabledExtensions) || [];
     const extPrefix = enabledExts.find(ext => slug.startsWith(ext + ':'));
     isExtensionData = !!extPrefix;
+
+    // 익스텐션 데이터 문서는 섹션 모드를 지원하지 않는다(raw 편집 UI 사용).
+    // URL 에 ?section= 이 붙어 들어오더라도 sectionMode 플래그를 해제하지 않으면,
+    // savePage 가 sectionMode && originalPageMeta 조건으로 title/category/redirect/
+    // is_locked 를 초기 로드 값(originalPageMeta)으로 고정해 송신하여,
+    // UI 에는 전체 편집 필드가 보이는데도 사용자의 메타데이터 편집이 조용히 버려진다.
+    if (isExtensionData && sectionMode) {
+        sectionMode = false;
+        sectionIndex = -1;
+        sectionHeadingParam = '';
+        if (slug) AUTO_SAVE_KEY = 'wiki_autosave_' + slug;
+    }
 
     if (isExtensionData) {
         // 익스텐션 데이터: raw textarea 사용 (대용량 데이터 지원)
@@ -2492,17 +2571,51 @@ document.addEventListener('DOMContentLoaded', async () => {
                 refLineNum = view.state.doc.lineAt(cursorPos).number; // 1-indexed
             }
 
+            // 프리뷰 DOM의 data-heading-idx는 numberHeadings()가 h1~h4 요소에만 부여한다.
+            // 따라서 마크다운 소스에서도 h1~h4 ATX 헤딩만, 그리고 펜스 코드블록 바깥의
+            // 라인만 카운트해야 프리뷰의 인덱스와 정확히 일치한다.
             const docLines = view.state.doc.toString().split('\n');
             let currentHeadingIdx = -1;
             let headingCount = 0;
+            let inFencedCode = false;
+            let fenceChar = '';
+            let fenceLen = 0;
 
             for (let i = 0; i < docLines.length; i++) {
                 const lineNum = i + 1;
-                if (/^#{1,6}\s/.test(docLines[i])) {
-                    if (lineNum <= refLineNum) {
-                        currentHeadingIdx = headingCount;
+                const line = docLines[i];
+
+                if (!inFencedCode) {
+                    // CommonMark: 백틱 펜스 오프너는 여는 라인에 추가 백틱이 있으면 안 된다
+                    // (예: ``langx`` 는 인라인 코드이지 펜스 오프너가 아님).
+                    // 틸드 펜스는 info string에 백틱이 있어도 되지만 틸드는 있으면 안 된다.
+                    const fenceMatch = line.match(/^(`{3,}|~{3,})(.*)$/);
+                    if (fenceMatch) {
+                        const opener = fenceMatch[1];
+                        const rest = fenceMatch[2];
+                        const ch = opener[0];
+                        const isValidFence = ch === '`' ? !rest.includes('`') : !rest.includes('~');
+                        if (isValidFence) {
+                            inFencedCode = true;
+                            fenceChar = ch;
+                            fenceLen = opener.length;
+                            continue;
+                        }
+                        // 유효한 펜스 오프너가 아니면 일반 라인으로 처리하여 헤딩 판정 계속
                     }
-                    headingCount++;
+                    if (/^#{1,4}[ \t]/.test(line)) {
+                        if (lineNum <= refLineNum) {
+                            currentHeadingIdx = headingCount;
+                        }
+                        headingCount++;
+                    }
+                } else {
+                    const trimmed = line.trim();
+                    if (trimmed[0] === fenceChar
+                        && trimmed.replace(new RegExp('^' + fenceChar + '+'), '').trim() === ''
+                        && trimmed.length >= fenceLen) {
+                        inFencedCode = false;
+                    }
                 }
             }
 
@@ -2921,6 +3034,15 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (page.redirect_to) document.getElementById('redirectInput').value = page.redirect_to;
             if (page.is_locked) document.getElementById('isLockedCheck').checked = true;
 
+            // 섹션 모드에서는 서버가 보낸 메타데이터를 그대로 유지해 저장 시 함께 송신
+            originalPageMeta = {
+                title: page.title,
+                category: page.category || '',
+                redirect_to: page.redirect_to || '',
+                is_locked: page.is_locked ? 1 : 0,
+                is_private: page.is_private ? 1 : 0
+            };
+
             let initialContent = page.content || '';
             if (!isExtensionData) {
                 if (!initialContent.endsWith('\n')) {
@@ -2929,13 +3051,76 @@ document.addEventListener('DOMContentLoaded', async () => {
                     initialContent += '\n';
                 }
             }
-            originalContent = initialContent;
-            editor.setMarkdown(initialContent);
-            scrollPreviewToBottom();
+
+            // 섹션 편집 모드: 해당 섹션 텍스트만 에디터에 로드
+            // (익스텐션 데이터 문서는 섹션 모드 비활성)
+            let useSectionMode = false;
+            if (sectionMode && !isExtensionData) {
+                const range = findSectionRange(initialContent, sectionIndex, sectionHeadingParam);
+                if (range) {
+                    useSectionMode = true;
+                    fullOriginalContent = initialContent;
+                    sectionRange = range;
+                    const lines = initialContent.split('\n');
+                    const sectionText = lines.slice(range.lineIdx, range.endLine).join('\n');
+                    originalContent = sectionText;
+                    editor.setMarkdown(sectionText);
+                    scrollPreviewToBottom();
+
+                    // 섹션 모드 UI
+                    const banner = document.getElementById('sectionEditBanner');
+                    const headingEl = document.getElementById('sectionEditHeading');
+                    const fullLink = document.getElementById('sectionEditFullLink');
+                    if (banner && headingEl) {
+                        headingEl.textContent = range.headingText;
+                        banner.classList.remove('d-none');
+                        banner.classList.add('d-flex');
+                    }
+                    if (fullLink) {
+                        fullLink.href = '/edit?slug=' + encodeURIComponent(slug);
+                    }
+                    // 섹션 모드에서 수정 불가한 필드 숨김 (제목/카테고리/잠금/리다이렉트)
+                    const lockedContainers = [
+                        document.getElementById('titleInput'),
+                        document.getElementById('categoryInput'),
+                        document.getElementById('redirectInput')
+                    ];
+                    lockedContainers.forEach(el => {
+                        if (el) {
+                            const wrapper = el.closest('.mb-3') || el.closest('.row');
+                            if (wrapper) wrapper.style.display = 'none';
+                        }
+                    });
+                    const adminLockWrapper = document.getElementById('adminLockContainer');
+                    if (adminLockWrapper) adminLockWrapper.style.display = 'none';
+                } else {
+                    // 섹션을 찾지 못하면 전체 편집으로 자동 fallback
+                    sectionMode = false;
+                    sectionIndex = -1;
+                    AUTO_SAVE_KEY = 'wiki_autosave_' + slug;
+                    if (typeof Swal !== 'undefined') {
+                        Swal.fire({
+                            icon: 'warning',
+                            title: '섹션을 찾지 못했습니다',
+                            text: '문서 구조가 변경되어 전체 편집 모드로 전환합니다.',
+                            timer: 2500,
+                            showConfirmButton: false
+                        });
+                    }
+                }
+            }
+
+            if (!useSectionMode) {
+                originalContent = initialContent;
+                editor.setMarkdown(initialContent);
+                scrollPreviewToBottom();
+            }
 
             pageVersion = page.version;
             document.getElementById('editPageTitle').innerHTML =
-                `<i class="mdi mdi-pencil-box-multiple"></i> 편집: ${escapeHtml(page.title)}`;
+                useSectionMode
+                    ? `<i class="mdi mdi-pencil-box-multiple"></i> 섹션 편집: ${escapeHtml(page.title)}`
+                    : `<i class="mdi mdi-pencil-box-multiple"></i> 편집: ${escapeHtml(page.title)}`;
             document.title = `편집: ${page.title} - ${appConfig.wikiName}`;
             document.getElementById('diffPreviewSection').style.display = 'block'; // 편집일 때만 노출
             checkAutoSave();
@@ -3151,11 +3336,27 @@ async function openTemplateModal() {
 
 // ── 저장 ──
 async function savePage() {
-    const title = document.getElementById('titleInput').value.trim();
-    const category = document.getElementById('categoryInput').value.trim();
-    const redirect_to = document.getElementById('redirectInput').value.trim();
-    const is_locked = document.getElementById('isLockedCheck').checked ? 1 : 0;
-    const content = editor.getMarkdown();
+    // 섹션 모드에서는 제목/카테고리/잠금/리다이렉트는 서버 값 유지
+    const title = sectionMode && originalPageMeta
+        ? originalPageMeta.title
+        : document.getElementById('titleInput').value.trim();
+    const category = sectionMode && originalPageMeta
+        ? (originalPageMeta.category || '')
+        : document.getElementById('categoryInput').value.trim();
+    const redirect_to = sectionMode && originalPageMeta
+        ? (originalPageMeta.redirect_to || '')
+        : document.getElementById('redirectInput').value.trim();
+    const is_locked = sectionMode && originalPageMeta
+        ? (originalPageMeta.is_locked ? 1 : 0)
+        : (document.getElementById('isLockedCheck').checked ? 1 : 0);
+
+    // 섹션 모드: 에디터 내용(= 섹션 텍스트)을 원본에 재주입한 전체 본문을 전송
+    let content;
+    if (sectionMode && sectionRange) {
+        content = mergeSectionIntoFull(fullOriginalContent, sectionRange, editor.getMarkdown());
+    } else {
+        content = editor.getMarkdown();
+    }
     const summary = document.getElementById('summaryInput').value.trim();
 
     if (!title) {
@@ -3189,6 +3390,11 @@ async function savePage() {
     saveBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 저장 중...';
 
     let isSuccess = false;
+    // 재저장 차단 플래그 — 섹션 모드 409 복구 중 메타데이터 재조회 실패 시 설정한다.
+    // originalPageMeta 가 스테일한 상태에서 새로운 expected_version 으로 저장하면
+    // 다른 편집자의 카테고리/리다이렉트/잠금 변경을 조용히 덮어쓸 수 있으므로,
+    // finally 블록에서 저장 버튼을 다시 활성화하지 않도록 한다. 사용자는 새로고침이 필요.
+    let blockResave = false;
 
     try {
         const body = {
@@ -3214,7 +3420,148 @@ async function savePage() {
         if (res.status === 409) {
             const data = await res.json();
 
-            // 버전 충돌 (Optimistic Locking Failure)
+            // 섹션 모드에서 충돌 발생 시: 서버의 최신 전체 본문에서 섹션 재탐색을 시도하여
+            // 섹션 경계가 유지되면 계속 섹션 편집, 아니면 전체 편집 모드로 fallback 한다.
+            if (sectionMode && sectionRange) {
+                const serverContent = data.content || '';
+                const newRange = findSectionRange(serverContent, sectionIndex, sectionRange.headingText);
+                if (newRange) {
+                    // 경계만 갱신하고 사용자 편집은 유지 — 다시 저장 버튼 누를 수 있게 함
+                    fullOriginalContent = serverContent;
+                    sectionRange = newRange;
+                    pageVersion = data.current_version;
+
+                    // 409 응답에는 메타데이터가 없으므로 최신 제목/카테고리/잠금/리다이렉트를
+                    // 다시 받아와 originalPageMeta 를 갱신한다. 갱신에 실패하면 덮어쓰기로
+                    // 인한 데이터 손실을 피하기 위해 재저장을 차단하고 새로고침을 유도한다.
+                    let metaOk = false;
+                    try {
+                        const metaRes = await fetch(`/api/w/${encodeURIComponent(slug)}?redirect=no&nocache=true`);
+                        if (metaRes.ok) {
+                            const freshPage = await metaRes.json();
+                            originalPageMeta = {
+                                title: freshPage.title,
+                                category: freshPage.category || '',
+                                redirect_to: freshPage.redirect_to || '',
+                                is_locked: freshPage.is_locked ? 1 : 0,
+                                is_private: freshPage.is_private ? 1 : 0
+                            };
+                            metaOk = true;
+                        }
+                    } catch (e) { /* metaOk 유지 */ }
+
+                    if (!metaOk) {
+                        // 재저장 차단: finally 블록이 버튼을 다시 활성화하지 않도록 플래그 설정.
+                        // 이걸 설정하지 않으면 스테일 originalPageMeta + 최신 expected_version 조합으로
+                        // 재저장이 가능해져 다른 사용자의 메타데이터 변경이 덮어써진다.
+                        blockResave = true;
+                        await Swal.fire({
+                            icon: 'error',
+                            title: '문서 정보를 다시 가져오지 못했습니다',
+                            text: '다른 사용자의 변경을 덮어쓸 수 있어 저장을 중단합니다. 페이지를 새로고침 해주세요.',
+                        });
+                        return;
+                    }
+
+                    Swal.fire({
+                        icon: 'info',
+                        title: '문서가 업데이트되었습니다',
+                        text: '다른 사용자의 변경이 반영되었습니다. 다시 저장해주세요.',
+                    });
+                    saveBtn.innerHTML = '<i class="mdi mdi-check"></i> 저장';
+                    if (turnstileWidgetId !== null) refreshTurnstile(); else saveBtn.disabled = false;
+                    return;
+                }
+                // 섹션을 찾지 못함 → 전체 편집 모드로 전환
+                // 이 경로에서는 제목/카테고리/리다이렉트/잠금 입력값이 초기 로드 시점의
+                // 값 그대로이므로, 일반 충돌 UI 로 넘기기 전에 서버의 최신 메타데이터를
+                // 다시 받아 입력 필드를 갱신해야 한다. 그러지 않으면 사용자가 재시도할 때
+                // 스테일한 메타데이터로 다른 편집자의 변경을 조용히 덮어쓸 수 있다.
+                let freshPageForFallback = null;
+                try {
+                    const metaRes = await fetch(`/api/w/${encodeURIComponent(slug)}?redirect=no&nocache=true`);
+                    if (metaRes.ok) {
+                        freshPageForFallback = await metaRes.json();
+                    }
+                } catch (e) { /* freshPageForFallback 유지 */ }
+
+                if (!freshPageForFallback) {
+                    // 메타 재조회 실패 → 재저장 차단(finally 에서 버튼 재활성화 금지)
+                    // 사용자는 페이지 새로고침 후 다시 편집해야 함.
+                    blockResave = true;
+                    await Swal.fire({
+                        icon: 'error',
+                        title: '문서 정보를 다시 가져오지 못했습니다',
+                        text: '다른 사용자의 변경을 덮어쓸 수 있어 저장을 중단합니다. 페이지를 새로고침 해주세요.',
+                    });
+                    return;
+                }
+
+                await Swal.fire({
+                    icon: 'warning',
+                    title: '문서 구조가 변경되었습니다',
+                    text: '섹션 경계가 달라져 전체 편집 모드로 전환합니다.',
+                });
+                // 편집하던 섹션 텍스트를 원래 경계에 덮어 합성한 "내 수정본 전체"를 메인 에디터에 로드
+                const mergedLocal = mergeSectionIntoFull(fullOriginalContent, sectionRange, editor.getMarkdown());
+                editor.setMarkdown(mergedLocal);
+                sectionMode = false;
+                sectionRange = null;
+                AUTO_SAVE_KEY = 'wiki_autosave_' + slug;
+                const banner = document.getElementById('sectionEditBanner');
+                if (banner) { banner.classList.add('d-none'); banner.classList.remove('d-flex'); }
+                // 숨겼던 필드 복원
+                const fallbackLockedFields = [
+                    document.getElementById('titleInput'),
+                    document.getElementById('categoryInput'),
+                    document.getElementById('redirectInput')
+                ];
+                fallbackLockedFields.forEach(el => {
+                    if (el) {
+                        const wrapper = el.closest('.mb-3') || el.closest('.row');
+                        if (wrapper) wrapper.style.display = '';
+                    }
+                });
+                // 섹션 모드 진입 시 adminLockContainer 도 숨겼으므로(관리자 잠금 컨트롤) 반드시 복원.
+                // 누락 시 관리자가 전체 편집 모드로 전환된 뒤에도 잠금 상태를 변경/확인할 수 없음.
+                // 단, 관리자 전용 UI 이므로 원래 가시성 조건(role 검사)을 다시 적용한다 —
+                // 일반 사용자에게는 보여선 안 됨.
+                const adminLockWrapper = document.getElementById('adminLockContainer');
+                if (adminLockWrapper) {
+                    const isAdminUser = currentUser && (currentUser.role === 'admin' || currentUser.role === 'super_admin');
+                    adminLockWrapper.style.display = isAdminUser ? 'block' : 'none';
+                }
+
+                // 메타데이터 입력 필드를 서버 최신값으로 갱신 — 재시도 시 스테일 값 송신 방지
+                const titleEl = document.getElementById('titleInput');
+                const categoryEl = document.getElementById('categoryInput');
+                const redirectEl = document.getElementById('redirectInput');
+                const lockedEl = document.getElementById('isLockedCheck');
+                if (titleEl) titleEl.value = freshPageForFallback.title || '';
+                const freshCategory = freshPageForFallback.category || '';
+                if (categoryEl) categoryEl.value = freshCategory;
+                categoryTags = freshCategory ? freshCategory.split(',').map(c => c.trim()).filter(c => c) : [];
+                if (typeof renderCategoryTags === 'function') renderCategoryTags();
+                if (redirectEl) redirectEl.value = freshPageForFallback.redirect_to || '';
+                if (lockedEl) lockedEl.checked = !!freshPageForFallback.is_locked;
+                // originalPageMeta 도 일관성 유지 (sectionMode 는 false 가 되었지만 방어적으로 갱신)
+                originalPageMeta = {
+                    title: freshPageForFallback.title,
+                    category: freshPageForFallback.category || '',
+                    redirect_to: freshPageForFallback.redirect_to || '',
+                    is_locked: freshPageForFallback.is_locked ? 1 : 0,
+                    is_private: freshPageForFallback.is_private ? 1 : 0
+                };
+                // pageVersion 도 충돌 응답의 current_version 으로 갱신(아래 showConflictModal 이 다시 설정하지만 명시적)
+                pageVersion = data.current_version;
+
+                // 서버의 최신 전체 본문을 기준으로 일반 충돌 UI를 띄워 사용자가 수동 병합하도록 함
+                showConflictModal({ current_version: data.current_version, content: data.content });
+                saveBtn.innerHTML = '<i class="mdi mdi-check"></i> 저장';
+                return;
+            }
+
+            // 버전 충돌 (Optimistic Locking Failure) — 일반 편집
             showConflictModal(data);
 
             saveBtn.innerHTML = '<i class="mdi mdi-check"></i> 저장';
@@ -3229,7 +3576,8 @@ async function savePage() {
         if (AUTO_SAVE_KEY) localStorage.removeItem(AUTO_SAVE_KEY);
 
         isSuccess = true;
-        originalContent = content;
+        // 섹션 모드: originalContent 는 섹션 텍스트 기준이어야 beforeunload 경고가 정상 동작
+        originalContent = sectionMode ? editor.getMarkdown() : content;
         Swal.fire({
             icon: 'success',
             title: '저장 완료!',
@@ -3243,7 +3591,8 @@ async function savePage() {
     } catch (err) {
         Swal.fire('오류', err.message, 'error');
     } finally {
-        if (!isSuccess) {
+        // blockResave 가 true 이면 재저장으로 인한 덮어쓰기 위험이 있으므로 버튼을 비활성 상태로 유지.
+        if (!isSuccess && !blockResave) {
             saveBtn.innerHTML = '<i class="mdi mdi-check"></i> 저장';
             if (turnstileWidgetId !== null) {
                 refreshTurnstile();

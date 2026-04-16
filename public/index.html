@@ -772,7 +772,10 @@
             showCategory: true,
             tocContainerId: 'tocContainer',
             tocNavId: 'tocNav',
-            collapsibleSections: true
+            collapsibleSections: true,
+            enableSectionEdit: true,
+            canEdit: canEdit,
+            sectionEditSlug: actionSlug
           });
         }
 
@@ -1050,6 +1053,20 @@
 
       const trimmedSlug = newSlug ? newSlug.trim() : '';
       if (trimmedSlug) {
+        // 이동/역링크 일괄 갱신이 끝날 때까지 화면 상호작용을 차단하는 로딩 다이얼로그
+        Swal.fire({
+          title: '문서 주소 변경 중...',
+          html: updateBacklinks
+            ? '역링크가 있는 다른 문서들의 본문도 함께 수정하고 있습니다.<br>잠시만 기다려주세요.'
+            : '잠시만 기다려주세요.',
+          allowOutsideClick: false,
+          allowEscapeKey: false,
+          showConfirmButton: false,
+          didOpen: () => {
+            Swal.showLoading();
+          }
+        });
+
         try {
           const res = await fetch(`/api/w/${encodeURIComponent(slug)}/move`, {
             method: 'POST',

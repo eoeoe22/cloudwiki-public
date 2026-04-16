@@ -224,6 +224,13 @@
                 <i class="mdi mdi-pencil-box-multiple"></i> 문서 편집
             </h2>
 
+            <!-- 섹션 편집 모드 배너 -->
+            <div id="sectionEditBanner" class="alert alert-info d-none align-items-center flex-wrap gap-2 mb-3" role="alert">
+                <i class="mdi mdi-text-box-edit-outline" style="font-size: 1.2rem;"></i>
+                <span>현재 <strong id="sectionEditHeading"></strong> 섹션만 편집 중입니다. 이 섹션의 내용만 저장됩니다.</span>
+                <a id="sectionEditFullLink" href="#" class="ms-auto small"><i class="mdi mdi-page-next-outline"></i> 문서 전체 편집으로 전환</a>
+            </div>
+
             <!-- 제목 입력 -->
             <div class="mb-3">
                 <label for="titleInput" class="form-label fw-bold">제목</label>

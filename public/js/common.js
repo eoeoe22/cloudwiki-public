@@ -112,6 +112,13 @@ function initMarkedConfig() {
         renderer: {
             html(token) {
                 const htmlStr = typeof token === 'string' ? token : (token.text || token.raw || '');
+                // HTML 주석은 escape 하지 않고 그대로 통과시킨다.
+                // transclusion 센티넬(<!--WIKI_TCL_B--> / <!--WIKI_TCL_E-->) 등이
+                // escape 되면 일반 텍스트로 노출되며, 최종 HTML 에서는 DOMPurify 가
+                // 모든 주석 노드를 제거하므로 XSS 위험이 없다.
+                if (/^\s*<!--[\s\S]*?-->\s*$/.test(htmlStr)) {
+                    return htmlStr;
+                }
                 return escapeHtml(htmlStr);
             }
         }
@@ -853,7 +860,15 @@ async function _resolveTransclusionsCore(text, depth, cache, pageSlug, options) 
     }
     await Promise.all(fetchPromises);
 
-    let newText = protectedText.replace(regex, (match, name) => {
+    // transclusion 으로 주입된 헤딩을 원본 헤딩과 구분하기 위해, 템플릿 전개 결과를
+    // 보이지 않는 HTML 주석 센티넬로 감싼다. 같은 헤딩 텍스트가 원본과 템플릿 양쪽에
+    // 존재할 때 텍스트 매칭만으로는 섹션 편집 링크가 엉뚱한 섹션을 가리킬 수 있으므로,
+    // 확실한 소스 표식이 필요하다. 센티넬은 _extractMarkdownSectionRanges 에서
+    // 문자 오프셋 깊이 추적으로 감지되고, 최종 HTML 에서는 DOMPurify 가 제거한다.
+    const WIKI_TCL_OPEN = '<!--WIKI_TCL_B-->';
+    const WIKI_TCL_CLOSE = '<!--WIKI_TCL_E-->';
+
+    let newText = protectedText.replace(regex, (match, name, offset, fullStr) => {
         const trimmed = name.trim();
         if (_isExtensionCall(trimmed)) {
             if (!options.expandExtensions) return match;
@@ -873,7 +888,34 @@ async function _resolveTransclusionsCore(text, depth, cache, pageSlug, options) 
             if (!slug.startsWith('template:') && !slug.startsWith('틀:') && !slug.startsWith('템플릿:')) {
                 slug = '틀:' + slug;
             }
-            return cache.get(slug) ?? match;
+            const expanded = cache.get(slug);
+            if (expanded === undefined || expanded === null) return match;
+            if (typeof expanded !== 'string') return match;
+
+            // 현재 라인의 접두 / 접미 컨텍스트 분석
+            const lineStart = fullStr.lastIndexOf('\n', offset - 1) + 1;
+            const nextNl = fullStr.indexOf('\n', offset + match.length);
+            const lineEnd = nextNl === -1 ? fullStr.length : nextNl;
+            const beforeOnLine = fullStr.substring(lineStart, offset);
+            const afterOnLine = fullStr.substring(offset + match.length, lineEnd);
+            const aloneOnLine = beforeOnLine.trim() === '' && afterOnLine.trim() === '';
+
+            if (aloneOnLine && beforeOnLine === '') {
+                // 진짜 블록 컨텍스트(컬럼 0, 단독 라인): 센티넬을 빈 줄로 분리하여
+                // 템플릿 내부 블록 구조(헤딩 등)가 올바르게 렌더링되도록 함.
+                return '\n\n' + WIKI_TCL_OPEN + '\n\n' + expanded + '\n\n' + WIKI_TCL_CLOSE + '\n\n';
+            }
+            if (aloneOnLine) {
+                // 들여쓰기된 단독 라인 (예: 리스트/블록쿼트 하위 항목 "  {{tpl}}").
+                // 원본의 들여쓰기 접두사(공백) 를 다음 줄들에도 이어 붙여 부모 블록
+                // 컨텍스트(리스트 연속, 블록쿼트 continuation) 를 유지한다.
+                // 첫 줄은 replace 위치가 이미 접두사 뒤라 그대로 두고, 이후 개행마다 동일 prefix 삽입.
+                const prefix = beforeOnLine;
+                const indentedExpanded = expanded.split('\n').join('\n' + prefix);
+                return WIKI_TCL_OPEN + indentedExpanded + WIKI_TCL_CLOSE;
+            }
+            // 인라인 컨텍스트(문장 중간): 같은 줄에 바로 붙여 문단 흐름을 깨지 않음
+            return WIKI_TCL_OPEN + expanded + WIKI_TCL_CLOSE;
         }
     });
 
@@ -898,7 +940,9 @@ async function resolveTransclusions(content, pageSlug) {
  */
 async function resolveTransclusionsForMarkdown(content, pageSlug) {
     const cache = new Map();
-    return await _resolveTransclusionsCore(content, 0, cache, pageSlug, { expandExtensions: false, emitExtensionPlaceholders: false });
+    const expanded = await _resolveTransclusionsCore(content, 0, cache, pageSlug, { expandExtensions: false, emitExtensionPlaceholders: false });
+    // 마크다운 원문 복사 경로에서는 transclusion 센티넬을 제거해 깔끔한 텍스트로 반환.
+    return expanded.replace(/<!--WIKI_TCL_[BE]-->/g, '');
 }
 
 // ── 카테고리 목록 렌더링 ──

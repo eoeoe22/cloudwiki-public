@@ -228,6 +228,7 @@
 
 #cm-editor .cm-editor {
     height: 100%;
+    background-color: #000000 !important;
 }
 
 #cm-editor .cm-scroller {

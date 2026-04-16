@@ -151,11 +151,28 @@ export async function renderForAI(content: string, db: D1Database, depth = 0, cu
 }
 
 /**
+ * 헤딩 레벨별 카운터를 진행시킵니다.
+ * - 초기화되지 않은 부모 레벨 카운터(0)는 1로 끌어올려 "0.1", "1.0.1" 같은
+ *   0 접두 번호가 생성되지 않도록 합니다 (예: 문서가 ##부터 시작하거나 레벨이 건너뛰는 경우).
+ * - 현재 레벨 카운터를 증가시킨 뒤, 더 깊은 레벨의 카운터는 리셋합니다.
+ */
+function advanceCounters(counters: number[], level: number): void {
+    for (let i = 0; i < level - 1; i++) {
+        if (counters[i] === 0) counters[i] = 1;
+    }
+    counters[level - 1]++;
+    for (let i = level; i < counters.length; i++) counters[i] = 0;
+}
+
+/**
  * 문서에서 헤딩(#) 기반으로 목차만 추출합니다.
+ * 이름 중복 시에도 구분 가능하도록 계층적 번호를 붙입니다.
+ * 예: "1. 개요", "1.1 상세", "1.1.1 세부", "2. 다음 장"
  */
 export function extractTOC(content: string): string {
     const lines = content.split('\n');
     const toc: string[] = [];
+    const counters = [0, 0, 0, 0, 0, 0]; // 레벨 1-6
 
     let inCodeBlock = false;
 
@@ -169,7 +186,12 @@ export function extractTOC(content: string): string {
 
         const match = line.match(/^(#{1,6})\s+(.*)$/);
         if (match) {
-            toc.push(`${match[1]} ${match[2].trim()}`);
+            const level = match[1].length;
+            advanceCounters(counters, level);
+
+            const parts = counters.slice(0, level).map(n => String(n));
+            const number = level === 1 ? `${parts[0]}.` : parts.join('.');
+            toc.push(`${number} ${match[2].trim()}`);
         }
     }
 
@@ -178,17 +200,21 @@ export function extractTOC(content: string): string {
 
 /**
  * 문서에서 특정 목차의 내용만 추출합니다.
+ * extractTOC가 반환하는 계층적 번호(예: "1", "1.1", "1.1.1")로 지정합니다.
+ * 입력은 선행/후행 공백, 말미의 점을 허용합니다 ("1." == "1").
  * @param content 원본 마크다운
- * @param sectionName 찾을 목차명
+ * @param sectionNumber 찾을 목차 번호
  */
-export function extractSection(content: string, sectionName: string): string {
+export function extractSection(content: string, sectionNumber: string): string {
     const lines = content.split('\n');
+    const counters = [0, 0, 0, 0, 0, 0];
     let inSection = false;
     let sectionLevel = 0;
     const result: string[] = [];
     let inCodeBlock = false;
 
-    const targetSection = sectionName.trim().toLowerCase();
+    // 입력 정규화: 공백 제거, 말미의 '.' 제거
+    const target = sectionNumber.trim().replace(/\.+$/, '');
 
     for (const line of lines) {
         if (line.trim().startsWith('```')) {
@@ -199,13 +225,15 @@ export function extractSection(content: string, sectionName: string): string {
             const match = line.match(/^(#{1,6})\s+(.*)$/);
             if (match) {
                 const level = match[1].length;
-                const title = match[2].trim().toLowerCase();
+                advanceCounters(counters, level);
+
+                const currentNumber = counters.slice(0, level).map(n => String(n)).join('.');
 
                 if (inSection) {
                     if (level <= sectionLevel) {
                         break;
                     }
-                } else if (title === targetSection) {
+                } else if (currentNumber === target) {
                     inSection = true;
                     sectionLevel = level;
                     result.push(line);

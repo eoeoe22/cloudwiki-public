@@ -176,7 +176,7 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                     },
                     {
                         name: 'get_toc',
-                        description: '위키 문서의 목차(section)만 불러옵니다. 긴 문서를 전부 읽기보다 get_toc 도구로 목차를 추출한 뒤 read_section 도구를 이용해 부분적으로 읽는 것을 권장합니다.',
+                        description: '위키 문서의 목차(section)만 불러옵니다. 목차는 계층적 번호(예: "1.", "1.1", "1.1.1")가 붙은 형식으로 반환됩니다. 긴 문서를 전부 읽기보다 get_toc 도구로 목차를 추출한 뒤 read_section 도구에 번호를 지정해 부분적으로 읽는 것을 권장합니다.',
                         inputSchema: { type: 'object', properties: { title: { type: 'string', description: '문서 제목' } }, required: ['title'] }
                     },
                     {
@@ -186,8 +186,8 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                     },
                     {
                         name: 'read_section',
-                        description: '위키 문서에서 특정 목차의 내용만 읽어옵니다.',
-                        inputSchema: { type: 'object', properties: { title: { type: 'string', description: '문서 제목' }, section_name: { type: 'string', description: '목차 명' } }, required: ['title', 'section_name'] }
+                        description: '위키 문서에서 특정 목차의 내용만 읽어옵니다. 목차는 get_toc 가 반환하는 계층적 번호(예: "1", "1.1", "1.1.1")로 지정합니다.',
+                        inputSchema: { type: 'object', properties: { title: { type: 'string', description: '문서 제목' }, section_number: { type: 'string', description: 'get_toc가 반환한 목차 번호 (예: "1", "1.1", "1.1.1")' } }, required: ['title', 'section_number'] }
                     },
                     {
                         name: 'get_tree',
@@ -271,7 +271,7 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
 
                 if (toolName === 'get_toc') return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: extractTOC(actualContent) || '목차가 존재하지 않습니다.' }] } };
                 if (toolName === 'read_document') return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: await renderForAI(actualContent, db, 0, slug) || '문서 내용이 존재하지 않습니다.' }] } };
-                if (toolName === 'read_section') return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: await renderForAI(extractSection(actualContent, args.section_name || ''), db, 0, slug) || '해당 목차를 찾을 수 없습니다.' }] } };
+                if (toolName === 'read_section') return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: await renderForAI(extractSection(actualContent, args.section_number || ''), db, 0, slug) || '해당 목차를 찾을 수 없습니다.' }] } };
             }
             if (toolName === 'get_tree') {
                 const requestedSlug = normalizeSlug(args.title || '');

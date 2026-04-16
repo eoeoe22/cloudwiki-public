@@ -801,7 +801,15 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
         }
 
         // 헤딩 복사 버튼 추가 (makeCollapsibleSections 이후에 실행하여 토글 아이콘 위치 인식)
-        _addHeadingCopyButtons(containerEl, resolvedContent);
+        // 편집 권한이 있을 때는 섹션 편집 버튼도 함께 표시
+        // rawContent: 원본(raw) 마크다운 - 섹션 편집 URL 의 section 인덱스를 원본 기준으로 생성하기 위함
+        // (transclusion 으로 주입된 헤딩은 원본에 없으므로 raw 매칭 실패 시 편집 버튼 생략)
+        _addHeadingCopyButtons(containerEl, resolvedContent, {
+            enableSectionEdit: !!options.enableSectionEdit,
+            canEdit: !!options.canEdit,
+            slug: options.enableSectionEdit ? (options.sectionEditSlug || slug) : null,
+            rawContent: content
+        });
 
         // {timer:} 요소 실시간 업데이트
         _initTimers(containerEl, containerId);
@@ -817,13 +825,59 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
 // ── 헤딩 복사 버튼 ──
 
 /**
- * 마크다운 텍스트에서 h1~h4 헤딩 목록과 각 헤딩의 섹션 마크다운을 추출.
+ * 마크다운 텍스트에서 h1~h4 헤딩을 찾아 섹션별 라인 범위를 반환.
  * 펜스 코드블록 내부의 '#' 라인은 헤딩으로 처리하지 않음.
- * 반환값: 헤딩 순서에 대응하는 섹션 마크다운 문자열 배열.
+ * 반환값: [{ level, lineIdx, endLine, headingText }, ...]
+ *   - lineIdx: 헤딩 라인 (0-based)
+ *   - endLine: 섹션 종료 라인(exclusive, 끝 빈 줄 제거 반영)
+ *   - headingText: "## " 등 마크다운 접두사를 제거한 헤딩 텍스트
  */
-function _extractMarkdownSections(markdownText) {
-    const lines = markdownText.split('\n');
-    const headings = []; // { level, lineIdx }
+function _extractMarkdownSectionRanges(markdownText) {
+    const text = markdownText || '';
+    const lines = text.split('\n');
+
+    // transclusion 센티넬 마커 위치(문자 오프셋)를 수집하여 라인별 깊이를 계산.
+    // 센티넬은 common.js 의 _resolveTransclusionsCore 가 템플릿 전개 결과 주위에
+    // 삽입한다. 이를 통해 헤딩이 원본에서 온 것인지 transclusion 주입된 것인지를
+    // 텍스트가 아닌 구조적 소스 표식으로 판별한다.
+    const OPEN = '<!--WIKI_TCL_B-->';
+    const CLOSE = '<!--WIKI_TCL_E-->';
+    const markers = [];
+    let pos = 0;
+    while (true) {
+        const oIdx = text.indexOf(OPEN, pos);
+        const cIdx = text.indexOf(CLOSE, pos);
+        if (oIdx < 0 && cIdx < 0) break;
+        if (oIdx >= 0 && (cIdx < 0 || oIdx < cIdx)) {
+            markers.push({ offset: oIdx, type: +1 });
+            pos = oIdx + OPEN.length;
+        } else {
+            markers.push({ offset: cIdx, type: -1 });
+            pos = cIdx + CLOSE.length;
+        }
+    }
+
+    // 각 라인 시작의 문자 오프셋 사전 계산
+    const lineOffsets = new Array(lines.length);
+    {
+        let off = 0;
+        for (let i = 0; i < lines.length; i++) {
+            lineOffsets[i] = off;
+            off += lines[i].length + 1; // '\n'
+        }
+    }
+
+    // 주어진 문자 오프셋에서 transclusion 깊이 반환
+    function depthAt(charOffset) {
+        let d = 0;
+        for (const mk of markers) {
+            if (mk.offset >= charOffset) break;
+            d += mk.type;
+        }
+        return d > 0 ? d : 0;
+    }
+
+    const headings = []; // { level, lineIdx, headingText, transcluded }
     let inFencedCode = false;
     let fenceChar = '';
     let fenceLen = 0;
@@ -839,9 +893,42 @@ function _extractMarkdownSections(markdownText) {
                 fenceLen = fenceMatch[1].length;
                 continue;
             }
-            const hMatch = line.match(/^(#{1,4}) /);
+            const hMatch = line.match(/^(#{1,4})\s+(.*)$/);
             if (hMatch) {
-                headings.push({ level: hMatch[1].length, lineIdx: i });
+                headings.push({
+                    level: hMatch[1].length,
+                    lineIdx: i,
+                    headingText: hMatch[2].trim(),
+                    transcluded: depthAt(lineOffsets[i]) > 0
+                });
+            } else if (i > 0) {
+                // setext 헤딩(=== / ---) 감지.
+                // marked 는 setext 를 <h1>/<h2> 로 렌더링하므로 DOM headingEls 에는
+                // 포함되지만, ATX 만 파싱하면 ranges 와 DOM 개수가 어긋나 section 인덱스가
+                // 엉뚱한 섹션을 가리킬 수 있다.
+                const underlineMatch = line.match(/^(=+|-+)\s*$/);
+                if (underlineMatch) {
+                    const prev = lines[i - 1];
+                    const prevTrim = prev.trim();
+                    // 이전 라인이 문단 텍스트여야 setext 로 인정.
+                    // 빈 줄/ATX 헤딩/블록쿼트/리스트 항목 등은 제외.
+                    const isParagraph = prevTrim !== ''
+                        && !prevTrim.startsWith('#')
+                        && !prevTrim.startsWith('>')
+                        && !/^[-*_]{3,}\s*$/.test(prevTrim)
+                        && !/^[-*+]\s+/.test(prevTrim)
+                        && !/^\d+[.)]\s+/.test(prevTrim)
+                        && !/^(`{3,}|~{3,})/.test(prevTrim);
+                    if (isParagraph) {
+                        const level = underlineMatch[1][0] === '=' ? 1 : 2;
+                        headings.push({
+                            level: level,
+                            lineIdx: i - 1,
+                            headingText: prevTrim,
+                            transcluded: depthAt(lineOffsets[i - 1]) > 0
+                        });
+                    }
+                }
             }
         } else {
             const trimmed = line.trim();
@@ -861,18 +948,52 @@ function _extractMarkdownSections(markdownText) {
         }
         // 섹션 끝의 빈 줄 제거
         while (endLine > h.lineIdx && lines[endLine - 1].trim() === '') endLine--;
-        return lines.slice(h.lineIdx, endLine).join('\n');
+        return {
+            level: h.level,
+            lineIdx: h.lineIdx,
+            endLine,
+            headingText: h.headingText,
+            transcluded: h.transcluded
+        };
     });
 }
 
-/** 컨테이너 내 h1~h4 요소에 섹션 마크다운 복사 버튼을 추가 */
-function _addHeadingCopyButtons(containerEl, resolvedContent) {
-    const sections = _extractMarkdownSections(resolvedContent);
+/**
+ * 마크다운 텍스트에서 h1~h4 헤딩 목록과 각 헤딩의 섹션 마크다운을 추출.
+ * 펜스 코드블록 내부의 '#' 라인은 헤딩으로 처리하지 않음.
+ * 반환값: 헤딩 순서에 대응하는 섹션 마크다운 문자열 배열.
+ */
+function _extractMarkdownSections(markdownText) {
+    const lines = markdownText.split('\n');
+    const ranges = _extractMarkdownSectionRanges(markdownText);
+    return ranges.map(r => lines.slice(r.lineIdx, r.endLine).join('\n'));
+}
+
+/** 컨테이너 내 h1~h4 요소에 섹션 마크다운 복사 버튼(+ 선택적으로 섹션 편집 버튼)을 추가 */
+function _addHeadingCopyButtons(containerEl, resolvedContent, options = {}) {
+    const ranges = _extractMarkdownSectionRanges(resolvedContent);
+    const lines = resolvedContent.split('\n');
     const headingEls = Array.from(containerEl.querySelectorAll('h1, h2, h3, h4'));
 
+    const enableSectionEdit = !!options.enableSectionEdit;
+    const canEdit = !!options.canEdit;
+    const editSlug = options.slug || '';
+    // 섹션 편집 링크는 원본(raw) 마크다운의 섹션 인덱스를 써야 한다.
+    // transclusion 으로 주입된 헤딩은 원본에 존재하지 않으므로 편집 버튼을 생략하며,
+    // 이 판정은 headingText 매칭이 아니라 _extractMarkdownSectionRanges 가 센티넬
+    // 마커로부터 계산한 range.transcluded (소스 구조 메타데이터) 로 수행한다.
+    const rawContent = typeof options.rawContent === 'string' ? options.rawContent : null;
+    const rawRanges = rawContent !== null ? _extractMarkdownSectionRanges(rawContent) : null;
+    let rawCursor = 0; // non-transcluded DOM 헤딩에 대응하는 raw range 포인터
+
+    // 섹션 콘텐츠에서 센티넬 주석 라인 제거(복사 텍스트를 깔끔하게 유지)
+    const SENTINEL_RE = /<!--WIKI_TCL_[BE]-->/g;
+    const stripSentinels = (s) => s.replace(SENTINEL_RE, '');
+
     headingEls.forEach((h, idx) => {
-        const sectionContent = sections[idx];
-        if (sectionContent === undefined) return;
+        const range = ranges[idx];
+        if (!range) return;
+        const sectionContent = stripSentinels(lines.slice(range.lineIdx, range.endLine).join('\n'));
 
         const copyBtn = document.createElement('button');
         copyBtn.className = 'wiki-heading-copy-btn';
@@ -906,6 +1027,47 @@ function _addHeadingCopyButtons(containerEl, resolvedContent) {
             h.insertBefore(copyBtn, toggleIcon);
         } else {
             h.appendChild(copyBtn);
+        }
+
+        // 편집 권한이 있을 때만 섹션 편집 버튼을 복사 버튼 옆에 추가
+        if (enableSectionEdit && canEdit && editSlug && rawRanges) {
+            // transclusion 주입 헤딩은 원본에 존재하지 않으므로 편집 버튼 미생성.
+            // 판정은 텍스트 매칭이 아니라 센티넬 기반 소스 메타데이터(range.transcluded)로.
+            if (range.transcluded) return;
+
+            // 이 DOM 헤딩은 원본 마크다운의 rawCursor 번째 헤딩에 해당한다(순서 불변).
+            const rawIdx = rawCursor;
+            rawCursor++;
+            const rawRange = rawRanges[rawIdx];
+            if (!rawRange) return; // 예기치 않은 불일치 — 방어적 차단
+
+            // 텍스트 일치 확인(방어적): 원본을 앞서 변경한 뒤 캐시된 이전 render 와
+            // 엇갈리는 극한 경우를 잡기 위한 안전망. 불일치 시 편집 버튼 생략.
+            const normalize = (s) => (s || '').trim();
+            if (normalize(rawRange.headingText) !== normalize(range.headingText)) return;
+
+            const editLink = document.createElement('a');
+            editLink.className = 'wiki-heading-edit-btn';
+            editLink.title = '이 섹션만 편집';
+            editLink.setAttribute('aria-label', '섹션 편집');
+            const params = new URLSearchParams({
+                slug: editSlug,
+                section: String(rawIdx),
+                h: rawRange.headingText
+            });
+            editLink.href = '/edit?' + params.toString();
+            editLink.innerHTML = '<i class="bi bi-pencil"></i>';
+            editLink.addEventListener('click', (e) => {
+                // 섹션 접기/펼치기 헤딩 클릭 이벤트와 충돌 방지
+                e.stopPropagation();
+            });
+
+            // 복사 버튼 바로 다음 형제로 삽입 → [copy][edit][toggle-icon]
+            if (copyBtn.nextSibling) {
+                h.insertBefore(editLink, copyBtn.nextSibling);
+            } else {
+                h.appendChild(editLink);
+            }
         }
     });
 }
