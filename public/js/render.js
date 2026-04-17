@@ -1,3 +1,35 @@
+// ── 컬러 팔레트 ──
+// 하드코딩 프리셋 정의(WIKI_HARDCODED_PALETTES) 및 병합 헬퍼(getMergedWikiPalettes)는
+// common.js에 있음 — render.js와 edit.js가 동일한 단일 소스를 참조하도록 유지.
+
+/** 현재 다크모드 여부 */
+function _isWikiDarkMode() {
+    return !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+}
+
+/**
+ * 텍스트에 포함된 {palette:이름} 토큰을 {bg:#...}{color:#...} 토큰으로 치환.
+ * 존재하지 않는 팔레트는 원본 토큰을 그대로 남겨 { bg:}/{color:} 파서에서 무시되도록 함.
+ * 기존 렌더링 파이프라인의 매크로 치환 단계로서 동작하며 새로운 렌더 경로를 만들지 않음.
+ */
+function _resolvePaletteTokens(text) {
+    if (!text || typeof text !== 'string') return text;
+    if (text.indexOf('{palette:') === -1) return text;
+    const merged = getMergedWikiPalettes();
+    const isDark = _isWikiDarkMode();
+    return text.replace(/\{palette:\s*([^}\s][^}]*?)\s*\}/g, (match, nameRaw) => {
+        const name = nameRaw.trim();
+        const entry = merged[name];
+        if (!entry) return match; // 미등록 이름: 원본 유지 (bg/color 파서도 매칭 실패하여 무시됨)
+        const variant = isDark ? entry.dark : entry.light;
+        if (!variant) return match;
+        let out = '';
+        if (variant.bg) out += `{bg:${variant.bg}}`;
+        if (variant.color) out += `{color:${variant.color}}`;
+        return out || match;
+    });
+}
+
 // ── 타임스탬프 유틸리티 ──
 
 /**
@@ -149,6 +181,28 @@ function _processTimestampsInHtml(html) {
         if (text === null) return match;
         return `<span class="wiki-age" title="${dateStr}">${text}</span>`;
     });
+    // {calendar:YYYY-MM-DD}
+    html = html.replace(/\{calendar:(\d{4}-\d{2}-\d{2})\}/g, (match, dateStr) => {
+        const parts = dateStr.split('-');
+        const year = parseInt(parts[0], 10);
+        const month = parseInt(parts[1], 10);
+        const day = parseInt(parts[2], 10);
+        const d = new Date(year, month - 1, day);
+        if (isNaN(d.getTime()) || d.getFullYear() !== year || d.getMonth() !== month - 1 || d.getDate() !== day) {
+            return match;
+        }
+        const monthNames = ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월'];
+        const dayNames = ['일요일','월요일','화요일','수요일','목요일','금요일','토요일'];
+        const monthName = monthNames[month - 1];
+        const dowName = dayNames[d.getDay()];
+        const dowClass = d.getDay() === 0 ? ' wiki-cal-sun' : d.getDay() === 6 ? ' wiki-cal-sat' : '';
+        return `<span class="wiki-calendar-box" title="${dateStr}">` +
+            `<span class="wiki-cal-month">${monthName}</span>` +
+            `<span class="wiki-cal-day">${day}</span>` +
+            `<span class="wiki-cal-dow${dowClass}">${dowName}</span>` +
+            `<span class="wiki-cal-year">${year}</span>` +
+            `</span>`;
+    });
 
     // 보호했던 코드블록 복원
     html = html.replace(/\x00TSPROT(\d+)\x00/g, (_, i) => prot[parseInt(i, 10)]);
@@ -193,7 +247,8 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
         const foldBlocks = [];
         let preprocessed = foldInput.replace(foldRegex, (match, titleLine, foldContent) => {
             foldContent = foldContent.replace(/^\n+|\n+$/g, '');
-            let summaryText = titleLine;
+            // 팔레트 토큰을 {bg:}{color:}로 치환. 원위치에 전개되므로 뒤에 오는 bg/color가 자연스럽게 우선권을 가짐.
+            let summaryText = _resolvePaletteTokens(titleLine);
             let bgOpt = '';
             let colorOpt = '';
 
@@ -205,6 +260,9 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
                 let colorMatch = summaryText.match(/\{color:\s*([^}]+)\}/);
                 if (colorMatch) { colorOpt = escapeHtml(colorMatch[1].trim()); summaryText = summaryText.replace(colorMatch[0], ''); replaced = true; }
             }
+
+            // 미등록 {palette:이름} 토큰은 렌더에 노출되지 않도록 조용히 제거 (표 셀 경로와 동일 정책)
+            summaryText = summaryText.replace(/\{palette:\s*[^}]*\}/g, '');
 
             summaryText = escapeHtml(summaryText.trim());
 
@@ -274,6 +332,19 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
 
                 while (replaced) {
                     replaced = false;
+                    // {palette:이름}을 선두에서 {bg:}{color:}로 전개 후 다음 이터레이션에서 파싱되도록 continue
+                    let palMatch = val.match(/^([\s]*)\{palette:\s*([^}\s][^}]*?)\s*\}/);
+                    if (palMatch) {
+                        const expanded = _resolvePaletteTokens(`{palette:${palMatch[2]}}`);
+                        // 미등록 팔레트는 치환되지 않음 → 무한 루프 방지: 원본 토큰 그대로면 제거
+                        if (expanded === `{palette:${palMatch[2]}}`) {
+                            val = palMatch[1] + val.slice(palMatch[0].length);
+                        } else {
+                            val = palMatch[1] + expanded + val.slice(palMatch[0].length);
+                        }
+                        replaced = true;
+                        continue;
+                    }
                     let bgMatch = val.match(/^([\s]*)\{bg:\s*([^}]+)\}/);
                     if (bgMatch) {
                         const colorValue = bgMatch[2].trim();

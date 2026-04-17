@@ -182,12 +182,12 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                     {
                         name: 'read_document',
                         description: '위키 문서의 전체 본문을 읽어옵니다.',
-                        inputSchema: { type: 'object', properties: { title: { type: 'string', description: '문서 제목' } }, required: ['title'] }
+                        inputSchema: { type: 'object', properties: { title: { type: 'string', description: '문서 제목' }, raw: { type: 'boolean', description: 'true로 설정 시 위키 꾸미기 문법 변환을 건너뛰고 원본 그대로 반환합니다.' } }, required: ['title'] }
                     },
                     {
                         name: 'read_section',
                         description: '위키 문서에서 특정 목차의 내용만 읽어옵니다. 목차는 get_toc 가 반환하는 계층적 번호(예: "1", "1.1", "1.1.1")로 지정합니다.',
-                        inputSchema: { type: 'object', properties: { title: { type: 'string', description: '문서 제목' }, section_number: { type: 'string', description: 'get_toc가 반환한 목차 번호 (예: "1", "1.1", "1.1.1")' } }, required: ['title', 'section_number'] }
+                        inputSchema: { type: 'object', properties: { title: { type: 'string', description: '문서 제목' }, section_number: { type: 'string', description: 'get_toc가 반환한 목차 번호 (예: "1", "1.1", "1.1.1")' }, raw: { type: 'boolean', description: 'true로 설정 시 위키 꾸미기 문법 변환을 건너뛰고 원본 그대로 반환합니다.' } }, required: ['title', 'section_number'] }
                     },
                     {
                         name: 'get_tree',
@@ -202,7 +202,7 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                     {
                         name: 'get_category_info',
                         description: '해당 카테고리에 속한 문서 목록과 카테고리 설명을 반환합니다.',
-                        inputSchema: { type: 'object', properties: { category: { type: 'string', description: '조회할 카테고리 이름' } }, required: ['category'] }
+                        inputSchema: { type: 'object', properties: { category: { type: 'string', description: '조회할 카테고리 이름' }, raw: { type: 'boolean', description: 'true로 설정 시 위키 꾸미기 문법 변환을 건너뛰고 원본 그대로 반환합니다.' } }, required: ['category'] }
                     },
                     {
                         name: 'get_document_categoty',
@@ -270,8 +270,15 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                 }
 
                 if (toolName === 'get_toc') return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: extractTOC(actualContent) || '목차가 존재하지 않습니다.' }] } };
-                if (toolName === 'read_document') return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: await renderForAI(actualContent, db, 0, slug) || '문서 내용이 존재하지 않습니다.' }] } };
-                if (toolName === 'read_section') return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: await renderForAI(extractSection(actualContent, args.section_number || ''), db, 0, slug) || '해당 목차를 찾을 수 없습니다.' }] } };
+                if (toolName === 'read_document') {
+                    const text = args.raw === true ? actualContent : await renderForAI(actualContent, db, 0, slug);
+                    return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: text || '문서 내용이 존재하지 않습니다.' }] } };
+                }
+                if (toolName === 'read_section') {
+                    const sectionContent = extractSection(actualContent, args.section_number || '');
+                    const text = args.raw === true ? sectionContent : await renderForAI(sectionContent, db, 0, slug);
+                    return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: text || '해당 목차를 찾을 수 없습니다.' }] } };
+                }
             }
             if (toolName === 'get_tree') {
                 const requestedSlug = normalizeSlug(args.title || '');
@@ -349,7 +356,10 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                             }
                         }
                     }
-                    renderedCatContent = await renderForAI(actualContent, db, 0, catSlug) || '문서 내용이 존재하지 않습니다.';
+                    const categoryText = args.raw === true
+                        ? actualContent
+                        : await renderForAI(actualContent, db, 0, catSlug);
+                    renderedCatContent = categoryText || '문서 내용이 존재하지 않습니다.';
                 }
 
                 const output = {

@@ -41,6 +41,7 @@ export type Env = {
         TERMS_OF_SERVICE: string;
         PRIVACY_POLICY: string;
         ROLE_PERMISSIONS_JSON?: string;
+        PALETTES?: string;
     };
     Variables: {
         user: User | null;

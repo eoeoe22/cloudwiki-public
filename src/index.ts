@@ -319,19 +319,31 @@ app.get('/tickets', async (c) => {
     return renderHtml(c, '/tickets.html');
 });
 
-// /w/:slug/discussions/* → discussions.html 서빙 (SSR 브랜딩 적용)
-app.get('/w/:slug/discussions/:id', async (c) => {
+// 레거시 리다이렉트: /w/:slug/revisions → /w/:slug?mode=revisions (하위 호환)
+app.get('/w/:slug/revisions', (c) => {
     if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) {
         return c.redirect('/login');
     }
-    return renderHtml(c, '/discussions.html');
+    const slug = c.req.param('slug');
+    return c.redirect(`/w/${encodeURIComponent(slug)}?mode=revisions`, 301);
 });
-
-app.get('/w/:slug/discussions', async (c) => {
+app.get('/w/:slug/discussions/:id', (c) => {
     if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) {
         return c.redirect('/login');
     }
-    return renderHtml(c, '/discussions.html');
+    const slug = c.req.param('slug');
+    const id = c.req.param('id');
+    if (!/^[1-9]\d*$/.test(id)) {
+        return c.notFound();
+    }
+    return c.redirect(`/w/${encodeURIComponent(slug)}?mode=discussions&id=${encodeURIComponent(id)}`, 301);
+});
+app.get('/w/:slug/discussions', (c) => {
+    if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) {
+        return c.redirect('/login');
+    }
+    const slug = c.req.param('slug');
+    return c.redirect(`/w/${encodeURIComponent(slug)}?mode=discussions`, 301);
 });
 
 // /recent-changes → recent-changes.html 서빙 (SSR 브랜딩 적용)
@@ -342,21 +354,34 @@ app.get('/recent-changes', async (c) => {
     return renderHtml(c, '/recent-changes.html');
 });
 
-// /w/:slug/revisions → revisions.html 서빙 (SSR 브랜딩 적용)
-app.get('/w/:slug/revisions', async (c) => {
-    if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) {
-        return c.redirect('/login');
-    }
-    return renderHtml(c, '/revisions.html');
-});
-
-// /w/:slug → index.html + SSR (문서 데이터 주입)
-app.get('/w/:slug', async (c) => {
+// /w/* → 와일드카드 라우트: 슬래시 포함 슬러그를 지원하기 위해 경로 전체를 슬러그로 처리
+// 하위 페이지(revisions, discussions)는 ?mode= 쿼리 파라미터로 구분
+app.get('/w/*', async (c) => {
     if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) {
         return c.redirect('/login');
     }
 
-    const slug = c.req.param('slug');
+    const mode = c.req.query('mode');
+
+    // mode=revisions → revisions.html 서빙
+    if (mode === 'revisions') {
+        return renderHtml(c, '/revisions.html');
+    }
+
+    // mode=discussions → discussions.html 서빙
+    if (mode === 'discussions') {
+        return renderHtml(c, '/discussions.html');
+    }
+
+    // 슬러그 추출: /w/ 이후 경로 전체를 슬러그로 사용
+    const rawPath = c.req.path.substring(3); // "/w/" 이후
+    let slug: string;
+    try {
+        slug = decodeURIComponent(rawPath);
+    } catch {
+        slug = rawPath;
+    }
+
     const db = c.env.DB;
     const user = c.get('user');
     const rbac = c.get('rbac') as RBAC;

@@ -632,7 +632,7 @@ initColorPickerCanvasEvents();
 // ── 타임스탬프 인라인 자동완성 ──
 const timestampAc = {
     visible: false,
-    trigger: 'dday',   // 'age' | 'dday' | 'time' | 'timer'
+    trigger: 'dday',   // 'age' | 'dday' | 'time' | 'timer' | 'calendar'
     div: document.getElementById('timestamp-autocomplete'),
 };
 
@@ -765,7 +765,7 @@ function showTimestampAutocomplete(trigger) {
     const calSec = document.getElementById('tsCalSection');
     const yearPanel = document.getElementById('tsCalYearPanel');
 
-    const isDate = (trigger === 'age' || trigger === 'dday');
+    const isDate = (trigger === 'age' || trigger === 'dday' || trigger === 'calendar');
 
     // 섹션 전환
     if (calSec) calSec.style.display = isDate ? 'block' : 'none';
@@ -773,15 +773,18 @@ function showTimestampAutocomplete(trigger) {
     if (presetsEl) presetsEl.style.display = isDate ? 'none' : 'flex';
 
     const today = new Date();
+    function _localDateStr(d) {
+        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    }
     function _offsetDate(days) {
         const d = new Date(today);
         d.setDate(d.getDate() + days);
-        return d.toISOString().slice(0, 10);
+        return _localDateStr(d);
     }
     function _offsetYear(years) {
         const d = new Date(today);
         d.setFullYear(d.getFullYear() + years);
-        return d.toISOString().slice(0, 10);
+        return _localDateStr(d);
     }
 
     if (trigger === 'age') {
@@ -797,6 +800,16 @@ function showTimestampAutocomplete(trigger) {
     } else if (trigger === 'dday') {
         if (iconEl) iconEl.className = 'mdi mdi-calendar';
         if (labelEl) labelEl.textContent = 'D-Day 날짜 선택';
+        if (inputEl) { inputEl.type = 'text'; inputEl.placeholder = 'YYYY-MM-DD'; inputEl.readOnly = true; }
+        const initDate = _offsetDate(0);
+        cal.year = parseInt(initDate.slice(0, 4), 10);
+        cal.month = parseInt(initDate.slice(5, 7), 10);
+        cal.selectedDate = initDate;
+        cal.showingYearPanel = false;
+        if (inputEl) inputEl.value = initDate;
+    } else if (trigger === 'calendar') {
+        if (iconEl) iconEl.className = 'mdi mdi-calendar-month';
+        if (labelEl) labelEl.textContent = '캘린더 날짜 선택';
         if (inputEl) { inputEl.type = 'text'; inputEl.placeholder = 'YYYY-MM-DD'; inputEl.readOnly = true; }
         const initDate = _offsetDate(0);
         cal.year = parseInt(initDate.slice(0, 4), 10);
@@ -1264,6 +1277,162 @@ function selectIconAutocomplete(index) {
     }
 
     hideIconAutocomplete();
+    editor.focus();
+}
+
+// ══════════════════════════════════════════════════
+// ── 팔레트 인라인 자동완성 ──
+// ══════════════════════════════════════════════════
+
+// 하드코딩 프리셋 정의는 common.js의 WIKI_HARDCODED_PALETTES가 단일 소스.
+// 에디터는 '기본/커스텀/오버라이드' 출처 구분이 필요하므로 common.js의 병합 헬퍼 대신
+// 커스텀 맵과 하드코딩을 직접 합치면서 source 라벨을 부여한다.
+
+const paletteAc = {
+    visible: false,
+    results: [],          // [{ name, source: 'preset'|'custom', variant: {bg,color} }]
+    selectedIndex: -1,
+    query: '',
+    div: document.getElementById('palette-autocomplete'),
+};
+
+function getAllPalettesForEditor() {
+    const isDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+    const hardcoded = (typeof WIKI_HARDCODED_PALETTES !== 'undefined') ? WIKI_HARDCODED_PALETTES : {};
+    const custom = (appConfig && appConfig.palettes && typeof appConfig.palettes === 'object') ? appConfig.palettes : {};
+    const merged = {};
+    // 하드코딩 먼저, 그 다음 커스텀이 덮어씌움 (충돌 시 커스텀 우선)
+    for (const [name, entry] of Object.entries(hardcoded)) {
+        merged[name] = { source: 'preset', entry };
+    }
+    for (const [name, entry] of Object.entries(custom)) {
+        if (!entry || typeof entry !== 'object') continue;
+        merged[name] = { source: merged[name] ? 'override' : 'custom', entry };
+    }
+    return Object.entries(merged).map(([name, info]) => {
+        const variant = isDark ? (info.entry.dark || info.entry.light) : (info.entry.light || info.entry.dark);
+        return { name, source: info.source, variant: variant || {} };
+    });
+}
+
+function hidePaletteAutocomplete() {
+    paletteAc.visible = false;
+    paletteAc.results = [];
+    paletteAc.selectedIndex = -1;
+    if (paletteAc.div) paletteAc.div.style.display = 'none';
+}
+
+function showPaletteAutocomplete(query) {
+    paletteAc.query = (query || '').toLowerCase();
+    paletteAc.visible = true;
+
+    positionDropdownAtCursor(paletteAc.div, 280);
+
+    const all = getAllPalettesForEditor();
+    const q = paletteAc.query;
+    let results;
+    if (!q) {
+        results = all;
+    } else {
+        const exact = all.filter(p => p.name.toLowerCase() === q);
+        const starts = all.filter(p => p.name.toLowerCase() !== q && p.name.toLowerCase().startsWith(q));
+        const includes = all.filter(p => !p.name.toLowerCase().startsWith(q) && p.name.toLowerCase().includes(q));
+        results = [...exact, ...starts, ...includes];
+    }
+    paletteAc.results = results;
+    paletteAc.selectedIndex = results.length > 0 ? 0 : -1;
+    renderPaletteAcResults();
+}
+
+function renderPaletteAcResults() {
+    const listEl = document.getElementById('paletteAcList');
+    const emptyEl = document.getElementById('paletteAcEmpty');
+    if (!listEl) return;
+    if (paletteAc.results.length === 0) {
+        listEl.innerHTML = '';
+        if (emptyEl) emptyEl.style.display = 'block';
+        return;
+    }
+    if (emptyEl) emptyEl.style.display = 'none';
+    listEl.innerHTML = '';
+
+    paletteAc.results.forEach((p, i) => {
+        const rawBg = p.variant.bg || 'transparent';
+        const rawColor = p.variant.color || 'inherit';
+        const bg = _isSafeCssColor(rawBg) ? rawBg : 'transparent';
+        const color = _isSafeCssColor(rawColor) ? rawColor : 'inherit';
+        const tag = p.source === 'preset' ? '기본' : p.source === 'override' ? '오버라이드' : '커스텀';
+
+        const itemEl = document.createElement('div');
+        itemEl.className = `palette-ac-item${i === paletteAc.selectedIndex ? ' active' : ''}`;
+        itemEl.dataset.index = String(i);
+
+        const badgeEl = document.createElement('span');
+        badgeEl.className = 'palette-ac-badge';
+        badgeEl.textContent = p.name;
+        badgeEl.style.backgroundColor = bg;
+        badgeEl.style.color = color;
+
+        const nameEl = document.createElement('span');
+        nameEl.className = 'palette-ac-name';
+        nameEl.textContent = p.name;
+
+        const tagEl = document.createElement('span');
+        tagEl.className = 'palette-ac-tag';
+        tagEl.textContent = tag;
+
+        itemEl.appendChild(badgeEl);
+        itemEl.appendChild(nameEl);
+        itemEl.appendChild(tagEl);
+
+        itemEl.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const idx = parseInt(itemEl.dataset.index);
+            selectPaletteAutocomplete(idx);
+        });
+
+        listEl.appendChild(itemEl);
+    });
+}
+
+function highlightPaletteAcItem() {
+    if (!paletteAc.div) return;
+    const items = paletteAc.div.querySelectorAll('.palette-ac-item');
+    items.forEach((item, idx) => {
+        if (idx === paletteAc.selectedIndex) {
+            item.classList.add('active');
+            item.scrollIntoView({ block: 'nearest' });
+        } else {
+            item.classList.remove('active');
+        }
+    });
+}
+
+function selectPaletteAutocomplete(index) {
+    const item = paletteAc.results[index];
+    if (!item || !editor) return;
+
+    const selection = editor.getSelection();
+    if (!selection) { hidePaletteAutocomplete(); return; }
+
+    const [from] = selection;
+    const line = from[0];
+    const col = from[1];
+
+    const md = editor.getMarkdown();
+    const lines = md.split('\n');
+    const lineText = lines[line - 1] || '';
+    const textBefore = lineText.substring(0, col - 1);
+    const prefix = '{palette:';
+    const lastTriggerIndex = textBefore.lastIndexOf(prefix);
+
+    if (lastTriggerIndex !== -1) {
+        editor.setSelection([line, lastTriggerIndex + 1], [line, col]);
+        editor.insertText(`${prefix}${item.name}}`);
+    }
+
+    hidePaletteAutocomplete();
     editor.focus();
 }
 
@@ -1949,7 +2118,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const highlightPlugin = makePlugin(highlightMatcher);
 
         const timeMatcher = new MatchDecorator({
-            regexp: /\{(time|timer|age|dday):[^}]+\}/g,
+            regexp: /\{(time|timer|age|dday|calendar):[^}]+\}/g,
             decoration: Decoration.mark({ class: "cm-time-marker" })
         });
         const timePlugin = makePlugin(timeMatcher);
@@ -4043,7 +4212,8 @@ window.addEventListener('keydown', (e) => {
             : colorAc.visible ? 'color'
                 : imgSizeAc.visible ? 'imgsize'
                     : timestampAc.visible ? 'timestamp'
-                        : null;
+                        : paletteAc.visible ? 'palette'
+                            : null;
     if (!activeAc) return;
 
     const key = e.key;
@@ -4176,6 +4346,30 @@ window.addEventListener('keydown', (e) => {
             e.preventDefault(); e.stopPropagation();
             applyTimestampAutocomplete();
         }
+    } else if (activeAc === 'palette') {
+        if (isDown) {
+            if (paletteAc.results.length > 0) {
+                e.preventDefault(); e.stopPropagation();
+                paletteAc.selectedIndex = (paletteAc.selectedIndex + 1) % paletteAc.results.length;
+                highlightPaletteAcItem();
+            } else { hidePaletteAutocomplete(); }
+        } else if (isUp) {
+            if (paletteAc.results.length > 0) {
+                e.preventDefault(); e.stopPropagation();
+                paletteAc.selectedIndex = (paletteAc.selectedIndex - 1 + paletteAc.results.length) % paletteAc.results.length;
+                highlightPaletteAcItem();
+            } else { hidePaletteAutocomplete(); }
+        } else if (isLeft || isRight) {
+            hidePaletteAutocomplete();
+        } else if (isEnter) {
+            if (paletteAc.results.length > 0 && paletteAc.selectedIndex >= 0) {
+                e.preventDefault(); e.stopPropagation();
+                selectPaletteAutocomplete(paletteAc.selectedIndex);
+            } else { hidePaletteAutocomplete(); }
+        } else if (isEsc) {
+            e.preventDefault(); e.stopPropagation();
+            hidePaletteAutocomplete();
+        }
     }
 }, true);
 
@@ -4195,6 +4389,9 @@ document.addEventListener('mousedown', (e) => {
     }
     if (timestampAc.div && !timestampAc.div.contains(e.target)) {
         setTimeout(hideTimestampAutocomplete, 100);
+    }
+    if (paletteAc.div && !paletteAc.div.contains(e.target)) {
+        setTimeout(hidePaletteAutocomplete, 100);
     }
 });
 
@@ -4230,11 +4427,13 @@ function attachAutocomplete() {
             const iconMatch = textBefore.match(/\{icon:([^}]*)$/);
             const bgColorMatch = textBefore.match(/\{bg:([^}]*)$/);
             const textColorMatch = textBefore.match(/\{color:([^}]*)$/);
+            const paletteMatch = textBefore.match(/\{palette:([^}]*)$/);
             const imgMatch = textBefore.match(/!\[[^\]]*\]\([^)]+\)$/);
             const ddayMatch = textBefore.match(/\{dday:([^}]*)$/);
             const timeMatch = textBefore.match(/\{time:([^}]*)$/);
             const timerMatch = textBefore.match(/\{timer:([^}]*)$/);
             const ageMatch = textBefore.match(/\{age:([^}]*)$/);
+            const calendarMatch = textBefore.match(/\{calendar:([^}]*)$/);
 
             if (linkMatch) {
                 hideIconAutocomplete();
@@ -4265,12 +4464,25 @@ function attachAutocomplete() {
                 hideAutocomplete();
                 hideIconAutocomplete();
                 hideTimestampAutocomplete();
+                hidePaletteAutocomplete();
                 showColorAutocomplete(bgColorMatch[1], 'bg');
             } else if (textColorMatch) {
                 hideAutocomplete();
                 hideIconAutocomplete();
                 hideTimestampAutocomplete();
+                hidePaletteAutocomplete();
                 showColorAutocomplete(textColorMatch[1], 'color');
+            } else if (paletteMatch) {
+                hideAutocomplete();
+                hideIconAutocomplete();
+                hideColorAutocomplete();
+                hideTimestampAutocomplete();
+                showPaletteAutocomplete(paletteMatch[1]);
+            } else if (calendarMatch) {
+                hideAutocomplete();
+                hideIconAutocomplete();
+                hideColorAutocomplete();
+                showTimestampAutocomplete('calendar');
             } else if (ageMatch) {
                 hideAutocomplete();
                 hideIconAutocomplete();
@@ -4304,6 +4516,7 @@ function attachAutocomplete() {
                 hideColorAutocomplete();
                 hideImgSizeAutocomplete();
                 hideTimestampAutocomplete();
+                hidePaletteAutocomplete();
             }
         });
     });
@@ -4325,6 +4538,9 @@ function attachAutocomplete() {
             }
             if (!document.activeElement.closest('#timestamp-autocomplete')) {
                 hideTimestampAutocomplete();
+            }
+            if (!document.activeElement.closest('#palette-autocomplete')) {
+                hidePaletteAutocomplete();
             }
         }, 200);
     });

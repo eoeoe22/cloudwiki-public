@@ -7,6 +7,51 @@ import { ROLE_CASE_SQL, enrichRoles, RBAC } from '../utils/role';
 
 const wiki = new Hono<Env>();
 
+// ── 커스텀 팔레트 파서 ──
+// PALETTES 환경변수(JSON 문자열)를 정규화된 팔레트 맵으로 변환.
+// 플랫 형태({bg,color})는 light/dark 공통 사용, 분리 형태({light,dark})는 각 모드별 적용.
+// 유효한 엔트리만 통과시키며 파싱 실패 시 빈 객체 반환(프론트엔드에서 조용히 무시).
+function parseCustomPalettes(raw: string | undefined): Record<string, { light: { bg?: string; color?: string }; dark: { bg?: string; color?: string } }> {
+    if (!raw) return {};
+    let parsed: any;
+    try {
+        parsed = JSON.parse(raw);
+    } catch {
+        return {};
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+
+    const result: Record<string, { light: { bg?: string; color?: string }; dark: { bg?: string; color?: string } }> = {};
+    for (const [name, value] of Object.entries(parsed)) {
+        if (!name) continue;
+        if (!/^[A-Za-z0-9_-]+$/.test(name)) continue;
+        if (!value || typeof value !== 'object') continue;
+        const v = value as any;
+
+        const hasSplit = (v.light && typeof v.light === 'object') || (v.dark && typeof v.dark === 'object');
+        if (hasSplit) {
+            const light = (v.light && typeof v.light === 'object') ? { bg: typeof v.light.bg === 'string' ? v.light.bg : undefined, color: typeof v.light.color === 'string' ? v.light.color : undefined } : {};
+            const dark = (v.dark && typeof v.dark === 'object') ? { bg: typeof v.dark.bg === 'string' ? v.dark.bg : undefined, color: typeof v.dark.color === 'string' ? v.dark.color : undefined } : {};
+            // 한쪽만 정의된 경우 반대편으로 폴백
+            const finalLight = { bg: light.bg ?? dark.bg, color: light.color ?? dark.color };
+            const finalDark = { bg: dark.bg ?? light.bg, color: dark.color ?? light.color };
+            if (
+                finalLight.bg === undefined &&
+                finalLight.color === undefined &&
+                finalDark.bg === undefined &&
+                finalDark.color === undefined
+            ) continue;
+            result[name] = { light: finalLight, dark: finalDark };
+        } else {
+            const bg = typeof v.bg === 'string' ? v.bg : undefined;
+            const color = typeof v.color === 'string' ? v.color : undefined;
+            if (bg === undefined && color === undefined) continue;
+            result[name] = { light: { bg, color }, dark: { bg, color } };
+        }
+    }
+    return result;
+}
+
 /**
  * 최근 변경 캐시를 즉시 새 데이터로 갱신
  * (delete 후 재요청 대기 대신, 직접 put하여 즉시 반영)
@@ -505,6 +550,7 @@ wiki.get('/config', (c) => {
         enableConcurrentEditDetection: c.env.ENABLE_CONCURRENT_EDIT_DETECTION !== 'false',
         turnstileSiteKey: c.env.TURNSTILE_SITE_KEY || '',
         enabledExtensions: (c.env.ENABLED_EXTENSIONS || '').split(',').map((s: string) => s.trim()).filter(Boolean),
+        palettes: parseCustomPalettes(c.env.PALETTES),
     });
 });
 

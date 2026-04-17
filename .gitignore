@@ -34,3 +34,6 @@ yarn-error.log*
 
 # TypeScript
 *.tsbuildinfo
+
+.gemini/
+gha-creds-*.json

@@ -200,7 +200,7 @@ discussionRoutes.post('/discussions/thread/:id/comments', requireAuth, requirePe
                   AND p.author_id NOT IN (SELECT user_id FROM discussion_mutes WHERE discussion_id = ?)
             `).bind(discussionId, discussionId, user.id, discussionId).all<{ author_id: number }>();
 
-            const link = `/w/${encodeURIComponent(discussionInfo.slug)}/discussions/${discussionId}`;
+            const link = `/w/${encodeURIComponent(discussionInfo.slug)}?mode=discussions&id=${discussionId}`;
             const notifContent = `'${discussionInfo.title}' 토론에 새 댓글이 달렸습니다.`;
 
             const batchStmts = participants.map(p => 
@@ -262,7 +262,7 @@ discussionRoutes.put('/discussions/thread/:id/status', requireAuth, async (c) =>
                 'SELECT p.slug FROM discussions d LEFT JOIN pages p ON d.page_id = p.id WHERE d.id = ?'
             ).bind(discussionId).first<{ slug: string | null }>();
             if (info?.slug) {
-                const link = `/w/${encodeURIComponent(info.slug)}/discussions/${discussionId}`;
+                const link = `/w/${encodeURIComponent(info.slug)}?mode=discussions&id=${discussionId}`;
                 await db.prepare("DELETE FROM notifications WHERE link = ? AND type != 'message'").bind(link).run();
             }
         } catch (e) {
@@ -309,7 +309,7 @@ discussionRoutes.delete('/discussions/thread/:id', requireAuth, async (c) => {
             'SELECT p.slug FROM discussions d LEFT JOIN pages p ON d.page_id = p.id WHERE d.id = ?'
         ).bind(discussionId).first<{ slug: string | null }>();
         if (info?.slug) {
-            const link = `/w/${encodeURIComponent(info.slug)}/discussions/${discussionId}`;
+            const link = `/w/${encodeURIComponent(info.slug)}?mode=discussions&id=${discussionId}`;
             await db.prepare("DELETE FROM notifications WHERE link = ? AND type != 'message'").bind(link).run();
         }
     } catch (e) {
@@ -349,7 +349,7 @@ discussionRoutes.delete('/discussions/thread/:id/hard', requireAuth, async (c) =
     // 관련 알림 정리
     if (discussionPageInfo?.slug) {
         try {
-            const link = `/w/${encodeURIComponent(discussionPageInfo.slug)}/discussions/${discussionId}`;
+            const link = `/w/${encodeURIComponent(discussionPageInfo.slug)}?mode=discussions&id=${discussionId}`;
             await db.prepare("DELETE FROM notifications WHERE link = ? AND type != 'message'").bind(link).run();
         } catch (e) {
             console.error('Failed to clear discussion notifications on hard delete:', e);

@@ -560,6 +560,17 @@ adminRoutes.get('/media', async (c) => {
     const limit = Math.min(50, Math.max(1, Number(c.req.query('limit')) || 10));
     const offset = Math.max(0, Number(c.req.query('offset')) || 0);
     const search = c.req.query('search')?.trim() || '';
+    const sort = c.req.query('sort') || 'date_desc';
+
+    const sortMap: Record<string, string> = {
+        date_desc:  'm.created_at DESC',
+        date_asc:   'm.created_at ASC',
+        name_asc:   'm.filename COLLATE NOCASE ASC',
+        name_desc:  'm.filename COLLATE NOCASE DESC',
+        size_desc:  'm.size DESC',
+        size_asc:   'm.size ASC',
+    };
+    const orderBy = sortMap[sort] || sortMap['date_desc'];
 
     let queryStr = `SELECT m.id, m.r2_key, m.filename, m.mime_type, m.size, m.created_at, u.name as uploader_name
                     FROM media m LEFT JOIN users u ON m.uploader_id = u.id`;
@@ -572,7 +583,7 @@ adminRoutes.get('/media', async (c) => {
         params.push(`%${search}%`);
     }
 
-    queryStr += ` ORDER BY m.created_at DESC LIMIT ? OFFSET ?`;
+    queryStr += ` ORDER BY ${orderBy} LIMIT ? OFFSET ?`;
     const queryParams = [...params, limit, offset];
 
     const [mediaResult, countResult] = await Promise.all([

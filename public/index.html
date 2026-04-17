@@ -303,7 +303,7 @@
       window.addEventListener('scroll', () => {
         if (window.scrollY > 200) {
           scrollFabGroup.classList.add('visible');
-        } else {
+        } else if (!document.body.classList.contains('reading-mode')) {
           scrollFabGroup.classList.remove('visible');
         }
       }, { passive: true });
@@ -316,16 +316,20 @@
 
       if (path === '/' || path === '') {
         showHome();
-      } else if (path.match(/^\/w\/([^/]+)\/discussions/)) {
-        // 토론 페이지 → 별도 HTML로 이동
-        window.location.href = path;
-        return;
-      } else if (path.match(/^\/w\/([^/]+)\/revisions$/)) {
-        // 리비전 페이지 → 별도 HTML로 이동
-        window.location.href = path;
-        return;
-      } else if (path.match(/^\/w\/([^/]+)$/)) {
-        const slug = decodeURIComponent(path.match(/^\/w\/([^/]+)$/)[1]);
+      } else if (path.startsWith('/w/')) {
+        const params = new URLSearchParams(window.location.search);
+        const mode = params.get('mode');
+        if (mode === 'discussions' || mode === 'revisions') {
+          // 토론/리비전 페이지 → 별도 HTML로 이동
+          window.location.href = path + window.location.search;
+          return;
+        }
+        let slug = path.substring(3);
+        try {
+          slug = decodeURIComponent(slug);
+        } catch (e) {
+          // malformed percent-encoding이 있어도 라우터가 깨지지 않도록 원본 slug를 사용
+        }
         showArticle(slug);
       } else if (path === '/search') {
         window.location.href = '/search.html' + window.location.search;
@@ -609,6 +613,9 @@
       <span class="meta-item">v${page.version}</span>
       <span class="meta-item" id="pageViewCount" style="display:none;"><i class="bi bi-eye"></i> <span id="pageViewNum">0</span></span>
       ${badgesHtml}
+      <button type="button" class="reading-mode-toggle" onclick="toggleReadingMode()" title="읽기 모드" aria-label="읽기 모드">
+        <i class="bi bi-book" aria-hidden="true"></i><span class="reading-mode-toggle-label d-none d-sm-inline"> 읽기 모드</span>
+      </button>
     `;
 
         // 조회수 비동기 로드
@@ -642,10 +649,10 @@
              aria-label="${canEdit ? '편집' : '편집 (잠김)'}">
             <i class="bi bi-pencil" aria-hidden="true"></i><span class="d-none d-sm-inline"> 편집</span>
           </a>
-          <a href="/w/${encodeURIComponent(actionSlug)}/revisions" class="btn btn-outline-secondary" aria-label="이력">
+          <a href="/w/${encodeURIComponent(actionSlug)}?mode=revisions" class="btn btn-outline-secondary" aria-label="이력">
             <i class="bi bi-clock-history" aria-hidden="true"></i><span class="d-none d-sm-inline"> 이력</span>
           </a>
-          <a href="/w/${encodeURIComponent(actionSlug)}/discussions" class="btn btn-outline-secondary" aria-label="토론">
+          <a href="/w/${encodeURIComponent(actionSlug)}?mode=discussions" class="btn btn-outline-secondary" aria-label="토론">
             <i class="bi bi-chat-dots" aria-hidden="true"></i><span class="d-none d-sm-inline"> 토론</span>
           </a>
           <button class="btn btn-outline-secondary" onclick="scrollToBacklinks(); return false;" aria-label="역링크">
@@ -802,7 +809,7 @@
           if (discRes.ok) {
             const discData = await discRes.json();
             if (discData.discussions && discData.discussions.length > 0) {
-              bannerLinkEl.href = `/w/${encodeURIComponent(actionSlug)}/discussions`;
+              bannerLinkEl.href = `/w/${encodeURIComponent(actionSlug)}?mode=discussions`;
               bannerEl.classList.remove('d-none');
             }
           }
@@ -1430,6 +1437,10 @@
 
   <!-- 스크롤 FAB (뷰포트 고정, body 직전) -->
   <div class="scroll-fab-group" id="scrollFabGroup">
+    <button class="scroll-fab reading-mode-exit-fab d-none" id="readingModeExitFab" onclick="toggleReadingMode()"
+      title="읽기 모드 나가기" aria-label="읽기 모드 나가기">
+      <i class="bi bi-x-lg"></i>
+    </button>
     <button class="scroll-fab" id="tocFabBtn" onclick="toggleFloatingToc()" title="목차">
       <i class="mdi mdi-format-list-bulleted-square"></i>
     </button>
@@ -1443,6 +1454,37 @@
   </div>
 
   <script>
+    // ── 읽기 모드 ──
+    function _applyReadingModeUi(active) {
+      const exitBtn = document.getElementById('readingModeExitFab');
+      const fabGroup = document.getElementById('scrollFabGroup');
+      if (!exitBtn || !fabGroup) return;
+      if (active) {
+        exitBtn.classList.remove('d-none');
+        fabGroup.classList.add('visible');
+      } else {
+        exitBtn.classList.add('d-none');
+        if (window.scrollY <= 200) fabGroup.classList.remove('visible');
+      }
+    }
+
+    function toggleReadingMode() {
+      const active = document.body.classList.toggle('reading-mode');
+      _applyReadingModeUi(active);
+      try {
+        if (active) localStorage.setItem('readingMode', '1');
+        else localStorage.removeItem('readingMode');
+      } catch (e) { }
+    }
+
+    // 초기 상태 복원 — 사이드바 숨김과 FAB 노출이 동시에 반영되도록 동기 적용
+    try {
+      if (localStorage.getItem('readingMode') === '1') {
+        document.body.classList.add('reading-mode');
+        _applyReadingModeUi(true);
+      }
+    } catch (e) { }
+
     function toggleFloatingToc() {
       const panel = document.getElementById('tocFloatingPanel');
       const tocSource = document.getElementById('tocNav');
@@ -1460,10 +1502,94 @@
             panel.classList.remove('visible');
           });
         });
+        // 현재 스크롤 위치에 맞춰 활성 항목 표시
+        _tocSpyLastId = null;
+        _updateTocActive();
       }
 
       panel.classList.toggle('visible');
     }
+
+    // ── 목차 스크롤 스파이 ──
+    let _tocSpyAttached = false;
+    let _tocSpyLastId = null;
+
+    function _findCurrentHeadingId() {
+      const articleContent = document.getElementById('articleContent');
+      if (!articleContent) return null;
+      const headings = articleContent.querySelectorAll('h1, h2, h3, h4');
+      if (!headings.length) return null;
+
+      const offset = 120;
+      let currentId = null;
+      for (const h of headings) {
+        if (!h.id) continue;
+        const rect = h.getBoundingClientRect();
+        if (rect.top - offset <= 0) {
+          currentId = h.id;
+        } else {
+          break;
+        }
+      }
+      if (!currentId) {
+        for (const h of headings) {
+          if (h.id) { currentId = h.id; break; }
+        }
+      }
+      return currentId;
+    }
+
+    function _updateTocActive() {
+      const articlePage = document.getElementById('articlePage');
+      if (!articlePage || articlePage.classList.contains('d-none')) return;
+      const currentId = _findCurrentHeadingId();
+      if (!currentId) return;
+      if (currentId === _tocSpyLastId) return;
+      _tocSpyLastId = currentId;
+
+      ['tocNav', 'tocFloatingNav'].forEach(navId => {
+        const nav = document.getElementById(navId);
+        if (!nav) return;
+        nav.querySelectorAll('a.toc-active').forEach(a => a.classList.remove('toc-active'));
+        nav.querySelectorAll('a').forEach(a => {
+          const href = a.getAttribute('href') || '';
+          if (href.slice(1) === currentId) a.classList.add('toc-active');
+        });
+      });
+
+      // 플로팅 패널이 열려 있으면 활성 항목이 보이도록 스크롤
+      const floatingNav = document.getElementById('tocFloatingNav');
+      const panel = document.getElementById('tocFloatingPanel');
+      if (floatingNav && panel && panel.classList.contains('visible')) {
+        const activeLink = floatingNav.querySelector('a.toc-active');
+        if (activeLink) {
+          const navRect = floatingNav.getBoundingClientRect();
+          const linkRect = activeLink.getBoundingClientRect();
+          if (linkRect.top < navRect.top || linkRect.bottom > navRect.bottom) {
+            activeLink.scrollIntoView({ block: 'nearest' });
+          }
+        }
+      }
+    }
+
+    function _attachTocSpy() {
+      if (_tocSpyAttached) return;
+      _tocSpyAttached = true;
+      let ticking = false;
+      const handler = () => {
+        if (ticking) return;
+        ticking = true;
+        requestAnimationFrame(() => {
+          _updateTocActive();
+          ticking = false;
+        });
+      };
+      window.addEventListener('scroll', handler, { passive: true });
+      window.addEventListener('resize', handler, { passive: true });
+      _updateTocActive();
+    }
+
+    document.addEventListener('DOMContentLoaded', _attachTocSpy);
 
     // 문서 페이지가 아닐 때 TOC FAB 숨기기
     const _origHideAllPages = typeof hideAllPages === 'function' ? hideAllPages : null;

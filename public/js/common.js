@@ -1432,6 +1432,26 @@ function _isSafeCssColor(value) {
     return /^(#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})|(rgb|hsl)a?\([0-9,.\s/%]+\))$/.test(value);
 }
 
+// ── 컬러 팔레트 하드코딩 프리셋 (단일 소스) ──
+// render.js(렌더링)과 edit.js(에디터 자동완성)가 동일한 정의를 참조하도록 common.js에 둠.
+// 부트스트랩 컬러 스키마 기반. 라이트/다크 모두 자연스럽게 보이도록 모드별 색상을 분리 정의.
+// 이름 충돌 시 커스텀(appConfig.palettes)이 하드코딩을 덮어씌움.
+const WIKI_HARDCODED_PALETTES = {
+    primary:   { light: { bg: '#CFE2FF', color: '#052C65' }, dark: { bg: '#031633', color: '#9EC5FE' } },
+    secondary: { light: { bg: '#E2E3E5', color: '#2B2F32' }, dark: { bg: '#1C1F22', color: '#C4C8CB' } },
+    success:   { light: { bg: '#D1E7DD', color: '#0A3622' }, dark: { bg: '#051B11', color: '#A3CFBB' } },
+    info:      { light: { bg: '#CFF4FC', color: '#055160' }, dark: { bg: '#032830', color: '#9EEAF9' } },
+    warning:   { light: { bg: '#FFF3CD', color: '#664D03' }, dark: { bg: '#332701', color: '#FFE69C' } },
+    danger:    { light: { bg: '#F8D7DA', color: '#58151C' }, dark: { bg: '#2C0B0E', color: '#F1AEB5' } },
+    muted:     { light: { bg: '#F8F9FA', color: '#6C757D' }, dark: { bg: '#1A1D20', color: '#ADB5BD' } },
+};
+
+/** 커스텀(appConfig.palettes) + 하드코딩을 병합한 팔레트 맵. 커스텀 우선. */
+function getMergedWikiPalettes() {
+    const custom = (typeof appConfig !== 'undefined' && appConfig && appConfig.palettes && typeof appConfig.palettes === 'object') ? appConfig.palettes : {};
+    return Object.assign({}, WIKI_HARDCODED_PALETTES, custom);
+}
+
 
 // ── PC 사이드바: 본문 스크롤 연동 및 푸터 겹침 방지 ──
 (function () {

@@ -122,8 +122,8 @@
     // ── URL에서 slug 추출 ──
     function extractSlug() {
       const path = window.location.pathname;
-      const m = path.match(/^\/w\/(.+)\/revisions$/);
-      return m ? decodeURIComponent(m[1]) : null;
+      if (!path.startsWith('/w/')) return null;
+      try { return decodeURIComponent(path.substring(3)); } catch { return path.substring(3); }
     }
 
     // ── 초기화 ──

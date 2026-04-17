@@ -166,17 +166,22 @@
     // ── URL 파싱 ──
     function parseUrl() {
       const path = window.location.pathname;
-      // /w/:slug/discussions/:id
-      let m = path.match(/^\/w\/(.+)\/discussions\/([0-9]+)$/);
-      if (m) {
-        return { slug: decodeURIComponent(m[1]), threadId: Number(m[2]) };
+      if (!path.startsWith('/w/')) return null;
+      let slug;
+      try { slug = decodeURIComponent(path.substring(3)); } catch { slug = path.substring(3); }
+      const params = new URLSearchParams(window.location.search);
+      const idParam = params.get('id');
+
+      if (idParam === null) {
+        return { slug, threadId: null };
       }
-      // /w/:slug/discussions
-      m = path.match(/^\/w\/(.+)\/discussions$/);
-      if (m) {
-        return { slug: decodeURIComponent(m[1]), threadId: null };
+
+      if (!/^[1-9]\d*$/.test(idParam)) {
+        return null;
       }
-      return null;
+
+      const threadId = Number(idParam);
+      return { slug, threadId };
     }
 
     // ── 초기화 ──
@@ -262,7 +267,7 @@
                   <div class="discussion-item-title d-flex align-items-start gap-2 mb-2">
                     <div class="flex-shrink-0 mt-1">${statusBadge}</div>
                     <div class="fs-5 fw-bold" style="line-height: 1.4;">
-                      <a href="/w/${encodeURIComponent(slug)}/discussions/${d.id}" class="stretched-link text-decoration-none" style="color: var(--wiki-text) !important; word-break: keep-all; overflow-wrap: anywhere;">${escapeHtml(d.title)}</a>
+                      <a href="/w/${encodeURIComponent(slug)}?mode=discussions&id=${d.id}" class="stretched-link text-decoration-none" style="color: var(--wiki-text) !important; word-break: keep-all; overflow-wrap: anywhere;">${escapeHtml(d.title)}</a>
                     </div>
                   </div>
                   <div class="discussion-item-meta d-flex flex-wrap gap-3 text-muted mt-2" style="font-size: 0.85rem;">
@@ -323,7 +328,7 @@
         if (!res.ok) throw new Error(data.error || '토론 생성 실패');
 
         Swal.fire('성공', '새 토론이 생성되었습니다.', 'success').then(() => {
-          window.location.href = `/w/${encodeURIComponent(currentSlug)}/discussions/${data.id}`;
+          window.location.href = `/w/${encodeURIComponent(currentSlug)}?mode=discussions&id=${data.id}`;
         });
       } catch (err) {
         Swal.fire('오류', err.message, 'error');
@@ -348,7 +353,7 @@
           `<i class="bi bi-chat-dots"></i> ${escapeHtml(discussion.title)}`;
 
         // 뒤로가기
-        document.getElementById('threadBackLink').href = `/w/${encodeURIComponent(slug)}/discussions`;
+        document.getElementById('threadBackLink').href = `/w/${encodeURIComponent(slug)}?mode=discussions`;
 
         // 메타 정보
         const statusBadge = discussion.status === 'open'
@@ -427,14 +432,17 @@
 
         // 해당 토론 관련 알림 일괄 삭제 (로그인 유저만, 백그라운드 처리)
         if (currentUser) {
-          const notifLink = `/w/${encodeURIComponent(slug)}/discussions/${threadId}`;
-          fetch('/api/notifications/by-link', {
-            method: 'DELETE',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ link: notifLink })
-          }).then(res => {
-            if (res.ok) loadNotificationCount();
-          }).catch(() => { /* 무시 */ });
+          const newFormatLink = `/w/${encodeURIComponent(slug)}?mode=discussions&id=${threadId}`;
+          const legacyFormatLink = `/w/${encodeURIComponent(slug)}/discussions/${threadId}`;
+          for (const notifLink of [newFormatLink, legacyFormatLink]) {
+            fetch('/api/notifications/by-link', {
+              method: 'DELETE',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ link: notifLink })
+            }).then(res => {
+              if (res.ok) loadNotificationCount();
+            }).catch(() => { /* 무시 */ });
+          }
         }
 
       } catch (err) {
@@ -603,7 +611,7 @@
         if (!res.ok) throw new Error(data.error || '삭제 실패');
 
         Swal.fire('삭제됨', '토론이 삭제되었습니다.', 'success').then(() => {
-          window.location.href = `/w/${encodeURIComponent(currentSlug)}/discussions`;
+          window.location.href = `/w/${encodeURIComponent(currentSlug)}?mode=discussions`;
         });
       } catch (err) {
         Swal.fire('오류', err.message, 'error');
