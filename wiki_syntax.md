@@ -1,4 +1,4 @@
-Cloudwiki/위키 문법 가이드
+
 
 # Cloudwiki 문법 가이드
 
@@ -232,91 +232,6 @@ Cloudwiki 문법은 기본 마크다운 표 문법과 호환되며, 셀 병합, 
 | 내용 | 내용 | 내용 |
 ```
 
----
-
-## 확장 문법 컬러 코드
-
-Cloudwiki는 표 셀, 펼치기/접기 제목 등에서 배경색과 글자색을 지정할 수 있는 확장 문법을 제공합니다.
-색상 값은 CSS 컬러 표기(`#ff0000`, `rgb(...)`, `red` 등)가 모두 가능합니다.
-
-### `{bg:색상}` / `{color:색상}`
-
-배경색은 `{bg:색상}`, 글자색은 `{color:색상}` 문법으로 지정합니다.
-
-| 기본 셀 | {bg:#ff0000} 빨간 배경 | {bg:#000} {color:#fff} 검정 배경 흰 글씨 |
-| --- | --- | --- |
-| 내용 | {bg: yellow} 노란 배경 | {color: blue} 파란 글씨 |
-
-```
-| 기본 셀 | {bg:#ff0000} 빨간 배경 | {bg:#000} {color:#fff} 검정 배경 흰 글씨 |
-| --- | --- | --- |
-| 내용 | {bg: yellow} 노란 배경 | {color: blue} 파란 글씨 |
-```
-
-> {mdi:alert} 배경과 글씨 색상을 모두 설정하는 것을 권장합니다. 둘 중 하나만 설정하는 경우, 다크 모드에서 가독성 문제가 생길 가능성이 높습니다.
-
-### `{palette:이름}` — 컬러 팔레트
-
-자주 쓰는 배경/글씨 조합을 미리 정의해두고 한 번에 적용하는 문법입니다.
-`{palette:이름}` 토큰은 내부적으로 해당 팔레트의 `{bg:...}{color:...}` 로 치환되므로 `{bg:}`/`{color:}` 가 동작하는 모든 위치 (표 셀, 펼치기 제목 등) 에서 그대로 사용할 수 있습니다.
-
-#### 기본 프리셋
-
-별도 설정 없이 바로 쓸 수 있는 의미 기반 프리셋입니다. 부트스트랩 컬러 스키마를 따르며 다크 모드에도 자동으로 대응합니다.
-
-| 이름 | 용도 |
-| --- | --- |
-| `primary` | 주요 강조 |
-| `secondary` | 보조 |
-| `success` | 성공 / 완료 |
-| `info` | 정보 |
-| `warning` | 경고 |
-| `danger` | 위험 / 오류 |
-| `muted` | 비활성 / 부가 |
-
-| {palette:primary} primary | {palette:success} success | {palette:warning} warning | {palette:danger} danger |
-| --- | --- | --- | --- |
-| {palette:secondary} secondary | {palette:info} info | {palette:muted} muted | 기본 셀 |
-
-```
-| {palette:primary} primary | {palette:success} success | {palette:warning} warning | {palette:danger} danger |
-| --- | --- | --- | --- |
-| {palette:secondary} secondary | {palette:info} info | {palette:muted} muted | 기본 셀 |
-```
-
-#### 커스텀 프리셋
-
-`wrangler.toml` 의 `PALETTES` 환경변수에 JSON 으로 팔레트를 정의하면 기본 프리셋과 동일한 방식으로 사용할 수 있습니다.
-
-```json
-{
-  "cloudflare": { "bg": "#FF8000", "color": "#000000" },
-  "anthropic":  { "bg": "#F0EEE6", "color": "#C15F3C" }
-}
-```
-
-라이트/다크 모드에 따라 다른 색을 쓰고 싶다면 `light`/`dark` 를 분리하여 지정합니다.
-
-```json
-{
-  "cloudflare": {
-    "light": { "bg": "#FF8000", "color": "#000000" },
-    "dark":  { "bg": "#CC6600", "color": "#FFFFFF" }
-  }
-}
-```
-
-이름이 기본 프리셋과 충돌하면 커스텀 팔레트가 우선 적용됩니다.
-
-#### 오버라이드
-
-팔레트 뒤에 `{bg:...}` 또는 `{color:...}` 를 연달아 쓰면, 뒤에 오는 값이 팔레트의 해당 속성을 덮어씁니다.
-
-```
-{palette:cloudflare}{color:#ffffff}  → 배경은 팔레트, 글씨색만 흰색으로 강제
-```
-
-정의되지 않은 이름을 참조하면 렌더 시 토큰이 조용히 무시되며, 에디터에서는 자동완성 목록에 나타나지 않습니다.
 
 ---
 
@@ -482,6 +397,72 @@ CloudWiki는 부트스트랩 아이콘(Bootstrap Icons)과 MDI(Material Design I
 
 
 
+## 컬러 코드
+
+Cloudwiki는 표 셀, 펼치기/접기 제목 등에서 배경색과 글자색을 지정할 수 있는 확장 문법을 제공합니다.
+색상 값은 `#ff0000`, `red` 모두 사용 가능합니다.
+
+### `{bg:색상}` / `{color:색상}`
+
+배경색은 `{bg:색상}`, 글자색은 `{color:색상}` 문법으로 지정합니다.
+
+| 기본 셀 | {bg:#ff0000} 빨간 배경 | {bg:#000000}} {color:#fff} 검정 배경 흰 글씨 |
+| --- | --- | --- |
+| 내용 | {bg: yellow} 노란 배경 | {color: blue} 파란 글씨 |
+
+```
+| 기본 셀 | {bg:#ff0000} 빨간 배경 | {bg:#000} {color:#fff} 검정 배경 흰 글씨 |
+| --- | --- | --- |
+| 내용 | {bg: yellow} 노란 배경 | {color: blue} 파란 글씨 |
+```
+
+> {mdi:alert} 배경과 글씨 색상을 모두 설정하는 것을 권장합니다. 둘 중 하나만 설정하는 경우, 다크 모드에서 가독성 문제가 생길 가능성이 높습니다.
+
+### `{palette:이름}` — 컬러 팔레트
+
+자주 쓰는 배경/글씨 조합을 미리 정의해두고 한 번에 적용하는 문법입니다.
+`{palette:이름}` 토큰은 내부적으로 해당 팔레트의 `{bg:...}{color:...}` 로 치환되므로 `{bg:}`/`{color:}` 가 동작하는 모든 위치 (표 셀, 펼치기 제목 등) 에서 그대로 사용할 수 있습니다.
+
+#### 기본 프리셋
+
+별도 설정 없이 바로 쓸 수 있는 의미 기반 프리셋입니다. 부트스트랩 컬러 스키마를 따르며 다크 모드에도 자동으로 대응합니다.
+
+| 이름 | 용도 |
+| --- | --- |
+| `primary` | 주요 강조 |
+| `secondary` | 보조 |
+| `success` | 성공 / 완료 |
+| `info` | 정보 |
+| `warning` | 경고 |
+| `danger` | 위험 / 오류 |
+| `muted` | 비활성 / 부가 |
+
+| {palette:primary} primary | {palette:success} success | {palette:warning} warning | {palette:danger} danger |
+| --- | --- | --- | --- |
+| {palette:secondary} secondary | {palette:info} info | {palette:muted} muted | 기본 셀 |
+
+```
+| {palette:primary} primary | {palette:success} success | {palette:warning} warning | {palette:danger} danger |
+| --- | --- | --- | --- |
+| {palette:secondary} secondary | {palette:info} info | {palette:muted} muted | 기본 셀 |
+```
+
+#### 커스텀 프리셋
+
+`wrangler.toml` 의 `PALETTES` 환경변수에 JSON 으로 팔레트를 정의하면 기본 프리셋과 동일한 방식으로 사용할 수 있습니다.
+
+설정 방법은[[Cloudwiki/기능/컬러 팔레트]] 를 참고하세요.
+
+#### 오버라이드
+
+팔레트 뒤에 `{bg:...}` 또는 `{color:...}` 를 연달아 쓰면, 뒤에 오는 값이 팔레트의 해당 속성을 덮어씁니다.
+
+```
+{palette:cloudflare}{color:#ffffff}  → 배경은 팔레트, 글씨색만 흰색으로 강제
+```
+
+정의되지 않은 이름을 참조하면 렌더 시 토큰이 조용히 무시되며, 에디터에서는 자동완성 목록에 나타나지 않습니다.
+
 
 ---
 
@@ -578,4 +559,3 @@ https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d380514.6269296274!2d-88.06
 ```
 https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d380514.6269296274!2d-88.06153207605908!3d41.833239273665306!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x880e2c3cd0f4cbed%3A0xafe0a6ad09c0c000!2z66-46rWtIOydvOumrOuFuOydtCDsi5zsubTqs6A!5e0!3m2!1sko!2skr!4v1776126803127!5m2!1sko!2skr
 ```
-
