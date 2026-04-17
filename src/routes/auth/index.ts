@@ -1,9 +1,10 @@
 import { Hono } from 'hono';
+import type { Context } from 'hono';
 import { getCookie } from 'hono/cookie';
 import type { Env } from '../../types';
 import { requireAuth } from '../../middleware/session';
 import { getSuperAdmins } from '../../utils/auth';
-import type { OAuthProvider } from './providers/base';
+import type { OAuthProvider, OAuthProfile, OAuthStateData } from './providers/base';
 import { googleProvider } from './providers/google';
 import { discordProvider } from './providers/discord';
 import { handleOAuthLogin } from './common';
@@ -44,8 +45,91 @@ for (const [name, provider] of Object.entries(providerRegistry)) {
         }
         const result = await provider.handleCallback(c);
         if (result instanceof Response) return result;
-        return handleOAuthLogin(c, result);
+
+        if (result.state.intent === 'refresh_picture') {
+            return handleRefreshPicture(c, result.profile, result.state);
+        }
+        return handleOAuthLogin(c, result.profile);
     });
+}
+
+/**
+ * GET /auth/refresh-picture
+ * 로그인된 사용자의 현재 OAuth 공급자로 재인증을 시작하여 프로필 사진을 갱신.
+ * 콜백은 공급자의 기존 /auth/<provider>/callback 을 재사용하며, state에 담긴
+ * intent=refresh_picture 값을 통해 분기 처리된다.
+ */
+auth.get('/auth/refresh-picture', requireAuth, async (c) => {
+    const user = c.get('user')!;
+    const active = parseProviders(c.env.AUTH_PROVIDERS);
+
+    if (!active.includes(user.provider)) {
+        return c.redirect('/mypage?picture_error=provider_not_enabled');
+    }
+    const provider = providerRegistry[user.provider];
+    if (!provider) {
+        return c.redirect('/mypage?picture_error=provider_not_supported');
+    }
+
+    return provider.handleLogin(c, {
+        intent: 'refresh_picture',
+        userId: user.id,
+        expectedUid: user.uid,
+    });
+});
+
+/**
+ * refresh_picture 의도로 돌아온 OAuth 콜백 처리:
+ *  - state에 담긴 userId/expectedUid 와 응답 프로필을 검증
+ *  - 동일 계정임이 확인되면 users.picture 를 공급자에서 받은 값으로 갱신
+ *  - 세션 KV 캐시 무효화 후 /mypage 로 돌아감
+ */
+async function handleRefreshPicture(
+    c: Context<Env>,
+    profile: OAuthProfile,
+    stateData: OAuthStateData
+): Promise<Response> {
+    if (!stateData.userId || !stateData.expectedUid) {
+        return c.redirect('/mypage?picture_error=invalid_state');
+    }
+
+    // 현재 로그인 세션과 state의 userId가 일치해야 함
+    const currentUser = c.get('user');
+    if (!currentUser || currentUser.id !== stateData.userId) {
+        return c.redirect('/mypage?picture_error=session_mismatch');
+    }
+
+    // 재인증 결과의 uid가 기존 계정과 일치해야 함 (다른 계정으로 갱신 방지)
+    if (profile.uid !== stateData.expectedUid || profile.provider !== currentUser.provider) {
+        return c.redirect('/mypage?picture_error=account_mismatch');
+    }
+
+    const db = c.env.DB;
+    const userRow = await db
+        .prepare('SELECT id, provider, uid, role FROM users WHERE id = ?')
+        .bind(stateData.userId)
+        .first<{ id: number; provider: string; uid: string; role: string }>();
+
+    if (!userRow || userRow.role === 'deleted') {
+        return c.redirect('/mypage?picture_error=user_not_found');
+    }
+    if (userRow.provider !== profile.provider || userRow.uid !== profile.uid) {
+        return c.redirect('/mypage?picture_error=account_mismatch');
+    }
+
+    await db
+        .prepare('UPDATE users SET picture = ? WHERE id = ?')
+        .bind(profile.picture || null, stateData.userId)
+        .run();
+
+    // 세션 KV 캐시 무효화 (변경된 picture 반영).
+    // 리다이렉트 직후 /mypage가 재조회되므로 동기 삭제로 이전 picture 노출을 방지한다.
+    const sessionId = getCookie(c, 'wiki_session');
+    if (sessionId) {
+        await c.env.KV.delete(`session:${sessionId}`);
+    }
+
+    return c.redirect('/mypage?picture_updated=1');
 }
 
 /**

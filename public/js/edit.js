@@ -83,6 +83,10 @@ function initTurnstile() {
         if (btn) btn.disabled = false;
         return;
     }
+    // Turnstile 필요 환경 → 새로고침 버튼 노출 (스크립트 로드 실패 시에도 재시도 가능)
+    const refreshBtn = document.getElementById('turnstileRefreshBtn');
+    if (refreshBtn) refreshBtn.style.display = '';
+
     if (!turnstileReady) return;
     const container = document.getElementById('turnstile-container');
     if (!container || turnstileWidgetId !== null) return;
@@ -109,6 +113,37 @@ function refreshTurnstile() {
         turnstileToken = null;
         document.getElementById('saveBtn').disabled = true;
         turnstile.reset(turnstileWidgetId);
+    }
+}
+
+// 사용자가 수동으로 Turnstile을 다시 로드할 때 호출.
+// 탭이 불완전하게 리프레시되어 Turnstile 스크립트가 로드되지 않으면 저장이 막히므로,
+// 스크립트/위젯을 모두 초기화한 뒤 다시 주입하여 복구한다.
+function reloadTurnstile() {
+    const container = document.getElementById('turnstile-container');
+    if (!container) return;
+
+    if (typeof turnstile !== 'undefined' && turnstileWidgetId !== null) {
+        try { turnstile.remove(turnstileWidgetId); } catch (e) { /* ignore */ }
+    }
+    turnstileWidgetId = null;
+    turnstileToken = null;
+    container.innerHTML = '';
+
+    const btn = document.getElementById('saveBtn');
+    if (btn) btn.disabled = true;
+
+    if (typeof turnstile !== 'undefined' && turnstileReady) {
+        initTurnstile();
+    } else {
+        turnstileReady = false;
+        const oldScript = document.querySelector('script[src*="challenges.cloudflare.com/turnstile"]');
+        if (oldScript) oldScript.remove();
+        const script = document.createElement('script');
+        script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?onload=onTurnstileLoad';
+        script.async = true;
+        script.defer = true;
+        document.head.appendChild(script);
     }
 }
 
@@ -3546,6 +3581,70 @@ async function openTemplateModal() {
     }
 }
 
+// ── 자동 편집 요약 생성 ──
+// 원본 대비 카테고리 추가/삭제, 관리자 전용(잠금) 변경을 감지해 요약 문자열을 만든다.
+// 섹션 모드나 신규 문서(originalPageMeta 미설정)에서는 호출 측에서 빈 문자열을 사용해야 한다.
+function buildAutoEditSummary() {
+    if (!originalPageMeta) return '';
+
+    const origCats = originalPageMeta.category
+        ? originalPageMeta.category.split(',').map(c => c.trim()).filter(Boolean)
+        : [];
+    const currCats = Array.isArray(categoryTags) ? categoryTags.slice() : [];
+    const added = currCats.filter(c => !origCats.includes(c));
+    const removed = origCats.filter(c => !currCats.includes(c));
+
+    const origLocked = originalPageMeta.is_locked ? 1 : 0;
+    const lockEl = document.getElementById('isLockedCheck');
+    const currLocked = lockEl && lockEl.checked ? 1 : 0;
+
+    const parts = [];
+    if (added.length) parts.push(`분류 ${added.map(c => `'${c}'`).join(', ')} 추가`);
+    if (removed.length) parts.push(`분류 ${removed.map(c => `'${c}'`).join(', ')} 삭제`);
+    if (origLocked !== currLocked) {
+        parts.push(currLocked ? '관리자 전용 설정' : '관리자 전용 해제');
+    }
+    return parts.join(', ');
+}
+
+// ── 변경 사항 검증 (프론트 전용) ──
+// 본문이 바뀌지 않았어도 카테고리/리다이렉트/관리자 잠금이 변경되었다면 저장을 허용한다.
+// 신규 문서(originalPageMeta 미설정)에서는 기본값(빈 카테고리/리다이렉트, 잠금 해제) 대비
+// 메타데이터 입력 여부로 판단 — 본문 없이 리다이렉트만 설정해 새 문서를 만드는 용례 지원.
+function hasMeaningfulChanges() {
+    const currentContent = editor ? editor.getMarkdown() : '';
+
+    // 섹션 모드: 제목/카테고리/잠금/리다이렉트를 수정할 수 없으므로 본문(섹션 텍스트) 비교만 유효.
+    if (sectionMode) {
+        return currentContent !== originalContent;
+    }
+
+    if (currentContent !== originalContent) return true;
+
+    // 신규 문서(originalPageMeta === null)는 빈 메타데이터를 기준선으로 사용한다.
+    const baseMeta = originalPageMeta || { category: '', redirect_to: '', is_locked: 0 };
+
+    const origCats = baseMeta.category
+        ? baseMeta.category.split(',').map(c => c.trim()).filter(Boolean).sort()
+        : [];
+    const currCats = Array.isArray(categoryTags)
+        ? categoryTags.slice().map(c => String(c).trim()).filter(Boolean).sort()
+        : [];
+    if (origCats.join('\u0000') !== currCats.join('\u0000')) return true;
+
+    const origRedirect = baseMeta.redirect_to || '';
+    const redirectEl = document.getElementById('redirectInput');
+    const currRedirect = redirectEl ? redirectEl.value.trim() : '';
+    if (origRedirect !== currRedirect) return true;
+
+    const origLocked = baseMeta.is_locked ? 1 : 0;
+    const lockEl = document.getElementById('isLockedCheck');
+    const currLocked = lockEl && lockEl.checked ? 1 : 0;
+    if (origLocked !== currLocked) return true;
+
+    return false;
+}
+
 // ── 저장 ──
 async function savePage() {
     // 섹션 모드에서는 제목/카테고리/잠금/리다이렉트는 서버 값 유지
@@ -3569,7 +3668,18 @@ async function savePage() {
     } else {
         content = editor.getMarkdown();
     }
-    const summary = document.getElementById('summaryInput').value.trim();
+    const userSummary = document.getElementById('summaryInput').value.trim();
+
+    // 본문/메타데이터 변경이 전혀 없으면 저장 거부 (프론트 전용 검증).
+    // 카테고리, 관리자 전용 잠금, 리다이렉트 중 하나라도 바뀌었다면 본문 변경이 없어도 저장 허용.
+    if (!hasMeaningfulChanges()) {
+        Swal.fire({
+            icon: 'info',
+            title: '변경된 내용이 없습니다',
+            text: '본문을 편집하거나 카테고리, 리다이렉트, 관리자 전용 설정을 변경한 뒤 저장해주세요.',
+        });
+        return;
+    }
 
     if (!title) {
         Swal.fire('오류', '제목을 입력해주세요.', 'warning');
@@ -3587,10 +3697,20 @@ async function savePage() {
         Swal.fire('오류', '카테고리에는 특수문자를 사용할 수 없습니다.', 'warning');
         return;
     }
-    if (summary && summary.length > 50) {
+    if (userSummary && userSummary.length > 50) {
         Swal.fire('오류', '편집 요약은 최대 50자까지 입력할 수 있습니다.', 'warning');
         return;
     }
+
+    // 카테고리/관리자 전용 변경은 편집 요약에 자동 기재한다. (섹션 모드에서는 해당 값 변경 불가)
+    const autoSummary = sectionMode ? '' : buildAutoEditSummary();
+    let summary;
+    if (autoSummary && userSummary) {
+        summary = `${autoSummary} / ${userSummary}`;
+    } else {
+        summary = autoSummary || userSummary;
+    }
+    if (summary.length > 50) summary = summary.slice(0, 50);
 
     if (appConfig.turnstileSiteKey && !turnstileToken) {
         Swal.fire('오류', 'Turnstile 검증을 완료해주세요.', 'warning');
@@ -4520,6 +4640,7 @@ function attachAutocomplete() {
                 hideIconAutocomplete();
                 hideColorAutocomplete();
                 hideTimestampAutocomplete();
+                hideImgSizeAutocomplete();
                 showPaletteAutocomplete(paletteMatch[1]);
             } else if (calendarMatch) {
                 hideAutocomplete();

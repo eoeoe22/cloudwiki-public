@@ -181,26 +181,34 @@ function _processTimestampsInHtml(html) {
         if (text === null) return match;
         return `<span class="wiki-age" title="${dateStr}">${text}</span>`;
     });
-    // {calendar:YYYY-MM-DD}
-    html = html.replace(/\{calendar:(\d{4}-\d{2}-\d{2})\}/g, (match, dateStr) => {
-        const parts = dateStr.split('-');
-        const year = parseInt(parts[0], 10);
-        const month = parseInt(parts[1], 10);
-        const day = parseInt(parts[2], 10);
-        const d = new Date(year, month - 1, day);
-        if (isNaN(d.getTime()) || d.getFullYear() !== year || d.getMonth() !== month - 1 || d.getDate() !== day) {
-            return match;
-        }
+    // {calendar:YYYY-MM-DD} 또는 {calendar:MM-DD} (연도 생략)
+    html = html.replace(/\{calendar:(?:(\d{4})-)?(\d{2})-(\d{2})\}/g, (match, yearStr, monthStr, dayStr) => {
         const monthNames = ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월'];
-        const dayNames = ['일요일','월요일','화요일','수요일','목요일','금요일','토요일'];
+        const month = parseInt(monthStr, 10);
+        const day = parseInt(dayStr, 10);
+        if (yearStr) {
+            const year = parseInt(yearStr, 10);
+            const d = new Date(year, month - 1, day);
+            if (isNaN(d.getTime()) || d.getFullYear() !== year || d.getMonth() !== month - 1 || d.getDate() !== day) {
+                return match;
+            }
+            const dayNames = ['일요일','월요일','화요일','수요일','목요일','금요일','토요일'];
+            const monthName = monthNames[month - 1];
+            const dowName = dayNames[d.getDay()];
+            const dowClass = d.getDay() === 0 ? ' wiki-cal-sun' : d.getDay() === 6 ? ' wiki-cal-sat' : '';
+            return `<span class="wiki-calendar-box" title="${yearStr}-${monthStr}-${dayStr}">` +
+                `<span class="wiki-cal-month">${monthName}</span>` +
+                `<span class="wiki-cal-day">${day}</span>` +
+                `<span class="wiki-cal-dow${dowClass}">${dowName}</span>` +
+                `<span class="wiki-cal-year">${year}</span>` +
+                `</span>`;
+        }
+        // 연도 생략: 월 유효성만 확인하고 일은 2자리 숫자면 허용
+        if (month < 1 || month > 12) return match;
         const monthName = monthNames[month - 1];
-        const dowName = dayNames[d.getDay()];
-        const dowClass = d.getDay() === 0 ? ' wiki-cal-sun' : d.getDay() === 6 ? ' wiki-cal-sat' : '';
-        return `<span class="wiki-calendar-box" title="${dateStr}">` +
+        return `<span class="wiki-calendar-box wiki-calendar-box--no-year" title="${monthStr}-${dayStr}">` +
             `<span class="wiki-cal-month">${monthName}</span>` +
             `<span class="wiki-cal-day">${day}</span>` +
-            `<span class="wiki-cal-dow${dowClass}">${dowName}</span>` +
-            `<span class="wiki-cal-year">${year}</span>` +
             `</span>`;
     });
 

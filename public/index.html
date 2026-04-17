@@ -144,6 +144,9 @@
           <!-- 본문 -->
           <div class="wiki-content" id="articleContent"></div>
 
+          <!-- 본문 (Raw 보기) -->
+          <pre class="wiki-content-raw" id="articleRawContent"></pre>
+
           <!-- 백링크 -->
           <div class="backlinks-section d-none" id="backlinksSection">
             <h5><i class="bi bi-link-45deg"></i> 이 문서를 참조하는 문서</h5>
@@ -303,7 +306,7 @@
       window.addEventListener('scroll', () => {
         if (window.scrollY > 200) {
           scrollFabGroup.classList.add('visible');
-        } else if (!document.body.classList.contains('reading-mode')) {
+        } else if (!document.body.classList.contains('reading-mode') && !document.body.classList.contains('raw-mode')) {
           scrollFabGroup.classList.remove('visible');
         }
       }, { passive: true });
@@ -472,6 +475,13 @@
     async function showArticle(slug) {
       showLoading();
       currentSlug = slug;
+
+      // Raw 보기 모드 초기화 — 모든 early-return 분기(404 카테고리 폴백, 403, 410 등) 이전에 수행
+      // 이전 문서에서 활성화된 raw-mode 가 남아 있으면 body.raw-mode 스타일이 다음 페이지의
+      // .wiki-content 를 숨기고 #articleRawContent 에 이전 문서의 본문이 노출될 수 있음
+      _exitRawMode();
+      const _rawElReset = document.getElementById('articleRawContent');
+      if (_rawElReset) _rawElReset.textContent = '';
 
       // 목차 섹션 및 FAB 초기화 (이전 익스텐션 문서에서 숨겨진 경우 복원)
       document.getElementById('wikiAccordion').classList.remove('d-none');
@@ -663,6 +673,10 @@
 
         // 더보기 액션
         let moreActionsHtml = `
+          <li><button class="dropdown-item" type="button" onclick="toggleRawMode(); return false;">
+            <i class="bi bi-code-slash"></i> Raw 보기
+          </button></li>
+          <li><hr class="dropdown-divider"></li>
           <li><button class="dropdown-item${_hasColon ? ' disabled' : ''}" ${_hasColon ? 'disabled' : `data-slug="${escapeHtml(actionSlug)}" onclick="showSubdocs(this.dataset.slug); return false;"`}>
             <i class="bi bi-diagram-3"></i> 하위 문서 보기
           </button></li>
@@ -709,6 +723,11 @@
         if (currentUser && document.getElementById('watchToggleBtn')) {
           loadWatchStatus(actionSlug);
         }
+
+        // Raw 보기용 원본 컨텐츠 갱신 — showArticle 진입 시 이미 _exitRawMode() 로 상태를 초기화했으므로
+        // 여기서는 새 문서 본문만 반영하면 됨
+        const rawEl = document.getElementById('articleRawContent');
+        if (rawEl) rawEl.textContent = page.content || '';
 
         // Markdown → HTML 렌더링 (common.js의 renderWikiContent 모듈 사용)
         // 익스텐션 데이터 문서(freq: 등)는 마크다운 렌더링 비활성화 — 익스텐션 렌더러로 표시
@@ -1441,6 +1460,10 @@
       title="읽기 모드 나가기" aria-label="읽기 모드 나가기">
       <i class="bi bi-x-lg"></i>
     </button>
+    <button class="scroll-fab raw-mode-exit-fab d-none" id="rawModeExitFab" onclick="toggleRawMode()"
+      title="Raw 보기 나가기" aria-label="Raw 보기 나가기">
+      <i class="bi bi-x-lg"></i>
+    </button>
     <button class="scroll-fab" id="tocFabBtn" onclick="toggleFloatingToc()" title="목차">
       <i class="mdi mdi-format-list-bulleted-square"></i>
     </button>
@@ -1464,17 +1487,61 @@
         fabGroup.classList.add('visible');
       } else {
         exitBtn.classList.add('d-none');
-        if (window.scrollY <= 200) fabGroup.classList.remove('visible');
+        if (window.scrollY <= 200 && !document.body.classList.contains('raw-mode')) {
+          fabGroup.classList.remove('visible');
+        }
       }
     }
 
     function toggleReadingMode() {
+      // 읽기 모드와 Raw 보기는 함께 사용 불가 — Raw 모드 활성 시 먼저 해제
+      if (document.body.classList.contains('raw-mode')) {
+        _exitRawMode();
+      }
       const active = document.body.classList.toggle('reading-mode');
       _applyReadingModeUi(active);
       try {
         if (active) localStorage.setItem('readingMode', '1');
         else localStorage.removeItem('readingMode');
       } catch (e) { }
+    }
+
+    // ── Raw 보기 모드 ──
+    function _applyRawModeUi(active) {
+      const exitBtn = document.getElementById('rawModeExitFab');
+      const fabGroup = document.getElementById('scrollFabGroup');
+      if (!exitBtn || !fabGroup) return;
+      if (active) {
+        exitBtn.classList.remove('d-none');
+        fabGroup.classList.add('visible');
+      } else {
+        exitBtn.classList.add('d-none');
+        if (window.scrollY <= 200 && !document.body.classList.contains('reading-mode')) {
+          fabGroup.classList.remove('visible');
+        }
+      }
+    }
+
+    // Raw 모드 표시 상태만 해제 — #articleRawContent 의 textContent 는 의도적으로 보존
+    // (재진입 시 즉시 표시 가능; 원본 내용은 새 문서 로드 시 showArticle 에서 교체됨)
+    function _exitRawMode() {
+      if (document.body.classList.contains('raw-mode')) {
+        document.body.classList.remove('raw-mode');
+      }
+      _applyRawModeUi(false);
+    }
+
+    function toggleRawMode() {
+      // 읽기 모드와 Raw 보기는 함께 사용 불가 — 읽기 모드 활성 시 먼저 해제
+      if (document.body.classList.contains('reading-mode')) {
+        document.body.classList.remove('reading-mode');
+        _applyReadingModeUi(false);
+        try { localStorage.removeItem('readingMode'); } catch (e) { }
+      }
+      const active = document.body.classList.toggle('raw-mode');
+      _applyRawModeUi(active);
+      // Raw 모드 진입 시 페이지 상단으로 스크롤
+      if (active) window.scrollTo({ top: 0, behavior: 'auto' });
     }
 
     // 초기 상태 복원 — 사이드바 숨김과 FAB 노출이 동시에 반영되도록 동기 적용

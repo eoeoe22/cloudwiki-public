@@ -1,18 +1,24 @@
 import type { Context } from 'hono';
 import type { Env } from '../../../types';
-import type { OAuthProvider, OAuthProfile } from './base';
+import type { OAuthProvider, OAuthCallbackResult, OAuthStateData } from './base';
 
 export const googleProvider: OAuthProvider = {
     name: 'google',
     label: 'Google',
 
-    async handleLogin(c: Context<Env>): Promise<Response> {
+    async handleLogin(c: Context<Env>, stateData?: Partial<OAuthStateData>): Promise<Response> {
         if (!c.env.GOOGLE_CLIENT_ID || !c.env.GOOGLE_REDIRECT_URI) {
             return c.redirect('/?error=oauth_not_configured&provider=google');
         }
 
         const state = crypto.randomUUID();
-        await c.env.KV.put(`oauth_state:${state}`, 'google', { expirationTtl: 300 });
+        const payload: OAuthStateData = {
+            provider: 'google',
+            intent: stateData?.intent ?? 'login',
+            userId: stateData?.userId,
+            expectedUid: stateData?.expectedUid,
+        };
+        await c.env.KV.put(`oauth_state:${state}`, JSON.stringify(payload), { expirationTtl: 300 });
 
         const params = new URLSearchParams({
             client_id: c.env.GOOGLE_CLIENT_ID,
@@ -26,7 +32,7 @@ export const googleProvider: OAuthProvider = {
         return c.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`);
     },
 
-    async handleCallback(c: Context<Env>): Promise<OAuthProfile | Response> {
+    async handleCallback(c: Context<Env>): Promise<OAuthCallbackResult | Response> {
         const code = c.req.query('code');
         const state = c.req.query('state');
 
@@ -34,9 +40,26 @@ export const googleProvider: OAuthProvider = {
         if (!state) {
             return c.redirect('/error?reason=' + encodeURIComponent('로그인 요청이 올바르지 않습니다. 다시 시도해주세요.'));
         }
-        const storedState = await c.env.KV.get(`oauth_state:${state}`);
-        if (storedState !== 'google') {
+        const storedRaw = await c.env.KV.get(`oauth_state:${state}`);
+        if (!storedRaw) {
             return c.redirect('/error?reason=' + encodeURIComponent('로그인 세션이 만료되었거나 유효하지 않습니다. 다시 시도해주세요.'));
+        }
+
+        // 구 포맷(단순 'google' 문자열) 폴백: 배포 전환 시점에 이미 진행 중이던 로그인 호환용
+        let stateData: OAuthStateData;
+        if (storedRaw === 'google') {
+            stateData = { provider: 'google', intent: 'login' };
+        } else {
+            try {
+                stateData = JSON.parse(storedRaw) as OAuthStateData;
+            } catch {
+                await c.env.KV.delete(`oauth_state:${state}`);
+                return c.redirect('/error?reason=' + encodeURIComponent('로그인 세션이 올바르지 않습니다. 다시 시도해주세요.'));
+            }
+        }
+        if (stateData.provider !== 'google') {
+            await c.env.KV.delete(`oauth_state:${state}`);
+            return c.redirect('/error?reason=' + encodeURIComponent('로그인 세션이 유효하지 않습니다. 다시 시도해주세요.'));
         }
         await c.env.KV.delete(`oauth_state:${state}`);
 
@@ -88,11 +111,14 @@ export const googleProvider: OAuthProvider = {
         }
 
         return {
-            provider: 'google',
-            uid: userInfo.id,
-            email: userInfo.email,
-            name: userInfo.name,
-            picture: userInfo.picture,
+            profile: {
+                provider: 'google',
+                uid: userInfo.id,
+                email: userInfo.email,
+                name: userInfo.name,
+                picture: userInfo.picture,
+            },
+            state: stateData,
         };
     },
 };

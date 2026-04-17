@@ -308,7 +308,15 @@
                 <button class="btn btn-wiki-outline" onclick="cancelEdit()">
                     <i class="mdi mdi-close"></i> 취소
                 </button>
-                <div id="turnstile-container" class="ms-2"></div>
+                <div class="ms-2 d-flex align-items-center gap-2">
+                    <div id="turnstile-container"></div>
+                    <button type="button" id="turnstileRefreshBtn"
+                        class="btn btn-sm btn-outline-secondary"
+                        style="display:none;" onclick="reloadTurnstile()" title="Turnstile 다시 로드"
+                        aria-label="Turnstile 다시 로드">
+                        <i class="mdi mdi-refresh" aria-hidden="true"></i>
+                    </button>
+                </div>
             </div>
         </div>
     </div>

@@ -2865,6 +2865,10 @@ h4:hover .wiki-heading-edit-btn {
   font-weight: 400;
 }
 
+.wiki-calendar-box--no-year .wiki-cal-day {
+  padding-bottom: 6px;
+}
+
 
 /* 익스텐션 경고/에러 메시지 */
 .wiki-ext .alert {
@@ -3045,5 +3049,44 @@ body.reading-mode .reading-mode-toggle {
 }
 
 .reading-mode-exit-fab:hover {
+  filter: brightness(1.05);
+}
+
+/* ── Raw 보기 모드 ── */
+.wiki-content-raw {
+  display: none;
+  background: var(--wiki-code-bg);
+  color: var(--wiki-text);
+  padding: 1.2rem;
+  border-radius: 8px;
+  border: 1px solid var(--wiki-border);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.9rem;
+  line-height: 1.55;
+  margin: 0 0 1rem 0;
+}
+
+body.raw-mode #wikiAccordion,
+body.raw-mode #parentDocsNav,
+body.raw-mode #parentDocsNavDivider,
+body.raw-mode .wiki-content,
+body.raw-mode .backlinks-section {
+  display: none !important;
+}
+
+body.raw-mode .wiki-content-raw {
+  display: block;
+}
+
+.raw-mode-exit-fab {
+  background: var(--wiki-primary) !important;
+  color: #fff !important;
+  border-color: var(--wiki-primary) !important;
+}
+
+.raw-mode-exit-fab:hover {
   filter: brightness(1.05);
 }
