@@ -101,5 +101,13 @@ ROLE_PERMISSIONS_JSON = """
 {"roles":{"user":{"permissions":["wiki:read","wiki:edit","comment:create","ticket:create","media:upload"],"inherits":[]},"discussion_manager":{"permissions":["discussion:manage"],"inherits":["user"]},"admin":{"permissions":["admin:access","wiki:delete","wiki:lock","wiki:private","user:manage","ticket:manage"],"inherits":["discussion_manager"]},"super_admin":{"permissions":["*"],"inherits":["admin"]},"banned":{"permissions":[],"inherits":[]},"deleted":{"permissions":[],"inherits":[]}}}
 """
 
+# PALETTES: 컬러 팔레트(커스텀) 정의. {palette:이름} 문법에서 사용.
+# 하드코딩 프리셋(primary/secondary/success/info/warning/danger/muted)은 설정 없이 사용 가능.
+# 커스텀 팔레트는 플랫({"bg":"#...","color":"#..."}) 또는 라이트/다크({"light":{...},"dark":{...}}) 형태.
+# 이름 충돌 시 커스텀이 하드코딩보다 우선합니다.
+PALETTES = """
+{"cloudflare":{"bg":"#FF8000","color":"#000000"},"anthropic":{"bg":"#F0EEE6","color":"#C15F3C"},"typescript":{"bg":"#0080FF","color":"#FFFFFF"}}
+"""
+
 [triggers]
 crons = ["0 0 * * *"] # 매일 자정 (UTC 기준)에 실행
