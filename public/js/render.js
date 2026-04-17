@@ -762,7 +762,7 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
         containerEl.querySelectorAll('table').forEach(t => {
             t.classList.add('table', 'table-bordered');
             const wrapper = document.createElement('div');
-            wrapper.className = 'table-responsive';
+            wrapper.className = 'wiki-table-wrapper';
             t.parentNode.insertBefore(wrapper, t);
             wrapper.appendChild(t);
         });

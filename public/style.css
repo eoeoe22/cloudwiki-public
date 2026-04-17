@@ -136,6 +136,15 @@ h6,
   max-width: 100%;
 }
 
+/* 위키 본문의 표 감싸개: 연속된 표들이 옆으로 붙지 않고 세로로 쌓이도록 block 으로 강제.
+   width:fit-content 로 짧은 표는 콘텐츠 폭만큼만 차지해 기존 외형을 유지. */
+.wiki-table-wrapper {
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
 .table> :not(caption)>*>* {
   color: var(--wiki-text);
   background-color: transparent;
