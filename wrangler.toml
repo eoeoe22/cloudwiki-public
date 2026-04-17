@@ -101,7 +101,7 @@ ROLE_PERMISSIONS_JSON = """
 {"roles":{"user":{"permissions":["wiki:read","wiki:edit","comment:create","ticket:create","media:upload"],"inherits":[]},"discussion_manager":{"permissions":["discussion:manage"],"inherits":["user"]},"admin":{"permissions":["admin:access","wiki:delete","wiki:lock","wiki:private","user:manage","ticket:manage"],"inherits":["discussion_manager"]},"super_admin":{"permissions":["*"],"inherits":["admin"]},"banned":{"permissions":[],"inherits":[]},"deleted":{"permissions":[],"inherits":[]}}}
 """
 
-# 컬러 팔레트
+# 컬러 팔레트 제작 : https://vialinks.xyz/palette-json
 # 하드코딩 프리셋(primary/secondary/success/info/warning/danger/muted)은 설정 없이 사용 가능.
 # 이름 충돌 시 커스텀이 하드코딩보다 우선합니다.
 PALETTES = """
