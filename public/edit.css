@@ -125,6 +125,23 @@
     .wiki-editor-split-row {
         flex-direction: row;
     }
+
+    /* PC 전용 프리뷰 모드: 편집창을 숨기고 프리뷰를 전체폭으로 확장 */
+    .wiki-editor-layout[data-preview-mode="on"] .wiki-editor-pane {
+        display: none;
+    }
+
+    .wiki-editor-layout[data-preview-mode="on"] .wiki-preview-pane {
+        flex: 1 1 100%;
+        border-right: none;
+    }
+}
+
+/* 모바일에서는 PC 전용 토글 버튼 숨김 (탭 버튼으로 대체) */
+@media (max-width: 768px) {
+    .cm-toolbar-btn-pc-only {
+        display: none !important;
+    }
 }
 
 /* 모바일: 수직 (탭 전환 방식) */

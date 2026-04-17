@@ -2551,10 +2551,41 @@ document.addEventListener('DOMContentLoaded', async () => {
             });
         });
 
-        // ── 툴바 오른쪽 끝: 설정 버튼 ──
+        // ── 툴바 오른쪽 끝: 프리뷰 모드 / 설정 버튼 ──
         const toolbarSpacer = document.createElement('span');
         toolbarSpacer.className = 'cm-toolbar-spacer';
         toolbar.appendChild(toolbarSpacer);
+
+        // PC 전용: 프리뷰 모드 토글 (편집창을 숨기고 프리뷰를 전체폭으로 확장)
+        const previewModeBtn = createToolbarBtn(
+            '<i class="mdi mdi-eye-outline"></i>',
+            '프리뷰 모드 (편집창 숨기기)',
+            () => togglePreviewMode()
+        );
+        previewModeBtn.id = 'cm-preview-mode-btn';
+        previewModeBtn.classList.add('cm-toolbar-btn-pc-only');
+        toolbar.appendChild(previewModeBtn);
+
+        function togglePreviewMode() {
+            const layoutEl = document.querySelector('.wiki-editor-layout');
+            if (!layoutEl) return;
+            const isOn = layoutEl.dataset.previewMode === 'on';
+            if (isOn) {
+                delete layoutEl.dataset.previewMode;
+                previewModeBtn.classList.remove('active');
+                previewModeBtn.innerHTML = '<i class="mdi mdi-eye-outline"></i>';
+                previewModeBtn.title = '프리뷰 모드 (편집창 숨기기)';
+                if (typeof cmEditorView !== 'undefined' && cmEditorView) {
+                    cmEditorView.requestMeasure();
+                }
+            } else {
+                layoutEl.dataset.previewMode = 'on';
+                previewModeBtn.classList.add('active');
+                previewModeBtn.innerHTML = '<i class="mdi mdi-eye-off-outline"></i>';
+                previewModeBtn.title = '프리뷰 모드 종료 (편집창 표시)';
+                updateCustomPreview();
+            }
+        }
 
         const settingsBtn = createToolbarBtn('<i class="mdi mdi-cog"></i>', '에디터 설정', () => toggleSettingsPanel());
         settingsBtn.id = 'cm-settings-btn';

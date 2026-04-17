@@ -458,14 +458,16 @@
                             }
                         }
 
-                        // 2. 모바일: 프리뷰 탭으로 전환
-                        const previewTabBtn = document.querySelector('.cm-tab-btn[data-tab="preview"]');
-                        if (previewTabBtn) previewTabBtn.click();
-
-                        // 3. 프리뷰 스크롤 (탭 전환 후 레이아웃 확정 시점)
+                        // 2. 프리뷰 스크롤 (현재 활성 탭은 변경하지 않음)
+                        //    모바일에서 에디터 탭을 보고 있을 때 FAB 목차로 이동 시
+                        //    강제로 프리뷰 탭으로 전환되는 문제를 피하기 위해 탭 전환 로직은 제거.
+                        //    단, 프리뷰 패널이 숨김 상태(display:none)면 getBoundingClientRect가
+                        //    0을 반환해 잘못된 오프셋이 계산되므로 보이는 경우에만 스크롤한다.
                         requestAnimationFrame(() => {
                             const preview = document.getElementById('custom-wiki-preview');
                             if (!preview) return;
+                            // offsetParent === null ⇒ display:none 등으로 렌더링되지 않음
+                            if (preview.offsetParent === null) return;
                             const target = preview.querySelector('#' + CSS.escape(hid));
                             if (target) {
                                 const pRect = preview.getBoundingClientRect();
