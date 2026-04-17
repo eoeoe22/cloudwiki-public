@@ -2497,7 +2497,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-format-list-numbered"></i>', '번호 목록', () => insertPrefix('1. ')));
         toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-checkbox-marked-outline"></i>', '체크리스트', () => insertPrefix('- [ ] ')));
         toolbar.appendChild(createToolbarSep());
-        toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-table"></i>', '표', () => editor.insertText('\n| 제목1 | 제목2 |\n|---|---|\n| 내용1 | 내용2 |\n')));
+        const tableBtn = createToolbarBtn('<i class="mdi mdi-table"></i>', '표', () => { });
+        toolbar.appendChild(tableBtn);
+        setupTableInsertPopover(tableBtn);
         toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-link-variant"></i>', '링크', () => wrapSelection('[', '](url)')));
         toolbar.appendChild(createToolbarSep());
 
@@ -2919,6 +2921,303 @@ document.addEventListener('DOMContentLoaded', async () => {
                 pendingIconInsertion = null;
             }
         });
+
+        // ── 표 삽입 팝오버 (그리드 + CSV) ──
+        function setupTableInsertPopover(tableBtn) {
+            const MAX_ROWS = 8;
+            const MAX_COLS = 10;
+
+            const popup = document.createElement('div');
+            popup.className = 'table-insert-popup';
+
+            let activeRow = 1;
+            let activeCol = 1;
+            let gridHTML = '<div class="table-insert-grid" role="grid" aria-label="표 크기 선택">';
+            for (let r = 1; r <= MAX_ROWS; r++) {
+                for (let c = 1; c <= MAX_COLS; c++) {
+                    const tabIndex = (r === 1 && c === 1) ? '0' : '-1';
+                    gridHTML += `<button type="button" class="table-insert-cell" role="gridcell" data-row="${r}" data-col="${c}" tabindex="${tabIndex}" aria-label="${r}행 ${c}열 표 삽입"></button>`;
+                }
+            }
+            gridHTML += '</div>';
+
+            popup.innerHTML = `
+                <div class="table-insert-label"><span class="table-insert-label-text">크기 선택</span></div>
+                ${gridHTML}
+                <button type="button" class="table-insert-csv-btn">
+                    <i class="mdi mdi-file-delimited-outline"></i>
+                    <span>CSV로 삽입</span>
+                </button>
+            `;
+            document.body.appendChild(popup);
+
+            const grid = popup.querySelector('.table-insert-grid');
+            const cells = popup.querySelectorAll('.table-insert-cell');
+            const labelText = popup.querySelector('.table-insert-label-text');
+            const csvBtn = popup.querySelector('.table-insert-csv-btn');
+
+            function getCell(rows, cols) {
+                return popup.querySelector(`.table-insert-cell[data-row="${rows}"][data-col="${cols}"]`);
+            }
+
+            function setActiveCell(rows, cols, shouldFocus) {
+                activeRow = Math.min(MAX_ROWS, Math.max(1, rows));
+                activeCol = Math.min(MAX_COLS, Math.max(1, cols));
+                cells.forEach(cell => {
+                    const isActive = parseInt(cell.dataset.row, 10) === activeRow && parseInt(cell.dataset.col, 10) === activeCol;
+                    cell.tabIndex = isActive ? 0 : -1;
+                });
+                const activeCell = getCell(activeRow, activeCol);
+                if (shouldFocus && activeCell) {
+                    activeCell.focus();
+                }
+            }
+
+            function highlight(rows, cols) {
+                cells.forEach(cell => {
+                    const r = parseInt(cell.dataset.row, 10);
+                    const c = parseInt(cell.dataset.col, 10);
+                    cell.classList.toggle('highlighted', r <= rows && c <= cols);
+                });
+                labelText.textContent = `${rows} × ${cols}`;
+            }
+
+            function clearHighlight() {
+                cells.forEach(cell => cell.classList.remove('highlighted'));
+                labelText.textContent = '크기 선택';
+            }
+
+            function insertSelectedTable(rows, cols) {
+                insertMarkdownTable(rows, cols);
+                popup.classList.remove('active');
+                tableBtn.focus();
+            }
+
+            cells.forEach(cell => {
+                cell.addEventListener('mouseenter', () => {
+                    const r = parseInt(cell.dataset.row, 10);
+                    const c = parseInt(cell.dataset.col, 10);
+                    setActiveCell(r, c, false);
+                    highlight(r, c);
+                });
+
+                cell.addEventListener('focus', () => {
+                    const r = parseInt(cell.dataset.row, 10);
+                    const c = parseInt(cell.dataset.col, 10);
+                    setActiveCell(r, c, false);
+                    highlight(r, c);
+                });
+
+                cell.addEventListener('click', () => {
+                    const rows = parseInt(cell.dataset.row, 10);
+                    const cols = parseInt(cell.dataset.col, 10);
+                    insertSelectedTable(rows, cols);
+                });
+
+                cell.addEventListener('keydown', (e) => {
+                    const row = parseInt(cell.dataset.row, 10);
+                    const col = parseInt(cell.dataset.col, 10);
+
+                    switch (e.key) {
+                        case 'ArrowRight':
+                            e.preventDefault();
+                            setActiveCell(row, col + 1, true);
+                            break;
+                        case 'ArrowLeft':
+                            e.preventDefault();
+                            setActiveCell(row, col - 1, true);
+                            break;
+                        case 'ArrowDown':
+                            e.preventDefault();
+                            setActiveCell(row + 1, col, true);
+                            break;
+                        case 'ArrowUp':
+                            e.preventDefault();
+                            setActiveCell(row - 1, col, true);
+                            break;
+                        case 'Home':
+                            e.preventDefault();
+                            setActiveCell(row, 1, true);
+                            break;
+                        case 'End':
+                            e.preventDefault();
+                            setActiveCell(row, MAX_COLS, true);
+                            break;
+                        case 'Enter':
+                        case ' ':
+                            e.preventDefault();
+                            insertSelectedTable(row, col);
+                            break;
+                        case 'Escape':
+                            e.preventDefault();
+                            popup.classList.remove('active');
+                            tableBtn.focus();
+                            break;
+                    }
+                });
+            });
+
+            grid.addEventListener('mouseleave', clearHighlight);
+
+            // 드래그 중 텍스트 선택 방지
+            grid.addEventListener('mousedown', (e) => { e.preventDefault(); });
+
+            tableBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const isActive = popup.classList.contains('active');
+                popup.classList.toggle('active');
+                if (!isActive) {
+                    clearHighlight();
+                    setActiveCell(1, 1, false);
+                    const rect = tableBtn.getBoundingClientRect();
+                    popup.style.top = (rect.bottom + window.scrollY + 6) + 'px';
+                    popup.style.left = Math.max(8, rect.left + window.scrollX - 40) + 'px';
+                    const firstCell = getCell(1, 1);
+                    if (firstCell) {
+                        firstCell.focus();
+                    }
+                }
+            });
+
+            document.addEventListener('click', (e) => {
+                if (!popup.contains(e.target) && !tableBtn.contains(e.target)) {
+                    popup.classList.remove('active');
+                }
+            });
+
+            csvBtn.addEventListener('click', () => {
+                popup.classList.remove('active');
+                openCsvTableModal();
+            });
+        }
+
+        function insertMarkdownTable(rows, cols) {
+            const headerCells = Array.from({ length: cols }, (_, i) => `제목${i + 1}`);
+            const headerLine = '| ' + headerCells.join(' | ') + ' |';
+            const sepLine = '|' + ' --- |'.repeat(cols);
+            const bodyLines = [];
+            const bodyRows = Math.max(0, rows - 1);
+            for (let r = 0; r < bodyRows; r++) {
+                const rowCells = Array.from({ length: cols }, (_, i) => `내용${i + 1}`);
+                bodyLines.push('| ' + rowCells.join(' | ') + ' |');
+            }
+            const table = '\n' + [headerLine, sepLine, ...bodyLines].join('\n') + '\n';
+            editor.insertText(table);
+        }
+
+        function parseCsvRecords(text) {
+            const rows = [];
+            let row = [];
+            let cell = '';
+            let inQuotes = false;
+
+            for (let i = 0; i < text.length; i++) {
+                const ch = text[i];
+
+                if (inQuotes) {
+                    if (ch === '"') {
+                        if (text[i + 1] === '"') {
+                            cell += '"';
+                            i++;
+                        } else {
+                            inQuotes = false;
+                        }
+                    } else {
+                        cell += ch;
+                    }
+                } else {
+                    if (ch === '"') {
+                        inQuotes = true;
+                    } else if (ch === ',') {
+                        row.push(cell);
+                        cell = '';
+                    } else if (ch === '\n') {
+                        row.push(cell);
+                        if (row.some(value => String(value).trim() !== '')) rows.push(row);
+                        row = [];
+                        cell = '';
+                    } else {
+                        cell += ch;
+                    }
+                }
+            }
+
+            row.push(cell);
+            if (row.some(value => String(value).trim() !== '')) rows.push(row);
+            return rows;
+        }
+
+        function convertCsvToMarkdownTable(csv) {
+            let text = csv.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+            text = text.replace(/^\s+|\s+$/g, '');
+            if (!text) throw new Error('내용이 비어있습니다');
+            if (text.indexOf(',') === -1) throw new Error('쉼표 구분자를 찾을 수 없습니다');
+
+            const parsed = parseCsvRecords(text);
+            if (parsed.length === 0) throw new Error('유효한 행이 없습니다');
+
+            const colCount = parsed[0].length;
+            if (colCount < 2) throw new Error('열이 2개 이상이어야 합니다');
+
+            const mismatchIdx = parsed.findIndex(r => r.length !== colCount);
+            if (mismatchIdx !== -1) {
+                throw new Error(`${mismatchIdx + 1}번째 행의 열 개수(${parsed[mismatchIdx].length})가 헤더(${colCount})와 다릅니다`);
+            }
+
+            const escapeCell = (s) => (s == null ? '' : String(s))
+                .replace(/\|/g, '\\|')
+                .replace(/\r?\n/g, ' ')
+                .trim();
+
+            const toRow = (row) => '| ' + row.map(escapeCell).join(' | ') + ' |';
+
+            const headerLine = toRow(parsed[0]);
+            const sepLine = '|' + ' --- |'.repeat(colCount);
+            const bodyLines = parsed.slice(1).map(toRow);
+            return [headerLine, sepLine, ...bodyLines].join('\n');
+        }
+
+        function openCsvTableModal() {
+            Swal.fire({
+                title: '<i class="mdi mdi-file-delimited-outline me-2"></i>CSV 표 삽입',
+                width: 620,
+                html: `
+                    <div class="text-start">
+                        <p style="font-size:0.85rem;color:var(--wiki-text-muted);margin-bottom:8px;">
+                            CSV 데이터를 붙여넣으세요. 첫 번째 행이 표 헤더로 사용됩니다.
+                        </p>
+                        <textarea id="swal-csv-input" class="form-control"
+                            placeholder="제목1,제목2,제목3&#10;내용1,내용2,내용3"
+                            style="font-size:0.85rem;height:220px;font-family:monospace;resize:vertical;width:100%;box-sizing:border-box;background:var(--wiki-bg);color:var(--wiki-text);border-color:var(--wiki-border);"></textarea>
+                    </div>
+                `,
+                showCancelButton: true,
+                confirmButtonText: '삽입',
+                cancelButtonText: '취소',
+                didOpen: () => {
+                    const el = document.getElementById('swal-csv-input');
+                    if (el) el.focus();
+                },
+                preConfirm: () => {
+                    const input = document.getElementById('swal-csv-input').value;
+                    if (!input || !input.trim()) {
+                        Swal.showValidationMessage('CSV 데이터를 입력해주세요.');
+                        return false;
+                    }
+                    try {
+                        return convertCsvToMarkdownTable(input);
+                    } catch (err) {
+                        Swal.showValidationMessage('CSV 형식이 아닙니다: ' + (err && err.message ? err.message : '알 수 없는 오류'));
+                        return false;
+                    }
+                }
+            }).then(result => {
+                if (result.isConfirmed && result.value) {
+                    editor.insertText('\n' + result.value + '\n');
+                    if (typeof cmEditorView !== 'undefined' && cmEditorView) cmEditorView.focus();
+                }
+            });
+        }
 
         // ── 구글 지도 퍼가기 모달 ──
         function openGoogleMapsEmbedModal() {

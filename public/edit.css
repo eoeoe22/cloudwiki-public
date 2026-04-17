@@ -955,6 +955,81 @@
     margin-top: 4px;
 }
 
+/* ── 표 삽입 그리드 팝오버 ── */
+.table-insert-popup {
+    position: absolute;
+    z-index: 1100;
+    background: var(--wiki-card-bg, #fff);
+    border: 1px solid var(--wiki-border, #dee2e6);
+    border-radius: 8px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
+    padding: 12px;
+    display: none;
+    user-select: none;
+}
+
+.table-insert-popup.active {
+    display: block;
+}
+
+.table-insert-label {
+    text-align: center;
+    font-size: 0.8rem;
+    color: var(--wiki-text-muted, #888);
+    margin-bottom: 6px;
+    min-height: 1.1em;
+}
+
+.table-insert-grid {
+    display: grid;
+    grid-template-columns: repeat(10, 20px);
+    grid-template-rows: repeat(8, 20px);
+    gap: 2px;
+    justify-content: center;
+}
+
+.table-insert-cell {
+    width: 20px;
+    height: 20px;
+    border: 1px solid var(--wiki-border, #dee2e6);
+    background: var(--wiki-bg, #fff);
+    cursor: pointer;
+    border-radius: 2px;
+    transition: background 0.08s ease, border-color 0.08s ease;
+}
+
+.table-insert-cell.highlighted {
+    background: var(--wiki-primary, #3b82f6);
+    border-color: var(--wiki-primary, #3b82f6);
+}
+
+.table-insert-csv-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    width: 100%;
+    margin-top: 10px;
+    padding: 6px 10px;
+    font-size: 0.85rem;
+    background: var(--wiki-bg);
+    color: var(--wiki-text);
+    border: 1px solid var(--wiki-border);
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+
+.table-insert-csv-btn:hover {
+    background: rgba(var(--wiki-primary-rgb, 59, 130, 246), 0.1);
+    border-color: var(--wiki-primary, #3b82f6);
+    color: var(--wiki-link, #2563eb);
+}
+
+.table-insert-csv-btn i {
+    font-size: 1rem;
+}
+
 /* ── 이미지 편집 모달 ── */
 #imageEditorModal .modal-dialog {
     max-width: 90vw;
