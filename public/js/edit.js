@@ -2104,10 +2104,22 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         const colorBadgeMatcher = new MatchDecorator({
             regexp: /\{(color|bg):\s*([^}]+)\}/g,
-            decoration: (match) => Decoration.mark({
-                class: "cm-color-badge",
-                attributes: { style: `--badge-color: ${match[2]};` }
-            })
+            decoration: (match, view, pos) => {
+                // 인라인 코드(`...`) 내부에서는 컬러 배지 표시하지 않음
+                const line = view.state.doc.lineAt(pos);
+                const relPos = pos - line.from;
+                const codeRegex = /`[^`]+`/g;
+                let m;
+                while ((m = codeRegex.exec(line.text)) !== null) {
+                    if (relPos >= m.index && relPos < m.index + m[0].length) {
+                        return null;
+                    }
+                }
+                return Decoration.mark({
+                    class: "cm-color-badge",
+                    attributes: { style: `--badge-color: ${match[2]};` }
+                });
+            }
         });
         const colorBadgePlugin = makePlugin(colorBadgeMatcher);
 
