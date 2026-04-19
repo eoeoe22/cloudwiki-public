@@ -69,6 +69,8 @@ CREATE INDEX IF NOT EXISTS idx_revisions_author ON revisions(author_id);
 CREATE INDEX IF NOT EXISTS idx_revisions_created ON revisions(created_at DESC);
 
 -- 미디어 테이블
+-- content: 이미지 문서(/w/이미지:파일명) 접근 시 함께 표시되는 일반 텍스트 설명.
+--          위키 문법 렌더링 없이 이스케이프하여 그대로 출력하며 리비전을 남기지 않는다.
 CREATE TABLE IF NOT EXISTS media (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   r2_key      TEXT NOT NULL UNIQUE,
@@ -76,10 +78,12 @@ CREATE TABLE IF NOT EXISTS media (
   mime_type   TEXT NOT NULL,
   size        INTEGER NOT NULL,
   uploader_id INTEGER,
+  content     TEXT NOT NULL DEFAULT '',
   created_at  INTEGER DEFAULT (unixepoch()),
   FOREIGN KEY (uploader_id) REFERENCES users(id)
 );
 CREATE INDEX IF NOT EXISTS idx_media_uploader ON media(uploader_id);
+CREATE INDEX IF NOT EXISTS idx_media_filename ON media(filename);
 
 -- FTS5 검색 가상 테이블
 CREATE VIRTUAL TABLE IF NOT EXISTS pages_fts

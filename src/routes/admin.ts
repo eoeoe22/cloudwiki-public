@@ -49,6 +49,21 @@ function writeAdminLog(c: any, type: string, log: string, userId: number) {
     );
 }
 
+/**
+ * 이미지 문서(/w/이미지:파일명) SSR/API 캐시 키를 무효화한다.
+ * media.ts의 PUT /api/media/doc/:filename과 동일한 키 집합을 사용한다.
+ */
+async function invalidateImageDocCache(c: any, filename: string) {
+    const cache = caches.default;
+    const origin = new URL(c.req.url).origin;
+    const encodedSlug = encodeURIComponent(`이미지:${filename}`);
+    await Promise.allSettled([
+        cache.delete(`${origin}/w/${encodedSlug}`),
+        cache.delete(`${origin}/api/w/${encodedSlug}`),
+        cache.delete(`${origin}/api/w/${encodedSlug}?redirect=no`),
+    ]);
+}
+
 adminRoutes.get('/users', async (c) => {
     const db = c.env.DB;
     const page = Math.max(1, Number(c.req.query('page')) || 1);
@@ -665,6 +680,7 @@ adminRoutes.post('/media/gc', async (c) => {
     }
 
     const deleted: number[] = [];
+    const deletedFilenames: string[] = [];
     const errors: string[] = [];
 
     for (const id of ids) {
@@ -699,10 +715,15 @@ adminRoutes.post('/media/gc', async (c) => {
             .bind(mediaItem.r2_key).run();
 
         deleted.push(id);
+        deletedFilenames.push(mediaItem.filename);
     }
 
     if (deleted.length > 0) {
         writeAdminLog(c, 'media_gc', `쓰레기 수집: ${deleted.length}개 미사용 이미지 삭제`, user.id);
+        // 각 이미지 문서(/w/이미지:파일명) 캐시 무효화
+        c.executionCtx.waitUntil(
+            Promise.allSettled(deletedFilenames.map(fn => invalidateImageDocCache(c, fn)))
+        );
     }
 
     return c.json({
@@ -769,10 +790,10 @@ adminRoutes.delete('/media/:id', async (c) => {
     const db = c.env.DB;
     const id = c.req.param('id');
 
-    // DB에서 r2_key 조회
-    const mediaItem = await db.prepare('SELECT r2_key FROM media WHERE id = ?')
+    // DB에서 r2_key/filename 조회 (filename은 이미지 문서 캐시 무효화에 필요)
+    const mediaItem = await db.prepare('SELECT r2_key, filename FROM media WHERE id = ?')
         .bind(id)
-        .first<{ r2_key: string }>();
+        .first<{ r2_key: string; filename: string }>();
 
     if (!mediaItem) {
         return c.json({ error: '이미지를 찾을 수 없습니다.' }, 404);
@@ -787,6 +808,9 @@ adminRoutes.delete('/media/:id', async (c) => {
 
     // DB에서 레코드 삭제
     await db.prepare('DELETE FROM media WHERE id = ?').bind(id).run();
+
+    // 이미지 문서 캐시 무효화 (/w/이미지:파일명, /api/w/...)
+    c.executionCtx.waitUntil(invalidateImageDocCache(c, mediaItem.filename));
 
     writeAdminLog(c, 'media_delete', `미디어 삭제: ${mediaItem.r2_key}`, c.get('user')!.id);
     return c.json({ success: true });

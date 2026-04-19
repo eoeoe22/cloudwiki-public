@@ -1,4 +1,86 @@
 
+// ── 텍스트 카운터 ──
+// 에디터 하단에 "n줄 n자 n자(공백포함) n단어" 표시.
+// Hot path(문서 변경 시) 최적화:
+//   1) span 참조를 최초 1회 탐색 후 캐시
+//   2) CM6 doc 객체의 cheap 메트릭(lines/length)은 즉시 반영
+//   3) 전체 문자열 스캔이 필요한 무공백 자수/단어 수는 디바운스(200ms)
+let _counterEls = null;
+let _counterHeavyTimer = null;
+
+function _ensureCounterEls() {
+    if (_counterEls) return _counterEls;
+    const root = document.getElementById('editorTextCounter');
+    if (!root) return null;
+    _counterEls = {
+        lines: root.querySelector('[data-counter="lines"]'),
+        chars: root.querySelector('[data-counter="chars"]'),
+        charsWithSpaces: root.querySelector('[data-counter="charsWithSpaces"]'),
+        words: root.querySelector('[data-counter="words"]'),
+    };
+    return _counterEls;
+}
+
+function _fmtCount(n) { return n.toLocaleString(); }
+
+function _setCheapCounts(els, lines, charsWithSpaces) {
+    if (els.lines) els.lines.textContent = `${_fmtCount(lines)}줄`;
+    if (els.charsWithSpaces) els.charsWithSpaces.textContent = `${_fmtCount(charsWithSpaces)}자(공백포함)`;
+}
+
+function _setHeavyCountsFromText(els, str) {
+    const chars = str.replace(/\s/g, '').length;
+    const trimmed = str.trim();
+    const words = trimmed ? trimmed.split(/\s+/).length : 0;
+    if (els.chars) els.chars.textContent = `${_fmtCount(chars)}자`;
+    if (els.words) els.words.textContent = `${_fmtCount(words)}단어`;
+}
+
+function _cancelHeavy() {
+    if (_counterHeavyTimer) {
+        clearTimeout(_counterHeavyTimer);
+        _counterHeavyTimer = null;
+    }
+}
+
+// 문자열 기반 (전체 동기 계산) — 초기 로드, raw textarea, 섹션 전환 등에서 사용
+function updateEditorTextCounter(text) {
+    const els = _ensureCounterEls();
+    if (!els) return;
+    const str = text == null ? '' : String(text);
+    const lines = str.length ? str.split('\n').length : 1;
+    _cancelHeavy();
+    _setCheapCounts(els, lines, str.length);
+    _setHeavyCountsFromText(els, str);
+}
+
+// CM6 전용 hot-path: cheap 메트릭은 즉시, heavy 메트릭은 디바운스
+function updateEditorTextCounterFromDoc(doc) {
+    const els = _ensureCounterEls();
+    if (!els) return;
+    _setCheapCounts(els, doc.lines, doc.length);
+    _cancelHeavy();
+    _counterHeavyTimer = setTimeout(() => {
+        _counterHeavyTimer = null;
+        _setHeavyCountsFromText(els, doc.toString());
+    }, 200);
+}
+
+// raw textarea hot-path: cheap 메트릭은 즉시, heavy 메트릭은 디바운스
+// (익스텐션 데이터는 대용량이므로 키스트로크마다 regex/split 전체 스캔 회피)
+function updateEditorTextCounterFromTextDebounced(text) {
+    const els = _ensureCounterEls();
+    if (!els) return;
+    const str = text == null ? '' : String(text);
+    const lines = str.length ? str.split('\n').length : 1;
+    _setCheapCounts(els, lines, str.length);
+    _cancelHeavy();
+    _counterHeavyTimer = setTimeout(() => {
+        _counterHeavyTimer = null;
+        _setHeavyCountsFromText(els, str);
+    }, 200);
+}
+
 // ── 에디터 상태 ──
 let slug = null;
 let pageVersion = null;
@@ -1882,23 +1964,19 @@ document.addEventListener('DOMContentLoaded', async () => {
                     <span class="wiki-ext-raw-editor-hint">마크다운 렌더링이 비활성화된 원시 데이터 편집 모드입니다</span>
                 </div>
                 <textarea id="rawExtTextarea" class="wiki-ext-raw-textarea" spellcheck="false"></textarea>
-                <div class="wiki-ext-raw-editor-footer">
-                    <span id="rawExtCharCount">0자</span>
-                    <span id="rawExtLineCount">0행</span>
-                </div>
             </div>
         `;
 
         const rawTextarea = document.getElementById('rawExtTextarea');
-        const charCountEl = document.getElementById('rawExtCharCount');
-        const lineCountEl = document.getElementById('rawExtLineCount');
 
         function updateRawCounts() {
-            const val = rawTextarea.value;
-            charCountEl.textContent = val.length.toLocaleString() + '자';
-            lineCountEl.textContent = (val.split('\n').length).toLocaleString() + '행';
+            updateEditorTextCounter(rawTextarea.value);
         }
-        rawTextarea.addEventListener('input', updateRawCounts);
+        // 키스트로크마다 전체 regex/split 스캔이 돌지 않도록 input에는 디바운스 버전 사용
+        rawTextarea.addEventListener('input', () => {
+            updateEditorTextCounterFromTextDebounced(rawTextarea.value);
+        });
+        updateRawCounts();
 
         // editor 심(shim) 객체: 기존 코드(save, cancel, diff, autosave 등)가
         // editor.getMarkdown() / editor.setMarkdown()을 통해 동작하도록 호환 유지
@@ -1942,9 +2020,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                     <div class="toc-floating-panel" id="editorTocFloatingPanel">
                         <div class="toc-floating-header">
                             <span><i class="mdi mdi-format-list-bulleted-square me-1"></i> 목차</span>
-                            <button class="toc-floating-close" onclick="toggleEditorFloatingToc()" title="닫기">
-                                <i class="bi bi-x-lg"></i>
-                            </button>
                         </div>
                         <nav class="toc-floating-body" id="editorTocFloatingNav"></nav>
                     </div>
@@ -1972,7 +2047,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         const { EditorState, Compartment, RangeSetBuilder } = cmState;
         const { EditorView, keymap: cmKeymap, lineNumbers, highlightActiveLineGutter, drawSelection,
-            MatchDecorator, ViewPlugin, Decoration } = cmViewMod;
+            MatchDecorator, ViewPlugin, Decoration, WidgetType } = cmViewMod;
         const { defaultKeymap, history, historyKeymap, indentWithTab } = cmCommands;
         const { markdown, markdownLanguage } = cmMarkdown;
         const { languages } = cmLangData;
@@ -1994,11 +2069,15 @@ document.addEventListener('DOMContentLoaded', async () => {
             showLineNumbers: localStorage.getItem('editor_show_line_numbers') !== 'false',
             scrollSync: localStorage.getItem('editor_scroll_sync') === 'true',
             wordWrap: localStorage.getItem('editor_word_wrap') !== 'false',
+            syntaxHighlight: localStorage.getItem('editor_syntax_highlight') !== 'false',
+            advancedEdit: localStorage.getItem('editor_advanced_edit') !== 'false',
         };
 
         // ── CM6 동적 재설정용 Compartment ──
         const lineNumbersCompartment = new Compartment();
         const lineWrappingCompartment = new Compartment();
+        const syntaxHighlightCompartment = new Compartment();
+        const advancedEditCompartment = new Compartment();
 
         // ── 마크다운 문법 하이라이트 스타일 ──
         const markdownLightStyle = HighlightStyle.define([
@@ -2131,11 +2210,65 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
         const alignPlugin = makePlugin(alignMatcher);
 
-        const iconMatcher = new MatchDecorator({
+        // ── 인라인 아이콘 위젯 ({bi:}/{mdi:}/{icon:} 옆에 실제 아이콘 미리보기) ──
+        class InlineIconWidget extends WidgetType {
+            constructor(type, name) { super(); this.type = type; this.name = name; }
+            eq(other) { return other.type === this.type && other.name === this.name; }
+            toDOM() {
+                const wrap = document.createElement('span');
+                wrap.className = 'cm-inline-icon-widget';
+                wrap.setAttribute('aria-hidden', 'true');
+                let iconEl = null;
+                if (this.type === 'bi') {
+                    iconEl = document.createElement('i');
+                    iconEl.className = `bi bi-${this.name}`;
+                } else if (this.type === 'mdi') {
+                    iconEl = document.createElement('span');
+                    iconEl.className = `mdi mdi-${this.name}`;
+                } else if (this.type === 'icon') {
+                    if (this.name.startsWith('bi-')) {
+                        iconEl = document.createElement('i');
+                        iconEl.className = `bi ${this.name}`;
+                    } else if (this.name.startsWith('mdi-')) {
+                        iconEl = document.createElement('span');
+                        iconEl.className = `mdi ${this.name}`;
+                    }
+                }
+                if (iconEl) wrap.appendChild(iconEl);
+                return wrap;
+            }
+            ignoreEvent() { return true; }
+        }
+
+        const iconMarkerMatcher = new MatchDecorator({
             regexp: /\{(bi|mdi|icon):[^}]+\}/g,
             decoration: Decoration.mark({ class: "cm-icon-marker" })
         });
-        const iconPlugin = makePlugin(iconMatcher);
+        const iconMarkerPlugin = makePlugin(iconMarkerMatcher);
+
+        const iconWidgetMatcher = new MatchDecorator({
+            regexp: /\{(bi|mdi|icon):([^}\s]+)\}/g,
+            decorate: (add, from, to, match, view) => {
+                // 인라인 코드(`...`) 내부에서는 아이콘 위젯 표시하지 않음
+                const line = view.state.doc.lineAt(from);
+                const relPos = from - line.from;
+                const codeRegex = /`[^`]+`/g;
+                let m;
+                while ((m = codeRegex.exec(line.text)) !== null) {
+                    if (relPos >= m.index && relPos < m.index + m[0].length) return;
+                }
+                const type = match[1];
+                const name = (match[2] || '').trim();
+                // 안전한 아이콘 이름 패턴만 허용 (영문/숫자/하이픈/언더스코어)
+                if (!/^[a-zA-Z0-9_-]+$/.test(name)) return;
+                if (type === 'icon' && !(name.startsWith('bi-') || name.startsWith('mdi-'))) return;
+                add(to, to, Decoration.widget({
+                    widget: new InlineIconWidget(type, name),
+                    side: 1
+                }));
+            }
+        });
+        const iconWidgetPlugin = makePlugin(iconWidgetMatcher);
 
         const colorBadgeMatcher = new MatchDecorator({
             regexp: /\{(color|bg):\s*([^}]+)\}/g,
@@ -2157,6 +2290,62 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         });
         const colorBadgePlugin = makePlugin(colorBadgeMatcher);
+
+        const paletteBadgeMatcher = new MatchDecorator({
+            regexp: /\{palette:\s*([^}]+)\}/g,
+            decoration: (match, view, pos) => {
+                // 인라인 코드(`...`) 내부에서는 팔레트 배지 표시하지 않음
+                const line = view.state.doc.lineAt(pos);
+                const relPos = pos - line.from;
+                const codeRegex = /`[^`]+`/g;
+                let m;
+                while ((m = codeRegex.exec(line.text)) !== null) {
+                    if (relPos >= m.index && relPos < m.index + m[0].length) {
+                        return null;
+                    }
+                }
+                const name = (match[1] || '').trim();
+                let variant = null;
+                try {
+                    const merged = (typeof getMergedWikiPalettes === 'function') ? getMergedWikiPalettes() : {};
+                    const entry = merged[name];
+                    if (entry) {
+                        const isDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+                        variant = isDark ? (entry.dark || entry.light) : (entry.light || entry.dark);
+                    }
+                } catch (_) { /* noop */ }
+                if (!variant) return null;
+                const rawBg = variant.bg || 'transparent';
+                const rawColor = variant.color || 'inherit';
+                const safeBg = (typeof _isSafeCssColor === 'function' && _isSafeCssColor(rawBg)) ? rawBg : 'transparent';
+                const safeColor = (typeof _isSafeCssColor === 'function' && _isSafeCssColor(rawColor)) ? rawColor : 'inherit';
+                return Decoration.mark({
+                    class: "cm-palette-badge",
+                    attributes: { style: `--palette-bg: ${safeBg}; --palette-color: ${safeColor};` }
+                });
+            }
+        });
+        const paletteBadgePlugin = makePlugin(paletteBadgeMatcher);
+
+        // 파라미터 토큰: {badge:}, {tag:}, {button:}, {stat:}, {size:}, {hr}
+        // {{틀}} 과 충돌하지 않도록 앞뒤 중괄호 제외
+        const paramTokenMatcher = new MatchDecorator({
+            regexp: /(?<!\{)\{(?:hr|(?:badge|tag|button|stat|size):[^}]+)\}(?!\})/g,
+            decoration: (match, view, pos) => {
+                // 인라인 코드(`...`) 내부에서는 표시하지 않음
+                const line = view.state.doc.lineAt(pos);
+                const relPos = pos - line.from;
+                const codeRegex = /`[^`]+`/g;
+                let m;
+                while ((m = codeRegex.exec(line.text)) !== null) {
+                    if (relPos >= m.index && relPos < m.index + m[0].length) {
+                        return null;
+                    }
+                }
+                return Decoration.mark({ class: "cm-param-token" });
+            }
+        });
+        const paramTokenPlugin = makePlugin(paramTokenMatcher);
 
         const highlightMatcher = new MatchDecorator({
             regexp: /==([^=]+)==/g,
@@ -2235,6 +2424,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                 let maxLine = doc.lines;
                 let inFold = false;
                 let inCode = false;
+                let colonBlockDepth = 0;
+                const colonOpenRe = /^:::[a-zA-Z][a-zA-Z0-9_-]*(?:[ \t]+.*)?[ \t]*$/;
+                const colonCloseRe = /^:::[ \t]*$/;
 
                 for (let i = 1; i <= maxLine; i++) {
                     let line = doc.line(i);
@@ -2242,8 +2434,12 @@ document.addEventListener('DOMContentLoaded', async () => {
                     let classes = [];
 
                     if (text.includes("[+")) inFold = true;
-                    if (inFold) classes.push("cm-fold-block");
+                    const isColonOpen = !inCode && colonOpenRe.test(text);
+                    const isColonClose = !inCode && !isColonOpen && colonCloseRe.test(text);
+                    if (isColonOpen) colonBlockDepth++;
+                    if (inFold || colonBlockDepth > 0) classes.push("cm-fold-block");
                     if (text.includes("[-]")) inFold = false;
+                    if (isColonClose && colonBlockDepth > 0) colonBlockDepth--;
 
                     let isCodeFence = text.trim().startsWith("```");
                     if (isCodeFence) {
@@ -2265,6 +2461,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const updateListener = EditorView.updateListener.of((update) => {
             if (update.docChanged) {
                 editorEventHandlers.change.forEach(cb => cb());
+                updateEditorTextCounterFromDoc(update.state.doc);
             }
             // 커서(선택) 위치가 변하면 스크롤 동기화 (활성화된 경우)
             // 단, 문서가 변경된 업데이트는 프리뷰가 아직 재렌더되기 전이므로 건너뛰고
@@ -2282,23 +2479,46 @@ document.addEventListener('DOMContentLoaded', async () => {
                 editorEventHandlers.blur.forEach(cb => cb());
             },
             mousedown: (event, view) => {
-                if (event.target.classList.contains('cm-color-badge')) {
-                    const rect = event.target.getBoundingClientRect();
-                    // 배지(가상 요소) 클릭 여부 확인 (우측 끝 18px 영역)
-                    if (event.clientX > rect.right - 18) {
+                const target = event.target;
+                const isColorBadge = target.classList && target.classList.contains('cm-color-badge');
+                const isPaletteBadge = target.classList && target.classList.contains('cm-palette-badge');
+                if (isColorBadge || isPaletteBadge) {
+                    const rect = target.getBoundingClientRect();
+                    // 배지(가상 요소) 클릭 여부 확인: 컬러 18px / 팔레트 28px 우측 영역
+                    const badgeWidth = isColorBadge ? 18 : 28;
+                    if (event.clientX > rect.right - badgeWidth) {
                         event.preventDefault();
                         event.stopPropagation();
-                        const text = event.target.textContent;
-                        const match = text.match(/\{(color|bg):\s*([^}]+)\}/);
-                        if (match) {
-                            const type = match[1];
-                            const colorCode = match[2];
-                            const pos = view.posAtDOM(event.target);
-                            if (pos !== null) {
-                                const endPos = pos + text.length;
-                                view.dispatch({ selection: { anchor: endPos } });
-                                showColorAutocomplete(colorCode, type);
-                                return true;
+                        const text = target.textContent;
+                        if (isColorBadge) {
+                            const match = text.match(/\{(color|bg):\s*([^}]+)\}/);
+                            if (match) {
+                                const type = match[1];
+                                const colorCode = match[2];
+                                const pos = view.posAtDOM(target);
+                                if (pos !== null) {
+                                    const endPos = pos + text.length;
+                                    view.dispatch({ selection: { anchor: endPos } });
+                                    showColorAutocomplete(colorCode, type);
+                                    return true;
+                                }
+                            }
+                        } else {
+                            const match = text.match(/\{palette:\s*([^}]+)\}/);
+                            if (match) {
+                                const name = (match[1] || '').trim();
+                                const pos = view.posAtDOM(target);
+                                if (pos !== null) {
+                                    const endPos = pos + text.length;
+                                    view.dispatch({ selection: { anchor: endPos } });
+                                    if (typeof hideAutocomplete === 'function') hideAutocomplete();
+                                    if (typeof hideIconAutocomplete === 'function') hideIconAutocomplete();
+                                    if (typeof hideColorAutocomplete === 'function') hideColorAutocomplete();
+                                    if (typeof hideTimestampAutocomplete === 'function') hideTimestampAutocomplete();
+                                    if (typeof hideImgSizeAutocomplete === 'function') hideImgSizeAutocomplete();
+                                    showPaletteAutocomplete(name);
+                                    return true;
+                                }
                             }
                         }
                     }
@@ -2306,6 +2526,29 @@ document.addEventListener('DOMContentLoaded', async () => {
                 return false;
             }
         });
+
+        // ── 문법 하이라이트/고급 편집 확장 묶음 ──
+        const buildSyntaxHighlightExts = () => editorSettings.syntaxHighlight ? [
+            markdown({ base: markdownLanguage, codeLanguages: languages }),
+            syntaxHighlighting(isDarkMode ? markdownDarkStyle : markdownLightStyle),
+            wikiLinkPlugin,
+            templatePlugin,
+            alignPlugin,
+            iconMarkerPlugin,
+            highlightPlugin,
+            timePlugin,
+            spoilerPlugin,
+            inlineCodePlugin,
+            quoteListPlugin,
+            paramTokenPlugin,
+            lineStylePlugin
+        ] : [];
+
+        const buildAdvancedEditExts = () => (editorSettings.syntaxHighlight && editorSettings.advancedEdit) ? [
+            colorBadgePlugin,
+            paletteBadgePlugin,
+            iconWidgetPlugin
+        ] : [];
 
         // ── CM6 EditorView 생성 ──
         const cmEditorView = new EditorView({
@@ -2321,13 +2564,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                     indentOnInput(),
                     bracketMatching(),
                     history(),
-                    syntaxHighlighting(isDarkMode ? markdownDarkStyle : markdownLightStyle),
                     cmKeymap.of([
                         ...defaultKeymap,
                         ...historyKeymap,
                         indentWithTab
                     ]),
-                    markdown({ base: markdownLanguage, codeLanguages: languages }),
                     themeExtension,
                     // 다크 모드에서도 높이/스크롤 보장 (oneDark는 이를 설정하지 않음) 및 전체 배경색 변경
                     isDarkMode ? EditorView.theme({
@@ -2342,17 +2583,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                     ),
                     updateListener,
                     blurHandler,
-                    wikiLinkPlugin,
-                    templatePlugin,
-                    alignPlugin,
-                    iconPlugin,
-                    colorBadgePlugin,
-                    highlightPlugin,
-                    timePlugin,
-                    spoilerPlugin,
-                    inlineCodePlugin,
-                    quoteListPlugin,
-                    lineStylePlugin
+                    syntaxHighlightCompartment.of(buildSyntaxHighlightExts()),
+                    advancedEditCompartment.of(buildAdvancedEditExts())
                 ]
             }),
             parent: document.querySelector('#cm-editor')
@@ -2361,6 +2593,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         // 전역 CM6 인스턴스 보관
         window._cmView = cmEditorView;
         window.CodeMirrorView = cmViewMod;
+
+        // 초기 텍스트 카운터 상태 반영
+        updateEditorTextCounter(cmEditorView.state.doc.toString());
 
         // ── 에디터 Shim 객체 (기존 edit.js 코드와 호환) ──
         editor = {
@@ -2518,10 +2753,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-form-dropdown"></i>', '펼치기 접기', () => editor.insertText('[+ 펼치기/접기 제목]\n여기에 숨겨진 내용이 들어갑니다.\n[-]')));
         toolbar.appendChild(createToolbarBtn('<i class="bi bi-diagram-3-fill"></i>', '하위 문서', () => openSubdocInsertModal()));
         toolbar.appendChild(createToolbarSep());
+        toolbar.appendChild(createToolbarBtn('<i class="bi bi-card-heading"></i>', '카드 블록', () => editor.insertText(':::card 제목\n내용\n:::')));
+        toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-view-grid-outline"></i>', '그리드·스탯', () => editor.insertText(':::grid\n{stat:4|명작}\n{stat:1|평작}\n:::')));
+        toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-label-outline"></i>', '배지', () => editor.insertText('{palette:primary}{badge:라벨}')));
+        toolbar.appendChild(createToolbarSep());
         toolbar.appendChild(createToolbarBtn('<code>&lt;/&gt;</code>', '인라인 코드', () => wrapSelection('`', '`')));
         toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-code-braces"></i>', '코드 블록', () => wrapSelection('\n```\n', '\n```\n')));
         toolbar.appendChild(createToolbarSep());
-        toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-google-maps"></i>', '구글 지도 퍼가기', () => openGoogleMapsEmbedModal()));
+        toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-google-maps"></i>', '구글 지도 삽입', () => openGoogleMapsEmbedModal()));
 
         // 이미지 업로드 버튼 + 드래그앤드롭 팝업
         const imageUploadBtn = createToolbarBtn('<i class="mdi mdi-image-plus"></i>', '이미지 업로드', () => { });
@@ -2535,10 +2774,23 @@ document.addEventListener('DOMContentLoaded', async () => {
             <div class="drop-main-text">이미지를 여기에 드래그하세요</div>
             <div class="drop-sub-text">또는 클릭하여 파일 선택</div>
         </div>
+        <button type="button" class="img-upload-search-btn">
+            <i class="mdi mdi-magnify"></i> 기존 이미지 검색
+        </button>
     `;
         document.body.appendChild(imgUploadPopup);
 
         const imgDropzone = imgUploadPopup.querySelector('.img-upload-dropzone');
+        const imgSearchBtn = imgUploadPopup.querySelector('.img-upload-search-btn');
+
+        imgSearchBtn.addEventListener('click', async () => {
+            imgUploadPopup.classList.remove('active');
+            await openExistingImageSearch((url, alt, size) => {
+                let insertTxt = `![${alt}](${url})`;
+                if (size && size !== 'full') insertTxt += `{size:${size}}`;
+                editor.insertText(insertTxt);
+            });
+        });
         const imgFileInput = document.createElement('input');
         imgFileInput.type = 'file';
         imgFileInput.accept = 'image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm,video/ogg';
@@ -2655,6 +2907,16 @@ document.addEventListener('DOMContentLoaded', async () => {
                 <span>스크롤 동기화</span>
                 <input type="checkbox" id="settingScrollSync" ${editorSettings.scrollSync ? 'checked' : ''}>
             </label>
+            <label class="editor-settings-item">
+                <span>문법 하이라이트</span>
+                <input type="checkbox" id="settingSyntaxHighlight" ${editorSettings.syntaxHighlight ? 'checked' : ''}>
+            </label>
+            <label class="editor-settings-item">
+                <span>고급 편집</span>
+                <input type="checkbox" id="settingAdvancedEdit"
+                    ${editorSettings.advancedEdit && editorSettings.syntaxHighlight ? 'checked' : ''}
+                    ${editorSettings.syntaxHighlight ? '' : 'disabled'}>
+            </label>
             <div class="editor-settings-divider"></div>
             <div class="editor-settings-section-title">줄바꿈 모드</div>
             <label class="editor-settings-item">
@@ -2721,6 +2983,42 @@ document.addEventListener('DOMContentLoaded', async () => {
             editorSettings.scrollSync = e.target.checked;
             localStorage.setItem('editor_scroll_sync', editorSettings.scrollSync);
             setScrollSync(editorSettings.scrollSync);
+        });
+
+        // ── 문법 하이라이트 / 고급 편집 토글 ──
+        function applySyntaxAndAdvancedExtensions() {
+            cmEditorView.dispatch({
+                effects: [
+                    syntaxHighlightCompartment.reconfigure(buildSyntaxHighlightExts()),
+                    advancedEditCompartment.reconfigure(buildAdvancedEditExts())
+                ]
+            });
+        }
+
+        const syntaxHighlightCheckbox = document.getElementById('settingSyntaxHighlight');
+        const advancedEditCheckbox = document.getElementById('settingAdvancedEdit');
+
+        syntaxHighlightCheckbox.addEventListener('change', (e) => {
+            editorSettings.syntaxHighlight = e.target.checked;
+            localStorage.setItem('editor_syntax_highlight', editorSettings.syntaxHighlight);
+            // 하이라이트가 꺼지면 고급 편집도 자동으로 꺼짐
+            if (!editorSettings.syntaxHighlight && editorSettings.advancedEdit) {
+                editorSettings.advancedEdit = false;
+                localStorage.setItem('editor_advanced_edit', 'false');
+                advancedEditCheckbox.checked = false;
+            }
+            advancedEditCheckbox.disabled = !editorSettings.syntaxHighlight;
+            applySyntaxAndAdvancedExtensions();
+        });
+
+        advancedEditCheckbox.addEventListener('change', (e) => {
+            if (!editorSettings.syntaxHighlight) {
+                e.target.checked = false;
+                return;
+            }
+            editorSettings.advancedEdit = e.target.checked;
+            localStorage.setItem('editor_advanced_edit', editorSettings.advancedEdit);
+            applySyntaxAndAdvancedExtensions();
         });
 
         // ── 줄바꿈 모드 토글 ──
@@ -3988,6 +4286,10 @@ async function savePage() {
         Swal.fire('오류', '문서 제목에 사용할 수 없는 특수문자가 포함되어 있습니다.', 'warning');
         return;
     }
+    if (title.startsWith('이미지:')) {
+        Swal.fire('오류', '"이미지:"는 이미지 문서 전용 네임스페이스이므로 일반 문서 제목으로 사용할 수 없습니다.', 'warning');
+        return;
+    }
     if (title.length > 30) {
         Swal.fire('오류', '문서 제목은 최대 30자까지 입력할 수 있습니다.', 'warning');
         return;
@@ -4386,6 +4688,166 @@ function cancelConflict() {
     });
 }
 
+
+// ── 기존 이미지 검색 모달 ──
+async function openExistingImageSearch(callback) {
+    let offset = 0;
+    const limit = 24;
+    let total = 0;
+    let items = [];
+    let currentQuery = '';
+    let loading = false;
+    let finished = false;
+
+    const escapeHtml = (s) => String(s ?? '').replace(/[&<>"']/g, (m) => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[m]));
+
+    let pickedItem = null;
+
+    await Swal.fire({
+        title: '기존 이미지 검색',
+        width: 720,
+        showCancelButton: true,
+        showConfirmButton: false,
+        cancelButtonText: '닫기',
+        html: `
+            <div class="existing-img-search-wrap">
+                <div class="existing-img-search-bar">
+                    <input type="text" id="existingImgSearchInput" class="form-control"
+                           placeholder="파일명 검색 (비워두면 최신순 전체)" autocomplete="off">
+                    <button type="button" class="btn btn-primary" id="existingImgSearchBtn">
+                        <i class="mdi mdi-magnify"></i>
+                    </button>
+                </div>
+                <div id="existingImgSearchInfo" class="existing-img-search-info"></div>
+                <div id="existingImgSearchGrid" class="existing-img-search-grid"></div>
+                <div id="existingImgSearchMore" class="existing-img-search-more" style="display:none;">
+                    <button type="button" class="btn btn-outline-secondary btn-sm" id="existingImgMoreBtn">
+                        더 불러오기
+                    </button>
+                </div>
+            </div>
+        `,
+        didOpen: () => {
+            const input = document.getElementById('existingImgSearchInput');
+            const searchBtn = document.getElementById('existingImgSearchBtn');
+            const moreBtn = document.getElementById('existingImgMoreBtn');
+
+            const doSearch = (reset) => {
+                if (reset) {
+                    offset = 0;
+                    items = [];
+                    finished = false;
+                    currentQuery = input.value.trim();
+                }
+                loadPage();
+            };
+
+            searchBtn.addEventListener('click', () => doSearch(true));
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') { e.preventDefault(); doSearch(true); }
+            });
+            moreBtn.addEventListener('click', () => loadPage());
+
+            doSearch(true);
+        },
+        preConfirm: () => pickedItem,
+    });
+
+    async function loadPage() {
+        if (loading || finished) return;
+        loading = true;
+        const grid = document.getElementById('existingImgSearchGrid');
+        const info = document.getElementById('existingImgSearchInfo');
+        const moreWrap = document.getElementById('existingImgSearchMore');
+
+        if (offset === 0) {
+            grid.innerHTML = '<div class="existing-img-search-empty">불러오는 중...</div>';
+        }
+        try {
+            const params = new URLSearchParams();
+            if (currentQuery) params.set('q', currentQuery);
+            params.set('limit', String(limit));
+            params.set('offset', String(offset));
+
+            const res = await fetch(`/api/media/search?${params.toString()}`);
+            if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                throw new Error(data.error || '검색 실패');
+            }
+            const data = await res.json();
+            total = data.total || 0;
+            const fetched = data.items || [];
+            if (offset === 0) items = [];
+            items = items.concat(fetched);
+            offset += fetched.length;
+            if (fetched.length < limit || items.length >= total) finished = true;
+
+            renderGrid(grid);
+            info.textContent = total > 0
+                ? `총 ${total}개 중 ${items.length}개 표시`
+                : '결과가 없습니다.';
+            moreWrap.style.display = finished ? 'none' : '';
+        } catch (err) {
+            grid.innerHTML = `<div class="existing-img-search-empty text-danger">${escapeHtml(err.message)}</div>`;
+        } finally {
+            loading = false;
+        }
+    }
+
+    function renderGrid(grid) {
+        if (!items.length) {
+            grid.innerHTML = '<div class="existing-img-search-empty">이미지가 없습니다.</div>';
+            return;
+        }
+        grid.innerHTML = items.map((m) => `
+            <div class="existing-img-tile" data-id="${m.id}" title="${escapeHtml(m.filename)}">
+                <img src="${escapeHtml(m.url)}" alt="${escapeHtml(m.filename)}" loading="lazy">
+                <div class="existing-img-tile-name">${escapeHtml(m.filename)}</div>
+            </div>
+        `).join('');
+
+        grid.querySelectorAll('.existing-img-tile').forEach((tile) => {
+            tile.addEventListener('click', async () => {
+                const id = Number(tile.dataset.id);
+                const picked = items.find((it) => it.id === id);
+                if (!picked) return;
+                const size = await askImageSize(picked);
+                if (size === null) return;
+                Swal.close();
+                const altBase = picked.filename.replace(/\.[^.]+$/, '');
+                callback(picked.url, altBase, size);
+            });
+        });
+    }
+
+    async function askImageSize(picked) {
+        const result = await Swal.fire({
+            title: '이미지 크기 선택',
+            html: `
+                <div class="existing-img-size-preview">
+                    <img src="${escapeHtml(picked.url)}" alt="${escapeHtml(picked.filename)}">
+                    <div class="existing-img-size-filename">${escapeHtml(picked.filename)}</div>
+                </div>
+                <div class="existing-img-size-options">
+                    <label><input type="radio" name="existingImgSize" value="icon"> 아이콘</label>
+                    <label><input type="radio" name="existingImgSize" value="small"> 작게</label>
+                    <label><input type="radio" name="existingImgSize" value="medium"> 중간</label>
+                    <label><input type="radio" name="existingImgSize" value="full" checked> 크게 (기본)</label>
+                </div>
+            `,
+            showCancelButton: true,
+            confirmButtonText: '삽입',
+            cancelButtonText: '취소',
+            preConfirm: () => {
+                const sel = document.querySelector('input[name="existingImgSize"]:checked');
+                return sel ? sel.value : 'full';
+            },
+        });
+        return result.isConfirmed ? (result.value || 'full') : null;
+    }
+}
 
 // ── 미디어 업로드 처리 ──
 async function handleImageUpload(blob, callback) {

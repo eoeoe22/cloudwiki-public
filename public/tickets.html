@@ -12,9 +12,10 @@
   <link href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css" rel="stylesheet">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Outfit:wght@500;600;700;800;900&family=Inter:wght@400;500;700;800&display=swap"
-        rel="stylesheet">
-  <link rel="stylesheet" href="/style.css">
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Outfit:wght@500;600;700;800;900&family=Inter:wght@400;500;700;800&display=swap"
+    rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
   <style>
     /* 모바일에서 햄버거 메뉴 숨김 */
     .navbar-toggler[data-bs-target="#mobileSidebar"] {
@@ -53,7 +54,8 @@
           <div class="d-flex flex-wrap gap-2 mb-3 align-items-center">
             <!-- 상태 필터 -->
             <div class="btn-group btn-group-sm" role="group">
-              <button type="button" class="btn btn-outline-secondary active" onclick="filterTickets(this, 'status', '')">
+              <button type="button" class="btn btn-outline-secondary active"
+                onclick="filterTickets(this, 'status', '')">
                 전체
               </button>
               <button type="button" class="btn btn-outline-success" onclick="filterTickets(this, 'status', 'open')">
@@ -65,7 +67,8 @@
             </div>
 
             <!-- 유형 필터 (관리자용) -->
-            <select class="form-select form-select-sm d-none" id="typeFilter" style="width: auto; min-width: 120px;" onchange="applyTypeFilter()">
+            <select class="form-select form-select-sm d-none" id="typeFilter" style="width: auto; min-width: 120px;"
+              onchange="applyTypeFilter()">
               <option value="">유형: 전체</option>
               <option value="general">일반</option>
               <option value="document">문서</option>
@@ -92,8 +95,7 @@
                   <input type="text" class="form-control" id="newTicketTitle" placeholder="문의 제목">
                 </div>
                 <div class="mb-3">
-                  <textarea class="form-control" id="newTicketContent" rows="4"
-                    placeholder="문의 내용을 입력하세요"></textarea>
+                  <textarea class="form-control" id="newTicketContent" rows="4" placeholder="문의 내용을 입력하세요"></textarea>
                 </div>
                 <div class="d-flex gap-2">
                   <button class="btn btn-wiki btn-sm" onclick="submitNewTicket()">작성</button>

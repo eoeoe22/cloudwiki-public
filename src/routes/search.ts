@@ -9,6 +9,9 @@ const search = new Hono<Env>();
  * GET /search?q=키워드&mode=content|category
  * mode=content (기본값): FTS5 기반 전문 검색, 정확한 제목 일치 시 redirect 반환
  * mode=category: 카테고리 이름으로 문서 목록 반환
+ *
+ * 이미지 문서 검색: 쿼리가 "이미지:"로 시작하면 media 테이블에서 filename/content를 검색한다.
+ * 일반 문서 검색 결과에는 이미지 문서가 포함되지 않는다.
  */
 search.get('/search', async (c) => {
     const query = c.req.query('q');
@@ -23,6 +26,74 @@ search.get('/search', async (c) => {
     const rbac = c.get('rbac') as RBAC;
     const isAdmin = user && rbac.can(user.role, 'admin:access');
     const searchStartTime = Date.now();
+
+    // 이미지 문서 검색 모드: "이미지:키워드"로 시작하면 media 테이블에서 검색한다.
+    // 매치가 전혀 없으면 legacy pages.slug의 '이미지:' 네임스페이스 호환을 위해
+    // 아래 일반 검색 경로로 폴스루한다(wiki.get('/w/:slug')의 폴스루와 일관 유지).
+    if (mode === 'content' && query.trim().startsWith('이미지:')) {
+        if (c.env.WIKI_VISIBILITY === 'closed' && !user) {
+            return c.json({ error: '로그인이 필요합니다.' }, 401);
+        }
+        const imageQuery = query.trim().substring('이미지:'.length).trim();
+
+        // "이미지:파일명" 정확 일치 시 해당 이미지 문서로 리다이렉트
+        if (imageQuery.length > 0) {
+            const exactImage = await db
+                .prepare('SELECT filename FROM media WHERE filename = ? LIMIT 1')
+                .bind(imageQuery)
+                .first<{ filename: string }>();
+            if (exactImage) {
+                trackSearch(c, query.trim(), 1, Date.now() - searchStartTime);
+                return c.json({ redirect: `/w/${encodeURIComponent('이미지:' + exactImage.filename)}` });
+            }
+        }
+
+        // filename 또는 content에 LIKE 매치
+        const likePattern = imageQuery.length > 0 ? `%${imageQuery}%` : '%';
+        const { results } = await db
+            .prepare(
+                `SELECT id, r2_key, filename, mime_type, content
+                 FROM media
+                 WHERE filename LIKE ? OR content LIKE ?
+                 ORDER BY created_at DESC LIMIT 30`
+            )
+            .bind(likePattern, likePattern)
+            .all<{ id: number; r2_key: string; filename: string; mime_type: string; content: string }>();
+
+        if (results.length > 0) {
+            const imageResults = results.map((r) => {
+                const slug = `이미지:${r.filename}`;
+                let snippet = '';
+                if (imageQuery && r.content) {
+                    const idx = r.content.toLowerCase().indexOf(imageQuery.toLowerCase());
+                    if (idx >= 0) {
+                        const start = Math.max(0, idx - 20);
+                        const end = Math.min(r.content.length, idx + imageQuery.length + 40);
+                        const raw = (start > 0 ? '…' : '') + r.content.slice(start, end) + (end < r.content.length ? '…' : '');
+                        snippet = raw
+                            .replace(/&/g, '&amp;')
+                            .replace(/</g, '&lt;')
+                            .replace(/>/g, '&gt;')
+                            .replace(/"/g, '&quot;')
+                            .replace(/'/g, '&#039;');
+                    }
+                }
+                return {
+                    slug,
+                    title: slug,
+                    isDeleted: false,
+                    is_image_doc: true,
+                    r2_key: r.r2_key,
+                    mime_type: r.mime_type,
+                    snippet,
+                };
+            });
+
+            trackSearch(c, query.trim(), imageResults.length, Date.now() - searchStartTime);
+            return c.json({ results: imageResults, image_mode: true });
+        }
+        // media에서 결과가 없으면 아래 일반 pages 검색으로 폴스루
+    }
 
     // 카테고리 검색 모드
     if (mode === 'category') {

@@ -30,6 +30,176 @@ function _resolvePaletteTokens(text) {
     });
 }
 
+// ── 고급 레이아웃: ::: 블록 디렉티브 & 인라인 칩 ──
+
+/**
+ * 라인 기반 스택 파서. `:::type 제목` 오프너와 단독 `:::` 클로저로 블록을 수집.
+ * 코드블록은 외부에서 이미 WIKICODEFPH 로 보호됐다고 가정.
+ * 중첩 지원: 여는 디렉티브 하나당 닫는 `:::` 한 줄이 쌍을 이룸.
+ * 반환: { text, blockData } — blockData[i] = { type, titleLine, innerText }
+ */
+function _preprocessBlockDirectives(text) {
+    if (!text || text.indexOf(':::') === -1) return { text, blockData: [] };
+    const lines = text.split('\n');
+    const blockData = [];
+    const root = { contentLines: [] };
+    const stack = [root];
+    const openRe = /^:::([a-zA-Z][a-zA-Z0-9_-]*)(?:[ \t]+(.*))?[ \t]*$/;
+    const closeRe = /^:::[ \t]*$/;
+    for (const line of lines) {
+        const om = line.match(openRe);
+        if (om) {
+            stack.push({ type: om[1], titleLine: (om[2] || '').trim(), contentLines: [] });
+            continue;
+        }
+        if (closeRe.test(line) && stack.length > 1) {
+            const frame = stack.pop();
+            const idx = blockData.length;
+            blockData.push({ type: frame.type, titleLine: frame.titleLine, innerText: frame.contentLines.join('\n') });
+            stack[stack.length - 1].contentLines.push(`\n\nWIKIBLOCKPH${idx}XEND\n\n`);
+            continue;
+        }
+        stack[stack.length - 1].contentLines.push(line);
+    }
+    // 미종료 블록은 원문 복원 (오타에 관대하게)
+    while (stack.length > 1) {
+        const orphan = stack.pop();
+        const literal = `:::${orphan.type}${orphan.titleLine ? ' ' + orphan.titleLine : ''}\n` + orphan.contentLines.join('\n');
+        stack[stack.length - 1].contentLines.push(literal);
+    }
+    return { text: root.contentLines.join('\n'), blockData };
+}
+
+/** titleLine에서 {palette:}/{bg:}/{color:} 토큰을 흡수해 { cleanTitle, bg, color } 반환 */
+function _extractBlockStyleTokens(titleLine) {
+    let t = _resolvePaletteTokens(titleLine || '');
+    let bg = '', color = '';
+    let replaced = true;
+    while (replaced) {
+        replaced = false;
+        const bm = t.match(/\{bg:\s*([^}]+)\}/);
+        if (bm) { bg = bm[1].trim(); t = t.replace(bm[0], ''); replaced = true; }
+        const cm = t.match(/\{color:\s*([^}]+)\}/);
+        if (cm) { color = cm[1].trim(); t = t.replace(cm[0], ''); replaced = true; }
+    }
+    t = t.replace(/\{palette:\s*[^}]*\}/g, '');
+    return { cleanTitle: t.trim(), bg, color };
+}
+
+/** 블록을 HTML로 렌더링. 중첩 WIKIBLOCKPH 는 자체적으로 재귀 치환 */
+function _renderBlockHtml(block, blockData) {
+    const type = block.type;
+    const { cleanTitle, bg, color } = _extractBlockStyleTokens(block.titleLine);
+
+    const { text: protectedInner, prot: wlProt } = protectWikiLinks(block.innerText || '');
+    let innerHtml = (typeof marked !== 'undefined') ? marked.parse(protectedInner) : protectedInner;
+    innerHtml = restoreWikiLinks(innerHtml, wlProt);
+    innerHtml = innerHtml.replace(/<img([^>]*)>\s*\{size:([a-zA-Z0-9_-]+)\}/g, (_, attrs, size) => `<img${attrs} data-size="${size.trim()}">`);
+    innerHtml = innerHtml.replace(/(?:<p>)?WIKIBLOCKPH(\d+)XEND(?:<\/p>)?/g, (m, i) => {
+        const sub = blockData[parseInt(i, 10)];
+        return sub ? _renderBlockHtml(sub, blockData) : '';
+    });
+
+    let style = '';
+    if (bg && _isSafeCssColor(bg)) style += `background-color:${bg};`;
+    if (color && _isSafeCssColor(color)) style += `color:${color};`;
+    const styleAttr = style ? ` style="${style}"` : '';
+    const titleEsc = escapeHtml(cleanTitle);
+
+    switch (type) {
+        case 'card':
+            return `<div class="wiki-card"${styleAttr}>` +
+                (titleEsc ? `<div class="wiki-card-header">${titleEsc}</div>` : '') +
+                `<div class="wiki-card-body">${innerHtml}</div>` +
+                `</div>`;
+        case 'grid':
+            return `<div class="wiki-grid"${styleAttr}>${innerHtml}</div>`;
+        case 'row':
+            return `<div class="wiki-row"${styleAttr}>${innerHtml}</div>`;
+        default:
+            return `<div class="wiki-block wiki-block-${escapeHtml(type)}"${styleAttr}>${innerHtml}</div>`;
+    }
+}
+
+/**
+ * HTML 내 인라인 레이아웃 토큰을 치환.
+ * - {badge:텍스트}, {tag:텍스트}  → <span>
+ * - {button:텍스트|url}           → <a class="wiki-button">
+ * - {stat:값|라벨}               → <div>  (선행 <p> 제거)
+ * - {hr}                          → <hr class="wiki-block-hr">
+ * 선행 {palette:}/{bg:}/{color:} 토큰을 흡수해 스타일로 적용.
+ * 코드블록/인라인코드 내부는 보호.
+ */
+function _processInlineLayoutTokens(html) {
+    if (!html || typeof html !== 'string') return html;
+    const prot = [];
+    html = html.replace(/<pre[\s\S]*?<\/pre>/gi, (m) => { prot.push(m); return `\x00ILTPROT${prot.length - 1}\x00`; });
+    html = html.replace(/<code[^>]*>[\s\S]*?<\/code>/gi, (m) => { prot.push(m); return `\x00ILTPROT${prot.length - 1}\x00`; });
+
+    const STYLE_PREFIX = '(?:\\{(?:palette|bg|color):[^}]+\\}\\s*)*';
+
+    function parseStylePrefix(prefix) {
+        let t = _resolvePaletteTokens(prefix || '');
+        let bg = '', color = '';
+        let replaced = true;
+        while (replaced) {
+            replaced = false;
+            const bm = t.match(/\{bg:\s*([^}]+)\}/);
+            if (bm) { bg = bm[1].trim(); t = t.replace(bm[0], ''); replaced = true; }
+            const cm = t.match(/\{color:\s*([^}]+)\}/);
+            if (cm) { color = cm[1].trim(); t = t.replace(cm[0], ''); replaced = true; }
+        }
+        return { bg, color };
+    }
+    function buildStyleAttr(bg, color) {
+        let s = '';
+        if (bg && _isSafeCssColor(bg)) s += `background-color:${bg};`;
+        if (color && _isSafeCssColor(color)) s += `color:${color};`;
+        return s ? ` style="${s}"` : '';
+    }
+
+    html = html.replace(new RegExp(`(${STYLE_PREFIX})\\{badge:([^}|]+)\\}`, 'g'), (m, prefix, text) => {
+        const { bg, color } = parseStylePrefix(prefix);
+        return `<span class="wiki-badge"${buildStyleAttr(bg, color)}>${escapeHtml(text.trim())}</span>`;
+    });
+    html = html.replace(new RegExp(`(${STYLE_PREFIX})\\{tag:([^}|]+)\\}`, 'g'), (m, prefix, text) => {
+        const { bg, color } = parseStylePrefix(prefix);
+        return `<span class="wiki-tag"${buildStyleAttr(bg, color)}>${escapeHtml(text.trim())}</span>`;
+    });
+    html = html.replace(new RegExp(`(${STYLE_PREFIX})\\{button:([^}]+)\\}`, 'g'), (m, prefix, content) => {
+        const { bg, color } = parseStylePrefix(prefix);
+        const parts = content.split('|').map(s => s.trim());
+        const text = parts[0] || '';
+        const url = parts[1] || '';
+        if (!text || !url) return m;
+        const safe = (typeof isSafeUrl === 'function') && isSafeUrl(url);
+        const href = safe ? url : '#';
+        let external = false;
+        try {
+            const u = new URL(url, window.location.origin);
+            external = (u.origin !== window.location.origin);
+        } catch (e) { /* 상대 경로 등 */ }
+        const styled = !!(bg || color);
+        const cls = styled ? 'wiki-button wiki-button-custom' : 'wiki-button';
+        const extAttr = external ? ' target="_blank" rel="noopener noreferrer"' : '';
+        return `<a class="${cls}" href="${escapeHtml(href)}"${extAttr}${buildStyleAttr(bg, color)}>${escapeHtml(text)}</a>`;
+    });
+    html = html.replace(new RegExp(`(?:<p>)?(${STYLE_PREFIX})\\{stat:([^}]+)\\}(?:<\\/p>)?`, 'g'), (m, prefix, content) => {
+        const { bg, color } = parseStylePrefix(prefix);
+        const parts = content.split('|').map(s => s.trim());
+        const value = escapeHtml(parts[0] || '');
+        const label = parts[1] ? escapeHtml(parts[1]) : '';
+        return `<div class="wiki-stat"${buildStyleAttr(bg, color)}>` +
+            `<div class="wiki-stat-value">${value}</div>` +
+            (label ? `<div class="wiki-stat-label">${label}</div>` : '') +
+            `</div>`;
+    });
+    html = html.replace(/(?:<p>)?\{hr\}(?:<\/p>)?/g, '<hr class="wiki-block-hr">');
+
+    html = html.replace(/\x00ILTPROT(\d+)\x00/g, (_, i) => prot[parseInt(i, 10)]);
+    return html;
+}
+
 // ── 타임스탬프 유틸리티 ──
 
 /**
@@ -291,13 +461,29 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
             return `\n\nWIKIFOLDPH${idx}XEND\n\n`;
         });
 
+        // ::: 블록 디렉티브 전처리. 펼치기 placeholder 를 opaque text 로 간주해 내부/외부 둘 다 대응.
+        const blockResult = _preprocessBlockDirectives(preprocessed);
+        preprocessed = blockResult.text;
+        const blockData = blockResult.blockData;
+
         preprocessed = preprocessed.replace(/WIKICODEFPH(\d+)XEND/g, (_, idx) => codeBlocksForFold[parseInt(idx, 10)]);
+        // 블록 innerText 에 포함된 코드블록 placeholder 도 복원
+        blockData.forEach(bd => {
+            bd.innerText = bd.innerText.replace(/WIKICODEFPH(\d+)XEND/g, (_, idx) => codeBlocksForFold[parseInt(idx, 10)]);
+        });
 
         // [[링크|텍스트]] 안의 | 가 마크다운 테이블 구분자와 충돌하지 않도록 보호
         const { text: preprocessedProt, prot: mainWikiLinkProt } = protectWikiLinks(preprocessed);
         let rawHtml = (typeof marked !== 'undefined') ? marked.parse(preprocessedProt) : preprocessedProt;
         rawHtml = restoreWikiLinks(rawHtml, mainWikiLinkProt);
         rawHtml = rawHtml.replace(/<img([^>]*)>\s*\{size:([a-zA-Z0-9_-]+)\}/g, (_, attrs, size) => `<img${attrs} data-size="${size.trim()}">`);
+
+        // 블록 placeholder 를 HTML 로 치환 (재귀적으로 중첩 블록도 해결).
+        // 먼저 돌려야 내부에 남아 있을 수 있는 fold placeholder 를 뒤이은 fold 치환 단계가 잡아낸다.
+        rawHtml = rawHtml.replace(/(?:<p>)?WIKIBLOCKPH(\d+)XEND(?:<\/p>)?/g, (m, idx) => {
+            const b = blockData[parseInt(idx, 10)];
+            return b ? _renderBlockHtml(b, blockData) : '';
+        });
 
         rawHtml = rawHtml.replace(/(?:<p>)?WIKIFOLDPH(\d+)XEND(?:<\/p>)?/g, (m, idx) => {
             const block = foldBlocks[parseInt(idx, 10)];
@@ -324,6 +510,9 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
                 }
             }
         }
+
+        // 인라인 레이아웃 토큰 처리 ({badge:}, {tag:}, {stat:}, {hr})
+        html = _processInlineLayoutTokens(html);
 
         // 타임스탬프 문법 처리
         html = _processTimestampsInHtml(html);
@@ -782,6 +971,58 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
             if (!img.hasAttribute('loading')) {
                 img.setAttribute('loading', 'lazy');
             }
+
+            // 이미지 클릭 시 "이미지:파일명" 문서로 이동
+            // 대상: 이 사이트의 업로드 이미지만 — 다음 세 가지 출처를 매칭한다.
+            //   1) 루트 상대경로("/media/images/...")
+            //   2) 동일 오리진의 절대 URL("https://<host>/media/images/...")
+            //   3) appConfig.mediaPublicUrl 접두사와 일치하는 URL
+            //      (CDN/별도 도메인에서 서빙되는 배포의 /api/media 응답 URL)
+            // 그 외(외부 도메인의 임의 /media/images/ 경로)는 로컬 업로드가 아니므로 매칭 제외.
+            if (img.getAttribute('data-size') === 'icon') return;
+            if (img.closest('a')) return;
+            const rawSrc = img.getAttribute('src') || '';
+            const mediaPublicUrl = (typeof appConfig !== 'undefined' && appConfig && typeof appConfig.mediaPublicUrl === 'string')
+                ? appConfig.mediaPublicUrl.replace(/\/+$/, '')
+                : '';
+
+            let encodedFilename = null;
+            if (rawSrc.startsWith('/') && !rawSrc.startsWith('//')) {
+                // 루트 상대경로: Worker가 직접 /media/images/... 를 서빙하는 경우
+                const m = rawSrc.match(/^\/media\/images\/([^?#]+)$/);
+                if (m) encodedFilename = m[1];
+            } else if (mediaPublicUrl && rawSrc.startsWith(mediaPublicUrl + '/images/')) {
+                // 설정된 미디어 공개 URL 접두사와 일치 (CDN 호스팅 포함)
+                const rest = rawSrc.substring((mediaPublicUrl + '/images/').length);
+                const cut = rest.search(/[?#]/);
+                const candidate = cut >= 0 ? rest.slice(0, cut) : rest;
+                if (candidate) encodedFilename = candidate;
+            } else if (/^https?:\/\//i.test(rawSrc)) {
+                // 동일 오리진 절대 URL 폴백
+                try {
+                    const u = new URL(rawSrc);
+                    if (u.origin === window.location.origin) {
+                        const m = u.pathname.match(/^\/media\/images\/([^?#]+)$/);
+                        if (m) encodedFilename = m[1];
+                    }
+                } catch { /* 잘못된 URL은 매칭하지 않음 */ }
+            }
+            if (!encodedFilename) return;
+
+            // 본문에 잘못된 퍼센트 인코딩이 포함될 수 있으므로(예: /media/images/foo%ZZ.jpg)
+            // decodeURIComponent 실패 시 원문을 그대로 사용해 렌더 파이프라인이 중단되지 않게 한다.
+            let filename;
+            try {
+                filename = decodeURIComponent(encodedFilename);
+            } catch {
+                filename = encodedFilename;
+            }
+            const link = document.createElement('a');
+            link.href = `/w/${encodeURIComponent('이미지:' + filename)}`;
+            link.className = 'wiki-image-link';
+            link.setAttribute('aria-label', `이미지 문서 보기: ${filename}`);
+            img.parentNode.insertBefore(link, img);
+            link.appendChild(img);
         });
 
         // 코드블럭 복사 버튼 추가 및 언어 하이라이팅 감지

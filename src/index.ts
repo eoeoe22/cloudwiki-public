@@ -405,6 +405,59 @@ app.get('/w/*', async (c) => {
         }
     }
 
+    // "이미지:파일명" 슬러그는 media 테이블을 먼저 조회해 이미지 문서로 렌더링한다.
+    // 대응되는 미디어가 없으면 레거시 pages 엔트리가 존재할 수 있으므로 일반 문서 렌더링으로 폴스루한다.
+    if (slug.startsWith('이미지:')) {
+        const filename = slug.substring('이미지:'.length);
+        const mediaRow = await db.prepare(
+            `SELECT m.id, m.r2_key, m.filename, m.mime_type, m.size, m.content, m.created_at,
+                    u.name as uploader_name
+             FROM media m LEFT JOIN users u ON m.uploader_id = u.id
+             WHERE m.filename = ? LIMIT 1`
+        ).bind(filename).first<{
+            id: number; r2_key: string; filename: string; mime_type: string;
+            size: number; content: string; created_at: number; uploader_name: string | null;
+        }>();
+
+        if (mediaRow) {
+            const ssrData: Record<string, any> = {
+                _ssrSlug: slug,
+                _ssrNotFound: false,
+                is_image_doc: true,
+                slug,
+                title: slug,
+                media: {
+                    id: mediaRow.id,
+                    r2_key: mediaRow.r2_key,
+                    filename: mediaRow.filename,
+                    mime_type: mediaRow.mime_type,
+                    size: mediaRow.size,
+                    uploader_name: mediaRow.uploader_name,
+                    url: `/media/${mediaRow.r2_key}`,
+                },
+                content: mediaRow.content || '',
+                created_at: mediaRow.created_at,
+                updated_at: mediaRow.created_at,
+                _ssrTitle: `${slug} - ${c.env.WIKI_NAME || 'CloudWiki'}`,
+                _ssrDescription: mediaRow.content
+                    ? mediaRow.content.slice(0, 160)
+                    : `${mediaRow.filename} - 이미지 문서`,
+            };
+
+            const response = await renderHtml(c, '/', ssrData);
+            trackPageView(c, slug, Date.now() - startTime);
+
+            if (canUseCache) {
+                const cachedResponse = new Response(response.body, response);
+                cachedResponse.headers.set('Cache-Control', 'public, max-age=86400');
+                c.executionCtx.waitUntil(cache.put(ssrCacheKey, cachedResponse.clone()));
+                return cachedResponse;
+            }
+            return response;
+        }
+        // mediaRow 부재 시 아래 일반 pages 조회로 폴스루 (legacy 이미지: 슬러그 호환)
+    }
+
     // 1) DB에서 문서 데이터 조회
     let page = await db
         .prepare('SELECT * FROM pages WHERE slug = ?')

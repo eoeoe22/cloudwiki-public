@@ -107,6 +107,27 @@ function initMarkedConfig() {
                 renderer(token) {
                     return '<span class="spoiler">' + this.parser.parseInline(token.tokens) + '</span>';
                 }
+            },
+            {
+                // {button:텍스트|url} 은 GFM 자동 링크로부터 보호해야 URL이 그대로 보존됨.
+                // tokenizer가 토큰으로 잡으면 autolink 단계가 내부를 건드리지 않음.
+                // 실제 <a> 변환은 _processInlineLayoutTokens에서 수행.
+                name: 'wikiButton',
+                level: 'inline',
+                start(src) { return src.indexOf('{button:'); },
+                tokenizer(src) {
+                    const match = src.match(/^\{button:([^}]+)\}/);
+                    if (match) {
+                        return {
+                            type: 'wikiButton',
+                            raw: match[0],
+                            text: match[1]
+                        };
+                    }
+                },
+                renderer(token) {
+                    return token.raw;
+                }
             }
         ],
         renderer: {
@@ -1123,6 +1144,18 @@ function _wrapLevelSections(containerEl, level) {
     while (i < children.length) {
         const child = children[i];
         if (child.nodeName === tagName) {
+            // 헤딩의 기존 내용(번호/텍스트/인라인 코드 등)을 단일 span으로 감싼다.
+            // display:flex 헤딩에서 텍스트 노드와 <code>가 각기 다른 flex item으로
+            // 분해되어 개별적으로 줄바꿈되는 버그(순서 뒤틀림)를 방지하기 위함.
+            if (!child.querySelector(':scope > .wiki-section-heading-text')) {
+                const textWrapper = document.createElement('span');
+                textWrapper.className = 'wiki-section-heading-text';
+                while (child.firstChild) {
+                    textWrapper.appendChild(child.firstChild);
+                }
+                child.appendChild(textWrapper);
+            }
+
             // 토글 아이콘 삽입
             const toggleIcon = document.createElement('span');
             toggleIcon.className = 'wiki-section-toggle-icon';

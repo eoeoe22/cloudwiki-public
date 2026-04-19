@@ -16,8 +16,9 @@
         href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Outfit:wght@500;600;700;800;900&family=Inter:wght@400;500;700;800&display=swap"
         rel="stylesheet">
 
-    <link rel="stylesheet" href="/style.css">
-    <link rel="stylesheet" href="/edit.css">
+    <link rel="stylesheet" href="/css/style.css">
+    <link rel="stylesheet" href="/render.css">
+    <link rel="stylesheet" href="/css/edit.css">
 
     <!-- CodeMirror 6 Import Map (ESM CDN) -->
     <script type="importmap">
@@ -235,10 +236,12 @@
             </h2>
 
             <!-- 섹션 편집 모드 배너 -->
-            <div id="sectionEditBanner" class="alert alert-info d-none align-items-center flex-wrap gap-2 mb-3" role="alert">
+            <div id="sectionEditBanner" class="alert alert-info d-none align-items-center flex-wrap gap-2 mb-3"
+                role="alert">
                 <i class="mdi mdi-text-box-edit-outline" style="font-size: 1.2rem;"></i>
                 <span>현재 <strong id="sectionEditHeading"></strong> 섹션만 편집 중입니다. 이 섹션의 내용만 저장됩니다.</span>
-                <a id="sectionEditFullLink" href="#" class="ms-auto small"><i class="mdi mdi-page-next-outline"></i> 문서 전체 편집으로 전환</a>
+                <a id="sectionEditFullLink" href="#" class="ms-auto small"><i class="mdi mdi-page-next-outline"></i> 문서
+                    전체 편집으로 전환</a>
             </div>
 
             <!-- 제목 입력 -->
@@ -279,6 +282,12 @@
             <div class="mb-3">
                 <label class="form-label fw-bold">내용</label>
                 <div id="editor"></div>
+                <div id="editorTextCounter" class="editor-text-counter" aria-live="off">
+                    <span data-counter="lines">1줄</span>
+                    <span data-counter="chars">0자</span>
+                    <span data-counter="charsWithSpaces">0자(공백포함)</span>
+                    <span data-counter="words">0단어</span>
+                </div>
             </div>
 
             <!-- 변경 사항 미리보기 (접기/펼치기) -->
@@ -310,8 +319,7 @@
                 </button>
                 <div class="ms-2 d-flex align-items-center gap-2">
                     <div id="turnstile-container"></div>
-                    <button type="button" id="turnstileRefreshBtn"
-                        class="btn btn-sm btn-outline-secondary"
+                    <button type="button" id="turnstileRefreshBtn" class="btn btn-sm btn-outline-secondary"
                         style="display:none;" onclick="reloadTurnstile()" title="Turnstile 다시 로드"
                         aria-label="Turnstile 다시 로드">
                         <i class="mdi mdi-refresh" aria-hidden="true"></i>
@@ -398,6 +406,16 @@
     </div>
 
     <script>
+        let _editorTocOutsideClickHandler = null;
+        function _closeEditorFloatingToc() {
+            const panel = document.getElementById('editorTocFloatingPanel');
+            if (!panel) return;
+            panel.classList.remove('visible');
+            if (_editorTocOutsideClickHandler) {
+                document.removeEventListener('pointerdown', _editorTocOutsideClickHandler, true);
+                _editorTocOutsideClickHandler = null;
+            }
+        }
         function toggleEditorFloatingToc() {
             const panel = document.getElementById('editorTocFloatingPanel');
             const floatingNav = document.getElementById('editorTocFloatingNav');
@@ -435,7 +453,7 @@
                 floatingNav.querySelectorAll('a[data-hid]').forEach(a => {
                     a.addEventListener('click', e => {
                         e.preventDefault();
-                        panel.classList.remove('visible');
+                        _closeEditorFloatingToc();
                         const hid = a.getAttribute('data-hid');
                         const rawText = a.dataset.rawText || '';
 
@@ -446,11 +464,11 @@
                             const doc = view.state.doc;
                             // 마크다운 문법 제거 유틸리티
                             const stripMd = (t) => t.replace(/(\*\*|__)(.*?)\1/g, '$2')
-                                                    .replace(/(\*|_)(.*?)\1/g, '$2')
-                                                    .replace(/~~(.*?)~~/g, '$2')
-                                                    .replace(/==(.*?)==/g, '$2')
-                                                    .replace(/\[\[(?:[^|\]]*\|)?([^\]]+)\]\]/g, '$1')
-                                                    .replace(/`([^`]+)`/g, '$1').trim();
+                                .replace(/(\*|_)(.*?)\1/g, '$2')
+                                .replace(/~~(.*?)~~/g, '$2')
+                                .replace(/==(.*?)==/g, '$2')
+                                .replace(/\[\[(?:[^|\]]*\|)?([^\]]+)\]\]/g, '$1')
+                                .replace(/`([^`]+)`/g, '$1').trim();
                             const targetText = stripMd(rawText);
 
                             for (let ln = 1; ln <= doc.lines; ln++) {
@@ -490,7 +508,23 @@
                 });
             }
 
-            panel.classList.toggle('visible');
+            if (isVisible) {
+                _closeEditorFloatingToc();
+            } else {
+                panel.classList.add('visible');
+                const fabGroup = document.getElementById('editorScrollFabGroup');
+                _editorTocOutsideClickHandler = (ev) => {
+                    if (panel.contains(ev.target)) return;
+                    if (fabGroup && fabGroup.contains(ev.target)) return;
+                    _closeEditorFloatingToc();
+                };
+                // 현재 클릭(FAB) 이벤트 이후에 리스너를 등록
+                setTimeout(() => {
+                    if (panel.classList.contains('visible')) {
+                        document.addEventListener('pointerdown', _editorTocOutsideClickHandler, true);
+                    }
+                }, 0);
+            }
         }
     </script>
 

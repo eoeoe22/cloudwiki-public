@@ -24,7 +24,8 @@
     href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Outfit:wght@500;600;700;800;900&family=Inter:wght@400;500;700;800&display=swap"
     rel="stylesheet">
   <!-- 커스텀 스타일 -->
-  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/css/style.css">
+  <link rel="stylesheet" href="/render.css">
 </head>
 
 <body style="-webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;">
@@ -81,7 +82,8 @@
             </div>
             <div class="dropdown">
               <button class="btn btn-secondary dropdown-toggle no-caret" type="button" id="shareDropdown"
-                data-bs-toggle="dropdown" data-bs-display="static" data-bs-flip="false" aria-expanded="false" title="공유하기">
+                data-bs-toggle="dropdown" data-bs-display="static" data-bs-flip="false" aria-expanded="false"
+                title="공유하기">
                 <i class="bi bi-share"></i>
               </button>
               <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="shareDropdown">
@@ -107,7 +109,8 @@
             </div>
             <div class="dropdown">
               <button class="btn btn-secondary dropdown-toggle no-caret" type="button" id="docToolsDropdown"
-                data-bs-toggle="dropdown" data-bs-display="static" data-bs-flip="false" aria-expanded="false" title="문서 도구">
+                data-bs-toggle="dropdown" data-bs-display="static" data-bs-flip="false" aria-expanded="false"
+                title="문서 도구">
                 <i class="bi bi-three-dots-vertical"></i>
               </button>
               <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="docToolsDropdown" id="articleMoreActions">
@@ -115,6 +118,10 @@
               </ul>
             </div>
           </div>
+
+          <!-- 상위 문서 (하위 문서인 경우) -->
+          <div id="parentDocsNav" class="d-none parent-docs-nav mb-0"></div>
+          <hr id="parentDocsNavDivider" class="d-none mt-2 mb-3">
 
           <!-- 목차 아코디언 -->
           <div class="accordion mb-4" id="wikiAccordion">
@@ -136,10 +143,6 @@
               </div>
             </div>
           </div>
-
-          <!-- 상위 문서 (하위 문서인 경우) -->
-          <div id="parentDocsNav" class="d-none parent-docs-nav mb-0"></div>
-          <hr id="parentDocsNavDivider" class="d-none mt-2 mb-3">
 
           <!-- 본문 -->
           <div class="wiki-content" id="articleContent"></div>
@@ -580,6 +583,12 @@
           page = await res.json();
         }
 
+        // 이미지 문서 분기: 일반 문서 렌더링을 건너뛰고 전용 UI로 표시
+        if (page && page.is_image_doc) {
+          await showImageDocument(slug, page);
+          return;
+        }
+
         currentPage = page;
 
         document.title = `${page.title} - ${appConfig.wikiName}`;
@@ -644,7 +653,7 @@
 
         // 액션 버튼
         const _hasColon = actionSlug.includes(':');
-        
+
         // 편집 권한 확인
         const isAdmin = currentUser && (currentUser.role === 'admin' || currentUser.role === 'super_admin');
         const isLocked = page.is_locked === 1;
@@ -874,6 +883,145 @@
         console.error(err);
         Swal.fire('오류', '문서를 불러오는 데 실패했습니다.', 'error');
         hideAllPages();
+      }
+    }
+
+    // ── 이미지 문서 (미디어 기반) ──
+    async function showImageDocument(slug, page) {
+      currentPage = page;
+      document.title = `${page.slug} - ${appConfig.wikiName}`;
+
+      // 제목/메타
+      document.getElementById('articleTitle').textContent = page.slug;
+      document.getElementById('redirectMessage').innerHTML = '';
+
+      // 토론 배너 초기화: 이전 문서에서 열린 토론이 있었다면 배너가 남아 다른 슬러그를
+      // 가리킬 수 있으므로, 이미지 문서 진입 시 항상 숨기고 링크를 비운다.
+      const _imgBannerEl = document.getElementById('discussionBanner');
+      const _imgBannerLinkEl = document.getElementById('discussionBannerLink');
+      if (_imgBannerEl) _imgBannerEl.classList.add('d-none');
+      if (_imgBannerLinkEl) _imgBannerLinkEl.removeAttribute('href');
+
+      const media = page.media || {};
+      const sizeStr = (media.size || 0) < 1024 ? `${media.size} B`
+        : media.size < 1024 * 1024 ? `${(media.size / 1024).toFixed(1)} KB`
+          : `${(media.size / (1024 * 1024)).toFixed(1)} MB`;
+      const uploadDate = page.created_at
+        ? new Date(page.created_at * 1000).toLocaleString('ko-KR')
+        : '';
+      const uploaderName = media.uploader_name ? escapeHtml(media.uploader_name) : '알 수 없음';
+
+      document.getElementById('articleMeta').innerHTML = `
+        <span class="meta-item">업로드: ${escapeHtml(uploadDate)}</span>
+        <span class="meta-item">${escapeHtml(sizeStr)}</span>
+        <span class="meta-item">업로더: ${uploaderName}</span>
+        <span class="meta-item"><code>${escapeHtml(media.mime_type || '')}</code></span>
+      `;
+
+      // 액션 버튼: 편집/원본 열기
+      // 편집 권한은 서버 RBAC가 부여한 wiki:edit 플래그를 그대로 따른다.
+      // /api/me 가 permissions를 내려주므로 그 값을 사용하고, 비로그인은 currentUser가 null이다.
+      const canEditImage = !!(currentUser && currentUser.permissions && currentUser.permissions['wiki:edit']);
+      const editTitle = !currentUser
+        ? '로그인 후 편집 가능'
+        : (canEditImage ? '설명 편집' : '편집 권한이 없습니다');
+      const filename = media.filename || page.slug.replace(/^이미지:/, '');
+      document.getElementById('articleMainActions').innerHTML = `
+        <button type="button" class="btn btn-outline-secondary ${canEditImage ? '' : 'disabled'}"
+                ${canEditImage ? '' : 'disabled aria-disabled="true"'} onclick="editImageDocContent(); return false;"
+                title="${editTitle}">
+          <i class="bi bi-pencil"></i><span class="d-none d-sm-inline"> 편집</span>
+        </button>
+        <a href="${escapeHtml(media.url || '')}" target="_blank" rel="noopener" class="btn btn-outline-secondary">
+          <i class="bi bi-box-arrow-up-right"></i><span class="d-none d-sm-inline"> 원본 열기</span>
+        </a>
+      `;
+      document.getElementById('articleMoreActions').innerHTML = '';
+
+      // 목차 / 부모 문서 / 역링크 영역 숨김
+      document.getElementById('wikiAccordion').classList.add('d-none');
+      const tocFab = document.getElementById('tocFabBtn');
+      if (tocFab) tocFab.classList.add('d-none');
+      document.getElementById('backlinksSection').classList.add('d-none');
+      document.getElementById('parentDocsNav').classList.add('d-none');
+      document.getElementById('parentDocsNavDivider').classList.add('d-none');
+
+      // Raw 보기용 원본 컨텐츠
+      const rawEl = document.getElementById('articleRawContent');
+      if (rawEl) rawEl.textContent = page.content || '';
+
+      // 본문: 이미지 + 이스케이프된 content 텍스트
+      const isVideo = (media.mime_type || '').startsWith('video/');
+      const mediaHtml = isVideo
+        ? `<video src="${escapeHtml(media.url || '')}" controls class="img-fluid"></video>`
+        : `<img src="${escapeHtml(media.url || '')}" alt="${escapeHtml(filename)}" class="img-fluid">`;
+      const contentHtml = page.content
+        ? `<pre class="wiki-image-doc-content">${escapeHtml(page.content)}</pre>`
+        : '<p class="text-muted">아직 설명이 작성되지 않았습니다.</p>';
+
+      const contentEl = document.getElementById('articleContent');
+      contentEl.innerHTML = `
+        <div class="wiki-image-doc-view">
+          <div class="wiki-image-doc-media">${mediaHtml}</div>
+          <div class="wiki-image-doc-text" id="wikiImageDocText">${contentHtml}</div>
+        </div>
+      `;
+
+      hideAllPages();
+      document.getElementById('articlePage').classList.remove('d-none');
+      if (typeof window.__sidebarLayoutUpdate === 'function') window.__sidebarLayoutUpdate();
+    }
+
+    // 이미지 문서 설명 편집 (모달)
+    async function editImageDocContent() {
+      if (!currentUser) {
+        Swal.fire('알림', '로그인 후 편집할 수 있습니다.', 'info');
+        return;
+      }
+      if (!(currentUser.permissions && currentUser.permissions['wiki:edit'])) {
+        Swal.fire('권한 없음', '이 작업을 수행할 권한이 없습니다.', 'error');
+        return;
+      }
+      if (!currentPage || !currentPage.is_image_doc) return;
+      const filename = (currentPage.media && currentPage.media.filename)
+        || currentPage.slug.replace(/^이미지:/, '');
+
+      const { value: newContent, isConfirmed } = await Swal.fire({
+        title: '이미지 설명 편집',
+        input: 'textarea',
+        inputValue: currentPage.content || '',
+        inputPlaceholder: '이미지에 대한 설명을 입력하세요 (일반 텍스트, 위키 문법은 사용되지 않습니다)',
+        inputAttributes: { maxlength: '20000', 'aria-label': '이미지 설명' },
+        showCancelButton: true,
+        confirmButtonText: '저장',
+        cancelButtonText: '취소',
+        width: 600,
+      });
+      if (!isConfirmed) return;
+
+      try {
+        const res = await fetch(`/api/media/doc/${encodeURIComponent(filename)}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content: newContent || '' }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '저장 실패');
+
+        currentPage.content = newContent || '';
+        const textEl = document.getElementById('wikiImageDocText');
+        if (textEl) {
+          textEl.innerHTML = currentPage.content
+            ? `<pre class="wiki-image-doc-content">${escapeHtml(currentPage.content)}</pre>`
+            : '<p class="text-muted">아직 설명이 작성되지 않았습니다.</p>';
+        }
+        const rawEl = document.getElementById('articleRawContent');
+        if (rawEl) rawEl.textContent = currentPage.content;
+
+        Swal.fire({ icon: 'success', title: '저장되었습니다.', timer: 1000, showConfirmButton: false });
+      } catch (err) {
+        console.error(err);
+        Swal.fire('오류', err.message || '저장에 실패했습니다.', 'error');
       }
     }
 
@@ -1460,8 +1608,8 @@
       title="읽기 모드 나가기" aria-label="읽기 모드 나가기">
       <i class="bi bi-x-lg"></i>
     </button>
-    <button class="scroll-fab raw-mode-exit-fab d-none" id="rawModeExitFab" onclick="toggleRawMode()"
-      title="Raw 보기 나가기" aria-label="Raw 보기 나가기">
+    <button class="scroll-fab raw-mode-exit-fab d-none" id="rawModeExitFab" onclick="toggleRawMode()" title="Raw 보기 나가기"
+      aria-label="Raw 보기 나가기">
       <i class="bi bi-x-lg"></i>
     </button>
     <button class="scroll-fab" id="tocFabBtn" onclick="toggleFloatingToc()" title="목차">

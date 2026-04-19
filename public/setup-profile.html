@@ -12,9 +12,10 @@
     <link href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css" rel="stylesheet">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Outfit:wght@500;600;700;800;900&family=Inter:wght@400;500;700;800&display=swap"
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Outfit:wght@500;600;700;800;900&family=Inter:wght@400;500;700;800&display=swap"
         rel="stylesheet">
-    <link rel="stylesheet" href="/style.css">
+    <link rel="stylesheet" href="/css/style.css">
     <style>
         body {
             background-color: var(--wiki-bg);
@@ -113,14 +114,17 @@
         <p class="setup-subtitle" id="setupSubtitle">CloudWiki에서 사용할 표시명을 설정해주세요.</p>
 
         <div class="form-group">
-            <input type="text" id="nameInput" class="name-input" placeholder="새 표시 이름" autocomplete="off" maxlength="20">
+            <input type="text" id="nameInput" class="name-input" placeholder="새 표시 이름" autocomplete="off"
+                maxlength="20">
             <div id="statusMessage" class="warning-text"></div>
         </div>
 
         <!-- 승인제 모드: 가입 메시지 입력 -->
         <div class="form-group" id="signupMessageGroup" style="display: none;">
-            <label for="signupMessage" class="form-label fw-bold" style="color: var(--wiki-text);">가입 신청 메시지 <span class="text-muted fw-normal">(선택사항)</span></label>
-            <textarea id="signupMessage" class="name-input" rows="3" placeholder="관리자에게 전달할 메시지를 입력해주세요." style="resize: vertical; font-size: 1rem; padding: 0.8rem;"></textarea>
+            <label for="signupMessage" class="form-label fw-bold" style="color: var(--wiki-text);">가입 신청 메시지 <span
+                    class="text-muted fw-normal">(선택사항)</span></label>
+            <textarea id="signupMessage" class="name-input" rows="3" placeholder="관리자에게 전달할 메시지를 입력해주세요."
+                style="resize: vertical; font-size: 1rem; padding: 0.8rem;"></textarea>
         </div>
 
         <button class="submit-btn" id="submitBtn" onclick="saveProfile()">시작하기</button>

@@ -551,6 +551,7 @@ wiki.get('/config', (c) => {
         turnstileSiteKey: c.env.TURNSTILE_SITE_KEY || '',
         enabledExtensions: (c.env.ENABLED_EXTENSIONS || '').split(',').map((s: string) => s.trim()).filter(Boolean),
         palettes: parseCustomPalettes(c.env.PALETTES),
+        mediaPublicUrl: c.env.MEDIA_PUBLIC_URL || '',
     });
 });
 
@@ -907,6 +908,49 @@ wiki.get('/w/:slug', async (c) => {
         return new Response(response.body, response);
     }
 
+    // "이미지:파일명" 슬러그는 media 테이블에서 먼저 조회해 이미지 문서로 반환한다.
+    // 대응되는 미디어가 없으면 레거시 pages 엔트리가 존재할 수 있으므로 일반 문서 조회로 폴스루한다.
+    if (slug.startsWith('이미지:')) {
+        const filename = slug.substring('이미지:'.length);
+        const mediaRow = await db.prepare(
+            `SELECT m.id, m.r2_key, m.filename, m.mime_type, m.size, m.content, m.created_at,
+                    u.name as uploader_name
+             FROM media m LEFT JOIN users u ON m.uploader_id = u.id
+             WHERE m.filename = ? LIMIT 1`
+        ).bind(filename).first<{
+            id: number; r2_key: string; filename: string; mime_type: string;
+            size: number; content: string; created_at: number; uploader_name: string | null;
+        }>();
+
+        if (mediaRow) {
+            const imageDoc = {
+                slug,
+                title: slug,
+                is_image_doc: true,
+                media: {
+                    id: mediaRow.id,
+                    r2_key: mediaRow.r2_key,
+                    filename: mediaRow.filename,
+                    mime_type: mediaRow.mime_type,
+                    size: mediaRow.size,
+                    uploader_name: mediaRow.uploader_name,
+                    url: `/media/${mediaRow.r2_key}`,
+                },
+                content: mediaRow.content || '',
+                updated_at: mediaRow.created_at,
+                created_at: mediaRow.created_at,
+            };
+
+            if (!nocache) {
+                response = c.json(imageDoc, 200, { 'Cache-Control': 'public, max-age=86400' });
+                c.executionCtx.waitUntil(cache.put(cacheKey, response.clone()));
+                return response;
+            }
+            return c.json(imageDoc);
+        }
+        // mediaRow 부재 시 아래 일반 pages 조회로 폴스루 (legacy 이미지: 슬러그 호환)
+    }
+
     let page = await db
         .prepare('SELECT * FROM pages WHERE slug = ?')
         .bind(slug)
@@ -1063,9 +1107,11 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
         }
     }
 
-    // "이미지:" 접두사 문서는 시스템이 자동 생성하므로 사용자 직접 생성/편집 차단
-    if (slug.startsWith('이미지:') || body.title.startsWith('이미지:')) {
-        return c.json({ error: '"이미지:" 접두사는 이미지 업로드 시 자동으로 생성되는 문서 전용입니다.' }, 403);
+    // "이미지:" 접두사 문서는 media 테이블 기반의 이미지 문서 전용이며,
+    // content 수정은 /api/media/doc/:filename 엔드포인트로만 가능하다.
+    // 일반 문서 제목 금지어: "이미지:" 네임스페이스는 슬러그/제목 어느 쪽에도 사용할 수 없다.
+    if (slug.startsWith('이미지:') || (body.title && body.title.startsWith('이미지:'))) {
+        return c.json({ error: '"이미지:"는 이미지 문서 전용 네임스페이스이므로 일반 문서 제목으로 사용할 수 없습니다.' }, 403);
     }
 
     // 관리자 전용 카테고리 검증 (쉼표 구분 지원)
@@ -1613,7 +1659,8 @@ wiki.get('/w/:slug/backlinks', async (c) => {
  * 문서 삭제 (관리자 전용)
  * - super_admin: ?hard=true 시 영구 삭제 (문서, 리비전, 리다이렉트)
  * - admin/super_admin: Soft Delete
- * - 이미지: 접두사 문서의 경우 R2 파일 및 media 레코드도 함께 삭제
+ * - "이미지:" 접두사 문서는 media 테이블로 관리되므로 이 라우트 대상이 아님.
+ *   이미지 삭제는 관리자 페이지(/admin-media)에서 수행한다.
  */
 wiki.delete('/w/:slug', requireAuth, async (c) => {
     const slug = c.req.param('slug');
@@ -1635,23 +1682,6 @@ wiki.delete('/w/:slug', requireAuth, async (c) => {
     if (hard) {
         if (!rbac.can(user.role, '*')) {
             return c.json({ error: '영구 삭제는 최고 관리자만 가능합니다.' }, 403);
-        }
-
-        // 이미지: 접두사 문서인 경우, R2 파일과 media 레코드도 함께 삭제
-        if (slug.startsWith('이미지:')) {
-            const pageContent = await db.prepare('SELECT content FROM pages WHERE id = ?')
-                .bind(page.id).first<{ content: string }>();
-            if (pageContent?.content) {
-                // R2 키 추출: content에서 images/yyyy/mm/uuid.ext 패턴 검색
-                const r2KeyMatch = pageContent.content.match(/images\/\d{4}\/\d{2}\/[a-f0-9-]+\.\w+/);
-                if (r2KeyMatch) {
-                    const r2Key = r2KeyMatch[0];
-                    // R2 파일 삭제
-                    await c.env.MEDIA.delete(r2Key);
-                    // media 테이블 레코드 삭제
-                    await db.prepare('DELETE FROM media WHERE r2_key = ?').bind(r2Key).run();
-                }
-            }
         }
 
         // 리비전 R2 파일 삭제
@@ -1691,20 +1721,6 @@ wiki.delete('/w/:slug', requireAuth, async (c) => {
         // Soft delete requires wiki:delete permission
         if (!rbac.can(user.role, 'wiki:delete')) {
             return c.json({ error: '문서 삭제 권한이 없습니다.' }, 403);
-        }
-
-        // 이미지: 접두사 문서의 soft delete 시에도 R2 파일과 media 레코드 삭제
-        if (slug.startsWith('이미지:')) {
-            const pageContent = await db.prepare('SELECT content FROM pages WHERE id = ?')
-                .bind(page.id).first<{ content: string }>();
-            if (pageContent?.content) {
-                const r2KeyMatch = pageContent.content.match(/images\/\d{4}\/\d{2}\/[a-f0-9-]+\.\w+/);
-                if (r2KeyMatch) {
-                    const r2Key = r2KeyMatch[0];
-                    await c.env.MEDIA.delete(r2Key);
-                    await db.prepare('DELETE FROM media WHERE r2_key = ?').bind(r2Key).run();
-                }
-            }
         }
 
         // Soft Delete
@@ -1801,6 +1817,11 @@ wiki.post('/w/:slug/move', requireAdmin, async (c) => {
     // 보안: 문서 제목 금지 문자 점검
     if (/[\[\]()#%|<>^\x00-\x1F\x7F]/.test(trimmedNewSlug)) {
         return c.json({ error: '문서 제목에 사용할 수 없는 특수문자가 포함되어 있습니다.' }, 400);
+    }
+
+    // "이미지:" 네임스페이스는 media 테이블 기반 이미지 문서 전용이므로 이동 대상/출처가 될 수 없다
+    if (currentSlug.startsWith('이미지:') || trimmedNewSlug.startsWith('이미지:')) {
+        return c.json({ error: '"이미지:" 네임스페이스는 이미지 문서 전용이며, 일반 문서 이동 대상이 될 수 없습니다.' }, 400);
     }
 
     // 네임스페이스 이동 제한: 콜론이 포함된 문서는 다른 네임스페이스로 이동 불가

@@ -8,6 +8,7 @@ import type { OAuthProvider, OAuthProfile, OAuthStateData } from './providers/ba
 import { googleProvider } from './providers/google';
 import { discordProvider } from './providers/discord';
 import { handleOAuthLogin } from './common';
+import type { RBAC } from '../../utils/role';
 
 const auth = new Hono<Env>();
 
@@ -298,11 +299,23 @@ auth.get('/auth/logout', async (c) => {
 /**
  * GET /api/me
  * 현재 로그인한 유저 정보 반환 (차단된 사용자도 자신의 정보는 조회 가능)
+ * permissions: 프런트엔드가 서버 RBAC와 동일하게 액션 버튼을 게이팅할 수 있도록
+ * 주요 권한의 허용 여부를 불리언 맵으로 포함시킨다.
  */
 auth.get('/api/me', (c) => {
     const user = c.get('user');
     if (!user) {
         return c.json({ error: '로그인이 필요합니다.' }, 401);
+    }
+    const rbac = c.get('rbac') as RBAC;
+    const permissionKeys = [
+        'wiki:read', 'wiki:edit', 'wiki:delete', 'wiki:lock', 'wiki:private',
+        'comment:create', 'ticket:create', 'ticket:manage',
+        'media:upload', 'discussion:manage', 'admin:access', 'user:manage',
+    ] as const;
+    const permissions: Record<string, boolean> = {};
+    for (const key of permissionKeys) {
+        permissions[key] = rbac.can(user.role, key);
     }
     return c.json({
         id: user.id,
@@ -311,6 +324,7 @@ auth.get('/api/me', (c) => {
         picture: user.picture,
         role: user.role,
         created_at: user.created_at,
+        permissions,
     });
 });
 

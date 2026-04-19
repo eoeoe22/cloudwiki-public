@@ -46,7 +46,32 @@ export async function renderForAI(content: string, db: D1Database, depth = 0, cu
         processed = '참고 : 표의 병합된 셀은 빈칸으로 표시됩니다\n\n' + processed;
     }
     processed = processed.replace(/\{[<>^]{1,2}\}/g, '');
-    // {#fff}, {mdi mdi-icon} 등 표 색상, 아이콘 문법을 제거. 내용물까지 모두 제거함.
+
+    // ::: 블록 디렉티브: 마커 라인만 제거하고 내부 콘텐츠는 보존.
+    // :::card 제목 → "제목" (한 줄 남김), :::grid/:::row → 줄 삭제, 단독 ::: → 줄 삭제
+    processed = processed.replace(/^:::([a-zA-Z][a-zA-Z0-9_-]*)(?:[ \t]+([^\n]*))?[ \t]*$/gm, (_, type, title) => {
+        const t = (title || '').replace(/\{(?:palette|bg|color):[^}]+\}/g, '').trim();
+        return t ? t : '';
+    });
+    processed = processed.replace(/^:::[ \t]*$/gm, '');
+
+    // 인라인 레이아웃 토큰: 텍스트 내용은 보존 (AI 컨텍스트에 의미 있음)
+    processed = processed.replace(/\{badge:([^}|]+)\}/g, (_, t) => `[${t.trim()}]`);
+    processed = processed.replace(/\{tag:([^}|]+)\}/g, (_, t) => `[${t.trim()}]`);
+    processed = processed.replace(/\{stat:([^}]+)\}/g, (_, c) => {
+        const parts = c.split('|').map((s: string) => s.trim());
+        return parts.length >= 2 ? `${parts[0]} (${parts[1]})` : parts[0];
+    });
+    processed = processed.replace(/\{button:([^}]+)\}/g, (_, c) => {
+        const parts = c.split('|').map((s: string) => s.trim());
+        const text = parts[0] || '';
+        const url = parts[1] || '';
+        if (text && url) return `[${text}](${url})`;
+        return text;
+    });
+    processed = processed.replace(/\{hr\}/g, '');
+
+    // {#fff}, {mdi mdi-icon} 등 남은 표 색상/아이콘/기타 싱글 중괄호 토큰 제거 (내용물 포함)
     processed = processed.replace(/\{[^{}]*\}/g, '');
 
     // [[문서간 링크]]는 그대로 유지 (변환하지 않음)

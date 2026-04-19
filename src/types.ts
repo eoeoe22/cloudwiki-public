@@ -127,6 +127,7 @@ export interface Media {
     mime_type: string;
     size: number;
     uploader_id: number | null;
+    content: string;
     created_at: number;
 }
 

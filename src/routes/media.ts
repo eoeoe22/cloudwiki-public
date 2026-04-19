@@ -16,6 +16,30 @@ const ALLOWED_TYPES = new Set([
 ]);
 
 /**
+ * 문서 제목 슬러그에서 금지되는 문자와 동일한 규칙을 기본으로 사용하고,
+ * 파일 경로 안전을 위해 `/`, `\`, `.`를, URL 안전을 위해 `?`를 추가로 차단한다.
+ * (`.`은 확장자 처리가 별도로 이루어지기 때문에 사용자 입력 파일명에 포함되면 안 되고,
+ *  `?`는 `/media/${r2_key}` URL에서 쿼리 구분자로 해석되어 객체 조회가 실패한다)
+ * 공백류(`\s`)도 금지한다 — 업로드된 URL은 `![alt](/media/...)` 형태로 본문에 주입되며,
+ * CommonMark 파서는 괄호로 감싸지 않은 링크 목적지에 공백이 있으면 파싱에 실패하여 이미지가 깨진다.
+ */
+const FILENAME_FORBIDDEN = /[\[\]()#%|<>^\x00-\x1F\x7F\/\\.?\s]/;
+
+function validateUploadFilename(name: string): { ok: true; value: string } | { ok: false; error: string } {
+    const trimmed = name.trim();
+    if (!trimmed) {
+        return { ok: false, error: '파일명을 입력해주세요.' };
+    }
+    if (FILENAME_FORBIDDEN.test(trimmed)) {
+        return { ok: false, error: '파일명에 사용할 수 없는 문자가 포함되어 있습니다. ([ ] ( ) # % | < > ^ / \\ . ? 공백 등은 사용할 수 없습니다)' };
+    }
+    if (trimmed.length > 100) {
+        return { ok: false, error: '파일명은 최대 100자까지 입력할 수 있습니다.' };
+    }
+    return { ok: true, value: trimmed };
+}
+
+/**
  * POST /api/media
  * 이미지 업로드 (media:upload 권한 필요)
  * multipart/form-data, 필드명: file, filename (사용자 지정 파일명)
@@ -36,25 +60,13 @@ media.post('/api/media', requireAuth, requirePermission('media:upload'), async (
     }
     const file = input as unknown as File;
 
-    // 사용자 지정 파일명 및 보안 필터링
-    let customFilename = (formData.get('filename') as string)?.trim();
-    if (!customFilename) {
-        return c.json({ error: '파일명을 입력해주세요.' }, 400);
+    // 사용자 지정 파일명 (문서 제목 슬러그와 동일한 금지 문자 규칙 적용)
+    const rawFilename = (formData.get('filename') as string | null) || '';
+    const validation = validateUploadFilename(rawFilename);
+    if (!validation.ok) {
+        return c.json({ error: validation.error }, 400);
     }
-
-    // 보안: 경로 탐색 및 특수문자 제거
-    // 1. 경로 관련 문자(/, \, .) 및 특수문자 제거/치환
-    // 2. 공백을 하이픈으로 치환
-    // 3. 영문, 숫자, 한글, 하이픈, 언더바만 허용
-    customFilename = customFilename
-        .replace(/[\/\.\\]/g, '') // 경로 구분자 및 마침표 제거
-        .replace(/\s+/g, '-')     // 공백을 하이픈으로
-        .replace(/[^a-zA-Z0-9가-힣\-_]/g, '') // 허용되지 않는 특수문자 제거
-        .slice(0, 100);           // 길이 제한 (DB/R2 안전)
-
-    if (!customFilename) {
-        customFilename = 'uploaded_file';
-    }
+    const customFilename = validation.value;
 
     // 타입 검증
     if (!ALLOWED_TYPES.has(file.type)) {
@@ -74,7 +86,8 @@ media.post('/api/media', requireAuth, requirePermission('media:upload'), async (
     // 확장자 결정
     const ext = getExtension(file.name, file.type);
 
-    // 중복 파일명 처리: images/customFilename.ext → images/customFilename(1).ext ...
+    // 중복 파일명 처리: images/customFilename.ext → images/customFilename-2.ext ...
+    // 괄호는 금지 문자이므로 하이픈-숫자 접미사를 사용한다.
     let finalFilename = customFilename;
     let r2Key = `images/${finalFilename}.${ext}`;
 
@@ -83,10 +96,9 @@ media.post('/api/media', requireAuth, requirePermission('media:upload'), async (
     ).bind(r2Key).first();
 
     if (existing) {
-        // 중복 → 넘버링
-        let counter = 1;
+        let counter = 2;
         while (true) {
-            finalFilename = `${customFilename}(${counter})`;
+            finalFilename = `${customFilename}-${counter}`;
             r2Key = `images/${finalFilename}.${ext}`;
             const dup = await c.env.DB.prepare(
                 'SELECT id FROM media WHERE r2_key = ?'
@@ -104,15 +116,141 @@ media.post('/api/media', requireAuth, requirePermission('media:upload'), async (
     // DB 기록 (filename에 확장자 포함 최종 파일명 저장)
     const dbFilename = `${finalFilename}.${ext}`;
     await c.env.DB.prepare(
-        'INSERT INTO media (r2_key, filename, mime_type, size, uploader_id) VALUES (?, ?, ?, ?, ?)'
+        'INSERT INTO media (r2_key, filename, mime_type, size, uploader_id, content) VALUES (?, ?, ?, ?, ?, ?)'
     )
-        .bind(r2Key, dbFilename, file.type, file.size, user.id)
+        .bind(r2Key, dbFilename, file.type, file.size, user.id, '')
         .run();
 
     // 공개 URL 반환
     const publicUrl = `${c.env.MEDIA_PUBLIC_URL}/${r2Key}`;
 
     return c.json({ url: publicUrl, r2_key: r2Key, filename: dbFilename });
+});
+
+/**
+ * GET /api/media/search
+ * 업로드된 이미지 목록을 검색/페이지네이션하여 반환한다.
+ * 에디터의 "기존 이미지 검색" 기능에서 호출되며, 업로드와 동일한 media:upload 권한을 요구한다.
+ * 동영상은 제외하고 이미지(mime_type=image/*)만 돌려준다.
+ */
+media.get('/api/media/search', requireAuth, requirePermission('media:upload'), async (c) => {
+    const db = c.env.DB;
+    const limit = Math.min(60, Math.max(1, Number(c.req.query('limit')) || 24));
+    const offset = Math.max(0, Number(c.req.query('offset')) || 0);
+    const search = (c.req.query('q') || '').trim();
+
+    const where: string[] = [`mime_type LIKE 'image/%'`];
+    const params: any[] = [];
+    if (search) {
+        where.push('filename LIKE ?');
+        params.push(`%${search}%`);
+    }
+    const whereSql = `WHERE ${where.join(' AND ')}`;
+
+    const listSql = `SELECT id, r2_key, filename, mime_type, size, created_at
+                     FROM media ${whereSql}
+                     ORDER BY created_at DESC
+                     LIMIT ? OFFSET ?`;
+    const countSql = `SELECT COUNT(*) as count FROM media ${whereSql}`;
+
+    const [listResult, countResult] = await Promise.all([
+        db.prepare(listSql).bind(...params, limit, offset).all(),
+        db.prepare(countSql).bind(...params).first<{ count: number }>(),
+    ]);
+
+    const publicBase = c.env.MEDIA_PUBLIC_URL;
+    const items = (listResult.results || []).map((m: any) => ({
+        id: m.id,
+        r2_key: m.r2_key,
+        filename: m.filename,
+        mime_type: m.mime_type,
+        size: m.size,
+        created_at: m.created_at,
+        url: `${publicBase}/${m.r2_key}`,
+    }));
+
+    return c.json({ items, total: countResult?.count || 0 });
+});
+
+/**
+ * GET /api/media/doc/:filename
+ * 이미지 문서 조회 — `/w/이미지:파일명` 경로에서 클라이언트가 호출한다.
+ * 일반 문서가 아닌 media 테이블을 조회하며, content는 평문으로 반환된다(위키 문법 렌더 없음).
+ */
+media.get('/api/media/doc/:filename', async (c) => {
+    if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) {
+        return c.json({ error: '로그인이 필요합니다.' }, 401);
+    }
+    const filename = c.req.param('filename');
+    const row = await c.env.DB.prepare(
+        `SELECT m.id, m.r2_key, m.filename, m.mime_type, m.size, m.content, m.created_at,
+                u.name as uploader_name
+         FROM media m LEFT JOIN users u ON m.uploader_id = u.id
+         WHERE m.filename = ? LIMIT 1`
+    ).bind(filename).first<{
+        id: number; r2_key: string; filename: string; mime_type: string;
+        size: number; content: string; created_at: number; uploader_name: string | null;
+    }>();
+
+    if (!row) {
+        return c.json({ error: '이미지를 찾을 수 없습니다.' }, 404);
+    }
+
+    return c.json({
+        id: row.id,
+        r2_key: row.r2_key,
+        filename: row.filename,
+        mime_type: row.mime_type,
+        size: row.size,
+        content: row.content || '',
+        created_at: row.created_at,
+        uploader_name: row.uploader_name,
+        url: `/media/${row.r2_key}`,
+    });
+});
+
+/**
+ * PUT /api/media/doc/:filename
+ * 이미지 문서 content 수정 — 문서 편집 권한(wiki:edit) 보유자가 사용.
+ * body: { content: string }
+ * 리비전은 남기지 않고 즉시 덮어쓴다.
+ */
+media.put('/api/media/doc/:filename', requireAuth, requirePermission('wiki:edit'), async (c) => {
+    const filename = c.req.param('filename');
+    let body: { content?: string };
+    try {
+        body = await c.req.json();
+    } catch {
+        return c.json({ error: '유효하지 않은 요청입니다.' }, 400);
+    }
+    const content = typeof body.content === 'string' ? body.content : '';
+
+    // 길이 제한 (과도한 저장 방지)
+    if (content.length > 20000) {
+        return c.json({ error: '본문은 최대 20000자까지 입력할 수 있습니다.' }, 400);
+    }
+
+    const row = await c.env.DB.prepare('SELECT id FROM media WHERE filename = ? LIMIT 1')
+        .bind(filename).first<{ id: number }>();
+    if (!row) {
+        return c.json({ error: '이미지를 찾을 수 없습니다.' }, 404);
+    }
+
+    await c.env.DB.prepare('UPDATE media SET content = ? WHERE id = ?')
+        .bind(content, row.id).run();
+
+    // /w/이미지:파일명 SSR 캐시 및 /api/w/이미지:파일명 API 캐시 무효화
+    const cache = caches.default;
+    const origin = new URL(c.req.url).origin;
+    const slug = `이미지:${filename}`;
+    const encodedSlug = encodeURIComponent(slug);
+    c.executionCtx.waitUntil(Promise.allSettled([
+        cache.delete(`${origin}/w/${encodedSlug}`),
+        cache.delete(`${origin}/api/w/${encodedSlug}`),
+        cache.delete(`${origin}/api/w/${encodedSlug}?redirect=no`),
+    ]));
+
+    return c.json({ success: true });
 });
 
 /**

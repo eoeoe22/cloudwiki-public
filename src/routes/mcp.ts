@@ -208,6 +208,26 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                         name: 'get_document_categoty',
                         description: '해당 문서가 속한 카테고리 목록을 반환합니다.',
                         inputSchema: { type: 'object', properties: { title: { type: 'string', description: '조회할 문서 제목' } }, required: ['title'] }
+                    },
+                    {
+                        name: 'get_backlinks',
+                        description: '이 문서를 참조하는 역링크(위키링크 [[...]], 틀 트랜스클루전 {{...}}) 문서 목록을 반환합니다.',
+                        inputSchema: { type: 'object', properties: { title: { type: 'string', description: '역링크를 조회할 문서 제목' } }, required: ['title'] }
+                    },
+                    {
+                        name: 'get_recent_changes',
+                        description: '위키 전체에서 최근 수정된 문서 목록을 반환합니다.',
+                        inputSchema: { type: 'object', properties: { limit: { type: 'number', description: '최대 반환 개수 (기본 10, 최대 50)' } }, required: [] }
+                    },
+                    {
+                        name: 'list_discussions',
+                        description: '특정 문서에 달린 토론 스레드 목록을 반환합니다. 각 스레드의 id, 제목, 상태(open/closed), 댓글 수, 작성일이 포함됩니다.',
+                        inputSchema: { type: 'object', properties: { title: { type: 'string', description: '문서 제목' } }, required: ['title'] }
+                    },
+                    {
+                        name: 'read_discussion',
+                        description: '특정 토론 스레드의 제목, 상태, 모든 댓글을 읽어옵니다. discussion_id 는 list_discussions 가 반환한 id를 사용합니다.',
+                        inputSchema: { type: 'object', properties: { discussion_id: { type: 'number', description: 'list_discussions가 반환한 토론 id' } }, required: ['discussion_id'] }
                     }
                 ]
             }
@@ -373,6 +393,89 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                 const cats = await db.prepare('SELECT pc.category FROM page_categories pc JOIN pages p ON pc.page_id = p.id WHERE p.slug = ? AND p.deleted_at IS NULL AND p.is_private = 0 ORDER BY pc.category ASC')
                     .bind(slug).all<{category: string}>();
                 return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(cats.results.map(r => r.category), null, 2) }] } };
+            }
+            if (toolName === 'get_backlinks') {
+                const slug = normalizeSlug(args.title || '');
+                const targetSlugs: string[] = [slug];
+                // 틀 접두사인 경우 접두사 없는 이름도 함께 매칭 (웹 API와 동일)
+                const templatePrefixes = ['틀:', 'template:', '템플릿:'];
+                for (const prefix of templatePrefixes) {
+                    if (slug.startsWith(prefix)) {
+                        targetSlugs.push(slug.substring(prefix.length));
+                        break;
+                    }
+                }
+                const placeholders = targetSlugs.map(() => '?').join(', ');
+                const query = `
+                    SELECT DISTINCT p.title
+                    FROM page_links pl
+                    JOIN pages p ON pl.source_page_id = p.id
+                    WHERE p.slug != ?
+                      AND pl.target_slug IN (${placeholders})
+                      AND p.is_private = 0
+                      AND p.deleted_at IS NULL
+                    ORDER BY p.updated_at DESC LIMIT 100
+                `;
+                const backlinks = await db.prepare(query).bind(slug, ...targetSlugs).all<{ title: string }>();
+                return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(backlinks.results.map(r => r.title), null, 2) }] } };
+            }
+            if (toolName === 'get_recent_changes') {
+                const limit = Math.min(50, Math.max(1, Number(args.limit) || 10));
+                const { results } = await db.prepare(`
+                    SELECT p.title, p.updated_at, u.name as author_name
+                    FROM pages p
+                    LEFT JOIN users u ON p.author_id = u.id
+                    WHERE p.deleted_at IS NULL AND p.is_private = 0
+                    ORDER BY p.updated_at DESC LIMIT ?
+                `).bind(limit).all();
+                return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(results, null, 2) }] } };
+            }
+            if (toolName === 'list_discussions') {
+                const slug = normalizeSlug(args.title || '');
+                const page = await db.prepare('SELECT id FROM pages WHERE slug = ? AND deleted_at IS NULL AND is_private = 0').bind(slug).first<{ id: number }>();
+                if (!page) return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: 'Error: 문서를 찾을 수 없거나 비공개/삭제 상태입니다.' }], isError: true } };
+                const { results } = await db.prepare(`
+                    SELECT d.id, d.title, d.status, d.created_at, d.updated_at,
+                           u.name as author_name,
+                           (SELECT COUNT(*) FROM discussion_comments dc WHERE dc.discussion_id = d.id AND dc.deleted_at IS NULL) as comment_count
+                    FROM discussions d
+                    LEFT JOIN users u ON d.author_id = u.id
+                    WHERE d.page_id = ? AND d.deleted_at IS NULL
+                    ORDER BY d.updated_at DESC LIMIT 50
+                `).bind(page.id).all();
+                return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(results, null, 2) }] } };
+            }
+            if (toolName === 'read_discussion') {
+                const dId = Number(args.discussion_id);
+                if (!Number.isFinite(dId)) {
+                    return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: 'Error: discussion_id가 유효하지 않습니다.' }], isError: true } };
+                }
+                const discussion = await db.prepare(`
+                    SELECT d.id, d.title, d.status, d.created_at, d.updated_at,
+                           u.name as author_name,
+                           p.title as page_title
+                    FROM discussions d
+                    LEFT JOIN users u ON d.author_id = u.id
+                    JOIN pages p ON d.page_id = p.id
+                    WHERE d.id = ? AND d.deleted_at IS NULL AND p.deleted_at IS NULL AND p.is_private = 0
+                `).bind(dId).first();
+                if (!discussion) return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: 'Error: 토론을 찾을 수 없거나 비공개/삭제 상태입니다.' }], isError: true } };
+                const { results: comments } = await db.prepare(`
+                    SELECT dc.id, dc.content, dc.parent_id, dc.created_at, dc.deleted_at,
+                           u.name as author_name
+                    FROM discussion_comments dc
+                    LEFT JOIN users u ON dc.author_id = u.id
+                    WHERE dc.discussion_id = ?
+                    ORDER BY dc.created_at ASC
+                `).bind(dId).all<{ id: number; content: string; parent_id: number | null; created_at: number; deleted_at: number | null; author_name: string | null }>();
+                const cleanedComments = comments.map(dc => ({
+                    id: dc.id,
+                    author_name: dc.deleted_at ? null : dc.author_name,
+                    content: dc.deleted_at ? '(삭제된 댓글)' : dc.content,
+                    parent_id: dc.parent_id,
+                    created_at: dc.created_at
+                }));
+                return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify({ discussion, comments: cleanedComments }, null, 2) }] } };
             }
             return { jsonrpc: '2.0', error: { code: -32601, message: `Tool not found: ${toolName}` }, id };
         } catch (e: any) {
