@@ -4,6 +4,7 @@ import { requireAuth, requireAdmin, requirePermission } from '../middleware/sess
 import { normalizeSlug, isR2OnlyNamespace } from '../utils/slug';
 import { safeJSON } from '../utils/json';
 import { ROLE_CASE_SQL, enrichRoles, RBAC } from '../utils/role';
+import { fetchMediaTags } from '../utils/mediaTags';
 
 const wiki = new Hono<Env>();
 
@@ -841,25 +842,25 @@ wiki.get('/w/all-pages', async (c) => {
     };
     const orderBy = sortMap[sort] || sortMap['title_asc'];
 
-    let query = `
-        SELECT p.slug, p.title, p.category, p.created_at, p.updated_at
-        FROM pages p
-        WHERE p.deleted_at IS NULL
-    `;
+    let whereClause = 'p.deleted_at IS NULL';
     if (!isAdmin) {
-        query += ' AND p.is_private = 0';
-    }
-    query += ` ORDER BY ${orderBy} LIMIT ? OFFSET ?`;
-
-    const { results } = await db.prepare(query).bind(limit + 1, offset).all();
-
-    let has_more = false;
-    if (results.length > limit) {
-        has_more = true;
-        results.pop();
+        whereClause += ' AND p.is_private = 0';
     }
 
-    return c.json(safeJSON({ pages: results, has_more }));
+    const countQuery = `SELECT COUNT(*) as total FROM pages p WHERE ${whereClause}`;
+    const listQuery = `SELECT p.slug, p.title, p.category, p.created_at, p.updated_at FROM pages p WHERE ${whereClause} ORDER BY ${orderBy} LIMIT ? OFFSET ?`;
+
+    const [countResult, listResult] = await db.batch([
+        db.prepare(countQuery),
+        db.prepare(listQuery).bind(limit, offset),
+    ]);
+
+    const rawTotal = (countResult.results[0] as any)?.total;
+    const parsedTotal = Number(rawTotal);
+    const total = Number.isFinite(parsedTotal) ? parsedTotal : 0;
+    const results = listResult.results;
+
+    return c.json(safeJSON({ pages: results, total }));
 });
 
 /**
@@ -923,6 +924,8 @@ wiki.get('/w/:slug', async (c) => {
         }>();
 
         if (mediaRow) {
+            const tags = await fetchMediaTags(db, mediaRow.id);
+
             const imageDoc = {
                 slug,
                 title: slug,
@@ -935,6 +938,7 @@ wiki.get('/w/:slug', async (c) => {
                     size: mediaRow.size,
                     uploader_name: mediaRow.uploader_name,
                     url: `/media/${mediaRow.r2_key}`,
+                    tags,
                 },
                 content: mediaRow.content || '',
                 updated_at: mediaRow.created_at,

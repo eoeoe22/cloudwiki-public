@@ -8,6 +8,7 @@ import { RBAC } from './utils/role';
 import { applyPageSSR, extractMetaDescription } from './middleware/ssr';
 import { safeJSON } from './utils/json';
 import { escapeHtml, sanitizeUrl } from './utils/html';
+import { fetchMediaTags } from './utils/mediaTags';
 import authRoutes from './routes/auth/index';
 import wikiRoutes from './routes/wiki';
 import searchRoutes from './routes/search';
@@ -420,6 +421,8 @@ app.get('/w/*', async (c) => {
         }>();
 
         if (mediaRow) {
+            const tags = await fetchMediaTags(db, mediaRow.id);
+
             const ssrData: Record<string, any> = {
                 _ssrSlug: slug,
                 _ssrNotFound: false,
@@ -434,6 +437,7 @@ app.get('/w/*', async (c) => {
                     size: mediaRow.size,
                     uploader_name: mediaRow.uploader_name,
                     url: `/media/${mediaRow.r2_key}`,
+                    tags,
                 },
                 content: mediaRow.content || '',
                 created_at: mediaRow.created_at,

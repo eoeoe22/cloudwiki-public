@@ -25,6 +25,8 @@
     rel="stylesheet">
   <!-- 커스텀 스타일 -->
   <link rel="stylesheet" href="/css/style.css">
+  <!-- 테마 FOUC 방지: CSS 로드 후 즉시 테마 적용 -->
+  <script>try{var t=localStorage.getItem('themeMode');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
   <link rel="stylesheet" href="/render.css">
 </head>
 
@@ -958,18 +960,31 @@
       const contentHtml = page.content
         ? `<pre class="wiki-image-doc-content">${escapeHtml(page.content)}</pre>`
         : '<p class="text-muted">아직 설명이 작성되지 않았습니다.</p>';
+      const tagsHtml = renderImageDocTagsHtml(media.tags);
 
       const contentEl = document.getElementById('articleContent');
       contentEl.innerHTML = `
         <div class="wiki-image-doc-view">
           <div class="wiki-image-doc-media">${mediaHtml}</div>
           <div class="wiki-image-doc-text" id="wikiImageDocText">${contentHtml}</div>
+          <div class="wiki-image-doc-tags" id="wikiImageDocTags">${tagsHtml}</div>
         </div>
       `;
 
       hideAllPages();
       document.getElementById('articlePage').classList.remove('d-none');
       if (typeof window.__sidebarLayoutUpdate === 'function') window.__sidebarLayoutUpdate();
+    }
+
+    // 이미지 문서 본문 하단 태그 뱃지 HTML 생성
+    function renderImageDocTagsHtml(tags) {
+      if (!Array.isArray(tags) || tags.length === 0) {
+        return '<span class="wiki-image-doc-tags-empty text-muted">태그 없음</span>';
+      }
+      const items = tags.map(t =>
+        `<span class="category-tag"><span>${escapeHtml(t)}</span></span>`
+      ).join('');
+      return `<span class="wiki-image-doc-tags-label text-muted"><i class="mdi mdi-tag-multiple-outline"></i> 태그</span>${items}`;
     }
 
     // 이미지 문서 설명 편집 (모달)
@@ -985,36 +1000,67 @@
       if (!currentPage || !currentPage.is_image_doc) return;
       const filename = (currentPage.media && currentPage.media.filename)
         || currentPage.slug.replace(/^이미지:/, '');
+      const initialTags = (currentPage.media && Array.isArray(currentPage.media.tags))
+        ? currentPage.media.tags.slice()
+        : [];
 
-      const { value: newContent, isConfirmed } = await Swal.fire({
-        title: '이미지 설명 편집',
-        input: 'textarea',
-        inputValue: currentPage.content || '',
-        inputPlaceholder: '이미지에 대한 설명을 입력하세요 (일반 텍스트, 위키 문법은 사용되지 않습니다)',
-        inputAttributes: { maxlength: '20000', 'aria-label': '이미지 설명' },
+      let tagWidget = null;
+      const { value: formResult, isConfirmed } = await Swal.fire({
+        title: '이미지 문서 편집',
+        width: 600,
         showCancelButton: true,
         confirmButtonText: '저장',
         cancelButtonText: '취소',
-        width: 600,
+        focusConfirm: false,
+        html: `
+          <div style="text-align:left;">
+            <label class="form-label fw-bold" style="display:block; margin-bottom:4px;">설명</label>
+            <textarea id="imageDocContentInput" class="form-control" rows="6" maxlength="20000" style="width:100%;" placeholder="이미지에 대한 설명을 입력하세요 (일반 텍스트, 위키 문법은 사용되지 않습니다)">${escapeHtml(currentPage.content || '')}</textarea>
+            <label class="form-label fw-bold" style="display:block; margin:14px 0 4px 0;">태그</label>
+            <div class="category-tag-container" id="imageDocTagContainer" style="max-width:100%;">
+              <input type="text" id="imageDocTagInput" class="category-tag-input" placeholder="태그 입력 후 엔터나 쉼표">
+            </div>
+            <div class="form-text text-muted" style="margin-top:4px; font-size:0.82rem;">한글/영문/숫자/공백/_/./- 만 사용 가능 · 최대 20개</div>
+          </div>
+        `,
+        didOpen: () => {
+          tagWidget = mountMediaTagInput({
+            container: document.getElementById('imageDocTagContainer'),
+            input: document.getElementById('imageDocTagInput'),
+            initial: initialTags,
+          });
+          document.getElementById('imageDocContentInput').focus();
+        },
+        willClose: () => { if (tagWidget) tagWidget.destroy(); },
+        preConfirm: () => {
+          const content = document.getElementById('imageDocContentInput').value || '';
+          if (tagWidget) tagWidget.flush();
+          return { content, tags: tagWidget ? tagWidget.getTags() : initialTags };
+        },
       });
-      if (!isConfirmed) return;
+      if (!isConfirmed || !formResult) return;
+      const newContent = formResult.content;
+      const newTags = formResult.tags;
 
       try {
         const res = await fetch(`/api/media/doc/${encodeURIComponent(filename)}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ content: newContent || '' }),
+          body: JSON.stringify({ content: newContent || '', tags: newTags }),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || '저장 실패');
 
         currentPage.content = newContent || '';
+        if (currentPage.media) currentPage.media.tags = Array.isArray(newTags) ? newTags.slice() : [];
         const textEl = document.getElementById('wikiImageDocText');
         if (textEl) {
           textEl.innerHTML = currentPage.content
             ? `<pre class="wiki-image-doc-content">${escapeHtml(currentPage.content)}</pre>`
             : '<p class="text-muted">아직 설명이 작성되지 않았습니다.</p>';
         }
+        const tagsEl = document.getElementById('wikiImageDocTags');
+        if (tagsEl) tagsEl.innerHTML = renderImageDocTagsHtml(currentPage.media && currentPage.media.tags);
         const rawEl = document.getElementById('articleRawContent');
         if (rawEl) rawEl.textContent = currentPage.content;
 

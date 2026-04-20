@@ -16,6 +16,8 @@
     href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Outfit:wght@500;600;700;800;900&family=Inter:wght@400;500;700;800&display=swap"
     rel="stylesheet">
   <link rel="stylesheet" href="/css/style.css">
+  <!-- 테마 FOUC 방지: CSS 로드 후 즉시 테마 적용 -->
+  <script>try{var t=localStorage.getItem('themeMode');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
 </head>
 
 <body style="-webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;">
@@ -96,10 +98,9 @@
                 style="width: 100%; max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch;">
                 <div id="allPagesList" style="min-width: 560px;"></div>
               </div>
-              <button id="loadMorePagesBtn" class="btn btn-outline-secondary w-100 mt-3 d-none"
-                onclick="loadMorePages()">
-                <i class="bi bi-chevron-down"></i> 더 로드하기
-              </button>
+              <nav id="allPagesPagination" class="mt-3 d-none" aria-label="문서 목록 페이지네이션">
+                <ul class="pagination justify-content-center flex-wrap" id="allPagesPaginationList"></ul>
+              </nav>
             </div>
           </div>
 
@@ -159,10 +160,12 @@
     const PAGE_SIZE = 10;
 
     // 모든 문서 목록 상태
-    let allPagesOffset = 0;
     const ALL_PAGES_SIZE = 20;
     let allPagesLoaded = false; // 탭 최초 로드 여부
     let currentSort = 'title_asc';
+    let currentAllPage = 1;
+    let totalAllPages = 0;
+    let allPagesAbortController = null;
 
     // ── 초기화 ──
     document.addEventListener('DOMContentLoaded', async () => {
@@ -273,25 +276,40 @@
     }
 
     // ── 모든 문서 목록 로드 ──
-    async function loadAllPages(append = false) {
+    async function loadAllPages(page = 1) {
+      if (allPagesAbortController) {
+        allPagesAbortController.abort();
+        allPagesAbortController = null;
+      }
+      allPagesAbortController = new AbortController();
+      const signal = allPagesAbortController.signal;
+
       try {
         const listEl = document.getElementById('allPagesList');
-        const loadBtn = document.getElementById('loadMorePagesBtn');
+        const offset = (page - 1) * ALL_PAGES_SIZE;
 
-        if (!append) {
-          allPagesOffset = 0;
-          listEl.innerHTML = '<div class="text-center py-4"><div class="spinner-border spinner-border-sm text-primary" role="status"></div> 불러오는 중...</div>';
-          loadBtn.classList.add('d-none');
-        }
+        listEl.innerHTML = '<div class="text-center py-4"><div class="spinner-border spinner-border-sm text-primary" role="status"></div> 불러오는 중...</div>';
+        document.getElementById('allPagesPagination').classList.add('d-none');
 
-        const res = await fetch(`/api/w/all-pages?offset=${allPagesOffset}&limit=${ALL_PAGES_SIZE}&sort=${currentSort}`);
+        const res = await fetch(`/api/w/all-pages?offset=${offset}&limit=${ALL_PAGES_SIZE}&sort=${currentSort}`, { signal });
         if (!res.ok) throw new Error('문서 목록 로딩 실패');
 
         const data = await res.json();
+        currentAllPage = page;
+        totalAllPages = Math.ceil(data.total / ALL_PAGES_SIZE);
 
         const showCategory = currentSort.startsWith('category');
 
-        const itemsHtml = data.pages.map(page => {
+        if (data.pages.length === 0) {
+          if (data.total > 0) {
+            loadAllPages(totalAllPages);
+            return;
+          }
+          listEl.innerHTML = '<div class="text-center text-muted py-5"><i class="bi bi-inbox fs-1 d-block mb-2"></i>문서가 없습니다.</div>';
+          return;
+        }
+
+        listEl.innerHTML = data.pages.map(page => {
           const createdDate = new Date(page.created_at * 1000).toLocaleDateString('ko-KR');
           const updatedDate = new Date(page.updated_at * 1000).toLocaleDateString('ko-KR');
           const categoryBadge = page.category
@@ -317,39 +335,66 @@
           `;
         }).join('');
 
-        if (append) {
-          listEl.insertAdjacentHTML('beforeend', itemsHtml);
-        } else {
-          listEl.innerHTML = itemsHtml;
-        }
-
-        if (data.pages.length === 0 && !append) {
-          listEl.innerHTML = '<div class="text-center text-muted py-5"><i class="bi bi-inbox fs-1 d-block mb-2"></i>문서가 없습니다.</div>';
-        }
-
-        if (data.has_more) {
-          loadBtn.classList.remove('d-none');
-        } else {
-          loadBtn.classList.add('d-none');
-        }
-
-        allPagesOffset += data.pages.length;
+        renderAllPagesPagination();
 
       } catch (err) {
+        if (err.name === 'AbortError') return;
         console.error(err);
         Swal.fire('오류', '문서 목록을 불러오는 데 실패했습니다.', 'error');
       }
     }
 
+    // ── 페이지네이션 렌더링 ──
+    function renderAllPagesPagination() {
+      const nav = document.getElementById('allPagesPagination');
+      const ul = document.getElementById('allPagesPaginationList');
+
+      if (totalAllPages <= 1) {
+        nav.classList.add('d-none');
+        return;
+      }
+
+      nav.classList.remove('d-none');
+
+      const pages = new Set([1, totalAllPages]);
+      for (let i = Math.max(2, currentAllPage - 2); i <= Math.min(totalAllPages - 1, currentAllPage + 2); i++) {
+        pages.add(i);
+      }
+      const sortedPages = [...pages].sort((a, b) => a - b);
+
+      let html = `<li class="page-item ${currentAllPage === 1 ? 'disabled' : ''}">
+        <a class="page-link" href="#" ${currentAllPage === 1 ? 'tabindex="-1" aria-disabled="true"' : ''} onclick="event.preventDefault(); goToAllPage(${currentAllPage - 1})">이전</a>
+      </li>`;
+
+      let prev = 0;
+      for (const p of sortedPages) {
+        if (prev && p - prev > 1) {
+          html += `<li class="page-item disabled"><span class="page-link">…</span></li>`;
+        }
+        html += `<li class="page-item ${p === currentAllPage ? 'active' : ''}">
+          <a class="page-link" href="#" ${p === currentAllPage ? 'aria-current="page"' : ''} onclick="event.preventDefault(); goToAllPage(${p})">${p}</a>
+        </li>`;
+        prev = p;
+      }
+
+      html += `<li class="page-item ${currentAllPage === totalAllPages ? 'disabled' : ''}">
+        <a class="page-link" href="#" ${currentAllPage === totalAllPages ? 'tabindex="-1" aria-disabled="true"' : ''} onclick="event.preventDefault(); goToAllPage(${currentAllPage + 1})">다음</a>
+      </li>`;
+
+      ul.innerHTML = html;
+    }
+
+    // ── 페이지 이동 ──
+    function goToAllPage(page) {
+      if (page < 1 || page > totalAllPages) return;
+      loadAllPages(page);
+      document.getElementById('pane-allpages').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
     // ── 정렬 변경 ──
     function changeSort() {
       currentSort = document.getElementById('allPagesSortSelect').value;
-      loadAllPages();
-    }
-
-    // ── 더 로드하기 (모든 문서) ──
-    function loadMorePages() {
-      loadAllPages(true);
+      loadAllPages(1);
     }
   </script>
 

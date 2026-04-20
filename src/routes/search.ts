@@ -5,6 +5,10 @@ import type { RBAC } from '../utils/role';
 
 const search = new Hono<Env>();
 
+// 페이지네이션 상수: 서버/클라이언트 모두 이 값을 기준으로 계산.
+// 변경 시 API 응답의 pageSize 로 프런트에 전달되어 자동 반영된다.
+const PAGE_SIZE = 10;
+
 /**
  * GET /search?q=키워드&mode=content|category
  * mode=content (기본값): FTS5 기반 전문 검색, 정확한 제목 일치 시 redirect 반환
@@ -19,13 +23,28 @@ search.get('/search', async (c) => {
     const user = c.get('user');
 
     if (!query || query.trim().length === 0) {
-        return c.json({ results: [] });
+        return c.json({ results: [], total: 0, page: 1, pageSize: PAGE_SIZE });
     }
 
     const db = c.env.DB;
     const rbac = c.get('rbac') as RBAC;
     const isAdmin = user && rbac.can(user.role, 'admin:access');
     const searchStartTime = Date.now();
+
+    // 서버 사이드 페이지네이션: 페이지당 PAGE_SIZE 건, LIMIT/OFFSET 으로 DB 부하 최소화.
+    // 분석(trackSearch)은 첫 페이지에서만 기록해 동일 세션의 페이지 이동이 중복 집계되지 않도록 한다.
+    const pageParam = parseInt(c.req.query('page') || '1', 10);
+    const requestedPage = Number.isFinite(pageParam) && pageParam >= 1 ? pageParam : 1;
+    const shouldTrack = requestedPage === 1;
+
+    // total 을 알고 난 뒤 호출: 요청된 페이지가 마지막 페이지를 넘어가면 마지막 페이지로 클램프해
+    // total>0 인데 results=[] 가 되는 상황을 방지한다. 응답의 page 필드는 실제 반환된 페이지다.
+    const clampPage = (total: number) => {
+        if (total <= 0) return { page: 1, offset: 0 };
+        const totalPages = Math.ceil(total / PAGE_SIZE);
+        const p = Math.min(requestedPage, totalPages);
+        return { page: p, offset: (p - 1) * PAGE_SIZE };
+    };
 
     // 이미지 문서 검색 모드: "이미지:키워드"로 시작하면 media 테이블에서 검색한다.
     // 매치가 전혀 없으면 legacy pages.slug의 '이미지:' 네임스페이스 호환을 위해
@@ -43,24 +62,32 @@ search.get('/search', async (c) => {
                 .bind(imageQuery)
                 .first<{ filename: string }>();
             if (exactImage) {
-                trackSearch(c, query.trim(), 1, Date.now() - searchStartTime);
+                if (shouldTrack) trackSearch(c, query.trim(), 1, Date.now() - searchStartTime);
                 return c.json({ redirect: `/w/${encodeURIComponent('이미지:' + exactImage.filename)}` });
             }
         }
 
         // filename 또는 content에 LIKE 매치
         const likePattern = imageQuery.length > 0 ? `%${imageQuery}%` : '%';
-        const { results } = await db
-            .prepare(
-                `SELECT id, r2_key, filename, mime_type, content
-                 FROM media
-                 WHERE filename LIKE ? OR content LIKE ?
-                 ORDER BY created_at DESC LIMIT 30`
-            )
-            .bind(likePattern, likePattern)
-            .all<{ id: number; r2_key: string; filename: string; mime_type: string; content: string }>();
 
-        if (results.length > 0) {
+        const totalRow = await db
+            .prepare('SELECT COUNT(*) as total FROM media WHERE filename LIKE ? OR content LIKE ?')
+            .bind(likePattern, likePattern)
+            .first<{ total: number }>();
+        const total = totalRow?.total ?? 0;
+
+        if (total > 0) {
+            const { page, offset } = clampPage(total);
+            const { results } = await db
+                .prepare(
+                    `SELECT id, r2_key, filename, mime_type, content
+                     FROM media
+                     WHERE filename LIKE ? OR content LIKE ?
+                     ORDER BY created_at DESC LIMIT ? OFFSET ?`
+                )
+                .bind(likePattern, likePattern, PAGE_SIZE, offset)
+                .all<{ id: number; r2_key: string; filename: string; mime_type: string; content: string }>();
+
             const imageResults = results.map((r) => {
                 const slug = `이미지:${r.filename}`;
                 let snippet = '';
@@ -89,27 +116,32 @@ search.get('/search', async (c) => {
                 };
             });
 
-            trackSearch(c, query.trim(), imageResults.length, Date.now() - searchStartTime);
-            return c.json({ results: imageResults, image_mode: true });
+            if (shouldTrack) trackSearch(c, query.trim(), total, Date.now() - searchStartTime);
+            return c.json({ results: imageResults, image_mode: true, total, page, pageSize: PAGE_SIZE });
         }
         // media에서 결과가 없으면 아래 일반 pages 검색으로 폴스루
     }
 
     // 카테고리 검색 모드
     if (mode === 'category') {
-        let sql = `
+        const visibility = isAdmin ? '' : ' AND deleted_at IS NULL AND is_private = 0';
+
+        const totalRow = await db
+            .prepare(`SELECT COUNT(*) as total FROM pages WHERE category = ?${visibility}`)
+            .bind(query.trim())
+            .first<{ total: number }>();
+        const total = totalRow?.total ?? 0;
+        const { page, offset } = clampPage(total);
+
+        const sql = `
             SELECT slug, title, category, deleted_at
             FROM pages
-            WHERE category = ?
+            WHERE category = ?${visibility}
+            ORDER BY title LIMIT ? OFFSET ?
         `;
-        if (!isAdmin) {
-            sql += ' AND deleted_at IS NULL AND is_private = 0';
-        }
-        sql += ' ORDER BY title LIMIT 50';
-
-        const results = await db.prepare(sql).bind(query.trim()).all();
-        trackSearch(c, query.trim(), results.results?.length || 0, Date.now() - searchStartTime);
-        return c.json({ results: results.results, mode: 'category' });
+        const results = await db.prepare(sql).bind(query.trim(), PAGE_SIZE, offset).all();
+        if (shouldTrack) trackSearch(c, query.trim(), total, Date.now() - searchStartTime);
+        return c.json({ results: results.results, mode: 'category', total, page, pageSize: PAGE_SIZE });
     }
 
     // 제목+내용 검색 모드 (FTS5)
@@ -125,7 +157,7 @@ search.get('/search', async (c) => {
 
     const exactMatch = await db.prepare(exactSql).bind(query.trim()).first();
     if (exactMatch) {
-        trackSearch(c, query.trim(), 1, Date.now() - searchStartTime);
+        if (shouldTrack) trackSearch(c, query.trim(), 1, Date.now() - searchStartTime);
         return c.json({ redirect: `/w/${encodeURIComponent((exactMatch as any).slug)}` });
     }
 
@@ -134,18 +166,23 @@ search.get('/search', async (c) => {
 
     // Trigram 토크나이저: 3글자 미만은 FTS5 MATCH에서 매치 불가 → LIKE fallback
     if (trimmedQuery.length < 3) {
-        let sql = `
+        const visibility = isAdmin ? '' : ' AND deleted_at IS NULL AND is_private = 0';
+        const likePattern = `%${trimmedQuery}%`;
+
+        const totalRow = await db
+            .prepare(`SELECT COUNT(*) as total FROM pages WHERE (title LIKE ? OR content LIKE ?)${visibility}`)
+            .bind(likePattern, likePattern)
+            .first<{ total: number }>();
+        const total = totalRow?.total ?? 0;
+        const { page, offset } = clampPage(total);
+
+        const sql = `
             SELECT slug, title, deleted_at
             FROM pages
-            WHERE (title LIKE ? OR content LIKE ?)
+            WHERE (title LIKE ? OR content LIKE ?)${visibility}
+            ORDER BY updated_at DESC LIMIT ? OFFSET ?
         `;
-        if (!isAdmin) {
-            sql += ' AND deleted_at IS NULL AND is_private = 0';
-        }
-        sql += ' ORDER BY updated_at DESC LIMIT 30';
-
-        const likePattern = `%${trimmedQuery}%`;
-        const results = await db.prepare(sql).bind(likePattern, likePattern).all();
+        const results = await db.prepare(sql).bind(likePattern, likePattern, PAGE_SIZE, offset).all();
 
         const safeResults = results.results.map((r: any) => ({
             ...r,
@@ -153,33 +190,42 @@ search.get('/search', async (c) => {
             snippet: '',
         }));
 
-        trackSearch(c, trimmedQuery, safeResults.length, Date.now() - searchStartTime);
-        return c.json({ results: safeResults });
+        if (shouldTrack) trackSearch(c, trimmedQuery, total, Date.now() - searchStartTime);
+        return c.json({ results: safeResults, total, page, pageSize: PAGE_SIZE });
     }
 
     // FTS5 Trigram 검색 (3글자 이상)
     // 보안을 위해 <mark> 대신 임시 문자열을 사용하고 나중에 치환
     try {
-        let sql = `
-           SELECT p.slug, p.title, p.deleted_at,
-                  snippet(pages_fts, 1, '__MARK_START__', '__MARK_END__', '...', 40) as snippet
-           FROM pages_fts
-           JOIN pages p ON pages_fts.rowid = p.id
-           WHERE pages_fts MATCH ?
-        `;
-
-        if (!isAdmin) {
-            sql += ' AND p.deleted_at IS NULL AND p.is_private = 0';
-        }
-
-        sql += ' ORDER BY rank LIMIT 30';
+        const visibility = isAdmin ? '' : ' AND p.deleted_at IS NULL AND p.is_private = 0';
 
         // Trigram 토크나이저에서는 따옴표로 감싸면 정확한 substring 매칭
         const safeMatchQuery = '"' + trimmedQuery.replace(/"/g, '""') + '"';
 
+        const totalRow = await db
+            .prepare(
+                `SELECT COUNT(*) as total
+                 FROM pages_fts
+                 JOIN pages p ON pages_fts.rowid = p.id
+                 WHERE pages_fts MATCH ?${visibility}`
+            )
+            .bind(safeMatchQuery)
+            .first<{ total: number }>();
+        const total = totalRow?.total ?? 0;
+        const { page, offset } = clampPage(total);
+
+        const sql = `
+           SELECT p.slug, p.title, p.deleted_at,
+                  snippet(pages_fts, 1, '__MARK_START__', '__MARK_END__', '...', 40) as snippet
+           FROM pages_fts
+           JOIN pages p ON pages_fts.rowid = p.id
+           WHERE pages_fts MATCH ?${visibility}
+           ORDER BY rank LIMIT ? OFFSET ?
+        `;
+
         const results = await db
             .prepare(sql)
-            .bind(safeMatchQuery)
+            .bind(safeMatchQuery, PAGE_SIZE, offset)
             .all();
 
         // XSS 방지를 위해 스니펫의 HTML 특수문자를 이스케이프 처리한 뒤 임시 문자열을 <mark> 태그로 치환
@@ -202,23 +248,28 @@ search.get('/search', async (c) => {
             return finalR;
         });
 
-        trackSearch(c, trimmedQuery, safeResults.length, Date.now() - searchStartTime);
-        return c.json({ results: safeResults });
+        if (shouldTrack) trackSearch(c, trimmedQuery, total, Date.now() - searchStartTime);
+        return c.json({ results: safeResults, total, page, pageSize: PAGE_SIZE });
     } catch (ftsError) {
         // FTS5 쿼리 실패 시 LIKE fallback
         console.error('FTS5 search failed, falling back to LIKE:', ftsError);
-        let fallbackSql = `
+        const visibility = isAdmin ? '' : ' AND deleted_at IS NULL AND is_private = 0';
+        const likePattern = `%${trimmedQuery}%`;
+
+        const totalRow = await db
+            .prepare(`SELECT COUNT(*) as total FROM pages WHERE (title LIKE ? OR content LIKE ?)${visibility}`)
+            .bind(likePattern, likePattern)
+            .first<{ total: number }>();
+        const total = totalRow?.total ?? 0;
+        const { page, offset } = clampPage(total);
+
+        const fallbackSql = `
             SELECT slug, title, deleted_at
             FROM pages
-            WHERE (title LIKE ? OR content LIKE ?)
+            WHERE (title LIKE ? OR content LIKE ?)${visibility}
+            ORDER BY updated_at DESC LIMIT ? OFFSET ?
         `;
-        if (!isAdmin) {
-            fallbackSql += ' AND deleted_at IS NULL AND is_private = 0';
-        }
-        fallbackSql += ' ORDER BY updated_at DESC LIMIT 30';
-
-        const likePattern = `%${trimmedQuery}%`;
-        const fallbackResults = await db.prepare(fallbackSql).bind(likePattern, likePattern).all();
+        const fallbackResults = await db.prepare(fallbackSql).bind(likePattern, likePattern, PAGE_SIZE, offset).all();
 
         const safeResults = fallbackResults.results.map((r: any) => ({
             ...r,
@@ -226,8 +277,8 @@ search.get('/search', async (c) => {
             snippet: '',
         }));
 
-        trackSearch(c, trimmedQuery, safeResults.length, Date.now() - searchStartTime);
-        return c.json({ results: safeResults });
+        if (shouldTrack) trackSearch(c, trimmedQuery, total, Date.now() - searchStartTime);
+        return c.json({ results: safeResults, total, page, pageSize: PAGE_SIZE });
     }
 });
 

@@ -268,9 +268,12 @@
 }
 
 @media (prefers-color-scheme: dark) {
-    #cm-editor .cm-editor {
+    html:not([data-theme="light"]) #cm-editor .cm-editor {
         background-color: #000000 !important;
     }
+}
+html[data-theme="dark"] #cm-editor .cm-editor {
+    background-color: #000000 !important;
 }
 
 #cm-editor .cm-scroller {
@@ -378,9 +381,12 @@
 }
 
 @media (prefers-color-scheme: dark) {
-    .editor-settings-panel {
+    html:not([data-theme="light"]) .editor-settings-panel {
         box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4);
     }
+}
+html[data-theme="dark"] .editor-settings-panel {
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4);
 }
 
 /* 설정 버튼 활성 상태 */
@@ -432,10 +438,12 @@
     padding: 0 2px;
 }
 
-.cm-wiki-template {
-    color: #28a745;
+.cm-wiki-template.cm-wiki-template {
+    --cm-wiki-template-color: #28a745;
+    --cm-wiki-template-background: rgba(40, 167, 69, 0.08);
+    color: var(--cm-wiki-template-color);
     font-weight: bold;
-    background: rgba(40, 167, 69, 0.08);
+    background: var(--cm-wiki-template-background);
     border-radius: 3px;
     padding: 0 2px;
 }
@@ -447,19 +455,30 @@
 }
 
 @media (prefers-color-scheme: dark) {
-    .cm-toolbar {
+    html:not([data-theme="light"]) .cm-toolbar {
         background: var(--wiki-bg-alt, #1e1e1e);
     }
 
-    .cm-wiki-link {
+    html:not([data-theme="light"]) .cm-wiki-link {
         color: #58a6ff;
         background: rgba(88, 166, 255, 0.1);
     }
 
-    .cm-wiki-template {
-        color: #56d364;
-        background: rgba(86, 211, 100, 0.1);
+    html:not([data-theme="light"]) .cm-wiki-template.cm-wiki-template {
+        --cm-wiki-template-color: #56d364;
+        --cm-wiki-template-background: rgba(86, 211, 100, 0.1);
     }
+}
+html[data-theme="dark"] .cm-toolbar {
+    background: var(--wiki-bg-alt, #1e1e1e);
+}
+html[data-theme="dark"] .cm-wiki-link {
+    color: #58a6ff;
+    background: rgba(88, 166, 255, 0.1);
+}
+html[data-theme="dark"] .cm-wiki-template.cm-wiki-template {
+    --cm-wiki-template-color: #56d364;
+    --cm-wiki-template-background: rgba(86, 211, 100, 0.1);
 }
 
 .conflict-textarea {
@@ -507,11 +526,16 @@
 }
 
 @media (prefers-color-scheme: dark) {
-    #concurrent-edit-banner {
+    html:not([data-theme="light"]) #concurrent-edit-banner {
         background: linear-gradient(135deg, #3d3200 0%, #4a3d00 100%);
         border-color: #b38600;
         color: #ffe082;
     }
+}
+html[data-theme="dark"] #concurrent-edit-banner {
+    background: linear-gradient(135deg, #3d3200 0%, #4a3d00 100%);
+    border-color: #b38600;
+    color: #ffe082;
 }
 
 /* Category Tag Autocomplete Dropdown */
@@ -1082,6 +1106,37 @@
     text-overflow: ellipsis;
 }
 
+.existing-img-tile-tags {
+    padding: 0 6px 6px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3px;
+    align-items: center;
+}
+
+.existing-img-tile-tag,
+.existing-img-tile-tag-more {
+    font-size: 0.68rem;
+    line-height: 1.1;
+    padding: 2px 6px;
+    background-color: rgba(88, 166, 255, 0.1);
+    color: var(--wiki-primary, #58a6ff);
+    border: 1px solid rgba(88, 166, 255, 0.2);
+    border-radius: 6px;
+    white-space: nowrap;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.existing-img-tile-tag-more {
+    background-color: transparent;
+    color: var(--wiki-text-muted, #888);
+    border-color: transparent;
+    padding-left: 0;
+    padding-right: 0;
+}
+
 .existing-img-search-more {
     text-align: center;
     margin-top: 12px;
@@ -1232,9 +1287,12 @@
 }
 
 @media (prefers-color-scheme: dark) {
-    .img-editor-canvas-wrap {
+    html:not([data-theme="light"]) .img-editor-canvas-wrap {
         background: repeating-conic-gradient(#333 0% 25%, #222 0% 50%) 50% / 16px 16px;
     }
+}
+html[data-theme="dark"] .img-editor-canvas-wrap {
+    background: repeating-conic-gradient(#333 0% 25%, #222 0% 50%) 50% / 16px 16px;
 }
 
 .img-editor-canvas-wrap canvas {
@@ -1600,6 +1658,11 @@
 
 /* CM6 에디터 하단 여백은 JS 테마에서 설정 */
 
+/* 에디터 작성 공간 폰트 크기 */
+#cm-editor .cm-content {
+    font-size: 15.5px;
+}
+
 /* Hide mobile hamburger menu since sidebar is completely hidden on the edit page */
 .navbar-toggler[data-bs-target="#mobileSidebar"] {
     display: none !important;
@@ -1614,10 +1677,14 @@
 
 @media (prefers-color-scheme: dark) {
 
-    .cm-wiki-link,
-    .cm-wiki-template {
+    html:not([data-theme="light"]) .cm-wiki-link,
+    html:not([data-theme="light"]) .cm-wiki-template {
         color: #58a6ff !important;
     }
+}
+html[data-theme="dark"] .cm-wiki-link,
+html[data-theme="dark"] .cm-wiki-template {
+    color: #58a6ff !important;
 }
 
 .cm-align-marker {
@@ -1631,9 +1698,12 @@
 }
 
 @media (prefers-color-scheme: dark) {
-    .cm-quote-marker {
+    html:not([data-theme="light"]) .cm-quote-marker {
         color: #58a6ff !important;
     }
+}
+html[data-theme="dark"] .cm-quote-marker {
+    color: #58a6ff !important;
 }
 
 .cm-list-marker {
@@ -1699,10 +1769,14 @@
 }
 
 @media (prefers-color-scheme: dark) {
-    .cm-highlight {
+    html:not([data-theme="light"]) .cm-highlight {
         background-color: #bfa000 !important;
         color: #fff !important;
     }
+}
+html[data-theme="dark"] .cm-highlight {
+    background-color: #bfa000 !important;
+    color: #fff !important;
 }
 
 .cm-time-marker {
@@ -1710,9 +1784,12 @@
 }
 
 @media (prefers-color-scheme: dark) {
-    .cm-time-marker {
+    html:not([data-theme="light"]) .cm-time-marker {
         color: #58a6ff !important;
     }
+}
+html[data-theme="dark"] .cm-time-marker {
+    color: #58a6ff !important;
 }
 
 /* {badge:}, {tag:}, {button:}, {stat:}, {size:}, {hr} 등 파라미터 토큰 */
@@ -1722,9 +1799,12 @@
 }
 
 @media (prefers-color-scheme: dark) {
-    .cm-param-token {
+    html:not([data-theme="light"]) .cm-param-token {
         color: #fbbf24 !important;
     }
+}
+html[data-theme="dark"] .cm-param-token {
+    color: #fbbf24 !important;
 }
 
 .cm-inline-code {
@@ -1736,10 +1816,14 @@
 }
 
 @media (prefers-color-scheme: dark) {
-    .cm-inline-code {
+    html:not([data-theme="light"]) .cm-inline-code {
         background-color: #2d2d2d !important;
         color: #e0e0e0 !important;
     }
+}
+html[data-theme="dark"] .cm-inline-code {
+    background-color: #2d2d2d !important;
+    color: #e0e0e0 !important;
 }
 
 .cm-code-block {
@@ -1753,14 +1837,21 @@
 }
 
 @media (prefers-color-scheme: dark) {
-    .cm-code-block {
+    html:not([data-theme="light"]) .cm-code-block {
         background-color: #1e1e1e !important;
     }
 
-    .cm-code-block,
-    .cm-code-block * {
+    html:not([data-theme="light"]) .cm-code-block,
+    html:not([data-theme="light"]) .cm-code-block * {
         color: #e0e0e0 !important;
     }
+}
+html[data-theme="dark"] .cm-code-block {
+    background-color: #1e1e1e !important;
+}
+html[data-theme="dark"] .cm-code-block,
+html[data-theme="dark"] .cm-code-block * {
+    color: #e0e0e0 !important;
 }
 
 /* ── 백틱, 코드블럭 내부에서 위키 문법 렌더링 차단 (CSS Reset) ── */
@@ -1814,10 +1905,12 @@
 }
 
 @media (prefers-color-scheme: dark) {
-    .cm-fold-block {
+    html:not([data-theme="light"]) .cm-fold-block {
         background-color: rgba(255, 255, 255, 0.12) !important;
-        /* 좀 더 진하게 */
     }
+}
+html[data-theme="dark"] .cm-fold-block {
+    background-color: rgba(255, 255, 255, 0.12) !important;
 }
 
 /* 마크다운 일반 링크 대괄호/괄호 회색 처리 */
@@ -1861,4 +1954,198 @@
     word-break: break-word;
     overflow-wrap: anywhere;
     line-height: 1.35;
+}
+
+/* ── 카드 블록 삽입 모달 ── */
+.card-insert-form .form-label {
+    font-size: 0.85rem;
+    color: var(--wiki-text-muted);
+    margin-bottom: 4px;
+}
+
+.card-insert-palette-swatches {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.card-insert-palette-swatch {
+    border: 1px solid var(--wiki-border);
+    border-radius: 4px;
+    padding: 4px 10px;
+    font-size: 0.82rem;
+    cursor: pointer;
+    background: var(--wiki-bg);
+    color: var(--wiki-text);
+    transition: box-shadow 0.12s, transform 0.08s;
+}
+
+.card-insert-palette-swatch:hover {
+    box-shadow: 0 0 0 2px rgba(var(--wiki-primary-rgb, 59, 130, 246), 0.25);
+}
+
+.card-insert-palette-swatch.active {
+    box-shadow: 0 0 0 2px var(--wiki-primary, #3b82f6);
+}
+
+.card-insert-palette-swatch-none {
+    font-size: 0.78rem;
+    color: var(--wiki-text-muted);
+}
+
+/* ── 그리드·스탯 삽입 모달 ── */
+.grid-stat-form .grid-stat-header {
+    display: grid;
+    grid-template-columns: 1fr 1.4fr 1fr 32px;
+    gap: 8px;
+    font-size: 0.75rem;
+    color: var(--wiki-text-muted);
+    padding: 0 2px 4px 2px;
+}
+
+.grid-stat-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-height: 320px;
+    overflow-y: auto;
+}
+
+.grid-stat-row {
+    display: grid;
+    grid-template-columns: 1fr 1.4fr 1fr 32px;
+    gap: 8px;
+    align-items: center;
+}
+
+.grid-stat-row .form-control,
+.grid-stat-row .form-select {
+    font-size: 0.85rem;
+}
+
+.grid-stat-remove {
+    width: 30px;
+    height: 30px;
+    border: 1px solid var(--wiki-border);
+    background: var(--wiki-bg);
+    color: var(--wiki-text-muted);
+    border-radius: 4px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+
+.grid-stat-remove:hover {
+    background: rgba(220, 53, 69, 0.1);
+    color: #dc3545;
+    border-color: #dc3545;
+}
+
+.grid-stat-add-btn {
+    margin-top: 10px;
+    padding: 6px 12px;
+    font-size: 0.85rem;
+    background: var(--wiki-bg);
+    color: var(--wiki-text);
+    border: 1px dashed var(--wiki-border);
+    border-radius: 4px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+
+.grid-stat-add-btn:hover {
+    background: rgba(var(--wiki-primary-rgb, 59, 130, 246), 0.1);
+    border-color: var(--wiki-primary, #3b82f6);
+    border-style: solid;
+    color: var(--wiki-link, #2563eb);
+}
+
+.grid-stat-palette-btn {
+    width: 100%;
+    height: 30px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 4px;
+    padding: 2px 8px;
+    border: 1px solid var(--wiki-border);
+    border-radius: 4px;
+    font-size: 0.82rem;
+    font-weight: 600;
+    cursor: pointer;
+    background: var(--wiki-bg);
+    color: var(--wiki-text);
+    overflow: hidden;
+    transition: box-shadow 0.12s;
+}
+
+.grid-stat-palette-btn:hover {
+    box-shadow: 0 0 0 2px rgba(var(--wiki-primary-rgb, 59, 130, 246), 0.25);
+}
+
+.grid-stat-palette-btn-label {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: left;
+}
+
+.grid-stat-palette-btn-none {
+    color: var(--wiki-text-muted);
+    font-weight: 400;
+}
+
+.grid-stat-palette-btn-caret {
+    flex: 0 0 auto;
+    font-size: 1rem;
+    opacity: 0.7;
+}
+
+.grid-stat-palette-popover {
+    position: fixed;
+    z-index: 10000;
+    background: var(--wiki-bg);
+    border: 1px solid var(--wiki-border);
+    border-radius: 6px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.2);
+    padding: 8px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    max-width: 360px;
+    max-height: 280px;
+    overflow-y: auto;
+}
+
+.grid-stat-palette-swatch {
+    border: 1px solid var(--wiki-border);
+    border-radius: 4px;
+    padding: 4px 10px;
+    font-size: 0.82rem;
+    font-weight: 600;
+    cursor: pointer;
+    background: var(--wiki-bg);
+    color: var(--wiki-text);
+    transition: box-shadow 0.12s, transform 0.08s;
+}
+
+.grid-stat-palette-swatch:hover {
+    box-shadow: 0 0 0 2px rgba(var(--wiki-primary-rgb, 59, 130, 246), 0.25);
+}
+
+.grid-stat-palette-swatch.active {
+    box-shadow: 0 0 0 2px var(--wiki-primary, #3b82f6);
+}
+
+.grid-stat-palette-swatch-none {
+    font-size: 0.78rem;
+    font-weight: 400;
+    color: var(--wiki-text-muted);
 }

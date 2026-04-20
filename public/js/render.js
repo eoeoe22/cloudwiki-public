@@ -70,26 +70,41 @@ function _preprocessBlockDirectives(text) {
     return { text: root.contentLines.join('\n'), blockData };
 }
 
-/** titleLine에서 {palette:}/{bg:}/{color:} 토큰을 흡수해 { cleanTitle, bg, color } 반환 */
+/** titleLine에서 {palette:}/{bg:}/{color:}/{body-palette:}/{body-bg:}/{body-color:} 토큰을 흡수해 { cleanTitle, bg, color, bodyBg, bodyColor } 반환 */
 function _extractBlockStyleTokens(titleLine) {
     let t = _resolvePaletteTokens(titleLine || '');
-    let bg = '', color = '';
+    let bg = '', color = '', bodyBg = '', bodyColor = '';
+
+    // {body-palette:이름} 먼저 처리 (bg/color 파서와 충돌 방지)
+    t = t.replace(/\{body-palette:\s*([^}\s][^}]*?)\s*\}/g, (match, name) => {
+        const resolved = _resolvePaletteTokens(`{palette:${name.trim()}}`);
+        const bgM = resolved.match(/\{bg:([^}]+)\}/);
+        const colorM = resolved.match(/\{color:([^}]+)\}/);
+        if (bgM) bodyBg = bgM[1].trim();
+        if (colorM) bodyColor = colorM[1].trim();
+        return '';
+    });
+
     let replaced = true;
     while (replaced) {
         replaced = false;
+        const bbm = t.match(/\{body-bg:\s*([^}]+)\}/);
+        if (bbm) { bodyBg = bbm[1].trim(); t = t.replace(bbm[0], ''); replaced = true; }
+        const bcm = t.match(/\{body-color:\s*([^}]+)\}/);
+        if (bcm) { bodyColor = bcm[1].trim(); t = t.replace(bcm[0], ''); replaced = true; }
         const bm = t.match(/\{bg:\s*([^}]+)\}/);
         if (bm) { bg = bm[1].trim(); t = t.replace(bm[0], ''); replaced = true; }
         const cm = t.match(/\{color:\s*([^}]+)\}/);
         if (cm) { color = cm[1].trim(); t = t.replace(cm[0], ''); replaced = true; }
     }
     t = t.replace(/\{palette:\s*[^}]*\}/g, '');
-    return { cleanTitle: t.trim(), bg, color };
+    return { cleanTitle: t.trim(), bg, color, bodyBg, bodyColor };
 }
 
 /** 블록을 HTML로 렌더링. 중첩 WIKIBLOCKPH 는 자체적으로 재귀 치환 */
 function _renderBlockHtml(block, blockData) {
     const type = block.type;
-    const { cleanTitle, bg, color } = _extractBlockStyleTokens(block.titleLine);
+    const { cleanTitle, bg, color, bodyBg, bodyColor } = _extractBlockStyleTokens(block.titleLine);
 
     const { text: protectedInner, prot: wlProt } = protectWikiLinks(block.innerText || '');
     let innerHtml = (typeof marked !== 'undefined') ? marked.parse(protectedInner) : protectedInner;
@@ -107,11 +122,23 @@ function _renderBlockHtml(block, blockData) {
     const titleEsc = escapeHtml(cleanTitle);
 
     switch (type) {
-        case 'card':
-            return `<div class="wiki-card"${styleAttr}>` +
-                (titleEsc ? `<div class="wiki-card-header">${titleEsc}</div>` : '') +
-                `<div class="wiki-card-body">${innerHtml}</div>` +
+        case 'card': {
+            // 헤더(제목)와 바디(내용)에 스타일을 분리 적용
+            let headerStyle = '';
+            if (bg && _isSafeCssColor(bg)) headerStyle += `background-color:${bg};`;
+            if (color && _isSafeCssColor(color)) headerStyle += `color:${color};`;
+            const headerStyleAttr = headerStyle ? ` style="${headerStyle}"` : '';
+
+            let bodyStyle = '';
+            if (bodyBg && _isSafeCssColor(bodyBg)) bodyStyle += `background-color:${bodyBg};`;
+            if (bodyColor && _isSafeCssColor(bodyColor)) bodyStyle += `color:${bodyColor};`;
+            const bodyStyleAttr = bodyStyle ? ` style="${bodyStyle}"` : '';
+
+            return `<div class="wiki-card">` +
+                (titleEsc ? `<div class="wiki-card-header"${headerStyleAttr}>${titleEsc}</div>` : '') +
+                `<div class="wiki-card-body"${bodyStyleAttr}>${innerHtml}</div>` +
                 `</div>`;
+        }
         case 'grid':
             return `<div class="wiki-grid"${styleAttr}>${innerHtml}</div>`;
         case 'row':
@@ -404,6 +431,19 @@ function restoreWikiLinks(html, prot) {
     return html.replace(/\x00WLPROT(\d+)\x00/g, (_, i) => prot[parseInt(i, 10)]);
 }
 
+// marked 가 생성한 GFM task list 의 <input type="checkbox"> 를 MDI 아이콘으로 치환.
+// 체크된 항목은 초록색으로 표시.
+function _replaceTaskCheckboxesWithIcons(html) {
+    return html.replace(/<input\b([^>]*?)\btype="checkbox"([^>]*?)>/gi, (match, before, after) => {
+        const attrs = before + after;
+        const checked = /\bchecked\b/i.test(attrs);
+        if (checked) {
+            return `<span class="mdi mdi-checkbox-marked wiki-task-checkbox" style="color:#8bc34a;" aria-hidden="true"></span>`;
+        }
+        return `<span class="mdi mdi-square wiki-task-checkbox" aria-hidden="true"></span>`;
+    });
+}
+
 // ── 문서 렌더링 통합 (index.html, edit.html 공통) ──
 async function renderWikiContent(content, slug, containerId, options = {}) {
     const containerEl = document.getElementById(containerId);
@@ -420,6 +460,9 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
         });
 
         foldInput = foldInput.replace(/^[\u200B\uFEFF]+(\[[-+])/gm, '$1');
+
+        // "- []" (공백 없는 빈 체크박스) → GFM 표준 "- [ ]" 로 정규화
+        foldInput = foldInput.replace(/^(\s*[-*+] )\[\](?=[ \t]|$)/gm, '$1[ ]');
 
         const foldRegex = /^\[\+\s*(.*?)\s*\][ \t]*\n((?:(?!^\[-\][ \t]*$)[\s\S])*?)\n\[-\][ \t]*$/gm;
         const foldBlocks = [];
@@ -454,6 +497,7 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
             const { text: restoredContentProt, prot: foldWikiLinkProt } = protectWikiLinks(restoredContent);
             let rawContentHtml = (typeof marked !== 'undefined') ? marked.parse(restoredContentProt) : restoredContentProt;
             rawContentHtml = restoreWikiLinks(rawContentHtml, foldWikiLinkProt);
+            rawContentHtml = _replaceTaskCheckboxesWithIcons(rawContentHtml);
             rawContentHtml = rawContentHtml.replace(/<img([^>]*)>\s*\{size:([a-zA-Z0-9_-]+)\}/g, (_, attrs, size) => `<img${attrs} data-size="${size.trim()}">`);
             let contentHtml = (typeof DOMPurify !== 'undefined') ? DOMPurify.sanitize(rawContentHtml, { ADD_TAGS: ['i', 'span', 'details', 'summary'], ADD_ATTR: ['class', 'style', 'data-bg', 'data-color', 'data-size', 'data-unix', 'colspan', 'rowspan', 'title'] }) : escapeHtml(rawContentHtml);
 
@@ -476,6 +520,7 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
         const { text: preprocessedProt, prot: mainWikiLinkProt } = protectWikiLinks(preprocessed);
         let rawHtml = (typeof marked !== 'undefined') ? marked.parse(preprocessedProt) : preprocessedProt;
         rawHtml = restoreWikiLinks(rawHtml, mainWikiLinkProt);
+        rawHtml = _replaceTaskCheckboxesWithIcons(rawHtml);
         rawHtml = rawHtml.replace(/<img([^>]*)>\s*\{size:([a-zA-Z0-9_-]+)\}/g, (_, attrs, size) => `<img${attrs} data-size="${size.trim()}">`);
 
         // 블록 placeholder 를 HTML 로 치환 (재귀적으로 중첩 블록도 해결).
@@ -1118,6 +1163,15 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
 
         if (options.collapsibleSections) {
             makeCollapsibleSections(containerEl);
+            // 각주 목록은 섹션 외부(문서 최하단)에 위치해야 한다.
+            // processFootnotes가 먼저 실행되어 .wiki-footnotes가 containerEl 끝에 붙은 상태에서
+            // makeCollapsibleSections가 이를 마지막 헤딩 섹션 본문으로 함께 감싸면
+            // 마지막 섹션을 접을 때 각주까지 같이 접히는 문제가 발생하므로
+            // 래핑 이후 각주 컨테이너를 다시 containerEl 최하단으로 이동시킨다.
+            const footnotesEl = containerEl.querySelector('.wiki-footnotes');
+            if (footnotesEl && footnotesEl.parentElement !== containerEl) {
+                containerEl.appendChild(footnotesEl);
+            }
         }
 
         // 헤딩 복사 버튼 추가 (makeCollapsibleSections 이후에 실행하여 토글 아이콘 위치 인식)

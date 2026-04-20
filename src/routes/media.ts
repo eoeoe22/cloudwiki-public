@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import type { Env } from '../types';
 import { requireAuth, requirePermission } from '../middleware/session';
+import { fetchMediaTagMap, replaceMediaTags } from '../utils/mediaTags';
 
 const media = new Hono<Env>();
 
@@ -40,6 +41,50 @@ function validateUploadFilename(name: string): { ok: true; value: string } | { o
 }
 
 /**
+ * 태그 문자열 규칙: 카테고리와 동일 (한글/영숫자/공백/_/./-).
+ * 최대 20개, 각 50자 이내. trim, 중복 제거, 정규식 통과 항목만 유효.
+ */
+const TAG_VALID_RE = /^[가-힣a-zA-Z0-9 _.-]+$/;
+const TAG_MAX_COUNT = 20;
+const TAG_MAX_LENGTH = 50;
+
+function sanitizeTags(input: unknown): string[] {
+    let raw: unknown[] = [];
+    if (Array.isArray(input)) {
+        raw = input;
+    } else if (typeof input === 'string') {
+        const s = input.trim();
+        if (!s) return [];
+        // JSON 배열 문자열 지원
+        if (s.startsWith('[')) {
+            try {
+                const parsed = JSON.parse(s);
+                if (Array.isArray(parsed)) raw = parsed;
+            } catch { /* fallthrough to comma split */ }
+        }
+        if (raw.length === 0) {
+            raw = s.split(',');
+        }
+    } else {
+        return [];
+    }
+
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const item of raw) {
+        if (typeof item !== 'string') continue;
+        const trimmed = item.trim();
+        if (!trimmed || trimmed.length > TAG_MAX_LENGTH) continue;
+        if (!TAG_VALID_RE.test(trimmed)) continue;
+        if (seen.has(trimmed)) continue;
+        seen.add(trimmed);
+        out.push(trimmed);
+        if (out.length >= TAG_MAX_COUNT) break;
+    }
+    return out;
+}
+
+/**
  * POST /api/media
  * 이미지 업로드 (media:upload 권한 필요)
  * multipart/form-data, 필드명: file, filename (사용자 지정 파일명)
@@ -67,6 +112,10 @@ media.post('/api/media', requireAuth, requirePermission('media:upload'), async (
         return c.json({ error: validation.error }, 400);
     }
     const customFilename = validation.value;
+
+    // 태그 (선택). 문자열(JSON 배열 또는 쉼표구분) 또는 배열로 허용.
+    const rawTags = formData.get('tags');
+    const tags = sanitizeTags(rawTags);
 
     // 타입 검증
     if (!ALLOWED_TYPES.has(file.type)) {
@@ -115,16 +164,21 @@ media.post('/api/media', requireAuth, requirePermission('media:upload'), async (
 
     // DB 기록 (filename에 확장자 포함 최종 파일명 저장)
     const dbFilename = `${finalFilename}.${ext}`;
-    await c.env.DB.prepare(
+    const insertResult = await c.env.DB.prepare(
         'INSERT INTO media (r2_key, filename, mime_type, size, uploader_id, content) VALUES (?, ?, ?, ?, ?, ?)'
     )
         .bind(r2Key, dbFilename, file.type, file.size, user.id, '')
         .run();
 
+    const newMediaId = Number(insertResult.meta?.last_row_id ?? 0);
+    if (newMediaId && tags.length > 0) {
+        await replaceMediaTags(c.env.DB, newMediaId, tags);
+    }
+
     // 공개 URL 반환
     const publicUrl = `${c.env.MEDIA_PUBLIC_URL}/${r2Key}`;
 
-    return c.json({ url: publicUrl, r2_key: r2Key, filename: dbFilename });
+    return c.json({ url: publicUrl, r2_key: r2Key, filename: dbFilename, tags });
 });
 
 /**
@@ -139,27 +193,67 @@ media.get('/api/media/search', requireAuth, requirePermission('media:upload'), a
     const offset = Math.max(0, Number(c.req.query('offset')) || 0);
     const search = (c.req.query('q') || '').trim();
 
-    const where: string[] = [`mime_type LIKE 'image/%'`];
+    // 태그 필터: tags=쉼표구분 또는 tag=단일. 모두 정제 후 AND 매칭.
+    const rawTagInput = c.req.query('tags') ?? c.req.query('tag') ?? '';
+    const filterTags = sanitizeTags(rawTagInput);
+
+    const where: string[] = [`m.mime_type LIKE 'image/%'`];
     const params: any[] = [];
     if (search) {
-        where.push('filename LIKE ?');
+        where.push('m.filename LIKE ?');
         params.push(`%${search}%`);
     }
-    const whereSql = `WHERE ${where.join(' AND ')}`;
 
-    const listSql = `SELECT id, r2_key, filename, mime_type, size, created_at
-                     FROM media ${whereSql}
-                     ORDER BY created_at DESC
-                     LIMIT ? OFFSET ?`;
-    const countSql = `SELECT COUNT(*) as count FROM media ${whereSql}`;
+    let listSql: string;
+    let countSql: string;
+    let listParams: any[];
+    let countParams: any[];
+
+    if (filterTags.length > 0) {
+        // 태그 AND 매칭: 모든 태그를 만족하는 media만 (COUNT DISTINCT = 요청 태그 수)
+        const tagPlaceholders = filterTags.map(() => '?').join(',');
+        const tagJoin = `JOIN media_tags mt ON mt.media_id = m.id AND mt.tag IN (${tagPlaceholders})`;
+        const groupHaving = `GROUP BY m.id HAVING COUNT(DISTINCT mt.tag) = ?`;
+        const whereSql = `WHERE ${where.join(' AND ')}`;
+
+        listSql = `SELECT m.id, m.r2_key, m.filename, m.mime_type, m.size, m.created_at
+                   FROM media m ${tagJoin}
+                   ${whereSql}
+                   ${groupHaving}
+                   ORDER BY m.created_at DESC
+                   LIMIT ? OFFSET ?`;
+        listParams = [...filterTags, ...params, filterTags.length, limit, offset];
+
+        countSql = `SELECT COUNT(*) as count FROM (
+                      SELECT m.id FROM media m ${tagJoin}
+                      ${whereSql}
+                      ${groupHaving}
+                    ) sub`;
+        countParams = [...filterTags, ...params, filterTags.length];
+    } else {
+        const whereSql = `WHERE ${where.join(' AND ')}`;
+        listSql = `SELECT m.id, m.r2_key, m.filename, m.mime_type, m.size, m.created_at
+                   FROM media m ${whereSql}
+                   ORDER BY m.created_at DESC
+                   LIMIT ? OFFSET ?`;
+        listParams = [...params, limit, offset];
+
+        countSql = `SELECT COUNT(*) as count FROM media m ${whereSql}`;
+        countParams = [...params];
+    }
 
     const [listResult, countResult] = await Promise.all([
-        db.prepare(listSql).bind(...params, limit, offset).all(),
-        db.prepare(countSql).bind(...params).first<{ count: number }>(),
+        db.prepare(listSql).bind(...listParams).all(),
+        db.prepare(countSql).bind(...countParams).first<{ count: number }>(),
     ]);
 
+    const rows = (listResult.results || []) as Array<{
+        id: number; r2_key: string; filename: string; mime_type: string; size: number; created_at: number;
+    }>;
+    const tagMap = await fetchMediaTagMap(db, rows.map(r => r.id));
+
     const publicBase = c.env.MEDIA_PUBLIC_URL;
-    const items = (listResult.results || []).map((m: any) => ({
+    const items = rows.map(m => ({
         id: m.id,
         r2_key: m.r2_key,
         filename: m.filename,
@@ -167,9 +261,34 @@ media.get('/api/media/search', requireAuth, requirePermission('media:upload'), a
         size: m.size,
         created_at: m.created_at,
         url: `${publicBase}/${m.r2_key}`,
+        tags: tagMap.get(m.id) || [],
     }));
 
     return c.json({ items, total: countResult?.count || 0 });
+});
+
+/**
+ * GET /api/media/search-tags
+ * 태그 자동완성(최대 8개). 업로드/검색 모달에서 호출된다.
+ */
+media.get('/api/media/search-tags', requireAuth, requirePermission('media:upload'), async (c) => {
+    const db = c.env.DB;
+    const q = (c.req.query('q') || '').trim();
+
+    let rows: { tag: string }[];
+    if (q.length > 0) {
+        const { results } = await db
+            .prepare('SELECT DISTINCT tag FROM media_tags WHERE tag >= ? AND tag < ? ORDER BY tag ASC LIMIT 8')
+            .bind(q, `${q}\uffff`)
+            .all<{ tag: string }>();
+        rows = results;
+    } else {
+        const { results } = await db
+            .prepare('SELECT DISTINCT tag FROM media_tags ORDER BY tag ASC LIMIT 8')
+            .all<{ tag: string }>();
+        rows = results;
+    }
+    return c.json({ results: rows.map(r => r.tag) });
 });
 
 /**
@@ -196,6 +315,8 @@ media.get('/api/media/doc/:filename', async (c) => {
         return c.json({ error: '이미지를 찾을 수 없습니다.' }, 404);
     }
 
+    const tagMap = await fetchMediaTagMap(c.env.DB, [row.id]);
+
     return c.json({
         id: row.id,
         r2_key: row.r2_key,
@@ -206,6 +327,7 @@ media.get('/api/media/doc/:filename', async (c) => {
         created_at: row.created_at,
         uploader_name: row.uploader_name,
         url: `/media/${row.r2_key}`,
+        tags: tagMap.get(row.id) || [],
     });
 });
 
@@ -217,7 +339,7 @@ media.get('/api/media/doc/:filename', async (c) => {
  */
 media.put('/api/media/doc/:filename', requireAuth, requirePermission('wiki:edit'), async (c) => {
     const filename = c.req.param('filename');
-    let body: { content?: string };
+    let body: { content?: string; tags?: unknown };
     try {
         body = await c.req.json();
     } catch {
@@ -238,6 +360,12 @@ media.put('/api/media/doc/:filename', requireAuth, requirePermission('wiki:edit'
 
     await c.env.DB.prepare('UPDATE media SET content = ? WHERE id = ?')
         .bind(content, row.id).run();
+
+    // 태그 필드가 요청에 포함된 경우에만 교체. (undefined면 기존 태그 유지)
+    if (body.tags !== undefined) {
+        const tags = sanitizeTags(body.tags);
+        await replaceMediaTags(c.env.DB, row.id, tags);
+    }
 
     // /w/이미지:파일명 SSR 캐시 및 /api/w/이미지:파일명 API 캐시 무효화
     const cache = caches.default;

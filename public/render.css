@@ -831,6 +831,42 @@
 }
 
 
+/* ── 체크박스 (Task List) ── */
+.wiki-content input[type="checkbox"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 0.95em;
+  height: 0.95em;
+  border: 1.5px solid var(--wiki-border);
+  border-radius: 3px;
+  display: inline-block;
+  vertical-align: middle;
+  margin-right: 0.3em;
+  position: relative;
+  flex-shrink: 0;
+  cursor: default;
+  background: transparent;
+  opacity: 1;
+}
+
+.wiki-content input[type="checkbox"][checked] {
+  background: #22c55e;
+  border-color: #22c55e;
+}
+
+.wiki-content input[type="checkbox"][checked]::after {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: -1px;
+  width: 5px;
+  height: 9px;
+  border: 1.5px solid #fff;
+  border-top: none;
+  border-left: none;
+  transform: rotate(45deg);
+}
+
 /* 익스텐션 경고/에러 메시지 */
 .wiki-ext .alert {
   margin: 1rem 0;
@@ -936,6 +972,28 @@
   line-height: 1.7;
 }
 
+/* 이미지 문서 하단 태그 배지 영역 */
+.wiki-image-doc-tags {
+  margin-top: 0.75rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.wiki-image-doc-tags-label {
+  font-size: 0.85rem;
+  margin-right: 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.wiki-image-doc-tags-empty {
+  font-size: 0.85rem;
+  font-style: italic;
+}
+
 /* 본문 내 이미지 링크 (클릭 시 이미지 문서로 이동) */
 .wiki-image-link {
   display: inline-block;
@@ -945,15 +1003,6 @@
 
 .wiki-image-link:hover img {
   opacity: 0.92;
-}
-
-/* 검색 결과 내 이미지 썸네일 */
-.search-image-thumb {
-  width: 96px;
-  height: 96px;
-  object-fit: cover;
-  border-radius: 6px;
-  flex-shrink: 0;
 }
 
 .wiki-ext-raw-editor-badge {
@@ -1151,10 +1200,32 @@ body.raw-mode .wiki-content-raw {
 
 .wiki-row {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: flex-start;
   gap: 0.75rem;
   margin-bottom: 1rem;
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.wiki-row > * {
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+/* 행 내부의 표는 기본 반응형 동작을 유지하면서 자연 너비로 나란히 배치 */
+.wiki-content .wiki-row table {
+  width: auto;
+  max-width: none;
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+/* 행 내부의 카드는 고정 너비로 나란히 배치, 여백 중복 제거 */
+.wiki-row > .wiki-card {
+  flex: 0 0 280px;
+  margin-bottom: 0;
 }
 
 .wiki-stat {

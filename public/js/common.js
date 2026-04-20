@@ -3,6 +3,16 @@
  * 모든 페이지에서 공통으로 사용되는 함수와 변수를 모아놓은 파일입니다.
  */
 
+// ── 테마 초기화 (body 내 fallback, head의 인라인 스크립트가 먼저 실행됨) ──
+(function () {
+    try {
+        var saved = localStorage.getItem('themeMode') || 'auto';
+        if (saved === 'light' || saved === 'dark') {
+            document.documentElement.setAttribute('data-theme', saved);
+        }
+    } catch (e) { /* 스토리지 접근 불가 시 auto 테마 유지 */ }
+})();
+
 // ── 전역 변수 ──
 var appConfig = { wikiName: 'CloudWiki' };
 var currentUser = null;
@@ -172,6 +182,194 @@ function escapeHtml(str) {
         .replace(/'/g, '&#039;');
 }
 
+// ── 미디어 태그 입력 위젯 (카테고리 입력과 동일한 UX) ──
+// 컨테이너에 버블 UI + 자동완성(/api/media/search-tags)을 장착한다.
+// 업로드 모달, 이미지 검색 모달, 이미지 문서 편집 모달에서 공통 사용한다.
+const MEDIA_TAG_VALID_RE = /^[가-힣a-zA-Z0-9 _.-]+$/;
+function mountMediaTagInput({ container, input, initial }) {
+    const tags = Array.isArray(initial) ? initial.slice() : [];
+
+    const ac = document.createElement('div');
+    ac.className = 'list-group';
+    ac.style.cssText = 'position:absolute; display:none; z-index:10000; background:var(--wiki-bg,#fff); border:1px solid var(--wiki-border,#ddd); border-radius:4px; box-shadow:0 4px 12px rgba(0,0,0,0.15); max-height:240px; overflow-y:auto;';
+    document.body.appendChild(ac);
+
+    let acResults = [];
+    let acSelected = -1;
+    let acDebounce = null;
+    let lastQ = null;
+
+    function positionAc() {
+        const rect = container.getBoundingClientRect();
+        ac.style.left = (rect.left + window.scrollX) + 'px';
+        ac.style.top = (rect.bottom + window.scrollY + 2) + 'px';
+        ac.style.width = rect.width + 'px';
+    }
+    function hideAc() { ac.style.display = 'none'; acResults = []; acSelected = -1; lastQ = null; }
+
+    function render() {
+        container.querySelectorAll('.category-tag').forEach(el => el.remove());
+        tags.forEach((t, i) => {
+            const el = document.createElement('span');
+            el.className = 'category-tag';
+            const textSpan = document.createElement('span');
+            textSpan.textContent = t;
+            const close = document.createElement('i');
+            close.className = 'mdi mdi-close';
+            close.style.cursor = 'pointer';
+            close.addEventListener('click', (e) => { e.stopPropagation(); tags.splice(i, 1); render(); onChange(); });
+            el.appendChild(textSpan);
+            el.appendChild(document.createTextNode(' '));
+            el.appendChild(close);
+            container.insertBefore(el, input);
+        });
+    }
+
+    function showTagWarning(title, text) {
+        if (typeof Swal !== 'undefined' && Swal && typeof Swal.fire === 'function') {
+            Swal.fire({ icon: 'warning', title, text, toast: true, position: 'top-end', timer: 2000, showConfirmButton: false });
+        }
+    }
+
+    function addTag(raw) {
+        const t = String(raw || '').trim();
+        if (!t) return false;
+        if (t.length > 50) {
+            showTagWarning('태그 길이 초과', '태그는 최대 50자까지 입력할 수 있습니다.');
+            return false;
+        }
+        if (!MEDIA_TAG_VALID_RE.test(t)) {
+            showTagWarning('특수문자 제외', '특수문자를 제외한 태그명을 입력해 주세요.');
+            return false;
+        }
+        if (tags.includes(t)) return false;
+        if (tags.length >= 20) {
+            showTagWarning('태그 개수 초과', '태그는 최대 20개까지 추가할 수 있습니다.');
+            return false;
+        }
+        tags.push(t);
+        render();
+        onChange();
+        return true;
+    }
+
+    async function fetchAc(q) {
+        if (q === lastQ) return;
+        lastQ = q;
+        const requestQ = q;
+        try {
+            const res = await fetch(`/api/media/search-tags?q=${encodeURIComponent(q)}`);
+            if (!res.ok) return;
+            // Discard stale responses if the query changed while awaiting
+            if (requestQ !== lastQ) return;
+            const data = await res.json();
+            acResults = (data.results || []).filter(r => !tags.includes(r));
+            renderAc();
+        } catch (_) { /* ignore */ }
+    }
+    function renderAc() {
+        if (acResults.length === 0) { hideAc(); return; }
+        positionAc();
+        ac.style.display = 'block';
+        ac.innerHTML = '';
+        acResults.forEach((tag, idx) => {
+            const row = document.createElement('div');
+            row.className = 'list-group-item tag-ac-item';
+            row.style.cssText = 'cursor:pointer; padding:6px 12px; display:flex; align-items:center; gap:6px;';
+            row.innerHTML = '<i class="mdi mdi-tag-outline"></i>';
+            const span = document.createElement('span');
+            span.textContent = tag;
+            row.appendChild(span);
+            row.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                addTag(tag);
+                input.value = '';
+                hideAc();
+                input.focus();
+            });
+            ac.appendChild(row);
+        });
+        acSelected = -1;
+    }
+    function highlightAc() {
+        const items = ac.querySelectorAll('.tag-ac-item');
+        items.forEach((el, i) => {
+            if (i === acSelected) { el.classList.add('active'); el.scrollIntoView({ block: 'nearest' }); }
+            else el.classList.remove('active');
+        });
+    }
+
+    function showAcForQuery(q) {
+        positionAc();
+        if (acDebounce) clearTimeout(acDebounce);
+        acDebounce = setTimeout(() => fetchAc(q), 200);
+    }
+
+    input.addEventListener('keydown', (e) => {
+        if (e.isComposing) return;
+        if (ac.style.display !== 'none' && acResults.length > 0) {
+            if (e.key === 'ArrowDown') { e.preventDefault(); acSelected = (acSelected + 1) % acResults.length; highlightAc(); return; }
+            if (e.key === 'ArrowUp') { e.preventDefault(); acSelected = (acSelected - 1 + acResults.length) % acResults.length; highlightAc(); return; }
+            if (e.key === 'Escape') { e.preventDefault(); hideAc(); return; }
+            if (e.key === 'Enter' && acSelected >= 0) {
+                e.preventDefault(); addTag(acResults[acSelected]); input.value = ''; hideAc(); return;
+            }
+        }
+        if (e.key === 'Enter' || e.key === ',') {
+            e.preventDefault();
+            if (input.value.trim()) {
+                input.value.split(',').forEach(t => addTag(t));
+                input.value = '';
+                hideAc();
+            }
+        } else if (e.key === 'Backspace' && input.value === '') {
+            if (tags.length > 0) { tags.pop(); render(); onChange(); }
+        }
+    });
+
+    input.addEventListener('input', () => {
+        if (input.value.includes(',')) {
+            const parts = input.value.split(',');
+            const last = parts.pop();
+            parts.forEach(t => addTag(t));
+            input.value = last;
+            hideAc();
+            return;
+        }
+        showAcForQuery(input.value.trim());
+    });
+
+    input.addEventListener('blur', () => {
+        setTimeout(() => {
+            hideAc();
+            if (input.value.trim()) {
+                input.value.split(',').forEach(t => addTag(t));
+                input.value = '';
+            }
+        }, 150);
+    });
+
+    container.addEventListener('click', (e) => {
+        if (e.target === container) input.focus();
+    });
+
+    let onChange = () => {};
+
+    render();
+
+    return {
+        getTags: () => tags.slice(),
+        flush: () => {
+            if (input.value.trim()) {
+                input.value.split(',').forEach(t => addTag(t));
+                input.value = '';
+            }
+        },
+        setOnChange: (fn) => { onChange = typeof fn === 'function' ? fn : () => {}; },
+        destroy: () => { if (acDebounce) clearTimeout(acDebounce); hideAc(); ac.remove(); },
+    };
+}
+
 // ── 검색 ──
 function doSearch(e) {
     e.preventDefault();
@@ -179,6 +377,50 @@ function doSearch(e) {
     if (q) {
         window.location.href = `/search?q=${encodeURIComponent(q)}&mode=content`;
     }
+}
+
+// ── 테마 관리 ──
+function applyThemeClass(mode) {
+    if (mode === 'light' || mode === 'dark') {
+        document.documentElement.setAttribute('data-theme', mode);
+    } else {
+        document.documentElement.removeAttribute('data-theme');
+    }
+}
+
+function setTheme(mode) {
+    var validModes = ['light', 'dark', 'auto'];
+    if (validModes.indexOf(mode) === -1) mode = 'auto';
+    try {
+        localStorage.setItem('themeMode', mode);
+    } catch (e) { /* 스토리지 접근 불가 시 무시 */ }
+    applyThemeClass(mode);
+    updateThemeToggleUI(mode);
+}
+
+function getCurrentTheme() {
+    try { return localStorage.getItem('themeMode') || 'auto'; } catch (e) { return 'auto'; }
+}
+
+function cycleTheme() {
+    var order = ['auto', 'light', 'dark'];
+    var curr = getCurrentTheme();
+    var next = order[(order.indexOf(curr) + 1) % order.length];
+    setTheme(next);
+}
+
+function updateThemeToggleUI(mode) {
+    if (!mode) mode = getCurrentTheme();
+    var icons = { auto: 'mdi-theme-light-dark', light: 'mdi-white-balance-sunny', dark: 'mdi-moon-waning-crescent' };
+    var labels = { auto: '테마: 자동 (클릭 시 라이트)', light: '테마: 라이트 (클릭 시 다크)', dark: '테마: 다크 (클릭 시 자동)' };
+    document.querySelectorAll('#navThemeIcon').forEach(function (el) {
+        el.classList.remove('mdi-theme-light-dark', 'mdi-white-balance-sunny', 'mdi-moon-waning-crescent');
+        el.classList.add(icons[mode] || icons.auto);
+    });
+    document.querySelectorAll('#navThemeToggle').forEach(function (el) {
+        el.setAttribute('title', labels[mode] || labels.auto);
+        el.setAttribute('aria-label', labels[mode] || labels.auto);
+    });
 }
 
 // ── 랜덤 문서 ──
@@ -278,6 +520,9 @@ async function loadConfig() {
     }
     // 레이아웃 컴포넌트(헤더/사이드바)가 비어있으면 클라이언트에서 로드 시도 (SSR 누락 대비)
     await ensureLayoutComponents();
+
+    // 테마 토글 UI 업데이트 (헤더 주입 후)
+    updateThemeToggleUI();
 
     // 전역 인증 상태 동기화 (레이아웃 주입 여부와 상관없이 항상 수행)
     await checkAuth();

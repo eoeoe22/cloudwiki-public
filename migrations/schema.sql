@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS pages (
 
 CREATE INDEX IF NOT EXISTS idx_pages_updated ON pages(updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_pages_author ON pages(author_id);
+CREATE INDEX IF NOT EXISTS idx_pages_deleted_private ON pages(deleted_at, is_private);
 
 -- 리비전 테이블
 -- content: 본문이 직접 저장되거나, r2_key가 있으면 R2에서 조회.
@@ -84,6 +85,15 @@ CREATE TABLE IF NOT EXISTS media (
 );
 CREATE INDEX IF NOT EXISTS idx_media_uploader ON media(uploader_id);
 CREATE INDEX IF NOT EXISTS idx_media_filename ON media(filename);
+
+-- 미디어-태그 테이블 (이미지 1개에 태그 N개)
+CREATE TABLE IF NOT EXISTS media_tags (
+  media_id INTEGER NOT NULL,
+  tag      TEXT NOT NULL,
+  PRIMARY KEY (media_id, tag),
+  FOREIGN KEY (media_id) REFERENCES media(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_media_tags_tag ON media_tags(tag);
 
 -- FTS5 검색 가상 테이블
 CREATE VIRTUAL TABLE IF NOT EXISTS pages_fts

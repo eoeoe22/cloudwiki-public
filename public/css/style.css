@@ -37,6 +37,8 @@
   --wiki-glass-bg: rgba(255, 255, 255, 0.75);
   --wiki-glass-border: rgba(255, 255, 255, 0.5);
   --wiki-glass-blur: blur(16px);
+
+  color-scheme: light;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -78,7 +80,72 @@
     --wiki-glass-bg: rgba(24, 24, 27, 0.75);
     --wiki-glass-border: rgba(255, 255, 255, 0.05);
     --wiki-glass-blur: blur(16px);
+
+    color-scheme: dark;
   }
+}
+
+/* ── 강제 라이트/다크 테마 ── */
+html[data-theme="light"] {
+  --wiki-bg: #F8F9FF;
+  --wiki-card-bg: #FFFFFF;
+  --wiki-text: #1f2937;
+  --wiki-text-muted: #6b7280;
+  --wiki-border: #E2E8F0;
+  --wiki-border-focus: #0ea5e9;
+  --wiki-hr-color: #cbd5e1;
+  --wiki-primary: #006591;
+  --wiki-primary-hover: #004c6e;
+  --wiki-accent: #8B5CF6;
+  --wiki-success: #10B981;
+  --wiki-warning: #F59E0B;
+  --wiki-danger: #EF4444;
+  --wiki-code-bg: #f8fafc;
+  --wiki-toc-bg: rgba(255, 255, 255, 0.6);
+  --wiki-btn-text: #ffffff;
+  --wiki-diff-add-bg: #dcfce7;
+  --wiki-diff-add-text: #166534;
+  --wiki-diff-del-bg: #fee2e2;
+  --wiki-diff-del-text: #991b1b;
+  --wiki-shadow-sm: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  --wiki-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  --wiki-shadow-md: 0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -4px rgba(0, 0, 0, 0.05);
+  --wiki-shadow-lg: 0 20px 25px -5px rgba(0, 0, 0, 0.05), 0 8px 10px -6px rgba(0, 0, 0, 0.05);
+  --wiki-glass-bg: rgba(255, 255, 255, 0.75);
+  --wiki-glass-border: rgba(255, 255, 255, 0.5);
+  --wiki-glass-blur: blur(16px);
+  color-scheme: light;
+}
+
+html[data-theme="dark"] {
+  --wiki-bg: #09090B;
+  --wiki-card-bg: #18181B;
+  --wiki-text: #f4f4f5;
+  --wiki-text-muted: #a1a1aa;
+  --wiki-border: #27272A;
+  --wiki-border-focus: #38bdf8;
+  --wiki-hr-color: #3f3f46;
+  --wiki-primary: #38BDF8;
+  --wiki-primary-hover: #7dd3fc;
+  --wiki-accent: #8B5CF6;
+  --wiki-success: #10B981;
+  --wiki-warning: #F59E0B;
+  --wiki-danger: #EF4444;
+  --wiki-code-bg: #27272a;
+  --wiki-toc-bg: rgba(24, 24, 27, 0.6);
+  --wiki-btn-text: #09090b;
+  --wiki-diff-add-bg: rgba(16, 185, 129, 0.2);
+  --wiki-diff-add-text: #a7f3d0;
+  --wiki-diff-del-bg: rgba(239, 68, 68, 0.2);
+  --wiki-diff-del-text: #fecaca;
+  --wiki-shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.5);
+  --wiki-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5), 0 2px 4px -2px rgba(0, 0, 0, 0.5);
+  --wiki-shadow-md: 0 10px 15px -3px rgba(0, 0, 0, 0.5), 0 4px 6px -4px rgba(0, 0, 0, 0.5);
+  --wiki-shadow-lg: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.5);
+  --wiki-glass-bg: rgba(24, 24, 27, 0.75);
+  --wiki-glass-border: rgba(255, 255, 255, 0.05);
+  --wiki-glass-blur: blur(16px);
+  color-scheme: dark;
 }
 
 * {
@@ -685,12 +752,26 @@ div:where(.swal2-container) .swal2-html-container {
 }
 
 .user-avatar {
-  width: 36px;
-  height: 36px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
   border: 1px solid var(--wiki-border);
   box-shadow: none;
-  margin-right: 8px;
+  margin-right: 0;
+}
+
+#navLogin i {
+  font-size: 1.3rem;
+}
+
+/* ── 테마 토글 ── */
+.theme-toggle-btn i {
+  font-size: 1.3rem;
+}
+
+.theme-option.active {
+  color: var(--wiki-primary);
+  font-weight: 600;
 }
 
 /* ── Main Layout (Sidebar + Content) ── */
@@ -1133,6 +1214,41 @@ div:where(.swal2-container) .swal2-html-container {
 .search-result-item h4 a {
   color: var(--wiki-primary);
   font-weight: 700;
+}
+
+/* 검색 결과 내 이미지 썸네일: 고정 정사각형에 이미지 비율 보존 */
+.search-image-thumb {
+  width: 96px;
+  height: 96px;
+  object-fit: contain;
+  background: var(--wiki-bg);
+  border: 1px solid var(--wiki-border);
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+
+@media (max-width: 575.98px) {
+  .search-image-thumb {
+    width: 72px;
+    height: 72px;
+  }
+}
+
+/* 검색 결과 본문 영역: flex 자식이 내용 크기보다 작게 줄어들 수 있도록 min-width:0.
+   긴 파일명/URL 이 줄바꿈되도록 overflow-wrap 을 내부 자손(제목/링크/스니펫)에도 강제. */
+.search-result-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.search-result-body h4,
+.search-result-body h4 a,
+.search-result-body .snippet {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  min-width: 0;
 }
 
 /* ── Nav Tabs (위키 스타일 통합) ── */

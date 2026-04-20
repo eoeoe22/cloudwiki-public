@@ -356,7 +356,10 @@ const COLOR_SWATCHES = [
 
 // ── 다크모드 감지 유틸리티 ──
 function getIsDarkMode() {
-    return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+    const themeAttr = document.documentElement.getAttribute('data-theme');
+    if (themeAttr === 'dark') return true;
+    if (themeAttr === 'light') return false;
+    return !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
 }
 
 // ── 커서 위치 기반 드롭다운 포지셔닝 공통 함수 ──
@@ -1411,6 +1414,8 @@ const paletteAc = {
     selectedIndex: -1,
     query: '',
     div: document.getElementById('palette-autocomplete'),
+    // 배지 클릭으로 열린 경우에 설정: 치환할 정확한 문서 범위 {from, to}
+    replaceRange: null,
 };
 
 function getAllPalettesForEditor() {
@@ -1436,11 +1441,13 @@ function hidePaletteAutocomplete() {
     paletteAc.visible = false;
     paletteAc.results = [];
     paletteAc.selectedIndex = -1;
+    paletteAc.replaceRange = null;
     if (paletteAc.div) paletteAc.div.style.display = 'none';
 }
 
-function showPaletteAutocomplete(query) {
-    paletteAc.query = (query || '').toLowerCase();
+function showPaletteAutocomplete(query, opts) {
+    const showAll = !!(opts && opts.showAll);
+    paletteAc.query = showAll ? '' : (query || '').toLowerCase();
     paletteAc.visible = true;
 
     positionDropdownAtCursor(paletteAc.div, 280);
@@ -1529,6 +1536,23 @@ function highlightPaletteAcItem() {
 function selectPaletteAutocomplete(index) {
     const item = paletteAc.results[index];
     if (!item || !editor) return;
+
+    // 배지 클릭으로 열린 경우: 저장된 정확한 범위만 치환하여 중괄호 중첩 방지
+    if (paletteAc.replaceRange && window._cmView) {
+        const view = window._cmView;
+        const { from, to } = paletteAc.replaceRange;
+        const insert = `{palette:${item.name}}`;
+        const docLen = view.state.doc.length;
+        const safeFrom = Math.max(0, Math.min(from, docLen));
+        const safeTo = Math.max(safeFrom, Math.min(to, docLen));
+        view.dispatch({
+            changes: { from: safeFrom, to: safeTo, insert },
+            selection: { anchor: safeFrom + insert.length }
+        });
+        hidePaletteAutocomplete();
+        view.focus();
+        return;
+    }
 
     const selection = editor.getSelection();
     if (!selection) { hidePaletteAutocomplete(); return; }
@@ -2062,7 +2086,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         let _scrollSyncEnabled = false;
 
         // 다크모드 감지
-        const isDarkMode = getIsDarkMode();
+        let isDarkMode = getIsDarkMode();
 
         // ── 에디터 설정 (localStorage에서 불러오기) ──
         const editorSettings = {
@@ -2078,6 +2102,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         const lineWrappingCompartment = new Compartment();
         const syntaxHighlightCompartment = new Compartment();
         const advancedEditCompartment = new Compartment();
+        const themeCompartment = new Compartment();
+        const darkBgCompartment = new Compartment();
 
         // ── 마크다운 문법 하이라이트 스타일 ──
         const markdownLightStyle = HighlightStyle.define([
@@ -2184,7 +2210,13 @@ document.addEventListener('DOMContentLoaded', async () => {
             ".cm-foldGutter .cm-gutterElement": { padding: "0 4px" },
         }, { dark: false });
 
-        const themeExtension = isDarkMode ? oneDark : lightTheme;
+        const buildDarkBgExt = () => isDarkMode ? EditorView.theme({
+            "&": { height: "100%", fontSize: "14px", backgroundColor: "#000000" },
+            ".cm-scroller": { overflow: "auto" },
+            ".cm-content": { paddingBottom: "25vh" },
+            ".cm-gutters": { backgroundColor: "#000000", borderRight: "1px solid #333" },
+            ".cm-activeLineGutter": { backgroundColor: "#2d2d2d" }
+        }) : [];
 
         // ── 위키 문법 에디터 내 하이라이팅 플러그인 ──
         const makePlugin = (matcher) => ViewPlugin.fromClass(class {
@@ -2506,17 +2538,55 @@ document.addEventListener('DOMContentLoaded', async () => {
                         } else {
                             const match = text.match(/\{palette:\s*([^}]+)\}/);
                             if (match) {
-                                const name = (match[1] || '').trim();
                                 const pos = view.posAtDOM(target);
                                 if (pos !== null) {
-                                    const endPos = pos + text.length;
-                                    view.dispatch({ selection: { anchor: endPos } });
+                                    // posAtDOM이 요소 기준으로 오프셋이 어긋날 수 있어,
+                                    // 클릭한 배지의 textContent와 동일한 토큰 중 pos에 가장 가까운 것을 택한다.
+                                    // 같은 라인에 {palette:a}{palette:b} 처럼 인접 토큰이 있을 때
+                                    // 경계 허용치 때문에 이전 토큰이 잘못 매칭되던 문제 방지.
+                                    const line = view.state.doc.lineAt(pos);
+                                    const relPos = pos - line.from;
+                                    const tokenRegex = /\{palette:\s*[^}]+\}/g;
+                                    let tokenFrom = -1;
+                                    let tokenTo = -1;
+                                    let bestDist = Infinity;
+                                    let m;
+                                    while ((m = tokenRegex.exec(line.text)) !== null) {
+                                        if (m[0] !== text) continue;
+                                        const start = m.index;
+                                        const end = start + m[0].length;
+                                        // 클릭 위치가 토큰 내부면 거리 0, 아니면 가장 가까운 끝까지의 거리
+                                        const dist = relPos < start ? start - relPos
+                                            : relPos > end ? relPos - end
+                                            : 0;
+                                        if (dist < bestDist) {
+                                            bestDist = dist;
+                                            tokenFrom = line.from + start;
+                                            tokenTo = line.from + end;
+                                            if (dist === 0) break;
+                                        }
+                                    }
+                                    if (tokenFrom === -1) {
+                                        // 폴백: 기존 추정치 사용
+                                        tokenFrom = pos;
+                                        tokenTo = pos + text.length;
+                                    }
+                                    const docLength = view.state.doc.length;
+                                    tokenFrom = Math.max(0, Math.min(tokenFrom, docLength));
+                                    tokenTo = Math.max(0, Math.min(tokenTo, docLength));
+                                    if (tokenFrom > tokenTo) {
+                                        const tmp = tokenFrom;
+                                        tokenFrom = tokenTo;
+                                        tokenTo = tmp;
+                                    }
+                                    view.dispatch({ selection: { anchor: tokenTo } });
                                     if (typeof hideAutocomplete === 'function') hideAutocomplete();
                                     if (typeof hideIconAutocomplete === 'function') hideIconAutocomplete();
                                     if (typeof hideColorAutocomplete === 'function') hideColorAutocomplete();
                                     if (typeof hideTimestampAutocomplete === 'function') hideTimestampAutocomplete();
                                     if (typeof hideImgSizeAutocomplete === 'function') hideImgSizeAutocomplete();
-                                    showPaletteAutocomplete(name);
+                                    paletteAc.replaceRange = { from: tokenFrom, to: tokenTo };
+                                    showPaletteAutocomplete('', { showAll: true });
                                     return true;
                                 }
                             }
@@ -2569,15 +2639,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                         ...historyKeymap,
                         indentWithTab
                     ]),
-                    themeExtension,
-                    // 다크 모드에서도 높이/스크롤 보장 (oneDark는 이를 설정하지 않음) 및 전체 배경색 변경
-                    isDarkMode ? EditorView.theme({
-                        "&": { height: "100%", fontSize: "14px", backgroundColor: "#000000" },
-                        ".cm-scroller": { overflow: "auto" },
-                        ".cm-content": { paddingBottom: "25vh" },
-                        ".cm-gutters": { backgroundColor: "#000000", borderRight: "1px solid #333" },
-                        ".cm-activeLineGutter": { backgroundColor: "#2d2d2d" }
-                    }) : [],
+                    themeCompartment.of(isDarkMode ? oneDark : lightTheme),
+                    darkBgCompartment.of(buildDarkBgExt()),
                     lineWrappingCompartment.of(
                         editorSettings.wordWrap ? EditorView.lineWrapping : []
                     ),
@@ -2753,8 +2816,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-form-dropdown"></i>', '펼치기 접기', () => editor.insertText('[+ 펼치기/접기 제목]\n여기에 숨겨진 내용이 들어갑니다.\n[-]')));
         toolbar.appendChild(createToolbarBtn('<i class="bi bi-diagram-3-fill"></i>', '하위 문서', () => openSubdocInsertModal()));
         toolbar.appendChild(createToolbarSep());
-        toolbar.appendChild(createToolbarBtn('<i class="bi bi-card-heading"></i>', '카드 블록', () => editor.insertText(':::card 제목\n내용\n:::')));
-        toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-view-grid-outline"></i>', '그리드·스탯', () => editor.insertText(':::grid\n{stat:4|명작}\n{stat:1|평작}\n:::')));
+        toolbar.appendChild(createToolbarBtn('<i class="bi bi-card-heading"></i>', '카드 블록', () => openCardInsertModal()));
+        toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-view-grid-outline"></i>', '그리드·스탯', () => openGridStatInsertModal()));
         toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-label-outline"></i>', '배지', () => editor.insertText('{palette:primary}{badge:라벨}')));
         toolbar.appendChild(createToolbarSep());
         toolbar.appendChild(createToolbarBtn('<code>&lt;/&gt;</code>', '인라인 코드', () => wrapSelection('`', '`')));
@@ -3572,6 +3635,359 @@ document.addEventListener('DOMContentLoaded', async () => {
             });
         }
 
+        // ── 카드 블록 삽입 모달 (제목 + 제목/본문 팔레트 선택) ──
+        function openCardInsertModal() {
+            const palettes = getAllPalettesForEditor();
+
+            function paletteSwatchHtml(containerId) {
+                let html = `<div id="${containerId}" class="card-insert-palette-swatches">`;
+                html += `<button type="button" class="card-insert-palette-swatch" data-palette="" title="선택 안 함">
+                    <span class="card-insert-palette-swatch-none">없음</span>
+                </button>`;
+                for (const p of palettes) {
+                    const bg = _isSafeCssColor(p.variant.bg || '') ? p.variant.bg : 'transparent';
+                    const color = _isSafeCssColor(p.variant.color || '') ? p.variant.color : 'inherit';
+                    html += `<button type="button" class="card-insert-palette-swatch" data-palette="${escapeHtml(p.name)}" title="${escapeHtml(p.name)}" style="background:${bg};color:${color};">${escapeHtml(p.name)}</button>`;
+                }
+                html += `</div>`;
+                return html;
+            }
+
+            Swal.fire({
+                title: '<i class="bi bi-card-heading me-2"></i>카드 블록 삽입',
+                width: 560,
+                html: `
+                    <div class="text-start card-insert-form">
+                        <div class="mb-3">
+                            <label class="form-label" for="cardInsertTitle">제목</label>
+                            <input type="text" id="cardInsertTitle" class="form-control"
+                                placeholder="카드 제목" autocomplete="off"
+                                style="background:var(--wiki-bg);color:var(--wiki-text);border-color:var(--wiki-border);">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">제목 팔레트</label>
+                            <input type="hidden" id="cardInsertTitlePalette" value="">
+                            ${paletteSwatchHtml('cardInsertTitleSwatches')}
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label">내용 팔레트</label>
+                            <input type="hidden" id="cardInsertBodyPalette" value="">
+                            ${paletteSwatchHtml('cardInsertBodySwatches')}
+                        </div>
+                    </div>
+                `,
+                showCancelButton: true,
+                confirmButtonText: '삽입',
+                cancelButtonText: '취소',
+                didOpen: () => {
+                    const titleInput = document.getElementById('cardInsertTitle');
+                    if (titleInput) titleInput.focus();
+
+                    function wireSwatches(containerId, hiddenId) {
+                        const container = document.getElementById(containerId);
+                        const hidden = document.getElementById(hiddenId);
+                        if (!container || !hidden) return;
+                        const swatches = container.querySelectorAll('.card-insert-palette-swatch');
+                        function setActive(val) {
+                            hidden.value = val || '';
+                            swatches.forEach(sw => {
+                                sw.classList.toggle('active', (sw.dataset.palette || '') === (val || ''));
+                            });
+                        }
+                        setActive('');
+                        swatches.forEach(sw => {
+                            sw.addEventListener('click', (e) => {
+                                e.preventDefault();
+                                setActive(sw.dataset.palette || '');
+                            });
+                        });
+                    }
+                    wireSwatches('cardInsertTitleSwatches', 'cardInsertTitlePalette');
+                    wireSwatches('cardInsertBodySwatches', 'cardInsertBodyPalette');
+                },
+                preConfirm: () => {
+                    const title = (document.getElementById('cardInsertTitle').value || '')
+                        .replace(/[\r\n]+/g, ' ')
+                        .trim();
+                    const titlePalette = (document.getElementById('cardInsertTitlePalette').value || '').trim();
+                    const bodyPalette = (document.getElementById('cardInsertBodyPalette').value || '').trim();
+                    return { title, titlePalette, bodyPalette };
+                }
+            }).then(result => {
+                if (!result.isConfirmed || !result.value) return;
+                const { title, titlePalette, bodyPalette } = result.value;
+                let tokens = '';
+                if (titlePalette) tokens += `{palette:${titlePalette}}`;
+                if (bodyPalette) tokens += `{body-palette:${bodyPalette}}`;
+                const titlePart = tokens && title ? `${tokens} ${title}` : (tokens || title);
+                const header = titlePart ? `:::card ${titlePart}` : ':::card';
+                const body = '내용';
+                editor.insertText(`${header}\n${body}\n:::`);
+                if (typeof cmEditorView !== 'undefined' && cmEditorView) cmEditorView.focus();
+            });
+        }
+
+        // ── 그리드·스탯 삽입 모달 ──
+        function openGridStatInsertModal() {
+            const palettes = getAllPalettesForEditor();
+            const paletteByName = new Map();
+            for (const p of palettes) paletteByName.set(p.name, p);
+
+            function paletteSwatchesHtml() {
+                let html = `<button type="button" class="grid-stat-palette-swatch" data-palette="" title="선택 안 함">
+                    <span class="grid-stat-palette-swatch-none">없음</span>
+                </button>`;
+                for (const p of palettes) {
+                    const bg = _isSafeCssColor(p.variant.bg || '') ? p.variant.bg : 'transparent';
+                    const color = _isSafeCssColor(p.variant.color || '') ? p.variant.color : 'inherit';
+                    html += `<button type="button" class="grid-stat-palette-swatch" data-palette="${escapeHtml(p.name)}" title="${escapeHtml(p.name)}" style="background:${bg};color:${color};">${escapeHtml(p.name)}</button>`;
+                }
+                return html;
+            }
+
+            function updatePaletteBtnAppearance(btn, name) {
+                const p = paletteByName.get(name);
+                if (!p) {
+                    btn.style.background = '';
+                    btn.style.color = '';
+                    btn.innerHTML = `<span class="grid-stat-palette-btn-label grid-stat-palette-btn-none">팔레트 없음</span><i class="mdi mdi-chevron-down grid-stat-palette-btn-caret"></i>`;
+                    return;
+                }
+                const bg = _isSafeCssColor(p.variant.bg || '') ? p.variant.bg : 'transparent';
+                const color = _isSafeCssColor(p.variant.color || '') ? p.variant.color : 'inherit';
+                btn.style.background = bg;
+                btn.style.color = color;
+                btn.innerHTML = `<span class="grid-stat-palette-btn-label">${escapeHtml(p.name)}</span><i class="mdi mdi-chevron-down grid-stat-palette-btn-caret"></i>`;
+            }
+
+            const stats = [
+                { value: '', label: '', palette: '' },
+                { value: '', label: '', palette: '' },
+            ];
+
+            let popoverEl = null;
+            let openPopoverIdx = -1;
+            let outsideHandler = null;
+            let windowResizeHandler = null;
+
+            function closePopover() {
+                openPopoverIdx = -1;
+                if (popoverEl) popoverEl.style.display = 'none';
+            }
+
+            function positionPopover(btn) {
+                if (!popoverEl) return;
+                const rect = btn.getBoundingClientRect();
+                // CSS의 display: flex (wrap + gap) 레이아웃 유지: 'block'으로 덮어쓰지 않음
+                popoverEl.style.display = 'flex';
+                // 화면 아래 공간이 부족하면 위쪽으로 띄움
+                const popH = Math.min(popoverEl.offsetHeight || 240, 300);
+                const belowSpace = window.innerHeight - rect.bottom;
+                const top = belowSpace < popH + 12 && rect.top > popH + 12
+                    ? Math.max(8, rect.top - popH - 6)
+                    : rect.bottom + 4;
+                popoverEl.style.top = `${top}px`;
+                popoverEl.style.left = `${Math.max(8, rect.left)}px`;
+                popoverEl.style.minWidth = `${Math.max(200, rect.width)}px`;
+            }
+
+            function openPopover(idx, btn) {
+                if (!popoverEl) return;
+                openPopoverIdx = idx;
+                const currentVal = (stats[idx] && stats[idx].palette) || '';
+                popoverEl.querySelectorAll('.grid-stat-palette-swatch').forEach(sw => {
+                    sw.classList.toggle('active', (sw.dataset.palette || '') === currentVal);
+                });
+                positionPopover(btn);
+            }
+
+            function render() {
+                const list = document.getElementById('gridStatList');
+                if (!list) return;
+                list.innerHTML = '';
+                stats.forEach((s, i) => {
+                    const row = document.createElement('div');
+                    row.className = 'grid-stat-row';
+                    row.innerHTML = `
+                        <input type="text" class="form-control form-control-sm grid-stat-value" data-idx="${i}"
+                            placeholder="값" value="${escapeHtml(s.value)}"
+                            style="background:var(--wiki-bg);color:var(--wiki-text);border-color:var(--wiki-border);">
+                        <input type="text" class="form-control form-control-sm grid-stat-label" data-idx="${i}"
+                            placeholder="라벨" value="${escapeHtml(s.label)}"
+                            style="background:var(--wiki-bg);color:var(--wiki-text);border-color:var(--wiki-border);">
+                        <button type="button" class="grid-stat-palette-btn" data-idx="${i}"
+                            aria-haspopup="listbox" aria-expanded="false"></button>
+                        <button type="button" class="grid-stat-remove" data-idx="${i}" title="삭제">
+                            <i class="mdi mdi-close"></i>
+                        </button>
+                    `;
+                    list.appendChild(row);
+                    const paletteBtn = row.querySelector('.grid-stat-palette-btn');
+                    if (paletteBtn) updatePaletteBtnAppearance(paletteBtn, s.palette || '');
+                });
+
+                list.querySelectorAll('.grid-stat-value').forEach(el => {
+                    el.addEventListener('input', (e) => {
+                        const i = parseInt(e.target.dataset.idx, 10);
+                        if (!Number.isNaN(i) && stats[i]) stats[i].value = e.target.value;
+                    });
+                });
+                list.querySelectorAll('.grid-stat-label').forEach(el => {
+                    el.addEventListener('input', (e) => {
+                        const i = parseInt(e.target.dataset.idx, 10);
+                        if (!Number.isNaN(i) && stats[i]) stats[i].label = e.target.value;
+                    });
+                });
+                list.querySelectorAll('.grid-stat-palette-btn').forEach(el => {
+                    el.addEventListener('click', (e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        const i = parseInt(el.dataset.idx, 10);
+                        if (Number.isNaN(i)) return;
+                        if (openPopoverIdx === i) { closePopover(); return; }
+                        openPopover(i, el);
+                    });
+                });
+                list.querySelectorAll('.grid-stat-remove').forEach(el => {
+                    el.addEventListener('click', (e) => {
+                        const i = parseInt(e.currentTarget.dataset.idx, 10);
+                        if (!Number.isNaN(i)) {
+                            stats.splice(i, 1);
+                            if (stats.length === 0) stats.push({ value: '', label: '', palette: '' });
+                            closePopover();
+                            render();
+                        }
+                    });
+                });
+            }
+
+            Swal.fire({
+                title: '<i class="mdi mdi-view-grid-outline me-2"></i>그리드·스탯 삽입',
+                width: 640,
+                html: `
+                    <div class="text-start grid-stat-form">
+                        <p style="font-size:0.85rem;color:var(--wiki-text-muted);margin-bottom:10px;">
+                            그리드에 표시할 스탯 항목을 편집한 뒤 삽입하세요.
+                        </p>
+                        <div class="grid-stat-header">
+                            <span>값</span>
+                            <span>라벨</span>
+                            <span>팔레트</span>
+                            <span></span>
+                        </div>
+                        <div id="gridStatList" class="grid-stat-list"></div>
+                        <button type="button" id="gridStatAddBtn" class="grid-stat-add-btn">
+                            <i class="mdi mdi-plus"></i> 스탯 추가
+                        </button>
+                    </div>
+                `,
+                showCancelButton: true,
+                confirmButtonText: '삽입',
+                cancelButtonText: '취소',
+                didOpen: () => {
+                    // 팔레트 팝오버를 body에 부착 (모달 내 overflow 클리핑 방지)
+                    popoverEl = document.createElement('div');
+                    popoverEl.className = 'grid-stat-palette-popover';
+                    popoverEl.style.display = 'none';
+                    popoverEl.innerHTML = paletteSwatchesHtml();
+                    document.body.appendChild(popoverEl);
+
+                    popoverEl.querySelectorAll('.grid-stat-palette-swatch').forEach(sw => {
+                        sw.addEventListener('click', (e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            if (openPopoverIdx < 0 || !stats[openPopoverIdx]) { closePopover(); return; }
+                            const val = sw.dataset.palette || '';
+                            stats[openPopoverIdx].palette = val;
+                            const btn = document.querySelector(`.grid-stat-palette-btn[data-idx="${openPopoverIdx}"]`);
+                            if (btn) updatePaletteBtnAppearance(btn, val);
+                            closePopover();
+                        });
+                    });
+
+                    outsideHandler = (e) => {
+                        if (openPopoverIdx < 0) return;
+                        if (popoverEl && popoverEl.contains(e.target)) return;
+                        if (e.target.closest && e.target.closest('.grid-stat-palette-btn')) return;
+                        closePopover();
+                    };
+                    document.addEventListener('mousedown', outsideHandler, true);
+
+                    windowResizeHandler = () => {
+                        if (openPopoverIdx < 0) return;
+                        const btn = document.querySelector(`.grid-stat-palette-btn[data-idx="${openPopoverIdx}"]`);
+                        if (btn) positionPopover(btn);
+                        else closePopover();
+                    };
+                    window.addEventListener('resize', windowResizeHandler);
+                    document.querySelector('.swal2-container')?.addEventListener('scroll', windowResizeHandler, true);
+                    document.getElementById('gridStatList')?.addEventListener('scroll', windowResizeHandler, true);
+
+                    render();
+                    const firstInput = document.querySelector('#gridStatList .grid-stat-value');
+                    if (firstInput) firstInput.focus();
+                    const addBtn = document.getElementById('gridStatAddBtn');
+                    if (addBtn) {
+                        addBtn.addEventListener('click', (e) => {
+                            e.preventDefault();
+                            closePopover();
+                            stats.push({ value: '', label: '', palette: '' });
+                            render();
+                        });
+                    }
+                },
+                willClose: () => {
+                    if (outsideHandler) document.removeEventListener('mousedown', outsideHandler, true);
+                    if (windowResizeHandler) {
+                        window.removeEventListener('resize', windowResizeHandler);
+                        document.querySelector('.swal2-container')?.removeEventListener('scroll', windowResizeHandler, true);
+                        document.getElementById('gridStatList')?.removeEventListener('scroll', windowResizeHandler, true);
+                    }
+                    if (popoverEl && popoverEl.parentNode) popoverEl.parentNode.removeChild(popoverEl);
+                    popoverEl = null;
+                    openPopoverIdx = -1;
+                    outsideHandler = null;
+                    windowResizeHandler = null;
+                },
+                preConfirm: () => {
+                    const normalized = stats.map(s => ({
+                        value: (s.value || '').trim(),
+                        label: (s.label || '').trim(),
+                        palette: (s.palette || '').trim()
+                    }));
+                    const filled = normalized.filter(s => s.value !== '' || s.label !== '' || s.palette !== '');
+                    if (filled.length === 0) {
+                        Swal.showValidationMessage('최소 한 개 이상의 스탯을 입력해주세요.');
+                        return false;
+                    }
+                    if (filled.some(s => s.value === '')) {
+                        Swal.showValidationMessage('각 스탯 항목에는 값을 입력해주세요.');
+                        return false;
+                    }
+                    const invalidChars = /[|\}\r\n]/;
+                    for (const s of filled) {
+                        if (invalidChars.test(s.value) || invalidChars.test(s.label)) {
+                            Swal.showValidationMessage('값 또는 라벨에 |, }, 줄바꿈 문자를 사용할 수 없습니다.');
+                            return false;
+                        }
+                    }
+                    return filled;
+                }
+            }).then(result => {
+                if (!result.isConfirmed || !Array.isArray(result.value)) return;
+                const lines = [':::grid'];
+                for (const s of result.value) {
+                    const { value, label, palette } = s;
+                    const prefix = palette ? `{palette:${palette}}` : '';
+                    const payload = label ? `${value}|${label}` : value;
+                    lines.push(`${prefix}{stat:${payload}}`);
+                }
+                lines.push(':::');
+                editor.insertText(lines.join('\n'));
+                if (typeof cmEditorView !== 'undefined' && cmEditorView) cmEditorView.focus();
+            });
+        }
+
         // ── 하위 문서 구조 삽입 모달 ──
         async function openSubdocInsertModal() {
             let subdocSelectedSlug = null;
@@ -3791,17 +4207,41 @@ document.addEventListener('DOMContentLoaded', async () => {
         }, 300);
 
         startAutoSave();
+
+        // 테마 변경 시 에디터 실시간 업데이트
+        const applyEditorTheme = () => {
+            const newIsDarkMode = getIsDarkMode();
+            if (newIsDarkMode === isDarkMode) return;
+            isDarkMode = newIsDarkMode;
+
+            const effects = [
+                themeCompartment.reconfigure(isDarkMode ? oneDark : lightTheme),
+                darkBgCompartment.reconfigure(buildDarkBgExt()),
+                syntaxHighlightCompartment.reconfigure(buildSyntaxHighlightExts()),
+            ];
+
+            if (typeof advancedEditCompartment !== 'undefined') {
+                effects.push(
+                    advancedEditCompartment.reconfigure(
+                        advancedEditCompartment.get(cmEditorView.state) || []
+                    )
+                );
+            }
+
+            cmEditorView.dispatch({ effects });
+        };
+
+        // data-theme 속성 변경 감지 (수동 테마 전환)
+        new MutationObserver(applyEditorTheme).observe(
+            document.documentElement,
+            { attributes: true, attributeFilter: ['data-theme'] }
+        );
+
+        // OS 다크모드 변경 감지 (auto 모드 시)
+        if (window.matchMedia) {
+            window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyEditorTheme);
+        }
     } // ── isExtensionData else 블록 종료 ──
-
-
-    // 다크 모드 테마 토글 (OS 설정 변경 시)
-    // CM6에서는 초기화 시 테마를 설정하므로 런타임 토글은 페이지 리로드로 대체
-    if (window.matchMedia) {
-        window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
-            // CM6 테마는 초기화 시점에 결정되므로, 다크모드 변경 시 페이지 새로고침
-            // (편집 중 변경은 드물므로 실용적인 접근)
-        });
-    }
 
     // 반응형 Preview Style 변경
     window.addEventListener('resize', () => {
@@ -4696,8 +5136,10 @@ async function openExistingImageSearch(callback) {
     let total = 0;
     let items = [];
     let currentQuery = '';
+    let currentTags = [];
     let loading = false;
     let finished = false;
+    let tagWidget = null;
 
     const escapeHtml = (s) => String(s ?? '').replace(/[&<>"']/g, (m) => ({
         '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
@@ -4720,6 +5162,14 @@ async function openExistingImageSearch(callback) {
                         <i class="mdi mdi-magnify"></i>
                     </button>
                 </div>
+                <div class="existing-img-tag-filter" style="margin-top:8px;">
+                    <label style="display:block; font-size:0.82rem; color:var(--wiki-text-muted,#888); margin-bottom:4px; text-align:left;">
+                        <i class="mdi mdi-tag-multiple-outline"></i> 태그 필터 (여러 개 추가 시 AND 조건)
+                    </label>
+                    <div class="category-tag-container" id="existingImgTagContainer" style="max-width:100%;">
+                        <input type="text" id="existingImgTagInput" class="category-tag-input" placeholder="태그로 필터링 (엔터/쉼표로 추가)">
+                    </div>
+                </div>
                 <div id="existingImgSearchInfo" class="existing-img-search-info"></div>
                 <div id="existingImgSearchGrid" class="existing-img-search-grid"></div>
                 <div id="existingImgSearchMore" class="existing-img-search-more" style="display:none;">
@@ -4740,9 +5190,17 @@ async function openExistingImageSearch(callback) {
                     items = [];
                     finished = false;
                     currentQuery = input.value.trim();
+                    currentTags = tagWidget ? tagWidget.getTags() : [];
                 }
                 loadPage();
             };
+
+            tagWidget = mountMediaTagInput({
+                container: document.getElementById('existingImgTagContainer'),
+                input: document.getElementById('existingImgTagInput'),
+                initial: [],
+            });
+            tagWidget.setOnChange(() => doSearch(true));
 
             searchBtn.addEventListener('click', () => doSearch(true));
             input.addEventListener('keydown', (e) => {
@@ -4752,6 +5210,7 @@ async function openExistingImageSearch(callback) {
 
             doSearch(true);
         },
+        willClose: () => { if (tagWidget) tagWidget.destroy(); },
         preConfirm: () => pickedItem,
     });
 
@@ -4768,6 +5227,7 @@ async function openExistingImageSearch(callback) {
         try {
             const params = new URLSearchParams();
             if (currentQuery) params.set('q', currentQuery);
+            if (currentTags && currentTags.length > 0) params.set('tags', currentTags.join(','));
             params.set('limit', String(limit));
             params.set('offset', String(offset));
 
@@ -4801,12 +5261,22 @@ async function openExistingImageSearch(callback) {
             grid.innerHTML = '<div class="existing-img-search-empty">이미지가 없습니다.</div>';
             return;
         }
-        grid.innerHTML = items.map((m) => `
-            <div class="existing-img-tile" data-id="${m.id}" title="${escapeHtml(m.filename)}">
+        grid.innerHTML = items.map((m) => {
+            const tagBadges = (m.tags || []).slice(0, 4).map(t =>
+                `<span class="existing-img-tile-tag">${escapeHtml(t)}</span>`
+            ).join('');
+            const extra = (m.tags && m.tags.length > 4) ? `<span class="existing-img-tile-tag-more">+${m.tags.length - 4}</span>` : '';
+            const tagLine = (m.tags && m.tags.length) ? `<div class="existing-img-tile-tags">${tagBadges}${extra}</div>` : '';
+            const titleAttr = (m.tags && m.tags.length)
+                ? `${m.filename}\n태그: ${m.tags.join(', ')}`
+                : m.filename;
+            return `
+            <div class="existing-img-tile" data-id="${m.id}" title="${escapeHtml(titleAttr)}">
                 <img src="${escapeHtml(m.url)}" alt="${escapeHtml(m.filename)}" loading="lazy">
                 <div class="existing-img-tile-name">${escapeHtml(m.filename)}</div>
-            </div>
-        `).join('');
+                ${tagLine}
+            </div>`;
+        }).join('');
 
         grid.querySelectorAll('.existing-img-tile').forEach((tile) => {
             tile.addEventListener('click', async () => {
@@ -4850,6 +5320,7 @@ async function openExistingImageSearch(callback) {
 }
 
 // ── 미디어 업로드 처리 ──
+// mountMediaTagInput은 common.js에서 제공한다.
 async function handleImageUpload(blob, callback) {
     if (!blob) return;
 
@@ -4868,30 +5339,63 @@ async function handleImageUpload(blob, callback) {
         selectedSize = editResult.size || 'full';
     }
 
-    // 사용자에게 파일명 입력 요청
+    // 사용자에게 파일명 + 태그 입력 요청
     const originalName = blob.name || 'image';
     const nameWithoutExt = originalName.replace(/\.[^.]+$/, '');
-    const { value: customFilename, isConfirmed } = await Swal.fire({
-        title: '이미지 파일명 입력',
-        input: 'text',
-        inputLabel: '파일명 (확장자 제외)',
-        inputValue: nameWithoutExt,
-        inputPlaceholder: '파일명을 입력하세요',
+    const nameDefaultAttr = String(nameWithoutExt).replace(/[&<>"']/g, (m) => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[m]));
+
+    let tagWidget = null;
+    const { value: formResult, isConfirmed } = await Swal.fire({
+        title: '이미지 업로드',
+        html: `
+            <div style="text-align:left;">
+                <label for="uploadFilenameInput" class="form-label fw-bold" style="display:block; margin-bottom:4px;">파일명 (확장자 제외)</label>
+                <input type="text" id="uploadFilenameInput" class="swal2-input" style="margin:0 0 14px 0; width:100%;" placeholder="파일명을 입력하세요" value="${nameDefaultAttr}" maxlength="100">
+                <label class="form-label fw-bold" style="display:block; margin-bottom:4px;">태그 (선택)</label>
+                <div class="category-tag-container" id="uploadTagContainer" style="max-width:100%;">
+                    <input type="text" id="uploadTagInput" class="category-tag-input" placeholder="태그 입력 후 엔터나 쉼표">
+                </div>
+                <div class="form-text text-muted" style="margin-top:4px; font-size:0.82rem;">한글/영문/숫자/공백/_/./- 만 사용 가능 · 최대 20개</div>
+            </div>
+        `,
         showCancelButton: true,
         confirmButtonText: '업로드',
         cancelButtonText: '취소',
-        inputValidator: (value) => {
-            if (!value || !value.trim()) {
-                return '파일명을 입력해주세요.';
+        focusConfirm: false,
+        didOpen: () => {
+            const fnInput = document.getElementById('uploadFilenameInput');
+            fnInput.focus();
+            fnInput.select();
+            tagWidget = mountMediaTagInput({
+                container: document.getElementById('uploadTagContainer'),
+                input: document.getElementById('uploadTagInput'),
+                initial: [],
+            });
+        },
+        willClose: () => { if (tagWidget) tagWidget.destroy(); },
+        preConfirm: () => {
+            const fn = document.getElementById('uploadFilenameInput').value.trim();
+            if (!fn) {
+                Swal.showValidationMessage('파일명을 입력해주세요.');
+                return false;
             }
-        }
+            if (tagWidget) tagWidget.flush();
+            return { filename: fn, tags: tagWidget ? tagWidget.getTags() : [] };
+        },
     });
 
-    if (!isConfirmed || !customFilename) return;
+    if (!isConfirmed || !formResult) return;
+    const customFilename = formResult.filename;
+    const uploadTags = formResult.tags || [];
 
     const formData = new FormData();
     formData.append('file', blob);
-    formData.append('filename', customFilename.trim());
+    formData.append('filename', customFilename);
+    if (uploadTags.length > 0) {
+        formData.append('tags', JSON.stringify(uploadTags));
+    }
 
     try {
         const res = await fetch('/api/media', {
