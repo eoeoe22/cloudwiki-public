@@ -319,8 +319,15 @@ function hexToHsv(hex) {
 }
 
 // ── 로컬스토리지 자동저장 ──
+// 사용자 설정(editor_auto_save)은 매 tick마다 localStorage에서 직접 읽어
+// 토글이 즉시 반영되도록 한다. 기본값은 ON.
+function isAutoSaveEnabled() {
+    return localStorage.getItem('editor_auto_save') !== 'false';
+}
+
 function startAutoSave() {
     setInterval(() => {
+        if (!isAutoSaveEnabled()) return;
         if (editor && slug && AUTO_SAVE_KEY) {
             const content = editor.getMarkdown();
             if (content && content.trim().length > 0) {
@@ -332,6 +339,11 @@ function startAutoSave() {
 
 async function checkAutoSave() {
     if (!AUTO_SAVE_KEY) return;
+    if (!isAutoSaveEnabled()) {
+        // 끈 상태면 잔여 스냅샷 정리 후 종료
+        localStorage.removeItem(AUTO_SAVE_KEY);
+        return;
+    }
 
     const savedContent = localStorage.getItem(AUTO_SAVE_KEY);
     if (savedContent) {

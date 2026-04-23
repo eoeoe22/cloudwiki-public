@@ -353,6 +353,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             wordWrap: localStorage.getItem('editor_word_wrap') !== 'false',
             syntaxHighlight: localStorage.getItem('editor_syntax_highlight') !== 'false',
             advancedEdit: localStorage.getItem('editor_advanced_edit') !== 'false',
+            autoSave: localStorage.getItem('editor_auto_save') !== 'false',
         };
 
         // ── CM6 동적 재설정용 Compartment ──
@@ -1248,6 +1249,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                     ${editorSettings.advancedEdit && editorSettings.syntaxHighlight ? 'checked' : ''}
                     ${editorSettings.syntaxHighlight ? '' : 'disabled'}>
             </label>
+            <label class="editor-settings-item">
+                <span>자동 저장</span>
+                <input type="checkbox" id="settingAutoSave" ${editorSettings.autoSave ? 'checked' : ''}>
+            </label>
             <div class="editor-settings-divider"></div>
             <div class="editor-settings-section-title">줄바꿈 모드</div>
             <label class="editor-settings-item">
@@ -1350,6 +1355,16 @@ document.addEventListener('DOMContentLoaded', async () => {
             editorSettings.advancedEdit = e.target.checked;
             localStorage.setItem('editor_advanced_edit', editorSettings.advancedEdit);
             applySyntaxAndAdvancedExtensions();
+        });
+
+        // ── 자동 저장 토글 ──
+        document.getElementById('settingAutoSave').addEventListener('change', (e) => {
+            editorSettings.autoSave = e.target.checked;
+            localStorage.setItem('editor_auto_save', editorSettings.autoSave);
+            // 끌 때는 이미 저장된 로컬 스냅샷도 정리
+            if (!editorSettings.autoSave && typeof AUTO_SAVE_KEY !== 'undefined' && AUTO_SAVE_KEY) {
+                localStorage.removeItem(AUTO_SAVE_KEY);
+            }
         });
 
         // ── 줄바꿈 모드 토글 ──
