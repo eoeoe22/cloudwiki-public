@@ -88,13 +88,20 @@ async function refreshRecentChangesCache(c: any) {
 function invalidatePageCache(c: any, slug: string) {
     const origin = new URL(c.req.url).origin;
     const cache = caches.default;
-    const path = encodeURIComponent(slug);
+    // encodeURIComponent는 ':'를 %3A로 인코딩하지만 브라우저는 URL 경로의 ':'를 인코딩하지 않는 경우도 있다.
+    // 두 변형(%3A 인코딩 / ':' 그대로)을 모두 삭제해 어느 쪽으로 캐시됐더라도 확실히 무효화한다.
+    const encodedPath = encodeURIComponent(slug);
+    const paths = slug.includes(':')
+        ? [encodedPath, encodedPath.replace(/%3A/g, ':')]
+        : [encodedPath];
 
-    return Promise.all([
-        cache.delete(`${origin}/api/w/${path}`),
-        cache.delete(`${origin}/api/w/${path}?redirect=no`),
-        cache.delete(`${origin}/w/${path}`)
-    ]);
+    return Promise.allSettled(
+        paths.flatMap(path => [
+            cache.delete(`${origin}/api/w/${path}`),
+            cache.delete(`${origin}/api/w/${path}?redirect=no`),
+            cache.delete(`${origin}/w/${path}`)
+        ])
+    );
 }
 
 /**
@@ -1305,7 +1312,7 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
 
         // 캐시 무효화 (API + SSR) + 최근 변경 즉시 갱신
         // 콜론이 포함된 문서(틀, 익스텐션 등)인 경우 역링크 문서 캐시도 함께 무효화
-        c.executionCtx.waitUntil(Promise.all([
+        c.executionCtx.waitUntil(Promise.allSettled([
             invalidatePageCache(c, slug),
             refreshRecentChangesCache(c),
             invalidateBacklinkCaches(c, slug, db),
@@ -1371,7 +1378,7 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
 
         // 캐시 무효화 (API + SSR) + 최근 변경 즉시 갱신
         // 콜론이 포함된 문서(틀, 익스텐션 등)인 경우 역링크 문서 캐시도 함께 무효화
-        c.executionCtx.waitUntil(Promise.all([
+        c.executionCtx.waitUntil(Promise.allSettled([
             invalidatePageCache(c, slug),
             refreshRecentChangesCache(c),
             invalidateBacklinkCaches(c, slug, db),
@@ -1707,7 +1714,7 @@ wiki.delete('/w/:slug', requireAuth, async (c) => {
 
         // 캐시 무효화 (API + SSR) + 최근 변경 즉시 갱신
         // 틀: 등 콜론 포함 문서인 경우 역링크 문서 캐시도 함께 무효화
-        c.executionCtx.waitUntil(Promise.all([
+        c.executionCtx.waitUntil(Promise.allSettled([
             invalidatePageCache(c, slug),
             refreshRecentChangesCache(c),
             invalidateBacklinkCaches(c, slug, db),
@@ -1734,7 +1741,7 @@ wiki.delete('/w/:slug', requireAuth, async (c) => {
 
         // 캐시 무효화 (API + SSR) + 최근 변경 즉시 갱신
         // 틀: 등 콜론 포함 문서인 경우 역링크 문서 캐시도 함께 무효화
-        c.executionCtx.waitUntil(Promise.all([
+        c.executionCtx.waitUntil(Promise.allSettled([
             invalidatePageCache(c, slug),
             refreshRecentChangesCache(c),
             invalidateBacklinkCaches(c, slug, db),
@@ -1788,7 +1795,7 @@ wiki.post('/w/:slug/restore', requireAuth, async (c) => {
 
     // 캐시 무효화 (API + SSR) + 최근 변경 즉시 갱신
     // 틀: 등 콜론 포함 문서인 경우 역링크 문서 캐시도 함께 무효화
-    c.executionCtx.waitUntil(Promise.all([
+    c.executionCtx.waitUntil(Promise.allSettled([
         invalidatePageCache(c, slug),
         refreshRecentChangesCache(c),
         invalidateBacklinkCaches(c, slug, db),
@@ -1900,7 +1907,7 @@ wiki.post('/w/:slug/move', requireAdmin, async (c) => {
 
     // 캐시 무효화 (API + SSR) + 최근 변경 즉시 갱신
     // 틀: 등 콜론 포함 문서인 경우 이동 전 슬러그의 역링크 문서 캐시도 함께 무효화
-    c.executionCtx.waitUntil(Promise.all([
+    c.executionCtx.waitUntil(Promise.allSettled([
         invalidatePageCache(c, currentSlug),
         invalidatePageCache(c, trimmedNewSlug),
         refreshRecentChangesCache(c),
@@ -2002,7 +2009,7 @@ wiki.post('/w/:slug/revert', requireAuth, async (c) => {
         .run();
 
     // 캐시 무효화 (API + SSR) + 최근 변경 즉시 갱신
-    c.executionCtx.waitUntil(Promise.all([
+    c.executionCtx.waitUntil(Promise.allSettled([
         invalidatePageCache(c, slug),
         refreshRecentChangesCache(c),
     ]));

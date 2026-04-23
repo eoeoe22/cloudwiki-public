@@ -193,12 +193,51 @@ function _processInlineLayoutTokens(html) {
         const { bg, color } = parseStylePrefix(prefix);
         return `<span class="wiki-tag"${buildStyleAttr(bg, color)}>${escapeHtml(text.trim())}</span>`;
     });
-    html = html.replace(new RegExp(`(${STYLE_PREFIX})\\{button:([^}]+)\\}`, 'g'), (m, prefix, content) => {
+    // 버튼 앞에 놓인 스타일/아이콘 토큰({palette|bg|color|mdi|bi|icon}:...)을 흡수해 버튼 내부에 렌더링.
+    // 순서 무관하게 혼용 가능. 아이콘 토큰은 최대 1개만 소비.
+    // 프리픽스는 `{button:...}` 매치 후 역방향 결정적 스캔으로 수집하여
+    // 탐욕적 반복 정규식의 백트래킹을 회피한다.
+    const BUTTON_TOKEN_RE = /^\{(?:palette|bg|color|mdi|bi|icon):[^}]+\}$/;
+    const ICON_TOKEN_RE = /^\{(mdi|bi|icon):\s*([^}]+?)\s*\}$/;
+    const CLASS_NAME_RE = /^[a-zA-Z0-9\-_]+$/;
+    function buildButton(prefix, content) {
         const { bg, color } = parseStylePrefix(prefix);
+        let iconHtml = '';
+        const tokenRe = /\{(?:palette|bg|color|mdi|bi|icon):[^}]+\}/g;
+        let tm;
+        while ((tm = tokenRe.exec(prefix)) !== null) {
+            const im = tm[0].match(ICON_TOKEN_RE);
+            if (!im) continue;
+            const type = im[1];
+            const name = im[2];
+            if (type === 'mdi') {
+                iconHtml = `<span class="mdi mdi-${escapeHtml(name)}" aria-hidden="true"></span>`;
+            } else if (type === 'bi') {
+                iconHtml = `<i class="bi bi-${escapeHtml(name)}" aria-hidden="true"></i>`;
+            } else if (type === 'icon') {
+                // 공백으로 구분된 복수 클래스 지원 - 각 클래스를 개별 검증
+                const classes = name.split(/\s+/).filter(Boolean);
+                const allSafe = classes.length > 0 && classes.every(c => CLASS_NAME_RE.test(c));
+                if (allSafe) {
+                    // 유틸리티 클래스가 섞여 있을 수 있으므로 전체 배열에서 mdi-*/bi-* 토큰 탐지
+                    const hasMdi = classes.some(c => c.startsWith('mdi-'));
+                    const hasBi = classes.some(c => c.startsWith('bi-'));
+                    if (hasMdi) {
+                        iconHtml = `<span class="mdi ${escapeHtml(name)}" aria-hidden="true"></span>`;
+                    } else if (hasBi) {
+                        iconHtml = `<i class="bi ${escapeHtml(name)}" aria-hidden="true"></i>`;
+                    } else {
+                        // 알 수 없는 아이콘 클래스 → 제네릭 span으로 렌더링
+                        iconHtml = `<span class="${escapeHtml(name)}" aria-hidden="true"></span>`;
+                    }
+                }
+            }
+            if (iconHtml) break;
+        }
         const parts = content.split('|').map(s => s.trim());
         const text = parts[0] || '';
         const url = parts[1] || '';
-        if (!text || !url) return m;
+        if (!text || !url) return null;
         const safe = (typeof isSafeUrl === 'function') && isSafeUrl(url);
         const href = safe ? url : '#';
         let external = false;
@@ -209,8 +248,40 @@ function _processInlineLayoutTokens(html) {
         const styled = !!(bg || color);
         const cls = styled ? 'wiki-button wiki-button-custom' : 'wiki-button';
         const extAttr = external ? ' target="_blank" rel="noopener noreferrer"' : '';
-        return `<a class="${cls}" href="${escapeHtml(href)}"${extAttr}${buildStyleAttr(bg, color)}>${escapeHtml(text)}</a>`;
-    });
+        const inner = iconHtml
+            ? `${iconHtml}<span class="wiki-button-label">${escapeHtml(text)}</span>`
+            : escapeHtml(text);
+        return `<a class="${cls}" href="${escapeHtml(href)}"${extAttr}${buildStyleAttr(bg, color)}>${inner}</a>`;
+    }
+    {
+        const buttonRe = /\{button:([^}]+)\}/g;
+        let out = '';
+        let lastIdx = 0;
+        let bm;
+        while ((bm = buttonRe.exec(html)) !== null) {
+            const buttonStart = bm.index;
+            const buttonEnd = buttonRe.lastIndex;
+            // 버튼 직전의 연속된 스타일/아이콘 토큰을 역방향으로 수집(선형 시간).
+            let pStart = buttonStart;
+            while (pStart > lastIdx) {
+                let j = pStart;
+                while (j > lastIdx && /\s/.test(html[j - 1])) j--;
+                if (j <= lastIdx || html[j - 1] !== '}') break;
+                let k = j - 2;
+                while (k >= lastIdx && html[k] !== '{' && html[k] !== '}') k--;
+                if (k < lastIdx || html[k] !== '{') break;
+                if (!BUTTON_TOKEN_RE.test(html.slice(k, j))) break;
+                pStart = k;
+            }
+            const prefix = html.slice(pStart, buttonStart);
+            const built = buildButton(prefix, bm[1]);
+            if (built === null) continue; // 무효 버튼 → 프리픽스 포함 원문 유지
+            out += html.slice(lastIdx, pStart) + built;
+            lastIdx = buttonEnd;
+        }
+        out += html.slice(lastIdx);
+        html = out;
+    }
     html = html.replace(new RegExp(`(?:<p>)?(${STYLE_PREFIX})\\{stat:([^}]+)\\}(?:<\\/p>)?`, 'g'), (m, prefix, content) => {
         const { bg, color } = parseStylePrefix(prefix);
         const parts = content.split('|').map(s => s.trim());
@@ -302,6 +373,78 @@ function _computeTimerText(unixSec) {
     if (minutes > 0) parts.push(`${minutes}분`);
     if (seconds > 0 || parts.length === 0) parts.push(`${seconds}초`);
     return parts.join(' ') + (diff >= 0 ? ' 남음' : ' 지남');
+}
+
+// containerId → ResizeObserver (그리드 균형 조정 중복 방지)
+const _gridObserverMap = {};
+
+/**
+ * .wiki-grid 내부 카드가 줄바꿈될 때 위아래 개수가 대칭이 되도록 열 수를 조정.
+ * 예) 4개 카드가 3+1로 깨지지 않고 2+2로 배치되도록.
+ * 한 줄에 모두 들어가는 경우에는 기본 flex 레이아웃을 유지.
+ */
+function _balanceWikiGrids(containerEl, containerId) {
+    // 이전 옵저버 해제 (재렌더링 시 누수 방지)
+    if (_gridObserverMap[containerId]) {
+        _gridObserverMap[containerId].disconnect();
+        delete _gridObserverMap[containerId];
+    }
+    const grids = Array.from(containerEl.querySelectorAll('.wiki-grid'));
+    if (grids.length === 0) return;
+    const ITEM_MIN = 200; // .wiki-grid > * 의 기준 너비 (render.css 참조)
+
+    function reset(grid) {
+        grid.classList.remove('wiki-grid-balanced');
+        grid.style.maxWidth = '';
+        grid.style.width = '';
+        grid.style.gridTemplateColumns = '';
+    }
+
+    function apply(grid) {
+        const N = grid.children.length;
+        if (N <= 1) { reset(grid); return; }
+        // 이전 balanced 상태의 폭 제한을 먼저 해제해 실제 사용 가능 폭을 측정.
+        const prevMax = grid.style.maxWidth;
+        const prevW = grid.style.width;
+        grid.style.maxWidth = '';
+        grid.style.width = '';
+        // getBoundingClientRect 가 서브픽셀 정확도를 가진다.
+        const W = grid.getBoundingClientRect().width;
+        if (W <= 0) {
+            if (prevMax) grid.style.maxWidth = prevMax;
+            if (prevW) grid.style.width = prevW;
+            return;
+        }
+        const cs = getComputedStyle(grid);
+        const gap = parseFloat(cs.columnGap) || parseFloat(cs.gap) || 10;
+        // 부동소수점/서브픽셀 오차 흡수용 1px 마진.
+        const maxFit = Math.max(1, Math.floor((W + gap + 1) / (ITEM_MIN + gap)));
+        if (N <= maxFit) {
+            grid.classList.remove('wiki-grid-balanced');
+            grid.style.gridTemplateColumns = '';
+            // width 는 위에서 이미 비움
+            return;
+        }
+        const rows = Math.ceil(N / maxFit);
+        const cols = Math.ceil(N / rows);
+        grid.classList.add('wiki-grid-balanced');
+        grid.style.gridTemplateColumns = '';
+        // flex-wrap 이 cols 개에서 줄바꿈되도록 컨테이너 폭을 고정.
+        const targetW = cols * ITEM_MIN + (cols - 1) * gap;
+        grid.style.width = `${targetW}px`;
+        grid.style.maxWidth = '100%';
+    }
+
+    // grid 자체는 max-width 로 크기가 제한되어 부모 확장을 감지하지 못하므로,
+    // 부모를 관측하고 변화 시 모든 grid 를 재계산한다.
+    const ro = window.ResizeObserver ? new ResizeObserver(() => {
+        grids.forEach(apply);
+    }) : null;
+    grids.forEach(grid => {
+        apply(grid);
+        if (ro && grid.parentElement) ro.observe(grid.parentElement);
+    });
+    if (ro) _gridObserverMap[containerId] = ro;
 }
 
 // containerId → intervalId (타이머 중복 방지)
@@ -1119,13 +1262,18 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
         // ── 코드블럭 문법 하이라이팅 (Prism.js Autoloader 연동) ──
         // 코드블럭이 아무 문법이 아니라면 라이브러리를 불러오지 않음
         if (requirePrism) {
+            // 코드 전용 각진 모노스페이스 폰트 (JetBrains Mono + 한국어용 Nanum Gothic Coding)
+            // 테마 색상은 render.css에서 직접 정의(VS Code Dark+/Light+)하므로 Prism CDN 테마는 로드하지 않음
+            if (!document.getElementById('wiki-code-font-link')) {
+                const codeFont = document.createElement('link');
+                codeFont.id = 'wiki-code-font-link';
+                codeFont.rel = 'stylesheet';
+                codeFont.href = 'https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Nanum+Gothic+Coding:wght@400;700&display=swap';
+                document.head.appendChild(codeFont);
+            }
+
             if (typeof window.Prism === 'undefined') {
                 if (!document.getElementById('prism-core-script')) {
-                    const prismCss = document.createElement('link');
-                    prismCss.rel = 'stylesheet';
-                    prismCss.href = 'https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css';
-                    document.head.appendChild(prismCss);
-
                     const prismCore = document.createElement('script');
                     prismCore.id = 'prism-core-script';
                     prismCore.src = 'https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js';
@@ -1157,6 +1305,9 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
         // 헤딩 번호 삽입 (항상 실행)
         numberHeadings(containerEl);
 
+        // 각주 섹션 헤딩(<h4>각주</h4>)에는 문단 번호 prefix 를 부여하지 않는다.
+        containerEl.querySelectorAll('.wiki-footnotes .wiki-heading-num').forEach(el => el.remove());
+
         if (options.tocContainerId && options.tocNavId) {
             generateTOC(containerEl, options.tocContainerId, options.tocNavId);
         }
@@ -1185,6 +1336,9 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
             rawContent: content
         });
 
+        // :::grid 레이아웃 균형 조정 (줄바꿈시 위아래 카드 개수 대칭)
+        _balanceWikiGrids(containerEl, containerId);
+
         // {timer:} 요소 실시간 업데이트
         _initTimers(containerEl, containerId);
 
@@ -1193,6 +1347,54 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
 
     } catch (err) {
         console.error('renderWikiContent error:', err);
+    }
+}
+
+/** #articleTitle 클릭 시 제목 텍스트만 클립보드에 복사. 시각적 UI 는 변경하지 않는다.
+ *  핸들러는 article 로드 경로(마크다운/익스텐션/이미지/카테고리)와 무관하게 한 번만
+ *  부착되면 충분하다: onclick 콜백은 클릭 시점에 textContent 를 다시 읽으므로
+ *  이후 어떤 경로로 제목이 갱신되더라도 항상 최신 제목이 복사된다. */
+function _setupArticleTitleCopy() {
+    const titleEl = document.getElementById('articleTitle');
+    if (!titleEl) return;
+    if (titleEl._copyOnClickBound) return; // 중복 부착 방지
+    titleEl._copyOnClickBound = true;
+    titleEl.onclick = async () => {
+        const titleText = (titleEl.textContent || '').trim();
+        if (!titleText) return;
+        let ok = false;
+        try {
+            await navigator.clipboard.writeText(titleText);
+            ok = true;
+        } catch (err) {
+            const ta = document.createElement('textarea');
+            ta.value = titleText;
+            document.body.appendChild(ta);
+            ta.select();
+            try { ok = document.execCommand('copy'); } catch (e2) { /* ignore */ }
+            document.body.removeChild(ta);
+        }
+        if (ok && typeof Swal !== 'undefined') {
+            Swal.fire({
+                icon: 'success',
+                title: '제목이 복사되었습니다.',
+                toast: true,
+                position: 'top-end',
+                timer: 1500,
+                showConfirmButton: false
+            });
+        }
+    };
+}
+
+// article 레벨에서 항상 핸들러가 부착되도록 초기화.
+// render.js 는 index.html 의 #articleTitle 요소 뒤에 로드되므로 즉시 실행해도 안전하지만,
+// 다른 페이지(revisions.html, 편집 프리뷰 등)에서 로드될 수 있으므로 요소 없을 때는 no-op.
+if (typeof document !== 'undefined') {
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', _setupArticleTitleCopy);
+    } else {
+        _setupArticleTitleCopy();
     }
 }
 
@@ -1377,8 +1579,10 @@ function _addHeadingCopyButtons(containerEl, resolvedContent, options = {}) {
 
         copyBtn.onclick = async (e) => {
             e.stopPropagation(); // 섹션 접기/펼치기 이벤트 전파 방지
+            let ok = false;
             try {
                 await navigator.clipboard.writeText(sectionContent);
+                ok = true;
                 copyBtn.innerHTML = '<i class="bi bi-check-lg"></i>';
                 setTimeout(() => { copyBtn.innerHTML = '<i class="bi bi-copy"></i>'; }, 2000);
             } catch (err) {
@@ -1387,11 +1591,23 @@ function _addHeadingCopyButtons(containerEl, resolvedContent, options = {}) {
                 document.body.appendChild(ta);
                 ta.select();
                 try {
-                    document.execCommand('copy');
-                    copyBtn.innerHTML = '<i class="bi bi-check-lg"></i>';
-                    setTimeout(() => { copyBtn.innerHTML = '<i class="bi bi-copy"></i>'; }, 2000);
+                    ok = document.execCommand('copy');
+                    if (ok) {
+                        copyBtn.innerHTML = '<i class="bi bi-check-lg"></i>';
+                        setTimeout(() => { copyBtn.innerHTML = '<i class="bi bi-copy"></i>'; }, 2000);
+                    }
                 } catch (e2) { /* ignore */ }
                 document.body.removeChild(ta);
+            }
+            if (ok && typeof Swal !== 'undefined') {
+                Swal.fire({
+                    icon: 'success',
+                    title: '문단이 복사되었습니다.',
+                    toast: true,
+                    position: 'top-end',
+                    timer: 1500,
+                    showConfirmButton: false
+                });
             }
         };
 

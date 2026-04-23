@@ -27,11 +27,15 @@ async function invalidateAllPagesCache(c: any) {
         // 너무 많은 프로미스가 동시에 실행되지 않도록 배치 처리
         for (let i = 0; i < results.length; i += 50) {
             const batch = results.slice(i, i + 50);
-            const promises = batch.map((row: any) => {
-                const path = encodeURIComponent(row.slug);
-                return cache.delete(`${origin}/w/${path}`);
+            // 브라우저는 URL 경로의 ':'를 인코딩하지 않는 경우도 있으므로 두 변형을 모두 삭제
+            const deletions = batch.flatMap((row: any) => {
+                const encoded = encodeURIComponent(row.slug);
+                const paths = row.slug.includes(':')
+                    ? [encoded, encoded.replace(/%3A/g, ':')]
+                    : [encoded];
+                return paths.map(path => cache.delete(`${origin}/w/${path}`));
             });
-            await Promise.allSettled(promises);
+            await Promise.allSettled(deletions);
         }
     } catch (e) {
         console.error('Failed to invalidate all pages cache:', e);
@@ -56,11 +60,16 @@ function writeAdminLog(c: any, type: string, log: string, userId: number) {
 async function invalidateImageDocCache(c: any, filename: string) {
     const cache = caches.default;
     const origin = new URL(c.req.url).origin;
+    // 브라우저는 URL 경로의 ':'를 인코딩하지 않는 경우도 있으므로 두 변형(%3A / ':')을 모두 삭제
     const encodedSlug = encodeURIComponent(`이미지:${filename}`);
+    const decodedSlug = encodedSlug.replace(/%3A/g, ':');
     await Promise.allSettled([
         cache.delete(`${origin}/w/${encodedSlug}`),
         cache.delete(`${origin}/api/w/${encodedSlug}`),
         cache.delete(`${origin}/api/w/${encodedSlug}?redirect=no`),
+        cache.delete(`${origin}/w/${decodedSlug}`),
+        cache.delete(`${origin}/api/w/${decodedSlug}`),
+        cache.delete(`${origin}/api/w/${decodedSlug}?redirect=no`),
     ]);
 }
 

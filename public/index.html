@@ -940,13 +940,16 @@
       `;
       document.getElementById('articleMoreActions').innerHTML = '';
 
-      // 목차 / 부모 문서 / 역링크 영역 숨김
+      // 목차 / 부모 문서 영역 숨김 (이미지 문서는 목차/부모 문서 개념 없음)
       document.getElementById('wikiAccordion').classList.add('d-none');
       const tocFab = document.getElementById('tocFabBtn');
       if (tocFab) tocFab.classList.add('d-none');
-      document.getElementById('backlinksSection').classList.add('d-none');
       document.getElementById('parentDocsNav').classList.add('d-none');
       document.getElementById('parentDocsNavDivider').classList.add('d-none');
+      // 역링크 섹션: 일반 문서와 달리 이미지 문서는 열람 즉시 자동 로드
+      document.querySelector('#backlinksSection h5').innerHTML = '<i class="bi bi-link-45deg"></i> 이 이미지를 사용하는 문서';
+      document.getElementById('backlinksSection').classList.add('d-none');
+      document.getElementById('backlinksList').innerHTML = '';
 
       // Raw 보기용 원본 컨텐츠
       const rawEl = document.getElementById('articleRawContent');
@@ -974,6 +977,10 @@
       hideAllPages();
       document.getElementById('articlePage').classList.remove('d-none');
       if (typeof window.__sidebarLayoutUpdate === 'function') window.__sidebarLayoutUpdate();
+
+      // 이미지 문서는 일반 문서와 달리 역링크를 자동으로 로드한다
+      // (일반 문서는 역링크 버튼 클릭 시 로드)
+      loadImageBacklinks(filename);
     }
 
     // 이미지 문서 본문 하단 태그 뱃지 HTML 생성
@@ -1099,12 +1106,14 @@
     }
 
     // ── 백링크 로드 ──
-    async function loadBacklinks(slug) {
+    // url 인자로 fetch 엔드포인트를 다르게 지정할 수 있다 (이미지 문서 역링크 등).
+    async function loadBacklinks(slug, url) {
       const section = document.getElementById('backlinksSection');
       const list = document.getElementById('backlinksList');
+      const fetchUrl = url || `/api/w/${encodeURIComponent(slug)}/backlinks`;
 
       try {
-        const res = await fetch(`/api/w/${encodeURIComponent(slug)}/backlinks`);
+        const res = await fetch(fetchUrl);
         if (!res.ok) {
           section.classList.add('d-none');
           return false;
@@ -1137,6 +1146,12 @@
         section.classList.add('d-none');
         return false;
       }
+    }
+
+    // ── 이미지 문서 역링크 로드 (열람 즉시 자동 호출) ──
+    async function loadImageBacklinks(filename) {
+      if (!filename) return false;
+      return await loadBacklinks(null, `/api/media/doc/${encodeURIComponent(filename)}/backlinks`);
     }
 
     // ── 카테고리 보기 (문서로 이동) ──

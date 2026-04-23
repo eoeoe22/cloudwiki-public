@@ -2,6 +2,8 @@ import { Hono } from 'hono';
 import type { Env } from '../types';
 import { requireAuth, requirePermission } from '../middleware/session';
 import { fetchMediaTagMap, replaceMediaTags } from '../utils/mediaTags';
+import { RBAC } from '../utils/role';
+import { safeJSON } from '../utils/json';
 
 const media = new Hono<Env>();
 
@@ -332,6 +334,45 @@ media.get('/api/media/doc/:filename', async (c) => {
 });
 
 /**
+ * GET /api/media/doc/:filename/backlinks
+ * 이미지 문서를 사용(참조)하는 문서 목록 조회.
+ * page_links 테이블(link_type='image', target_slug=r2_key) 기반.
+ * 비공개/삭제 문서는 관리자만 열람.
+ */
+media.get('/api/media/doc/:filename/backlinks', async (c) => {
+    if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) {
+        return c.json({ error: '로그인이 필요합니다.' }, 401);
+    }
+    const filename = c.req.param('filename');
+    const db = c.env.DB;
+    const user = c.get('user');
+    const rbac = c.get('rbac') as RBAC | undefined;
+    const isAdmin = !!(user && rbac && rbac.can(user.role, 'admin:access'));
+
+    const mediaRow = await db.prepare('SELECT r2_key FROM media WHERE filename = ? LIMIT 1')
+        .bind(filename).first<{ r2_key: string }>();
+    if (!mediaRow) {
+        return c.json({ error: '이미지를 찾을 수 없습니다.' }, 404);
+    }
+
+    let query = `
+        SELECT DISTINCT p.slug, p.title, p.updated_at, p.is_locked,
+            CASE WHEN p.deleted_at IS NOT NULL THEN 1 ELSE 0 END AS is_deleted
+        FROM page_links pl
+        JOIN pages p ON pl.source_page_id = p.id
+        WHERE pl.link_type = 'image'
+          AND pl.target_slug = ?
+    `;
+    if (!isAdmin) {
+        query += ' AND p.is_private = 0 AND p.deleted_at IS NULL';
+    }
+    query += ' ORDER BY p.updated_at DESC LIMIT 100';
+
+    const result = await db.prepare(query).bind(mediaRow.r2_key).all();
+    return c.json(safeJSON({ backlinks: result.results }));
+});
+
+/**
  * PUT /api/media/doc/:filename
  * 이미지 문서 content 수정 — 문서 편집 권한(wiki:edit) 보유자가 사용.
  * body: { content: string }
@@ -371,11 +412,16 @@ media.put('/api/media/doc/:filename', requireAuth, requirePermission('wiki:edit'
     const cache = caches.default;
     const origin = new URL(c.req.url).origin;
     const slug = `이미지:${filename}`;
+    // 브라우저는 URL 경로의 ':'를 인코딩하지 않는 경우도 있으므로 두 변형(%3A / ':')을 모두 삭제
     const encodedSlug = encodeURIComponent(slug);
+    const decodedSlug = encodedSlug.replace(/%3A/g, ':');
     c.executionCtx.waitUntil(Promise.allSettled([
         cache.delete(`${origin}/w/${encodedSlug}`),
         cache.delete(`${origin}/api/w/${encodedSlug}`),
         cache.delete(`${origin}/api/w/${encodedSlug}?redirect=no`),
+        cache.delete(`${origin}/w/${decodedSlug}`),
+        cache.delete(`${origin}/api/w/${decodedSlug}`),
+        cache.delete(`${origin}/api/w/${decodedSlug}?redirect=no`),
     ]));
 
     return c.json({ success: true });

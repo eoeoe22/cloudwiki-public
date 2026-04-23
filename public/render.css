@@ -154,6 +154,11 @@
   vertical-align: middle;
 }
 
+/* 코드 전용 각진 모노스페이스 스택 (한국어 대응: Nanum Gothic Coding) */
+:root {
+  --wiki-code-font: 'JetBrains Mono', 'Nanum Gothic Coding', 'D2Coding', 'Cascadia Code', 'Consolas', 'Menlo', 'DejaVu Sans Mono', monospace;
+}
+
 /* 인라인 코드 블록 */
 .wiki-content code {
   background: var(--wiki-code-bg);
@@ -165,7 +170,7 @@
   box-shadow: none;
   word-break: break-all;
   overflow-wrap: break-word;
-  font-family: inherit !important;
+  font-family: var(--wiki-code-font) !important;
 }
 
 /* 큰 코드 블록 (Wrapper로 마진 이동) */
@@ -185,7 +190,7 @@
   margin: 0;
   box-shadow: none;
   border: 1px solid var(--wiki-border);
-  font-family: inherit !important;
+  font-family: var(--wiki-code-font) !important;
 }
 
 .wiki-content pre code {
@@ -196,13 +201,103 @@
   font-size: inherit;
   word-break: inherit;
   overflow-wrap: inherit;
-  font-family: inherit !important;
+  font-family: var(--wiki-code-font) !important;
 }
 
-/* Prism.js 스타일 덮어쓰기 (기존 위키 코드블럭 스타일과 동기화) */
+/* ── Prism.js: VS Code Dark+/Light+ 스타일 테마 ──
+   기본(라이트) 값은 VS Code Light+ 기준, 다크 모드는 Dark+ 기준으로 오버라이드한다.
+   색상 변수는 이 블록 안에서만 쓰이며, 토큰 선택자에서 참조한다. */
+.wiki-content pre[class*="language-"],
+.wiki-content pre[class*="language-"] code[class*="language-"] {
+  /* VS Code Light+ (기본값) */
+  --vscode-bg: #ffffff;
+  --vscode-fg: #000000;
+  --vscode-comment: #008000;
+  --vscode-string: #a31515;
+  --vscode-number: #098658;
+  --vscode-keyword: #0000ff;
+  --vscode-function: #795e26;
+  --vscode-class: #267f99;
+  --vscode-variable: #001080;
+  --vscode-property: #0070c1;
+  --vscode-tag: #800000;
+  --vscode-attr-name: #e50000;
+  --vscode-attr-value: #0000ff;
+  --vscode-regex: #811f3f;
+  --vscode-operator: #000000;
+  --vscode-selection: #add6ff;
+}
+
+/* 시스템 다크 모드 자동 적용 */
+@media (prefers-color-scheme: dark) {
+  .wiki-content pre[class*="language-"],
+  .wiki-content pre[class*="language-"] code[class*="language-"] {
+    /* VS Code Dark+ */
+    --vscode-bg: #1e1e1e;
+    --vscode-fg: #d4d4d4;
+    --vscode-comment: #6a9955;
+    --vscode-string: #ce9178;
+    --vscode-number: #b5cea8;
+    --vscode-keyword: #569cd6;
+    --vscode-function: #dcdcaa;
+    --vscode-class: #4ec9b0;
+    --vscode-variable: #9cdcfe;
+    --vscode-property: #9cdcfe;
+    --vscode-tag: #569cd6;
+    --vscode-attr-name: #9cdcfe;
+    --vscode-attr-value: #ce9178;
+    --vscode-regex: #d16969;
+    --vscode-operator: #d4d4d4;
+    --vscode-selection: #264f78;
+  }
+}
+
+/* 사용자 강제 라이트 모드 */
+html[data-theme="light"] .wiki-content pre[class*="language-"],
+html[data-theme="light"] .wiki-content pre[class*="language-"] code[class*="language-"] {
+  --vscode-bg: #ffffff;
+  --vscode-fg: #000000;
+  --vscode-comment: #008000;
+  --vscode-string: #a31515;
+  --vscode-number: #098658;
+  --vscode-keyword: #0000ff;
+  --vscode-function: #795e26;
+  --vscode-class: #267f99;
+  --vscode-variable: #001080;
+  --vscode-property: #0070c1;
+  --vscode-tag: #800000;
+  --vscode-attr-name: #e50000;
+  --vscode-attr-value: #0000ff;
+  --vscode-regex: #811f3f;
+  --vscode-operator: #000000;
+  --vscode-selection: #add6ff;
+}
+
+/* 사용자 강제 다크 모드 */
+html[data-theme="dark"] .wiki-content pre[class*="language-"],
+html[data-theme="dark"] .wiki-content pre[class*="language-"] code[class*="language-"] {
+  --vscode-bg: #1e1e1e;
+  --vscode-fg: #d4d4d4;
+  --vscode-comment: #6a9955;
+  --vscode-string: #ce9178;
+  --vscode-number: #b5cea8;
+  --vscode-keyword: #569cd6;
+  --vscode-function: #dcdcaa;
+  --vscode-class: #4ec9b0;
+  --vscode-variable: #9cdcfe;
+  --vscode-property: #9cdcfe;
+  --vscode-tag: #569cd6;
+  --vscode-attr-name: #9cdcfe;
+  --vscode-attr-value: #ce9178;
+  --vscode-regex: #d16969;
+  --vscode-operator: #d4d4d4;
+  --vscode-selection: #264f78;
+}
+
+/* Prism.js 코드블럭 컨테이너 */
 .wiki-content pre[class*="language-"] {
-  background: var(--wiki-code-bg) !important;
-  color: var(--wiki-text) !important;
+  background: var(--vscode-bg) !important;
+  color: var(--vscode-fg) !important;
   padding: 1.2rem !important;
   border-radius: 8px !important;
   white-space: pre-wrap !important;
@@ -212,7 +307,9 @@
   box-shadow: none !important;
   border: 1px solid var(--wiki-border) !important;
   text-shadow: none !important;
-  font-family: inherit !important;
+  font-family: var(--wiki-code-font) !important;
+  tab-size: 4;
+  -moz-tab-size: 4;
 }
 
 .wiki-content pre[class*="language-"] code[class*="language-"] {
@@ -224,7 +321,107 @@
   word-break: inherit !important;
   overflow-wrap: inherit !important;
   text-shadow: none !important;
-  font-family: inherit !important;
+  font-family: var(--wiki-code-font) !important;
+}
+
+.wiki-content pre[class*="language-"] ::selection {
+  background: var(--vscode-selection);
+  text-shadow: none;
+}
+.wiki-content pre[class*="language-"] ::-moz-selection {
+  background: var(--vscode-selection);
+  text-shadow: none;
+}
+
+/* Prism 토큰 색상 (VS Code Dark+/Light+ 매핑) */
+.wiki-content pre[class*="language-"] .token.comment,
+.wiki-content pre[class*="language-"] .token.prolog,
+.wiki-content pre[class*="language-"] .token.doctype,
+.wiki-content pre[class*="language-"] .token.cdata {
+  color: var(--vscode-comment);
+  font-style: italic;
+}
+
+.wiki-content pre[class*="language-"] .token.punctuation {
+  color: var(--vscode-fg);
+}
+
+.wiki-content pre[class*="language-"] .token.namespace {
+  opacity: 0.7;
+}
+
+.wiki-content pre[class*="language-"] .token.string,
+.wiki-content pre[class*="language-"] .token.char,
+.wiki-content pre[class*="language-"] .token.attr-value,
+.wiki-content pre[class*="language-"] .token.inserted {
+  color: var(--vscode-string);
+}
+
+.wiki-content pre[class*="language-"] .token.number,
+.wiki-content pre[class*="language-"] .token.boolean,
+.wiki-content pre[class*="language-"] .token.constant,
+.wiki-content pre[class*="language-"] .token.symbol {
+  color: var(--vscode-number);
+}
+
+.wiki-content pre[class*="language-"] .token.keyword,
+.wiki-content pre[class*="language-"] .token.atrule,
+.wiki-content pre[class*="language-"] .token.important,
+.wiki-content pre[class*="language-"] .token.rule {
+  color: var(--vscode-keyword);
+  font-weight: 500;
+}
+
+.wiki-content pre[class*="language-"] .token.function,
+.wiki-content pre[class*="language-"] .token.method {
+  color: var(--vscode-function);
+}
+
+.wiki-content pre[class*="language-"] .token.class-name,
+.wiki-content pre[class*="language-"] .token.builtin,
+.wiki-content pre[class*="language-"] .token.type-class-name {
+  color: var(--vscode-class);
+}
+
+.wiki-content pre[class*="language-"] .token.variable,
+.wiki-content pre[class*="language-"] .token.parameter {
+  color: var(--vscode-variable);
+}
+
+.wiki-content pre[class*="language-"] .token.property {
+  color: var(--vscode-property);
+}
+
+.wiki-content pre[class*="language-"] .token.tag,
+.wiki-content pre[class*="language-"] .token.selector {
+  color: var(--vscode-tag);
+}
+
+.wiki-content pre[class*="language-"] .token.attr-name {
+  color: var(--vscode-attr-name);
+}
+
+.wiki-content pre[class*="language-"] .token.operator,
+.wiki-content pre[class*="language-"] .token.entity,
+.wiki-content pre[class*="language-"] .token.url {
+  color: var(--vscode-operator);
+  background: transparent;
+}
+
+.wiki-content pre[class*="language-"] .token.regex {
+  color: var(--vscode-regex);
+}
+
+.wiki-content pre[class*="language-"] .token.deleted {
+  color: #ce9178;
+}
+
+.wiki-content pre[class*="language-"] .token.italic {
+  font-style: italic;
+}
+
+.wiki-content pre[class*="language-"] .token.bold {
+  font-weight: 700;
 }
 
 /* 코드 복사 버튼 */
@@ -1198,6 +1395,14 @@ body.raw-mode .wiki-content-raw {
   margin-bottom: 0;
 }
 
+/* 줄바꿈시 위아래 개수를 대칭으로 맞추기 위한 JS 주도 균형 모드.
+   flex-wrap 기반 기본 레이아웃을 그대로 쓰고, 컨테이너의 max-width 를
+   _balanceWikiGrids 가 인라인으로 지정해 원하는 위치에서 줄바꿈되도록 한다.
+   카드 자체 크기(200px)와 간격(gap)은 기본값을 유지해 왼쪽 정렬이 보존된다. */
+.wiki-grid.wiki-grid-balanced {
+  margin-right: auto;
+}
+
 .wiki-row {
   display: flex;
   flex-wrap: nowrap;
@@ -1327,6 +1532,17 @@ a.wiki-button-custom {
 a.wiki-button-custom:hover,
 a.wiki-button-custom:focus {
   color: inherit;
+}
+
+a.wiki-button > .bi,
+a.wiki-button > .mdi {
+  display: inline-block;
+  vertical-align: baseline;
+  line-height: 1;
+}
+
+a.wiki-button > .wiki-button-label {
+  margin-left: 0.35em;
 }
 
 /* 카드 내부에서 제목·리스트 여백 조정 */

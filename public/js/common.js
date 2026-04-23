@@ -1015,7 +1015,305 @@ function _isExtensionCall(name) {
     return true;
 }
 
+/**
+ * 최상위(depth=0) 파이프(|)만 기준으로 raw를 분리합니다.
+ * 다음 위키 문법 내부의 '|'는 분리하지 않습니다:
+ *   - [[링크|레이블]]          이중 대괄호
+ *   - {{틀|인자}}              이중 중괄호
+ *   - {{{파라미터|기본값}}}    삼중 중괄호 (파라미터 참조)
+ *   - {button:text|url}, {stat:value|label} 등 단일 중괄호 토큰
+ */
+function _splitPipeTopLevel(raw) {
+    const parts = [];
+    let depth = 0;        // {{...}} / [[...]] / {{{...}}} 합산 깊이
+    let singleBrace = 0;  // {...} 단일 중괄호 토큰 깊이
+    let start = 0;
+    let i = 0;
+    while (i < raw.length) {
+        const ch = raw[i];
+        if (ch === '{') {
+            // 가장 긴 접두사 우선: {{ 는 이중 중괄호 (혹은 {{{ 의 일부)
+            if (raw[i + 1] === '{') {
+                depth++;
+                i += (raw[i + 2] === '{') ? 3 : 2;
+                continue;
+            }
+            singleBrace++;
+            i++;
+            continue;
+        }
+        if (ch === '}') {
+            // LIFO: 단일 중괄호가 열려 있으면 먼저 닫는다. {{Foo|{{Bar|{btn:X|Y}}}|...}}
+            // 에서 내부 {btn:...} 의 `}` 가 바깥 `}}` 의 일부로 먼저 소비되지 않도록.
+            if (singleBrace > 0) {
+                singleBrace--;
+                i++;
+                continue;
+            }
+            if (raw[i + 1] === '}') {
+                if (depth > 0) depth--;
+                i += (raw[i + 2] === '}') ? 3 : 2;
+                continue;
+            }
+            // 짝 없는 `}` — 텍스트로 간주.
+            i++;
+            continue;
+        }
+        if (ch === '[' && raw[i + 1] === '[') {
+            depth++;
+            i += 2;
+            continue;
+        }
+        if (ch === ']' && raw[i + 1] === ']') {
+            if (depth > 0) depth--;
+            i += 2;
+            continue;
+        }
+        if (ch === '|' && depth === 0 && singleBrace === 0) {
+            parts.push(raw.substring(start, i));
+            start = i + 1;
+        }
+        i++;
+    }
+    parts.push(raw.substring(start));
+    return parts;
+}
+
+/**
+ * {{틀이름|값1|key=값2}} 호출 내부 텍스트를 파싱한다. 첫 토큰은 틀 이름, 이후 토큰은 좌→우 순으로:
+ *   - `=` 가 있으면 `key=value` 이름 인자로 저장
+ *   - 없으면 현재 위치 카운터(1부터 시작) 를 키로 하는 이름 인자로 저장
+ * 같은 키가 반복되면 나중 값이 이전 값을 덮어쓴다. 따라서 호출자가 `1=value` 형태로
+ * 명시적 위치 인자를 넘겨도 `{{{1}}}` 참조가 올바르게 해결된다.
+ */
+function _parseTemplateCall(raw) {
+    const parts = _splitPipeTopLevel(raw);
+    const name = (parts.shift() || '').trim();
+    const args = {};
+    let posIndex = 1;
+    for (const part of parts) {
+        const eq = part.indexOf('=');
+        if (eq > 0) {
+            args[part.substring(0, eq).trim()] = part.substring(eq + 1).trim();
+        } else {
+            args[String(posIndex)] = part.trim();
+            posIndex++;
+        }
+    }
+    return { name, args };
+}
+
+/**
+ * `{{{` 로 시작하는 파라미터 참조의 닫는 `}}}` 위치를 스택 기반으로 찾는다.
+ * 기본값이 {{...}}, {{{...}}}, {...} 등 중첩된 위키 토큰을 포함해도 정확히 매칭한다.
+ */
+function _findParamRefEnd(text, contentStart) {
+    const stack = ['tri']; // 외부 {{{ 는 이미 소비
+    let i = contentStart;
+    while (i < text.length) {
+        const ch = text[i];
+        if (ch === '{') {
+            if (text[i + 1] === '{' && text[i + 2] === '{') { stack.push('tri'); i += 3; continue; }
+            if (text[i + 1] === '{') { stack.push('dbl'); i += 2; continue; }
+            stack.push('sgl');
+            i++;
+            continue;
+        }
+        if (ch === '}') {
+            const top = stack[stack.length - 1];
+            if (top === 'tri' && text[i + 1] === '}' && text[i + 2] === '}') {
+                stack.pop();
+                i += 3;
+                if (stack.length === 0) return { contentEnd: i - 3, fullEnd: i };
+                continue;
+            }
+            if (top === 'dbl' && text[i + 1] === '}') {
+                stack.pop();
+                i += 2;
+                if (stack.length === 0) return { contentEnd: i - 2, fullEnd: i };
+                continue;
+            }
+            if (top === 'sgl') {
+                stack.pop();
+                i++;
+                if (stack.length === 0) return { contentEnd: i - 1, fullEnd: i };
+                continue;
+            }
+            // 매칭 없는 `}` — 그냥 스킵.
+            i++;
+            continue;
+        }
+        i++;
+    }
+    return null;
+}
+
+/**
+ * text 에서 최상위 `{{{...}}}` 파라미터 참조를 모두 찾는다.
+ */
+function _findParamRefs(text) {
+    const refs = [];
+    let i = 0;
+    while (i < text.length - 2) {
+        if (text[i] === '{' && text[i + 1] === '{' && text[i + 2] === '{') {
+            const end = _findParamRefEnd(text, i + 3);
+            if (end) {
+                refs.push({ start: i, fullEnd: end.fullEnd, raw: text.substring(i + 3, end.contentEnd) });
+                i = end.fullEnd;
+                continue;
+            }
+        }
+        i++;
+    }
+    return refs;
+}
+
+/**
+ * 틀 본문의 {{{이름}}} / {{{1}}} / {{{이름|기본값}}} 파라미터 참조를 호출 인자로 치환.
+ * - 인자로 전달된 값은 그대로(리터럴) 삽입한다.
+ * - 기본값에 포함된 `{{{...}}}` 참조는 동일 args 로 재귀적으로 치환된다.
+ *   (예: `{{{reason|{{{1|}}}}}}` 처럼 이름 인자가 없을 때 위치 인자를 폴백으로 쓰는 관용 패턴 지원)
+ * - 기본값에 {{fallback}}, {button:text|url} 같은 중괄호 포함 위키 토큰이 있어도 보존된다.
+ * @param {number} [depth] 재귀 깊이 (기본값의 기본값 중첩 방어용 안전장치)
+ */
+function _substituteTemplateParams(templateContent, args, depth) {
+    if (depth === undefined) depth = 0;
+    if (depth > 10) return templateContent;
+
+    const refs = _findParamRefs(templateContent);
+    if (refs.length === 0) return templateContent;
+
+    let result = '';
+    let cursor = 0;
+    for (const ref of refs) {
+        result += templateContent.substring(cursor, ref.start);
+
+        const parts = _splitPipeTopLevel(ref.raw);
+        const key = (parts.shift() || '').trim();
+        // 첫 `|` 뒤는 기본값. 2번째 이후의 `|` 는 기본값 안에 그대로 포함.
+        const def = parts.length > 0 ? parts.join('|') : undefined;
+
+        const value = Object.prototype.hasOwnProperty.call(args, key) ? args[key] : undefined;
+
+        if (value !== undefined) {
+            result += value;
+        } else if (def !== undefined) {
+            // 기본값은 재귀적으로 파라미터 치환하여 중첩 폴백 패턴을 해소.
+            result += _substituteTemplateParams(def, args, depth + 1);
+        }
+        // 아무것도 없으면 빈 문자열
+
+        cursor = ref.fullEnd;
+    }
+    result += templateContent.substring(cursor);
+    return result;
+}
+
+/**
+ * `{{`(contentStart-2 위치) 로 시작하는 틀 호출의 닫는 `}}` 위치를 찾는다.
+ * 단일 중괄호 `{...}` 토큰, 삼중 중괄호 `{{{...}}}` 파라미터 참조, 중첩된 `{{...}}` 호출을
+ * 모두 올바르게 건너뛰며, 호출 인자 안에 {button:text|url} 같은 `}`-포함 토큰이 있어도
+ * 첫 번째 `}` 에서 조기 종료하지 않는다.
+ * @returns { contentEnd: number, fullEnd: number } 성공 / null 실패 (짝 없음)
+ */
+function _findTemplateCallEnd(text, contentStart) {
+    let dblBrace = 1; // 외부 {{ 는 이미 소비된 상태로 호출됨
+    let sgl = 0;      // 단일 중괄호 {...} 깊이
+    let i = contentStart;
+    while (i < text.length) {
+        const ch = text[i];
+        if (ch === '}') {
+            // 단일 중괄호 토큰이 열려 있으면 먼저 닫아 준다 ({button:...|...} 내부 `|` 보호와 대칭)
+            if (sgl > 0) {
+                sgl--;
+                i++;
+                continue;
+            }
+            if (text[i + 1] === '}') {
+                dblBrace--;
+                i += 2;
+                if (dblBrace === 0) return { contentEnd: i - 2, fullEnd: i };
+                continue;
+            }
+            // 짝이 없는 `}` — 스킵
+            i++;
+            continue;
+        }
+        if (ch === '{') {
+            if (text[i + 1] === '{') {
+                dblBrace++;
+                i += 2;
+                continue;
+            }
+            sgl++;
+            i++;
+            continue;
+        }
+        i++;
+    }
+    return null;
+}
+
+/**
+ * text 에서 최상위 `{{...}}` 호출을 모두 찾아 반환한다.
+ * `{{{...}}}` 파라미터 참조는 범위 전체를 건너뛰므로, 그 내부(특히 기본값)의 `{{...}}` 가
+ * 최상위 호출로 잘못 인식되지 않는다.
+ */
+function _findTemplateCalls(text) {
+    const calls = [];
+    let i = 0;
+    while (i < text.length - 1) {
+        if (text[i] === '{' && text[i + 1] === '{') {
+            if (text[i + 2] === '{') {
+                const refEnd = _findParamRefEnd(text, i + 3);
+                i = refEnd ? refEnd.fullEnd : i + 3;
+                continue;
+            }
+            const end = _findTemplateCallEnd(text, i + 2);
+            if (end) {
+                calls.push({
+                    start: i,
+                    fullEnd: end.fullEnd,
+                    raw: text.substring(i + 2, end.contentEnd)
+                });
+                i = end.fullEnd;
+                continue;
+            }
+        }
+        i++;
+    }
+    return calls;
+}
+
 // ── 틀(Transclusion) 및 익스텐션 처리 ──
+/**
+ * text 안의 최상위 `{{...}}` 호출 중 selfSlug 와 일치하는 것을 경고로 교체한다.
+ * `_substituteTemplateParams` 가 기본값을 전개한 결과에 남아 있는 자기 호출을 잡아낸다.
+ */
+function _replaceSelfCalls(text, selfSlug) {
+    const calls = _findTemplateCalls(text);
+    if (calls.length === 0) return text;
+    const warning = `⚠️ [자기 자신을 참조하는 틀은 사용할 수 없습니다: ${selfSlug}]`;
+    let out = '';
+    let cursor = 0;
+    for (const c of calls) {
+        out += text.substring(cursor, c.start);
+        const { name } = _parseTemplateCall(c.raw.trim());
+        if (_isExtensionCall(name)) {
+            out += text.substring(c.start, c.fullEnd);
+        } else {
+            let refSlug = name;
+            if (!refSlug.startsWith('template:') && !refSlug.startsWith('틀:') && !refSlug.startsWith('템플릿:')) {
+                refSlug = '틀:' + refSlug;
+            }
+            out += refSlug === selfSlug ? warning : text.substring(c.start, c.fullEnd);
+        }
+        cursor = c.fullEnd;
+    }
+    out += text.substring(cursor);
+    return out;
+}
+
 /**
  * 틀 확장 공통 핵심 로직.
  * options.expandExtensions: true이면 익스텐션 호출도 처리 (resolveTransclusions용)
@@ -1043,15 +1341,16 @@ async function _resolveTransclusionsCore(text, depth, cache, pageSlug, options) 
         }
     });
 
-    const regex = /\{\{\s*([^\}]+?)\s*\}\}/g;
-    const matches = [...protectedText.matchAll(regex)];
+    // 괄호 균형을 추적하는 파서로 호출 위치를 찾는다. 인자 안의 {button:a|b} 처럼
+    // `}` 를 포함한 단일 중괄호 토큰이 있어도 첫 `}` 에서 중단되지 않는다.
+    const calls = _findTemplateCalls(protectedText);
 
-    if (matches.length === 0) return text;
+    if (calls.length === 0) return text;
 
     const slugsToFetch = new Set();
     const extensionSlugs = new Set();
-    matches.forEach(m => {
-        const name = m[1].trim();
+    calls.forEach(c => {
+        const { name } = _parseTemplateCall(c.raw.trim());
         if (_isExtensionCall(name)) {
             if (options.expandExtensions) {
                 // 익스텐션: slug를 그대로 사용 (예: "freq:AirPods_Pro_2")
@@ -1103,14 +1402,27 @@ async function _resolveTransclusionsCore(text, depth, cache, pageSlug, options) 
                                 return;
                             }
                             const selfReferenceWarning = `⚠️ [자기 자신을 참조하는 틀은 사용할 수 없습니다: ${slug}]`;
-                            const tplContent = data.content.replace(/\{\{\s*([^\}]+?)\s*\}\}/g, (match, name) => {
-                                let refSlug = name.trim();
-                                if (_isExtensionCall(refSlug)) return match;
-                                if (!refSlug.startsWith('template:') && !refSlug.startsWith('틀:') && !refSlug.startsWith('템플릿:')) {
-                                    refSlug = '틀:' + refSlug;
+                            // 틀 본문 내부의 자기 참조를 치환. 중괄호 균형을 맞추는 파서로 호출을
+                            // 찾기 때문에 인자 내부의 {button:...} 같은 토큰이 있어도 정확히 매칭한다.
+                            const innerCalls = _findTemplateCalls(data.content);
+                            let tplContent = '';
+                            let cursor = 0;
+                            for (const ic of innerCalls) {
+                                tplContent += data.content.substring(cursor, ic.start);
+                                const { name: innerName } = _parseTemplateCall(ic.raw.trim());
+                                const original = data.content.substring(ic.start, ic.fullEnd);
+                                if (_isExtensionCall(innerName)) {
+                                    tplContent += original;
+                                } else {
+                                    let refSlug = innerName;
+                                    if (!refSlug.startsWith('template:') && !refSlug.startsWith('틀:') && !refSlug.startsWith('템플릿:')) {
+                                        refSlug = '틀:' + refSlug;
+                                    }
+                                    tplContent += refSlug === slug ? selfReferenceWarning : original;
                                 }
-                                return refSlug === slug ? selfReferenceWarning : match;
-                            });
+                                cursor = ic.fullEnd;
+                            }
+                            tplContent += data.content.substring(cursor);
                             cache.set(slug, tplContent);
                         }
                     })
@@ -1134,56 +1446,80 @@ async function _resolveTransclusionsCore(text, depth, cache, pageSlug, options) 
     const WIKI_TCL_OPEN = '<!--WIKI_TCL_B-->';
     const WIKI_TCL_CLOSE = '<!--WIKI_TCL_E-->';
 
-    let newText = protectedText.replace(regex, (match, name, offset, fullStr) => {
-        const trimmed = name.trim();
+    // 각 호출에 대응할 치환 텍스트를 먼저 계산한 뒤, 호출 위치(start, fullEnd) 를 이용해
+    // 원본에서 세그먼트 단위로 교체. 정규식 기반 replace 를 사용하지 않아 인자 내부의
+    // 브레이스 포함 토큰도 안전하게 처리된다.
+    let newText = '';
+    let cursor = 0;
+    for (const c of calls) {
+        newText += protectedText.substring(cursor, c.start);
+        const match = protectedText.substring(c.start, c.fullEnd);
+        const call = _parseTemplateCall(c.raw.trim());
+        const trimmed = call.name;
+        let replacement;
         if (_isExtensionCall(trimmed)) {
-            if (!options.expandExtensions) return match;
-            const cached = cache.get(trimmed);
-            if (!cached) return match;
-            if (typeof cached === 'string') return cached; // 에러 메시지
-            if (cached._disabled) return `⚠️ [비활성화된 익스텐션: ${cached.extName}]`;
-            if (options.emitExtensionPlaceholders) {
-                // 플레이스홀더를 삽입하고 데이터는 전역 배열에 저장
-                const idx = _wikiExtensionData.length;
-                _wikiExtensionData.push({ extName: cached.extName, slug: cached.slug, content: cached.content, title: cached.title });
-                return `\n\nWIKIEXTPH_${cached.extName}_${idx}_XEND\n\n`;
+            if (!options.expandExtensions) {
+                replacement = match;
+            } else {
+                const cached = cache.get(trimmed);
+                if (!cached) {
+                    replacement = match;
+                } else if (typeof cached === 'string') {
+                    replacement = cached; // 에러 메시지
+                } else if (cached._disabled) {
+                    replacement = `⚠️ [비활성화된 익스텐션: ${cached.extName}]`;
+                } else if (options.emitExtensionPlaceholders) {
+                    const idx = _wikiExtensionData.length;
+                    _wikiExtensionData.push({ extName: cached.extName, slug: cached.slug, content: cached.content, title: cached.title });
+                    replacement = `\n\nWIKIEXTPH_${cached.extName}_${idx}_XEND\n\n`;
+                } else {
+                    replacement = match;
+                }
             }
-            return match;
         } else {
             let slug = trimmed;
             if (!slug.startsWith('template:') && !slug.startsWith('틀:') && !slug.startsWith('템플릿:')) {
                 slug = '틀:' + slug;
             }
-            const expanded = cache.get(slug);
-            if (expanded === undefined || expanded === null) return match;
-            if (typeof expanded !== 'string') return match;
+            const cached = cache.get(slug);
+            if (cached === undefined || cached === null || typeof cached !== 'string') {
+                replacement = match;
+            } else {
+                // 파라미터 치환: {{{이름}}} / {{{1}}} / {{{이름|기본값}}} 을 호출 인자로 대체.
+                // 치환 후 남은 {{...}} 는 다음 재귀 단계(depth+1) 에서 확장된다.
+                let expanded = _substituteTemplateParams(cached, call.args);
+                // 기본값(default) 에 숨어 있던 자기 호출이 파라미터 치환으로 드러날 수 있다.
+                // (예: {{{1|{{A}}}}} 에 1 이 미지정된 경우 expanded 에 {{A}} 가 나타남.)
+                // cache 시점의 사전 스캔은 {{{...}}} 범위를 건너뛰므로 이 지점에서 한 번 더
+                // 자기 호출을 경고로 교체해 MAX_DEPTH 까지의 무한 재귀를 차단한다.
+                expanded = _replaceSelfCalls(expanded, slug);
 
-            // 현재 라인의 접두 / 접미 컨텍스트 분석
-            const lineStart = fullStr.lastIndexOf('\n', offset - 1) + 1;
-            const nextNl = fullStr.indexOf('\n', offset + match.length);
-            const lineEnd = nextNl === -1 ? fullStr.length : nextNl;
-            const beforeOnLine = fullStr.substring(lineStart, offset);
-            const afterOnLine = fullStr.substring(offset + match.length, lineEnd);
-            const aloneOnLine = beforeOnLine.trim() === '' && afterOnLine.trim() === '';
+                // 현재 라인의 접두 / 접미 컨텍스트 분석
+                const lineStart = protectedText.lastIndexOf('\n', c.start - 1) + 1;
+                const nextNl = protectedText.indexOf('\n', c.fullEnd);
+                const lineEnd = nextNl === -1 ? protectedText.length : nextNl;
+                const beforeOnLine = protectedText.substring(lineStart, c.start);
+                const afterOnLine = protectedText.substring(c.fullEnd, lineEnd);
+                const aloneOnLine = beforeOnLine.trim() === '' && afterOnLine.trim() === '';
 
-            if (aloneOnLine && beforeOnLine === '') {
-                // 진짜 블록 컨텍스트(컬럼 0, 단독 라인): 센티넬을 빈 줄로 분리하여
-                // 템플릿 내부 블록 구조(헤딩 등)가 올바르게 렌더링되도록 함.
-                return '\n\n' + WIKI_TCL_OPEN + '\n\n' + expanded + '\n\n' + WIKI_TCL_CLOSE + '\n\n';
+                if (aloneOnLine && beforeOnLine === '') {
+                    // 진짜 블록 컨텍스트(컬럼 0, 단독 라인): 센티넬을 빈 줄로 분리.
+                    replacement = '\n\n' + WIKI_TCL_OPEN + '\n\n' + expanded + '\n\n' + WIKI_TCL_CLOSE + '\n\n';
+                } else if (aloneOnLine) {
+                    // 들여쓰기된 단독 라인: 원본 접두사를 다음 줄들에도 이어 붙여 부모 블록 유지.
+                    const prefix = beforeOnLine;
+                    const indentedExpanded = expanded.split('\n').join('\n' + prefix);
+                    replacement = WIKI_TCL_OPEN + indentedExpanded + WIKI_TCL_CLOSE;
+                } else {
+                    // 인라인 컨텍스트(문장 중간): 같은 줄에 바로 붙여 문단 흐름 유지.
+                    replacement = WIKI_TCL_OPEN + expanded + WIKI_TCL_CLOSE;
+                }
             }
-            if (aloneOnLine) {
-                // 들여쓰기된 단독 라인 (예: 리스트/블록쿼트 하위 항목 "  {{tpl}}").
-                // 원본의 들여쓰기 접두사(공백) 를 다음 줄들에도 이어 붙여 부모 블록
-                // 컨텍스트(리스트 연속, 블록쿼트 continuation) 를 유지한다.
-                // 첫 줄은 replace 위치가 이미 접두사 뒤라 그대로 두고, 이후 개행마다 동일 prefix 삽입.
-                const prefix = beforeOnLine;
-                const indentedExpanded = expanded.split('\n').join('\n' + prefix);
-                return WIKI_TCL_OPEN + indentedExpanded + WIKI_TCL_CLOSE;
-            }
-            // 인라인 컨텍스트(문장 중간): 같은 줄에 바로 붙여 문단 흐름을 깨지 않음
-            return WIKI_TCL_OPEN + expanded + WIKI_TCL_CLOSE;
         }
-    });
+        newText += replacement;
+        cursor = c.fullEnd;
+    }
+    newText += protectedText.substring(cursor);
 
     newText = newText.replace(/\x00CODEBLOCK_(\d+)\x00/g, (_, idx) => codeBlocks[parseInt(idx, 10)]);
 

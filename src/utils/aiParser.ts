@@ -3,6 +3,284 @@ import { normalizeSlug } from './slug';
 
 const MAX_TEMPLATE_DEPTH = 3;
 
+interface TemplateCall {
+    name: string;
+    /**
+     * 이름이 있는 인자(`key=value`)와 위치 인자(`value`) 를 통합해 저장한다.
+     * 위치 인자는 `'1'`, `'2'`, ... 문자열 키로 저장되므로 호출자가 `1=value` 형태로
+     * 위치 인자에 이름을 명시적으로 지정해도 `{{{1}}}` 로 조회된다.
+     * 같은 키가 반복되면 뒤쪽 인자가 앞쪽을 덮어쓴다 (MediaWiki 와 동일).
+     */
+    args: Record<string, string>;
+}
+
+/**
+ * 최상위(depth=0) 파이프(|)만 기준으로 raw를 분리합니다.
+ * 다음 위키 문법 내부의 '|'는 분리하지 않습니다:
+ *   - [[링크|레이블]]          이중 대괄호
+ *   - {{틀|인자}}              이중 중괄호
+ *   - {{{파라미터|기본값}}}    삼중 중괄호 (파라미터 참조)
+ *   - {button:text|url}, {stat:value|label} 등 단일 중괄호 토큰
+ */
+function splitPipeTopLevel(raw: string): string[] {
+    const parts: string[] = [];
+    let depth = 0;       // {{...}} / [[...]] / {{{...}}} 합산 깊이
+    let singleBrace = 0; // {...} 단일 중괄호 토큰 깊이
+    let start = 0;
+    let i = 0;
+    while (i < raw.length) {
+        const ch = raw[i];
+        if (ch === '{') {
+            // 가장 긴 접두사 우선: {{ 는 이중 중괄호 (혹은 {{{ 의 일부)
+            if (raw[i + 1] === '{') {
+                depth++;
+                i += (raw[i + 2] === '{') ? 3 : 2;
+                continue;
+            }
+            singleBrace++;
+            i++;
+            continue;
+        }
+        if (ch === '}') {
+            // LIFO: 단일 중괄호가 열려 있으면 먼저 닫는다. {{Foo|{{Bar|{btn:X|Y}}}|...}}
+            // 에서 내부 {btn:...} 의 `}` 가 바깥 `}}` 의 일부로 먼저 소비되지 않도록.
+            if (singleBrace > 0) {
+                singleBrace--;
+                i++;
+                continue;
+            }
+            if (raw[i + 1] === '}') {
+                if (depth > 0) depth--;
+                i += (raw[i + 2] === '}') ? 3 : 2;
+                continue;
+            }
+            // 짝 없는 `}` — 텍스트로 간주.
+            i++;
+            continue;
+        }
+        if (ch === '[' && raw[i + 1] === '[') {
+            depth++;
+            i += 2;
+            continue;
+        }
+        if (ch === ']' && raw[i + 1] === ']') {
+            if (depth > 0) depth--;
+            i += 2;
+            continue;
+        }
+        if (ch === '|' && depth === 0 && singleBrace === 0) {
+            parts.push(raw.substring(start, i));
+            start = i + 1;
+        }
+        i++;
+    }
+    parts.push(raw.substring(start));
+    return parts;
+}
+
+/**
+ * {{틀이름|값1|key=값2}} 형태의 호출 내부 텍스트(틀이름 포함)를 파싱합니다.
+ * 첫 토큰은 틀 이름, 이후 토큰은 좌→우 순으로:
+ *   - `=` 가 있으면 `key=value` 이름 인자로 저장
+ *   - 없으면 현재 위치 카운터(1부터 시작)를 키로 하는 이름 인자로 저장
+ * 같은 키가 반복되면 나중 값이 이전 값을 덮어쓴다. 따라서 호출자가 `1=value` 형태로
+ * 명시적 위치 인자를 넘겨도 `{{{1}}}` 참조가 올바르게 해결된다.
+ */
+function parseTemplateCall(raw: string): TemplateCall {
+    const parts = splitPipeTopLevel(raw);
+    const name = (parts.shift() || '').trim();
+    const args: Record<string, string> = {};
+    let posIndex = 1;
+    for (const part of parts) {
+        const eq = part.indexOf('=');
+        if (eq > 0) {
+            args[part.substring(0, eq).trim()] = part.substring(eq + 1).trim();
+        } else {
+            args[String(posIndex)] = part.trim();
+            posIndex++;
+        }
+    }
+    return { name, args };
+}
+
+interface TemplateCallSpan {
+    start: number;
+    fullEnd: number;
+    raw: string;
+}
+
+/**
+ * `{{`(contentStart-2 위치) 로 시작하는 틀 호출의 닫는 `}}` 위치를 찾는다.
+ * 단일 중괄호 `{...}` 토큰, 삼중 중괄호 `{{{...}}}` 파라미터 참조, 중첩된 `{{...}}` 호출을
+ * 모두 올바르게 건너뛰며, 인자 안에 {button:text|url} 같은 `}`-포함 토큰이 있어도
+ * 첫 `}` 에서 조기 종료하지 않는다.
+ */
+function findTemplateCallEnd(text: string, contentStart: number): { contentEnd: number; fullEnd: number } | null {
+    let dblBrace = 1;
+    let sgl = 0;
+    let i = contentStart;
+    while (i < text.length) {
+        const ch = text[i];
+        if (ch === '}') {
+            if (sgl > 0) { sgl--; i++; continue; }
+            if (text[i + 1] === '}') {
+                dblBrace--;
+                i += 2;
+                if (dblBrace === 0) return { contentEnd: i - 2, fullEnd: i };
+                continue;
+            }
+            i++;
+            continue;
+        }
+        if (ch === '{') {
+            if (text[i + 1] === '{') { dblBrace++; i += 2; continue; }
+            sgl++;
+            i++;
+            continue;
+        }
+        i++;
+    }
+    return null;
+}
+
+/**
+ * text 에서 최상위 `{{...}}` 호출을 모두 찾아 반환한다.
+ * `{{{...}}}` 파라미터 참조는 범위 전체를 건너뛰므로, 그 내부(특히 기본값)의 `{{...}}` 가
+ * 최상위 호출로 잘못 인식되지 않는다.
+ */
+function findTemplateCalls(text: string): TemplateCallSpan[] {
+    const calls: TemplateCallSpan[] = [];
+    let i = 0;
+    while (i < text.length - 1) {
+        if (text[i] === '{' && text[i + 1] === '{') {
+            if (text[i + 2] === '{') {
+                const refEnd = findParamRefEnd(text, i + 3);
+                i = refEnd ? refEnd.fullEnd : i + 3;
+                continue;
+            }
+            const end = findTemplateCallEnd(text, i + 2);
+            if (end) {
+                calls.push({ start: i, fullEnd: end.fullEnd, raw: text.substring(i + 2, end.contentEnd) });
+                i = end.fullEnd;
+                continue;
+            }
+        }
+        i++;
+    }
+    return calls;
+}
+
+/**
+ * `{{{` 로 시작하는 파라미터 참조의 닫는 `}}}` 위치를 스택 기반으로 찾는다.
+ * 내부 기본값이 {{...}}, {{{...}}}, {...} 등 중첩된 위키 토큰을 포함해도 정확히 매칭한다.
+ */
+function findParamRefEnd(text: string, contentStart: number): { contentEnd: number; fullEnd: number } | null {
+    const stack: Array<'tri' | 'dbl' | 'sgl'> = ['tri'];
+    let i = contentStart;
+    while (i < text.length) {
+        const ch = text[i];
+        if (ch === '{') {
+            if (text[i + 1] === '{' && text[i + 2] === '{') { stack.push('tri'); i += 3; continue; }
+            if (text[i + 1] === '{') { stack.push('dbl'); i += 2; continue; }
+            stack.push('sgl');
+            i++;
+            continue;
+        }
+        if (ch === '}') {
+            const top = stack[stack.length - 1];
+            if (top === 'tri' && text[i + 1] === '}' && text[i + 2] === '}') {
+                stack.pop();
+                i += 3;
+                if (stack.length === 0) return { contentEnd: i - 3, fullEnd: i };
+                continue;
+            }
+            if (top === 'dbl' && text[i + 1] === '}') {
+                stack.pop();
+                i += 2;
+                if (stack.length === 0) return { contentEnd: i - 2, fullEnd: i };
+                continue;
+            }
+            if (top === 'sgl') {
+                stack.pop();
+                i++;
+                if (stack.length === 0) return { contentEnd: i - 1, fullEnd: i };
+                continue;
+            }
+            // 매칭 없는 `}` — 그냥 스킵해 무한 루프를 피한다.
+            i++;
+            continue;
+        }
+        i++;
+    }
+    return null;
+}
+
+interface ParamRefSpan {
+    start: number;
+    fullEnd: number;
+    raw: string;
+}
+
+/**
+ * text 에서 최상위 `{{{...}}}` 파라미터 참조를 모두 찾는다.
+ */
+function findParamRefs(text: string): ParamRefSpan[] {
+    const refs: ParamRefSpan[] = [];
+    let i = 0;
+    while (i < text.length - 2) {
+        if (text[i] === '{' && text[i + 1] === '{' && text[i + 2] === '{') {
+            const end = findParamRefEnd(text, i + 3);
+            if (end) {
+                refs.push({ start: i, fullEnd: end.fullEnd, raw: text.substring(i + 3, end.contentEnd) });
+                i = end.fullEnd;
+                continue;
+            }
+        }
+        i++;
+    }
+    return refs;
+}
+
+/**
+ * 틀 본문의 {{{이름}}} / {{{1}}} / {{{이름|기본값}}} 파라미터 참조를 주어진 인자로 치환합니다.
+ * - 인자로 전달된 값은 그대로(리터럴) 삽입한다.
+ * - 기본값에 포함된 `{{{...}}}` 참조는 동일 args 로 재귀적으로 치환된다.
+ *   (예: `{{{reason|{{{1|}}}}}}` 처럼 이름 인자가 없을 때 위치 인자를 폴백으로 쓰는 관용 패턴 지원)
+ * - 기본값에 {{fallback}}, {button:text|url} 같은 중괄호 포함 위키 토큰이 있어도 보존된다.
+ * @param depth 재귀 깊이 (기본값의 기본값 중첩 방어용 안전장치)
+ */
+function substituteParams(templateContent: string, args: Record<string, string>, depth: number = 0): string {
+    if (depth > 10) return templateContent;
+
+    const refs = findParamRefs(templateContent);
+    if (refs.length === 0) return templateContent;
+
+    let result = '';
+    let cursor = 0;
+    for (const ref of refs) {
+        result += templateContent.substring(cursor, ref.start);
+
+        const parts = splitPipeTopLevel(ref.raw);
+        const key = (parts.shift() || '').trim();
+        // 첫 `|` 뒤는 기본값. 2번째 이후의 `|` 는 기본값 안에 그대로 포함.
+        const def = parts.length > 0 ? parts.join('|') : undefined;
+
+        const value = Object.prototype.hasOwnProperty.call(args, key) ? args[key] : undefined;
+
+        if (value !== undefined) {
+            result += value;
+        } else if (def !== undefined) {
+            // 기본값은 재귀적으로 파라미터 치환하여 중첩 폴백 패턴을 해소.
+            result += substituteParams(def, args, depth + 1);
+        }
+        // 아무것도 없으면 빈 문자열
+
+        cursor = ref.fullEnd;
+    }
+    result += templateContent.substring(cursor);
+    return result;
+}
+
 /**
  * 텍스트에서 AI 처리에 방해되는 위키 전용 문법을 제거/변환합니다.
  * - [[문서간 링크]]는 변환하지 않고 그대로 유지합니다.
@@ -33,12 +311,26 @@ export async function renderForAI(content: string, db: D1Database, depth = 0, cu
         return key;
     });
 
-    // 3) {{틀 트랜스클루전}} 토큰을 아래 {...} 셀/아이콘 제거 정규식으로부터 보호
-    processed = processed.replace(/\{\{[^{}]+?\}\}/g, (match) => {
-        const key = `\x00TEMPLATE_${placeholderIndex++}\x00`;
-        placeholders.set(key, match);
-        return key;
-    });
+    // 3) {{틀 트랜스클루전}} 토큰을 아래 {...} 셀/아이콘 제거 정규식으로부터 보호.
+    // 정규식 대신 중괄호 균형 파서로 호출 범위를 찾기 때문에 인자 안에 {stat:v|label}
+    // 같은 단일 중괄호 토큰이 있어도 호출 전체가 누락 없이 보호된다.
+    {
+        const protectCalls = findTemplateCalls(processed);
+        if (protectCalls.length > 0) {
+            let rebuilt = '';
+            let cursor = 0;
+            for (const c of protectCalls) {
+                rebuilt += processed.substring(cursor, c.start);
+                const match = processed.substring(c.start, c.fullEnd);
+                const key = `\x00TEMPLATE_${placeholderIndex++}\x00`;
+                placeholders.set(key, match);
+                rebuilt += key;
+                cursor = c.fullEnd;
+            }
+            rebuilt += processed.substring(cursor);
+            processed = rebuilt;
+        }
+    }
 
     // 3. {중괄호} 문법 처리
     // {<}, {>}, {^}, {><} 등 표 셀 병합 문법이 포함되어 있으면 안내 문구 추가 후 제거
@@ -86,23 +378,23 @@ export async function renderForAI(content: string, db: D1Database, depth = 0, cu
 
     // 4. {{틀 트랜스클루전}} 처리
     if (depth < MAX_TEMPLATE_DEPTH) {
-        // 정규식: {{틀이름}} 또는 {{틀:틀이름}} 또는 {{문서이름}}
-        const templateRegex = /\{\{([^}]+?)\}\}/g;
+        // 중괄호 균형 파서로 호출 위치를 찾는다. 인자 내부의 {button:a|b} 같은
+        // `}` 포함 토큰이나 중첩된 {{...}} 호출이 있어도 전체 호출을 정확히 잡아낸다.
+        const templateCalls = findTemplateCalls(processed);
 
-        // 모든 매치를 먼저 순회하여 슬러그 목록을 모음
-        const matches = Array.from(processed.matchAll(templateRegex));
-
-        if (matches.length > 0) {
-            // 1) 슬러그 목록 추출 (중복 제거)
-            const slugMap = new Map<string, string>(); // normalizedSlug -> original match text
-            const selfRefSlugs = new Set<string>(); // 자기 자신을 참조하는 슬러그
-            for (const m of matches) {
-                let targetSlug = m[1].trim();
+        if (templateCalls.length > 0) {
+            // 1) 슬러그 목록 추출 (중복 제거) + 매치별 호출 인자 보존
+            const slugMap = new Map<string, string>();
+            const selfRefSlugs = new Set<string>();
+            const matchCalls: { normalized: string; call: TemplateCall; start: number; fullEnd: number }[] = [];
+            for (const tc of templateCalls) {
+                const call = parseTemplateCall(tc.raw.trim());
+                let targetSlug = call.name;
                 if (!targetSlug.startsWith('틀:') && !targetSlug.startsWith('template:') && !targetSlug.startsWith('템플릿:')) {
                     targetSlug = '틀:' + targetSlug;
                 }
                 const normalized = normalizeSlug(targetSlug);
-                // 자기 자신을 참조하는 틀은 건너뛰기
+                matchCalls.push({ normalized, call, start: tc.start, fullEnd: tc.fullEnd });
                 if (currentSlug && normalized === normalizeSlug(currentSlug)) {
                     selfRefSlugs.add(normalized);
                     continue;
@@ -133,38 +425,56 @@ export async function renderForAI(content: string, db: D1Database, depth = 0, cu
                 // 배치 실패 시 빈 결과로 처리
             }
 
-            // 3) 조회된 틀 내용을 재귀적으로 파싱
-            const parsedTemplates = new Map<string, string>();
+            // 3) 매치별로 파라미터 치환 후 재귀 파싱 (인자가 다르면 결과도 다르므로 매치별 처리)
+            const parsedByIndex = new Array<string>(matchCalls.length);
             const parsePromises: Promise<void>[] = [];
-
-            for (const [normalized] of slugMap) {
-                const content = templateContents.get(normalized);
-                if (content) {
-                    parsePromises.push(
-                        renderForAI(content, db, depth + 1, normalized).then(parsed => {
-                            parsedTemplates.set(normalized, parsed);
-                        })
-                    );
+            for (let i = 0; i < matchCalls.length; i++) {
+                const { normalized, call } = matchCalls[i];
+                if (selfRefSlugs.has(normalized)) {
+                    parsedByIndex[i] = '';
+                    continue;
                 }
+                const content = templateContents.get(normalized);
+                if (!content) {
+                    parsedByIndex[i] = '';
+                    continue;
+                }
+                const substituted = substituteParams(content, call.args);
+                parsePromises.push(
+                    renderForAI(substituted, db, depth + 1, normalized).then(parsed => {
+                        parsedByIndex[i] = parsed;
+                    })
+                );
             }
             await Promise.all(parsePromises);
 
-            // 4) 수집된 치환 값들을 원본에서 교체
-            for (const m of matches) {
-                const original = m[0];
-                let targetSlug = m[1].trim();
-                if (!targetSlug.startsWith('틀:') && !targetSlug.startsWith('template:') && !targetSlug.startsWith('템플릿:')) {
-                    targetSlug = '틀:' + targetSlug;
-                }
-                const normalized = normalizeSlug(targetSlug);
-                // 자기 참조 틀은 빈 문자열로 치환
-                const replacement = selfRefSlugs.has(normalized) ? '' : (parsedTemplates.get(normalized) || '');
-                processed = processed.replace(new RegExp(original.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&'), 'g'), replacement);
+            // 4) 호출 위치(start, fullEnd) 를 이용해 세그먼트 단위로 교체.
+            // findTemplateCalls 가 이미 왼쪽→오른쪽 순서로 비겹침 스팬을 반환하므로
+            // 역순 처리 없이 한 번에 재조립 가능.
+            let rebuilt = '';
+            let cursor = 0;
+            for (let i = 0; i < matchCalls.length; i++) {
+                const mc = matchCalls[i];
+                rebuilt += processed.substring(cursor, mc.start);
+                rebuilt += parsedByIndex[i] || '';
+                cursor = mc.fullEnd;
             }
+            rebuilt += processed.substring(cursor);
+            processed = rebuilt;
         }
     } else {
-        // 최대 깊이를 초과하면 틀 문법 자체를 텍스트에서 삭제
-        processed = processed.replace(/\{\{([^}]+?)\}\}/g, '');
+        // 최대 깊이를 초과하면 틀 호출 자체를 제거 (파라미터 참조 {{{...}}} 는 보존)
+        const overflowCalls = findTemplateCalls(processed);
+        if (overflowCalls.length > 0) {
+            let rebuilt = '';
+            let cursor = 0;
+            for (const c of overflowCalls) {
+                rebuilt += processed.substring(cursor, c.start);
+                cursor = c.fullEnd;
+            }
+            rebuilt += processed.substring(cursor);
+            processed = rebuilt;
+        }
     }
 
     // 플레이스홀더 복원 (코드블럭/인라인 코드 내용 원상복구)

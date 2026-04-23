@@ -478,7 +478,9 @@ app.get('/w/*', async (c) => {
         };
         // 삭제된 문서는 리다이렉트나 본문 조회를 하지 않도록 처리
         const response = await renderHtml(c, '/', deletedSsrData);
-        return new Response(response.body, { status: 410, headers: response.headers });
+        const goneResponse = new Response(response.body, { status: 410, headers: response.headers });
+        goneResponse.headers.set('Cache-Control', 'no-store, must-revalidate');
+        return goneResponse;
     }
 
     let redirectedFrom: string | null = null;

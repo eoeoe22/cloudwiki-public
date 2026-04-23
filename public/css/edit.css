@@ -448,6 +448,16 @@ html[data-theme="dark"] .editor-settings-panel {
     padding: 0 2px;
 }
 
+.cm-wiki-template-param.cm-wiki-template-param {
+    --cm-wiki-template-param-color: #d98c0b;
+    --cm-wiki-template-param-background: rgba(217, 140, 11, 0.1);
+    color: var(--cm-wiki-template-param-color);
+    font-weight: bold;
+    background: var(--cm-wiki-template-param-background);
+    border-radius: 3px;
+    padding: 0 2px;
+}
+
 .cm-bg-color {
     border: 1px solid #ccc;
     border-radius: 3px;
@@ -468,6 +478,11 @@ html[data-theme="dark"] .editor-settings-panel {
         --cm-wiki-template-color: #56d364;
         --cm-wiki-template-background: rgba(86, 211, 100, 0.1);
     }
+
+    html:not([data-theme="light"]) .cm-wiki-template-param.cm-wiki-template-param {
+        --cm-wiki-template-param-color: #f0b155;
+        --cm-wiki-template-param-background: rgba(240, 177, 85, 0.12);
+    }
 }
 html[data-theme="dark"] .cm-toolbar {
     background: var(--wiki-bg-alt, #1e1e1e);
@@ -479,6 +494,10 @@ html[data-theme="dark"] .cm-wiki-link {
 html[data-theme="dark"] .cm-wiki-template.cm-wiki-template {
     --cm-wiki-template-color: #56d364;
     --cm-wiki-template-background: rgba(86, 211, 100, 0.1);
+}
+html[data-theme="dark"] .cm-wiki-template-param.cm-wiki-template-param {
+    --cm-wiki-template-param-color: #f0b155;
+    --cm-wiki-template-param-background: rgba(240, 177, 85, 0.12);
 }
 
 .conflict-textarea {
@@ -1863,6 +1882,7 @@ html[data-theme="dark"] .cm-code-block * {
 
 .cm-inline-code.cm-wiki-link,
 .cm-inline-code.cm-wiki-template,
+.cm-inline-code.cm-wiki-template-param,
 .cm-inline-code.cm-align-marker,
 .cm-inline-code.cm-icon-marker,
 .cm-inline-code.cm-color-badge,
@@ -1874,6 +1894,7 @@ html[data-theme="dark"] .cm-code-block * {
 .cm-inline-code.cm-param-token,
 .cm-code-block .cm-wiki-link,
 .cm-code-block .cm-wiki-template,
+.cm-code-block .cm-wiki-template-param,
 .cm-code-block .cm-align-marker,
 .cm-code-block .cm-icon-marker,
 .cm-code-block .cm-color-badge,

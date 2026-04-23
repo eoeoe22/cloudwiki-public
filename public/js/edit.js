@@ -133,6 +133,70 @@ function findSectionRange(fullContent, idx, expectedHeading) {
     return null;
 }
 
+// 섹션 인덱스를 열람 페이지의 계층적 목차 번호(예: "1.2.1")로 변환.
+// common.js 의 numberHeadings() 와 동일한 카운터 로직을 복제해 열람 페이지의
+// s-X.Y 앵커 ID 와 1:1 로 매칭되는 번호를 생성한다.
+// _extractMarkdownSectionRanges 는 render.js 에 정의되어 있다.
+//
+// 중요: sectionIndex 는 섹션 편집 링크(render.js 의 _addHeadingCopyButtons)
+// 에서 **원본(raw) 헤딩 순서** 즉 transclusion 으로 주입되지 않은 헤딩만
+// 0-based 로 센 인덱스다. 반면 열람 페이지의 s-X.Y 앵커는 transclusion 전개
+// 이후의 전체 헤딩 순서로 번호가 매겨지므로, 전달받은 ranges(resolveTransclusions
+// 결과에서 추출) 에서 idx 를 그대로 쓰면 문서 앞쪽에 transcluded 헤딩이
+// 존재할 때 엉뚱한 섹션을 가리킨다. 따라서 ranges 의 non-transcluded 엔트리
+// 만 세어 idx 번째 위치를 찾아낸 뒤 번호 계산에 사용한다.
+function computeSectionNumber(fullContent, idx, expectedHeading) {
+    if (typeof _extractMarkdownSectionRanges !== 'function') return null;
+    const ranges = _extractMarkdownSectionRanges(fullContent || '');
+    if (!ranges.length) return null;
+
+    const normalize = (s) => (s || '').trim();
+    const target = normalize(expectedHeading);
+
+    // raw idx → resolved ranges 인덱스 매핑: non-transcluded 엔트리 중 idx 번째.
+    // _extractMarkdownSectionRanges 는 transclusion 센티넬이 없으면 모든 엔트리의
+    // transcluded 를 false 로 세팅하므로, 비-전개 본문에서도 이 로직은 idx 와 동일.
+    let targetIdx = -1;
+    if (idx >= 0) {
+        let seen = 0;
+        for (let i = 0; i < ranges.length; i++) {
+            if (ranges[i].transcluded) continue;
+            if (seen === idx) { targetIdx = i; break; }
+            seen++;
+        }
+    }
+
+    // non-transcluded 엔트리가 idx 개 미만이어서 매핑이 실패한 경우(예: 다른
+    // 편집자가 섹션을 삭제해 raw 헤딩 수가 줄어든 경우) expectedHeading 텍스트로
+    // 재탐색한다. non-transcluded 쪽을 먼저 시도하고, 없으면 전체 ranges 에서
+    // 단일 매칭을 허용한다.
+    if (targetIdx === -1 && target) {
+        const nonTransMatches = [];
+        const allMatches = [];
+        for (let i = 0; i < ranges.length; i++) {
+            if (normalize(ranges[i].headingText) !== target) continue;
+            allMatches.push(i);
+            if (!ranges[i].transcluded) nonTransMatches.push(i);
+        }
+        if (nonTransMatches.length === 1) targetIdx = nonTransMatches[0];
+        else if (allMatches.length === 1) targetIdx = allMatches[0];
+    }
+
+    if (targetIdx === -1) return null;
+
+    const minLevel = Math.min(...ranges.map(r => r.level));
+    const counters = [0, 0, 0, 0, 0, 0];
+    for (let i = 0; i <= targetIdx; i++) {
+        const relLevel = ranges[i].level - minLevel;
+        counters[relLevel]++;
+        for (let k = relLevel + 1; k < counters.length; k++) counters[k] = 0;
+    }
+    const relLevel = ranges[targetIdx].level - minLevel;
+    const parts = [];
+    for (let k = 0; k <= relLevel; k++) parts.push(counters[k] || 1);
+    return parts.join('.');
+}
+
 // 섹션 텍스트 조각을 원본에 재주입하여 전체 본문 복원
 function mergeSectionIntoFull(fullContent, range, newSectionText) {
     const lines = (fullContent || '').split('\n');
@@ -2231,10 +2295,18 @@ document.addEventListener('DOMContentLoaded', async () => {
         const wikiLinkPlugin = makePlugin(wikiLinkMatcher);
 
         const templateMatcher = new MatchDecorator({
-            regexp: /\{\{([^}]*)\}\}/g,
+            // {{{...}}} 파라미터 참조는 제외 (lookbehind + lookahead 사용)
+            regexp: /(?<!\{)\{\{(?!\{)([^}]*)\}\}/g,
             decoration: Decoration.mark({ class: "cm-wiki-template" })
         });
         const templatePlugin = makePlugin(templateMatcher);
+
+        // 틀 파라미터 참조 {{{이름}}} / {{{1}}} / {{{이름|기본값}}}
+        const templateParamMatcher = new MatchDecorator({
+            regexp: /\{\{\{([^{}|]+)(?:\|[^{}]*)?\}\}\}/g,
+            decoration: Decoration.mark({ class: "cm-wiki-template-param" })
+        });
+        const templateParamPlugin = makePlugin(templateParamMatcher);
 
         const alignMatcher = new MatchDecorator({
             regexp: /\{[<p^>><]+\}/g,
@@ -2603,6 +2675,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             syntaxHighlighting(isDarkMode ? markdownDarkStyle : markdownLightStyle),
             wikiLinkPlugin,
             templatePlugin,
+            templateParamPlugin,
             alignPlugin,
             iconMarkerPlugin,
             highlightPlugin,
@@ -4951,6 +5024,24 @@ async function savePage() {
         isSuccess = true;
         // 섹션 모드: originalContent 는 섹션 텍스트 기준이어야 beforeunload 경고가 정상 동작
         originalContent = sectionMode ? editor.getMarkdown() : content;
+        // 섹션 편집 완료 시 해당 섹션의 열람 페이지 앵커로 복귀하여 같은 위치로 스크롤한다.
+        // 열람 페이지의 s-X.Y 앵커는 resolveTransclusions 이후의 헤딩 순서를 기준으로
+        // 생성되므로, 틀(transclusion)이 포함된 문서에서도 올바른 번호를 구하기 위해
+        // 저장된 전체 본문을 먼저 트랜스클루전 전개한 뒤 섹션 번호를 계산한다.
+        let redirectHash = '';
+        if (sectionMode) {
+            try {
+                const resolvedContent = typeof resolveTransclusions === 'function'
+                    ? await resolveTransclusions(content, slug)
+                    : content;
+                const sectionNum = computeSectionNumber(
+                    resolvedContent,
+                    sectionIndex,
+                    sectionRange ? sectionRange.headingText : ''
+                );
+                if (sectionNum) redirectHash = `#s-${sectionNum}`;
+            } catch (e) { /* 앵커 계산 실패 시 최상단으로 이동 */ }
+        }
         Swal.fire({
             icon: 'success',
             title: '저장 완료!',
@@ -4958,7 +5049,7 @@ async function savePage() {
             timer: 1500,
             showConfirmButton: false,
         }).then(() => {
-            window.location.href = `/w/${encodeURIComponent(slug)}`;
+            window.location.href = `/w/${encodeURIComponent(slug)}${redirectHash}`;
         });
 
     } catch (err) {
@@ -5157,17 +5248,17 @@ async function openExistingImageSearch(callback) {
             <div class="existing-img-search-wrap">
                 <div class="existing-img-search-bar">
                     <input type="text" id="existingImgSearchInput" class="form-control"
-                           placeholder="파일명 검색 (비워두면 최신순 전체)" autocomplete="off">
+                           placeholder="파일명 검색" autocomplete="off">
                     <button type="button" class="btn btn-primary" id="existingImgSearchBtn">
                         <i class="mdi mdi-magnify"></i>
                     </button>
                 </div>
                 <div class="existing-img-tag-filter" style="margin-top:8px;">
                     <label style="display:block; font-size:0.82rem; color:var(--wiki-text-muted,#888); margin-bottom:4px; text-align:left;">
-                        <i class="mdi mdi-tag-multiple-outline"></i> 태그 필터 (여러 개 추가 시 AND 조건)
+                        <i class="mdi mdi-tag-multiple-outline"></i> 태그 검색
                     </label>
                     <div class="category-tag-container" id="existingImgTagContainer" style="max-width:100%;">
-                        <input type="text" id="existingImgTagInput" class="category-tag-input" placeholder="태그로 필터링 (엔터/쉼표로 추가)">
+                        <input type="text" id="existingImgTagInput" class="category-tag-input" placeholder="(엔터/쉼표로 추가)">
                     </div>
                 </div>
                 <div id="existingImgSearchInfo" class="existing-img-search-info"></div>
@@ -5420,25 +5511,46 @@ async function handleImageUpload(blob, callback) {
 }
 
 // ── 취소 ──
-function cancelEdit() {
+async function cancelEdit() {
+    // 섹션 편집을 취소할 때도 사용자가 보고 있던 섹션 위치로 복귀한다.
+    // 열람 페이지의 s-X.Y 앵커는 resolveTransclusions 이후 헤딩 기준이므로
+    // 원본 본문도 트랜스클루전 전개 후 섹션 번호를 계산한다.
+    const buildReturnUrl = async () => {
+        if (!slug) return '/';
+        let hash = '';
+        if (sectionMode && fullOriginalContent) {
+            try {
+                const resolvedContent = typeof resolveTransclusions === 'function'
+                    ? await resolveTransclusions(fullOriginalContent, slug)
+                    : fullOriginalContent;
+                const sectionNum = computeSectionNumber(
+                    resolvedContent,
+                    sectionIndex,
+                    sectionRange ? sectionRange.headingText : ''
+                );
+                if (sectionNum) hash = `#s-${sectionNum}`;
+            } catch (e) { /* 앵커 계산 실패 시 최상단으로 이동 */ }
+        }
+        return `/w/${encodeURIComponent(slug)}${hash}`;
+    };
+
     if (editor && editor.getMarkdown().trim()) {
         // 내용 변경 여부 확인
-        Swal.fire({
+        const result = await Swal.fire({
             title: '편집을 취소하시겠습니까?',
             text: '저장하지 않은 변경사항이 사라집니다.',
             icon: 'question',
             showCancelButton: true,
             confirmButtonText: '나가기',
             cancelButtonText: '계속 편집',
-        }).then(result => {
-            if (result.isConfirmed) {
-                pageLeft = true;
-                window.location.href = slug ? `/w/${encodeURIComponent(slug)}` : '/';
-            }
         });
+        if (result.isConfirmed) {
+            pageLeft = true;
+            window.location.href = await buildReturnUrl();
+        }
     } else {
         pageLeft = true;
-        window.location.href = slug ? `/w/${encodeURIComponent(slug)}` : '/';
+        window.location.href = await buildReturnUrl();
     }
 }
 
@@ -5624,9 +5736,121 @@ function selectAutocomplete(index) {
         // [[query 부분을 선택 후 교체 (setMarkdown 전체 교체 방지)
         editor.setSelection([line, lastTriggerIndex + 1], [line, col]);
         editor.insertText(`${trigger}${item.title}${close}`);
+
+        // 틀 선택 시 대상 틀이 파라미터({{{...}}})를 정의하고 있으면
+        // 비동기로 스키마(`|name=|...`)를 끼워 넣고 커서를 첫 빈 칸에 둔다.
+        if (wikiAc.type === 'template' && item.slug) {
+            _autoInsertTemplateParamSchema(item.slug, line, lastTriggerIndex + 1, item.title);
+        }
     }
 
     hideAutocomplete();
+}
+
+/**
+ * 틀 본문에서 `{{{이름}}}` / `{{{1}}}` / `{{{이름|기본값}}}` 참조를 수집해
+ * 위치 인자와 이름 인자 목록을 반환한다. 기본값 내부의 참조도 재귀 스캔한다.
+ */
+function _extractTemplateParamNames(content) {
+    if (typeof _findParamRefs !== 'function') return { positional: [], named: [] };
+    const seen = new Set();
+    const positional = [];
+    const named = [];
+    // 위치 인자는 `_parseTemplateCall` 이 1부터 증가시키며 문자열 키를 그대로 쓰므로
+    // `'1','2',...` 형태만 정준(positional) 이다. `0`, `01` 같은 앞자리 0 포함 숫자는
+    // 어떤 호출에서도 위치 인자로 채워지지 않으므로 이름 인자로 취급해 `0=`/`01=` 스키마를 만든다.
+    const POSITIONAL_RE = /^[1-9]\d*$/;
+    function scan(text) {
+        const refs = _findParamRefs(text);
+        for (const r of refs) {
+            const raw = r.raw;
+            const pipeIdx = raw.indexOf('|');
+            const name = (pipeIdx === -1 ? raw : raw.substring(0, pipeIdx)).trim();
+            if (name && !seen.has(name)) {
+                seen.add(name);
+                if (POSITIONAL_RE.test(name)) positional.push(name);
+                else named.push(name);
+            }
+            if (pipeIdx !== -1) scan(raw.substring(pipeIdx + 1));
+        }
+    }
+    scan(content);
+    positional.sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
+    return { positional, named };
+}
+
+/**
+ * 자동완성에서 틀을 선택한 직후 호출. 틀 본문을 fetch 해서 파라미터가 있으면
+ * `{{title|...|name=|...}}` 형태로 스키마를 삽입하고 커서를 첫 입력 칸에 둔다.
+ * - 익스텐션(슬러그에 `:` 포함, `틀:` 접두가 아님) 은 자체 문법을 쓰므로 스킵.
+ * - fetch 실패 / 파라미터 없음 / 삽입 위치가 이미 사용자가 수정된 경우 조용히 패스.
+ */
+async function _autoInsertTemplateParamSchema(slug, line, insertCol, title) {
+    try {
+        if (typeof _isExtensionCall === 'function' && _isExtensionCall(slug)) return;
+    } catch (_) { /* noop */ }
+
+    let data;
+    try {
+        const res = await fetch(`/api/w/${encodeURIComponent(slug)}`);
+        if (!res.ok) return;
+        data = await res.json();
+    } catch (_) { return; }
+    if (!data || typeof data.content !== 'string') return;
+
+    const params = _extractTemplateParamNames(data.content);
+    const tokens = [];
+    // 위치 인자 참조 번호 집합 (정수 + 양수만).
+    const positionalIndices = (Array.isArray(params.positional) ? params.positional : [])
+        .map(p => Number(p))
+        .filter(n => Number.isInteger(n) && n > 0);
+    positionalIndices.sort((a, b) => a - b);
+    const maxPositionalIndex = positionalIndices.length > 0
+        ? positionalIndices[positionalIndices.length - 1] : 0;
+
+    // 템플릿 본문은 위키 문서이므로 사용자가 `{{{5000}}}` 같은 큰 인덱스를 넣으면
+    // 그만큼 빈 인자(`||||...`) 가 끼어 에디터가 멈출 수 있다. 최대 인덱스가 일정
+    // 임계값을 넘거나 희소할 가능성이 있을 때는 참조된 번호만 `N=` 이름 인자 형태로
+    // 주입해 삽입 크기를 실제 참조 수에 비례하도록 제한한다.
+    const POSITIONAL_BLANK_CAP = 9;
+    if (maxPositionalIndex > 0 && maxPositionalIndex <= POSITIONAL_BLANK_CAP) {
+        for (let i = 0; i < maxPositionalIndex; i++) tokens.push('');
+    } else {
+        for (const n of positionalIndices) tokens.push(`${n}=`);
+    }
+    for (const n of params.named) tokens.push(`${n}=`);
+    if (tokens.length === 0) return;
+
+    if (!editor) return;
+    const currentMd = editor.getMarkdown();
+    const currentLines = currentMd.split('\n');
+    const currentLine = currentLines[line - 1];
+    if (typeof currentLine !== 'string') return;
+
+    // 방금 삽입한 `{{title}}` 이 여전히 예상 위치에 있는지 확인 (유저가 그 사이 다른 편집을 했을 수 있음).
+    const expected = `{{${title}}}`;
+    const openAt = insertCol - 1; // 0-based
+    if (currentLine.substring(openAt, openAt + expected.length) !== expected) return;
+
+    // 네트워크 대기 중 사용자가 다른 위치로 캐럿을 옮겼다면 강제로 포커스를 빼앗지 않는다.
+    // 동기 삽입 직후 캐럿은 `}}` 바로 뒤 (insertCol + 4 + title.length) 에 있어야 한다.
+    const expectedCaret = insertCol + 4 + title.length;
+    const caretSel = editor.getSelection();
+    if (!caretSel) return;
+    const [cFrom, cTo] = caretSel;
+    if (cFrom[0] !== line || cTo[0] !== line ||
+        cFrom[1] !== expectedCaret || cTo[1] !== expectedCaret) {
+        return;
+    }
+
+    const schema = '|' + tokens.join('|');
+    const insertAt = insertCol + 2 + title.length; // `}}` 바로 앞 1-based col
+    editor.setSelection([line, insertAt], [line, insertAt]);
+    editor.insertText(schema);
+
+    // 첫 토큰(prefix) 끝에 커서 배치
+    const cursorCol = insertAt + 1 + tokens[0].length;
+    editor.setSelection([line, cursorCol], [line, cursorCol]);
 }
 
 // ── 자동완성 통합 키보드 네비게이션 (단일 Capturing 핸들러) ──
@@ -5849,7 +6073,10 @@ function attachAutocomplete() {
             const textBefore = lineText.substring(0, from[1] - 1);
 
             const linkMatch = textBefore.match(/\[\[([^\]\[|#]*)$/);
-            const templateMatch = textBefore.match(/\{\{([^\}\{]*)$/);
+            // | 이후(파라미터 영역) 에서는 자동완성을 띄우지 않도록 | 도 제외.
+            // 또한 세 번째 `{` 를 입력해 `{{{` (파라미터 참조 문법) 로 넘어가면
+            // 틀 검색을 중단한다 — 선행 `{` 를 네거티브 룩비하인드로 차단.
+            const templateMatch = textBefore.match(/(?<!\{)\{\{([^\}\{|]*)$/);
             const biIconMatch = textBefore.match(/\{bi:([^}]*)$/);
             const mdiIconMatch = textBefore.match(/\{mdi:([^}]*)$/);
             const iconMatch = textBefore.match(/\{icon:([^}]*)$/);
