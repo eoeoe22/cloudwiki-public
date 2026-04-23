@@ -2193,3 +2193,232 @@ html[data-theme="dark"] .cm-fold-block {
     font-weight: 400;
     color: var(--wiki-text-muted);
 }
+
+/* ── 배지 삽입 모달 ── */
+.badge-insert-form .form-label {
+    font-size: 0.85rem;
+    color: var(--wiki-text-muted);
+    margin-bottom: 4px;
+}
+
+.badge-insert-type-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.badge-insert-type-tab {
+    flex: 1 1 0;
+    min-width: 92px;
+    padding: 8px 10px;
+    border: 1px solid var(--wiki-border);
+    border-radius: 6px;
+    background: var(--wiki-bg);
+    color: var(--wiki-text);
+    font-size: 0.9rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    cursor: pointer;
+    transition: background 0.12s, border-color 0.12s, box-shadow 0.12s, color 0.12s;
+}
+
+.badge-insert-type-tab i {
+    font-size: 1.1rem;
+}
+
+.badge-insert-type-tab:hover {
+    border-color: var(--wiki-primary, #3b82f6);
+    background: rgba(var(--wiki-primary-rgb, 59, 130, 246), 0.08);
+}
+
+.badge-insert-type-tab.active {
+    border-color: var(--wiki-primary, #3b82f6);
+    background: rgba(var(--wiki-primary-rgb, 59, 130, 246), 0.15);
+    color: var(--wiki-link, #2563eb);
+    box-shadow: 0 0 0 2px rgba(var(--wiki-primary-rgb, 59, 130, 246), 0.2);
+}
+
+.badge-insert-palette-swatches {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    max-height: 140px;
+    overflow-y: auto;
+    padding: 2px;
+}
+
+.badge-insert-palette-swatch {
+    border: 1px solid var(--wiki-border);
+    border-radius: 4px;
+    padding: 4px 10px;
+    font-size: 0.82rem;
+    cursor: pointer;
+    background: var(--wiki-bg);
+    color: var(--wiki-text);
+    transition: box-shadow 0.12s, transform 0.08s;
+}
+
+.badge-insert-palette-swatch:hover {
+    box-shadow: 0 0 0 2px rgba(var(--wiki-primary-rgb, 59, 130, 246), 0.25);
+}
+
+.badge-insert-palette-swatch.active {
+    box-shadow: 0 0 0 2px var(--wiki-primary, #3b82f6);
+}
+
+.badge-insert-palette-swatch-none {
+    font-size: 0.78rem;
+    color: var(--wiki-text-muted);
+}
+
+.badge-insert-field {
+    display: flex;
+    flex-direction: column;
+    margin-bottom: 10px;
+}
+
+.badge-insert-field:last-child {
+    margin-bottom: 0;
+}
+
+.badge-insert-field-row {
+    display: grid;
+    grid-template-columns: 1fr 1.4fr;
+    gap: 10px;
+}
+
+.badge-insert-field-row .badge-insert-field {
+    margin-bottom: 0;
+}
+
+.badge-insert-icon-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border: 1px solid var(--wiki-border);
+    border-radius: 6px;
+    background: var(--wiki-bg);
+}
+
+.badge-insert-icon-preview {
+    width: 28px;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.2rem;
+    color: var(--wiki-text);
+}
+
+.badge-insert-icon-placeholder {
+    font-size: 0.75rem;
+    color: var(--wiki-text-muted);
+}
+
+.badge-insert-icon-label {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 0.82rem;
+    color: var(--wiki-text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.badge-insert-icon-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 10px;
+    font-size: 0.82rem;
+    border: 1px solid var(--wiki-border);
+    border-radius: 4px;
+    background: var(--wiki-bg);
+    color: var(--wiki-text);
+    cursor: pointer;
+    transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+
+.badge-insert-icon-btn:hover {
+    border-color: var(--wiki-primary, #3b82f6);
+    color: var(--wiki-link, #2563eb);
+    background: rgba(var(--wiki-primary-rgb, 59, 130, 246), 0.08);
+}
+
+.badge-insert-icon-btn-ghost {
+    padding: 4px 8px;
+    color: var(--wiki-text-muted);
+}
+
+.badge-insert-icon-btn-ghost:hover {
+    border-color: #dc3545;
+    color: #dc3545;
+    background: rgba(220, 53, 69, 0.1);
+}
+
+.badge-insert-preview {
+    min-height: 46px;
+    padding: 10px 12px;
+    border: 1px dashed var(--wiki-border);
+    border-radius: 6px;
+    background: var(--wiki-bg);
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.badge-insert-preview-empty {
+    font-size: 0.82rem;
+    color: var(--wiki-text-muted);
+}
+
+.badge-insert-validation {
+    min-height: 1.1em;
+    font-size: 0.8rem;
+    color: #dc3545;
+}
+
+.badge-insert-icon-view {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.badge-insert-icon-toolbar {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.badge-insert-icon-toolbar .form-control {
+    flex: 1 1 auto;
+}
+
+.badge-insert-back-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 6px 10px;
+    border: 1px solid var(--wiki-border);
+    border-radius: 4px;
+    background: var(--wiki-bg);
+    color: var(--wiki-text);
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+
+.badge-insert-back-btn:hover {
+    border-color: var(--wiki-primary, #3b82f6);
+    color: var(--wiki-link, #2563eb);
+    background: rgba(var(--wiki-primary-rgb, 59, 130, 246), 0.08);
+}
+
+.badge-insert-icon-grid {
+    max-height: 380px;
+    overflow-y: auto;
+}

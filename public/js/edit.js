@@ -824,7 +824,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                                         // 클릭 위치가 토큰 내부면 거리 0, 아니면 가장 가까운 끝까지의 거리
                                         const dist = relPos < start ? start - relPos
                                             : relPos > end ? relPos - end
-                                            : 0;
+                                                : 0;
                                         if (dist < bestDist) {
                                             bestDist = dist;
                                             tokenFrom = line.from + start;
@@ -1086,7 +1086,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         toolbar.appendChild(createToolbarBtn('<i class="bi bi-card-heading"></i>', '카드 블록', () => openCardInsertModal()));
         toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-view-grid-outline"></i>', '그리드·스탯', () => openGridStatInsertModal()));
         toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-palette-outline"></i>', '색상 삽입', () => openPaletteColorModal()));
-        toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-label-outline"></i>', '배지', () => editor.insertText('{palette:primary}{badge:라벨}')));
+        toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-label-outline"></i>', '배지', () => openBadgeInsertModal()));
         toolbar.appendChild(createToolbarSep());
         toolbar.appendChild(createToolbarBtn('<code>&lt;/&gt;</code>', '인라인 코드', () => wrapSelection('`', '`')));
         toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-code-braces"></i>', '코드 블록', () => wrapSelection('\n```\n', '\n```\n')));
@@ -1243,7 +1243,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 <input type="checkbox" id="settingSyntaxHighlight" ${editorSettings.syntaxHighlight ? 'checked' : ''}>
             </label>
             <label class="editor-settings-item">
-                <span>고급 편집</span>
+                <span>아이콘 표시</span>
                 <input type="checkbox" id="settingAdvancedEdit"
                     ${editorSettings.advancedEdit && editorSettings.syntaxHighlight ? 'checked' : ''}
                     ${editorSettings.syntaxHighlight ? '' : 'disabled'}>
@@ -2264,4 +2264,4 @@ async function cancelEdit() {
         window.location.href = await buildReturnUrl();
     }
 }
-
+

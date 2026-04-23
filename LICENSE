@@ -19,3 +19,43 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+---
+
+### Third-Party Software Notices
+
+This project utilizes several third-party libraries and resources. Below are the licenses for these external components:
+
+#### Backend Framework & Platform
+- **Hono** (https://hono.dev/)
+  - License: MIT License
+- **Cloudflare Workers / D1 / R2 / KV / Analytics Engine**
+  - Subject to Cloudflare Terms of Service.
+
+#### Frontend Libraries & Tools
+- **Bootstrap 5.3.3** (https://getbootstrap.com/)
+  - License: MIT License
+- **Bootstrap Icons 1.13.1** (https://icons.getbootstrap.com/)
+  - License: MIT License
+- **Material Design Icons (@mdi/font 7.4.47)** (https://materialdesignicons.com/)
+  - License: Apache License 2.0 (Icons), SIL Open Font License 1.1 (Fonts)
+- **SweetAlert2** (https://sweetalert2.github.io/)
+  - License: MIT License
+- **Marked.js** (https://marked.js.org/)
+  - License: MIT License
+- **DOMPurify** (https://github.com/cure53/dompurify)
+  - License: Apache License 2.0 or MIT License
+- **CodeMirror 6** (https://codemirror.net/)
+  - License: MIT License
+- **Chart.js** (https://www.chartjs.org/) - *Used in 'freq' extension*
+  - License: MIT License
+
+#### Fonts
+- **Inter, Outfit, Noto Sans KR** (Google Fonts)
+  - License: SIL Open Font License 1.1
+
+#### Development Tools
+- **TypeScript** (https://www.typescriptlang.org/)
+  - License: Apache License 2.0
+- **Wrangler (Cloudflare CLI)**
+  - License: MIT or Apache License 2.0
