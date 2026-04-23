@@ -104,9 +104,43 @@ function _extractBlockStyleTokens(titleLine) {
 /** 블록을 HTML로 렌더링. 중첩 WIKIBLOCKPH 는 자체적으로 재귀 치환 */
 function _renderBlockHtml(block, blockData) {
     const type = block.type;
-    const { cleanTitle, bg, color, bodyBg, bodyColor } = _extractBlockStyleTokens(block.titleLine);
+    let { cleanTitle, bg, color, bodyBg, bodyColor } = _extractBlockStyleTokens(block.titleLine);
 
-    const { text: protectedInner, prot: wlProt } = protectWikiLinks(block.innerText || '');
+    let innerText = block.innerText || '';
+
+    if (type === 'card') {
+        let t = innerText.trimStart();
+        let replaced = true;
+        while (replaced) {
+            replaced = false;
+            let palMatch = t.match(/^\{palette:\s*([^}\s][^}]*?)\s*\}/);
+            if (palMatch) {
+                const expanded = _resolvePaletteTokens(`{palette:${palMatch[1].trim()}}`);
+                if (expanded !== `{palette:${palMatch[1].trim()}}`) {
+                    t = expanded + t.slice(palMatch[0].length);
+                } else {
+                    t = t.slice(palMatch[0].length);
+                }
+                replaced = true;
+                continue;
+            }
+            let bgMatch = t.match(/^\{bg:\s*([^}]+)\}/);
+            if (bgMatch) {
+                bodyBg = bgMatch[1].trim();
+                t = t.slice(bgMatch[0].length).trimStart();
+                replaced = true;
+            }
+            let colorMatch = t.match(/^\{color:\s*([^}]+)\}/);
+            if (colorMatch) {
+                bodyColor = colorMatch[1].trim();
+                t = t.slice(colorMatch[0].length).trimStart();
+                replaced = true;
+            }
+        }
+        innerText = t;
+    }
+
+    const { text: protectedInner, prot: wlProt } = protectWikiLinks(innerText);
     let innerHtml = (typeof marked !== 'undefined') ? marked.parse(protectedInner) : protectedInner;
     innerHtml = restoreWikiLinks(innerHtml, wlProt);
     innerHtml = innerHtml.replace(/<img([^>]*)>\s*\{size:([a-zA-Z0-9_-]+)\}/g, (_, attrs, size) => `<img${attrs} data-size="${size.trim()}">`);

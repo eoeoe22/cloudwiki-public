@@ -698,12 +698,15 @@ function openCardInsertModal() {
     }).then(result => {
         if (!result.isConfirmed || !result.value) return;
         const { title, titlePalette, bodyPalette } = result.value;
-        let tokens = '';
-        if (titlePalette) tokens += `{palette:${titlePalette}}`;
-        if (bodyPalette) tokens += `{body-palette:${bodyPalette}}`;
-        const titlePart = tokens && title ? `${tokens} ${title}` : (tokens || title);
+        let titleTokens = '';
+        if (titlePalette) titleTokens += `{palette:${titlePalette}}`;
+        const titlePart = titleTokens && title ? `${titleTokens} ${title}` : (titleTokens || title);
         const header = titlePart ? `:::card ${titlePart}` : ':::card';
-        const body = '내용';
+        
+        let bodyTokens = '';
+        if (bodyPalette) bodyTokens += `{palette:${bodyPalette}}`;
+        const body = bodyTokens ? `${bodyTokens}내용` : '내용';
+        
         editor.insertText(`${header}\n${body}\n:::`);
         if (typeof cmEditorView !== 'undefined' && cmEditorView) cmEditorView.focus();
     });
