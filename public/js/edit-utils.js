@@ -317,4 +317,52 @@ function hexToHsv(hex) {
     }
     return { h, s, v };
 }
+
+// ── 로컬스토리지 자동저장 ──
+function startAutoSave() {
+    setInterval(() => {
+        if (editor && slug && AUTO_SAVE_KEY) {
+            const content = editor.getMarkdown();
+            if (content && content.trim().length > 0) {
+                localStorage.setItem(AUTO_SAVE_KEY, content);
+            }
+        }
+    }, 10000); // 10초마다 자동 저장
+}
+
+async function checkAutoSave() {
+    if (!AUTO_SAVE_KEY) return;
+
+    const savedContent = localStorage.getItem(AUTO_SAVE_KEY);
+    if (savedContent) {
+        // 로드된 내용과 동일하면 묻지 않고 삭제
+        if (savedContent.trim() === originalContent.trim()) {
+            localStorage.removeItem(AUTO_SAVE_KEY);
+            return;
+        }
+
+        const result = await Swal.fire({
+            title: '작성 중인 내용이 있습니다',
+            text: '이전에 작성하던 내용을 불러오시겠습니까?',
+            icon: 'info',
+            showCancelButton: true,
+            confirmButtonText: '예, 불러오기',
+            cancelButtonText: '아니오, 삭제'
+        });
+
+        if (result.isConfirmed) {
+            editor.setMarkdown(savedContent);
+            scrollToBottom();
+            Swal.fire({
+                icon: 'success',
+                title: '불러옴',
+                text: '저장된 내용을 불러왔습니다.',
+                timer: 1000,
+                showConfirmButton: false
+            });
+        } else {
+            localStorage.removeItem(AUTO_SAVE_KEY);
+        }
+    }
+}
 

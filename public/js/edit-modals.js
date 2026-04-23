@@ -1,3 +1,6 @@
+// ※ 아이콘 관련 기능을 수정할 때는 반드시 SELECTED_ICONS_ONLY 설정을 확인할 것.
+//    selectedIconsOnly=true  → icons.json 기반 (icon 문법만 사용)
+//    selectedIconsOnly=false → 라이브러리 직접 검색 (bi, mdi 문법 사용)
 // ── Bootstrap Icons 목록 로딩 (지연 로딩, 캐시됨) ──
 async function loadBiIcons() {
     if (biIconList) return biIconList;
@@ -136,7 +139,7 @@ function renderMixedIconGrid(gridEl, emptyEl, iconList, query) {
             item.title = fullName;
             item.innerHTML = `<i class="${cssClass}"></i><span>${escapeHtml(fullName)}</span>`;
             item.addEventListener('click', () => {
-                pendingIconInsertion = `{${type}:${iconName}}`;
+                pendingIconInsertion = selectedIconsOnly ? `{icon:${fullName}}` : `{${type}:${iconName}}`;
                 bootstrap.Modal.getOrCreateInstance(document.getElementById('iconPickerModal')).hide();
             });
             gridEl.appendChild(item);
@@ -246,7 +249,7 @@ function renderIconPickerGrid(gridEl, emptyEl, iconList, query, type) {
             item.title = iconName;
             item.innerHTML = `<i class="${prefix}${iconName}"></i><span>${escapeHtml(iconName)}</span>`;
             item.addEventListener('click', () => {
-                pendingIconInsertion = `{${type}:${iconName}}`;
+                pendingIconInsertion = selectedIconsOnly ? `{icon:${type}-${iconName}}` : `{${type}:${iconName}}`;
                 bootstrap.Modal.getOrCreateInstance(document.getElementById('iconPickerModal')).hide();
             });
             gridEl.appendChild(item);
@@ -1173,7 +1176,7 @@ function openComponentInsertModal() {
         if (state.type === 'button') {
             const url = (state.url || '').trim();
             if (!text || !url) return '';
-            const iconPrefix = state.icon ? `{${state.icon.type}:${state.icon.name}}` : '';
+            const iconPrefix = state.icon ? (selectedIconsOnly ? `{icon:${state.icon.type}-${state.icon.name}}` : `{${state.icon.type}:${state.icon.name}}`) : '';
             return `${palettePrefix}${iconPrefix}{button:${text}|${url}}`;
         }
         return '';

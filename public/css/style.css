@@ -276,48 +276,6 @@ div:where(.swal2-container) .swal2-html-container {
   color: var(--wiki-text) !important;
 }
 
-/* ── Toast UI Editor Overrides ── */
-.toastui-editor-defaultUI {
-  background-color: var(--wiki-bg) !important;
-  border-color: var(--wiki-border) !important;
-}
-
-.toastui-editor-md-container,
-.toastui-editor-ww-container {
-  background-color: var(--wiki-bg) !important;
-}
-
-.toastui-editor-contents,
-.ProseMirror {
-  font-family: 'Noto Sans KR', 'Inter', 'Pretendard Variable', 'Pretendard', -apple-system, BlinkMacSystemFont, 'system-ui', 'Segoe UI', Roboto, sans-serif;
-}
-
-.toastui-editor-defaultUI .toastui-editor-toolbar {
-  background-color: var(--wiki-toc-bg) !important;
-  border-bottom-color: var(--wiki-border) !important;
-}
-
-.toastui-editor-mode-switch {
-  background-color: var(--wiki-bg) !important;
-  border-top-color: var(--wiki-border) !important;
-}
-
-.toastui-editor-mode-switch .tab-item {
-  color: var(--wiki-text-muted) !important;
-  background-color: var(--wiki-bg) !important;
-  border: 1px solid transparent;
-}
-
-.toastui-editor-mode-switch .tab-item.active {
-  color: var(--wiki-primary) !important;
-  background-color: var(--wiki-bg) !important;
-  border: 1px solid var(--wiki-border);
-  border-bottom: none;
-}
-
-/* Editor Icons Filter removed to preserve ToastUI default white icons in dark mode */
-
-
 /* ── Legacy Neumorphism Classes (Converted to Flat UI) ── */
 /* 기존 HTML 수정 없이도 플랫하게 보이도록 속성 덮어쓰기 */
 .neu-raised,

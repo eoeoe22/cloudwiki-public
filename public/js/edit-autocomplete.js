@@ -81,7 +81,122 @@ function selectImgSizeAutocomplete(index) {
     editor.focus();
 }
 
+// ── 코드 템플릿 인라인 자동완성 상태 ──
+// ※ 아이콘 관련 옵션(icon, bi, mdi)은 SELECTED_ICONS_ONLY 설정에 따라 표시가 달라짐.
+//    SELECTED_ICONS_ONLY=true  → {icon:} 만 표시 (icons.json 기반)
+//    SELECTED_ICONS_ONLY=false → {bi:}, {mdi:} 만 표시 (라이브러리 직접 검색)
+//    아이콘 관련 기능을 수정할 때는 반드시 SELECTED_ICONS_ONLY 설정을 확인할 것.
+const codeAc = {
+    visible: false,
+    selectedIndex: -1,
+    query: '',
+    div: document.getElementById('code-autocomplete'),
+    options: [
+        { id: 'icon', label: '아이콘', icon: 'mdi mdi-emoticon-outline', insert: 'icon:', iconMode: 'selected' },
+        { id: 'bi', label: 'Bootstrap Icons', icon: 'bi bi-bootstrap', insert: 'bi:', iconMode: 'library' },
+        { id: 'mdi', label: 'Material Design', icon: 'mdi mdi-material-design', insert: 'mdi:', iconMode: 'library' },
+        { id: 'bg', label: '배경색', icon: 'mdi mdi-format-color-fill', insert: 'bg:' },
+        { id: 'color', label: '글자색', icon: 'mdi mdi-format-color-text', insert: 'color:' },
+        { id: 'palette', label: '팔레트 색상', icon: 'mdi mdi-palette-swatch', insert: 'palette:' },
+        { id: 'dday', label: 'D-Day', icon: 'mdi mdi-calendar-clock', insert: 'dday:' },
+        { id: 'time', label: '표시 시간', icon: 'mdi mdi-clock-outline', insert: 'time:' },
+        { id: 'timer', label: '타이머', icon: 'mdi mdi-timer-outline', insert: 'timer:' },
+        { id: 'age', label: '만 나이', icon: 'mdi mdi-cake-variant-outline', insert: 'age:' },
+        { id: 'calendar', label: '캘린더 날짜', icon: 'mdi mdi-calendar-month', insert: 'calendar:' },
+        { id: 'size', label: '이미지 크기', icon: 'mdi mdi-image-size-select-large', insert: 'size:' }
+    ],
+    filtered: []
+};
+
+function hideCodeAutocomplete() {
+    codeAc.visible = false;
+    codeAc.selectedIndex = -1;
+    if (codeAc.div) codeAc.div.style.display = 'none';
+}
+
+function showCodeAutocomplete(query) {
+    codeAc.query = query.toLowerCase();
+    // SELECTED_ICONS_ONLY 에 따라 아이콘 옵션 필터링
+    // selectedIconsOnly=true  → iconMode='library'(bi, mdi) 제외
+    // selectedIconsOnly=false → iconMode='selected'(icon) 제외
+    codeAc.filtered = codeAc.options.filter(o => {
+        if (o.iconMode === 'selected' && !selectedIconsOnly) return false;
+        if (o.iconMode === 'library' && selectedIconsOnly) return false;
+        const normalizedId = o.id.toLowerCase();
+        const normalizedLabel = o.label.toLowerCase();
+        return normalizedId.includes(codeAc.query) || normalizedLabel.includes(codeAc.query);
+    });
+
+    if (codeAc.filtered.length === 0) {
+        hideCodeAutocomplete();
+        return;
+    }
+
+    codeAc.visible = true;
+    positionDropdownAtCursor(codeAc.div, 240);
+    renderCodeAcResults();
+}
+
+function renderCodeAcResults() {
+    const gridEl = document.getElementById('codeAcGrid');
+    if (!gridEl) return;
+
+    gridEl.innerHTML = codeAc.filtered.map((opt, index) => `
+        <div class="list-group-item autocomplete-item" data-index="${index}" onclick="selectCodeAutocomplete(${index})" style="cursor:pointer; padding:6px 10px; display:flex; align-items:center;">
+            <i class="${opt.icon}" style="font-size:1.1rem; width:24px; text-align:center; margin-right:8px; color:var(--wiki-link-color);"></i>
+            <span style="flex:1; font-size:0.9rem;">${escapeHtml(opt.label)}</span>
+            <span class="text-muted" style="font-size:0.75rem; font-family:monospace;">{${escapeHtml(opt.id)}:...}</span>
+        </div>
+    `).join('');
+
+    codeAc.selectedIndex = 0;
+    highlightCodeAcItem();
+}
+
+function highlightCodeAcItem() {
+    if (!codeAc.div) return;
+    const items = codeAc.div.querySelectorAll('.autocomplete-item');
+    items.forEach((item, idx) => {
+        if (idx === codeAc.selectedIndex) {
+            item.classList.add('active');
+            item.scrollIntoView({ block: 'nearest' });
+        } else {
+            item.classList.remove('active');
+        }
+    });
+}
+
+function selectCodeAutocomplete(index) {
+    const opt = codeAc.filtered[index];
+    if (!opt || !editor) return;
+
+    const selection = editor.getSelection();
+    if (!selection) { hideCodeAutocomplete(); return; }
+
+    const [from] = selection;
+    const line = from[0];
+    const col = from[1];
+
+    const md = editor.getMarkdown();
+    const lines = md.split('\n');
+    const lineText = lines[line - 1] || '';
+    const textBefore = lineText.substring(0, col - 1);
+
+    const match = textBefore.match(/(?<!\{)\{([a-zA-Z]*)$/);
+    if (match) {
+        const replaceStartCol = col - match[1].length;
+        editor.setSelection([line, replaceStartCol], [line, col]);
+        editor.insertText(opt.insert);
+    }
+
+    hideCodeAutocomplete();
+    editor.focus();
+}
+
 // ── 아이콘 인라인 자동완성 상태 ──
+// ※ 아이콘 관련 기능을 수정할 때는 반드시 SELECTED_ICONS_ONLY 설정을 확인할 것.
+//    selectedIconsOnly=true  → icons.json 기반 (icon 문법만 사용)
+//    selectedIconsOnly=false → 라이브러리 직접 검색 (bi, mdi 문법 사용)
 const iconAc = {
     visible: false,
     type: 'bi',              // 'bi' | 'mdi' | 'icon'
@@ -807,12 +922,14 @@ function selectIconAutocomplete(index) {
     const lineText = lines[line - 1] || '';
     const textBefore = lineText.substring(0, col - 1);
 
-    const prefix = iconAc.type === 'icon' ? '{icon:' : (iconAc.type === 'bi' ? '{bi:' : '{mdi:');
-    const lastTriggerIndex = textBefore.lastIndexOf(prefix);
+    const insertionPrefix = selectedIconsOnly ? '{icon:' : (iconAc.type === 'icon' ? '{icon:' : (iconAc.type === 'bi' ? '{bi:' : '{mdi:'));
+    const triggerPrefix = iconAc.type === 'icon' ? '{icon:' : (iconAc.type === 'bi' ? '{bi:' : '{mdi:');
+    const lastTriggerIndex = textBefore.lastIndexOf(triggerPrefix);
 
     if (lastTriggerIndex !== -1) {
         editor.setSelection([line, lastTriggerIndex + 1], [line, col]);
-        editor.insertText(`${prefix}${iconName}}`);
+        const finalIconName = (selectedIconsOnly && iconAc.type !== 'icon') ? `${iconAc.type}-${iconName}` : iconName;
+        editor.insertText(`${insertionPrefix}${finalIconName}}`);
     }
 
     hideIconAutocomplete();
@@ -994,17 +1111,6 @@ function selectPaletteAutocomplete(index) {
 
     hidePaletteAutocomplete();
     editor.focus();
-}
-
-function startAutoSave() {
-    setInterval(() => {
-        if (editor && slug && AUTO_SAVE_KEY) {
-            const content = editor.getMarkdown();
-            if (content && content.trim().length > 0) {
-                localStorage.setItem(AUTO_SAVE_KEY, content);
-            }
-        }
-    }, 10000); // 10초마다 자동 저장
 }
 
 // ── 카테고리 태그 UI 로직 ──
@@ -1216,42 +1322,6 @@ if (categoryTagInput) {
     });
 }
 
-
-async function checkAutoSave() {
-    if (!AUTO_SAVE_KEY) return;
-
-    const savedContent = localStorage.getItem(AUTO_SAVE_KEY);
-    if (savedContent) {
-        // 로드된 내용과 동일하면 묻지 않고 삭제
-        if (savedContent.trim() === currentContent.trim()) {
-            localStorage.removeItem(AUTO_SAVE_KEY);
-            return;
-        }
-
-        const result = await Swal.fire({
-            title: '작성 중인 내용이 있습니다',
-            text: '이전에 작성하던 내용을 불러오시겠습니까?',
-            icon: 'info',
-            showCancelButton: true,
-            confirmButtonText: '예, 불러오기',
-            cancelButtonText: '아니오, 삭제'
-        });
-
-        if (result.isConfirmed) {
-            editor.setMarkdown(savedContent);
-            scrollToBottom();
-            Swal.fire({
-                icon: 'success',
-                title: '불러옴',
-                text: '저장된 내용을 불러왔습니다.',
-                timer: 1000,
-                showConfirmButton: false
-            });
-        } else {
-            localStorage.removeItem(AUTO_SAVE_KEY);
-        }
-    }
-}
 
 // ── 위키 자동완성 (Autocomplete) ──
 const wikiAc = {
@@ -1490,7 +1560,8 @@ window.addEventListener('keydown', (e) => {
                 : imgSizeAc.visible ? 'imgsize'
                     : timestampAc.visible ? 'timestamp'
                         : paletteAc.visible ? 'palette'
-                            : null;
+                            : codeAc.visible ? 'code'
+                                : null;
     if (!activeAc) return;
 
     const key = e.key;
@@ -1647,30 +1718,63 @@ window.addEventListener('keydown', (e) => {
             e.preventDefault(); e.stopPropagation();
             hidePaletteAutocomplete();
         }
+    } else if (activeAc === 'code') {
+        if (isDown) {
+            if (codeAc.filtered.length > 0) {
+                e.preventDefault(); e.stopPropagation();
+                codeAc.selectedIndex = (codeAc.selectedIndex + 1) % codeAc.filtered.length;
+                highlightCodeAcItem();
+            } else { hideCodeAutocomplete(); }
+        } else if (isUp) {
+            if (codeAc.filtered.length > 0) {
+                e.preventDefault(); e.stopPropagation();
+                codeAc.selectedIndex = (codeAc.selectedIndex - 1 + codeAc.filtered.length) % codeAc.filtered.length;
+                highlightCodeAcItem();
+            } else { hideCodeAutocomplete(); }
+        } else if (isLeft || isRight) {
+            hideCodeAutocomplete();
+        } else if (isEnter) {
+            if (codeAc.filtered.length > 0 && codeAc.selectedIndex >= 0) {
+                e.preventDefault(); e.stopPropagation();
+                selectCodeAutocomplete(codeAc.selectedIndex);
+            } else { hideCodeAutocomplete(); }
+        } else if (isEsc) {
+            e.preventDefault(); e.stopPropagation();
+            hideCodeAutocomplete();
+        }
     }
 }, true);
 
 // 전역 클릭 시 자동완성 닫기
+// 단, 어떤 자동완성 드롭다운 내부를 클릭한 경우는 "드롭다운 간 이동"으로 간주해
+// 다른 자동완성 hide 를 예약하지 않는다. 예) {에서 color:를 고른 뒤 세부 색상
+// 자동완성이 RAF 로 뜨는데 mousedown 이 먼저 hide 를 예약하면 그 패널이 닫혀 버림.
 document.addEventListener('mousedown', (e) => {
-    if (wikiAc.div && !wikiAc.div.contains(e.target)) {
-        setTimeout(hideAutocomplete, 100);
-    }
-    if (iconAc.div && !iconAc.div.contains(e.target)) {
-        setTimeout(hideIconAutocomplete, 100);
-    }
-    if (colorAc.div && !colorAc.div.contains(e.target)) {
-        setTimeout(hideColorAutocomplete, 100);
-    }
-    if (imgSizeAc.div && !imgSizeAc.div.contains(e.target)) {
-        setTimeout(hideImgSizeAutocomplete, 100);
-    }
-    if (timestampAc.div && !timestampAc.div.contains(e.target)) {
-        setTimeout(hideTimestampAutocomplete, 100);
-    }
-    if (paletteAc.div && !paletteAc.div.contains(e.target)) {
-        setTimeout(hidePaletteAutocomplete, 100);
-    }
+    const acDivs = [wikiAc.div, iconAc.div, colorAc.div, imgSizeAc.div, timestampAc.div, paletteAc.div, codeAc.div];
+    const clickedInsideAnyAc = acDivs.some(div => div && div.contains(e.target));
+    if (clickedInsideAnyAc) return;
+
+    setTimeout(() => hideAutocompletesExcept(null), 100);
 });
+
+// ── 자동완성 드롭다운 레지스트리 ──
+// 새 드롭다운을 추가할 때 이 객체에만 등록하면 분기별로 개별 hide 호출을 유지할 필요가 없다.
+// `카테고리 태그 입력` 드롭다운(categoryAc)은 에디터 본문과 분리된 입력에서만 동작하므로 제외.
+const _AUTOCOMPLETE_HIDERS = {
+    wiki:      hideAutocomplete,       // [[...]] 링크, {{...}} 틀
+    icon:      hideIconAutocomplete,
+    color:     hideColorAutocomplete,
+    palette:   hidePaletteAutocomplete,
+    timestamp: hideTimestampAutocomplete,
+    imgsize:   hideImgSizeAutocomplete,
+    code:      hideCodeAutocomplete,
+};
+
+function hideAutocompletesExcept(keep) {
+    for (const kind in _AUTOCOMPLETE_HIDERS) {
+        if (kind !== keep) _AUTOCOMPLETE_HIDERS[kind]();
+    }
+}
 
 // 에디터 변경 감지 및 트리거 실행
 function attachAutocomplete() {
@@ -1683,12 +1787,12 @@ function attachAutocomplete() {
         // change 이벤트 직후 selection이 확정되도록 한 프레임 뒤에 처리
         requestAnimationFrame(() => {
             const selection = editor.getSelection();
-            if (!selection) { hideAutocomplete(); return; }
+            if (!selection) { hideAutocompletesExcept(null); return; }
 
             // 커서(드래그 없음)인지 확인
             const [from, to] = selection;
             if (from[0] !== to[0] || from[1] !== to[1]) {
-                hideAutocomplete();
+                hideAutocompletesExcept(null);
                 return;
             }
 
@@ -1714,90 +1818,63 @@ function attachAutocomplete() {
             const timerMatch = textBefore.match(/\{timer:([^}]*)$/);
             const ageMatch = textBefore.match(/\{age:([^}]*)$/);
             const calendarMatch = textBefore.match(/\{calendar:([^}]*)$/);
+            const codeMatch = textBefore.match(/(?<!\{)\{([a-zA-Z]*)$/);
 
             if (linkMatch) {
-                hideIconAutocomplete();
-                hideColorAutocomplete();
-                hideTimestampAutocomplete();
+                hideAutocompletesExcept('wiki');
                 showAutocomplete(linkMatch[1], 'link');
             } else if (templateMatch) {
-                hideIconAutocomplete();
-                hideColorAutocomplete();
-                hideTimestampAutocomplete();
+                hideAutocompletesExcept('wiki');
                 showAutocomplete(templateMatch[1], 'template');
-            } else if (iconMatch) {
-                hideAutocomplete();
-                hideColorAutocomplete();
-                hideTimestampAutocomplete();
+            } else if (iconMatch && selectedIconsOnly) {
+                hideAutocompletesExcept('icon');
                 showIconAutocomplete(iconMatch[1], 'icon');
-            } else if (biIconMatch) {
-                hideAutocomplete();
-                hideColorAutocomplete();
-                hideTimestampAutocomplete();
+            } else if (biIconMatch && !selectedIconsOnly) {
+                hideAutocompletesExcept('icon');
                 showIconAutocomplete(biIconMatch[1], 'bi');
-            } else if (mdiIconMatch) {
-                hideAutocomplete();
-                hideColorAutocomplete();
-                hideTimestampAutocomplete();
+            } else if (mdiIconMatch && !selectedIconsOnly) {
+                hideAutocompletesExcept('icon');
+                showIconAutocomplete(mdiIconMatch[1], 'mdi');
+            } else if (biIconMatch && selectedIconsOnly) {
+                // selectedIconsOnly=true 이면 {bi:} 입력도 icon 모드로 동작하게 하여 icons.json 내에서 찾도록 함.
+                hideAutocompletesExcept('icon');
+                showIconAutocomplete(biIconMatch[1], 'bi');
+            } else if (mdiIconMatch && selectedIconsOnly) {
+                hideAutocompletesExcept('icon');
                 showIconAutocomplete(mdiIconMatch[1], 'mdi');
             } else if (bgColorMatch) {
-                hideAutocomplete();
-                hideIconAutocomplete();
-                hideTimestampAutocomplete();
-                hidePaletteAutocomplete();
+                hideAutocompletesExcept('color');
                 showColorAutocomplete(bgColorMatch[1], 'bg');
             } else if (textColorMatch) {
-                hideAutocomplete();
-                hideIconAutocomplete();
-                hideTimestampAutocomplete();
-                hidePaletteAutocomplete();
+                hideAutocompletesExcept('color');
                 showColorAutocomplete(textColorMatch[1], 'color');
             } else if (paletteMatch) {
-                hideAutocomplete();
-                hideIconAutocomplete();
-                hideColorAutocomplete();
-                hideTimestampAutocomplete();
-                hideImgSizeAutocomplete();
+                hideAutocompletesExcept('palette');
                 showPaletteAutocomplete(paletteMatch[1]);
             } else if (calendarMatch) {
-                hideAutocomplete();
-                hideIconAutocomplete();
-                hideColorAutocomplete();
+                hideAutocompletesExcept('timestamp');
                 showTimestampAutocomplete('calendar');
             } else if (ageMatch) {
-                hideAutocomplete();
-                hideIconAutocomplete();
-                hideColorAutocomplete();
+                hideAutocompletesExcept('timestamp');
                 showTimestampAutocomplete('age');
             } else if (ddayMatch) {
-                hideAutocomplete();
-                hideIconAutocomplete();
-                hideColorAutocomplete();
+                hideAutocompletesExcept('timestamp');
                 showTimestampAutocomplete('dday');
             } else if (timerMatch) {
-                hideAutocomplete();
-                hideIconAutocomplete();
-                hideColorAutocomplete();
+                hideAutocompletesExcept('timestamp');
                 showTimestampAutocomplete('timer');
             } else if (timeMatch) {
-                hideAutocomplete();
-                hideIconAutocomplete();
-                hideColorAutocomplete();
+                hideAutocompletesExcept('timestamp');
                 showTimestampAutocomplete('time');
             } else if (imgMatch) {
                 // 이미지 마크다운 `)` 입력 직후 트리거
-                hideAutocomplete();
-                hideIconAutocomplete();
-                hideColorAutocomplete();
-                hideTimestampAutocomplete();
+                hideAutocompletesExcept('imgsize');
                 showImgSizeAutocomplete();
+            } else if (codeMatch) {
+                hideAutocompletesExcept('code');
+                showCodeAutocomplete(codeMatch[1]);
             } else {
-                hideAutocomplete();
-                hideIconAutocomplete();
-                hideColorAutocomplete();
-                hideImgSizeAutocomplete();
-                hideTimestampAutocomplete();
-                hidePaletteAutocomplete();
+                hideAutocompletesExcept(null);
             }
         });
     });
@@ -1805,24 +1882,18 @@ function attachAutocomplete() {
     // 포커스 잃으면 닫기
     editor.on('blur', () => {
         setTimeout(() => {
-            if (!document.activeElement.closest('#wiki-autocomplete')) {
-                hideAutocomplete();
-            }
-            if (!document.activeElement.closest('#icon-autocomplete')) {
-                hideIconAutocomplete();
-            }
-            if (!document.activeElement.closest('#color-autocomplete')) {
-                hideColorAutocomplete();
-            }
-            if (!document.activeElement.closest('#imgsize-autocomplete')) {
-                hideImgSizeAutocomplete();
-            }
-            if (!document.activeElement.closest('#timestamp-autocomplete')) {
-                hideTimestampAutocomplete();
-            }
-            if (!document.activeElement.closest('#palette-autocomplete')) {
-                hidePaletteAutocomplete();
-            }
+            const activeEl = document.activeElement;
+            // 클릭 후 editor.focus() 로 포커스가 다시 에디터에 와 있다면
+            // 자동완성이 RAF/프로그래밍 방식으로 새로 떠 있을 수 있으므로 그대로 둔다.
+            if (activeEl && activeEl.closest('.cm-editor')) return;
+
+            if (!activeEl || !activeEl.closest('#wiki-autocomplete')) hideAutocomplete();
+            if (!activeEl || !activeEl.closest('#icon-autocomplete')) hideIconAutocomplete();
+            if (!activeEl || !activeEl.closest('#color-autocomplete')) hideColorAutocomplete();
+            if (!activeEl || !activeEl.closest('#imgsize-autocomplete')) hideImgSizeAutocomplete();
+            if (!activeEl || !activeEl.closest('#timestamp-autocomplete')) hideTimestampAutocomplete();
+            if (!activeEl || !activeEl.closest('#palette-autocomplete')) hidePaletteAutocomplete();
+            if (!activeEl || !activeEl.closest('#code-autocomplete')) hideCodeAutocomplete();
         }, 200);
     });
 }
@@ -1842,4 +1913,4 @@ setTimeout(attachAutocomplete, 500);
     setTimeout(setup, 600);
 })();
 
-// ══════════════════════════════════════════════════
+// ══════════════════════════════════════════════════

@@ -80,6 +80,16 @@
         <div id="imgsizeAcGrid"></div>
     </div>
 
+    <!-- 코드 템플릿 인라인 자동완성 드롭다운 -->
+    <div id="code-autocomplete" class="list-group"
+        style="display:none; position:absolute; z-index:9999; background:var(--wiki-bg); border:1px solid var(--wiki-border); border-radius:4px; box-shadow:0 2px 10px rgba(0,0,0,0.1); width:240px; padding:0;">
+        <div class="list-group-item text-muted"
+            style="font-size:0.85rem; background:var(--wiki-bg-alt); padding:6px 10px; border-bottom:1px solid var(--wiki-border);">
+            <i class="mdi mdi-code-braces"></i> 코드 삽입
+        </div>
+        <div id="codeAcGrid" style="max-height: 300px; overflow-y: auto;"></div>
+    </div>
+
     <!-- 색상 피커 인라인 자동완성 드롭다운 -->
     <div id="color-autocomplete">
         <div class="color-ac-header">
