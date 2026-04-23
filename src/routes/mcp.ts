@@ -1,7 +1,7 @@
 import { Hono, Context } from 'hono';
 import { cors } from 'hono/cors';
 import type { Env } from '../types';
-import { renderForAI, extractTOC, extractSection, findSectionForSnippet } from '../utils/aiParser';
+import { renderForAI, extractTOC, extractSection, findSectionForSnippet, expandTemplates } from '../utils/aiParser';
 import { normalizeSlug, isR2OnlyNamespace, isMcpReadableSlug } from '../utils/slug';
 import { getRevisionContent } from '../utils/r2';
 
@@ -187,7 +187,7 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                     {
                         name: 'read_section',
                         description: '위키 문서에서 특정 목차의 내용만 읽어옵니다. 목차는 get_toc 가 반환하는 계층적 번호(예: "1", "1.1", "1.1.1")로 지정합니다.',
-                        inputSchema: { type: 'object', properties: { title: { type: 'string', description: '문서 제목' }, section_number: { type: 'string', description: 'get_toc가 반환한 목차 번호 (예: "1", "1.1", "1.1.1")' }, raw: { type: 'boolean', description: 'true로 설정 시 위키 꾸미기 문법 변환을 건너뛰고 원본 그대로 반환합니다.' } }, required: ['title', 'section_number'] }
+                        inputSchema: { type: 'object', properties: { title: { type: 'string', description: '문서 제목' }, section_number: { type: 'string', description: 'get_toc가 반환한 목차 번호 (예: "1", "1.1", "1.1.1")' }, raw: { type: 'boolean', description: 'true로 설정 시 위키 꾸미기 문법 변환을 건너뛰고 반환합니다. 단, get_toc 의 번호 체계와 맞추기 위해 틀 트랜스클루전({{...}})은 항상 확장된 상태로 반환됩니다.' } }, required: ['title', 'section_number'] }
                     },
                     {
                         name: 'get_tree',
@@ -289,13 +289,22 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                     }
                 }
 
-                if (toolName === 'get_toc') return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: extractTOC(actualContent) || '목차가 존재하지 않습니다.' }] } };
+                if (toolName === 'get_toc') {
+                    const expanded = await expandTemplates(actualContent, db, 0, slug);
+                    return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: extractTOC(expanded) || '목차가 존재하지 않습니다.' }] } };
+                }
                 if (toolName === 'read_document') {
                     const text = args.raw === true ? actualContent : await renderForAI(actualContent, db, 0, slug);
                     return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: text || '문서 내용이 존재하지 않습니다.' }] } };
                 }
                 if (toolName === 'read_section') {
-                    const sectionContent = extractSection(actualContent, args.section_number || '');
+                    // get_toc 가 확장된 컨텐츠 기준으로 번호를 매기므로, read_section 도
+                    // 동일하게 확장 후 번호를 찾아야 일관된 결과가 나온다. 틀이 원문의
+                    // 실제 섹션 앞쪽에 헤딩을 주입하는 경우, 같은 번호가 원문·확장본에서
+                    // 서로 다른 헤딩을 가리키므로 "원문에서 먼저 찾기" 같은 폴백은 위험하다.
+                    // raw 플래그는 추출 이후 위키 문법 stripping 여부에만 영향을 준다.
+                    const expanded = await expandTemplates(actualContent, db, 0, slug);
+                    const sectionContent = extractSection(expanded, args.section_number || '');
                     const text = args.raw === true ? sectionContent : await renderForAI(sectionContent, db, 0, slug);
                     return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: text || '해당 목차를 찾을 수 없습니다.' }] } };
                 }

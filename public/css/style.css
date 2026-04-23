@@ -826,6 +826,24 @@ div:where(.swal2-container) .swal2-html-container {
   color: var(--wiki-primary);
 }
 
+.doc-stats-counter {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  gap: 0.35rem 0.75rem;
+  margin-top: 0.5rem;
+  padding: 0 0.25rem;
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--wiki-text-muted);
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+
+.doc-stats-counter span {
+  white-space: nowrap;
+}
+
 .recent-changes-list {
   display: flex;
   flex-direction: column;

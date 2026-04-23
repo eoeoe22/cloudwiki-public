@@ -144,6 +144,12 @@
                 </div>
               </div>
             </div>
+            <div id="docStatsCounter" class="doc-stats-counter d-none" aria-live="off">
+              <span data-counter="lines">0줄</span>
+              <span data-counter="chars">0자</span>
+              <span data-counter="charsWithSpaces">0자(공백포함)</span>
+              <span data-counter="words">0단어</span>
+            </div>
           </div>
 
           <!-- 본문 -->
@@ -1096,6 +1102,7 @@
       document.getElementById('articleMoreActions').innerHTML = '';
       document.getElementById('articleContent').innerHTML = listHtml;
       document.getElementById('tocContainer').classList.add('d-none');
+      document.getElementById('docStatsCounter')?.classList.add('d-none');
       document.getElementById('backlinksSection').classList.add('d-none');
       document.getElementById('parentDocsNav').classList.add('d-none');
       document.getElementById('parentDocsNavDivider').classList.add('d-none');

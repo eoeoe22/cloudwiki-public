@@ -1312,6 +1312,9 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
             generateTOC(containerEl, options.tocContainerId, options.tocNavId);
         }
 
+        // 문서 원본(마크다운) 기준 통계(줄수/자수/단어수)를 TOC 아래에 표시
+        _updateDocumentStatsCounter(content);
+
         if (options.collapsibleSections) {
             makeCollapsibleSections(containerEl);
             // 각주 목록은 섹션 외부(문서 최하단)에 위치해야 한다.
@@ -1663,6 +1666,33 @@ function _addHeadingCopyButtons(containerEl, resolvedContent, options = {}) {
 }
 
 // ── 익스텐션 렌더링 시스템 ──
+
+/** 문서 통계 카운터: TOC 아래에 줄수/자수/단어수를 표시.
+ *  원본 마크다운(`content`)을 기준으로 계산하여 에디터 카운터와 일관성을 유지. */
+function _updateDocumentStatsCounter(text) {
+    const root = document.getElementById('docStatsCounter');
+    if (!root) return;
+    const str = text == null ? '' : String(text);
+    if (!str.length) {
+        root.classList.add('d-none');
+        return;
+    }
+    const lines = str.split('\n').length;
+    const charsWithSpaces = str.length;
+    const chars = str.replace(/\s/g, '').length;
+    const trimmed = str.trim();
+    const words = trimmed ? trimmed.split(/\s+/).length : 0;
+    const fmt = (n) => n.toLocaleString();
+    const set = (key, val) => {
+        const el = root.querySelector(`[data-counter="${key}"]`);
+        if (el) el.textContent = val;
+    };
+    set('lines', `${fmt(lines)}줄`);
+    set('chars', `${fmt(chars)}자`);
+    set('charsWithSpaces', `${fmt(charsWithSpaces)}자(공백포함)`);
+    set('words', `${fmt(words)}단어`);
+    root.classList.remove('d-none');
+}
 
 /** 익스텐션 모듈별 렌더러 맵 (각 익스텐션 파일이 로드 시 자동 등록) */
 if (!window._extensionRenderers) window._extensionRenderers = {};

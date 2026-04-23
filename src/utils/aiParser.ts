@@ -376,112 +376,157 @@ export async function renderForAI(content: string, db: D1Database, depth = 0, cu
         }
     }
 
-    // 4. {{틀 트랜스클루전}} 처리
-    if (depth < MAX_TEMPLATE_DEPTH) {
-        // 중괄호 균형 파서로 호출 위치를 찾는다. 인자 내부의 {button:a|b} 같은
-        // `}` 포함 토큰이나 중첩된 {{...}} 호출이 있어도 전체 호출을 정확히 잡아낸다.
-        const templateCalls = findTemplateCalls(processed);
-
-        if (templateCalls.length > 0) {
-            // 1) 슬러그 목록 추출 (중복 제거) + 매치별 호출 인자 보존
-            const slugMap = new Map<string, string>();
-            const selfRefSlugs = new Set<string>();
-            const matchCalls: { normalized: string; call: TemplateCall; start: number; fullEnd: number }[] = [];
-            for (const tc of templateCalls) {
-                const call = parseTemplateCall(tc.raw.trim());
-                let targetSlug = call.name;
-                if (!targetSlug.startsWith('틀:') && !targetSlug.startsWith('template:') && !targetSlug.startsWith('템플릿:')) {
-                    targetSlug = '틀:' + targetSlug;
-                }
-                const normalized = normalizeSlug(targetSlug);
-                matchCalls.push({ normalized, call, start: tc.start, fullEnd: tc.fullEnd });
-                if (currentSlug && normalized === normalizeSlug(currentSlug)) {
-                    selfRefSlugs.add(normalized);
-                    continue;
-                }
-                if (!slugMap.has(normalized)) {
-                    slugMap.set(normalized, targetSlug);
-                }
-            }
-
-            // 2) IN 절을 사용하여 한 번의 쿼리로 모든 틀 내용을 배치 조회
-            const slugList = Array.from(slugMap.keys());
-            const templateContents = new Map<string, string>();
-
-            // D1은 단일 prepare에 IN절 바인딩이 제한적이므로 batch 사용
-            const batchStatements = slugList.map(slug =>
-                db.prepare('SELECT slug, content FROM pages WHERE slug = ? AND deleted_at IS NULL AND is_private = 0').bind(slug)
-            );
-
-            try {
-                const batchResults = await db.batch<{ slug: string; content: string }>(batchStatements);
-                for (const result of batchResults) {
-                    if (result.results && result.results.length > 0) {
-                        const row = result.results[0];
-                        templateContents.set(row.slug, row.content);
-                    }
-                }
-            } catch {
-                // 배치 실패 시 빈 결과로 처리
-            }
-
-            // 3) 매치별로 파라미터 치환 후 재귀 파싱 (인자가 다르면 결과도 다르므로 매치별 처리)
-            const parsedByIndex = new Array<string>(matchCalls.length);
-            const parsePromises: Promise<void>[] = [];
-            for (let i = 0; i < matchCalls.length; i++) {
-                const { normalized, call } = matchCalls[i];
-                if (selfRefSlugs.has(normalized)) {
-                    parsedByIndex[i] = '';
-                    continue;
-                }
-                const content = templateContents.get(normalized);
-                if (!content) {
-                    parsedByIndex[i] = '';
-                    continue;
-                }
-                const substituted = substituteParams(content, call.args);
-                parsePromises.push(
-                    renderForAI(substituted, db, depth + 1, normalized).then(parsed => {
-                        parsedByIndex[i] = parsed;
-                    })
-                );
-            }
-            await Promise.all(parsePromises);
-
-            // 4) 호출 위치(start, fullEnd) 를 이용해 세그먼트 단위로 교체.
-            // findTemplateCalls 가 이미 왼쪽→오른쪽 순서로 비겹침 스팬을 반환하므로
-            // 역순 처리 없이 한 번에 재조립 가능.
-            let rebuilt = '';
-            let cursor = 0;
-            for (let i = 0; i < matchCalls.length; i++) {
-                const mc = matchCalls[i];
-                rebuilt += processed.substring(cursor, mc.start);
-                rebuilt += parsedByIndex[i] || '';
-                cursor = mc.fullEnd;
-            }
-            rebuilt += processed.substring(cursor);
-            processed = rebuilt;
-        }
-    } else {
-        // 최대 깊이를 초과하면 틀 호출 자체를 제거 (파라미터 참조 {{{...}}} 는 보존)
-        const overflowCalls = findTemplateCalls(processed);
-        if (overflowCalls.length > 0) {
-            let rebuilt = '';
-            let cursor = 0;
-            for (const c of overflowCalls) {
-                rebuilt += processed.substring(cursor, c.start);
-                cursor = c.fullEnd;
-            }
-            rebuilt += processed.substring(cursor);
-            processed = rebuilt;
-        }
-    }
+    // 4. {{틀 트랜스클루전}} 처리 — expandTemplates 와 공유되는 내부 헬퍼로 위임
+    processed = await expandTemplateCallsIn(processed, db, depth, currentSlug, renderForAI);
 
     // 플레이스홀더 복원 (코드블럭/인라인 코드 내용 원상복구)
     for (const [key, value] of placeholders) {
         processed = processed.split(key).join(value);
     }
 
+    return processed;
+}
+
+/**
+ * 이미 코드블럭/인라인 코드가 보호된 텍스트에 대해 `{{...}}` 틀 호출을 재귀적으로 확장합니다.
+ * `recurse` 는 템플릿 본문(파라미터 치환 후)을 한 단계 더 처리할 함수로,
+ * `renderForAI` 는 자기 자신을, `expandTemplates` 는 자기 자신을 전달합니다.
+ * 이로써 두 호출 경로에서 "배치 조회 + 자기참조 방지 + 재조립" 로직이 단일 구현을 공유합니다.
+ */
+async function expandTemplateCallsIn(
+    processed: string,
+    db: D1Database,
+    depth: number,
+    currentSlug: string | undefined,
+    recurse: (content: string, db: D1Database, depth: number, currentSlug?: string) => Promise<string>
+): Promise<string> {
+    if (depth >= MAX_TEMPLATE_DEPTH) {
+        // 최대 깊이를 초과하면 틀 호출 자체를 제거 (파라미터 참조 {{{...}}} 는 보존)
+        const overflowCalls = findTemplateCalls(processed);
+        if (overflowCalls.length === 0) return processed;
+        let rebuilt = '';
+        let cursor = 0;
+        for (const c of overflowCalls) {
+            rebuilt += processed.substring(cursor, c.start);
+            cursor = c.fullEnd;
+        }
+        rebuilt += processed.substring(cursor);
+        return rebuilt;
+    }
+
+    // 중괄호 균형 파서로 호출 위치를 찾는다. 인자 내부의 {button:a|b} 같은
+    // `}` 포함 토큰이나 중첩된 {{...}} 호출이 있어도 전체 호출을 정확히 잡아낸다.
+    const templateCalls = findTemplateCalls(processed);
+    if (templateCalls.length === 0) return processed;
+
+    // 1) 슬러그 목록 추출 (중복 제거) + 매치별 호출 인자 보존
+    const slugMap = new Map<string, string>();
+    const selfRefSlugs = new Set<string>();
+    const matchCalls: { normalized: string; call: TemplateCall; start: number; fullEnd: number }[] = [];
+    for (const tc of templateCalls) {
+        const call = parseTemplateCall(tc.raw.trim());
+        let targetSlug = call.name;
+        if (!targetSlug.startsWith('틀:') && !targetSlug.startsWith('template:') && !targetSlug.startsWith('템플릿:')) {
+            targetSlug = '틀:' + targetSlug;
+        }
+        const normalized = normalizeSlug(targetSlug);
+        matchCalls.push({ normalized, call, start: tc.start, fullEnd: tc.fullEnd });
+        if (currentSlug && normalized === normalizeSlug(currentSlug)) {
+            selfRefSlugs.add(normalized);
+            continue;
+        }
+        if (!slugMap.has(normalized)) {
+            slugMap.set(normalized, targetSlug);
+        }
+    }
+
+    // 2) slug별 단일 SELECT 문을 준비한 뒤 db.batch로 여러 statement를 함께 실행해 틀 내용을 조회
+    // D1은 단일 prepare에서 가변 길이 IN 절 바인딩이 제한적이므로 이 방식을 사용
+    const slugList = Array.from(slugMap.keys());
+    const templateContents = new Map<string, string>();
+    const batchStatements = slugList.map(slug =>
+        db.prepare('SELECT slug, content FROM pages WHERE slug = ? AND deleted_at IS NULL AND is_private = 0').bind(slug)
+    );
+    try {
+        const batchResults = await db.batch<{ slug: string; content: string }>(batchStatements);
+        for (const result of batchResults) {
+            if (result.results && result.results.length > 0) {
+                const row = result.results[0];
+                templateContents.set(row.slug, row.content);
+            }
+        }
+    } catch {
+        // 배치 실패 시 빈 결과로 처리
+    }
+
+    // 3) 매치별로 파라미터 치환 후 재귀 처리 (인자가 다르면 결과도 다르므로 매치별 처리)
+    const expandedByIndex = new Array<string>(matchCalls.length);
+    const expandPromises: Promise<void>[] = [];
+    for (let i = 0; i < matchCalls.length; i++) {
+        const { normalized, call } = matchCalls[i];
+        if (selfRefSlugs.has(normalized)) {
+            expandedByIndex[i] = '';
+            continue;
+        }
+        const tplContent = templateContents.get(normalized);
+        if (!tplContent) {
+            expandedByIndex[i] = '';
+            continue;
+        }
+        const substituted = substituteParams(tplContent, call.args);
+        expandPromises.push(
+            recurse(substituted, db, depth + 1, normalized).then(expanded => {
+                expandedByIndex[i] = expanded;
+            })
+        );
+    }
+    await Promise.all(expandPromises);
+
+    // 4) 호출 위치(start, fullEnd) 를 이용해 세그먼트 단위로 교체.
+    // findTemplateCalls 가 이미 왼쪽→오른쪽 순서로 비겹침 스팬을 반환하므로
+    // 역순 처리 없이 한 번에 재조립 가능.
+    let rebuilt = '';
+    let cursor = 0;
+    for (let i = 0; i < matchCalls.length; i++) {
+        const mc = matchCalls[i];
+        rebuilt += processed.substring(cursor, mc.start);
+        rebuilt += expandedByIndex[i] || '';
+        cursor = mc.fullEnd;
+    }
+    rebuilt += processed.substring(cursor);
+    return rebuilt;
+}
+
+/**
+ * 템플릿 트랜스클루전({{틀이름|인자}})만 재귀적으로 확장하고, 그 외 위키 문법은 원본 그대로 보존합니다.
+ * get_toc/read_section 처럼 헤딩 번호를 일관되게 유지해야 하는 경로에서 사용합니다.
+ * 코드블럭과 인라인 코드 내부의 {{...}} 는 확장하지 않습니다.
+ */
+export async function expandTemplates(content: string, db: D1Database, depth = 0, currentSlug?: string): Promise<string> {
+    if (!content) return '';
+
+    let processed = content;
+    const placeholders = new Map<string, string>();
+    let placeholderIndex = 0;
+
+    processed = processed.replace(/```[\s\S]*?```/g, (match) => {
+        const key = `\x00FENCED_CODE_${placeholderIndex++}\x00`;
+        placeholders.set(key, match);
+        return key;
+    });
+    processed = processed.replace(/`[^`\n]+`/g, (match) => {
+        const key = `\x00INLINE_CODE_${placeholderIndex++}\x00`;
+        placeholders.set(key, match);
+        return key;
+    });
+
+    // renderForAI 와 동일한 내부 헬퍼를 공유하되, 재귀 시 자기 자신(expandTemplates)을 전달해
+    // 위키 문법 stripping 없이 템플릿 확장만 수행한다.
+    processed = await expandTemplateCallsIn(processed, db, depth, currentSlug, expandTemplates);
+
+    for (const [key, value] of placeholders) {
+        processed = processed.split(key).join(value);
+    }
     return processed;
 }
 
