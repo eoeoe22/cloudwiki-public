@@ -847,22 +847,30 @@ function openCardInsertModal() {
     }
 
     Swal.fire({
-        title: '<i class="bi bi-card-heading me-2"></i>카드 블록 삽입',
+        title: '<i class="bi bi-card-heading me-2"></i>카드 / 임베드 블록 삽입',
         width: 560,
         html: `
                     <div class="text-start card-insert-form">
                         <div class="mb-3">
+                            <label class="form-label">블록 종류</label>
+                            <input type="hidden" id="cardInsertType" value="card">
+                            <div class="btn-group w-100" role="group" id="cardInsertTypeToggle">
+                                <button type="button" class="btn btn-outline-primary active" data-type="card">카드</button>
+                                <button type="button" class="btn btn-outline-primary" data-type="embed">임베드</button>
+                            </div>
+                        </div>
+                        <div class="mb-3">
                             <label class="form-label" for="cardInsertTitle">제목</label>
                             <input type="text" id="cardInsertTitle" class="form-control"
-                                placeholder="카드 제목" autocomplete="off"
+                                placeholder="제목" autocomplete="off"
                                 style="background:var(--wiki-bg);color:var(--wiki-text);border-color:var(--wiki-border);">
                         </div>
                         <div class="mb-3">
-                            <label class="form-label">제목 팔레트</label>
+                            <label class="form-label" id="cardInsertTitlePaletteLabel">제목 팔레트</label>
                             <input type="hidden" id="cardInsertTitlePalette" value="">
                             ${paletteSwatchHtml('cardInsertTitleSwatches')}
                         </div>
-                        <div class="mb-2">
+                        <div class="mb-2" id="cardInsertBodyPaletteGroup">
                             <label class="form-label">내용 팔레트</label>
                             <input type="hidden" id="cardInsertBodyPalette" value="">
                             ${paletteSwatchHtml('cardInsertBodySwatches')}
@@ -897,27 +905,58 @@ function openCardInsertModal() {
             }
             wireSwatches('cardInsertTitleSwatches', 'cardInsertTitlePalette');
             wireSwatches('cardInsertBodySwatches', 'cardInsertBodyPalette');
+
+            const typeHidden = document.getElementById('cardInsertType');
+            const typeButtons = document.querySelectorAll('#cardInsertTypeToggle button[data-type]');
+            const bodyGroup = document.getElementById('cardInsertBodyPaletteGroup');
+            const titlePaletteLabel = document.getElementById('cardInsertTitlePaletteLabel');
+            const titleInputEl = document.getElementById('cardInsertTitle');
+            function applyType(t) {
+                typeHidden.value = t;
+                typeButtons.forEach(b => b.classList.toggle('active', b.dataset.type === t));
+                if (t === 'embed') {
+                    if (bodyGroup) bodyGroup.style.display = 'none';
+                    if (titlePaletteLabel) titlePaletteLabel.textContent = '왼쪽 테두리 팔레트';
+                    if (titleInputEl) titleInputEl.placeholder = '임베드 제목';
+                } else {
+                    if (bodyGroup) bodyGroup.style.display = '';
+                    if (titlePaletteLabel) titlePaletteLabel.textContent = '제목 팔레트';
+                    if (titleInputEl) titleInputEl.placeholder = '카드 제목';
+                }
+            }
+            applyType('card');
+            typeButtons.forEach(b => b.addEventListener('click', (e) => {
+                e.preventDefault();
+                applyType(b.dataset.type);
+            }));
         },
         preConfirm: () => {
+            const type = (document.getElementById('cardInsertType').value || 'card').trim();
             const title = (document.getElementById('cardInsertTitle').value || '')
                 .replace(/[\r\n]+/g, ' ')
                 .trim();
             const titlePalette = (document.getElementById('cardInsertTitlePalette').value || '').trim();
             const bodyPalette = (document.getElementById('cardInsertBodyPalette').value || '').trim();
-            return { title, titlePalette, bodyPalette };
+            return { type, title, titlePalette, bodyPalette };
         }
     }).then(result => {
         if (!result.isConfirmed || !result.value) return;
-        const { title, titlePalette, bodyPalette } = result.value;
+        const { type, title, titlePalette, bodyPalette } = result.value;
+        const blockType = type === 'embed' ? 'embed' : 'card';
         let titleTokens = '';
         if (titlePalette) titleTokens += `{palette:${titlePalette}}`;
         const titlePart = titleTokens && title ? `${titleTokens} ${title}` : (titleTokens || title);
-        const header = titlePart ? `:::card ${titlePart}` : ':::card';
-        
-        let bodyTokens = '';
-        if (bodyPalette) bodyTokens += `{palette:${bodyPalette}}`;
-        const body = bodyTokens ? `${bodyTokens}내용` : '내용';
-        
+        const header = titlePart ? `:::${blockType} ${titlePart}` : `:::${blockType}`;
+
+        let body;
+        if (blockType === 'embed') {
+            body = '내용';
+        } else {
+            let bodyTokens = '';
+            if (bodyPalette) bodyTokens += `{palette:${bodyPalette}}`;
+            body = bodyTokens ? `${bodyTokens}내용` : '내용';
+        }
+
         editor.insertText(`${header}\n${body}\n:::`);
         if (typeof cmEditorView !== 'undefined' && cmEditorView) cmEditorView.focus();
     });

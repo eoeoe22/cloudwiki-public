@@ -341,8 +341,15 @@ export async function renderForAI(content: string, db: D1Database, depth = 0, cu
 
     // ::: 블록 디렉티브: 마커 라인만 제거하고 내부 콘텐츠는 보존.
     // :::card 제목 → "제목" (한 줄 남김), :::grid/:::row → 줄 삭제, 단독 ::: → 줄 삭제
+    // 콜아웃(:::info 등)은 제목이 없어도 타입 라벨을 유지해 AI 컨텍스트에서 의미가 보존되도록 한다.
+    const CALLOUT_LABELS: Record<string, string> = {
+        info: '정보', tip: '팁', success: '성공',
+        warning: '주의', danger: '위험', note: '노트'
+    };
     processed = processed.replace(/^:::([a-zA-Z][a-zA-Z0-9_-]*)(?:[ \t]+([^\n]*))?[ \t]*$/gm, (_, type, title) => {
         const t = (title || '').replace(/\{(?:palette|bg|color):[^}]+\}/g, '').trim();
+        const calloutLabel = CALLOUT_LABELS[type as string];
+        if (calloutLabel) return t ? `${calloutLabel}: ${t}` : `${calloutLabel}:`;
         return t ? t : '';
     });
     processed = processed.replace(/^:::[ \t]*$/gm, '');
@@ -360,6 +367,25 @@ export async function renderForAI(content: string, db: D1Database, depth = 0, cu
         const url = parts[1] || '';
         if (text && url) return `[${text}](${url})`;
         return text;
+    });
+    processed = processed.replace(/\{kbd:([^}]+)\}/g, (_, c) => c.trim());
+    processed = processed.replace(/\{progress:([^}]+)\}/g, (_, c) => {
+        const parts = c.split('|').map((s: string) => s.trim());
+        const valueStr = parts[0] || '';
+        const label = parts[1] || '';
+        const fracMatch = valueStr.match(/^(\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)$/);
+        let text = valueStr;
+        if (fracMatch) {
+            const a = parseFloat(fracMatch[1]);
+            const b = parseFloat(fracMatch[2]);
+            if (b > 0) {
+                const pct = Math.round((a / b) * 100);
+                text = `${fracMatch[1]}/${fracMatch[2]} (${pct}%)`;
+            }
+        } else if (/^\d+(?:\.\d+)?$/.test(valueStr)) {
+            text = `${valueStr}%`;
+        }
+        return label ? `${label}: ${text}` : text;
     });
     processed = processed.replace(/\{hr\}/g, '');
 

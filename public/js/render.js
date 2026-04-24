@@ -70,45 +70,34 @@ function _preprocessBlockDirectives(text) {
     return { text: root.contentLines.join('\n'), blockData };
 }
 
-/** titleLine에서 {palette:}/{bg:}/{color:}/{body-palette:}/{body-bg:}/{body-color:} 토큰을 흡수해 { cleanTitle, bg, color, bodyBg, bodyColor } 반환 */
+/** titleLine에서 {palette:}/{bg:}/{color:} 토큰을 흡수해 { cleanTitle, bg, color } 반환 */
 function _extractBlockStyleTokens(titleLine) {
     let t = _resolvePaletteTokens(titleLine || '');
-    let bg = '', color = '', bodyBg = '', bodyColor = '';
-
-    // {body-palette:이름} 먼저 처리 (bg/color 파서와 충돌 방지)
-    t = t.replace(/\{body-palette:\s*([^}\s][^}]*?)\s*\}/g, (match, name) => {
-        const resolved = _resolvePaletteTokens(`{palette:${name.trim()}}`);
-        const bgM = resolved.match(/\{bg:([^}]+)\}/);
-        const colorM = resolved.match(/\{color:([^}]+)\}/);
-        if (bgM) bodyBg = bgM[1].trim();
-        if (colorM) bodyColor = colorM[1].trim();
-        return '';
-    });
-
+    let bg = '', color = '';
     let replaced = true;
     while (replaced) {
         replaced = false;
-        const bbm = t.match(/\{body-bg:\s*([^}]+)\}/);
-        if (bbm) { bodyBg = bbm[1].trim(); t = t.replace(bbm[0], ''); replaced = true; }
-        const bcm = t.match(/\{body-color:\s*([^}]+)\}/);
-        if (bcm) { bodyColor = bcm[1].trim(); t = t.replace(bcm[0], ''); replaced = true; }
         const bm = t.match(/\{bg:\s*([^}]+)\}/);
         if (bm) { bg = bm[1].trim(); t = t.replace(bm[0], ''); replaced = true; }
         const cm = t.match(/\{color:\s*([^}]+)\}/);
         if (cm) { color = cm[1].trim(); t = t.replace(cm[0], ''); replaced = true; }
     }
     t = t.replace(/\{palette:\s*[^}]*\}/g, '');
-    return { cleanTitle: t.trim(), bg, color, bodyBg, bodyColor };
+    return { cleanTitle: t.trim(), bg, color };
 }
 
 /** 블록을 HTML로 렌더링. 중첩 WIKIBLOCKPH 는 자체적으로 재귀 치환 */
 function _renderBlockHtml(block, blockData) {
     const type = block.type;
-    let { cleanTitle, bg, color, bodyBg, bodyColor } = _extractBlockStyleTokens(block.titleLine);
+    let { cleanTitle, bg, color } = _extractBlockStyleTokens(block.titleLine);
+    // 본문 색은 본문 맨 앞의 {bg:}/{color:}/{palette:} 토큰만으로 지정한다.
+    let bodyBg = '', bodyColor = '';
 
     let innerText = block.innerText || '';
 
-    if (type === 'card') {
+    const isCallout = (type === 'info' || type === 'tip' || type === 'success'
+                    || type === 'warning' || type === 'danger' || type === 'note');
+    if (type === 'card' || isCallout) {
         let t = innerText.trimStart();
         let replaced = true;
         while (replaced) {
@@ -177,6 +166,48 @@ function _renderBlockHtml(block, blockData) {
             return `<div class="wiki-grid"${styleAttr}>${innerHtml}</div>`;
         case 'row':
             return `<div class="wiki-row"${styleAttr}>${innerHtml}</div>`;
+        case 'embed': {
+            const accentRaw = (color && _isSafeCssColor(color)) ? color
+                            : (bg && _isSafeCssColor(bg)) ? bg
+                            : '';
+            const accentStyle = accentRaw ? ` style="border-left-color:${accentRaw};"` : '';
+            const titleHtml = titleEsc ? `<div class="wiki-embed-title">${titleEsc}</div>` : '';
+            return `<div class="wiki-embed"${accentStyle}>` +
+                titleHtml +
+                `<div class="wiki-embed-body">${innerHtml}</div>` +
+                `</div>`;
+        }
+        case 'info':
+        case 'tip':
+        case 'success':
+        case 'warning':
+        case 'danger':
+        case 'note': {
+            const calloutMeta = {
+                info:    { icon: 'mdi-information-outline',   title: '정보' },
+                tip:     { icon: 'mdi-lightbulb-on-outline',  title: '팁' },
+                success: { icon: 'mdi-check-circle-outline',  title: '성공' },
+                warning: { icon: 'mdi-alert-outline',         title: '주의' },
+                danger:  { icon: 'mdi-alert-octagon-outline', title: '위험' },
+                note:    { icon: 'mdi-note-text-outline',     title: '노트' }
+            }[type];
+            const headerTitle = titleEsc || escapeHtml(calloutMeta.title);
+            let headerStyle = '';
+            if (bg && _isSafeCssColor(bg)) headerStyle += `background-color:${bg};`;
+            if (color && _isSafeCssColor(color)) headerStyle += `color:${color};`;
+            const headerStyleAttr = headerStyle ? ` style="${headerStyle}"` : '';
+            let bodyStyle = '';
+            if (bodyBg && _isSafeCssColor(bodyBg)) bodyStyle += `background-color:${bodyBg};`;
+            if (bodyColor && _isSafeCssColor(bodyColor)) bodyStyle += `color:${bodyColor};`;
+            const bodyStyleAttr = bodyStyle ? ` style="${bodyStyle}"` : '';
+            return `<div class="wiki-callout wiki-callout-${type}">` +
+                `<div class="wiki-callout-header"${headerStyleAttr}>` +
+                    `<span class="mdi ${calloutMeta.icon} wiki-callout-icon" aria-hidden="true"></span>` +
+                    `<span class="wiki-callout-title">${headerTitle}</span>` +
+                `</div>` +
+                `<div class="wiki-callout-body"${bodyStyleAttr}>${innerHtml}</div>` +
+                `</div>`;
+        }
         default:
             return `<div class="wiki-block wiki-block-${escapeHtml(type)}"${styleAttr}>${innerHtml}</div>`;
     }
@@ -363,6 +394,66 @@ function _processInlineLayoutTokens(html) {
     });
     // stat이 자신만 있는 단락(<p>...</p>) 안에 래핑된 경우 <p>를 제거해 블록으로 승격.
     html = html.replace(/<p>\s*(<div class="wiki-stat"[\s\S]*?<\/div>)\s*<\/p>/g, '$1');
+
+    // 닫는 '}' 누락 시 뒤쪽 다른 '}' 까지 탐욕 매치되어 HTML 태그를 내용으로 삼키는 것을 막기 위해
+    // 매치 범위를 '<' / 개행 직전까지로 제한한다.
+    html = scanComponent(html, /\{kbd:([^}<\n]+)\}/g, (prefix, m) => {
+        const { bg, color } = parseStylePrefix(prefix);
+        const keys = m[1].split('+').map(s => s.trim()).filter(Boolean);
+        if (keys.length === 0) return null;
+        const keyStyleAttr = buildStyleAttr(bg, color);
+        const parts = keys.map(k => `<kbd class="wiki-kbd"${keyStyleAttr}>${escapeHtml(k)}</kbd>`);
+        // 바깥 카드는 사용자 색 토큰을 받지 않고 테마 기본색만 사용한다.
+        return `<span class="wiki-kbd-card">` +
+            `<span class="wiki-kbd-combo">${parts.join('<span class="wiki-kbd-plus">+</span>')}</span>` +
+            `</span>`;
+    });
+
+    html = scanComponent(html, /\{progress:([^}<\n]+)\}/g, (prefix, m) => {
+        const { bg, color } = parseStylePrefix(prefix);
+        const iconHtml = extractIconHtml(prefix);
+        const parts = m[1].split('|').map(s => s.trim());
+        const valueStr = parts[0] || '';
+        const label = parts[1] || '';
+        let percent = null;
+        let valueDisplay = '';
+        const fracMatch = valueStr.match(/^(\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)$/);
+        if (fracMatch) {
+            const a = parseFloat(fracMatch[1]);
+            const b = parseFloat(fracMatch[2]);
+            if (b > 0 && a >= 0 && a <= b) {
+                percent = (a / b) * 100;
+                valueDisplay = `${fracMatch[1]}/${fracMatch[2]}`;
+            }
+        } else {
+            const n = parseFloat(valueStr);
+            if (!isNaN(n) && n >= 0 && n <= 100 && /^-?\d+(?:\.\d+)?%?$/.test(valueStr.replace(/\s/g, ''))) {
+                percent = n;
+                valueDisplay = `${n}%`;
+            }
+        }
+        if (percent === null) return null;
+        const clamped = Math.max(0, Math.min(100, percent));
+        const fillStyle = (bg && _isSafeCssColor(bg))
+            ? ` style="width:${clamped}%;background-color:${bg};"`
+            : ` style="width:${clamped}%;"`;
+        const rootStyle = (color && _isSafeCssColor(color)) ? ` style="color:${color};"` : '';
+        const hasLabel = !!(iconHtml || label);
+        const labelHtml = hasLabel
+            ? `<span class="wiki-progress-label">${iconHtml}${label ? `<span class="wiki-progress-label-text">${escapeHtml(label)}</span>` : ''}</span>`
+            : '';
+        return `<div class="wiki-progress"${rootStyle}>` +
+            `<div class="wiki-progress-header">` +
+                labelHtml +
+                `<span class="wiki-progress-value">${escapeHtml(valueDisplay)}</span>` +
+            `</div>` +
+            `<div class="wiki-progress-track">` +
+                `<div class="wiki-progress-fill"${fillStyle}></div>` +
+            `</div>` +
+        `</div>`;
+    });
+    // progress가 자신만 있는 단락(<p>...</p>) 안에 래핑된 경우 <p>를 제거해 블록으로 승격.
+    html = html.replace(/<p>\s*(<div class="wiki-progress"[\s\S]*?<\/div>\s*<\/div>\s*<\/div>)\s*<\/p>/g, '$1');
 
     html = html.replace(/(?:<p>)?\{hr\}(?:<\/p>)?/g, '<hr class="wiki-block-hr">');
 

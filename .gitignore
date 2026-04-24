@@ -31,7 +31,7 @@ yarn-error.log*
 .idea/
 *.swp
 *.swo
-.claude
+.claude/
 
 # TypeScript
 *.tsbuildinfo

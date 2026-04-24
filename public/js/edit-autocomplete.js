@@ -103,6 +103,8 @@ const codeAc = {
         { id: 'timer', label: '타이머', icon: 'mdi mdi-timer-outline', insert: 'timer:' },
         { id: 'age', label: '만 나이', icon: 'mdi mdi-cake-variant-outline', insert: 'age:' },
         { id: 'calendar', label: '캘린더 날짜', icon: 'mdi mdi-calendar-month', insert: 'calendar:' },
+        { id: 'kbd', label: '키보드 키', icon: 'mdi mdi-keyboard-outline', insert: 'kbd:' },
+        { id: 'progress', label: '진행도 바', icon: 'mdi mdi-progress-helper', insert: 'progress:' },
         { id: 'size', label: '이미지 크기', icon: 'mdi mdi-image-size-select-large', insert: 'size:' }
     ],
     filtered: []
