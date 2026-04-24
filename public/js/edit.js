@@ -1083,6 +1083,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         toolbar.appendChild(createToolbarBtn('[*]', '각주 삽입', () => editor.insertText('[* 각주 내용]')));
         toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-form-dropdown"></i>', '펼치기 접기', () => editor.insertText('[+ 펼치기/접기 제목]\n여기에 숨겨진 내용이 들어갑니다.\n[-]')));
         toolbar.appendChild(createToolbarBtn('<i class="bi bi-diagram-3-fill"></i>', '하위 문서', () => openSubdocInsertModal()));
+        toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-calendar-clock"></i>', '타임스탬프 삽입', () => openTimestampInsertModal()));
         toolbar.appendChild(createToolbarSep());
         toolbar.appendChild(createToolbarBtn('<i class="bi bi-card-heading"></i>', '카드 블록', () => openCardInsertModal()));
         toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-view-grid-outline"></i>', '그리드·스탯', () => openGridStatInsertModal()));
@@ -1135,8 +1136,24 @@ document.addEventListener('DOMContentLoaded', async () => {
             imgUploadPopup.classList.toggle('active');
             if (!isActive) {
                 const rect = imageUploadBtn.getBoundingClientRect();
-                imgUploadPopup.style.top = (rect.bottom + window.scrollY + 6) + 'px';
-                imgUploadPopup.style.left = Math.max(8, rect.left + window.scrollX - 140) + 'px';
+                const popupW = imgUploadPopup.offsetWidth;
+                const popupH = imgUploadPopup.offsetHeight;
+                const viewportW = document.documentElement.clientWidth;
+                const viewportH = document.documentElement.clientHeight;
+                const margin = 8;
+                const triggerCenterX = rect.left + (rect.width / 2);
+
+                let left = triggerCenterX - (popupW / 2);
+                left = Math.max(margin, Math.min(left, viewportW - popupW - margin));
+
+                let top = rect.bottom + 6;
+                if (top + popupH + margin > viewportH && rect.top - popupH - 6 >= margin) {
+                    top = rect.top - popupH - 6;
+                }
+                top = Math.max(margin, Math.min(top, viewportH - popupH - margin));
+
+                imgUploadPopup.style.left = (left + window.scrollX) + 'px';
+                imgUploadPopup.style.top = (top + window.scrollY) + 'px';
             }
         });
 
@@ -1279,15 +1296,25 @@ document.addEventListener('DOMContentLoaded', async () => {
                 settingsPanel.style.display = 'block';
 
                 const panelW = settingsPanel.offsetWidth;
+                const panelH = settingsPanel.offsetHeight;
                 const rect = settingsBtn.getBoundingClientRect();
+                const viewportW = document.documentElement.clientWidth;
+                const viewportH = document.documentElement.clientHeight;
+                const margin = 8;
+
+                // 버튼 바로 아래, 오른쪽 정렬 + 뷰포트 경계 클램핑
+                let left = rect.right - panelW;
+                left = Math.max(margin, Math.min(left, viewportW - panelW - margin));
+
+                let top = rect.bottom + 4;
+                if (top + panelH + margin > viewportH && rect.top - panelH - 4 >= margin) {
+                    top = rect.top - panelH - 4;
+                }
+                top = Math.max(margin, Math.min(top, viewportH - panelH - margin));
 
                 // position:absolute → document 좌표 사용 (scrollX/Y 포함)
-                // 버튼 바로 아래, 오른쪽 정렬
-                const left = rect.right + window.scrollX - panelW;
-                const top = rect.bottom + window.scrollY + 4;
-
-                settingsPanel.style.left = `${left}px`;
-                settingsPanel.style.top = `${top}px`;
+                settingsPanel.style.left = `${left + window.scrollX}px`;
+                settingsPanel.style.top = `${top + window.scrollY}px`;
                 settingsPanel.style.visibility = '';
                 settingsBtn.classList.add('active');
             }

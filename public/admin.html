@@ -134,6 +134,17 @@
         font-weight: 600;
       }
 
+      /* 대시보드 통계 박스 (다크모드 대응) */
+      .dash-stat-box {
+        background-color: var(--wiki-bg);
+        border: 1px solid var(--wiki-border);
+        color: var(--wiki-text);
+      }
+
+      .dash-stat-box .text-muted {
+        color: var(--wiki-text-muted) !important;
+      }
+
       /* Mobile & Tablet Adjustments */
       @media (max-width: 1200px) {
         .admin-layout {
@@ -310,7 +321,7 @@
             <div class="card-body">
               <div class="row g-3 text-center">
                 <div class="col-6 col-md-3">
-                  <div class="p-3 bg-light rounded-3">
+                  <div class="p-3 rounded-3 dash-stat-box">
                     <div class="text-muted small">총 페이지뷰</div>
                     <div class="fs-4 fw-bold text-primary" id="dashTotalViews">
                       -
@@ -318,7 +329,7 @@
                   </div>
                 </div>
                 <div class="col-6 col-md-3">
-                  <div class="p-3 bg-light rounded-3">
+                  <div class="p-3 rounded-3 dash-stat-box">
                     <div class="text-muted small">접속 국가</div>
                     <div class="fs-4 fw-bold text-success" id="dashCountries">
                       -
@@ -469,6 +480,32 @@
               <h5 class="mb-0">삭제된 문서 관리 (Soft Delete)</h5>
             </div>
             <div class="card-body">
+              <div class="d-flex flex-wrap gap-2 mb-3">
+                <input
+                  type="text"
+                  id="deletedPagesSearch"
+                  class="form-control form-control-sm"
+                  placeholder="문서명/제목 검색"
+                  style="max-width: 240px"
+                  onkeydown="if(event.key==='Enter') searchDeletedPages()"
+                />
+                <button
+                  class="btn btn-sm btn-primary"
+                  onclick="searchDeletedPages()"
+                >
+                  검색
+                </button>
+                <button
+                  class="btn btn-sm btn-outline-secondary"
+                  onclick="resetDeletedPagesSearch()"
+                >
+                  초기화
+                </button>
+                <span
+                  class="ms-auto small text-muted align-self-center"
+                  id="deletedPagesTotal"
+                ></span>
+              </div>
               <div class="table-responsive">
                 <table class="table table-hover mb-0">
                   <thead class="table-light">
@@ -481,18 +518,11 @@
                   <tbody id="deletedPagesBody"></tbody>
                 </table>
               </div>
-              <div
-                id="deletedPagesLoadMoreWrapper"
-                class="text-center py-3"
-                style="display: none"
-              >
-                <button
-                  class="btn btn-outline-secondary btn-sm"
-                  onclick="loadMoreDeletedPages()"
-                >
-                  더 불러오기
-                </button>
-              </div>
+              <nav
+                id="deletedPagesPagination"
+                class="mt-3"
+                aria-label="삭제된 문서 페이지 이동"
+              ></nav>
             </div>
           </div>
 
@@ -824,17 +854,12 @@
                   <tbody id="adminLogBody"></tbody>
                 </table>
               </div>
-              <div
-                id="adminLogMore"
-                class="text-center py-2"
-                style="display: none"
-              >
-                <button
-                  class="btn btn-sm btn-outline-secondary"
-                  onclick="loadMoreAdminLogs()"
-                >
-                  더 보기
-                </button>
+              <div class="d-flex justify-content-between align-items-center mt-2">
+                <span class="small text-muted" id="adminLogTotal"></span>
+                <nav
+                  id="adminLogPagination"
+                  aria-label="관리 활동 로그 페이지 이동"
+                ></nav>
               </div>
             </div>
           </div>
@@ -875,7 +900,7 @@
 
         if (tabId === "tab-users" && !userListLoaded) toggleUserList();
         if (tabId === "tab-content" && !deletedPagesLoaded)
-          toggleDeletedPages();
+          loadDeletedPages(1);
         if (tabId === "tab-stats" && !adminLogLoaded) loadAdminLogs();
       }
 
@@ -1239,42 +1264,166 @@
 
       // ── 삭제된 문서 ──
       var deletedPagesLoaded = false,
-        deletedPagesPage = 1;
-      async function loadDeletedPages(page = 1, append = false) {
-        deletedPagesLoaded = true;
-        deletedPagesPage = page;
-        const res = await fetch(
-          `/api/admin/pages/deleted?limit=10&offset=${(page - 1) * 10}`,
-        );
-        const data = await res.json();
-        const html = (data.pages || [])
-          .map(
-            (p) => `<tr>
-                <td class="fw-bold small">${escapeHtml(p.slug)}</td>
+        deletedPagesPage = 1,
+        deletedPagesTotal = 0,
+        deletedPagesSearchTerm = "";
+      const DELETED_PAGES_PAGE_SIZE = 10;
+
+      async function loadDeletedPages(page = 1) {
+        try {
+          deletedPagesLoaded = true;
+          deletedPagesPage = page;
+          const params = new URLSearchParams({
+            limit: DELETED_PAGES_PAGE_SIZE,
+            offset: (page - 1) * DELETED_PAGES_PAGE_SIZE,
+          });
+          if (deletedPagesSearchTerm)
+            params.set("search", deletedPagesSearchTerm);
+          const res = await fetch(`/api/admin/pages/deleted?${params}`);
+          if (!res.ok) throw new Error("목록을 불러오지 못했습니다.");
+          const data = await res.json();
+          deletedPagesTotal = data.total || 0;
+          const html = (data.pages || [])
+            .map((p) => {
+              const slugAttr = JSON.stringify(p.slug).replace(/"/g, "&quot;");
+              const badges = [
+                p.is_private
+                  ? '<span class="badge bg-secondary ms-1">비공개</span>'
+                  : "",
+                p.is_locked
+                  ? '<span class="badge bg-warning text-dark ms-1">잠금</span>'
+                  : "",
+              ].join("");
+              const title = p.title
+                ? `<div class="small text-muted">${escapeHtml(p.title)}</div>`
+                : "";
+              return `<tr>
+                <td>
+                  <div class="fw-bold small">${escapeHtml(p.slug)}${badges}</div>
+                  ${title}
+                </td>
                 <td class="small text-muted">${new Date(p.deleted_at * 1000).toLocaleString()}</td>
-                <td><button class="btn btn-xs btn-outline-success" onclick="restorePage('${escapeHtml(p.slug)}')">복원</button></td>
-            </tr>`,
-          )
-          .join("");
-        const tbody = document.getElementById("deletedPagesBody");
-        if (append) tbody.insertAdjacentHTML("beforeend", html);
-        else
+                <td>
+                  <a href="/w/${encodeURIComponent(p.slug)}" target="_blank" rel="noopener" class="btn btn-xs btn-outline-secondary me-1" title="새 탭으로 열기" aria-label="새 탭으로 열기"><i class="mdi mdi-open-in-new"></i></a>
+                  <button class="btn btn-xs btn-outline-success" onclick="restorePage(${slugAttr})">복원</button>
+                </td>
+            </tr>`;
+            })
+            .join("");
+          const tbody = document.getElementById("deletedPagesBody");
           tbody.innerHTML =
             html ||
             '<tr><td colspan="3" class="text-center py-3">없음</td></tr>';
-        document.getElementById("deletedPagesLoadMoreWrapper").style.display =
-          page * 10 < data.total ? "" : "none";
+          document.getElementById("deletedPagesTotal").textContent =
+            deletedPagesTotal > 0 ? `총 ${deletedPagesTotal}건` : "";
+          renderDeletedPagesPagination();
+        } catch (err) {
+          Swal.fire("오류", err.message, "error");
+        }
       }
-      function loadMoreDeletedPages() {
-        loadDeletedPages(deletedPagesPage + 1, true);
+
+      function searchDeletedPages() {
+        deletedPagesSearchTerm =
+          document.getElementById("deletedPagesSearch").value.trim();
+        loadDeletedPages(1);
       }
+
+      function resetDeletedPagesSearch() {
+        document.getElementById("deletedPagesSearch").value = "";
+        deletedPagesSearchTerm = "";
+        loadDeletedPages(1);
+      }
+
+      function goToDeletedPagesPage(page) {
+        const totalPages = Math.max(
+          1,
+          Math.ceil(deletedPagesTotal / DELETED_PAGES_PAGE_SIZE),
+        );
+        const target = Math.min(Math.max(1, page), totalPages);
+        if (target === deletedPagesPage) return;
+        loadDeletedPages(target);
+      }
+
+      function getDeletedPagesPageNumbers(current, total) {
+        const pages = [];
+        if (total <= 7) {
+          for (let i = 1; i <= total; i++) pages.push(i);
+          return pages;
+        }
+        pages.push(1);
+        if (current > 3) pages.push("...");
+        const start = Math.max(2, current - 1);
+        const end = Math.min(total - 1, current + 1);
+        for (let i = start; i <= end; i++) pages.push(i);
+        if (current < total - 2) pages.push("...");
+        pages.push(total);
+        return pages;
+      }
+
+      function renderDeletedPagesPagination() {
+        const container = document.getElementById("deletedPagesPagination");
+        if (!deletedPagesTotal) {
+          container.innerHTML = "";
+          return;
+        }
+        const totalPages = Math.max(
+          1,
+          Math.ceil(deletedPagesTotal / DELETED_PAGES_PAGE_SIZE),
+        );
+        const pages = getDeletedPagesPageNumbers(
+          deletedPagesPage,
+          totalPages,
+        );
+        const isFirst = deletedPagesPage === 1;
+        const isLast = deletedPagesPage === totalPages;
+        let html =
+          '<ul class="pagination pagination-sm justify-content-center mb-0 flex-wrap">';
+        html += `<li class="page-item ${isFirst ? "disabled" : ""}"><button type="button" class="page-link" onclick="goToDeletedPagesPage(1)" ${isFirst ? "disabled" : ""} aria-label="처음"><i class="mdi mdi-chevron-double-left"></i></button></li>`;
+        html += `<li class="page-item ${isFirst ? "disabled" : ""}"><button type="button" class="page-link" onclick="goToDeletedPagesPage(${deletedPagesPage - 1})" ${isFirst ? "disabled" : ""} aria-label="이전"><i class="mdi mdi-chevron-left"></i></button></li>`;
+        for (const p of pages) {
+          if (p === "...") {
+            html +=
+              '<li class="page-item disabled"><span class="page-link">…</span></li>';
+          } else {
+            const active = p === deletedPagesPage ? "active" : "";
+            html += `<li class="page-item ${active}"><button type="button" class="page-link" onclick="goToDeletedPagesPage(${p})">${p}</button></li>`;
+          }
+        }
+        html += `<li class="page-item ${isLast ? "disabled" : ""}"><button type="button" class="page-link" onclick="goToDeletedPagesPage(${deletedPagesPage + 1})" ${isLast ? "disabled" : ""} aria-label="다음"><i class="mdi mdi-chevron-right"></i></button></li>`;
+        html += `<li class="page-item ${isLast ? "disabled" : ""}"><button type="button" class="page-link" onclick="goToDeletedPagesPage(${totalPages})" ${isLast ? "disabled" : ""} aria-label="마지막"><i class="mdi mdi-chevron-double-right"></i></button></li>`;
+        html += "</ul>";
+        container.innerHTML = html;
+      }
+
       async function restorePage(slug) {
-        if (
-          await fetch(`/api/w/${encodeURIComponent(slug)}/restore`, {
-            method: "POST",
-          })
-        )
-          loadDeletedPages();
+        const confirm = await Swal.fire({
+          title: "문서를 복원하시겠습니까?",
+          text: slug,
+          icon: "question",
+          showCancelButton: true,
+          confirmButtonText: "복원",
+          cancelButtonText: "취소",
+        });
+        if (!confirm.isConfirmed) return;
+        try {
+          const res = await fetch(
+            `/api/w/${encodeURIComponent(slug)}/restore`,
+            { method: "POST" },
+          );
+          if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            throw new Error(data.error || "복원에 실패했습니다.");
+          }
+          Swal.fire({
+            icon: "success",
+            title: "복원 완료",
+            timer: 900,
+            showConfirmButton: false,
+          });
+          loadDeletedPages(1);
+        } catch (err) {
+          Swal.fire("오류", err.message, "error");
+        }
       }
 
       // ── 카테고리 ──
@@ -1313,44 +1462,88 @@
       }
 
       // ── 통계 및 로그 ──
-      let adminLogOffset = 0,
-        adminLogLoaded = false;
-      async function loadAdminLogs() {
-        adminLogLoaded = true;
-        adminLogOffset = 0;
-        document.getElementById("adminLogBody").innerHTML = "";
-        document.getElementById("adminLogMore").style.display = "none";
-        await fetchAdminLogs();
-      }
-      async function fetchAdminLogs() {
-        const search = document.getElementById("adminLogSearch")?.value.trim() || "";
-        const type = document.getElementById("adminLogType")?.value || "all";
-        const params = new URLSearchParams({ offset: adminLogOffset });
-        if (search) params.set("search", search);
-        if (type && type !== "all") params.set("type", type);
-        const res = await fetch(`/api/admin/logs?${params}`);
-        const data = await res.json();
-        const html = data.logs
-          .map(
-            (log) => `<tr>
+      let adminLogLoaded = false,
+        adminLogPage = 1,
+        adminLogTotal = 0;
+      const ADMIN_LOG_PAGE_SIZE = 15;
+
+      async function loadAdminLogs(page = 1) {
+        try {
+          adminLogLoaded = true;
+          adminLogPage = page;
+          const search =
+            document.getElementById("adminLogSearch")?.value.trim() || "";
+          const type = document.getElementById("adminLogType")?.value || "all";
+          const params = new URLSearchParams({
+            offset: (page - 1) * ADMIN_LOG_PAGE_SIZE,
+          });
+          if (search) params.set("search", search);
+          if (type && type !== "all") params.set("type", type);
+          const res = await fetch(`/api/admin/logs?${params}`);
+          if (!res.ok) throw new Error("로그를 불러오지 못했습니다.");
+          const data = await res.json();
+          adminLogTotal = data.total || 0;
+          const html = (data.logs || [])
+            .map(
+              (log) => `<tr>
                 <td class="small text-muted">${new Date(log.created_at * 1000).toLocaleString()}</td>
                 <td><span class="badge bg-secondary">${escapeHtml(log.type)}</span></td>
                 <td class="small">${escapeHtml(log.log)}</td>
                 <td class="small">${escapeHtml(log.user_name || "Admin")}</td>
             </tr>`,
-          )
-          .join("");
-        if (!html && adminLogOffset === 0) {
+            )
+            .join("");
           document.getElementById("adminLogBody").innerHTML =
+            html ||
             `<tr><td colspan="4" class="text-center text-muted py-3">로그가 없습니다.</td></tr>`;
-        } else {
-          document.getElementById("adminLogBody").insertAdjacentHTML("beforeend", html);
+          document.getElementById("adminLogTotal").textContent =
+            adminLogTotal > 0 ? `총 ${adminLogTotal}건` : "";
+          renderAdminLogPagination();
+        } catch (err) {
+          Swal.fire("오류", err.message, "error");
         }
-        adminLogOffset += data.logs.length;
-        document.getElementById("adminLogMore").style.display = data.hasMore ? "" : "none";
       }
-      async function loadMoreAdminLogs() {
-        await fetchAdminLogs();
+
+      function goToAdminLogPage(page) {
+        const totalPages = Math.max(
+          1,
+          Math.ceil(adminLogTotal / ADMIN_LOG_PAGE_SIZE),
+        );
+        const target = Math.min(Math.max(1, page), totalPages);
+        if (target === adminLogPage) return;
+        loadAdminLogs(target);
+      }
+
+      function renderAdminLogPagination() {
+        const container = document.getElementById("adminLogPagination");
+        if (!adminLogTotal) {
+          container.innerHTML = "";
+          return;
+        }
+        const totalPages = Math.max(
+          1,
+          Math.ceil(adminLogTotal / ADMIN_LOG_PAGE_SIZE),
+        );
+        const pages = getDeletedPagesPageNumbers(adminLogPage, totalPages);
+        const isFirst = adminLogPage === 1;
+        const isLast = adminLogPage === totalPages;
+        let html =
+          '<ul class="pagination pagination-sm justify-content-center mb-0 flex-wrap">';
+        html += `<li class="page-item ${isFirst ? "disabled" : ""}"><button type="button" class="page-link" onclick="goToAdminLogPage(1)" ${isFirst ? "disabled" : ""} aria-label="처음"><i class="mdi mdi-chevron-double-left"></i></button></li>`;
+        html += `<li class="page-item ${isFirst ? "disabled" : ""}"><button type="button" class="page-link" onclick="goToAdminLogPage(${adminLogPage - 1})" ${isFirst ? "disabled" : ""} aria-label="이전"><i class="mdi mdi-chevron-left"></i></button></li>`;
+        for (const p of pages) {
+          if (p === "...") {
+            html +=
+              '<li class="page-item disabled"><span class="page-link">…</span></li>';
+          } else {
+            const active = p === adminLogPage ? "active" : "";
+            html += `<li class="page-item ${active}"><button type="button" class="page-link" onclick="goToAdminLogPage(${p})">${p}</button></li>`;
+          }
+        }
+        html += `<li class="page-item ${isLast ? "disabled" : ""}"><button type="button" class="page-link" onclick="goToAdminLogPage(${adminLogPage + 1})" ${isLast ? "disabled" : ""} aria-label="다음"><i class="mdi mdi-chevron-right"></i></button></li>`;
+        html += `<li class="page-item ${isLast ? "disabled" : ""}"><button type="button" class="page-link" onclick="goToAdminLogPage(${totalPages})" ${isLast ? "disabled" : ""} aria-label="마지막"><i class="mdi mdi-chevron-double-right"></i></button></li>`;
+        html += "</ul>";
+        container.innerHTML = html;
       }
 
       async function loadAnalyticsDashboard() {

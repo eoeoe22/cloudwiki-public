@@ -1127,6 +1127,64 @@ div:where(.swal2-container) .swal2-html-container {
   color: var(--wiki-text);
 }
 
+/* ── Input Group (Bootstrap) Dark Mode ── */
+.input-group-text {
+  background-color: var(--wiki-card-bg);
+  border: 1px solid var(--wiki-border);
+  color: var(--wiki-text-muted);
+}
+
+/* ── Pagination (Bootstrap) Dark Mode ── */
+.pagination {
+  --bs-pagination-bg: var(--wiki-card-bg);
+  --bs-pagination-color: var(--wiki-text);
+  --bs-pagination-border-color: var(--wiki-border);
+  --bs-pagination-hover-bg: var(--wiki-bg);
+  --bs-pagination-hover-color: var(--wiki-primary);
+  --bs-pagination-hover-border-color: var(--wiki-border);
+  --bs-pagination-focus-bg: var(--wiki-bg);
+  --bs-pagination-focus-color: var(--wiki-primary);
+  --bs-pagination-focus-box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.15);
+  --bs-pagination-active-bg: var(--wiki-primary);
+  --bs-pagination-active-color: var(--wiki-btn-text);
+  --bs-pagination-active-border-color: var(--wiki-primary);
+  --bs-pagination-disabled-bg: var(--wiki-bg);
+  --bs-pagination-disabled-color: var(--wiki-text-muted);
+  --bs-pagination-disabled-border-color: var(--wiki-border);
+}
+
+.pagination .page-link {
+  background-color: var(--bs-pagination-bg);
+  color: var(--bs-pagination-color);
+  border-color: var(--bs-pagination-border-color);
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.pagination .page-link:hover {
+  background-color: var(--bs-pagination-hover-bg);
+  color: var(--bs-pagination-hover-color);
+  border-color: var(--bs-pagination-hover-border-color);
+}
+
+.pagination .page-link:focus {
+  background-color: var(--bs-pagination-focus-bg);
+  color: var(--bs-pagination-focus-color);
+  box-shadow: var(--bs-pagination-focus-box-shadow);
+  outline: none;
+}
+
+.pagination .page-item.active .page-link {
+  background-color: var(--bs-pagination-active-bg);
+  color: var(--bs-pagination-active-color);
+  border-color: var(--bs-pagination-active-border-color);
+}
+
+.pagination .page-item.disabled .page-link {
+  background-color: var(--bs-pagination-disabled-bg);
+  color: var(--bs-pagination-disabled-color);
+  border-color: var(--bs-pagination-disabled-border-color);
+}
+
 /* ── Edit Page Inputs ── */
 .edit-title-input {
   width: 100%;
@@ -1528,6 +1586,10 @@ div:where(.swal2-container) .swal2-html-container {
 }
 
 /* ── Footnotes ── */
+.wiki-fn-ref {
+  white-space: nowrap;
+}
+
 .wiki-fn-ref a {
   color: var(--wiki-primary);
   font-weight: 700;
@@ -1535,6 +1597,7 @@ div:where(.swal2-container) .swal2-html-container {
   text-decoration: none;
   cursor: pointer;
   transition: color 0.2s ease;
+  white-space: nowrap;
 }
 
 .wiki-fn-ref a:hover {

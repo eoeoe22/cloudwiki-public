@@ -58,9 +58,9 @@
             style="width: 100%; max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch;">
             <div class="revision-list" id="revisionsList" style="min-width: 800px;"></div>
           </div>
-          <button id="loadMoreBtn" class="btn btn-outline-secondary w-100 mt-3 d-none" onclick="loadMoreRevisions()">
-            <i class="bi bi-chevron-down"></i> 더 로드하기
-          </button>
+          <nav id="revisionsPagination" class="mt-3 d-none" aria-label="편집 이력 페이지네이션">
+            <ul class="pagination justify-content-center flex-wrap" id="revisionsPaginationList"></ul>
+          </nav>
           <a id="revBackLink" href="#" class="btn btn-wiki-outline mt-3">
             <i class="bi bi-arrow-left"></i> 문서로 돌아가기
           </a>
@@ -120,8 +120,10 @@
   <script>
     // ── 전역 상태 ──
     let currentSlug = null;
-    let currentOffset = 0;
     let isPageDeleted = false;
+    const REV_PAGE_SIZE = 10;
+    let currentRevPage = 1;
+    let totalRevPages = 0;
 
     // ── URL에서 slug 추출 ──
     function extractSlug() {
@@ -146,20 +148,21 @@
     });
 
     // ── 리비전 목록 ──
-    async function showRevisions(slug, append = false) {
+    async function showRevisions(slug, page = 1) {
       try {
-        if (!append) {
+        const isFirstLoad = totalRevPages === 0 && currentRevPage === 1;
+        if (isFirstLoad) {
           document.getElementById('loading').classList.remove('d-none');
           document.getElementById('revisionsPage').classList.add('d-none');
-          currentOffset = 0;
         }
 
-        const res = await fetch(`/api/w/${encodeURIComponent(slug)}/revisions?offset=${currentOffset}`);
+        const offset = (page - 1) * REV_PAGE_SIZE;
+        const res = await fetch(`/api/w/${encodeURIComponent(slug)}/revisions?offset=${offset}&limit=${REV_PAGE_SIZE}`);
         if (!res.ok) throw new Error('리비전 로딩 실패');
 
         const data = await res.json();
 
-        if (!append) {
+        if (isFirstLoad) {
           const pageRes = await fetch(`/api/w/${encodeURIComponent(slug)}`);
           const pageData = pageRes.ok ? await pageRes.json() : null;
           isPageDeleted = !!pageData?.deleted_at;
@@ -168,6 +171,15 @@
           document.getElementById('revBackLink').href = `/w/${encodeURIComponent(slug)}`;
 
           document.title = `편집 이력 - ${pageData?.title || slug} - ${appConfig.wikiName}`;
+        }
+
+        currentRevPage = page;
+        totalRevPages = Math.max(1, Math.ceil((data.total || 0) / REV_PAGE_SIZE));
+
+        // 리비전이 삭제되어 범위를 벗어난 페이지를 요청한 경우 마지막 페이지로 이동
+        if (data.revisions.length === 0 && data.total > 0) {
+          showRevisions(slug, totalRevPages);
+          return;
         }
 
         const listEl = document.getElementById('revisionsList');
@@ -195,24 +207,13 @@
           `;
         }).join('');
 
-        if (append) {
-          listEl.insertAdjacentHTML('beforeend', itemsHtml);
-        } else {
-          listEl.innerHTML = itemsHtml;
-        }
+        listEl.innerHTML = itemsHtml || '<div class="text-center text-muted py-5"><i class="bi bi-inbox fs-1 d-block mb-2"></i>편집 이력이 없습니다.</div>';
 
-        const loadMoreBtn = document.getElementById('loadMoreBtn');
-        if (data.has_more) {
-          loadMoreBtn.classList.remove('d-none');
-        } else {
-          loadMoreBtn.classList.add('d-none');
-        }
+        renderRevisionsPagination();
 
         document.getElementById('loading').classList.add('d-none');
         document.getElementById('revisionsPage').classList.remove('d-none');
         initRoleIconPopovers(listEl);
-
-        currentOffset += data.revisions.length;
 
       } catch (err) {
         console.error(err);
@@ -221,11 +222,53 @@
       }
     }
 
-    // ── 더 로드하기 ──
-    function loadMoreRevisions() {
-      if (currentSlug) {
-        showRevisions(currentSlug, true);
+    // ── 페이지네이션 렌더링 ──
+    function renderRevisionsPagination() {
+      const nav = document.getElementById('revisionsPagination');
+      const ul = document.getElementById('revisionsPaginationList');
+
+      if (totalRevPages <= 1) {
+        nav.classList.add('d-none');
+        ul.innerHTML = '';
+        return;
       }
+
+      nav.classList.remove('d-none');
+
+      const pages = new Set([1, totalRevPages]);
+      for (let i = Math.max(2, currentRevPage - 2); i <= Math.min(totalRevPages - 1, currentRevPage + 2); i++) {
+        pages.add(i);
+      }
+      const sortedPages = [...pages].sort((a, b) => a - b);
+
+      let html = `<li class="page-item ${currentRevPage === 1 ? 'disabled' : ''}">
+        <a class="page-link" href="#" ${currentRevPage === 1 ? 'tabindex="-1" aria-disabled="true"' : ''} onclick="event.preventDefault(); goToRevPage(${currentRevPage - 1})">이전</a>
+      </li>`;
+
+      let prev = 0;
+      for (const p of sortedPages) {
+        if (prev && p - prev > 1) {
+          html += `<li class="page-item disabled"><span class="page-link">…</span></li>`;
+        }
+        html += `<li class="page-item ${p === currentRevPage ? 'active' : ''}">
+          <a class="page-link" href="#" ${p === currentRevPage ? 'aria-current="page"' : ''} onclick="event.preventDefault(); goToRevPage(${p})">${p}</a>
+        </li>`;
+        prev = p;
+      }
+
+      html += `<li class="page-item ${currentRevPage === totalRevPages ? 'disabled' : ''}">
+        <a class="page-link" href="#" ${currentRevPage === totalRevPages ? 'tabindex="-1" aria-disabled="true"' : ''} onclick="event.preventDefault(); goToRevPage(${currentRevPage + 1})">다음</a>
+      </li>`;
+
+      ul.innerHTML = html;
+    }
+
+    // ── 페이지 이동 ──
+    function goToRevPage(page) {
+      if (page < 1 || page > totalRevPages || page === currentRevPage) return;
+      if (!currentSlug) return;
+      showRevisions(currentSlug, page);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     }
 
     // ── 리비전 보기 ──

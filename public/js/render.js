@@ -197,8 +197,6 @@ function _processInlineLayoutTokens(html) {
     html = html.replace(/<pre[\s\S]*?<\/pre>/gi, (m) => { prot.push(m); return `\x00ILTPROT${prot.length - 1}\x00`; });
     html = html.replace(/<code[^>]*>[\s\S]*?<\/code>/gi, (m) => { prot.push(m); return `\x00ILTPROT${prot.length - 1}\x00`; });
 
-    const STYLE_PREFIX = '(?:\\{(?:palette|bg|color):[^}]+\\}\\s*)*';
-
     function parseStylePrefix(prefix) {
         let t = _resolvePaletteTokens(prefix || '');
         let bg = '', color = '';
@@ -219,23 +217,16 @@ function _processInlineLayoutTokens(html) {
         return s ? ` style="${s}"` : '';
     }
 
-    html = html.replace(new RegExp(`(${STYLE_PREFIX})\\{badge:([^}|]+)\\}`, 'g'), (m, prefix, text) => {
-        const { bg, color } = parseStylePrefix(prefix);
-        return `<span class="wiki-badge"${buildStyleAttr(bg, color)}>${escapeHtml(text.trim())}</span>`;
-    });
-    html = html.replace(new RegExp(`(${STYLE_PREFIX})\\{tag:([^}|]+)\\}`, 'g'), (m, prefix, text) => {
-        const { bg, color } = parseStylePrefix(prefix);
-        return `<span class="wiki-tag"${buildStyleAttr(bg, color)}>${escapeHtml(text.trim())}</span>`;
-    });
-    // 버튼 앞에 놓인 스타일/아이콘 토큰({palette|bg|color|mdi|bi|icon}:...)을 흡수해 버튼 내부에 렌더링.
+    // 인라인 컴포넌트({button:}, {badge:}, {tag:}, {stat:}) 앞에 놓인
+    // 스타일/아이콘 토큰({palette|bg|color|mdi|bi|icon}:...)을 흡수해 컴포넌트 내부에 렌더링.
     // 순서 무관하게 혼용 가능. 아이콘 토큰은 최대 1개만 소비.
-    // 프리픽스는 `{button:...}` 매치 후 역방향 결정적 스캔으로 수집하여
+    // 프리픽스는 컴포넌트 매치 후 역방향 결정적 스캔으로 수집하여
     // 탐욕적 반복 정규식의 백트래킹을 회피한다.
-    const BUTTON_TOKEN_RE = /^\{(?:palette|bg|color|mdi|bi|icon):[^}]+\}$/;
+    const COMPONENT_TOKEN_RE = /^\{(?:palette|bg|color|mdi|bi|icon):[^}]+\}$/;
     const ICON_TOKEN_RE = /^\{(mdi|bi|icon):\s*([^}]+?)\s*\}$/;
     const CLASS_NAME_RE = /^[a-zA-Z0-9\-_]+$/;
-    function buildButton(prefix, content) {
-        const { bg, color } = parseStylePrefix(prefix);
+
+    function extractIconHtml(prefix) {
         let iconHtml = '';
         const tokenRe = /\{(?:palette|bg|color|mdi|bi|icon):[^}]+\}/g;
         let tm;
@@ -245,9 +236,14 @@ function _processInlineLayoutTokens(html) {
             const type = im[1];
             const name = im[2];
             if (type === 'mdi') {
-                iconHtml = `<span class="mdi mdi-${escapeHtml(name)}" aria-hidden="true"></span>`;
+                // 단일 아이콘 이름만 허용(공백/특수문자로 클래스 주입 방지)
+                if (CLASS_NAME_RE.test(name)) {
+                    iconHtml = `<span class="mdi mdi-${escapeHtml(name)}" aria-hidden="true"></span>`;
+                }
             } else if (type === 'bi') {
-                iconHtml = `<i class="bi bi-${escapeHtml(name)}" aria-hidden="true"></i>`;
+                if (CLASS_NAME_RE.test(name)) {
+                    iconHtml = `<i class="bi bi-${escapeHtml(name)}" aria-hidden="true"></i>`;
+                }
             } else if (type === 'icon') {
                 // 공백으로 구분된 복수 클래스 지원 - 각 클래스를 개별 검증
                 const classes = name.split(/\s+/).filter(Boolean);
@@ -268,7 +264,70 @@ function _processInlineLayoutTokens(html) {
             }
             if (iconHtml) break;
         }
-        const parts = content.split('|').map(s => s.trim());
+        return iconHtml;
+    }
+
+    // 컴포넌트 토큰 뒤에서 역방향으로 연속된 스타일/아이콘 토큰을 수집(선형 시간).
+    function collectPrefixStart(s, startIdx, minIdx) {
+        let pStart = startIdx;
+        while (pStart > minIdx) {
+            let j = pStart;
+            while (j > minIdx && /\s/.test(s[j - 1])) j--;
+            if (j <= minIdx || s[j - 1] !== '}') break;
+            let k = j - 2;
+            while (k >= minIdx && s[k] !== '{' && s[k] !== '}') k--;
+            if (k < minIdx || s[k] !== '{') break;
+            if (!COMPONENT_TOKEN_RE.test(s.slice(k, j))) break;
+            pStart = k;
+        }
+        return pStart;
+    }
+
+    // 컴포넌트 토큰 스캐너: tokenRe 매치마다 앞의 프리픽스를 수집하고 render로 HTML을 만든다.
+    // render가 null을 반환하면 해당 매치는 원문 유지(다음 매치는 해당 토큰 끝 이후부터 검사).
+    function scanComponent(source, tokenRe, render) {
+        let out = '';
+        let lastIdx = 0;
+        let m;
+        tokenRe.lastIndex = 0;
+        while ((m = tokenRe.exec(source)) !== null) {
+            const start = m.index;
+            const end = tokenRe.lastIndex;
+            const pStart = collectPrefixStart(source, start, lastIdx);
+            const prefix = source.slice(pStart, start);
+            const built = render(prefix, m);
+            if (built === null) continue;
+            out += source.slice(lastIdx, pStart) + built;
+            lastIdx = end;
+        }
+        out += source.slice(lastIdx);
+        return out;
+    }
+
+    html = scanComponent(html, /\{badge:([^}|]+)\}/g, (prefix, m) => {
+        const { bg, color } = parseStylePrefix(prefix);
+        const iconHtml = extractIconHtml(prefix);
+        const text = m[1].trim();
+        const inner = iconHtml
+            ? `${iconHtml}<span class="wiki-badge-label">${escapeHtml(text)}</span>`
+            : escapeHtml(text);
+        return `<span class="wiki-badge"${buildStyleAttr(bg, color)}>${inner}</span>`;
+    });
+
+    html = scanComponent(html, /\{tag:([^}|]+)\}/g, (prefix, m) => {
+        const { bg, color } = parseStylePrefix(prefix);
+        const iconHtml = extractIconHtml(prefix);
+        const text = m[1].trim();
+        const inner = iconHtml
+            ? `${iconHtml}<span class="wiki-tag-label">${escapeHtml(text)}</span>`
+            : escapeHtml(text);
+        return `<span class="wiki-tag"${buildStyleAttr(bg, color)}>${inner}</span>`;
+    });
+
+    html = scanComponent(html, /\{button:([^}]+)\}/g, (prefix, m) => {
+        const { bg, color } = parseStylePrefix(prefix);
+        const iconHtml = extractIconHtml(prefix);
+        const parts = m[1].split('|').map(s => s.trim());
         const text = parts[0] || '';
         const url = parts[1] || '';
         if (!text || !url) return null;
@@ -286,46 +345,25 @@ function _processInlineLayoutTokens(html) {
             ? `${iconHtml}<span class="wiki-button-label">${escapeHtml(text)}</span>`
             : escapeHtml(text);
         return `<a class="${cls}" href="${escapeHtml(href)}"${extAttr}${buildStyleAttr(bg, color)}>${inner}</a>`;
-    }
-    {
-        const buttonRe = /\{button:([^}]+)\}/g;
-        let out = '';
-        let lastIdx = 0;
-        let bm;
-        while ((bm = buttonRe.exec(html)) !== null) {
-            const buttonStart = bm.index;
-            const buttonEnd = buttonRe.lastIndex;
-            // 버튼 직전의 연속된 스타일/아이콘 토큰을 역방향으로 수집(선형 시간).
-            let pStart = buttonStart;
-            while (pStart > lastIdx) {
-                let j = pStart;
-                while (j > lastIdx && /\s/.test(html[j - 1])) j--;
-                if (j <= lastIdx || html[j - 1] !== '}') break;
-                let k = j - 2;
-                while (k >= lastIdx && html[k] !== '{' && html[k] !== '}') k--;
-                if (k < lastIdx || html[k] !== '{') break;
-                if (!BUTTON_TOKEN_RE.test(html.slice(k, j))) break;
-                pStart = k;
-            }
-            const prefix = html.slice(pStart, buttonStart);
-            const built = buildButton(prefix, bm[1]);
-            if (built === null) continue; // 무효 버튼 → 프리픽스 포함 원문 유지
-            out += html.slice(lastIdx, pStart) + built;
-            lastIdx = buttonEnd;
-        }
-        out += html.slice(lastIdx);
-        html = out;
-    }
-    html = html.replace(new RegExp(`(?:<p>)?(${STYLE_PREFIX})\\{stat:([^}]+)\\}(?:<\\/p>)?`, 'g'), (m, prefix, content) => {
+    });
+
+    html = scanComponent(html, /\{stat:([^}]+)\}/g, (prefix, m) => {
         const { bg, color } = parseStylePrefix(prefix);
-        const parts = content.split('|').map(s => s.trim());
+        const iconHtml = extractIconHtml(prefix);
+        const parts = m[1].split('|').map(s => s.trim());
         const value = escapeHtml(parts[0] || '');
         const label = parts[1] ? escapeHtml(parts[1]) : '';
+        const valueInner = iconHtml
+            ? `${iconHtml}<span class="wiki-stat-value-text">${value}</span>`
+            : value;
         return `<div class="wiki-stat"${buildStyleAttr(bg, color)}>` +
-            `<div class="wiki-stat-value">${value}</div>` +
+            `<div class="wiki-stat-value">${valueInner}</div>` +
             (label ? `<div class="wiki-stat-label">${label}</div>` : '') +
             `</div>`;
     });
+    // stat이 자신만 있는 단락(<p>...</p>) 안에 래핑된 경우 <p>를 제거해 블록으로 승격.
+    html = html.replace(/<p>\s*(<div class="wiki-stat"[\s\S]*?<\/div>)\s*<\/p>/g, '$1');
+
     html = html.replace(/(?:<p>)?\{hr\}(?:<\/p>)?/g, '<hr class="wiki-block-hr">');
 
     html = html.replace(/\x00ILTPROT(\d+)\x00/g, (_, i) => prot[parseInt(i, 10)]);
@@ -558,6 +596,8 @@ function _processTimestampsInHtml(html) {
     // {calendar:YYYY-MM-DD} 또는 {calendar:MM-DD} (연도 생략)
     html = html.replace(/\{calendar:(?:(\d{4})-)?(\d{2})-(\d{2})\}/g, (match, yearStr, monthStr, dayStr) => {
         const monthNames = ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월'];
+        const dayNames = ['일요일','월요일','화요일','수요일','목요일','금요일','토요일'];
+        const getDowClass = (dayOfWeek) => dayOfWeek === 0 ? ' wiki-cal-sun' : dayOfWeek === 6 ? ' wiki-cal-sat' : '';
         const month = parseInt(monthStr, 10);
         const day = parseInt(dayStr, 10);
         if (yearStr) {
@@ -566,10 +606,9 @@ function _processTimestampsInHtml(html) {
             if (isNaN(d.getTime()) || d.getFullYear() !== year || d.getMonth() !== month - 1 || d.getDate() !== day) {
                 return match;
             }
-            const dayNames = ['일요일','월요일','화요일','수요일','목요일','금요일','토요일'];
             const monthName = monthNames[month - 1];
             const dowName = dayNames[d.getDay()];
-            const dowClass = d.getDay() === 0 ? ' wiki-cal-sun' : d.getDay() === 6 ? ' wiki-cal-sat' : '';
+            const dowClass = getDowClass(d.getDay());
             return `<span class="wiki-calendar-box" title="${yearStr}-${monthStr}-${dayStr}">` +
                 `<span class="wiki-cal-month">${monthName}</span>` +
                 `<span class="wiki-cal-day">${day}</span>` +
@@ -577,12 +616,20 @@ function _processTimestampsInHtml(html) {
                 `<span class="wiki-cal-year">${year}</span>` +
                 `</span>`;
         }
-        // 연도 생략: 월 유효성만 확인하고 일은 2자리 숫자면 허용
+        // 연도 생략: 월은 필수 유효성 확인(1~12), 일은 표시는 허용하되
+        // 실제 존재하는 날짜일 때만 요일을 표시하고 유효하지 않은 날짜(예: 2월 30일)는 요일을 공백으로 처리
         if (month < 1 || month > 12) return match;
         const monthName = monthNames[month - 1];
+        const currentYear = new Date().getFullYear();
+        const d = new Date(currentYear, month - 1, day);
+        const isValidDate = !isNaN(d.getTime()) && d.getFullYear() === currentYear && d.getMonth() === month - 1 && d.getDate() === day;
+        const dowHtml = isValidDate
+            ? `<span class="wiki-cal-dow${getDowClass(d.getDay())}">${dayNames[d.getDay()]}</span>`
+            : `<span class="wiki-cal-dow">&nbsp;</span>`;
         return `<span class="wiki-calendar-box wiki-calendar-box--no-year" title="${monthStr}-${dayStr}">` +
             `<span class="wiki-cal-month">${monthName}</span>` +
             `<span class="wiki-cal-day">${day}</span>` +
+            dowHtml +
             `</span>`;
     });
 
@@ -1648,13 +1695,9 @@ function _addHeadingCopyButtons(containerEl, resolvedContent, options = {}) {
             }
         };
 
-        // 토글 아이콘이 있으면 그 앞에, 없으면 헤딩 끝에 삽입
-        const toggleIcon = h.querySelector('.wiki-section-toggle-icon');
-        if (toggleIcon) {
-            h.insertBefore(copyBtn, toggleIcon);
-        } else {
-            h.appendChild(copyBtn);
-        }
+        // 복사 버튼은 항상 헤딩 끝(우측)에 위치한다.
+        // (chevron 토글 아이콘은 헤딩 좌측 끝에 위치한다.)
+        h.appendChild(copyBtn);
 
         // 편집 권한이 있을 때만 섹션 편집 버튼을 복사 버튼 옆에 추가
         if (enableSectionEdit && canEdit && editSlug && rawRanges) {

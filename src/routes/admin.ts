@@ -876,16 +876,24 @@ adminRoutes.get('/pages/deleted', async (c) => {
     const db = c.env.DB;
     const limit = Math.min(50, Math.max(1, Number(c.req.query('limit')) || 10));
     const offset = Math.max(0, Number(c.req.query('offset')) || 0);
+    const search = (c.req.query('search') || '').trim();
+
+    const conditions: string[] = ['deleted_at IS NOT NULL'];
+    const params: any[] = [];
+    if (search) {
+        conditions.push('(slug LIKE ? OR title LIKE ?)');
+        params.push(`%${search}%`, `%${search}%`);
+    }
+    const whereClause = ' WHERE ' + conditions.join(' AND ');
 
     const [pagesResult, countResult] = await Promise.all([
         db.prepare(
             `SELECT id, slug, title, is_private, is_locked, deleted_at, updated_at
-             FROM pages
-             WHERE deleted_at IS NOT NULL
+             FROM pages${whereClause}
              ORDER BY deleted_at DESC
              LIMIT ? OFFSET ?`
-        ).bind(limit, offset).all(),
-        db.prepare('SELECT COUNT(*) as count FROM pages WHERE deleted_at IS NOT NULL').first<{ count: number }>()
+        ).bind(...params, limit, offset).all(),
+        db.prepare(`SELECT COUNT(*) as count FROM pages${whereClause}`).bind(...params).first<{ count: number }>()
     ]);
 
     return c.json({

@@ -437,6 +437,214 @@ function setupTableInsertPopover(tableBtn) {
     });
 }
 
+// ── 타임스탬프 삽입 모달 ──
+function openTimestampInsertModal() {
+    const TYPES = [
+        { id: 'dday', label: 'D-Day', desc: '남은/지난 날짜', icon: 'mdi mdi-calendar-clock' },
+        { id: 'age', label: '만 나이', desc: '생년월일 기준', icon: 'mdi mdi-cake-variant-outline' },
+        { id: 'time', label: '표시 시간', desc: '고정 시각 표시', icon: 'mdi mdi-clock-outline' },
+        { id: 'timer', label: '타이머', desc: '남은/지난 시간', icon: 'mdi mdi-timer-outline' },
+        { id: 'calendar', label: '캘린더', desc: '날짜를 달력으로', icon: 'mdi mdi-calendar-month' },
+    ];
+
+    const state = {
+        type: 'dday',
+        date: '',       // YYYY-MM-DD (dday, age, calendar)
+        omitYear: false, // dday, calendar
+        datetime: '',   // YYYY-MM-DDTHH:MM[:SS] (time, timer)
+    };
+
+    function typeTabsHtml() {
+        return TYPES.map(t => {
+            const active = state.type === t.id ? ' active' : '';
+            return `<button type="button" class="timestamp-insert-type-tab${active}" data-type="${t.id}" title="${escapeHtml(t.desc)}">
+                <i class="${t.icon}"></i>
+                <span>${t.label}</span>
+            </button>`;
+        }).join('');
+    }
+
+    function fieldsHtml() {
+        const inputStyle = 'background:var(--wiki-bg);color:var(--wiki-text);border-color:var(--wiki-border);';
+        if (state.type === 'time' || state.type === 'timer') {
+            const help = state.type === 'time'
+                ? '선택한 시각이 고정된 날짜/시간 문자열로 표시됩니다.'
+                : '선택한 시각까지 남은/지난 시간이 실시간으로 표시됩니다.';
+            return `
+                <div class="timestamp-insert-field">
+                    <label class="form-label" for="timestampInsertDatetime">날짜 및 시각</label>
+                    <input type="datetime-local" id="timestampInsertDatetime" class="form-control form-control-sm"
+                        step="1" value="${escapeHtml(state.datetime)}" style="${inputStyle}">
+                    <div class="timestamp-insert-help">${help}</div>
+                </div>`;
+        }
+        // dday | age | calendar
+        const supportsOmitYear = (state.type === 'dday' || state.type === 'calendar');
+        const label = state.type === 'age' ? '생년월일' : '날짜';
+        const help = state.type === 'age'
+            ? '오늘 기준의 만 나이를 표시합니다.'
+            : state.type === 'dday'
+                ? '입력한 날짜까지 남은/지난 일수를 표시합니다. 연도를 생략하면 매년 반복됩니다.'
+                : '입력한 날짜를 달력 모양으로 표시합니다. 연도를 생략하면 연도가 표시되지 않습니다.';
+        return `
+            <div class="timestamp-insert-field">
+                <label class="form-label" for="timestampInsertDate">${label}</label>
+                <input type="date" id="timestampInsertDate" class="form-control form-control-sm"
+                    value="${escapeHtml(state.date)}" style="${inputStyle}">
+                ${supportsOmitYear ? `
+                <div class="form-check timestamp-insert-checkbox">
+                    <input type="checkbox" id="timestampInsertOmitYear" class="form-check-input" ${state.omitYear ? 'checked' : ''}>
+                    <label class="form-check-label" for="timestampInsertOmitYear">연도 생략 (MM-DD)</label>
+                </div>` : ''}
+                <div class="timestamp-insert-help">${help}</div>
+            </div>`;
+    }
+
+    function buildToken() {
+        if (state.type === 'time' || state.type === 'timer') {
+            if (!state.datetime) return '';
+            const t = Date.parse(state.datetime);
+            if (isNaN(t)) return '';
+            const unix = Math.floor(t / 1000);
+            return `{${state.type}:${unix}}`;
+        }
+        if (!state.date) return '';
+        const parts = state.date.split('-');
+        if (parts.length !== 3) return '';
+        if ((state.type === 'dday' || state.type === 'calendar') && state.omitYear) {
+            return `{${state.type}:${parts[1]}-${parts[2]}}`;
+        }
+        return `{${state.type}:${state.date}}`;
+    }
+
+    function updatePreview() {
+        const preview = document.getElementById('timestampInsertPreview');
+        if (!preview) return;
+        const token = buildToken();
+        if (!token) {
+            preview.innerHTML = `<span class="timestamp-insert-preview-empty">필수 입력을 채우면 미리보기가 표시됩니다.</span>`;
+            return;
+        }
+        try {
+            if (typeof _processTimestampsInHtml === 'function') {
+                const rendered = _processTimestampsInHtml(token);
+                // 렌더러가 토큰을 처리하지 못하면(유효성 실패) 원본을 그대로 돌려주므로 경고 표시
+                if (rendered === token) {
+                    preview.innerHTML = `<span class="timestamp-insert-preview-empty">입력 값이 올바르지 않습니다.</span>`;
+                } else {
+                    preview.innerHTML = rendered;
+                }
+            } else {
+                preview.textContent = token;
+            }
+        } catch (e) {
+            preview.textContent = token;
+        }
+    }
+
+    function validate() {
+        const err = document.getElementById('timestampInsertValidation');
+        let message = '';
+        if (state.type === 'time' || state.type === 'timer') {
+            if (!state.datetime) message = '날짜와 시각을 입력해주세요.';
+            else if (isNaN(Date.parse(state.datetime))) message = '올바른 날짜/시각을 입력해주세요.';
+        } else {
+            if (!state.date) message = '날짜를 입력해주세요.';
+        }
+        if (err) err.textContent = message;
+        return message === '';
+    }
+
+    function render() {
+        const root = document.getElementById('timestampInsertRoot');
+        if (!root) return;
+        root.innerHTML = `
+            <div class="timestamp-insert-form text-start">
+                <div class="mb-3">
+                    <label class="form-label">종류</label>
+                    <div class="timestamp-insert-type-tabs">${typeTabsHtml()}</div>
+                </div>
+                <div id="timestampInsertFields" class="mb-3">${fieldsHtml()}</div>
+                <div class="mb-2">
+                    <label class="form-label">미리보기</label>
+                    <div id="timestampInsertPreview" class="timestamp-insert-preview"></div>
+                </div>
+                <div id="timestampInsertValidation" class="timestamp-insert-validation"></div>
+            </div>
+        `;
+
+        root.querySelectorAll('.timestamp-insert-type-tab').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.preventDefault();
+                const newType = btn.dataset.type;
+                if (newType === state.type) return;
+                state.type = newType;
+                render();
+            });
+        });
+
+        const dateInput = document.getElementById('timestampInsertDate');
+        if (dateInput) {
+            dateInput.addEventListener('input', () => {
+                state.date = dateInput.value;
+                updatePreview();
+                validate();
+            });
+        }
+        const omitYearCb = document.getElementById('timestampInsertOmitYear');
+        if (omitYearCb) {
+            omitYearCb.addEventListener('change', () => {
+                state.omitYear = omitYearCb.checked;
+                updatePreview();
+                validate();
+            });
+        }
+        const datetimeInput = document.getElementById('timestampInsertDatetime');
+        if (datetimeInput) {
+            datetimeInput.addEventListener('input', () => {
+                state.datetime = datetimeInput.value;
+                updatePreview();
+                validate();
+            });
+        }
+
+        updatePreview();
+        validate();
+
+        const firstInput = dateInput || datetimeInput;
+        if (firstInput) setTimeout(() => firstInput.focus(), 0);
+    }
+
+    Swal.fire({
+        title: '<i class="mdi mdi-calendar-clock me-2"></i>타임스탬프 삽입',
+        width: 560,
+        html: '<div id="timestampInsertRoot"></div>',
+        showCancelButton: true,
+        confirmButtonText: '삽입',
+        cancelButtonText: '취소',
+        focusConfirm: false,
+        didOpen: () => {
+            render();
+        },
+        preConfirm: () => {
+            if (!validate()) return false;
+            const token = buildToken();
+            if (!token) {
+                const err = document.getElementById('timestampInsertValidation');
+                if (err) err.textContent = '필수 입력을 채워주세요.';
+                return false;
+            }
+            return token;
+        }
+    }).then(result => {
+        if (!result.isConfirmed || !result.value) return;
+        if (typeof editor !== 'undefined' && editor) {
+            editor.insertText(result.value);
+            if (typeof cmEditorView !== 'undefined' && cmEditorView) cmEditorView.focus();
+        }
+    });
+}
+
 function insertMarkdownTable(rows, cols) {
     const headerCells = Array.from({ length: cols }, (_, i) => `제목${i + 1}`);
     const headerLine = '| ' + headerCells.join(' | ') + ' |';
@@ -1091,6 +1299,31 @@ function openComponentInsertModal() {
         }).join('');
     }
 
+    function iconFieldHtml() {
+        const hasIcon = !!state.icon;
+        const iconPreview = hasIcon
+            ? (state.icon.type === 'bi'
+                ? `<i class="bi bi-${escapeHtml(state.icon.name)}"></i>`
+                : `<span class="mdi mdi-${escapeHtml(state.icon.name)}"></span>`)
+            : `<span class="badge-insert-icon-placeholder">없음</span>`;
+        const iconLabel = hasIcon ? `${state.icon.type}:${state.icon.name}` : '아이콘 선택 안 함';
+        return `
+                        <div class="badge-insert-field">
+                            <label class="form-label">아이콘</label>
+                            <div class="badge-insert-icon-row">
+                                <div class="badge-insert-icon-preview" aria-hidden="true">${iconPreview}</div>
+                                <div class="badge-insert-icon-label">${escapeHtml(iconLabel)}</div>
+                                <button type="button" id="badgeInsertIconPickBtn" class="badge-insert-icon-btn">
+                                    <i class="mdi mdi-vector-square"></i>
+                                    <span>${hasIcon ? '변경' : '선택'}</span>
+                                </button>
+                                ${hasIcon ? `<button type="button" id="badgeInsertIconClearBtn" class="badge-insert-icon-btn badge-insert-icon-btn-ghost" title="아이콘 제거">
+                                    <i class="mdi mdi-close"></i>
+                                </button>` : ''}
+                            </div>
+                        </div>`;
+    }
+
     function fieldsHtml() {
         if (state.type === 'stat') {
             return `
@@ -1107,16 +1340,10 @@ function openComponentInsertModal() {
                                     placeholder="예: 완료" autocomplete="off" value="${escapeHtml(state.label)}"
                                     style="background:var(--wiki-bg);color:var(--wiki-text);border-color:var(--wiki-border);">
                             </div>
-                        </div>`;
+                        </div>
+                        ${iconFieldHtml()}`;
         }
         if (state.type === 'button') {
-            const hasIcon = !!state.icon;
-            const iconPreview = hasIcon
-                ? (state.icon.type === 'bi'
-                    ? `<i class="bi bi-${escapeHtml(state.icon.name)}"></i>`
-                    : `<span class="mdi mdi-${escapeHtml(state.icon.name)}"></span>`)
-                : `<span class="badge-insert-icon-placeholder">없음</span>`;
-            const iconLabel = hasIcon ? `${state.icon.type}:${state.icon.name}` : '아이콘 선택 안 함';
             return `
                         <div class="badge-insert-field">
                             <label class="form-label" for="badgeInsertText">제목</label>
@@ -1130,20 +1357,7 @@ function openComponentInsertModal() {
                                 placeholder="https://example.com 또는 /w/문서이름" autocomplete="off" value="${escapeHtml(state.url)}"
                                 style="background:var(--wiki-bg);color:var(--wiki-text);border-color:var(--wiki-border);">
                         </div>
-                        <div class="badge-insert-field">
-                            <label class="form-label">아이콘</label>
-                            <div class="badge-insert-icon-row">
-                                <div class="badge-insert-icon-preview" aria-hidden="true">${iconPreview}</div>
-                                <div class="badge-insert-icon-label">${escapeHtml(iconLabel)}</div>
-                                <button type="button" id="badgeInsertIconPickBtn" class="badge-insert-icon-btn">
-                                    <i class="mdi mdi-vector-square"></i>
-                                    <span>${hasIcon ? '변경' : '선택'}</span>
-                                </button>
-                                ${hasIcon ? `<button type="button" id="badgeInsertIconClearBtn" class="badge-insert-icon-btn badge-insert-icon-btn-ghost" title="아이콘 제거">
-                                    <i class="mdi mdi-close"></i>
-                                </button>` : ''}
-                            </div>
-                        </div>`;
+                        ${iconFieldHtml()}`;
         }
         // badge | tag
         const placeholder = state.type === 'tag' ? '예: Beta' : '예: NEW';
@@ -1153,30 +1367,31 @@ function openComponentInsertModal() {
                         <input type="text" id="badgeInsertText" class="form-control form-control-sm"
                             placeholder="${placeholder}" autocomplete="off" value="${escapeHtml(state.text)}"
                             style="background:var(--wiki-bg);color:var(--wiki-text);border-color:var(--wiki-border);">
-                    </div>`;
+                    </div>
+                    ${iconFieldHtml()}`;
     }
 
     function buildToken() {
         const palettePrefix = state.palette ? `{palette:${state.palette}}` : '';
+        const iconPrefix = state.icon ? (selectedIconsOnly ? `{icon:${state.icon.type}-${state.icon.name}}` : `{${state.icon.type}:${state.icon.name}}`) : '';
         const text = (state.text || '').trim();
         if (state.type === 'badge') {
             if (!text) return '';
-            return `${palettePrefix}{badge:${text}}`;
+            return `${palettePrefix}${iconPrefix}{badge:${text}}`;
         }
         if (state.type === 'tag') {
             if (!text) return '';
-            return `${palettePrefix}{tag:${text}}`;
+            return `${palettePrefix}${iconPrefix}{tag:${text}}`;
         }
         if (state.type === 'stat') {
             if (!text) return '';
             const lbl = (state.label || '').trim();
             const payload = lbl ? `${text}|${lbl}` : text;
-            return `${palettePrefix}{stat:${payload}}`;
+            return `${palettePrefix}${iconPrefix}{stat:${payload}}`;
         }
         if (state.type === 'button') {
             const url = (state.url || '').trim();
             if (!text || !url) return '';
-            const iconPrefix = state.icon ? (selectedIconsOnly ? `{icon:${state.icon.type}-${state.icon.name}}` : `{${state.icon.type}:${state.icon.name}}`) : '';
             return `${palettePrefix}${iconPrefix}{button:${text}|${url}}`;
         }
         return '';
@@ -1305,7 +1520,7 @@ function openComponentInsertModal() {
             });
         }
 
-        // 아이콘 선택 버튼 (버튼 타입 전용)
+        // 아이콘 선택 버튼 (모든 타입 지원)
         const iconPickBtn = document.getElementById('badgeInsertIconPickBtn');
         if (iconPickBtn) {
             iconPickBtn.addEventListener('click', (e) => {

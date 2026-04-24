@@ -1425,8 +1425,8 @@ wiki.get('/w/category/:category', async (c) => {
  */
 wiki.get('/w/:slug/revisions', async (c) => {
     const slug = c.req.param('slug');
-    const offset = parseInt(c.req.query('offset') || '0', 10);
-    const limit = 10;
+    const offset = Math.max(0, parseInt(c.req.query('offset') || '0', 10));
+    const limit = Math.min(50, Math.max(1, parseInt(c.req.query('limit') || '10', 10)));
     const db = c.env.DB;
     const user = c.get('user');
     const rbac = c.get('rbac') as RBAC;
@@ -1445,29 +1445,29 @@ wiki.get('/w/:slug/revisions', async (c) => {
         return c.json({ error: '비공개 문서입니다.' }, 403);
     }
 
-    const revisions = await db
-        .prepare(
-            `SELECT r.id, r.page_version, r.summary, r.created_at, u.id as author_id, u.name as author_name, u.picture as author_picture,
-                    ${ROLE_CASE_SQL} as author_role,
-                    u.email as _author_email
-       FROM revisions r
-       LEFT JOIN users u ON r.author_id = u.id
-       WHERE r.page_id = ?
-       ORDER BY r.created_at DESC
-       LIMIT ? OFFSET ?`
-        )
-        .bind(page.id, limit + 1, offset)
-        .all();
+    const [countResult, listResult] = await db.batch([
+        db.prepare('SELECT COUNT(*) as total FROM revisions WHERE page_id = ?').bind(page.id),
+        db
+            .prepare(
+                `SELECT r.id, r.page_version, r.summary, r.created_at, u.id as author_id, u.name as author_name, u.picture as author_picture,
+                        ${ROLE_CASE_SQL} as author_role,
+                        u.email as _author_email
+           FROM revisions r
+           LEFT JOIN users u ON r.author_id = u.id
+           WHERE r.page_id = ?
+           ORDER BY r.created_at DESC
+           LIMIT ? OFFSET ?`
+            )
+            .bind(page.id, limit, offset),
+    ]);
 
-    let has_more = false;
-    if (revisions.results.length > limit) {
-        has_more = true;
-        revisions.results.pop();
-    }
+    const rawTotal = (countResult.results[0] as any)?.total;
+    const parsedTotal = Number(rawTotal);
+    const total = Number.isFinite(parsedTotal) ? parsedTotal : 0;
 
-    enrichRoles(revisions.results, 'author_role', '_author_email', c.env);
+    enrichRoles(listResult.results, 'author_role', '_author_email', c.env);
 
-    return c.json(safeJSON({ revisions: revisions.results, has_more }));
+    return c.json(safeJSON({ revisions: listResult.results, total }));
 });
 
 /**

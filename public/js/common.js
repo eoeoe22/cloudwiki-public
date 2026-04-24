@@ -1678,11 +1678,23 @@ function generateTOC(contentEl, tocContainerId, tocNavId) {
     const tocNav = document.getElementById(tocNavId);
     if (!tocNav) return;
 
+    const headingArray = Array.from(headings);
+    const regularHeadingLevels = headingArray
+        .filter(h => !h.closest('.wiki-footnotes'))
+        .map(h => parseInt(h.tagName[1], 10));
+    const allHeadingLevels = headingArray.map(h => parseInt(h.tagName[1], 10));
+    const minLevel = regularHeadingLevels.length > 0
+        ? Math.min(...regularHeadingLevels)
+        : Math.min(...allHeadingLevels);
+
     let html = '<ol>';
     let prevLevel = 0;
 
     headings.forEach((h, i) => {
-        const level = parseInt(h.tagName[1], 10);
+        // 각주 섹션 헤딩은 문서의 최상위 헤딩과 같은 기준 레벨로 맞춘 뒤 TOC 레벨을 정규화한다.
+        const isFootnoteHeading = !!h.closest('.wiki-footnotes');
+        const rawLevel = isFootnoteHeading ? minLevel : parseInt(h.tagName[1], 10);
+        const level = rawLevel - minLevel + 1;
         const id = h.id || `heading-${i}`;
         // .wiki-heading-num을 제외한 순수 텍스트만 사용 (번호는 <ol>이 자동 생성)
         const numSpan = h.querySelector('.wiki-heading-num');
@@ -1705,6 +1717,41 @@ function generateTOC(contentEl, tocContainerId, tocNavId) {
 
     tocNav.innerHTML = html;
     tocContainer.classList.remove('d-none');
+}
+
+// numberHeadings()는 헤딩별로 항상 `s-{N.N}` 형태의 앵커를 보장한다.
+// 원본 마크다운/HTML이 부여한 기존 id 가 있는 경우 h.id 는 그 값을 유지하고,
+// 별도의 <span class="wiki-section-anchor" id="s-N"> 가 헤딩 내부에 삽입된다.
+function _getSectionAnchorId(heading) {
+    const anchorEl = heading.querySelector('.wiki-section-anchor[id^="s-"]');
+    if (anchorEl) return anchorEl.id;
+    return heading.id || '';
+}
+
+async function _copySectionLinkToClipboard(url) {
+    let ok = false;
+    try {
+        await navigator.clipboard.writeText(url);
+        ok = true;
+    } catch (err) {
+        const ta = document.createElement('textarea');
+        ta.value = url;
+        document.body.appendChild(ta);
+        ta.select();
+        try { ok = document.execCommand('copy'); } catch (e2) { /* ignore */ }
+        document.body.removeChild(ta);
+    }
+    if (ok && typeof Swal !== 'undefined') {
+        Swal.fire({
+            icon: 'success',
+            title: '섹션 링크가 복사되었습니다.',
+            toast: true,
+            position: 'top-end',
+            timer: 1500,
+            showConfirmButton: false
+        });
+    }
+    return ok;
 }
 
 // ── 본문 섹션 접기/펼치기 ──
@@ -1737,11 +1784,11 @@ function _wrapLevelSections(containerEl, level) {
                 child.appendChild(textWrapper);
             }
 
-            // 토글 아이콘 삽입
+            // 토글 아이콘 삽입 (왼쪽 끝)
             const toggleIcon = document.createElement('span');
             toggleIcon.className = 'wiki-section-toggle-icon';
             toggleIcon.innerHTML = '<i class="bi bi-chevron-down"></i>';
-            child.appendChild(toggleIcon);
+            child.insertBefore(toggleIcon, child.firstChild);
             child.classList.add('wiki-section-heading');
 
             // 섹션 래퍼 생성
@@ -1783,9 +1830,20 @@ function _wrapLevelSections(containerEl, level) {
                 j++;
             }
 
-            // 헤딩 클릭 시 섹션 토글 (아이콘은 CSS로 제어)
+            // 헤딩 클릭 분기:
+            //  - 제목 텍스트 영역 클릭 → 섹션 링크(`{문서URL}#s-N`) 복사
+            //  - 왼쪽 chevron / 우측 여백 클릭 → 섹션 접기/펼치기
+            //  - 본문 내 링크/버튼 → 자체 핸들러로 위임
             child.addEventListener('click', function (e) {
-                if (e.target.closest('a')) return;
+                if (e.target.closest('a, button')) return;
+                if (e.target.closest('.wiki-section-heading-text')) {
+                    const anchorId = _getSectionAnchorId(child);
+                    if (anchorId) {
+                        const url = window.location.origin + window.location.pathname + '#' + anchorId;
+                        _copySectionLinkToClipboard(url);
+                    }
+                    return;
+                }
                 section.classList.toggle('wiki-section-collapsed');
             });
 

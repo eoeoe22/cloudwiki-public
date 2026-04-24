@@ -96,8 +96,7 @@
 }
 
 .wiki-section-toggle-icon {
-  margin-left: auto;
-  padding-left: 0.5rem;
+  margin-right: 0.5rem;
   font-size: 0.7em;
   color: var(--wiki-muted, #aaa);
   flex-shrink: 0;
@@ -1023,8 +1022,8 @@ html[data-theme="dark"] .wiki-content pre[class*="language-"] code[class*="langu
   font-weight: 400;
 }
 
-.wiki-calendar-box--no-year .wiki-cal-day {
-  padding-bottom: 6px;
+.wiki-calendar-box--no-year .wiki-cal-dow {
+  padding-bottom: 5px;
 }
 
 
@@ -1542,6 +1541,31 @@ a.wiki-button > .mdi {
 }
 
 a.wiki-button > .wiki-button-label {
+  margin-left: 0.35em;
+}
+
+.wiki-badge > .bi,
+.wiki-badge > .mdi,
+.wiki-tag > .bi,
+.wiki-tag > .mdi {
+  display: inline-block;
+  vertical-align: baseline;
+  line-height: 1;
+}
+
+.wiki-badge > .wiki-badge-label,
+.wiki-tag > .wiki-tag-label {
+  margin-left: 0.3em;
+}
+
+.wiki-stat-value > .bi,
+.wiki-stat-value > .mdi {
+  display: inline-block;
+  vertical-align: baseline;
+  line-height: 1;
+}
+
+.wiki-stat-value > .wiki-stat-value-text {
   margin-left: 0.35em;
 }
 
