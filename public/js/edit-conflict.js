@@ -34,10 +34,19 @@ function buildDiffHtml(diffData, contextLines) {
     return html;
 }
 
+// ── 에디터의 자동 줄바꿈 설정을 diff 미리보기 컨테이너에 반영 ──
+function applyDiffPreviewWrapMode(container) {
+    if (!container) return;
+    const wrap = localStorage.getItem('editor_word_wrap') !== 'false';
+    container.classList.toggle('wrap-mode', wrap);
+}
+
 // ── 변경 사항 (내 수정본) 렌더링 ──
 function renderLocalDiff() {
     const container = document.getElementById('diffPreviewContainer');
     if (!container) return;
+
+    applyDiffPreviewWrapMode(container);
 
     const currentContent = editor ? editor.getMarkdown() : '';
     if (originalContent === currentContent) {

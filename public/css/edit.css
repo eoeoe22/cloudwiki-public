@@ -55,6 +55,21 @@
     text-decoration: line-through;
 }
 
+/* 변경 사항 미리보기: 줄별 표시 + 에디터 줄바꿈 옵션 반영 */
+#diffPreviewContainer {
+    white-space: pre;
+    overflow-x: auto;
+    padding: 8px 10px;
+    font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+    line-height: 1.5;
+}
+
+#diffPreviewContainer.wrap-mode {
+    white-space: pre-wrap;
+    word-break: break-all;
+    overflow-x: hidden;
+}
+
 /* ── 초기 로딩 오버레이 ── */
 #initLoadingOverlay {
     position: fixed;

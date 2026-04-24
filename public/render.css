@@ -1198,7 +1198,7 @@ html[data-theme="dark"] .wiki-content pre[class*="language-"] code[class*="langu
 }
 
 .wiki-image-link:hover img {
-  opacity: 0.92;
+  opacity: 1;
 }
 
 .wiki-ext-raw-editor-badge {

@@ -1121,6 +1121,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             await openExistingImageSearch((url, alt, size) => {
                 let insertTxt = `![${alt}](${url})`;
                 if (size && size !== 'full') insertTxt += `{size:${size}}`;
+                insertTxt += '\n';
                 editor.insertText(insertTxt);
             });
         });
@@ -1172,6 +1173,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             await handleImageUpload(file, (url, alt, size) => {
                 let insertTxt = `![${alt}](${url})`;
                 if (size && size !== 'full') insertTxt += `{size:${size}}`;
+                insertTxt += '\n';
                 editor.insertText(insertTxt);
             });
             imgFileInput.value = '';
@@ -1197,6 +1199,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             await handleImageUpload(file, (url, alt, size) => {
                 let insertTxt = `![${alt}](${url})`;
                 if (size && size !== 'full') insertTxt += `{size:${size}}`;
+                insertTxt += '\n';
                 editor.insertText(insertTxt);
             });
         });
@@ -1405,6 +1408,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                             editorSettings.wordWrap ? EditorView.lineWrapping : []
                         )
                     });
+                    const diffPreview = document.getElementById('diffPreviewContainer');
+                    if (diffPreview) {
+                        diffPreview.classList.toggle('wrap-mode', editorSettings.wordWrap);
+                    }
                 }
             });
         });
@@ -1861,6 +1868,18 @@ document.addEventListener('DOMContentLoaded', async () => {
                 renderLocalDiff();
             }
         });
+
+        // 펼쳐진 상태에서 에디터 변경 시 실시간 재렌더 (디바운스)
+        let diffPreviewDebounce = null;
+        if (editor && typeof editor.on === 'function') {
+            editor.on('change', () => {
+                if (!diffDetails.open) return;
+                clearTimeout(diffPreviewDebounce);
+                diffPreviewDebounce = setTimeout(() => {
+                    if (diffDetails.open) renderLocalDiff();
+                }, 300);
+            });
+        }
     }
 
     // 동시편집 감지: 하트비트 전송 + 편집자 체크 시작
