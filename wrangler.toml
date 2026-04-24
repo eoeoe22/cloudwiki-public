@@ -105,7 +105,7 @@ ROLE_PERMISSIONS_JSON = """
 # 하드코딩 프리셋(primary/secondary/success/info/warning/danger/muted)은 설정 없이 사용 가능.
 # 이름 충돌 시 커스텀이 하드코딩보다 우선합니다.
 PALETTES = """
-{"cloudflare":{"bg":"#FF8000","color":"#000000"},"anthropic":{"bg":"#F0EEE6","color":"#C15F3C"},"typescript":{"bg":"#0080FF","color":"#FFFFFF"}}
+{"cloudflare":{"bg":"#FF8000","color":"#000000"},"anthropic":{"bg":"#F0EEE6","color":"#C15F3C"},"typescript":{"bg":"#0080FF","color":"#FFFFFF"},"reverse":{"light":{"bg":"#000000","color":"#000000"},"dark":{"bg":"#FFFFFF","color":"#FFFFFF"}}}
 """
 
 
