@@ -1560,6 +1560,8 @@
     }
 
     // 현재 URL의 해시에 해당하는 요소로 스크롤 (없으면 no-op)
+    // 타겟이 접힌 섹션/fold/목차 아코디언 내부에 있으면 먼저 펼친 뒤,
+    // 애니메이션이 끝난 좌표 기준으로 다시 한번 보정한다.
     function scrollToHash() {
       const hash = window.location.hash;
       if (!hash || hash.length < 2) return;
@@ -1571,7 +1573,11 @@
       }
       const el = id ? document.getElementById(id) : null;
       if (el) {
-        el.scrollIntoView({ behavior: 'instant', block: 'start' });
+        if (typeof _scrollToElementWithAncestors === 'function') {
+          _scrollToElementWithAncestors(el, { behavior: 'instant', block: 'start' });
+        } else {
+          el.scrollIntoView({ behavior: 'instant', block: 'start' });
+        }
       }
     }
 
@@ -1869,10 +1875,82 @@
       };
       window.addEventListener('scroll', handler, { passive: true });
       window.addEventListener('resize', handler, { passive: true });
+
+      // 섹션 접기/펼치기(.wiki-section-body grid 전환), 자체 문법 fold(<details>),
+      // 사이드바 목차 아코디언(#collapseTOC) 토글 시 레이아웃이 변하므로
+      // 스크롤스파이를 재계산한다. 애니메이션 진행 중 중간 프레임도 보정.
+      const refreshSpy = () => {
+        _tocSpyLastId = null;
+        _updateTocActive();
+        [90, 200, 340, 450].forEach(d => setTimeout(() => {
+          _tocSpyLastId = null;
+          _updateTocActive();
+        }, d));
+      };
+
+      // .wiki-section-body 는 grid-template-rows 에 CSS transition 을 걸어 접히므로
+      // transitionend 가 접기/펼치기 완료 신호가 된다.
+      document.addEventListener('transitionend', (e) => {
+        const t = e.target;
+        if (!(t instanceof Element)) return;
+        if (e.propertyName && e.propertyName !== 'grid-template-rows') return;
+        if (t.classList && t.classList.contains('wiki-section-body')) refreshSpy();
+      });
+
+      // <details> 는 toggle 이벤트가 버블링되지 않으므로 capture 단계에서 수신.
+      document.addEventListener('toggle', (e) => {
+        const t = e.target;
+        if (t && t.tagName === 'DETAILS') refreshSpy();
+      }, true);
+
+      // 본문과 별도의 목차 아코디언 — Bootstrap collapse 이벤트로 감지.
+      const tocCollapse = document.getElementById('collapseTOC');
+      if (tocCollapse) {
+        tocCollapse.addEventListener('show.bs.collapse', refreshSpy);
+        tocCollapse.addEventListener('hide.bs.collapse', refreshSpy);
+        tocCollapse.addEventListener('shown.bs.collapse', refreshSpy);
+        tocCollapse.addEventListener('hidden.bs.collapse', refreshSpy);
+      }
+
       _updateTocActive();
     }
 
+    // 목차(사이드바 / 플로팅 패널) 링크 클릭 시 접힌 조상을 먼저 펼친 뒤 스크롤.
+    // TOC 링크는 기본적으로 `<a href="#id">` 이므로 브라우저 기본 동작이 접힌 섹션을
+    // 무시한 채 현재(접힌) 좌표로 점프하는 문제를 막는다.
+    function _interceptTocLinkClick(e) {
+      const a = e.target.closest && e.target.closest('a[href^="#"]');
+      if (!a) return;
+      const hash = a.getAttribute('href');
+      if (!hash || hash.length < 2) return;
+      let id;
+      try { id = decodeURIComponent(hash.slice(1)); } catch (_) { id = hash.slice(1); }
+      const target = id ? document.getElementById(id) : null;
+      if (!target) return;
+      e.preventDefault();
+      history.pushState(null, '', hash);
+      if (typeof _scrollToElementWithAncestors === 'function') {
+        _scrollToElementWithAncestors(target, { behavior: 'smooth', block: 'start' });
+      } else {
+        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }
+
+    function _attachTocLinkInterceptors() {
+      const tocNav = document.getElementById('tocNav');
+      const floatingNav = document.getElementById('tocFloatingNav');
+      if (tocNav && !tocNav._tocLinkIntercepted) {
+        tocNav.addEventListener('click', _interceptTocLinkClick);
+        tocNav._tocLinkIntercepted = true;
+      }
+      if (floatingNav && !floatingNav._tocLinkIntercepted) {
+        floatingNav.addEventListener('click', _interceptTocLinkClick);
+        floatingNav._tocLinkIntercepted = true;
+      }
+    }
+
     document.addEventListener('DOMContentLoaded', _attachTocSpy);
+    document.addEventListener('DOMContentLoaded', _attachTocLinkInterceptors);
 
     // 문서 페이지가 아닐 때 TOC FAB 숨기기
     const _origHideAllPages = typeof hideAllPages === 'function' ? hideAllPages : null;

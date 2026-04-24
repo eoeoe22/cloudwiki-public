@@ -1754,6 +1754,53 @@ async function _copySectionLinkToClipboard(url) {
     return ok;
 }
 
+// ── 접힌 섹션/폴드를 펼쳐서 타겟이 보이도록 보정 ──
+// 본문 섹션 접기(.wiki-section-collapsed), 자체 문법 fold(<details class="wiki-fold">),
+// 사이드바의 목차 아코디언(#collapseTOC) — 타겟을 포함하는 접힌 조상을 모두 펼친다.
+// 펼침이 발생했으면 true 를 반환하여 호출측이 애니메이션 종료 후 재보정 여부를 결정할 수 있게 한다.
+function _expandAncestorsForScroll(targetEl) {
+    if (!targetEl) return false;
+    let changed = false;
+    let el = targetEl.parentElement;
+    while (el && el !== document.body) {
+        if (el.classList && el.classList.contains('wiki-section-collapsed')) {
+            el.classList.remove('wiki-section-collapsed');
+            changed = true;
+        }
+        if (el.tagName === 'DETAILS' && !el.open) {
+            el.open = true;
+            changed = true;
+        }
+        // 목차 아코디언(#collapseTOC) — Bootstrap Collapse API 로 열기
+        if (el.id === 'collapseTOC' && el.classList.contains('collapse') && !el.classList.contains('show')) {
+            try {
+                if (window.bootstrap && window.bootstrap.Collapse) {
+                    const inst = window.bootstrap.Collapse.getOrCreateInstance(el, { toggle: false });
+                    inst.show();
+                    changed = true;
+                }
+            } catch (_) { /* ignore */ }
+        }
+        el = el.parentElement;
+    }
+    return changed;
+}
+
+// 타겟 요소로 스크롤. 필요하면 접힌 조상들을 먼저 펼친 뒤,
+// CSS transition / Bootstrap collapse 애니메이션(~0.35s)이 끝난 뒤 좌표를 재보정한다.
+function _scrollToElementWithAncestors(el, options) {
+    if (!el) return;
+    const opts = options || { behavior: 'instant', block: 'start' };
+    const expanded = _expandAncestorsForScroll(el);
+    try { el.scrollIntoView(opts); } catch (_) { el.scrollIntoView(); }
+    if (expanded) {
+        // 애니메이션 진행 중/종료 후 최종 레이아웃 기준으로 다시 스크롤
+        const reScroll = () => { try { el.scrollIntoView(opts); } catch (_) { el.scrollIntoView(); } };
+        setTimeout(reScroll, 180);
+        setTimeout(reScroll, 400);
+    }
+}
+
 // ── 본문 섹션 접기/펼치기 ──
 function makeCollapsibleSections(containerEl) {
     const headings = containerEl.querySelectorAll('h1, h2, h3, h4, h5, h6');
@@ -1943,7 +1990,7 @@ function processWikiLinks(contentEl) {
                         const target = id ? document.getElementById(id) : null;
                         if (target) {
                             history.pushState(null, '', href);
-                            target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                            _scrollToElementWithAncestors(target, { behavior: 'smooth', block: 'start' });
                         }
                         return;
                     }
