@@ -520,26 +520,446 @@ html[data-theme="dark"] .cm-wiki-template-param.cm-wiki-template-param {
     --cm-wiki-template-param-background: rgba(240, 177, 85, 0.12);
 }
 
-.conflict-textarea {
-    height: 500px;
-    font-family: monospace;
-    font-size: 0.9rem;
-    overflow-y: auto;
-    resize: none;
+/* ────────────── GitHub 스타일 편집 충돌 UI ────────────── */
+
+.conflict-header {
+    border-radius: 8px;
 }
 
-/* 에디터 내부 높이를 conflict-textarea와 맞춤 */
-#conflict-local-editor textarea {
-    height: 440px !important;
-    width: 100%;
-    font-family: monospace;
-    font-size: 0.9rem;
-    resize: none;
+.conflict-header .conflict-header-info {
+    flex-grow: 1;
+    min-width: 280px;
+}
+
+.conflict-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    margin-right: 6px;
+    margin-top: 4px;
     border: 1px solid var(--wiki-border);
-    border-radius: 4px;
-    padding: 8px;
+    border-radius: 12px;
     background: var(--wiki-bg);
     color: var(--wiki-text);
+    font-size: 0.78rem;
+    line-height: 1.4;
+}
+.conflict-chip.server { color: var(--wiki-danger); border-color: var(--wiki-danger); }
+.conflict-chip.mine   { color: var(--wiki-primary, #3b82f6); border-color: var(--wiki-primary, #3b82f6); }
+
+.conflict-toolbar { flex-wrap: wrap; align-items: center; }
+
+.conflict-section {
+    margin-top: 16px;
+    border: 1px solid var(--wiki-border);
+    border-radius: 8px;
+    background: var(--wiki-bg);
+    overflow: hidden;
+}
+.conflict-section > summary {
+    list-style: none;
+    cursor: pointer;
+    padding: 10px 14px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    font-weight: 600;
+    user-select: none;
+    background: rgba(0, 0, 0, 0.02);
+}
+.conflict-section[open] > summary { border-bottom: 1px solid var(--wiki-border); }
+.conflict-section > summary::-webkit-details-marker { display: none; }
+.conflict-section > summary::before {
+    content: '▶';
+    font-size: 0.65rem;
+    transition: transform 0.15s ease;
+    color: var(--wiki-text-muted);
+    flex-shrink: 0;
+}
+.conflict-section[open] > summary::before { transform: rotate(90deg); }
+
+.conflict-section-title {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex-grow: 1;
+    flex-wrap: wrap;
+}
+.conflict-section-hint {
+    font-weight: 400;
+    color: var(--wiki-text-muted);
+    font-size: 0.8rem;
+    margin-left: 4px;
+}
+.conflict-section-tools {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+}
+.conflict-section-tools select.form-select {
+    width: auto;
+    min-width: 200px;
+}
+
+/* 비교 패널 */
+.conflict-diff-view {
+    max-height: 60vh;
+    overflow: auto;
+    background: var(--wiki-bg);
+}
+
+.conflict-diff-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+    font-size: 0.82rem;
+    line-height: 1.55;
+    table-layout: fixed;
+}
+.conflict-diff-table td {
+    padding: 1px 8px;
+    vertical-align: top;
+    border: none;
+}
+.conflict-diff-table .diff-gutter {
+    width: 48px;
+    text-align: right;
+    color: var(--wiki-text-muted);
+    user-select: none;
+    background: rgba(0, 0, 0, 0.03);
+    font-size: 0.74rem;
+    border-right: 1px solid var(--wiki-border);
+}
+.conflict-diff-table .diff-prefix {
+    width: 18px;
+    text-align: center;
+    color: var(--wiki-text-muted);
+    user-select: none;
+    font-weight: 700;
+}
+.conflict-diff-table .diff-line {
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+.conflict-diff-table tr.diff-add { background: var(--wiki-diff-add-bg); color: var(--wiki-diff-add-text); }
+.conflict-diff-table tr.diff-del { background: var(--wiki-diff-del-bg); color: var(--wiki-diff-del-text); }
+.conflict-diff-table tr.diff-add td.diff-prefix { color: var(--wiki-success); }
+.conflict-diff-table tr.diff-del td.diff-prefix { color: var(--wiki-danger); }
+
+.conflict-diff-table .hunk-header td {
+    background: rgba(58, 130, 246, 0.08);
+    color: var(--wiki-text-muted);
+    font-style: italic;
+    padding: 4px 8px;
+    font-size: 0.78rem;
+    border-top: 1px solid var(--wiki-border);
+    border-bottom: 1px solid var(--wiki-border);
+}
+
+/* Split 모드: 좌(서버/old) | 우(내수정/new) */
+.conflict-diff-table.mode-split td.diff-line.cell-del {
+    background: var(--wiki-diff-del-bg);
+    color: var(--wiki-diff-del-text);
+}
+.conflict-diff-table.mode-split td.diff-line.cell-add {
+    background: var(--wiki-diff-add-bg);
+    color: var(--wiki-diff-add-text);
+}
+.conflict-diff-table.mode-split td.cell-empty {
+    background: rgba(0, 0, 0, 0.03);
+}
+
+.conflict-diff-table.wrap-mode .diff-line {
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+.diff-empty {
+    padding: 20px;
+    text-align: center;
+    color: var(--wiki-text-muted);
+    font-style: italic;
+}
+
+/* 서버 본문 raw 패널 */
+.conflict-server-raw-actions {
+    padding: 8px 12px 0;
+    display: flex;
+    justify-content: flex-end;
+}
+.conflict-server-raw {
+    max-height: 60vh;
+    overflow: auto;
+    margin: 8px 12px 12px;
+    padding: 10px;
+    border: 1px dashed var(--wiki-border);
+    border-radius: 6px;
+    white-space: pre-wrap;
+    font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+    font-size: 0.82rem;
+    background: var(--wiki-bg);
+    color: var(--wiki-text);
+}
+#conflict-server-preview {
+    margin: 8px 12px 12px;
+    padding: 12px;
+    max-height: 60vh;
+    overflow: auto;
+    border: 1px dashed var(--wiki-border);
+    border-radius: 6px;
+}
+
+/* 병합 초안 영역 */
+#conflict-local-editor {
+    padding: 10px 12px 12px;
+}
+#conflict-local-editor textarea,
+#conflict-local-editor .wiki-ext-raw-textarea {
+    width: 100%;
+    min-height: 480px !important;
+    height: 480px !important;
+    font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+    font-size: 0.86rem;
+    line-height: 1.5;
+    resize: vertical;
+    border: 1px solid var(--wiki-border);
+    border-radius: 6px;
+    padding: 10px;
+    background: var(--wiki-bg);
+    color: var(--wiki-text);
+    white-space: pre;
+    overflow: auto;
+}
+#conflict-local-editor.wrap-mode textarea,
+#conflict-local-editor.wrap-mode .wiki-ext-raw-textarea {
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+/* hunk 액션 리스트 */
+.conflict-hunk-list {
+    padding: 10px 12px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-height: 220px;
+    overflow: auto;
+}
+.conflict-hunk-list:empty {
+    display: none;
+}
+.conflict-hunk-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border: 1px solid var(--wiki-border);
+    border-radius: 6px;
+    background: rgba(0, 0, 0, 0.02);
+    font-size: 0.85rem;
+}
+.conflict-hunk-row.resolved {
+    opacity: 0.55;
+    border-style: dashed;
+}
+.conflict-hunk-row.resolved .conflict-hunk-label::before {
+    content: '✓ ';
+    color: var(--wiki-success);
+    font-weight: 700;
+}
+.conflict-hunk-label {
+    flex-grow: 1;
+    color: var(--wiki-text-muted);
+    cursor: pointer;
+    text-decoration: underline dotted;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* 다크 모드 보정 */
+html[data-theme="dark"] .conflict-section > summary {
+    background: rgba(255, 255, 255, 0.03);
+}
+html[data-theme="dark"] .conflict-diff-table .diff-gutter {
+    background: rgba(255, 255, 255, 0.04);
+}
+html[data-theme="dark"] .conflict-diff-table.mode-split td.cell-empty {
+    background: rgba(255, 255, 255, 0.03);
+}
+html[data-theme="dark"] .conflict-diff-table .hunk-header td {
+    background: rgba(58, 130, 246, 0.18);
+}
+html[data-theme="dark"] .conflict-hunk-row {
+    background: rgba(255, 255, 255, 0.03);
+}
+html[data-theme="dark"] .conflict-chip {
+    background: rgba(255, 255, 255, 0.04);
+}
+
+@media (prefers-color-scheme: dark) {
+    html:not([data-theme="light"]) .conflict-section > summary {
+        background: rgba(255, 255, 255, 0.03);
+    }
+    html:not([data-theme="light"]) .conflict-diff-table .diff-gutter {
+        background: rgba(255, 255, 255, 0.04);
+    }
+    html:not([data-theme="light"]) .conflict-diff-table.mode-split td.cell-empty {
+        background: rgba(255, 255, 255, 0.03);
+    }
+    html:not([data-theme="light"]) .conflict-diff-table .hunk-header td {
+        background: rgba(58, 130, 246, 0.18);
+    }
+    html:not([data-theme="light"]) .conflict-hunk-row {
+        background: rgba(255, 255, 255, 0.03);
+    }
+    html:not([data-theme="light"]) .conflict-chip {
+        background: rgba(255, 255, 255, 0.04);
+    }
+}
+
+/* ────────── 모바일 보정 ────────── */
+@media (max-width: 768px) {
+    /* PC 전용 좌우 여백 제거 — 충돌 UI 컨테이너 폭 확보 */
+    #conflict-ui {
+        padding: 0 0.75rem !important;
+    }
+
+    /* 헤더: 칩 영역과 툴바가 좁은 화면에서 자연스럽게 쌓이도록 */
+    .conflict-header {
+        padding: 12px 14px;
+    }
+    .conflict-header .alert-heading {
+        font-size: 1.05rem;
+    }
+    .conflict-header .conflict-header-info {
+        min-width: 0;
+        width: 100%;
+    }
+    .conflict-toolbar {
+        width: 100%;
+        justify-content: flex-end;
+    }
+    .conflict-chip {
+        font-size: 0.74rem;
+        padding: 2px 7px;
+    }
+
+    /* details summary: 제목과 도구 영역을 위아래로 분리 */
+    .conflict-section > summary {
+        padding: 10px 12px;
+        gap: 8px;
+        flex-wrap: wrap;
+    }
+    .conflict-section-title {
+        flex-basis: 100%;
+        min-width: 0;
+    }
+    .conflict-section-hint {
+        flex-basis: 100%;
+        margin-left: 0;
+        font-size: 0.78rem;
+    }
+    .conflict-section-tools {
+        width: 100%;
+        flex-wrap: wrap;
+    }
+    .conflict-section-tools select.form-select {
+        min-width: 0;
+        flex: 1 1 auto;
+        width: auto;
+    }
+
+    /* 비교 테이블: 폰트/거터/패딩 축소, split 모드는 가로 스크롤 허용 */
+    .conflict-diff-view {
+        max-height: 50vh;
+    }
+    .conflict-diff-table {
+        font-size: 0.74rem;
+    }
+    .conflict-diff-table td {
+        padding: 1px 4px;
+    }
+    .conflict-diff-table .diff-gutter {
+        width: 32px;
+        font-size: 0.66rem;
+    }
+    .conflict-diff-table .diff-prefix {
+        width: 14px;
+    }
+    /* split 모드: 4칸 강제 균등 분할 풀고 칸별 최소폭 부여해 가로 스크롤 자연 발생 */
+    .conflict-diff-table.mode-split {
+        table-layout: auto;
+        width: auto;
+        min-width: 100%;
+    }
+    .conflict-diff-table.mode-split td.diff-line {
+        min-width: 160px;
+    }
+
+    /* 서버 본문 raw/preview 영역 */
+    .conflict-server-raw,
+    #conflict-server-preview {
+        max-height: 50vh;
+        margin: 8px;
+    }
+
+    /* 병합 초안 textarea — 화면 비율 기반 높이 */
+    #conflict-local-editor {
+        padding: 8px;
+    }
+    #conflict-local-editor textarea,
+    #conflict-local-editor .wiki-ext-raw-textarea {
+        min-height: 360px !important;
+        height: 55vh !important;
+        /* iOS Safari 자동 줌 방지: 16px 미만이면 포커스 시 화면이 확대됨 */
+        font-size: 16px;
+    }
+
+    /* 충돌 hunk 액션 행: 라벨과 버튼 그룹을 위아래로 */
+    .conflict-hunk-list {
+        max-height: 280px;
+        padding: 8px 10px 0;
+    }
+    .conflict-hunk-row {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 6px;
+        padding: 8px 10px;
+    }
+    .conflict-hunk-label {
+        white-space: normal;
+        text-overflow: clip;
+        overflow: visible;
+        font-size: 0.82rem;
+    }
+    .conflict-hunk-row .btn-group {
+        align-self: flex-end;
+    }
+}
+
+/* 매우 좁은 화면(폰 세로) — 한 번 더 축소 */
+@media (max-width: 480px) {
+    .conflict-toolbar .btn-group .btn {
+        padding: 0.2rem 0.45rem;
+        font-size: 0.78rem;
+    }
+    /* Unified/Split 라벨 숨기고 아이콘만 — 가로 폭 절약 */
+    #diffModeUnifiedBtn,
+    #diffModeSplitBtn {
+        font-size: 0;
+    }
+    #diffModeUnifiedBtn .mdi,
+    #diffModeSplitBtn .mdi {
+        font-size: 1rem;
+    }
+    .conflict-diff-table { font-size: 0.7rem; }
+    .conflict-diff-table .diff-gutter { width: 26px; font-size: 0.62rem; }
+    .conflict-hunk-row .btn-group { align-self: stretch; }
+    .conflict-hunk-row .btn-group .btn { flex: 1 1 0; }
 }
 
 /* 동시편집 경고 배너 */
