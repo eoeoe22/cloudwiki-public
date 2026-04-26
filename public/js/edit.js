@@ -757,6 +757,156 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         }, { decorations: v => v.decorations });
 
+        // ── 빈 표 셀 병합 미니툴바 ──
+        // 커서가 마크다운 표의 빈 셀에 위치하면 병합 토큰 4종을 빠르게 삽입할 수 있는 툴바를 띄운다.
+        const CELL_MERGE_BUTTONS = [
+            { token: '{<}', label: '좌측 셀과 병합', icon: 'mdi mdi-arrow-left-bold-outline' },
+            { token: '{>}', label: '우측 셀과 병합', icon: 'mdi mdi-arrow-right-bold-outline' },
+            { token: '{^}', label: '상단 셀과 병합', icon: 'mdi mdi-arrow-up-bold-outline' },
+            { token: '{><}', label: '가운데로 모음', icon: 'mdi mdi-arrow-collapse-horizontal' }
+        ];
+        const cellMergeToolbarEl = document.createElement('div');
+        cellMergeToolbarEl.className = 'cm-cell-merge-toolbar';
+        cellMergeToolbarEl.style.display = 'none';
+        CELL_MERGE_BUTTONS.forEach(b => {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'cm-cell-merge-btn';
+            btn.title = `${b.label} ${b.token}`;
+            btn.dataset.token = b.token;
+            btn.innerHTML = `<i class="${b.icon}"></i>`;
+            cellMergeToolbarEl.appendChild(btn);
+        });
+        document.body.appendChild(cellMergeToolbarEl);
+
+        // 현재 활성 셀 정보 (range는 절대 오프셋)
+        let activeMergeCell = null;
+
+        function isTableSeparatorLine(text) {
+            return /^\s*\|\s*:?-{3,}:?(?:\s*\|\s*:?-{3,}:?)*\s*\|?\s*$/.test(text);
+        }
+        function isPipeRow(text) {
+            // 표 행: '|'로 시작 (구분선/일반 행 모두)
+            return /^\s*\|/.test(text) && (text.match(/(?<!\\)\|/g) || []).length >= 2;
+        }
+        function isInsideTableBlock(state, lineNum) {
+            // 현재 라인 또는 인접 라인 중 하나가 구분선이면 표 블록으로 간주
+            const totalLines = state.doc.lines;
+            const cur = state.doc.line(lineNum).text;
+            if (isTableSeparatorLine(cur)) return false; // 구분선 자체에서는 표시 안 함
+            // 아래 한 줄이 구분선 (현재 라인이 헤더)
+            if (lineNum + 1 <= totalLines && isTableSeparatorLine(state.doc.line(lineNum + 1).text)) return true;
+            // 위로 거슬러 올라가며 구분선 발견 (현재 라인이 본문)
+            for (let n = lineNum - 1; n >= Math.max(1, lineNum - 30); n--) {
+                const t = state.doc.line(n).text;
+                if (isTableSeparatorLine(t)) return true;
+                if (!isPipeRow(t)) break;
+            }
+            return false;
+        }
+        function findEmptyCellAt(lineText, col) {
+            // col: 라인 내 0-based 커서 오프셋
+            // 이스케이프 처리된 \\| 는 셀 구분자가 아님
+            const pipes = [];
+            for (let i = 0; i < lineText.length; i++) {
+                if (lineText[i] === '\\') { i++; continue; }
+                if (lineText[i] === '|') pipes.push(i);
+            }
+            if (pipes.length < 2) return null;
+            for (let i = 0; i < pipes.length - 1; i++) {
+                const lo = pipes[i];
+                const hi = pipes[i + 1];
+                if (col > lo && col <= hi) {
+                    const segStart = lo + 1;
+                    const segEnd = hi;
+                    const seg = lineText.substring(segStart, segEnd);
+                    if (seg.trim() === '') {
+                        return { segStart, segEnd };
+                    }
+                    return null;
+                }
+            }
+            return null;
+        }
+
+        function hideCellMergeToolbar() {
+            if (cellMergeToolbarEl.style.display !== 'none') {
+                cellMergeToolbarEl.style.display = 'none';
+            }
+            activeMergeCell = null;
+        }
+
+        function updateCellMergeToolbar(view) {
+            const sel = view.state.selection.main;
+            if (sel.from !== sel.to) { hideCellMergeToolbar(); return; }
+            const pos = sel.head;
+            const line = view.state.doc.lineAt(pos);
+            const col = pos - line.from;
+            if (!isPipeRow(line.text) || isTableSeparatorLine(line.text)) {
+                hideCellMergeToolbar();
+                return;
+            }
+            if (!isInsideTableBlock(view.state, line.number)) {
+                hideCellMergeToolbar();
+                return;
+            }
+            const cell = findEmptyCellAt(line.text, col);
+            if (!cell) { hideCellMergeToolbar(); return; }
+
+            activeMergeCell = {
+                from: line.from + cell.segStart,
+                to: line.from + cell.segEnd
+            };
+
+            // 위치: 커서 위쪽 (공간 부족 시 아래쪽)
+            const coords = view.coordsAtPos(pos);
+            if (!coords) { hideCellMergeToolbar(); return; }
+            cellMergeToolbarEl.style.display = 'flex';
+            // 측정을 위해 보이지 않게 한 번 렌더
+            const tbW = cellMergeToolbarEl.offsetWidth || 160;
+            const tbH = cellMergeToolbarEl.offsetHeight || 32;
+            const margin = 6;
+            let top = coords.top - tbH - margin;
+            if (top < margin) top = coords.bottom + margin;
+            let left = coords.left - tbW / 2;
+            const viewportW = document.documentElement.clientWidth;
+            left = Math.max(margin, Math.min(left, viewportW - tbW - margin));
+            cellMergeToolbarEl.style.left = (left + window.scrollX) + 'px';
+            cellMergeToolbarEl.style.top = (top + window.scrollY) + 'px';
+        }
+
+        cellMergeToolbarEl.addEventListener('mousedown', (e) => {
+            // 에디터 blur로 인한 셀렉션 해제 방지
+            e.preventDefault();
+        });
+        cellMergeToolbarEl.addEventListener('click', (e) => {
+            const btn = e.target.closest('.cm-cell-merge-btn');
+            if (!btn || !activeMergeCell) return;
+            const token = btn.dataset.token;
+            const view = window._cmView;
+            if (!view) return;
+            const insert = ` ${token} `;
+            const { from, to } = activeMergeCell;
+            view.dispatch({
+                changes: { from, to, insert },
+                selection: { anchor: from + insert.length }
+            });
+            hideCellMergeToolbar();
+            view.focus();
+        });
+
+        // 에디터 스크롤/리사이즈 시 위치 갱신
+        window.addEventListener('scroll', () => {
+            if (cellMergeToolbarEl.style.display !== 'none' && window._cmView) {
+                updateCellMergeToolbar(window._cmView);
+            }
+        }, true);
+        window.addEventListener('resize', () => {
+            if (cellMergeToolbarEl.style.display !== 'none' && window._cmView) {
+                updateCellMergeToolbar(window._cmView);
+            }
+        });
+
         // 문서 변경 감지 리스너
         const updateListener = EditorView.updateListener.of((update) => {
             if (update.docChanged) {
@@ -771,12 +921,19 @@ document.addEventListener('DOMContentLoaded', async () => {
                     syncEditorScrollToPreview('cursor');
                 }
             }
+            // 빈 표 셀 병합 미니툴바 위치/표시 갱신
+            if (update.selectionSet || update.docChanged || update.viewportChanged) {
+                updateCellMergeToolbar(update.view);
+            }
         });
 
         // blur 감지
         const blurHandler = EditorView.domEventHandlers({
             blur: () => {
                 editorEventHandlers.blur.forEach(cb => cb());
+                // 에디터에서 포커스가 떠나면(모달 열기, 다른 입력 등) 셀 병합 툴바도 숨김.
+                // 툴바 버튼 클릭은 mousedown.preventDefault()로 blur가 발생하지 않으므로 안전.
+                hideCellMergeToolbar();
             },
             mousedown: (event, view) => {
                 const target = event.target;
@@ -1051,11 +1208,39 @@ document.addEventListener('DOMContentLoaded', async () => {
             cmEditorView.focus();
         }
 
+        // 그리드/row 같은 블록 위키 문법 인라인 삽입.
+        // 선택이 없으면 예시(stat 3개) 삽입, 있으면 선택을 ::: 블록으로 감쌈.
+        // 시작/끝이 라인 경계가 아니면 줄바꿈을 자동 보정.
+        function insertOrWrapWikiBlock(blockType) {
+            const { main } = cmEditorView.state.selection;
+            const selected = cmEditorView.state.sliceDoc(main.from, main.to);
+            const inner = selected || `{palette:primary}{stat:값1|라벨1}\n{palette:secondary}{stat:값2|라벨2}\n{palette:success}{stat:값3|라벨3}`;
+            const lineStart = cmEditorView.state.doc.lineAt(main.from);
+            const lineEnd = cmEditorView.state.doc.lineAt(main.to);
+            const prefix = (main.from === lineStart.from) ? '' : '\n';
+            const suffix = (main.to === lineEnd.to) ? '' : '\n';
+            const wrapped = `${prefix}:::${blockType}\n${inner}\n:::${suffix}`;
+            cmEditorView.dispatch({
+                changes: { from: main.from, to: main.to, insert: wrapped },
+                selection: { anchor: main.from + wrapped.length }
+            });
+            cmEditorView.focus();
+        }
+
         // 포맷 버튼
         toolbar.appendChild(createToolbarBtn('<b>H</b>', '제목', () => insertPrefix('## ')));
         toolbar.appendChild(createToolbarBtn('<b>B</b>', '굵게', () => wrapSelection('**', '**')));
         toolbar.appendChild(createToolbarBtn('<i>I</i>', '기울임', () => wrapSelection('*', '*')));
         toolbar.appendChild(createToolbarBtn('<s>S</s>', '취소선', () => wrapSelection('~~', '~~')));
+        toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-format-underline"></i>', '밑줄', () => wrapSelection('__', '__')));
+        toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-marker"></i>', '형광펜', () => wrapSelection('==', '==')));
+        toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-eye-off-outline"></i>', '스포일러', () => wrapSelection('||', '||')));
+        if (selectedIconsOnly) {
+            toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-vector-square"></i>', '아이콘 삽입', () => openSelectedIconsPicker()));
+        } else {
+            toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-vector-square"></i>', 'MDI 아이콘', () => openIconPicker('mdi')));
+            toolbar.appendChild(createToolbarBtn('<i class="bi bi-bootstrap-fill"></i>', 'Bootstrap 아이콘', () => openIconPicker('bi')));
+        }
         toolbar.appendChild(createToolbarSep());
         toolbar.appendChild(createToolbarBtn('─', '구분선', () => editor.insertText('\n---\n')));
         toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-format-quote-close"></i>', '인용', () => insertPrefix('> ')));
@@ -1063,6 +1248,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-format-list-bulleted"></i>', '목록', () => insertPrefix('- ')));
         toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-format-list-numbered"></i>', '번호 목록', () => insertPrefix('1. ')));
         toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-checkbox-marked-outline"></i>', '체크리스트', () => insertPrefix('- [ ] ')));
+        toolbar.appendChild(createToolbarSep());
+        toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-view-grid-outline"></i>', '그리드', () => insertOrWrapWikiBlock('grid')));
+        toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-view-week-outline"></i>', 'row(가로 배치)', () => insertOrWrapWikiBlock('row')));
         toolbar.appendChild(createToolbarSep());
         const tableBtn = createToolbarBtn('<i class="mdi mdi-table"></i>', '표', () => { });
         toolbar.appendChild(tableBtn);
@@ -1074,20 +1262,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         toolbar.appendChild(createToolbarBtn('[[ ]]', '위키 링크 삽입', () => editor.insertText('[[문서제목]]')));
         toolbar.appendChild(createToolbarBtn('{{ }}', '틀 삽입', () => editor.insertText('{{틀제목}}')));
 
-        if (selectedIconsOnly) {
-            toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-vector-square"></i>', '아이콘 삽입', () => openSelectedIconsPicker()));
-        } else {
-            toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-vector-square"></i>', 'MDI 아이콘', () => openIconPicker('mdi')));
-            toolbar.appendChild(createToolbarBtn('<i class="bi bi-bootstrap-fill"></i>', 'Bootstrap 아이콘', () => openIconPicker('bi')));
-        }
-
         toolbar.appendChild(createToolbarBtn('[*]', '각주 삽입', () => editor.insertText('[* 각주 내용]')));
         toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-form-dropdown"></i>', '펼치기 접기', () => editor.insertText('[+ 펼치기/접기 제목]\n여기에 숨겨진 내용이 들어갑니다.\n[-]')));
         toolbar.appendChild(createToolbarBtn('<i class="bi bi-diagram-3-fill"></i>', '하위 문서', () => openSubdocInsertModal()));
         toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-calendar-clock"></i>', '타임스탬프 삽입', () => openTimestampInsertModal()));
         toolbar.appendChild(createToolbarSep());
         toolbar.appendChild(createToolbarBtn('<i class="bi bi-card-heading"></i>', '카드 블록', () => openCardInsertModal()));
-        toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-view-grid-outline"></i>', '그리드·스탯', () => openGridStatInsertModal()));
         toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-palette-outline"></i>', '색상 삽입', () => openPaletteColorModal()));
         toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-label-outline"></i>', '배지', () => openBadgeInsertModal()));
         toolbar.appendChild(createToolbarSep());
@@ -2089,7 +2269,7 @@ async function savePage() {
         Swal.fire({
             icon: 'info',
             title: '변경된 내용이 없습니다',
-            text: '본문을 편집하거나 카테고리, 리다이렉트, 관리자 전용 설정을 변경한 뒤 저장해주세요.',
+            text: '본문을 편집하거나 카테고리, 리다이렉트 설정을 변경해주세요.',
         });
         return;
     }
