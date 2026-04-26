@@ -1529,20 +1529,12 @@ function _renderBlockHtml(block, blockData) {
                 note:    { icon: 'mdi-note-text-outline',     title: '노트' }
             }[type];
             const headerTitle = titleEsc || escapeHtml(calloutMeta.title);
-            let headerStyle = '';
-            if (bg && _isSafeCssColor(bg)) headerStyle += `background-color:${bg};`;
-            if (color && _isSafeCssColor(color)) headerStyle += `color:${color};`;
-            const headerStyleAttr = headerStyle ? ` style="${headerStyle}"` : '';
-            let bodyStyle = '';
-            if (bodyBg && _isSafeCssColor(bodyBg)) bodyStyle += `background-color:${bodyBg};`;
-            if (bodyColor && _isSafeCssColor(bodyColor)) bodyStyle += `color:${bodyColor};`;
-            const bodyStyleAttr = bodyStyle ? ` style="${bodyStyle}"` : '';
             return `<div class="wiki-callout wiki-callout-${type}">` +
-                `<div class="wiki-callout-header"${headerStyleAttr}>` +
+                `<div class="wiki-callout-header">` +
                     `<span class="mdi ${calloutMeta.icon} wiki-callout-icon" aria-hidden="true"></span>` +
                     `<span class="wiki-callout-title">${headerTitle}</span>` +
                 `</div>` +
-                `<div class="wiki-callout-body"${bodyStyleAttr}>${innerHtml}</div>` +
+                `<div class="wiki-callout-body">${innerHtml}</div>` +
                 `</div>`;
         }
         default:
