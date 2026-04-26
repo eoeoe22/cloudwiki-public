@@ -942,8 +942,8 @@ function selectIconAutocomplete(index) {
 // ── 팔레트 인라인 자동완성 ──
 // ══════════════════════════════════════════════════
 
-// 하드코딩 프리셋 정의는 common.js의 WIKI_HARDCODED_PALETTES가 단일 소스.
-// 에디터는 '기본/커스텀/오버라이드' 출처 구분이 필요하므로 common.js의 병합 헬퍼 대신
+// 하드코딩 프리셋 정의는 render.js의 WIKI_HARDCODED_PALETTES가 단일 소스.
+// 에디터는 '기본/커스텀/오버라이드' 출처 구분이 필요하므로 render.js의 병합 헬퍼 대신
 // 커스텀 맵과 하드코딩을 직접 합치면서 source 라벨을 부여한다.
 
 const paletteAc = {

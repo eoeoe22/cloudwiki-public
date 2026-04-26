@@ -87,22 +87,6 @@
   background: var(--wiki-bg);
 }
 
-.wiki-freq-toggle-phase.disabled,
-.wiki-freq-toggle-phase[disabled] {
-  opacity: 0.45;
-  cursor: not-allowed;
-  background: var(--wiki-card-bg);
-  color: var(--wiki-text-muted);
-  border-color: var(--wiki-border);
-}
-
-.wiki-freq-toggle-phase.disabled:hover,
-.wiki-freq-toggle-phase[disabled]:hover {
-  color: var(--wiki-text-muted);
-  border-color: var(--wiki-border);
-  background: var(--wiki-card-bg);
-}
-
 .wiki-freq-toggle-phase.active {
   color: #ea580c;
   border-color: #ea580c;
@@ -143,22 +127,6 @@
   color: #2563eb;
   border-color: #2563eb;
   background: rgba(37, 99, 235, 0.08);
-}
-
-.wiki-freq-mode-btn.disabled,
-.wiki-freq-mode-btn[disabled] {
-  opacity: 0.45;
-  cursor: not-allowed;
-  color: var(--wiki-text-muted);
-  border-color: var(--wiki-border);
-  background: var(--wiki-card-bg);
-}
-
-.wiki-freq-mode-btn.disabled:hover,
-.wiki-freq-mode-btn[disabled]:hover {
-  color: var(--wiki-text-muted);
-  border-color: var(--wiki-border);
-  background: var(--wiki-card-bg);
 }
 
 @media (prefers-color-scheme: dark) {

@@ -133,7 +133,7 @@ function findSectionRange(fullContent, idx, expectedHeading) {
 }
 
 // 섹션 인덱스를 열람 페이지의 계층적 목차 번호(예: "1.2.1")로 변환.
-// common.js 의 numberHeadings() 와 동일한 카운터 로직을 복제해 열람 페이지의
+// render.js 의 numberHeadings() 와 동일한 카운터 로직을 복제해 열람 페이지의
 // s-X.Y 앵커 ID 와 1:1 로 매칭되는 번호를 생성한다.
 // _extractMarkdownSectionRanges 는 render.js 에 정의되어 있다.
 //

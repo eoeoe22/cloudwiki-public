@@ -122,7 +122,7 @@
 
         // ── 타겟(2번째 인자) 처리 ──
         // {{freq:A|freq:B}} 형태에서 args["1"] = "freq:B" 가 들어온다.
-        // common.js 가 secondary[B] 에 미리 fetch한 결과를 넣어둠.
+        // render.js 의 _resolveTransclusionsCore 가 secondary[B] 에 미리 fetch한 결과를 넣어둠.
         const rawTargetArg = extData.args && extData.args['1'];
         const targetArg = (typeof rawTargetArg === 'string') ? rawTargetArg.trim() : '';
         let targetSlug = null;
@@ -393,7 +393,12 @@
                         intersect: false,
                     },
                     plugins: {
-                        legend: { display: !!targetFreq, position: 'bottom', labels: { color: textColor, boxWidth: 18, font: { size: 11 } } },
+                        legend: {
+                            display: !!targetFreq,
+                            position: 'bottom',
+                            labels: { color: textColor, boxWidth: 18, font: { size: 11 } },
+                            onClick: () => {},
+                        },
                         tooltip: {
                             callbacks: {
                                 title: function(items) {
@@ -410,48 +415,49 @@
                 }
             });
 
-            // 보정/위상 토글의 상호배타 상태를 한 번에 적용.
+            // 보정/위상 토글 상태를 한 번에 적용.
             const applyState = () => {
                 const primary = chart.data.datasets[0];
                 primary.data = buildPrimaryData();
                 primary.label = compensate ? 'SPL Δ (dB)' : 'SPL (dB)';
                 chart.options.scales.y.title.text = compensate ? 'SPL Δ (dB)' : 'SPL (dB)';
 
-                // 타겟 점선: 기본 표시, 보정/위상 모드에서는 숨김.
+                // 타겟 점선: 위상 모드에서는 숨김. 보정 모드에서는 평탄한 0 기준선.
+                // 그 외에는 원본 타겟 응답을 점선으로 겹쳐 표시.
                 const targetDs = chart.data.datasets.find(d => d.label && d.label.indexOf('Target (') === 0);
-                if (targetDs) targetDs.hidden = compensate || phaseVisible;
+                if (targetDs) {
+                    targetDs.hidden = phaseVisible;
+                    if (compensate) {
+                        targetDs.data = targetFreq.map(f => ({ x: f, y: 0 }));
+                    } else {
+                        targetDs.data = targetFreq.map((f, i) => ({ x: f, y: targetSpl[i] }));
+                    }
+                }
 
                 // 위상 데이터셋
                 const phaseDs = chart.data.datasets.find(d => d.yAxisID === 'yPhase');
                 if (phaseDs) phaseDs.hidden = !phaseVisible;
                 if (chart.options.scales.yPhase) chart.options.scales.yPhase.display = phaseVisible;
 
-                if (compensateBtn) {
-                    compensateBtn.classList.toggle('active', compensate);
-                    compensateBtn.classList.toggle('disabled', phaseVisible);
-                    compensateBtn.disabled = phaseVisible;
-                }
-                if (phaseBtn) {
-                    phaseBtn.classList.toggle('active', phaseVisible);
-                    phaseBtn.classList.toggle('disabled', compensate);
-                    phaseBtn.disabled = compensate;
-                }
+                if (compensateBtn) compensateBtn.classList.toggle('active', compensate);
+                if (phaseBtn) phaseBtn.classList.toggle('active', phaseVisible);
 
                 chart.update();
             };
 
+            // 두 버튼은 상호 배타 — 한쪽을 켜면 다른 한쪽이 자동으로 꺼진다.
             if (compensateBtn) {
                 compensateBtn.addEventListener('click', () => {
-                    if (compensateBtn.disabled) return;
                     compensate = !compensate;
+                    if (compensate) phaseVisible = false;
                     applyState();
                 });
             }
 
             if (phaseBtn) {
                 phaseBtn.addEventListener('click', () => {
-                    if (phaseBtn.disabled) return;
                     phaseVisible = !phaseVisible;
+                    if (phaseVisible) compensate = false;
                     applyState();
                 });
             }
