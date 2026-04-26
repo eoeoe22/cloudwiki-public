@@ -2171,63 +2171,51 @@ async function savePage() {
         if (res.status === 409) {
             const data = await res.json();
 
-            // 섹션 모드에서 충돌 발생 시: 서버의 최신 전체 본문에서 섹션 재탐색을 시도하여
-            // 섹션 경계가 유지되면 계속 섹션 편집, 아니면 전체 편집 모드로 fallback 한다.
+            // 섹션 모드에서 충돌 발생 시: 두 가지 시나리오를 구분한다.
+            // 1. 동일 섹션 동시 편집(sameSectionChangedByOther): 서버의 해당 섹션 내용이
+            //    사용자 베이스(originalContent)와 다른 경우 → 전체 편집 모드로 전환 후 충돌 UI 표시.
+            // 2. 섹션 경계 변경(boundary-only): 서버에서 해당 섹션을 찾을 수 있고 내용도
+            //    동일하지만 문서 구조가 바뀐 경우 → 서버 최신 본문에 섹션 편집을 합성해
+            //    전체 편집 모드로 전환 후 재저장을 허용한다(충돌 UI 불필요).
             if (sectionMode && sectionRange) {
-                const serverContent = data.content || '';
-                const newRange = findSectionRange(serverContent, sectionIndex, sectionRange.headingText);
-                if (newRange) {
-                    // 경계만 갱신하고 사용자 편집은 유지 — 다시 저장 버튼 누를 수 있게 함
-                    fullOriginalContent = serverContent;
-                    sectionRange = newRange;
-                    pageVersion = data.current_version;
-
-                    // 409 응답에는 메타데이터가 없으므로 최신 제목/카테고리/잠금/리다이렉트를
-                    // 다시 받아와 originalPageMeta 를 갱신한다. 갱신에 실패하면 덮어쓰기로
-                    // 인한 데이터 손실을 피하기 위해 재저장을 차단하고 새로고침을 유도한다.
-                    let metaOk = false;
-                    try {
-                        const metaRes = await fetch(`/api/w/${encodeURIComponent(slug)}?redirect=no&nocache=true`);
-                        if (metaRes.ok) {
-                            const freshPage = await metaRes.json();
-                            originalPageMeta = {
-                                title: freshPage.title,
-                                category: freshPage.category || '',
-                                redirect_to: freshPage.redirect_to || '',
-                                is_locked: freshPage.is_locked ? 1 : 0,
-                                is_private: freshPage.is_private ? 1 : 0
-                            };
-                            metaOk = true;
+                // 409 응답의 data.content 에서 해당 섹션을 탐색해 동시 편집 여부를 판별
+                let sameSectionChangedByOther = false;
+                let serverRange = null;
+                // data.content 는 항상 문자열이지만 빈 문자열일 수 있다(다른 사용자가 문서 전체를
+                // 비운 경우). 이전에는 if (data.content) 로 truthy 체크를 해 빈 본문이 들어오면
+                // 섹션 탐지 자체를 스킵 → sameSectionChangedByOther 가 false 로 남고 boundary-only
+                // 경로의 if (... && data.content) 도 false 가 되어 어떤 충돌 안내도 없이 사용자가
+                // 재저장하면 다른 편집자의 전체 삭제를 silent overwrite 하던 회귀가 있었다.
+                // 빈 본문은 곧 우리가 편집 중인 섹션도 사라졌음을 의미하므로 동시 편집으로 간주.
+                const serverContentStr = typeof data.content === 'string' ? data.content : '';
+                if (serverContentStr === '') {
+                    sameSectionChangedByOther = true;
+                } else {
+                    serverRange = findSectionRange(serverContentStr, sectionIndex, sectionRange.headingText);
+                    if (serverRange) {
+                        const serverLines = serverContentStr.split('\n');
+                        const newServerSection = serverLines.slice(serverRange.lineIdx, serverRange.endLine).join('\n');
+                        // 서버의 섹션 내용이 사용자 베이스와 다르면 동시 편집으로 판단.
+                        // trim() 으로 공백 차이를 무시하면 안 된다 — 다른 편집자가 같은 섹션의
+                        // 선/후행 공백만 바꾼 경우(예: 마크다운 hard line break "foo  \n",
+                        // 의도된 빈 줄)도 실제 동시 편집이며 silent overwrite 대상이 된다.
+                        // _extractMarkdownSectionRanges 가 이미 섹션 끝의 빈 줄을 endLine 에서
+                        // 제외하므로 양쪽 모두 결정론적이고, 정확 비교가 false positive 를 만들지
+                        // 않는다.
+                        if (newServerSection !== originalContent) {
+                            sameSectionChangedByOther = true;
                         }
-                    } catch (e) { /* metaOk 유지 */ }
-
-                    if (!metaOk) {
-                        // 재저장 차단: finally 블록이 버튼을 다시 활성화하지 않도록 플래그 설정.
-                        // 이걸 설정하지 않으면 스테일 originalPageMeta + 최신 expected_version 조합으로
-                        // 재저장이 가능해져 다른 사용자의 메타데이터 변경이 덮어써진다.
-                        blockResave = true;
-                        await Swal.fire({
-                            icon: 'error',
-                            title: '문서 정보를 다시 가져오지 못했습니다',
-                            text: '다른 사용자의 변경을 덮어쓸 수 있어 저장을 중단합니다. 페이지를 새로고침 해주세요.',
-                        });
-                        return;
+                    } else {
+                        // 섹션 자체가 사라진 경우(다른 사용자가 헤딩을 삭제하는 등) →
+                        // 동시 편집으로 간주하고 충돌 UI 를 표시해 사용자가 직접 병합하게 한다.
+                        sameSectionChangedByOther = true;
                     }
-
-                    Swal.fire({
-                        icon: 'info',
-                        title: '문서가 업데이트되었습니다',
-                        text: '다른 사용자의 변경이 반영되었습니다. 다시 저장해주세요.',
-                    });
-                    saveBtn.innerHTML = '<i class="mdi mdi-check"></i> 저장';
-                    if (turnstileWidgetId !== null) refreshTurnstile(); else saveBtn.disabled = false;
-                    return;
                 }
-                // 섹션을 찾지 못함 → 전체 편집 모드로 전환
-                // 이 경로에서는 제목/카테고리/리다이렉트/잠금 입력값이 초기 로드 시점의
-                // 값 그대로이므로, 일반 충돌 UI 로 넘기기 전에 서버의 최신 메타데이터를
-                // 다시 받아 입력 필드를 갱신해야 한다. 그러지 않으면 사용자가 재시도할 때
-                // 스테일한 메타데이터로 다른 편집자의 변경을 조용히 덮어쓸 수 있다.
+
+                // 409 응답에는 메타데이터가 없으므로 최신 제목/카테고리/잠금/리다이렉트를
+                // 다시 받아와 입력 필드와 originalPageMeta 를 갱신한다. 갱신에 실패하면
+                // 스테일 메타데이터로 다른 편집자 변경을 덮어쓸 위험이 있어 재저장을
+                // 차단하고 새로고침을 유도한다.
                 let freshPageForFallback = null;
                 try {
                     const metaRes = await fetch(`/api/w/${encodeURIComponent(slug)}?redirect=no&nocache=true`);
@@ -2250,15 +2238,40 @@ async function savePage() {
 
                 await Swal.fire({
                     icon: 'warning',
-                    title: '문서 구조가 변경되었습니다',
-                    text: '섹션 경계가 달라져 전체 편집 모드로 전환합니다.',
+                    title: '편집 충돌이 발생했습니다',
+                    text: sameSectionChangedByOther
+                        ? '같은 섹션을 다른 사용자가 동시에 편집했습니다. 전체 편집 모드에서 충돌 내용을 확인해 주세요.'
+                        : '다른 사용자가 문서 구조를 변경했습니다. 전체 편집 모드로 전환합니다.',
                 });
-                // 편집하던 섹션 텍스트를 원래 경계에 덮어 합성한 "내 수정본 전체"를 메인 에디터에 로드
-                const mergedLocal = mergeSectionIntoFull(fullOriginalContent, sectionRange, editor.getMarkdown());
+
+                // 편집하던 섹션 텍스트를 전체 본문에 합성.
+                // - 동시 편집: fullOriginalContent 기준으로 합성(3-way diff base 로 사용)
+                // - 경계 변경: data.content(서버 최신) 의 새 섹션 위치에 합성해 구조 변경을 보존.
+                //   논리적 보장: serverRange 가 null 이면 위에서 sameSectionChangedByOther = true 로
+                //   설정되므로, !sameSectionChangedByOther 가 참이면 serverRange 는 반드시 non-null.
+                let mergedBase;
+                let mergedLocal;
+                if (!sameSectionChangedByOther && serverRange && data.content) {
+                    mergedBase = data.content;
+                    mergedLocal = mergeSectionIntoFull(data.content, serverRange, editor.getMarkdown());
+                } else {
+                    mergedBase = fullOriginalContent;
+                    mergedLocal = mergeSectionIntoFull(fullOriginalContent, sectionRange, editor.getMarkdown());
+                }
                 editor.setMarkdown(mergedLocal);
+                // 충돌 모달은 originalContent 를 base 로 사용하므로 섹션 텍스트 조각이 아닌
+                // 전체 본문 기준으로 갱신한다.
+                originalContent = mergedBase;
                 sectionMode = false;
                 sectionRange = null;
                 DRAFT_KEY = 'wiki_draft_' + slug;
+                const titleInput = document.getElementById('titleInput');
+                const resolvedTitle = (titleInput && titleInput.value ? titleInput.value : slug);
+                const editPageTitle = document.getElementById('editPageTitle');
+                if (editPageTitle) {
+                    editPageTitle.textContent = '문서 편집: ' + resolvedTitle;
+                }
+                document.title = '문서 편집: ' + resolvedTitle;
                 const banner = document.getElementById('sectionEditBanner');
                 if (banner) { banner.classList.add('d-none'); banner.classList.remove('d-flex'); }
                 // 숨겼던 필드 복원
@@ -2303,11 +2316,14 @@ async function savePage() {
                     is_locked: freshPageForFallback.is_locked ? 1 : 0,
                     is_private: freshPageForFallback.is_private ? 1 : 0
                 };
-                // pageVersion 도 충돌 응답의 current_version 으로 갱신(아래 showConflictModal 이 다시 설정하지만 명시적)
+                // pageVersion 을 최신값으로 갱신
                 pageVersion = data.current_version;
 
-                // 서버의 최신 전체 본문을 기준으로 일반 충돌 UI를 띄워 사용자가 수동 병합하도록 함
-                showConflictModal({ current_version: data.current_version, content: data.content });
+                if (sameSectionChangedByOther) {
+                    // 동시 편집: 서버의 최신 전체 본문을 기준으로 충돌 UI 표시
+                    showConflictModal({ current_version: data.current_version, content: data.content });
+                }
+                // 경계 변경: 충돌 UI 없이 전체 편집 모드로 전환 완료 → 사용자가 재저장 가능
                 saveBtn.innerHTML = '<i class="mdi mdi-check"></i> 저장';
                 return;
             }

@@ -32,9 +32,14 @@
                     <h2 class="mb-0" id="searchTitle">
                         <i class="mdi mdi-magnify"></i> 검색 결과
                     </h2>
-                    <button type="button" class="btn btn-wiki-outline btn-sm" onclick="history.back()">
-                        <i class="bi bi-arrow-left"></i> 뒤로
-                    </button>
+                    <div class="d-flex gap-2">
+                        <button type="button" class="btn btn-wiki-outline btn-sm" id="imageSearchBtn" onclick="goImageSearch()">
+                            <i class="mdi mdi-image-search-outline"></i> 이미지 검색하기
+                        </button>
+                        <button type="button" class="btn btn-wiki-outline btn-sm" onclick="history.back()">
+                            <i class="bi bi-arrow-left"></i> 뒤로
+                        </button>
+                    </div>
                 </div>
                 <p class="text-muted mb-4" id="searchQuery"></p>
 
@@ -103,6 +108,19 @@
         let currentQuery = '';
         let currentMode = 'content';
         const responseCache = new Map();
+        const IMAGE_PREFIX = '이미지:';
+
+        // 상단 "이미지 검색하기" 버튼: 현재 검색어 맨 앞에 "이미지:"를 붙여 재검색한다.
+        // 이미 이미지 네임스페이스 검색 중이면 그대로 재실행(쿼리 없이 누르면 전체 이미지 목록).
+        function goImageSearch() {
+            const params = new URLSearchParams(window.location.search);
+            const headerInput = document.getElementById('searchInput');
+            const rawBaseQuery = (headerInput && headerInput.value.trim()) || params.get('q') || currentQuery || '';
+            const baseQuery = rawBaseQuery.trim();
+            const next = baseQuery.startsWith(IMAGE_PREFIX) ? baseQuery : (IMAGE_PREFIX + baseQuery);
+            if (headerInput) headerInput.value = next;
+            window.location.href = `/search?q=${encodeURIComponent(next)}&mode=content`;
+        }
         // 진행 중인 fetch 를 추적해 새 요청이 시작될 때 이전 요청을 취소한다.
         // 이전 요청이 늦게 완료되어 현재 UI 를 덮어쓰는 경쟁 상태를 방지한다.
         let activeAbortController = null;
@@ -309,13 +327,30 @@
 
             let itemsHtml = '';
             if (data.image_mode) {
-                // 이미지 문서 검색 결과: 섬네일 + 파일명 + 스니펫
+                // 이미지 문서 검색 결과: 섬네일 + 파일명 + 태그 + content 미리보기
+                // contentPreviewLength는 서버의 IMAGE_CONTENT_PREVIEW와 동기화된 값이다.
+                const CONTENT_MAX = data.contentPreviewLength || 200;
                 itemsHtml = data.results.map(r => {
                     const isVideo = (r.mime_type || '').startsWith('video/');
                     const url = r.r2_key ? `/media/${r.r2_key}` : '';
                     const preview = isVideo
                         ? `<video src="${escapeHtml(url)}" muted class="search-image-thumb"></video>`
                         : `<img src="${escapeHtml(url)}" alt="${escapeHtml(r.title)}" class="search-image-thumb" loading="lazy">`;
+                    const tagsHtml = Array.isArray(r.tags) && r.tags.length > 0
+                        ? `<div class="search-image-tags mb-2">${r.tags.map(t => `<span class="badge bg-light text-dark border me-1 mb-1"><i class="mdi mdi-tag-outline"></i> ${escapeHtml(t)}</span>`).join('')}</div>`
+                        : '';
+                    // content는 서버에서 이미 절단되어 내려오지만,
+                    // 혹시 더 긴 값이 들어오는 경우를 대비해 클라이언트에서도 안전장치로 재절단한다.
+                    const rawContent = (r.content || '').toString();
+                    const contentText = rawContent.length > CONTENT_MAX
+                        ? rawContent.slice(0, CONTENT_MAX) + '...'
+                        : rawContent;
+                    const contentHtml = contentText
+                        ? `<p class="search-image-content text-body-secondary mb-0">${escapeHtml(contentText)}</p>`
+                        : '';
+                    const snippetHtml = r.snippet
+                        ? `<p class="snippet text-body mb-2" style="line-height: 1.6;">${r.snippet}</p>`
+                        : '';
                     return `
                         <div class="search-result-item mb-4 pb-3 border-bottom d-flex gap-3 align-items-start">
                             ${preview}
@@ -323,7 +358,9 @@
                                 <h4 class="mb-2 fs-5">
                                     <a class="text-decoration-none text-primary fw-semibold" href="/w/${encodeURIComponent(r.slug)}">${escapeHtml(r.title)}</a>
                                 </h4>
-                                <p class="snippet text-body mb-0" style="line-height: 1.6;">${r.snippet || ''}</p>
+                                ${snippetHtml}
+                                ${tagsHtml}
+                                ${contentHtml}
                             </div>
                         </div>
                     `;

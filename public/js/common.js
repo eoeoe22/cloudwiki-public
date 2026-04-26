@@ -2116,7 +2116,8 @@ function processFootnotes(contentEl) {
                 a.onclick = (e) => {
                     e.preventDefault();
                     if (window.innerWidth >= 992) {
-                        document.getElementById(fnId)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        const target = document.getElementById(fnId);
+                        if (target) _scrollToElementWithAncestors(target, { behavior: 'smooth', block: 'start' });
                     }
                 };
                 sup.appendChild(a);

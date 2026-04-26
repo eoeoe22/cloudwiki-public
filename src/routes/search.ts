@@ -1,7 +1,13 @@
 import { Hono } from 'hono';
 import type { Env } from '../types';
 import { trackSearch } from '../utils/analytics';
+import { fetchMediaTagMap } from '../utils/mediaTags';
 import type { RBAC } from '../utils/role';
+
+// 이미지 검색 결과의 본문 미리보기 최대 길이.
+// 서버에서 본문을 이 길이로 절단하고 필요 시 '...'을 붙여 응답 크기를 제한한다.
+// 클라이언트는 안전장치로만 동일 기준의 재절단을 수행할 수 있다.
+const IMAGE_CONTENT_PREVIEW = 200;
 
 const search = new Hono<Env>();
 
@@ -78,15 +84,19 @@ search.get('/search', async (c) => {
 
         if (total > 0) {
             const { page, offset } = clampPage(total);
+            // 파일명 LIKE 매치를 content 매치보다 우선하기 위해 정렬 키에 CASE를 추가한다.
             const { results } = await db
                 .prepare(
                     `SELECT id, r2_key, filename, mime_type, content
                      FROM media
                      WHERE filename LIKE ? OR content LIKE ?
-                     ORDER BY created_at DESC LIMIT ? OFFSET ?`
+                     ORDER BY (CASE WHEN filename LIKE ? THEN 0 ELSE 1 END), created_at DESC
+                     LIMIT ? OFFSET ?`
                 )
-                .bind(likePattern, likePattern, PAGE_SIZE, offset)
+                .bind(likePattern, likePattern, likePattern, PAGE_SIZE, offset)
                 .all<{ id: number; r2_key: string; filename: string; mime_type: string; content: string }>();
+
+            const tagMap = await fetchMediaTagMap(db, results.map(r => r.id));
 
             const imageResults = results.map((r) => {
                 const slug = `이미지:${r.filename}`;
@@ -105,6 +115,10 @@ search.get('/search', async (c) => {
                             .replace(/'/g, '&#039;');
                     }
                 }
+                const rawContent = (r.content || '').trim();
+                const contentPreview = rawContent.length > IMAGE_CONTENT_PREVIEW
+                    ? rawContent.slice(0, IMAGE_CONTENT_PREVIEW) + '...'
+                    : rawContent;
                 return {
                     slug,
                     title: slug,
@@ -113,11 +127,13 @@ search.get('/search', async (c) => {
                     r2_key: r.r2_key,
                     mime_type: r.mime_type,
                     snippet,
+                    tags: tagMap.get(r.id) || [],
+                    content: contentPreview,
                 };
             });
 
             if (shouldTrack) trackSearch(c, query.trim(), total, Date.now() - searchStartTime);
-            return c.json({ results: imageResults, image_mode: true, total, page, pageSize: PAGE_SIZE });
+            return c.json({ results: imageResults, image_mode: true, total, page, pageSize: PAGE_SIZE, contentPreviewLength: IMAGE_CONTENT_PREVIEW });
         }
         // media에서 결과가 없으면 아래 일반 pages 검색으로 폴스루
     }
@@ -176,13 +192,15 @@ search.get('/search', async (c) => {
         const total = totalRow?.total ?? 0;
         const { page, offset } = clampPage(total);
 
+        // 제목 LIKE 매치를 본문 매치보다 우선해 정렬한다.
         const sql = `
             SELECT slug, title, deleted_at
             FROM pages
             WHERE (title LIKE ? OR content LIKE ?)${visibility}
-            ORDER BY updated_at DESC LIMIT ? OFFSET ?
+            ORDER BY (CASE WHEN title LIKE ? THEN 0 ELSE 1 END), updated_at DESC
+            LIMIT ? OFFSET ?
         `;
-        const results = await db.prepare(sql).bind(likePattern, likePattern, PAGE_SIZE, offset).all();
+        const results = await db.prepare(sql).bind(likePattern, likePattern, likePattern, PAGE_SIZE, offset).all();
 
         const safeResults = results.results.map((r: any) => ({
             ...r,
@@ -214,18 +232,22 @@ search.get('/search', async (c) => {
         const total = totalRow?.total ?? 0;
         const { page, offset } = clampPage(total);
 
+        // 제목 LIKE 매치를 FTS rank보다 우선해 정렬한다.
+        // (FTS5 trigram도 부분 일치를 잡지만 제목 일치를 항상 상단에 노출하기 위함)
+        const titleLikePattern = `%${trimmedQuery}%`;
         const sql = `
            SELECT p.slug, p.title, p.deleted_at,
                   snippet(pages_fts, 1, '__MARK_START__', '__MARK_END__', '...', 40) as snippet
            FROM pages_fts
            JOIN pages p ON pages_fts.rowid = p.id
            WHERE pages_fts MATCH ?${visibility}
-           ORDER BY rank LIMIT ? OFFSET ?
+           ORDER BY (CASE WHEN p.title LIKE ? THEN 0 ELSE 1 END), rank
+           LIMIT ? OFFSET ?
         `;
 
         const results = await db
             .prepare(sql)
-            .bind(safeMatchQuery, PAGE_SIZE, offset)
+            .bind(safeMatchQuery, titleLikePattern, PAGE_SIZE, offset)
             .all();
 
         // XSS 방지를 위해 스니펫의 HTML 특수문자를 이스케이프 처리한 뒤 임시 문자열을 <mark> 태그로 치환
@@ -263,13 +285,15 @@ search.get('/search', async (c) => {
         const total = totalRow?.total ?? 0;
         const { page, offset } = clampPage(total);
 
+        // 제목 LIKE 매치를 본문 매치보다 우선해 정렬한다.
         const fallbackSql = `
             SELECT slug, title, deleted_at
             FROM pages
             WHERE (title LIKE ? OR content LIKE ?)${visibility}
-            ORDER BY updated_at DESC LIMIT ? OFFSET ?
+            ORDER BY (CASE WHEN title LIKE ? THEN 0 ELSE 1 END), updated_at DESC
+            LIMIT ? OFFSET ?
         `;
-        const fallbackResults = await db.prepare(fallbackSql).bind(likePattern, likePattern, PAGE_SIZE, offset).all();
+        const fallbackResults = await db.prepare(fallbackSql).bind(likePattern, likePattern, likePattern, PAGE_SIZE, offset).all();
 
         const safeResults = fallbackResults.results.map((r: any) => ({
             ...r,

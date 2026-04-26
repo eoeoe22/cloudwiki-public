@@ -7,6 +7,60 @@ import { getRevisionContent } from '../utils/r2';
 
 const mcpRoutes = new Hono<Env>();
 
+// 바이트 배열을 base64로 직접 인코딩한다. btoa(String.fromCharCode(...))나
+// TextDecoder('latin1') 경유 방식은 0x80-0x9F 구간에서 WHATWG 규격이 Windows-1252로
+// 매핑하여 일부 바이트가 0xFF를 넘는 코드 포인트로 디코드되고, btoa가
+// InvalidCharacterError를 던질 수 있다. 압축된 이미지 바이트에는 해당 구간이 흔히
+// 등장하므로, 출력 ASCII 코드를 Uint8Array에 미리 채운 뒤 TextDecoder 한 번으로
+// 문자열로 변환한다. 핫 루프에서 result += ... 같은 문자열 결합을 피해 5MB 입력에서도
+// CPU 사용을 일정하게 유지한다.
+const BASE64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+const BASE64_CODES = (() => {
+    const codes = new Uint8Array(64);
+    for (let i = 0; i < 64; i++) codes[i] = BASE64_ALPHABET.charCodeAt(i);
+    return codes;
+})();
+const BASE64_PAD = 0x3d; // '='
+
+function bytesToBase64(bytes: Uint8Array): string {
+    const len = bytes.length;
+    const fullTriples = (len / 3) | 0;
+    const remainder = len - fullTriples * 3;
+    const outLen = fullTriples * 4 + (remainder ? 4 : 0);
+    const out = new Uint8Array(outLen);
+
+    let inIdx = 0;
+    let outIdx = 0;
+    for (let i = 0; i < fullTriples; i++) {
+        const b0 = bytes[inIdx++];
+        const b1 = bytes[inIdx++];
+        const b2 = bytes[inIdx++];
+        out[outIdx++] = BASE64_CODES[b0 >> 2];
+        out[outIdx++] = BASE64_CODES[((b0 & 0x03) << 4) | (b1 >> 4)];
+        out[outIdx++] = BASE64_CODES[((b1 & 0x0f) << 2) | (b2 >> 6)];
+        out[outIdx++] = BASE64_CODES[b2 & 0x3f];
+    }
+    if (remainder === 1) {
+        const b0 = bytes[inIdx];
+        out[outIdx++] = BASE64_CODES[b0 >> 2];
+        out[outIdx++] = BASE64_CODES[(b0 & 0x03) << 4];
+        out[outIdx++] = BASE64_PAD;
+        out[outIdx++] = BASE64_PAD;
+    } else if (remainder === 2) {
+        const b0 = bytes[inIdx];
+        const b1 = bytes[inIdx + 1];
+        out[outIdx++] = BASE64_CODES[b0 >> 2];
+        out[outIdx++] = BASE64_CODES[((b0 & 0x03) << 4) | (b1 >> 4)];
+        out[outIdx++] = BASE64_CODES[(b1 & 0x0f) << 2];
+        out[outIdx++] = BASE64_PAD;
+    }
+
+    // 출력 바이트는 모두 base64 알파벳/'=' 으로 ASCII 범위(0x2B, 0x2F, 0x30-0x39,
+    // 0x3D, 0x41-0x5A, 0x61-0x7A) 안에만 들어가므로 UTF-8 디코더로 안전하게
+    // 한 번에 문자열화할 수 있다.
+    return new TextDecoder().decode(out);
+}
+
 // ... (omitting lines between imports and handleJsonRpc for brevity in this thought, but replace tool needs exact match)
 
 // CORS 미들웨어 적용
@@ -228,6 +282,11 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                         name: 'read_discussion',
                         description: '특정 토론 스레드의 제목, 상태, 모든 댓글을 읽어옵니다. discussion_id 는 list_discussions 가 반환한 id를 사용합니다.',
                         inputSchema: { type: 'object', properties: { discussion_id: { type: 'number', description: 'list_discussions가 반환한 토론 id' } }, required: ['discussion_id'] }
+                    },
+                    {
+                        name: 'view_image',
+                        description: '위키에 업로드된 이미지를 파일명으로 조회하여 이미지 데이터로 반환합니다. 문서 본문에 ![파일명](https://도메인/media/images/파일명) 형식으로 삽입된 그 파일명(확장자 포함)을 사용합니다.',
+                        inputSchema: { type: 'object', properties: { filename: { type: 'string', description: '이미지 파일명 (확장자 포함, 예: "example.png")' } }, required: ['filename'] }
                     }
                 ]
             }
@@ -485,6 +544,55 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                     created_at: dc.created_at
                 }));
                 return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify({ discussion, comments: cleanedComments }, null, 2) }] } };
+            }
+            if (toolName === 'view_image') {
+                const filename = String(args.filename || '').trim();
+                if (!filename) {
+                    return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: 'Error: filename이 필요합니다.' }], isError: true } };
+                }
+
+                let row = await db.prepare(
+                    `SELECT r2_key, filename, mime_type, size FROM media WHERE filename = ? AND mime_type LIKE 'image/%' LIMIT 1`
+                ).bind(filename).first<{ r2_key: string; filename: string; mime_type: string; size: number }>();
+
+                if (!row) {
+                    const escapedFilename = filename.replace(/[\\%_]/g, '\\$&');
+                    const matches = await db.prepare(
+                        `SELECT r2_key, filename, mime_type, size FROM media WHERE filename LIKE ? ESCAPE '\\' AND mime_type LIKE 'image/%' ORDER BY filename ASC LIMIT 10`
+                    ).bind(`%${escapedFilename}%`).all<{ r2_key: string; filename: string; mime_type: string; size: number }>();
+
+                    if (matches.results.length === 0) {
+                        return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: `Error: '${filename}' 와 일치하는 이미지를 찾을 수 없습니다.` }], isError: true } };
+                    }
+                    if (matches.results.length > 1) {
+                        const list = matches.results.map(r => r.filename).join(', ');
+                        return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: `Error: 여러 이미지가 일치합니다. 정확한 파일명을 지정해 주세요: ${list}` }], isError: true } };
+                    }
+                    row = matches.results[0];
+                }
+
+                const MAX_IMAGE_RESPONSE_SIZE = 5 * 1024 * 1024; // 5MB
+                if (row.size > MAX_IMAGE_RESPONSE_SIZE) {
+                    return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: `Error: 이미지 파일이 너무 큽니다 (${(row.size / 1024 / 1024).toFixed(1)}MB). 5MB 이하 이미지만 조회할 수 있습니다.` }], isError: true } };
+                }
+
+                const obj = await c.env.MEDIA.get(row.r2_key);
+                if (!obj) {
+                    return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: 'Error: 이미지 파일이 스토리지에 존재하지 않습니다.' }], isError: true } };
+                }
+
+                const buffer = await obj.arrayBuffer();
+                const base64 = bytesToBase64(new Uint8Array(buffer));
+                const mimeType = obj.httpMetadata?.contentType || row.mime_type || 'image/png';
+
+                return {
+                    jsonrpc: '2.0', id,
+                    result: {
+                        content: [
+                            { type: 'image', data: base64, mimeType }
+                        ]
+                    }
+                };
             }
             return { jsonrpc: '2.0', error: { code: -32601, message: `Tool not found: ${toolName}` }, id };
         } catch (e: any) {

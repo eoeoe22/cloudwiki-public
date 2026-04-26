@@ -32,6 +32,31 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.wiki-freq-info-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  width: 1.25rem;
+  height: 1.25rem;
+  font-size: 0.875rem;
+  color: var(--wiki-text-muted);
+  background: transparent;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease;
+  flex-shrink: 0;
+}
+
+.wiki-freq-info-btn:hover {
+  color: var(--wiki-text);
+  background: var(--wiki-bg);
 }
 
 .wiki-freq-controls {
@@ -177,14 +202,3 @@
   height: 100% !important;
 }
 
-.wiki-freq-meta {
-  padding: 0.5rem 1rem;
-  font-size: 0.7rem;
-  color: var(--wiki-text-muted);
-  border-top: 1px solid var(--wiki-border);
-  background: var(--wiki-bg);
-  line-height: 1.4;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}

@@ -17,7 +17,7 @@
     function _parseFreqData(rawText) {
         const lines = rawText.split('\n');
         const freq = [], spl = [], phase = [];
-        const meta = {};
+        const meta = { comments: [], format: 'rew' };
         let hasPhase = false;
 
         for (const line of lines) {
@@ -27,6 +27,7 @@
             // 주석/메타데이터: '*'로 시작
             if (trimmed.startsWith('*')) {
                 const content = trimmed.replace(/^\*\s*/, '');
+                meta.comments.push(content);
                 if (content.startsWith('Measurement:')) meta.measurement = content.replace('Measurement:', '').trim();
                 if (content.startsWith('Source:')) meta.source = content.replace('Source:', '').trim();
                 if (content.startsWith('Dated:')) meta.dated = content.replace('Dated:', '').trim();
@@ -34,16 +35,23 @@
                 continue;
             }
 
-            // 헤더 행 감지
+            // 헤더 행 감지: REW 형식("Freq ... SPL")과 CSV 형식("frequency,raw" 등)
             if (trimmed.match(/Freq.*SPL/i)) {
                 if (trimmed.match(/Phase/i)) hasPhase = true;
                 continue;
             }
+            if (/^frequency\b/i.test(trimmed) && !/^\d/.test(trimmed)) {
+                meta.format = 'csv';
+                if (/phase/i.test(trimmed)) hasPhase = true;
+                continue;
+            }
 
-            // 데이터 행: 세미콜론 또는 탭/공백 구분
+            // 데이터 행: 세미콜론, 콤마, 또는 탭/공백 구분
             let parts;
             if (trimmed.includes(';')) {
                 parts = trimmed.split(';').map(s => s.trim());
+            } else if (trimmed.includes(',')) {
+                parts = trimmed.split(',').map(s => s.trim());
             } else {
                 parts = trimmed.split(/[\t ]+/);
             }
@@ -167,6 +175,25 @@
                 targetFreq = downsample(targetFreq, step);
                 targetSpl = downsample(targetSpl, step);
             }
+
+            // 포맷이 다르면 (예: 1차=REW 절대 SPL vs 타겟=CSV 정규화 응답) 절대 레벨이
+            // 크게 어긋나 오버레이/보정에서 스케일이 맞지 않는다.
+            // 200~1000 Hz 평균을 기준 레벨로 잡고 타겟을 1차에 맞춰 시프트.
+            if (parsed.meta.format !== targetParsed.meta.format) {
+                const meanInBand = (xs, ys) => {
+                    let sum = 0, count = 0;
+                    for (let i = 0; i < xs.length; i++) {
+                        if (xs[i] >= 200 && xs[i] <= 1000) { sum += ys[i]; count++; }
+                    }
+                    return count > 0 ? sum / count : null;
+                };
+                const pMean = meanInBand(freq, spl);
+                const tMean = meanInBand(targetFreq, targetSpl);
+                if (pMean !== null && tMean !== null) {
+                    const shift = pMean - tMean;
+                    targetSpl = targetSpl.map(v => v + shift);
+                }
+            }
         }
 
         // 컨테이너 구성
@@ -184,10 +211,15 @@
             warningHtml = `<div class="wiki-freq-target-warning">⚠️ ${escapeHtml(targetError)}</div>`;
         }
 
+        const hasComments = parsed.meta.comments && parsed.meta.comments.length > 0;
+        const infoBtnHtml = hasComments
+            ? '<button type="button" class="wiki-freq-info-btn" title="주석 전체 보기"><i class="bi bi-info-circle"></i></button>'
+            : '';
+
         containerDiv.innerHTML = `
             <div class="wiki-freq-graph">
                 <div class="wiki-freq-header">
-                    <span class="wiki-freq-title">${escapeHtml(docTitle)}${escapeHtml(metaLabel)}</span>
+                    <span class="wiki-freq-title">${escapeHtml(docTitle)}${escapeHtml(metaLabel)}${infoBtnHtml}</span>
                     <div class="wiki-freq-controls">
                         ${compensateBtnHtml}
                         ${parsed.hasPhase ? '<button class="wiki-freq-toggle-phase" title="위상 표시/숨기기"><i class="bi bi-activity"></i> Phase</button>' : ''}
@@ -197,13 +229,30 @@
                 <div class="wiki-freq-canvas-wrap">
                     <canvas></canvas>
                 </div>
-                ${parsed.meta.source ? '<div class="wiki-freq-meta">' + escapeHtml(parsed.meta.source) + '</div>' : ''}
             </div>
         `;
 
         const canvas = containerDiv.querySelector('canvas');
         const phaseBtn = containerDiv.querySelector('.wiki-freq-toggle-phase');
         const compensateBtn = containerDiv.querySelector('.wiki-freq-mode-btn[data-mode="compensate"]');
+        const infoBtn = containerDiv.querySelector('.wiki-freq-info-btn');
+
+        if (infoBtn && hasComments) {
+            infoBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const commentsHtml = parsed.meta.comments
+                    .map(c => escapeHtml(c))
+                    .join('<br>');
+                if (typeof Swal !== 'undefined') {
+                    Swal.fire({
+                        title: escapeHtml(docTitle),
+                        html: `<div style="text-align:left; font-size:0.85rem; line-height:1.5; max-height:60vh; overflow:auto; font-family: var(--bs-font-monospace, monospace);">${commentsHtml}</div>`,
+                        confirmButtonText: '닫기',
+                        width: '600px',
+                    });
+                }
+            });
+        }
 
         _loadChartJs().then(() => {
             const isDark = document.documentElement.getAttribute('data-bs-theme') === 'dark'

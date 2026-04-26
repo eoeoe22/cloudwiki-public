@@ -1285,6 +1285,26 @@ div:where(.swal2-container) .swal2-html-container {
   min-width: 0;
 }
 
+/* 이미지 검색 결과 본문 영역의 태그/콘텐츠 미리보기 */
+.search-image-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0;
+}
+
+.search-image-tags .badge {
+  font-weight: 500;
+  font-size: 0.78rem;
+}
+
+.search-image-content {
+  font-size: 0.9rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 /* ── Nav Tabs (위키 스타일 통합) ── */
 .nav-tabs {
   border-bottom: 1px solid var(--wiki-border);
