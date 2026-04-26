@@ -1839,6 +1839,181 @@ html[data-theme="dark"] #concurrent-edit-banner {
     font-size: 1rem;
 }
 
+/* ── 고급 표 삽입 모달 ── */
+.adv-table-form .adv-table-size-row {
+    display: flex;
+    gap: 14px;
+    margin-bottom: 12px;
+}
+
+.adv-table-form .adv-table-size-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.85rem;
+    color: var(--wiki-text);
+}
+
+.adv-table-form .adv-table-size-label input {
+    width: 64px;
+    padding: 4px 6px;
+    font-size: 0.85rem;
+    border: 1px solid var(--wiki-border);
+    border-radius: 4px;
+    text-align: center;
+}
+
+.adv-table-grid-wrap {
+    overflow: auto;
+    max-height: 360px;
+    border: 1px solid var(--wiki-border);
+    border-radius: 6px;
+    padding: 6px;
+    background: var(--wiki-bg-alt, var(--wiki-bg));
+}
+
+.adv-table-grid {
+    border-collapse: separate;
+    border-spacing: 4px;
+    width: 100%;
+}
+
+.adv-table-cell {
+    padding: 0;
+    border: none;
+}
+
+.adv-table-cell-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    width: 100%;
+    min-width: 72px;
+    min-height: 38px;
+    padding: 4px 8px;
+    font-size: 0.78rem;
+    background: var(--wiki-bg);
+    color: var(--wiki-text);
+    border: 1px dashed var(--wiki-border);
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background 0.12s, border-color 0.12s;
+}
+
+.adv-table-cell-btn:hover {
+    background: rgba(var(--wiki-primary-rgb, 59, 130, 246), 0.08);
+    border-color: var(--wiki-primary, #3b82f6);
+}
+
+.adv-table-cell.is-header .adv-table-cell-btn {
+    font-weight: 600;
+    background: var(--wiki-bg-alt, var(--wiki-bg));
+}
+
+.adv-table-cell.has-merge .adv-table-cell-btn {
+    background: rgba(var(--wiki-primary-rgb, 59, 130, 246), 0.15);
+    border-style: solid;
+    border-color: var(--wiki-primary, #3b82f6);
+    color: var(--wiki-link, #2563eb);
+}
+
+.adv-table-cell-btn i {
+    font-size: 0.95rem;
+    flex-shrink: 0;
+}
+
+.adv-table-cell-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.adv-table-merge-popover {
+    position: absolute;
+    z-index: 10000;
+    background: var(--wiki-bg);
+    border: 1px solid var(--wiki-border);
+    border-radius: 6px;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+    padding: 4px;
+    display: flex;
+    flex-direction: column;
+    min-width: 200px;
+}
+
+.adv-table-merge-option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    font-size: 0.85rem;
+    background: transparent;
+    color: var(--wiki-text);
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    text-align: left;
+    transition: background 0.1s;
+}
+
+.adv-table-merge-option:hover {
+    background: rgba(var(--wiki-primary-rgb, 59, 130, 246), 0.1);
+}
+
+.adv-table-merge-option.active {
+    background: rgba(var(--wiki-primary-rgb, 59, 130, 246), 0.18);
+    color: var(--wiki-link, #2563eb);
+}
+
+.adv-table-merge-option i {
+    font-size: 1rem;
+}
+
+.adv-table-merge-token {
+    margin-left: auto;
+    font-size: 0.78rem;
+    background: var(--wiki-bg-alt, transparent);
+    padding: 1px 6px;
+    border-radius: 3px;
+    color: var(--wiki-text-muted);
+}
+
+/* ── 빈 표 셀 병합 미니툴바 (커서 기반 인플레이스) ── */
+.cm-cell-merge-toolbar {
+    position: absolute;
+    z-index: 9998;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 4px;
+    background: var(--wiki-bg);
+    border: 1px solid var(--wiki-border);
+    border-radius: 6px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+}
+
+.cm-cell-merge-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    background: transparent;
+    color: var(--wiki-text);
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 1rem;
+    transition: background 0.1s, color 0.1s;
+}
+
+.cm-cell-merge-btn:hover {
+    background: rgba(var(--wiki-primary-rgb, 59, 130, 246), 0.12);
+    color: var(--wiki-link, #2563eb);
+}
+
 /* ── 타임스탬프 삽입 모달 ── */
 .timestamp-insert-form .form-label {
     font-size: 0.85rem;
@@ -2703,161 +2878,37 @@ html[data-theme="dark"] .cm-editor span.cm-inline-code::selection {
     color: var(--wiki-text-muted);
 }
 
-/* ── 그리드·스탯 삽입 모달 ── */
-.grid-stat-form .grid-stat-header {
-    display: grid;
-    grid-template-columns: 1fr 1.4fr 1fr 32px;
-    gap: 8px;
-    font-size: 0.75rem;
-    color: var(--wiki-text-muted);
-    padding: 0 2px 4px 2px;
-}
-
-.grid-stat-list {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    max-height: 320px;
-    overflow-y: auto;
-}
-
-.grid-stat-row {
-    display: grid;
-    grid-template-columns: 1fr 1.4fr 1fr 32px;
-    gap: 8px;
-    align-items: center;
-}
-
-.grid-stat-row .form-control,
-.grid-stat-row .form-select {
-    font-size: 0.85rem;
-}
-
-.grid-stat-remove {
-    width: 30px;
-    height: 30px;
-    border: 1px solid var(--wiki-border);
-    background: var(--wiki-bg);
-    color: var(--wiki-text-muted);
-    border-radius: 4px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    transition: background 0.12s, color 0.12s, border-color 0.12s;
-}
-
-.grid-stat-remove:hover {
-    background: rgba(220, 53, 69, 0.1);
-    color: #dc3545;
-    border-color: #dc3545;
-}
-
-.grid-stat-add-btn {
-    margin-top: 10px;
-    padding: 6px 12px;
-    font-size: 0.85rem;
-    background: var(--wiki-bg);
-    color: var(--wiki-text);
-    border: 1px dashed var(--wiki-border);
-    border-radius: 4px;
-    cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    transition: background 0.12s, border-color 0.12s, color 0.12s;
-}
-
-.grid-stat-add-btn:hover {
-    background: rgba(var(--wiki-primary-rgb, 59, 130, 246), 0.1);
-    border-color: var(--wiki-primary, #3b82f6);
-    border-style: solid;
-    color: var(--wiki-link, #2563eb);
-}
-
-.grid-stat-palette-btn {
-    width: 100%;
-    height: 30px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 4px;
-    padding: 2px 8px;
-    border: 1px solid var(--wiki-border);
-    border-radius: 4px;
-    font-size: 0.82rem;
-    font-weight: 600;
-    cursor: pointer;
-    background: var(--wiki-bg);
-    color: var(--wiki-text);
-    overflow: hidden;
-    transition: box-shadow 0.12s;
-}
-
-.grid-stat-palette-btn:hover {
-    box-shadow: 0 0 0 2px rgba(var(--wiki-primary-rgb, 59, 130, 246), 0.25);
-}
-
-.grid-stat-palette-btn-label {
-    flex: 1 1 auto;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    text-align: left;
-}
-
-.grid-stat-palette-btn-none {
-    color: var(--wiki-text-muted);
-    font-weight: 400;
-}
-
-.grid-stat-palette-btn-caret {
-    flex: 0 0 auto;
-    font-size: 1rem;
-    opacity: 0.7;
-}
-
-.grid-stat-palette-popover {
-    position: fixed;
-    z-index: 10000;
-    background: var(--wiki-bg);
-    border: 1px solid var(--wiki-border);
-    border-radius: 6px;
-    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.2);
-    padding: 8px;
+.card-insert-callout-chips {
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
-    max-width: 360px;
-    max-height: 280px;
-    overflow-y: auto;
 }
 
-.grid-stat-palette-swatch {
+.card-insert-callout-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
     border: 1px solid var(--wiki-border);
     border-radius: 4px;
-    padding: 4px 10px;
-    font-size: 0.82rem;
-    font-weight: 600;
+    padding: 6px 12px;
+    font-size: 0.85rem;
     cursor: pointer;
     background: var(--wiki-bg);
     color: var(--wiki-text);
     transition: box-shadow 0.12s, transform 0.08s;
 }
 
-.grid-stat-palette-swatch:hover {
+.card-insert-callout-chip:hover {
     box-shadow: 0 0 0 2px rgba(var(--wiki-primary-rgb, 59, 130, 246), 0.25);
 }
 
-.grid-stat-palette-swatch.active {
+.card-insert-callout-chip.active {
     box-shadow: 0 0 0 2px var(--wiki-primary, #3b82f6);
+    background: rgba(var(--wiki-primary-rgb, 59, 130, 246), 0.08);
 }
 
-.grid-stat-palette-swatch-none {
-    font-size: 0.78rem;
-    font-weight: 400;
-    color: var(--wiki-text-muted);
+.card-insert-callout-chip i {
+    font-size: 1.05rem;
 }
 
 /* ── 배지 삽입 모달 ── */
