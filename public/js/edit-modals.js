@@ -294,6 +294,10 @@ function setupTableInsertPopover(tableBtn) {
                     <i class="mdi mdi-file-delimited-outline"></i>
                     <span>CSV로 삽입</span>
                 </button>
+                <button type="button" class="table-insert-csv-btn table-insert-advanced-btn">
+                    <i class="mdi mdi-table-cog"></i>
+                    <span>고급 표 삽입 (셀 병합)</span>
+                </button>
             `;
     document.body.appendChild(popup);
 
@@ -301,6 +305,7 @@ function setupTableInsertPopover(tableBtn) {
     const cells = popup.querySelectorAll('.table-insert-cell');
     const labelText = popup.querySelector('.table-insert-label-text');
     const csvBtn = popup.querySelector('.table-insert-csv-btn');
+    const advancedBtn = popup.querySelector('.table-insert-advanced-btn');
 
     function getCell(rows, cols) {
         return popup.querySelector(`.table-insert-cell[data-row="${rows}"][data-col="${cols}"]`);
@@ -434,6 +439,11 @@ function setupTableInsertPopover(tableBtn) {
     csvBtn.addEventListener('click', () => {
         popup.classList.remove('active');
         openCsvTableModal();
+    });
+
+    advancedBtn.addEventListener('click', () => {
+        popup.classList.remove('active');
+        openAdvancedTableModal();
     });
 }
 
@@ -773,6 +783,198 @@ function openCsvTableModal() {
     });
 }
 
+// ── 고급 표 삽입 모달 (셀 병합) ──
+function openAdvancedTableModal() {
+    const MAX_ROWS = 12;
+    const MAX_COLS = 10;
+    const MERGE_TYPES = [
+        { id: '',     label: '일반 셀',   icon: 'mdi-square-outline',          token: '' },
+        { id: 'left', label: '좌측 병합', icon: 'mdi-arrow-left-bold-outline', token: '{<}' },
+        { id: 'right',label: '우측 병합', icon: 'mdi-arrow-right-bold-outline',token: '{>}' },
+        { id: 'up',   label: '상단 병합', icon: 'mdi-arrow-up-bold-outline',   token: '{^}' },
+        { id: 'mid',  label: '가운데 모음',icon: 'mdi-arrow-collapse-horizontal',token: '{><}' }
+    ];
+    const MERGE_BY_ID = Object.fromEntries(MERGE_TYPES.map(m => [m.id, m]));
+
+    const state = {
+        rows: 3,
+        cols: 3,
+        merge: {} // key "r-c" → mergeId
+    };
+
+    function clampRows(v) { return Math.min(MAX_ROWS, Math.max(2, parseInt(v, 10) || 2)); }
+    function clampCols(v) { return Math.min(MAX_COLS, Math.max(2, parseInt(v, 10) || 2)); }
+
+    function cellKey(r, c) { return `${r}-${c}`; }
+
+    function pruneMergeMap() {
+        const next = {};
+        for (const k in state.merge) {
+            const [r, c] = k.split('-').map(Number);
+            if (r < state.rows && c < state.cols) next[k] = state.merge[k];
+        }
+        state.merge = next;
+    }
+
+    function renderTable() {
+        const root = document.getElementById('advTableGrid');
+        if (!root) return;
+        let html = '<table class="adv-table-grid"><tbody>';
+        for (let r = 0; r < state.rows; r++) {
+            html += '<tr>';
+            for (let c = 0; c < state.cols; c++) {
+                const id = state.merge[cellKey(r, c)] || '';
+                const meta = MERGE_BY_ID[id] || MERGE_BY_ID[''];
+                const isHeader = r === 0;
+                const cls = `adv-table-cell${id ? ' has-merge' : ''}${isHeader ? ' is-header' : ''}`;
+                const labelTxt = id ? meta.token : (isHeader ? `제목${c + 1}` : `내용${c + 1}`);
+                html += `<td class="${cls}" data-r="${r}" data-c="${c}">
+                    <button type="button" class="adv-table-cell-btn" data-r="${r}" data-c="${c}"
+                        title="${escapeHtml(meta.label)}" aria-label="${r + 1}행 ${c + 1}열 - ${escapeHtml(meta.label)}">
+                        <i class="mdi ${meta.icon}"></i>
+                        <span class="adv-table-cell-label">${escapeHtml(labelTxt)}</span>
+                    </button>
+                </td>`;
+            }
+            html += '</tr>';
+        }
+        html += '</tbody></table>';
+        root.innerHTML = html;
+
+        root.querySelectorAll('.adv-table-cell-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const r = parseInt(btn.dataset.r, 10);
+                const c = parseInt(btn.dataset.c, 10);
+                openMergePopover(btn, r, c);
+            });
+        });
+    }
+
+    let popoverEl = null;
+    let outsideHandler = null;
+
+    function closeMergePopover() {
+        if (popoverEl && popoverEl.parentNode) popoverEl.parentNode.removeChild(popoverEl);
+        popoverEl = null;
+        if (outsideHandler) {
+            document.removeEventListener('mousedown', outsideHandler, true);
+            outsideHandler = null;
+        }
+    }
+
+    function openMergePopover(anchor, r, c) {
+        closeMergePopover();
+        const currentId = state.merge[cellKey(r, c)] || '';
+        popoverEl = document.createElement('div');
+        popoverEl.className = 'adv-table-merge-popover';
+        popoverEl.innerHTML = MERGE_TYPES.map(m => `
+            <button type="button" class="adv-table-merge-option${m.id === currentId ? ' active' : ''}" data-merge="${m.id}">
+                <i class="mdi ${m.icon}"></i>
+                <span>${escapeHtml(m.label)}</span>
+                ${m.token ? `<code class="adv-table-merge-token">${escapeHtml(m.token)}</code>` : ''}
+            </button>`).join('');
+        document.body.appendChild(popoverEl);
+
+        const rect = anchor.getBoundingClientRect();
+        const popH = popoverEl.offsetHeight || 200;
+        const belowSpace = window.innerHeight - rect.bottom;
+        const top = belowSpace < popH + 12 && rect.top > popH + 12
+            ? Math.max(8, rect.top - popH - 4)
+            : rect.bottom + 4;
+        popoverEl.style.top = `${top + window.scrollY}px`;
+        popoverEl.style.left = `${Math.max(8, rect.left + window.scrollX)}px`;
+
+        popoverEl.querySelectorAll('.adv-table-merge-option').forEach(opt => {
+            opt.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const id = opt.dataset.merge || '';
+                if (id) state.merge[cellKey(r, c)] = id;
+                else delete state.merge[cellKey(r, c)];
+                closeMergePopover();
+                renderTable();
+            });
+        });
+
+        outsideHandler = (e) => {
+            if (popoverEl && popoverEl.contains(e.target)) return;
+            if (e.target.closest && e.target.closest('.adv-table-cell-btn')) return;
+            closeMergePopover();
+        };
+        document.addEventListener('mousedown', outsideHandler, true);
+    }
+
+    function buildMarkdown() {
+        const lines = [];
+        for (let r = 0; r < state.rows; r++) {
+            const cells = [];
+            for (let c = 0; c < state.cols; c++) {
+                const id = state.merge[cellKey(r, c)];
+                if (id) cells.push(MERGE_BY_ID[id].token);
+                else cells.push(r === 0 ? `제목${c + 1}` : `내용${c + 1}`);
+            }
+            lines.push('| ' + cells.join(' | ') + ' |');
+            if (r === 0) lines.push('|' + ' --- |'.repeat(state.cols));
+        }
+        return lines.join('\n');
+    }
+
+    Swal.fire({
+        title: '<i class="mdi mdi-table-cog me-2"></i>고급 표 삽입',
+        width: 720,
+        html: `
+            <div class="text-start adv-table-form">
+                <p style="font-size:0.82rem;color:var(--wiki-text-muted);margin-bottom:10px;">
+                    각 셀을 클릭해 병합 토큰을 지정할 수 있습니다. 첫 번째 행은 표 헤더로 사용됩니다.
+                </p>
+                <div class="adv-table-size-row">
+                    <label class="adv-table-size-label">행
+                        <input type="number" id="advTableRows" min="2" max="${MAX_ROWS}" value="${state.rows}"
+                            style="background:var(--wiki-bg);color:var(--wiki-text);border-color:var(--wiki-border);">
+                    </label>
+                    <label class="adv-table-size-label">열
+                        <input type="number" id="advTableCols" min="2" max="${MAX_COLS}" value="${state.cols}"
+                            style="background:var(--wiki-bg);color:var(--wiki-text);border-color:var(--wiki-border);">
+                    </label>
+                </div>
+                <div id="advTableGrid" class="adv-table-grid-wrap"></div>
+            </div>
+        `,
+        showCancelButton: true,
+        confirmButtonText: '삽입',
+        cancelButtonText: '취소',
+        didOpen: () => {
+            renderTable();
+            const rowsInput = document.getElementById('advTableRows');
+            const colsInput = document.getElementById('advTableCols');
+            if (rowsInput) {
+                rowsInput.addEventListener('input', () => {
+                    state.rows = clampRows(rowsInput.value);
+                    pruneMergeMap();
+                    renderTable();
+                });
+            }
+            if (colsInput) {
+                colsInput.addEventListener('input', () => {
+                    state.cols = clampCols(colsInput.value);
+                    pruneMergeMap();
+                    renderTable();
+                });
+            }
+        },
+        willClose: () => {
+            closeMergePopover();
+        }
+    }).then(result => {
+        if (!result.isConfirmed) return;
+        const md = buildMarkdown();
+        editor.insertText('\n' + md + '\n');
+        if (typeof cmEditorView !== 'undefined' && cmEditorView) cmEditorView.focus();
+    });
+}
+
 // ── 구글 지도 퍼가기 모달 ──
 function openGoogleMapsEmbedModal() {
     Swal.fire({
@@ -846,8 +1048,22 @@ function openCardInsertModal() {
         return html;
     }
 
+    const CALLOUT_TYPES = [
+        { id: 'info',    label: '정보', icon: 'mdi mdi-information-outline' },
+        { id: 'tip',     label: '팁',   icon: 'mdi mdi-lightbulb-on-outline' },
+        { id: 'success', label: '성공', icon: 'mdi mdi-check-circle-outline' },
+        { id: 'warning', label: '주의', icon: 'mdi mdi-alert-outline' },
+        { id: 'danger',  label: '위험', icon: 'mdi mdi-alert-octagon-outline' },
+        { id: 'note',    label: '노트', icon: 'mdi mdi-note-text-outline' }
+    ];
+    const calloutChipsHtml = CALLOUT_TYPES.map((c, i) => `
+        <button type="button" class="card-insert-callout-chip${i === 0 ? ' active' : ''}" data-callout="${c.id}">
+            <i class="${c.icon}"></i>
+            <span>${c.label}</span>
+        </button>`).join('');
+
     Swal.fire({
-        title: '<i class="bi bi-card-heading me-2"></i>카드 / 임베드 블록 삽입',
+        title: '<i class="bi bi-card-heading me-2"></i>카드 / 임베드 / 콜아웃 블록 삽입',
         width: 560,
         html: `
                     <div class="text-start card-insert-form">
@@ -857,15 +1073,23 @@ function openCardInsertModal() {
                             <div class="btn-group w-100" role="group" id="cardInsertTypeToggle">
                                 <button type="button" class="btn btn-outline-primary active" data-type="card">카드</button>
                                 <button type="button" class="btn btn-outline-primary" data-type="embed">임베드</button>
+                                <button type="button" class="btn btn-outline-primary" data-type="callout">콜아웃</button>
+                            </div>
+                        </div>
+                        <div class="mb-3" id="cardInsertCalloutTypeGroup" style="display:none;">
+                            <label class="form-label">콜아웃 타입</label>
+                            <input type="hidden" id="cardInsertCalloutType" value="info">
+                            <div class="card-insert-callout-chips" id="cardInsertCalloutChips">
+                                ${calloutChipsHtml}
                             </div>
                         </div>
                         <div class="mb-3">
-                            <label class="form-label" for="cardInsertTitle">제목</label>
+                            <label class="form-label" for="cardInsertTitle" id="cardInsertTitleLabel">제목</label>
                             <input type="text" id="cardInsertTitle" class="form-control"
                                 placeholder="제목" autocomplete="off"
                                 style="background:var(--wiki-bg);color:var(--wiki-text);border-color:var(--wiki-border);">
                         </div>
-                        <div class="mb-3">
+                        <div class="mb-3" id="cardInsertTitlePaletteGroup">
                             <label class="form-label" id="cardInsertTitlePaletteLabel">제목 팔레트</label>
                             <input type="hidden" id="cardInsertTitlePalette" value="">
                             ${paletteSwatchHtml('cardInsertTitleSwatches')}
@@ -874,6 +1098,13 @@ function openCardInsertModal() {
                             <label class="form-label">내용 팔레트</label>
                             <input type="hidden" id="cardInsertBodyPalette" value="">
                             ${paletteSwatchHtml('cardInsertBodySwatches')}
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label" for="cardInsertBody">내용</label>
+                            <textarea id="cardInsertBody" class="form-control"
+                                placeholder="비워두면 '내용'이 자리표시자로 들어갑니다."
+                                rows="5"
+                                style="font-size:0.88rem;font-family:inherit;resize:vertical;background:var(--wiki-bg);color:var(--wiki-text);border-color:var(--wiki-border);"></textarea>
                         </div>
                     </div>
                 `,
@@ -909,18 +1140,35 @@ function openCardInsertModal() {
             const typeHidden = document.getElementById('cardInsertType');
             const typeButtons = document.querySelectorAll('#cardInsertTypeToggle button[data-type]');
             const bodyGroup = document.getElementById('cardInsertBodyPaletteGroup');
+            const titlePaletteGroup = document.getElementById('cardInsertTitlePaletteGroup');
             const titlePaletteLabel = document.getElementById('cardInsertTitlePaletteLabel');
+            const titleLabel = document.getElementById('cardInsertTitleLabel');
             const titleInputEl = document.getElementById('cardInsertTitle');
+            const calloutGroup = document.getElementById('cardInsertCalloutTypeGroup');
+
             function applyType(t) {
                 typeHidden.value = t;
                 typeButtons.forEach(b => b.classList.toggle('active', b.dataset.type === t));
                 if (t === 'embed') {
                     if (bodyGroup) bodyGroup.style.display = 'none';
+                    if (titlePaletteGroup) titlePaletteGroup.style.display = '';
+                    if (calloutGroup) calloutGroup.style.display = 'none';
                     if (titlePaletteLabel) titlePaletteLabel.textContent = '왼쪽 테두리 팔레트';
+                    if (titleLabel) titleLabel.textContent = '제목 (선택)';
                     if (titleInputEl) titleInputEl.placeholder = '임베드 제목';
+                } else if (t === 'callout') {
+                    // 콜아웃은 컬러 코드를 무시하므로 팔레트 입력을 모두 숨김
+                    if (bodyGroup) bodyGroup.style.display = 'none';
+                    if (titlePaletteGroup) titlePaletteGroup.style.display = 'none';
+                    if (calloutGroup) calloutGroup.style.display = '';
+                    if (titleLabel) titleLabel.textContent = '제목 (선택, 비우면 기본 제목)';
+                    if (titleInputEl) titleInputEl.placeholder = '예: 백업 필수';
                 } else {
                     if (bodyGroup) bodyGroup.style.display = '';
+                    if (titlePaletteGroup) titlePaletteGroup.style.display = '';
+                    if (calloutGroup) calloutGroup.style.display = 'none';
                     if (titlePaletteLabel) titlePaletteLabel.textContent = '제목 팔레트';
+                    if (titleLabel) titleLabel.textContent = '제목';
                     if (titleInputEl) titleInputEl.placeholder = '카드 제목';
                 }
             }
@@ -929,6 +1177,18 @@ function openCardInsertModal() {
                 e.preventDefault();
                 applyType(b.dataset.type);
             }));
+
+            // 콜아웃 타입 칩 핸들러
+            const calloutTypeHidden = document.getElementById('cardInsertCalloutType');
+            const calloutChips = document.querySelectorAll('#cardInsertCalloutChips .card-insert-callout-chip');
+            calloutChips.forEach(chip => {
+                chip.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    const val = chip.dataset.callout;
+                    calloutTypeHidden.value = val;
+                    calloutChips.forEach(c => c.classList.toggle('active', c.dataset.callout === val));
+                });
+            });
         },
         preConfirm: () => {
             const type = (document.getElementById('cardInsertType').value || 'card').trim();
@@ -937,24 +1197,44 @@ function openCardInsertModal() {
                 .trim();
             const titlePalette = (document.getElementById('cardInsertTitlePalette').value || '').trim();
             const bodyPalette = (document.getElementById('cardInsertBodyPalette').value || '').trim();
-            return { type, title, titlePalette, bodyPalette };
+            const calloutType = (document.getElementById('cardInsertCalloutType').value || 'info').trim();
+            const bodyRaw = (document.getElementById('cardInsertBody').value || '')
+                .replace(/\r\n/g, '\n')
+                .replace(/\r/g, '\n');
+            // 본문에 :::로 시작하는 라인이 있으면 블록 닫힘과 충돌하므로 차단
+            if (bodyRaw.split('\n').some(l => /^\s*:::/.test(l))) {
+                Swal.showValidationMessage('본문에 :::로 시작하는 줄은 블록을 닫아버려 사용할 수 없습니다.');
+                return false;
+            }
+            const body = bodyRaw.replace(/^\n+|\n+$/g, '');
+            return { type, title, titlePalette, bodyPalette, calloutType, body };
         }
     }).then(result => {
         if (!result.isConfirmed || !result.value) return;
-        const { type, title, titlePalette, bodyPalette } = result.value;
-        const blockType = type === 'embed' ? 'embed' : 'card';
-        let titleTokens = '';
-        if (titlePalette) titleTokens += `{palette:${titlePalette}}`;
+        const { type, title, titlePalette, bodyPalette, calloutType, body: bodyContent } = result.value;
+
+        let blockType;
+        if (type === 'embed') blockType = 'embed';
+        else if (type === 'callout') blockType = calloutType;
+        else blockType = 'card';
+
+        // 콜아웃은 컬러 코드를 무시하므로 팔레트 토큰을 출력하지 않는다.
+        const useTitlePalette = type !== 'callout' && titlePalette;
+        const useBodyPalette = type !== 'callout' && type !== 'embed' && bodyPalette;
+
+        const titleTokens = useTitlePalette ? `{palette:${titlePalette}}` : '';
         const titlePart = titleTokens && title ? `${titleTokens} ${title}` : (titleTokens || title);
         const header = titlePart ? `:::${blockType} ${titlePart}` : `:::${blockType}`;
 
+        // 본문: 비워두면 '내용' 자리표시자, 카드는 첫 줄에 본문 팔레트 토큰을 prefix.
+        const bodyText = bodyContent || '내용';
         let body;
-        if (blockType === 'embed') {
-            body = '내용';
+        if (useBodyPalette) {
+            const lines = bodyText.split('\n');
+            lines[0] = `{palette:${bodyPalette}}${lines[0]}`;
+            body = lines.join('\n');
         } else {
-            let bodyTokens = '';
-            if (bodyPalette) bodyTokens += `{palette:${bodyPalette}}`;
-            body = bodyTokens ? `${bodyTokens}내용` : '내용';
+            body = bodyText;
         }
 
         editor.insertText(`${header}\n${body}\n:::`);
@@ -1801,267 +2081,6 @@ function openComponentInsertModal() {
             editor.insertText(result.value);
             if (typeof cmEditorView !== 'undefined' && cmEditorView) cmEditorView.focus();
         }
-    });
-}
-
-// ── 그리드·스탯 삽입 모달 ──
-function openGridStatInsertModal() {
-    const palettes = getAllPalettesForEditor();
-    const paletteByName = new Map();
-    for (const p of palettes) paletteByName.set(p.name, p);
-
-    function paletteSwatchesHtml() {
-        let html = `<button type="button" class="grid-stat-palette-swatch" data-palette="" title="선택 안 함">
-                    <span class="grid-stat-palette-swatch-none">없음</span>
-                </button>`;
-        for (const p of palettes) {
-            const bg = _isSafeCssColor(p.variant.bg || '') ? p.variant.bg : 'transparent';
-            const color = _isSafeCssColor(p.variant.color || '') ? p.variant.color : 'inherit';
-            html += `<button type="button" class="grid-stat-palette-swatch" data-palette="${escapeHtml(p.name)}" title="${escapeHtml(p.name)}" style="background:${bg};color:${color};">${escapeHtml(p.name)}</button>`;
-        }
-        return html;
-    }
-
-    function updatePaletteBtnAppearance(btn, name) {
-        const p = paletteByName.get(name);
-        if (!p) {
-            btn.style.background = '';
-            btn.style.color = '';
-            btn.innerHTML = `<span class="grid-stat-palette-btn-label grid-stat-palette-btn-none">팔레트 없음</span><i class="mdi mdi-chevron-down grid-stat-palette-btn-caret"></i>`;
-            return;
-        }
-        const bg = _isSafeCssColor(p.variant.bg || '') ? p.variant.bg : 'transparent';
-        const color = _isSafeCssColor(p.variant.color || '') ? p.variant.color : 'inherit';
-        btn.style.background = bg;
-        btn.style.color = color;
-        btn.innerHTML = `<span class="grid-stat-palette-btn-label">${escapeHtml(p.name)}</span><i class="mdi mdi-chevron-down grid-stat-palette-btn-caret"></i>`;
-    }
-
-    const stats = [
-        { value: '', label: '', palette: '' },
-        { value: '', label: '', palette: '' },
-    ];
-
-    let popoverEl = null;
-    let openPopoverIdx = -1;
-    let outsideHandler = null;
-    let windowResizeHandler = null;
-
-    function closePopover() {
-        openPopoverIdx = -1;
-        if (popoverEl) popoverEl.style.display = 'none';
-    }
-
-    function positionPopover(btn) {
-        if (!popoverEl) return;
-        const rect = btn.getBoundingClientRect();
-        // CSS의 display: flex (wrap + gap) 레이아웃 유지: 'block'으로 덮어쓰지 않음
-        popoverEl.style.display = 'flex';
-        // 화면 아래 공간이 부족하면 위쪽으로 띄움
-        const popH = Math.min(popoverEl.offsetHeight || 240, 300);
-        const belowSpace = window.innerHeight - rect.bottom;
-        const top = belowSpace < popH + 12 && rect.top > popH + 12
-            ? Math.max(8, rect.top - popH - 6)
-            : rect.bottom + 4;
-        popoverEl.style.top = `${top}px`;
-        popoverEl.style.left = `${Math.max(8, rect.left)}px`;
-        popoverEl.style.minWidth = `${Math.max(200, rect.width)}px`;
-    }
-
-    function openPopover(idx, btn) {
-        if (!popoverEl) return;
-        openPopoverIdx = idx;
-        const currentVal = (stats[idx] && stats[idx].palette) || '';
-        popoverEl.querySelectorAll('.grid-stat-palette-swatch').forEach(sw => {
-            sw.classList.toggle('active', (sw.dataset.palette || '') === currentVal);
-        });
-        positionPopover(btn);
-    }
-
-    function render() {
-        const list = document.getElementById('gridStatList');
-        if (!list) return;
-        list.innerHTML = '';
-        stats.forEach((s, i) => {
-            const row = document.createElement('div');
-            row.className = 'grid-stat-row';
-            row.innerHTML = `
-                        <input type="text" class="form-control form-control-sm grid-stat-value" data-idx="${i}"
-                            placeholder="값" value="${escapeHtml(s.value)}"
-                            style="background:var(--wiki-bg);color:var(--wiki-text);border-color:var(--wiki-border);">
-                        <input type="text" class="form-control form-control-sm grid-stat-label" data-idx="${i}"
-                            placeholder="라벨" value="${escapeHtml(s.label)}"
-                            style="background:var(--wiki-bg);color:var(--wiki-text);border-color:var(--wiki-border);">
-                        <button type="button" class="grid-stat-palette-btn" data-idx="${i}"
-                            aria-haspopup="listbox" aria-expanded="false"></button>
-                        <button type="button" class="grid-stat-remove" data-idx="${i}" title="삭제">
-                            <i class="mdi mdi-close"></i>
-                        </button>
-                    `;
-            list.appendChild(row);
-            const paletteBtn = row.querySelector('.grid-stat-palette-btn');
-            if (paletteBtn) updatePaletteBtnAppearance(paletteBtn, s.palette || '');
-        });
-
-        list.querySelectorAll('.grid-stat-value').forEach(el => {
-            el.addEventListener('input', (e) => {
-                const i = parseInt(e.target.dataset.idx, 10);
-                if (!Number.isNaN(i) && stats[i]) stats[i].value = e.target.value;
-            });
-        });
-        list.querySelectorAll('.grid-stat-label').forEach(el => {
-            el.addEventListener('input', (e) => {
-                const i = parseInt(e.target.dataset.idx, 10);
-                if (!Number.isNaN(i) && stats[i]) stats[i].label = e.target.value;
-            });
-        });
-        list.querySelectorAll('.grid-stat-palette-btn').forEach(el => {
-            el.addEventListener('click', (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                const i = parseInt(el.dataset.idx, 10);
-                if (Number.isNaN(i)) return;
-                if (openPopoverIdx === i) { closePopover(); return; }
-                openPopover(i, el);
-            });
-        });
-        list.querySelectorAll('.grid-stat-remove').forEach(el => {
-            el.addEventListener('click', (e) => {
-                const i = parseInt(e.currentTarget.dataset.idx, 10);
-                if (!Number.isNaN(i)) {
-                    stats.splice(i, 1);
-                    if (stats.length === 0) stats.push({ value: '', label: '', palette: '' });
-                    closePopover();
-                    render();
-                }
-            });
-        });
-    }
-
-    Swal.fire({
-        title: '<i class="mdi mdi-view-grid-outline me-2"></i>그리드·스탯 삽입',
-        width: 640,
-        html: `
-                    <div class="text-start grid-stat-form">
-                        <p style="font-size:0.85rem;color:var(--wiki-text-muted);margin-bottom:10px;">
-                            그리드에 표시할 스탯 항목을 편집한 뒤 삽입하세요.
-                        </p>
-                        <div class="grid-stat-header">
-                            <span>값</span>
-                            <span>라벨</span>
-                            <span>팔레트</span>
-                            <span></span>
-                        </div>
-                        <div id="gridStatList" class="grid-stat-list"></div>
-                        <button type="button" id="gridStatAddBtn" class="grid-stat-add-btn">
-                            <i class="mdi mdi-plus"></i> 스탯 추가
-                        </button>
-                    </div>
-                `,
-        showCancelButton: true,
-        confirmButtonText: '삽입',
-        cancelButtonText: '취소',
-        didOpen: () => {
-            // 팔레트 팝오버를 body에 부착 (모달 내 overflow 클리핑 방지)
-            popoverEl = document.createElement('div');
-            popoverEl.className = 'grid-stat-palette-popover';
-            popoverEl.style.display = 'none';
-            popoverEl.innerHTML = paletteSwatchesHtml();
-            document.body.appendChild(popoverEl);
-
-            popoverEl.querySelectorAll('.grid-stat-palette-swatch').forEach(sw => {
-                sw.addEventListener('click', (e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    if (openPopoverIdx < 0 || !stats[openPopoverIdx]) { closePopover(); return; }
-                    const val = sw.dataset.palette || '';
-                    stats[openPopoverIdx].palette = val;
-                    const btn = document.querySelector(`.grid-stat-palette-btn[data-idx="${openPopoverIdx}"]`);
-                    if (btn) updatePaletteBtnAppearance(btn, val);
-                    closePopover();
-                });
-            });
-
-            outsideHandler = (e) => {
-                if (openPopoverIdx < 0) return;
-                if (popoverEl && popoverEl.contains(e.target)) return;
-                if (e.target.closest && e.target.closest('.grid-stat-palette-btn')) return;
-                closePopover();
-            };
-            document.addEventListener('mousedown', outsideHandler, true);
-
-            windowResizeHandler = () => {
-                if (openPopoverIdx < 0) return;
-                const btn = document.querySelector(`.grid-stat-palette-btn[data-idx="${openPopoverIdx}"]`);
-                if (btn) positionPopover(btn);
-                else closePopover();
-            };
-            window.addEventListener('resize', windowResizeHandler);
-            document.querySelector('.swal2-container')?.addEventListener('scroll', windowResizeHandler, true);
-            document.getElementById('gridStatList')?.addEventListener('scroll', windowResizeHandler, true);
-
-            render();
-            const firstInput = document.querySelector('#gridStatList .grid-stat-value');
-            if (firstInput) firstInput.focus();
-            const addBtn = document.getElementById('gridStatAddBtn');
-            if (addBtn) {
-                addBtn.addEventListener('click', (e) => {
-                    e.preventDefault();
-                    closePopover();
-                    stats.push({ value: '', label: '', palette: '' });
-                    render();
-                });
-            }
-        },
-        willClose: () => {
-            if (outsideHandler) document.removeEventListener('mousedown', outsideHandler, true);
-            if (windowResizeHandler) {
-                window.removeEventListener('resize', windowResizeHandler);
-                document.querySelector('.swal2-container')?.removeEventListener('scroll', windowResizeHandler, true);
-                document.getElementById('gridStatList')?.removeEventListener('scroll', windowResizeHandler, true);
-            }
-            if (popoverEl && popoverEl.parentNode) popoverEl.parentNode.removeChild(popoverEl);
-            popoverEl = null;
-            openPopoverIdx = -1;
-            outsideHandler = null;
-            windowResizeHandler = null;
-        },
-        preConfirm: () => {
-            const normalized = stats.map(s => ({
-                value: (s.value || '').trim(),
-                label: (s.label || '').trim(),
-                palette: (s.palette || '').trim()
-            }));
-            const filled = normalized.filter(s => s.value !== '' || s.label !== '' || s.palette !== '');
-            if (filled.length === 0) {
-                Swal.showValidationMessage('최소 한 개 이상의 스탯을 입력해주세요.');
-                return false;
-            }
-            if (filled.some(s => s.value === '')) {
-                Swal.showValidationMessage('각 스탯 항목에는 값을 입력해주세요.');
-                return false;
-            }
-            const invalidChars = /[|\}\r\n]/;
-            for (const s of filled) {
-                if (invalidChars.test(s.value) || invalidChars.test(s.label)) {
-                    Swal.showValidationMessage('값 또는 라벨에 |, }, 줄바꿈 문자를 사용할 수 없습니다.');
-                    return false;
-                }
-            }
-            return filled;
-        }
-    }).then(result => {
-        if (!result.isConfirmed || !Array.isArray(result.value)) return;
-        const lines = [':::grid'];
-        for (const s of result.value) {
-            const { value, label, palette } = s;
-            const prefix = palette ? `{palette:${palette}}` : '';
-            const payload = label ? `${value}|${label}` : value;
-            lines.push(`${prefix}{stat:${payload}}`);
-        }
-        lines.push(':::');
-        editor.insertText(lines.join('\n'));
-        if (typeof cmEditorView !== 'undefined' && cmEditorView) cmEditorView.focus();
     });
 }
 
