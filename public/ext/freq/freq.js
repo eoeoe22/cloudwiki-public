@@ -1,10 +1,14 @@
 /**
  * freq 익스텐션 — REW 주파수 응답 그래프 렌더러
- * 
+ *
  * 이 파일은 ENABLED_EXTENSIONS에 "freq"가 포함된 경우에만
  * common.js의 loadConfig()에서 동적으로 로드됩니다.
- * 
+ *
  * 로드 시 window._extensionRenderers에 자동 등록됩니다.
+ *
+ * 호출 형식:
+ *   {{freq:제목}}                 — 단일 그래프
+ *   {{freq:제목1|freq:제목2}}     — 제목2를 타겟 응답으로 사용 (비교/보정 옵션)
  */
 (function () {
     'use strict';
@@ -64,6 +68,22 @@
         return { freq, spl, phase, meta, hasPhase };
     }
 
+    /** 정렬된 (freqs, spls)에 대해 query 주파수에서의 SPL을 로그축 선형 보간으로 반환. 범위 밖이면 null. */
+    function _interpolateAt(freqs, spls, q) {
+        const n = freqs.length;
+        if (n === 0 || q < freqs[0] || q > freqs[n - 1]) return null;
+        let lo = 0, hi = n - 1;
+        while (hi - lo > 1) {
+            const mid = (lo + hi) >> 1;
+            if (freqs[mid] <= q) lo = mid;
+            else hi = mid;
+        }
+        const f0 = freqs[lo], f1 = freqs[hi];
+        if (f1 === f0) return spls[lo];
+        const t = (Math.log(q) - Math.log(f0)) / (Math.log(f1) - Math.log(f0));
+        return spls[lo] + t * (spls[hi] - spls[lo]);
+    }
+
     /** Chart.js 4.x 동적 로드 */
     function _loadChartJs() {
         return new Promise((resolve, reject) => {
@@ -92,28 +112,88 @@
             return;
         }
 
+        // ── 타겟(2번째 인자) 처리 ──
+        // {{freq:A|freq:B}} 형태에서 args["1"] = "freq:B" 가 들어온다.
+        // common.js 가 secondary[B] 에 미리 fetch한 결과를 넣어둠.
+        const rawTargetArg = extData.args && extData.args['1'];
+        const targetArg = (typeof rawTargetArg === 'string') ? rawTargetArg.trim() : '';
+        let targetSlug = null;
+        let targetParsed = null;
+        let targetError = null;
+        if (targetArg) {
+            targetSlug = targetArg;
+            const titleAfterPrefix = targetArg.startsWith('freq:') ? targetArg.substring(5).trim() : '';
+            if (!targetArg.startsWith('freq:') || !titleAfterPrefix) {
+                // freq: 네임스페이스가 아닌 문서 — 유효한 주파수응답 데이터가 아님
+                targetError = `"${targetArg}" 은(는) 유효한 주파수응답 데이터가 아닙니다. (freq: 문서만 타겟으로 사용 가능)`;
+            } else {
+                const sec = (extData.secondary && extData.secondary[targetSlug]) || null;
+                if (!sec) {
+                    targetError = `타겟 응답(${titleAfterPrefix})을 불러올 수 없습니다.`;
+                } else if (sec.disabled) {
+                    targetError = `타겟 응답(${titleAfterPrefix})의 익스텐션이 비활성화되어 있습니다.`;
+                } else if (sec.error) {
+                    targetError = `타겟 응답(${titleAfterPrefix}): ${sec.error}`;
+                } else if (typeof sec.content === 'string') {
+                    const tp = _parseFreqData(sec.content);
+                    if (tp.freq.length === 0) {
+                        targetError = `타겟 응답(${titleAfterPrefix}) 데이터를 파싱할 수 없습니다.`;
+                    } else {
+                        targetParsed = tp;
+                    }
+                } else {
+                    targetError = `타겟 응답(${titleAfterPrefix})이 유효하지 않습니다.`;
+                }
+            }
+        }
+
         // 데이터 다운샘플링: 포인트 수가 너무 많으면 성능을 위해 간략화
         const MAX_POINTS = 2000;
+        const downsample = (arr, step) => arr.filter((_, i) => i % step === 0);
         let { freq, spl, phase } = parsed;
         if (freq.length > MAX_POINTS) {
             const step = Math.ceil(freq.length / MAX_POINTS);
-            freq = freq.filter((_, i) => i % step === 0);
-            spl = spl.filter((_, i) => i % step === 0);
-            if (phase.length > 0) phase = phase.filter((_, i) => i % step === 0);
+            freq = downsample(freq, step);
+            spl = downsample(spl, step);
+            if (phase.length > 0) phase = downsample(phase, step);
+        }
+
+        let targetFreq = null, targetSpl = null;
+        if (targetParsed) {
+            targetFreq = targetParsed.freq;
+            targetSpl = targetParsed.spl;
+            if (targetFreq.length > MAX_POINTS) {
+                const step = Math.ceil(targetFreq.length / MAX_POINTS);
+                targetFreq = downsample(targetFreq, step);
+                targetSpl = downsample(targetSpl, step);
+            }
         }
 
         // 컨테이너 구성
         const docTitle = extData.slug.substring(extData.slug.indexOf(':') + 1);
         const metaLabel = parsed.meta.measurement ? ` — ${parsed.meta.measurement}` : '';
+        const targetTitle = (targetParsed && targetSlug && targetSlug.startsWith('freq:'))
+            ? targetSlug.substring(5)
+            : '';
+
+        let compensateBtnHtml = '';
+        let warningHtml = '';
+        if (targetParsed) {
+            compensateBtnHtml = `<button class="wiki-freq-mode-btn" data-mode="compensate" title="타겟 기준으로 보정 (편차 표시)"><i class="bi bi-rulers"></i> 보정</button>`;
+        } else if (targetError) {
+            warningHtml = `<div class="wiki-freq-target-warning">⚠️ ${escapeHtml(targetError)}</div>`;
+        }
 
         containerDiv.innerHTML = `
             <div class="wiki-freq-graph">
                 <div class="wiki-freq-header">
                     <span class="wiki-freq-title">${escapeHtml(docTitle)}${escapeHtml(metaLabel)}</span>
                     <div class="wiki-freq-controls">
+                        ${compensateBtnHtml}
                         ${parsed.hasPhase ? '<button class="wiki-freq-toggle-phase" title="위상 표시/숨기기"><i class="bi bi-activity"></i> Phase</button>' : ''}
                     </div>
                 </div>
+                ${warningHtml}
                 <div class="wiki-freq-canvas-wrap">
                     <canvas></canvas>
                 </div>
@@ -123,6 +203,7 @@
 
         const canvas = containerDiv.querySelector('canvas');
         const phaseBtn = containerDiv.querySelector('.wiki-freq-toggle-phase');
+        const compensateBtn = containerDiv.querySelector('.wiki-freq-mode-btn[data-mode="compensate"]');
 
         _loadChartJs().then(() => {
             const isDark = document.documentElement.getAttribute('data-bs-theme') === 'dark'
@@ -132,26 +213,80 @@
             const textColor = isDark ? '#b0b0b0' : '#555';
             const splColor = isDark ? '#60a5fa' : '#2563eb';
             const phaseColor = isDark ? '#f97316' : '#ea580c';
+            const targetColor = isDark ? '#94a3b8' : '#475569';
+
+            // 상태: 보정 토글 / 위상 토글. 두 토글은 상호 배타 (한 번에 하나만 ON 가능).
+            // 기본값: 둘 다 OFF → 타겟이 있으면 점선으로 항상 겹쳐 표시.
+            let compensate = false;
+            let phaseVisible = false;
+
+            // 보정 모드용: primary - target 을 200~1000 Hz 평균으로 0 정렬
+            const buildCompensated = () => {
+                const diff = freq.map((f, i) => {
+                    const t = _interpolateAt(targetFreq, targetSpl, f);
+                    return t === null ? null : spl[i] - t;
+                });
+                let sum = 0, count = 0;
+                for (let i = 0; i < freq.length; i++) {
+                    if (diff[i] !== null && freq[i] >= 200 && freq[i] <= 1000) {
+                        sum += diff[i];
+                        count++;
+                    }
+                }
+                if (count === 0) {
+                    for (let i = 0; i < freq.length; i++) {
+                        if (diff[i] !== null) { sum += diff[i]; count++; }
+                    }
+                }
+                const offset = count > 0 ? sum / count : 0;
+                return freq.map((f, i) => ({ x: f, y: diff[i] === null ? null : diff[i] - offset }));
+            };
+
+            const buildPrimaryData = () => {
+                if (compensate && targetFreq) return buildCompensated();
+                return freq.map((f, i) => ({ x: f, y: spl[i] }));
+            };
 
             const datasets = [
                 {
                     label: 'SPL (dB)',
-                    data: freq.map((f, i) => ({ x: f, y: spl[i] })),
+                    data: buildPrimaryData(),
                     borderColor: splColor,
                     backgroundColor: 'transparent',
                     borderWidth: 1.5,
                     pointRadius: 0,
                     tension: 0.1,
                     yAxisID: 'y',
+                    spanGaps: false,
                 }
             ];
+
+            // Target 데이터셋 — 기본 표시 (점선 겹쳐보기). 보정/위상 모드에서는 숨김.
+            if (targetFreq) {
+                datasets.push({
+                    label: `Target (${targetTitle})`,
+                    data: targetFreq.map((f, i) => ({ x: f, y: targetSpl[i] })),
+                    borderColor: targetColor,
+                    backgroundColor: 'transparent',
+                    borderWidth: 1.2,
+                    borderDash: [5, 4],
+                    pointRadius: 0,
+                    tension: 0.1,
+                    yAxisID: 'y',
+                    hidden: false,
+                });
+            }
+
+            // x축 범위 — 두 곡선 모두 커버
+            const xLow = Math.min(freq[0], targetFreq ? targetFreq[0] : freq[0]);
+            const xHigh = Math.max(freq[freq.length - 1], targetFreq ? targetFreq[targetFreq.length - 1] : freq[freq.length - 1]);
 
             const scales = {
                 x: {
                     type: 'logarithmic',
                     title: { display: true, text: 'Frequency (Hz)', color: textColor },
-                    min: Math.max(20, Math.min(...freq)),
-                    max: Math.min(20000, Math.max(...freq)),
+                    min: Math.max(20, xLow),
+                    max: Math.min(20000, xHigh),
                     grid: { color: gridColor },
                     ticks: {
                         color: textColor,
@@ -209,7 +344,7 @@
                         intersect: false,
                     },
                     plugins: {
-                        legend: { display: false },
+                        legend: { display: !!targetFreq, position: 'bottom', labels: { color: textColor, boxWidth: 18, font: { size: 11 } } },
                         tooltip: {
                             callbacks: {
                                 title: function(items) {
@@ -226,16 +361,49 @@
                 }
             });
 
-            // Phase 토글 버튼
-            if (phaseBtn) {
-                let phaseVisible = false;
-                phaseBtn.addEventListener('click', () => {
-                    phaseVisible = !phaseVisible;
-                    const phaseDataset = chart.data.datasets.find(d => d.yAxisID === 'yPhase');
-                    if (phaseDataset) phaseDataset.hidden = !phaseVisible;
-                    if (chart.options.scales.yPhase) chart.options.scales.yPhase.display = phaseVisible;
+            // 보정/위상 토글의 상호배타 상태를 한 번에 적용.
+            const applyState = () => {
+                const primary = chart.data.datasets[0];
+                primary.data = buildPrimaryData();
+                primary.label = compensate ? 'SPL Δ (dB)' : 'SPL (dB)';
+                chart.options.scales.y.title.text = compensate ? 'SPL Δ (dB)' : 'SPL (dB)';
+
+                // 타겟 점선: 기본 표시, 보정/위상 모드에서는 숨김.
+                const targetDs = chart.data.datasets.find(d => d.label && d.label.indexOf('Target (') === 0);
+                if (targetDs) targetDs.hidden = compensate || phaseVisible;
+
+                // 위상 데이터셋
+                const phaseDs = chart.data.datasets.find(d => d.yAxisID === 'yPhase');
+                if (phaseDs) phaseDs.hidden = !phaseVisible;
+                if (chart.options.scales.yPhase) chart.options.scales.yPhase.display = phaseVisible;
+
+                if (compensateBtn) {
+                    compensateBtn.classList.toggle('active', compensate);
+                    compensateBtn.classList.toggle('disabled', phaseVisible);
+                    compensateBtn.disabled = phaseVisible;
+                }
+                if (phaseBtn) {
                     phaseBtn.classList.toggle('active', phaseVisible);
-                    chart.update();
+                    phaseBtn.classList.toggle('disabled', compensate);
+                    phaseBtn.disabled = compensate;
+                }
+
+                chart.update();
+            };
+
+            if (compensateBtn) {
+                compensateBtn.addEventListener('click', () => {
+                    if (compensateBtn.disabled) return;
+                    compensate = !compensate;
+                    applyState();
+                });
+            }
+
+            if (phaseBtn) {
+                phaseBtn.addEventListener('click', () => {
+                    if (phaseBtn.disabled) return;
+                    phaseVisible = !phaseVisible;
+                    applyState();
                 });
             }
         }).catch(err => {

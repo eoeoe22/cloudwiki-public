@@ -209,9 +209,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     if (slug) {
-        AUTO_SAVE_KEY = 'wiki_autosave_' + slug
+        DRAFT_KEY = 'wiki_draft_' + slug
             + (sectionMode ? ('#section=' + sectionIndex) : '');
     }
+    // 과거 자동저장 잔여 키 일회성 정리 (오토세이브 기능은 제거됨)
+    if (typeof purgeLegacyAutosaveKeys === 'function') purgeLegacyAutosaveKeys();
 
     if (!slug) {
         Swal.fire('오류', '문서 제목이 지정되지 않았습니다.', 'error').then(() => {
@@ -234,7 +236,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         sectionMode = false;
         sectionIndex = -1;
         sectionHeadingParam = '';
-        if (slug) AUTO_SAVE_KEY = 'wiki_autosave_' + slug;
+        if (slug) DRAFT_KEY = 'wiki_draft_' + slug;
     }
 
     if (isExtensionData) {
@@ -280,7 +282,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         };
 
         // 변경 사항 미리보기, 스크롤 동기화, 자동 프리뷰 등 건너뜀
-        startAutoSave();
     } else {
         // ── CodeMirror 6 에디터 초기화 ──
         const isMobile = window.innerWidth <= 768;
@@ -354,7 +355,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             wordWrap: localStorage.getItem('editor_word_wrap') !== 'false',
             syntaxHighlight: localStorage.getItem('editor_syntax_highlight') !== 'false',
             advancedEdit: localStorage.getItem('editor_advanced_edit') !== 'false',
-            autoSave: localStorage.getItem('editor_auto_save') !== 'false',
         };
 
         // ── CM6 동적 재설정용 Compartment ──
@@ -1210,36 +1210,113 @@ document.addEventListener('DOMContentLoaded', async () => {
         toolbarSpacer.className = 'cm-toolbar-spacer';
         toolbar.appendChild(toolbarSpacer);
 
-        // PC 전용: 프리뷰 모드 토글 (편집창을 숨기고 프리뷰를 전체폭으로 확장)
-        const previewModeBtn = createToolbarBtn(
-            '<i class="mdi mdi-eye-outline"></i>',
-            '프리뷰 모드 (편집창 숨기기)',
-            () => togglePreviewMode()
-        );
-        previewModeBtn.id = 'cm-preview-mode-btn';
-        previewModeBtn.classList.add('cm-toolbar-btn-pc-only');
-        toolbar.appendChild(previewModeBtn);
+        // PC 전용: 보기/작성/일반 모드 전환 드롭다운
+        const PC_MODES = {
+            split: { icon: 'mdi-view-split-vertical', label: '일반 모드', desc: '에디터 + 프리뷰' },
+            edit: { icon: 'mdi-pencil', label: '작성 모드', desc: '에디터만' },
+            preview: { icon: 'mdi-eye-outline', label: '보기 모드', desc: '프리뷰만' },
+        };
 
-        function togglePreviewMode() {
+        const modeBtn = createToolbarBtn(
+            `<i class="mdi ${PC_MODES.split.icon}"></i><i class="mdi mdi-menu-down cm-toolbar-caret"></i>`,
+            '보기 방식 전환',
+            () => toggleModePanel()
+        );
+        modeBtn.id = 'cm-mode-btn';
+        modeBtn.classList.add('cm-toolbar-btn-pc-only', 'cm-toolbar-btn-mode');
+        toolbar.appendChild(modeBtn);
+
+        const modePanel = document.createElement('div');
+        modePanel.id = 'editor-mode-panel';
+        modePanel.className = 'editor-settings-panel editor-mode-panel';
+        modePanel.style.display = 'none';
+        modePanel.innerHTML = Object.entries(PC_MODES).map(([key, m]) => `
+            <button type="button" class="editor-mode-option" data-mode="${key}">
+                <i class="mdi ${m.icon}"></i>
+                <span class="editor-mode-option-text">
+                    <span class="editor-mode-option-label">${m.label}</span>
+                    <span class="editor-mode-option-desc">${m.desc}</span>
+                </span>
+                <i class="mdi mdi-check editor-mode-option-check"></i>
+            </button>
+        `).join('');
+        document.body.appendChild(modePanel);
+
+        let currentPcMode = 'split';
+        function setPcMode(mode) {
             const layoutEl = document.querySelector('.wiki-editor-layout');
             if (!layoutEl) return;
-            const isOn = layoutEl.dataset.previewMode === 'on';
-            if (isOn) {
-                delete layoutEl.dataset.previewMode;
-                previewModeBtn.classList.remove('active');
-                previewModeBtn.innerHTML = '<i class="mdi mdi-eye-outline"></i>';
-                previewModeBtn.title = '프리뷰 모드 (편집창 숨기기)';
-                if (typeof cmEditorView !== 'undefined' && cmEditorView) {
-                    cmEditorView.requestMeasure();
-                }
+            if (!PC_MODES[mode]) mode = 'split';
+            const prev = currentPcMode;
+            currentPcMode = mode;
+            if (mode === 'split') {
+                delete layoutEl.dataset.pcMode;
             } else {
-                layoutEl.dataset.previewMode = 'on';
-                previewModeBtn.classList.add('active');
-                previewModeBtn.innerHTML = '<i class="mdi mdi-eye-off-outline"></i>';
-                previewModeBtn.title = '프리뷰 모드 종료 (편집창 표시)';
+                layoutEl.dataset.pcMode = mode;
+            }
+            const m = PC_MODES[mode];
+            modeBtn.innerHTML = `<i class="mdi ${m.icon}"></i><i class="mdi mdi-menu-down cm-toolbar-caret"></i>`;
+            modeBtn.title = `보기 방식: ${m.label}`;
+            modeBtn.classList.toggle('active', mode !== 'split');
+            modePanel.querySelectorAll('.editor-mode-option').forEach(opt => {
+                opt.classList.toggle('active', opt.dataset.mode === mode);
+            });
+            if (prev === mode) return;
+            // 에디터가 숨김에서 표시로 전환된 경우 CM6에 레이아웃 재측정 요청
+            if (prev === 'preview' && mode !== 'preview' && typeof cmEditorView !== 'undefined' && cmEditorView) {
+                cmEditorView.requestMeasure();
+            }
+            // 프리뷰가 숨김에서 표시로 전환된 경우 즉시 갱신
+            if (prev === 'edit' && mode !== 'edit') {
                 updateCustomPreview();
             }
         }
+
+        function toggleModePanel() {
+            const isVisible = modePanel.style.display !== 'none';
+            if (isVisible) {
+                modePanel.style.display = 'none';
+                return;
+            }
+            modePanel.style.visibility = 'hidden';
+            modePanel.style.left = '-9999px';
+            modePanel.style.top = '-9999px';
+            modePanel.style.display = 'block';
+
+            const panelW = modePanel.offsetWidth;
+            const panelH = modePanel.offsetHeight;
+            const rect = modeBtn.getBoundingClientRect();
+            const viewportW = document.documentElement.clientWidth;
+            const viewportH = document.documentElement.clientHeight;
+            const margin = 8;
+
+            let left = rect.right - panelW;
+            left = Math.max(margin, Math.min(left, viewportW - panelW - margin));
+            let top = rect.bottom + 4;
+            if (top + panelH + margin > viewportH && rect.top - panelH - 4 >= margin) {
+                top = rect.top - panelH - 4;
+            }
+            top = Math.max(margin, Math.min(top, viewportH - panelH - margin));
+
+            modePanel.style.left = `${left + window.scrollX}px`;
+            modePanel.style.top = `${top + window.scrollY}px`;
+            modePanel.style.visibility = '';
+        }
+
+        modePanel.querySelectorAll('.editor-mode-option').forEach(opt => {
+            opt.addEventListener('click', () => {
+                setPcMode(opt.dataset.mode);
+                modePanel.style.display = 'none';
+            });
+        });
+
+        document.addEventListener('click', (e) => {
+            if (!modePanel.contains(e.target) && !modeBtn.contains(e.target)) {
+                modePanel.style.display = 'none';
+            }
+        });
+
+        setPcMode('split');
 
         const settingsBtn = createToolbarBtn('<i class="mdi mdi-cog"></i>', '에디터 설정', () => toggleSettingsPanel());
         settingsBtn.id = 'cm-settings-btn';
@@ -1269,10 +1346,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                 <input type="checkbox" id="settingAdvancedEdit"
                     ${editorSettings.advancedEdit && editorSettings.syntaxHighlight ? 'checked' : ''}
                     ${editorSettings.syntaxHighlight ? '' : 'disabled'}>
-            </label>
-            <label class="editor-settings-item">
-                <span>자동 저장</span>
-                <input type="checkbox" id="settingAutoSave" ${editorSettings.autoSave ? 'checked' : ''}>
             </label>
             <div class="editor-settings-divider"></div>
             <div class="editor-settings-section-title">줄바꿈 모드</div>
@@ -1386,16 +1459,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             editorSettings.advancedEdit = e.target.checked;
             localStorage.setItem('editor_advanced_edit', editorSettings.advancedEdit);
             applySyntaxAndAdvancedExtensions();
-        });
-
-        // ── 자동 저장 토글 ──
-        document.getElementById('settingAutoSave').addEventListener('change', (e) => {
-            editorSettings.autoSave = e.target.checked;
-            localStorage.setItem('editor_auto_save', editorSettings.autoSave);
-            // 끌 때는 이미 저장된 로컬 스냅샷도 정리
-            if (!editorSettings.autoSave && typeof AUTO_SAVE_KEY !== 'undefined' && AUTO_SAVE_KEY) {
-                localStorage.removeItem(AUTO_SAVE_KEY);
-            }
         });
 
         // ── 줄바꿈 모드 토글 ──
@@ -1638,8 +1701,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         }, 300);
 
-        startAutoSave();
-
         // 테마 변경 시 에디터 실시간 업데이트
         const applyEditorTheme = () => {
             const newIsDarkMode = getIsDarkMode();
@@ -1813,7 +1874,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     // 섹션을 찾지 못하면 전체 편집으로 자동 fallback
                     sectionMode = false;
                     sectionIndex = -1;
-                    AUTO_SAVE_KEY = 'wiki_autosave_' + slug;
+                    DRAFT_KEY = 'wiki_draft_' + slug;
                     if (typeof Swal !== 'undefined') {
                         Swal.fire({
                             icon: 'warning',
@@ -1839,7 +1900,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     : `<i class="mdi mdi-pencil-box-multiple"></i> 편집: ${escapeHtml(page.title)}`;
             document.title = `편집: ${page.title} - ${appConfig.wikiName}`;
             document.getElementById('diffPreviewSection').style.display = 'block'; // 편집일 때만 노출
-            checkAutoSave();
+            checkDraft();
         } else {
             // 새 문서
             originalContent = '';
@@ -1854,7 +1915,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             templateBtn.innerHTML = '<i class="mdi mdi-content-copy"></i> 템플릿으로 시작하기';
             templateBtn.onclick = openTemplateModal;
             document.getElementById('editPageTitle').appendChild(templateBtn);
-            checkAutoSave();
+            checkDraft();
         }
     } catch (e) {
         // 새 문서로 취급
@@ -2197,7 +2258,7 @@ async function savePage() {
                 editor.setMarkdown(mergedLocal);
                 sectionMode = false;
                 sectionRange = null;
-                AUTO_SAVE_KEY = 'wiki_autosave_' + slug;
+                DRAFT_KEY = 'wiki_draft_' + slug;
                 const banner = document.getElementById('sectionEditBanner');
                 if (banner) { banner.classList.add('d-none'); banner.classList.remove('d-flex'); }
                 // 숨겼던 필드 복원
@@ -2263,7 +2324,7 @@ async function savePage() {
             throw new Error(data.error || '저장 실패');
         }
 
-        if (AUTO_SAVE_KEY) localStorage.removeItem(AUTO_SAVE_KEY);
+        if (DRAFT_KEY) localStorage.removeItem(DRAFT_KEY);
 
         isSuccess = true;
         // 섹션 모드: originalContent 는 섹션 텍스트 기준이어야 beforeunload 경고가 정상 동작

@@ -1350,12 +1350,20 @@ async function _resolveTransclusionsCore(text, depth, cache, pageSlug, options) 
     const slugsToFetch = new Set();
     const extensionSlugs = new Set();
     calls.forEach(c => {
-        const { name } = _parseTemplateCall(c.raw.trim());
+        const { name, args } = _parseTemplateCall(c.raw.trim());
         if (_isExtensionCall(name)) {
             if (options.expandExtensions) {
                 // 익스텐션: slug를 그대로 사용 (예: "freq:AirPods_Pro_2")
                 extensionSlugs.add(name);
                 slugsToFetch.add(name);
+                // 익스텐션 호출의 인자값이 다른 익스텐션 슬러그(ex. freq:Target)인 경우
+                // 렌더러가 secondary 데이터로 사용할 수 있도록 미리 fetch.
+                for (const argVal of Object.values(args)) {
+                    if (typeof argVal === 'string' && _isExtensionCall(argVal)) {
+                        extensionSlugs.add(argVal);
+                        slugsToFetch.add(argVal);
+                    }
+                }
             }
         } else {
             let slug = name;
@@ -1470,7 +1478,24 @@ async function _resolveTransclusionsCore(text, depth, cache, pageSlug, options) 
                     replacement = `⚠️ [비활성화된 익스텐션: ${cached.extName}]`;
                 } else if (options.emitExtensionPlaceholders) {
                     const idx = _wikiExtensionData.length;
-                    _wikiExtensionData.push({ extName: cached.extName, slug: cached.slug, content: cached.content, title: cached.title });
+                    // 호출 인자 중 익스텐션 슬러그를 가리키는 값들을 secondary 로 해소.
+                    // 렌더러는 extData.secondary[<arg값>] 으로 부속 데이터에 접근한다.
+                    const secondary = {};
+                    for (const argVal of Object.values(call.args || {})) {
+                        if (typeof argVal === 'string' && _isExtensionCall(argVal)) {
+                            const sub = cache.get(argVal);
+                            if (sub && typeof sub === 'object' && sub._ext) {
+                                if (sub._disabled) {
+                                    secondary[argVal] = { slug: argVal, disabled: true };
+                                } else {
+                                    secondary[argVal] = { slug: argVal, content: sub.content, title: sub.title };
+                                }
+                            } else {
+                                secondary[argVal] = { slug: argVal, error: typeof sub === 'string' ? sub : '참조를 찾을 수 없습니다.' };
+                            }
+                        }
+                    }
+                    _wikiExtensionData.push({ extName: cached.extName, slug: cached.slug, content: cached.content, title: cached.title, args: call.args, secondary });
                     replacement = `\n\nWIKIEXTPH_${cached.extName}_${idx}_XEND\n\n`;
                 } else {
                     replacement = match;

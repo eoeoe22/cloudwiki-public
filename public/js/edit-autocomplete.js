@@ -429,7 +429,7 @@ function initColorPickerCanvasEvents() {
             }
         });
         hexInput.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') {
+            if (e.key === 'Enter' || e.key === 'Tab') {
                 e.preventDefault();
                 e.stopPropagation();
                 applyColorAutocomplete();
@@ -781,7 +781,7 @@ function applyTimestampAutocomplete() {
     const inputEl = document.getElementById('tsAcInput');
     if (inputEl) {
         inputEl.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') {
+            if (e.key === 'Enter' || e.key === 'Tab') {
                 e.preventDefault();
                 e.stopPropagation();
                 applyTimestampAutocomplete();
@@ -957,7 +957,10 @@ const paletteAc = {
 };
 
 function getAllPalettesForEditor() {
-    const isDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+    // 사이트 자체 테마 토글(data-theme)을 먼저 따르고, auto 일 때만 OS 선호를 반영한다.
+    const isDark = (typeof getIsDarkMode === 'function')
+        ? getIsDarkMode()
+        : !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
     const hardcoded = (typeof WIKI_HARDCODED_PALETTES !== 'undefined') ? WIKI_HARDCODED_PALETTES : {};
     const custom = (appConfig && appConfig.palettes && typeof appConfig.palettes === 'object') ? appConfig.palettes : {};
     const merged = {};
@@ -1274,7 +1277,7 @@ if (categoryTagInput) {
                 e.preventDefault();
                 hideCategoryAutocomplete();
                 return;
-            } else if (e.key === 'Enter' && categoryAc.selectedIndex >= 0) {
+            } else if ((e.key === 'Enter' || e.key === 'Tab') && categoryAc.selectedIndex >= 0) {
                 e.preventDefault();
                 selectCategoryAc(categoryAc.selectedIndex);
                 return;
@@ -1572,7 +1575,11 @@ window.addEventListener('keydown', (e) => {
     const isRight = key === 'ArrowRight' || e.keyCode === 39;
     const isLeft = key === 'ArrowLeft' || e.keyCode === 37;
     const isEnter = key === 'Enter' || e.keyCode === 13;
+    const isTab = key === 'Tab' || e.keyCode === 9;
     const isEsc = key === 'Escape' || e.keyCode === 27;
+    // Tab은 Enter와 동일하게 "현재 선택 항목 적용"으로 동작.
+    // 단, IME 조합/Shift+Tab(역방향 포커스 이동) 은 통과시킨다.
+    const isCommit = isEnter || (isTab && !e.shiftKey);
 
     if (activeAc === 'wiki') {
         if (isDown) {
@@ -1589,7 +1596,7 @@ window.addEventListener('keydown', (e) => {
             } else { hideAutocomplete(); }
         } else if (isLeft || isRight) {
             hideAutocomplete();
-        } else if (isEnter) {
+        } else if (isCommit) {
             if (wikiAc.results.length > 0 && wikiAc.selectedIndex >= 0) {
                 e.preventDefault(); e.stopPropagation();
                 selectAutocomplete(wikiAc.selectedIndex);
@@ -1623,7 +1630,7 @@ window.addEventListener('keydown', (e) => {
                 iconAc.selectedIndex = (iconAc.selectedIndex - 1 + iconAc.results.length) % iconAc.results.length;
                 highlightIconAcItem();
             }
-        } else if (isEnter) {
+        } else if (isCommit) {
             if (iconAc.results.length > 0 && iconAc.selectedIndex >= 0) {
                 e.preventDefault(); e.stopPropagation();
                 selectIconAutocomplete(iconAc.selectedIndex);
@@ -1643,7 +1650,7 @@ window.addEventListener('keydown', (e) => {
             highlightImgSizeAcItem();
         } else if (isLeft || isRight) {
             hideImgSizeAutocomplete();
-        } else if (isEnter) {
+        } else if (isCommit) {
             if (imgSizeAc.selectedIndex >= 0) {
                 e.preventDefault(); e.stopPropagation();
                 selectImgSizeAutocomplete(imgSizeAc.selectedIndex);
@@ -1655,44 +1662,86 @@ window.addEventListener('keydown', (e) => {
     } else if (activeAc === 'color') {
         const swatchCount = COLOR_SWATCHES.length;
         const SWATCH_COLS = 10;
+        const SV_STEP = 0.04;     // 채도/명도 조절 단계 (HSV 캔버스 모드)
+        const HUE_STEP = 6;       // 색조 조절 단계 (deg)
+        // 스와치가 선택되어 있으면 스와치 그리드 모드, 아니면 HSV 팔레트 캔버스 모드.
+        const inSwatchMode = colorAc.selectedSwatchIndex >= 0;
 
-        if (isRight) {
-            if (swatchCount > 0) {
-                e.preventDefault(); e.stopPropagation();
-                colorAc.selectedSwatchIndex = (colorAc.selectedSwatchIndex + 1) % swatchCount;
-                selectColorSwatch(colorAc.selectedSwatchIndex);
-            }
-        } else if (isLeft) {
-            if (swatchCount > 0) {
-                e.preventDefault(); e.stopPropagation();
-                colorAc.selectedSwatchIndex = (colorAc.selectedSwatchIndex - 1 + swatchCount) % swatchCount;
-                selectColorSwatch(colorAc.selectedSwatchIndex);
-            }
-        } else if (isDown) {
-            if (swatchCount > 0) {
-                e.preventDefault(); e.stopPropagation();
-                colorAc.selectedSwatchIndex = Math.min(colorAc.selectedSwatchIndex + SWATCH_COLS, swatchCount - 1);
-                selectColorSwatch(colorAc.selectedSwatchIndex);
-            }
-        } else if (isUp) {
-            if (swatchCount > 0) {
-                e.preventDefault(); e.stopPropagation();
-                colorAc.selectedSwatchIndex = Math.max(colorAc.selectedSwatchIndex - SWATCH_COLS, 0);
-                selectColorSwatch(colorAc.selectedSwatchIndex);
-            }
-        } else if (isEnter) {
+        if (isCommit) {
             e.preventDefault(); e.stopPropagation();
             applyColorAutocomplete();
         } else if (isEsc) {
             e.preventDefault(); e.stopPropagation();
             hideColorAutocomplete();
+        } else if (inSwatchMode) {
+            // ── 스와치 그리드 키보드 네비게이션 ──
+            if (isRight) {
+                if (swatchCount > 0) {
+                    e.preventDefault(); e.stopPropagation();
+                    colorAc.selectedSwatchIndex = (colorAc.selectedSwatchIndex + 1) % swatchCount;
+                    selectColorSwatch(colorAc.selectedSwatchIndex);
+                }
+            } else if (isLeft) {
+                if (swatchCount > 0) {
+                    e.preventDefault(); e.stopPropagation();
+                    colorAc.selectedSwatchIndex = (colorAc.selectedSwatchIndex - 1 + swatchCount) % swatchCount;
+                    selectColorSwatch(colorAc.selectedSwatchIndex);
+                }
+            } else if (isDown) {
+                if (swatchCount > 0) {
+                    e.preventDefault(); e.stopPropagation();
+                    colorAc.selectedSwatchIndex = Math.min(colorAc.selectedSwatchIndex + SWATCH_COLS, swatchCount - 1);
+                    selectColorSwatch(colorAc.selectedSwatchIndex);
+                }
+            } else if (isUp) {
+                if (swatchCount > 0) {
+                    e.preventDefault(); e.stopPropagation();
+                    colorAc.selectedSwatchIndex = Math.max(colorAc.selectedSwatchIndex - SWATCH_COLS, 0);
+                    selectColorSwatch(colorAc.selectedSwatchIndex);
+                }
+            }
+        } else {
+            // ── HSV 팔레트 캔버스 키보드 모드 ──
+            // Shift+Left/Right: 색조(hue)
+            // Left/Right: 채도(saturation)
+            // Up/Down: 명도(brightness)
+            if (e.shiftKey && (isRight || isLeft)) {
+                e.preventDefault(); e.stopPropagation();
+                colorAc.hue = isRight
+                    ? (colorAc.hue + HUE_STEP) % 360
+                    : (colorAc.hue - HUE_STEP + 360) % 360;
+                drawColorPalette();
+                drawHueSlider();
+                updateColorPreview();
+                renderColorSwatches();
+            } else if (isRight) {
+                e.preventDefault(); e.stopPropagation();
+                colorAc.saturation = Math.min(1, colorAc.saturation + SV_STEP);
+                drawColorPalette();
+                updateColorPreview();
+            } else if (isLeft) {
+                e.preventDefault(); e.stopPropagation();
+                colorAc.saturation = Math.max(0, colorAc.saturation - SV_STEP);
+                drawColorPalette();
+                updateColorPreview();
+            } else if (isUp) {
+                e.preventDefault(); e.stopPropagation();
+                colorAc.brightness = Math.min(1, colorAc.brightness + SV_STEP);
+                drawColorPalette();
+                updateColorPreview();
+            } else if (isDown) {
+                e.preventDefault(); e.stopPropagation();
+                colorAc.brightness = Math.max(0, colorAc.brightness - SV_STEP);
+                drawColorPalette();
+                updateColorPreview();
+            }
         }
     } else if (activeAc === 'timestamp') {
         if (isEsc) {
             e.preventDefault(); e.stopPropagation();
             hideTimestampAutocomplete();
             if (editor) editor.focus();
-        } else if (isEnter) {
+        } else if (isCommit) {
             e.preventDefault(); e.stopPropagation();
             applyTimestampAutocomplete();
         }
@@ -1711,7 +1760,7 @@ window.addEventListener('keydown', (e) => {
             } else { hidePaletteAutocomplete(); }
         } else if (isLeft || isRight) {
             hidePaletteAutocomplete();
-        } else if (isEnter) {
+        } else if (isCommit) {
             if (paletteAc.results.length > 0 && paletteAc.selectedIndex >= 0) {
                 e.preventDefault(); e.stopPropagation();
                 selectPaletteAutocomplete(paletteAc.selectedIndex);
@@ -1735,7 +1784,7 @@ window.addEventListener('keydown', (e) => {
             } else { hideCodeAutocomplete(); }
         } else if (isLeft || isRight) {
             hideCodeAutocomplete();
-        } else if (isEnter) {
+        } else if (isCommit) {
             if (codeAc.filtered.length > 0 && codeAc.selectedIndex >= 0) {
                 e.preventDefault(); e.stopPropagation();
                 selectCodeAutocomplete(codeAc.selectedIndex);

@@ -1387,10 +1387,11 @@ body.raw-mode .wiki-content-raw {
 }
 
 .wiki-embed-title {
-  font-size: 1rem;
-  font-weight: 600;
-  color: var(--wiki-link, #2563eb);
-  margin-bottom: 0.375rem;
+  font-size: 1.0625rem;
+  font-weight: 700;
+  color: var(--wiki-text);
+  margin-top: 0;
+  margin-bottom: 0.5rem;
   line-height: 1.3;
 }
 

@@ -160,12 +160,22 @@
         flex-direction: row;
     }
 
-    /* PC 전용 프리뷰 모드: 편집창을 숨기고 프리뷰를 전체폭으로 확장 */
-    .wiki-editor-layout[data-preview-mode="on"] .wiki-editor-pane {
+    /* PC 전용 보기 모드: 편집창을 숨기고 프리뷰를 전체폭으로 확장 */
+    .wiki-editor-layout[data-pc-mode="preview"] .wiki-editor-pane {
         display: none;
     }
 
-    .wiki-editor-layout[data-preview-mode="on"] .wiki-preview-pane {
+    .wiki-editor-layout[data-pc-mode="preview"] .wiki-preview-pane {
+        flex: 1 1 100%;
+        border-right: none;
+    }
+
+    /* PC 전용 작성 모드: 프리뷰를 숨기고 에디터를 전체폭으로 확장 */
+    .wiki-editor-layout[data-pc-mode="edit"] .wiki-preview-pane {
+        display: none;
+    }
+
+    .wiki-editor-layout[data-pc-mode="edit"] .wiki-editor-pane {
         flex: 1 1 100%;
         border-right: none;
     }
@@ -447,6 +457,85 @@ html[data-theme="dark"] .editor-settings-panel {
     height: 18px;
     background: var(--wiki-border);
     margin: 0 4px;
+}
+
+/* ── 보기 방식 모드 드롭다운 ── */
+.cm-toolbar-btn-mode {
+    width: auto;
+    padding: 0 4px 0 6px;
+    gap: 2px;
+}
+
+.cm-toolbar-caret {
+    font-size: 14px !important;
+    opacity: 0.7;
+    margin-left: -2px;
+}
+
+.editor-mode-panel {
+    width: 220px;
+    padding: 4px;
+}
+
+.editor-mode-option {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 8px 10px;
+    border: none;
+    background: transparent;
+    color: var(--wiki-text);
+    text-align: left;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.12s;
+}
+
+.editor-mode-option:hover {
+    background: var(--wiki-bg);
+}
+
+.editor-mode-option > i:first-child {
+    font-size: 18px;
+    flex-shrink: 0;
+    color: var(--wiki-text-muted);
+}
+
+.editor-mode-option-text {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-width: 0;
+}
+
+.editor-mode-option-label {
+    font-size: 0.9rem;
+    font-weight: 600;
+    line-height: 1.2;
+}
+
+.editor-mode-option-desc {
+    font-size: 0.72rem;
+    color: var(--wiki-text-muted);
+    line-height: 1.2;
+    margin-top: 2px;
+}
+
+.editor-mode-option-check {
+    font-size: 16px !important;
+    color: var(--wiki-primary);
+    visibility: hidden;
+    flex-shrink: 0;
+}
+
+.editor-mode-option.active .editor-mode-option-check {
+    visibility: visible;
+}
+
+.editor-mode-option.active > i:first-child,
+.editor-mode-option.active .editor-mode-option-label {
+    color: var(--wiki-primary);
 }
 
 /* ── 위키 문법 에디터 내 하이라이팅 ── */
@@ -1397,14 +1486,19 @@ html[data-theme="dark"] #concurrent-edit-banner {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 4px 8px;
+    padding: 4px 8px 4px 5px;
     border-radius: 6px;
     cursor: pointer;
+    border-left: 3px solid transparent;
 }
 
-#palette-autocomplete .palette-ac-item:hover,
-#palette-autocomplete .palette-ac-item.active {
+#palette-autocomplete .palette-ac-item:hover {
     background: var(--wiki-toc-bg);
+}
+
+#palette-autocomplete .palette-ac-item.active {
+    background: var(--wiki-bg);
+    border-left-color: var(--wiki-primary);
 }
 
 #palette-autocomplete .palette-ac-badge {

@@ -62,6 +62,22 @@
   background: var(--wiki-bg);
 }
 
+.wiki-freq-toggle-phase.disabled,
+.wiki-freq-toggle-phase[disabled] {
+  opacity: 0.45;
+  cursor: not-allowed;
+  background: var(--wiki-card-bg);
+  color: var(--wiki-text-muted);
+  border-color: var(--wiki-border);
+}
+
+.wiki-freq-toggle-phase.disabled:hover,
+.wiki-freq-toggle-phase[disabled]:hover {
+  color: var(--wiki-text-muted);
+  border-color: var(--wiki-border);
+  background: var(--wiki-card-bg);
+}
+
 .wiki-freq-toggle-phase.active {
   color: #ea580c;
   border-color: #ea580c;
@@ -73,6 +89,74 @@
     color: #f97316;
     border-color: #f97316;
     background: rgba(249, 115, 22, 0.12);
+  }
+}
+
+.wiki-freq-mode-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0.25rem 0.6rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--wiki-text-muted);
+  background: var(--wiki-card-bg);
+  border: 1px solid var(--wiki-border);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.wiki-freq-mode-btn:hover {
+  color: var(--wiki-text);
+  border-color: var(--wiki-border-focus);
+  background: var(--wiki-bg);
+}
+
+.wiki-freq-mode-btn.active {
+  color: #2563eb;
+  border-color: #2563eb;
+  background: rgba(37, 99, 235, 0.08);
+}
+
+.wiki-freq-mode-btn.disabled,
+.wiki-freq-mode-btn[disabled] {
+  opacity: 0.45;
+  cursor: not-allowed;
+  color: var(--wiki-text-muted);
+  border-color: var(--wiki-border);
+  background: var(--wiki-card-bg);
+}
+
+.wiki-freq-mode-btn.disabled:hover,
+.wiki-freq-mode-btn[disabled]:hover {
+  color: var(--wiki-text-muted);
+  border-color: var(--wiki-border);
+  background: var(--wiki-card-bg);
+}
+
+@media (prefers-color-scheme: dark) {
+  .wiki-freq-mode-btn.active {
+    color: #60a5fa;
+    border-color: #60a5fa;
+    background: rgba(96, 165, 250, 0.14);
+  }
+}
+
+.wiki-freq-target-warning {
+  padding: 0.5rem 1rem;
+  font-size: 0.75rem;
+  color: #b45309;
+  background: rgba(245, 158, 11, 0.1);
+  border-bottom: 1px solid var(--wiki-border);
+  line-height: 1.4;
+}
+
+@media (prefers-color-scheme: dark) {
+  .wiki-freq-target-warning {
+    color: #fbbf24;
+    background: rgba(251, 191, 36, 0.08);
   }
 }
 

@@ -85,7 +85,7 @@ let slug = null;
 let pageVersion = null;
 let originalContent = '';
 let editor = null;
-let AUTO_SAVE_KEY = '';
+let DRAFT_KEY = '';
 let conflictEditor = null;
 let serverViewMode = 'raw';
 let serverViewer = null;
@@ -318,63 +318,166 @@ function hexToHsv(hex) {
     return { h, s, v };
 }
 
-// ── 로컬스토리지 자동저장 ──
-// 사용자 설정(editor_auto_save)은 매 tick마다 localStorage에서 직접 읽어
-// 토글이 즉시 반영되도록 한다. 기본값은 ON.
-function isAutoSaveEnabled() {
-    return localStorage.getItem('editor_auto_save') !== 'false';
+// ── 로컬 초안 저장(수동) ──
+// 사용자가 "초안 저장" 버튼을 눌렀을 때만 현재 본문을 localStorage에 저장한다.
+// 저장 시 함께 보관: 초안 본문 / 그 시점의 문서 버전 / 그 시점의 base(originalContent).
+// base 는 나중에 불러올 때 서버 최신본과의 충돌 해결 UI 의 base 로 재사용된다.
+function saveDraftToLocal() {
+    if (!editor || !slug || !DRAFT_KEY) return false;
+    const content = editor.getMarkdown();
+    if (!content || !content.trim()) {
+        Swal.fire({
+            icon: 'info',
+            title: '저장할 내용이 없습니다',
+            timer: 1200,
+            showConfirmButton: false
+        });
+        return false;
+    }
+    const payload = {
+        content,
+        version: (typeof pageVersion === 'number' || typeof pageVersion === 'string') ? pageVersion : null,
+        base: typeof originalContent === 'string' ? originalContent : '',
+        savedAt: Date.now(),
+    };
+    try {
+        localStorage.setItem(DRAFT_KEY, JSON.stringify(payload));
+        Swal.fire({
+            icon: 'success',
+            title: '초안 저장됨',
+            text: '이 브라우저에 임시 저장했습니다.',
+            timer: 1200,
+            showConfirmButton: false
+        });
+        return true;
+    } catch (e) {
+        Swal.fire({
+            icon: 'error',
+            title: '초안 저장 실패',
+            text: '브라우저 저장소에 기록할 수 없습니다. (용량 초과 가능성)'
+        });
+        return false;
+    }
 }
 
-function startAutoSave() {
-    setInterval(() => {
-        if (!isAutoSaveEnabled()) return;
-        if (editor && slug && AUTO_SAVE_KEY) {
-            const content = editor.getMarkdown();
-            if (content && content.trim().length > 0) {
-                localStorage.setItem(AUTO_SAVE_KEY, content);
-            }
+// 저장된 초안을 읽어 정규화한다. 손상된 데이터는 null 반환.
+function readDraftFromLocal() {
+    if (!DRAFT_KEY) return null;
+    const raw = localStorage.getItem(DRAFT_KEY);
+    if (!raw) return null;
+    try {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed.content === 'string') {
+            return {
+                content: parsed.content,
+                version: ('version' in parsed) ? parsed.version : null,
+                base: typeof parsed.base === 'string' ? parsed.base : null,
+                savedAt: typeof parsed.savedAt === 'number' ? parsed.savedAt : null,
+            };
         }
-    }, 10000); // 10초마다 자동 저장
+    } catch (e) {
+        // JSON 이 아니면 손상된 잔여 데이터 — 무시하고 정리
+    }
+    localStorage.removeItem(DRAFT_KEY);
+    return null;
 }
 
-async function checkAutoSave() {
-    if (!AUTO_SAVE_KEY) return;
-    if (!isAutoSaveEnabled()) {
-        // 끈 상태면 잔여 스냅샷 정리 후 종료
-        localStorage.removeItem(AUTO_SAVE_KEY);
+// 페이지 진입 시 저장된 초안 처리:
+//  1) 본문 동일 → 조용히 삭제
+//  2) 버전이 그대로 → 단순 불러오기 확인
+//  3) 버전이 변경됨 → 경고 후 확인 시 충돌 해결 UI 진입
+async function checkDraft() {
+    if (!DRAFT_KEY) return;
+    const draft = readDraftFromLocal();
+    if (!draft) return;
+
+    const currentBase = typeof originalContent === 'string' ? originalContent : '';
+
+    // 본문이 서버 최신본과 동일하면 의미 없음 — 정리
+    if (draft.content.trim() === currentBase.trim()) {
+        localStorage.removeItem(DRAFT_KEY);
         return;
     }
 
-    const savedContent = localStorage.getItem(AUTO_SAVE_KEY);
-    if (savedContent) {
-        // 로드된 내용과 동일하면 묻지 않고 삭제
-        if (savedContent.trim() === originalContent.trim()) {
-            localStorage.removeItem(AUTO_SAVE_KEY);
+    // 버전 비교: 초안 저장 시점 이후 서버에서 바뀌었는지
+    const draftVer = draft.version;
+    const curVer = (typeof pageVersion === 'number' || typeof pageVersion === 'string') ? pageVersion : null;
+    // 버전 정보가 양쪽 다 존재하고 다를 때만 "변경됨" 으로 간주.
+    // (한쪽이 null 이면 비교 불가 → 안전하게 변경된 것으로 처리)
+    const versionChanged = draftVer == null || curVer == null
+        ? (draftVer !== curVer)
+        : String(draftVer) !== String(curVer);
+
+    if (versionChanged) {
+        const result = await Swal.fire({
+            title: '문서가 그 사이 편집되었습니다',
+            text: '마지막으로 초안을 저장한 이후 문서가 편집되었습니다. 초안을 불러오시겠습니까?',
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonText: '예, 불러오기 (충돌 해결)',
+            cancelButtonText: '아니오, 초안 삭제'
+        });
+        if (!result.isConfirmed) {
+            localStorage.removeItem(DRAFT_KEY);
             return;
         }
 
-        const result = await Swal.fire({
-            title: '작성 중인 내용이 있습니다',
-            text: '이전에 작성하던 내용을 불러오시겠습니까?',
-            icon: 'info',
-            showCancelButton: true,
-            confirmButtonText: '예, 불러오기',
-            cancelButtonText: '아니오, 삭제'
-        });
-
-        if (result.isConfirmed) {
-            editor.setMarkdown(savedContent);
-            scrollToBottom();
-            Swal.fire({
-                icon: 'success',
-                title: '불러옴',
-                text: '저장된 내용을 불러왔습니다.',
-                timer: 1000,
-                showConfirmButton: false
-            });
-        } else {
-            localStorage.removeItem(AUTO_SAVE_KEY);
+        // 초안 + 서버 최신본을 충돌 해결 UI 로 넘긴다.
+        //  - editor 본문 = 초안 (ours)
+        //  - originalContent = 초안의 base (3-way merge 의 base)
+        //  - showConflictModal({ current_version, content }) 의 content = 현재 서버 최신본 (theirs)
+        const theirs = currentBase;
+        const theirsVersion = curVer;
+        editor.setMarkdown(draft.content);
+        if (typeof scrollToBottom === 'function') scrollToBottom();
+        // base 가 누락된 레거시 초안은 현재 서버 최신본을 base 로 사용 (보수적 fallback).
+        originalContent = (typeof draft.base === 'string') ? draft.base : currentBase;
+        // 초안은 충돌 해결 후 저장 시점에 정리된다(savePage 성공 경로).
+        if (typeof showConflictModal === 'function') {
+            showConflictModal({ current_version: theirsVersion, content: theirs });
         }
+        return;
+    }
+
+    // 버전 동일 → 평소처럼 불러오기 여부만 확인
+    const result = await Swal.fire({
+        title: '저장된 초안이 있습니다',
+        text: '이전에 저장한 초안을 불러오시겠습니까?',
+        icon: 'info',
+        showCancelButton: true,
+        confirmButtonText: '예, 불러오기',
+        cancelButtonText: '아니오, 삭제'
+    });
+
+    if (result.isConfirmed) {
+        editor.setMarkdown(draft.content);
+        if (typeof scrollToBottom === 'function') scrollToBottom();
+        Swal.fire({
+            icon: 'success',
+            title: '불러옴',
+            text: '저장된 초안을 불러왔습니다.',
+            timer: 1000,
+            showConfirmButton: false
+        });
+    } else {
+        localStorage.removeItem(DRAFT_KEY);
+    }
+}
+
+// 과거 자동저장이 남긴 wiki_autosave_* 키를 일회성으로 정리한다.
+// (오토세이브 기능 자체가 제거되었으므로 더 이상 의미 없음)
+function purgeLegacyAutosaveKeys() {
+    try {
+        const toRemove = [];
+        for (let i = 0; i < localStorage.length; i++) {
+            const k = localStorage.key(i);
+            if (k && k.startsWith('wiki_autosave_')) toRemove.push(k);
+        }
+        toRemove.forEach(k => localStorage.removeItem(k));
+        // 사용자 토글 설정도 정리
+        localStorage.removeItem('editor_auto_save');
+    } catch (e) {
+        // localStorage 접근 불가 환경(Privacy 모드 등)은 무시
     }
 }
 

@@ -167,8 +167,8 @@ function _renderBlockHtml(block, blockData) {
         case 'row':
             return `<div class="wiki-row"${styleAttr}>${innerHtml}</div>`;
         case 'embed': {
-            const accentRaw = (color && _isSafeCssColor(color)) ? color
-                            : (bg && _isSafeCssColor(bg)) ? bg
+            const accentRaw = (bg && _isSafeCssColor(bg)) ? bg
+                            : (color && _isSafeCssColor(color)) ? color
                             : '';
             const accentStyle = accentRaw ? ` style="border-left-color:${accentRaw};"` : '';
             const titleHtml = titleEsc ? `<div class="wiki-embed-title">${titleEsc}</div>` : '';
