@@ -1,4 +1,3 @@
-// ──────────────────────────────────────────────────────────────────────────
 // 편집 충돌 해결 UI (GitHub PR conflict editor 스타일)
 //
 // 용어:
@@ -10,7 +9,6 @@
 // 활용해 (1) 충돌 마커가 자동 삽입된 병합 초안을 통합 textarea에 채우고,
 // (2) 비교 패널에서 "내 vs 서버 / 내 vs base / 서버 vs base" 세 가지
 // 시점의 GitHub 스타일 hunk 테이블을 보여준다.
-// ──────────────────────────────────────────────────────────────────────────
 
 const CONFLICT_CONTEXT_LINES = 3;
 
@@ -27,7 +25,7 @@ let conflictState = {
     conflicts: [],                 // [{ id, ours, theirs, resolved }]
 };
 
-// ── 라인 분할 / 결합 헬퍼 ───────────────────────────────────────────────
+// ── 라인 분할 / 결합 헬퍼 
 // jsdiff가 생성하는 part.value 는 보통 트레일링 \n 을 포함하므로,
 // split('\n') 결과의 마지막 빈 토큰을 제거해 라인 배열로 만든다.
 function splitLines(text) {
@@ -37,7 +35,7 @@ function splitLines(text) {
     return arr;
 }
 
-// ── jsdiff 결과 → base 라인 범위에 매핑된 hunk 배열 ─────────────────────
+// ── jsdiff 결과 → base 라인 범위에 매핑된 hunk 배열 
 // 반환: [{ baseStart, baseEnd, replacement }]
 //   baseStart..baseEnd 는 base 라인 인덱스 [0-based, end exclusive]
 //   replacement 는 해당 영역을 대체할 modified 측 텍스트(라인 배열)
@@ -72,7 +70,7 @@ function extractHunks(base, modified) {
     return hunks;
 }
 
-// ── 3-way 합성: 충돌 마커가 삽입된 병합 초안 생성 ────────────────────────
+// ── 3-way 합성: 충돌 마커가 삽입된 병합 초안 생성
 // 자동 병합이 아닌 "표기 초안". 겹치는 변경은 충돌 블록으로 감싸 사용자가
 // 직접 결정하도록 남긴다.
 function buildConflictDraft(base, ours, theirs, serverVer) {
@@ -209,9 +207,9 @@ function buildConflictDraft(base, ours, theirs, serverVer) {
 // ── 비교 모드별 source/target 텍스트 산출 ───────────────────────────────
 function getCompareSources(mode) {
     const s = conflictState;
-    if (mode === 'mine-vs-base')   return { left: s.base,   right: s.ours,   leftLabel: 'base',   rightLabel: '내 수정본' };
-    if (mode === 'server-vs-base') return { left: s.base,   right: s.theirs, leftLabel: 'base',   rightLabel: '서버 최신본' };
-    return                                { left: s.theirs, right: s.ours,   leftLabel: '서버',   rightLabel: '내 수정본' };
+    if (mode === 'mine-vs-base') return { left: s.base, right: s.ours, leftLabel: 'base', rightLabel: '내 수정본' };
+    if (mode === 'server-vs-base') return { left: s.base, right: s.theirs, leftLabel: 'base', rightLabel: '서버 최신본' };
+    return { left: s.theirs, right: s.ours, leftLabel: '서버', rightLabel: '내 수정본' };
 }
 
 // ── 변경 hunk 개수 (요약 칩용) ───────────────────────────────────────────
@@ -250,9 +248,9 @@ function buildUnifiedTable(patch) {
             const text = line.substring(1);
             if (ch === '\\') return; // "\ No newline at end of file"
             let type, oldCol, newCol, prefix;
-            if (ch === '+')      { type = 'add';  oldCol = '';     newCol = newLn++; prefix = '+'; }
-            else if (ch === '-') { type = 'del';  oldCol = oldLn++; newCol = '';      prefix = '-'; }
-            else                 { type = 'same'; oldCol = oldLn++; newCol = newLn++; prefix = ' '; }
+            if (ch === '+') { type = 'add'; oldCol = ''; newCol = newLn++; prefix = '+'; }
+            else if (ch === '-') { type = 'del'; oldCol = oldLn++; newCol = ''; prefix = '-'; }
+            else { type = 'same'; oldCol = oldLn++; newCol = newLn++; prefix = ' '; }
             rows.push(
                 `<tr class="diff-${type}">`
                 + `<td class="diff-gutter">${oldCol}</td>`
@@ -690,8 +688,8 @@ function updateConflictMarkerStateFromTextarea() {
     if (conflictState.conflicts) {
         for (const c of conflictState.conflicts) {
             const present = text.includes(`<<<<<<< 내 수정본 [#${c.id}]`)
-                         && text.includes(`>>>>>>> `) // end tag 존재 + id marker 검사
-                         && text.includes(`[#${c.id}]`);
+                && text.includes(`>>>>>>> `) // end tag 존재 + id marker 검사
+                && text.includes(`[#${c.id}]`);
             c.resolved = !present;
         }
         renderHunkList();
