@@ -306,12 +306,34 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                 return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(results.results, null, 2) }] } };
             }
             if (toolName === 'search_fts') {
-                const query = `SELECT p.slug, p.title, p.content, p.last_revision_id, snippet(pages_fts, -1, '<b>', '</b>', '...', 20) as snippet FROM pages_fts f JOIN pages p ON f.rowid = p.id WHERE pages_fts MATCH ? AND p.deleted_at IS NULL AND p.is_private = 0 LIMIT 10`;
-                const results = await db.prepare(query).bind(`"${args.query}"*`).all<{ slug: string; title: string; content: string; last_revision_id: number | null; snippet: string }>();
-                
+                const rawQuery = String(args.query || '').trim();
+                if (!rawQuery) {
+                    return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: '[]' }] } };
+                }
+
+                // Trigram 토크나이저는 3 codepoint 미만 쿼리를 매치할 수 없다.
+                // 웹 /search 와 동일하게 짧은 쿼리는 LIKE fallback 으로 본문/제목 부분 일치를 잡는다.
+                // 또한 따옴표(")는 FTS5 phrase syntax 를 깨뜨리므로 이중 따옴표로 escape 한다.
+                // String.length 는 UTF-16 code unit 기준이라 이모지 등 비-BMP 문자에서 codepoint
+                // 수와 어긋나므로, trigram의 codepoint 단위 기준에 맞춰 [...]로 codepoint 수를 센다.
+                let rows: { slug: string; title: string; content: string; last_revision_id: number | null; snippet: string }[] = [];
+                if ([...rawQuery].length < 3) {
+                    // LIKE 메타문자(%, _, \)를 escape 해 사용자가 입력한 문자열 그대로 부분 일치만 수행한다.
+                    const likeEscaped = rawQuery.replace(/[\\%_]/g, '\\$&');
+                    const likePattern = `%${likeEscaped}%`;
+                    const fbSql = `SELECT p.slug, p.title, p.content, p.last_revision_id FROM pages p WHERE (p.title LIKE ? ESCAPE '\\' OR p.content LIKE ? ESCAPE '\\') AND p.deleted_at IS NULL AND p.is_private = 0 ORDER BY (CASE WHEN p.title LIKE ? ESCAPE '\\' THEN 0 ELSE 1 END), p.updated_at DESC LIMIT 10`;
+                    const fbRes = await db.prepare(fbSql).bind(likePattern, likePattern, likePattern).all<{ slug: string; title: string; content: string; last_revision_id: number | null }>();
+                    rows = fbRes.results.map(r => ({ ...r, snippet: '' }));
+                } else {
+                    const safeMatchQuery = '"' + rawQuery.replace(/"/g, '""') + '"';
+                    const ftsSql = `SELECT p.slug, p.title, p.content, p.last_revision_id, snippet(pages_fts, -1, '<b>', '</b>', '...', 20) as snippet FROM pages_fts JOIN pages p ON pages_fts.rowid = p.id WHERE pages_fts MATCH ? AND p.deleted_at IS NULL AND p.is_private = 0 LIMIT 10`;
+                    const ftsRes = await db.prepare(ftsSql).bind(safeMatchQuery).all<{ slug: string; title: string; content: string; last_revision_id: number | null; snippet: string }>();
+                    rows = ftsRes.results;
+                }
+
                 const origin = new URL(c.req.url).origin;
                 const enabledExtMcp1 = (c.env.ENABLED_EXTENSIONS || '').split(',').map((s: string) => s.trim()).filter(Boolean);
-                const output = await Promise.all(results.results.map(async (row) => {
+                const output = await Promise.all(rows.map(async (row) => {
                     let actualContent = row.content;
                     if (isR2OnlyNamespace(row.slug, enabledExtMcp1) && (!actualContent || actualContent === '')) {
                         if (row.last_revision_id) {
@@ -321,9 +343,18 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                             }
                         }
                     }
+                    // LIKE fallback 경로에서는 FTS snippet 이 없으므로, 매치 위치 주변 본문을 직접 잘라 섹션을 찾는다.
+                    const snippetForSection = row.snippet
+                        || (() => {
+                            const idx = (actualContent || '').toLowerCase().indexOf(rawQuery.toLowerCase());
+                            if (idx < 0) return '';
+                            const start = Math.max(0, idx - 20);
+                            const end = Math.min(actualContent.length, idx + rawQuery.length + 60);
+                            return actualContent.slice(start, end);
+                        })();
                     return {
                         title: row.title,
-                        section: findSectionForSnippet(actualContent, row.snippet),
+                        section: findSectionForSnippet(actualContent, snippetForSection),
                     };
                 }));
                 return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(output, null, 2) }] } };

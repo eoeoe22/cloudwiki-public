@@ -15,6 +15,48 @@ const search = new Hono<Env>();
 // 변경 시 API 응답의 pageSize 로 프런트에 전달되어 자동 반영된다.
 const PAGE_SIZE = 10;
 
+// LIKE fallback 경로(<3글자 트라이그램 미스 또는 FTS5 오류)에서 사용할 스니펫 좌/우 컨텍스트 길이.
+// FTS5 snippet()의 num_tokens=40과 유사한 노출 범위를 만들기 위해 좌 20 / 우 60 codepoints로 잡는다.
+const LIKE_SNIPPET_LEFT = 20;
+const LIKE_SNIPPET_RIGHT = 60;
+
+function escapeForHtml(s: string): string {
+    return s
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
+
+/**
+ * LIKE fallback 경로에서 본문/제목으로부터 직접 <mark> 하이라이트가 포함된 스니펫을 생성한다.
+ * 본문에 매치가 있으면 본문 기준으로, 그렇지 않고 제목에 매치가 있으면 제목 기준으로 만든다.
+ * 둘 다 없으면 빈 문자열을 반환한다.
+ */
+function buildLikeSnippet(title: string, content: string, query: string): string {
+    if (!query) return '';
+    const q = query.toLowerCase();
+
+    const findAndSlice = (src: string): string | null => {
+        if (!src) return null;
+        const idx = src.toLowerCase().indexOf(q);
+        if (idx < 0) return null;
+        const start = Math.max(0, idx - LIKE_SNIPPET_LEFT);
+        const end = Math.min(src.length, idx + query.length + LIKE_SNIPPET_RIGHT);
+        const before = src.slice(start, idx);
+        const match = src.slice(idx, idx + query.length);
+        const after = src.slice(idx + query.length, end);
+        return (start > 0 ? '...' : '')
+            + escapeForHtml(before)
+            + '<mark>' + escapeForHtml(match) + '</mark>'
+            + escapeForHtml(after)
+            + (end < src.length ? '...' : '');
+    };
+
+    return findAndSlice(content) ?? findAndSlice(title) ?? '';
+}
+
 /**
  * GET /search?q=키워드&mode=content|category
  * mode=content (기본값): FTS5 기반 전문 검색, 정확한 제목 일치 시 redirect 반환
@@ -180,32 +222,40 @@ search.get('/search', async (c) => {
     // 정확 일치 없을 때만 검색 실행
     const trimmedQuery = query.trim();
 
-    // Trigram 토크나이저: 3글자 미만은 FTS5 MATCH에서 매치 불가 → LIKE fallback
-    if (trimmedQuery.length < 3) {
+    // Trigram 토크나이저: 3 codepoint 미만은 FTS5 MATCH에서 매치 불가 → LIKE fallback.
+    // String.length 는 UTF-16 code unit 기준이라 비-BMP 문자(이모지 등)에서 codepoint 수와
+    // 어긋난다. trigram 은 codepoint 단위로 토크나이즈하므로 [...]로 codepoint 수를 센다.
+    const queryCodepointLength = [...trimmedQuery].length;
+    if (queryCodepointLength < 3) {
         const visibility = isAdmin ? '' : ' AND deleted_at IS NULL AND is_private = 0';
-        const likePattern = `%${trimmedQuery}%`;
+        // LIKE 메타문자(%, _, \)를 escape 해 사용자가 입력한 문자열 그대로만 매치한다.
+        const likeEscaped = trimmedQuery.replace(/[\\%_]/g, '\\$&');
+        const likePattern = `%${likeEscaped}%`;
 
         const totalRow = await db
-            .prepare(`SELECT COUNT(*) as total FROM pages WHERE (title LIKE ? OR content LIKE ?)${visibility}`)
+            .prepare(`SELECT COUNT(*) as total FROM pages WHERE (title LIKE ? ESCAPE '\\' OR content LIKE ? ESCAPE '\\')${visibility}`)
             .bind(likePattern, likePattern)
             .first<{ total: number }>();
         const total = totalRow?.total ?? 0;
         const { page, offset } = clampPage(total);
 
         // 제목 LIKE 매치를 본문 매치보다 우선해 정렬한다.
+        // 스니펫을 직접 만들기 위해 content도 함께 가져온다(<3글자 fallback이라 호출 빈도가 낮다).
         const sql = `
-            SELECT slug, title, deleted_at
+            SELECT slug, title, content, deleted_at
             FROM pages
-            WHERE (title LIKE ? OR content LIKE ?)${visibility}
-            ORDER BY (CASE WHEN title LIKE ? THEN 0 ELSE 1 END), updated_at DESC
+            WHERE (title LIKE ? ESCAPE '\\' OR content LIKE ? ESCAPE '\\')${visibility}
+            ORDER BY (CASE WHEN title LIKE ? ESCAPE '\\' THEN 0 ELSE 1 END), updated_at DESC
             LIMIT ? OFFSET ?
         `;
-        const results = await db.prepare(sql).bind(likePattern, likePattern, likePattern, PAGE_SIZE, offset).all();
+        const results = await db.prepare(sql).bind(likePattern, likePattern, likePattern, PAGE_SIZE, offset).all<{ slug: string; title: string; content: string; deleted_at: number | null }>();
 
-        const safeResults = results.results.map((r: any) => ({
-            ...r,
+        const safeResults = results.results.map((r) => ({
+            slug: r.slug,
+            title: r.title,
+            deleted_at: r.deleted_at,
             isDeleted: !!r.deleted_at,
-            snippet: '',
+            snippet: buildLikeSnippet(r.title, r.content, trimmedQuery),
         }));
 
         if (shouldTrack) trackSearch(c, trimmedQuery, total, Date.now() - searchStartTime);
@@ -276,10 +326,12 @@ search.get('/search', async (c) => {
         // FTS5 쿼리 실패 시 LIKE fallback
         console.error('FTS5 search failed, falling back to LIKE:', ftsError);
         const visibility = isAdmin ? '' : ' AND deleted_at IS NULL AND is_private = 0';
-        const likePattern = `%${trimmedQuery}%`;
+        // LIKE 메타문자(%, _, \)를 escape 해 사용자가 입력한 문자열 그대로만 매치한다.
+        const likeEscaped = trimmedQuery.replace(/[\\%_]/g, '\\$&');
+        const likePattern = `%${likeEscaped}%`;
 
         const totalRow = await db
-            .prepare(`SELECT COUNT(*) as total FROM pages WHERE (title LIKE ? OR content LIKE ?)${visibility}`)
+            .prepare(`SELECT COUNT(*) as total FROM pages WHERE (title LIKE ? ESCAPE '\\' OR content LIKE ? ESCAPE '\\')${visibility}`)
             .bind(likePattern, likePattern)
             .first<{ total: number }>();
         const total = totalRow?.total ?? 0;
@@ -287,18 +339,20 @@ search.get('/search', async (c) => {
 
         // 제목 LIKE 매치를 본문 매치보다 우선해 정렬한다.
         const fallbackSql = `
-            SELECT slug, title, deleted_at
+            SELECT slug, title, content, deleted_at
             FROM pages
-            WHERE (title LIKE ? OR content LIKE ?)${visibility}
-            ORDER BY (CASE WHEN title LIKE ? THEN 0 ELSE 1 END), updated_at DESC
+            WHERE (title LIKE ? ESCAPE '\\' OR content LIKE ? ESCAPE '\\')${visibility}
+            ORDER BY (CASE WHEN title LIKE ? ESCAPE '\\' THEN 0 ELSE 1 END), updated_at DESC
             LIMIT ? OFFSET ?
         `;
-        const fallbackResults = await db.prepare(fallbackSql).bind(likePattern, likePattern, likePattern, PAGE_SIZE, offset).all();
+        const fallbackResults = await db.prepare(fallbackSql).bind(likePattern, likePattern, likePattern, PAGE_SIZE, offset).all<{ slug: string; title: string; content: string; deleted_at: number | null }>();
 
-        const safeResults = fallbackResults.results.map((r: any) => ({
-            ...r,
+        const safeResults = fallbackResults.results.map((r) => ({
+            slug: r.slug,
+            title: r.title,
+            deleted_at: r.deleted_at,
             isDeleted: !!r.deleted_at,
-            snippet: '',
+            snippet: buildLikeSnippet(r.title, r.content, trimmedQuery),
         }));
 
         if (shouldTrack) trackSearch(c, trimmedQuery, total, Date.now() - searchStartTime);
