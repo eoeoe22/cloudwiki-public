@@ -292,13 +292,13 @@
             }
 
             // 서버가 이미 정확 일치 시 redirect 로 응답하므로, 여기 도달했다면 정확 일치는 없는 상태다.
-            // "이미지:" 네임스페이스는 일반 문서 제목으로 저장이 거부되므로 CTA 를 숨긴다.
+            // "이미지:" 네임스페이스는 일반 문서 슬러그로 저장이 거부되므로 CTA 를 숨긴다.
             const normalizedQuery = q.trim().toLowerCase();
             const hasCaseInsensitiveExactMatch = Array.isArray(data.results)
                 && normalizedQuery !== ''
                 && data.results.some(result =>
-                    typeof result?.title === 'string'
-                    && result.title.trim().toLowerCase() === normalizedQuery
+                    typeof result?.slug === 'string'
+                    && result.slug.trim().toLowerCase() === normalizedQuery
                 );
             const isImageNamespaceQuery = q.trim().startsWith('이미지:');
             const canCreate = currentUser && currentUser.role !== 'banned'
@@ -335,7 +335,7 @@
                     const url = r.r2_key ? `/media/${r.r2_key}` : '';
                     const preview = isVideo
                         ? `<video src="${escapeHtml(url)}" muted class="search-image-thumb"></video>`
-                        : `<img src="${escapeHtml(url)}" alt="${escapeHtml(r.title)}" class="search-image-thumb" loading="lazy">`;
+                        : `<img src="${escapeHtml(url)}" alt="${escapeHtml(r.slug)}" class="search-image-thumb" loading="lazy">`;
                     const tagsHtml = Array.isArray(r.tags) && r.tags.length > 0
                         ? `<div class="search-image-tags mb-2">${r.tags.map(t => `<span class="badge bg-light text-dark border me-1 mb-1"><i class="mdi mdi-tag-outline"></i> ${escapeHtml(t)}</span>`).join('')}</div>`
                         : '';
@@ -356,7 +356,7 @@
                             ${preview}
                             <div class="search-result-body">
                                 <h4 class="mb-2 fs-5">
-                                    <a class="text-decoration-none text-primary fw-semibold" href="/w/${encodeURIComponent(r.slug)}">${escapeHtml(r.title)}</a>
+                                    <a class="text-decoration-none text-primary fw-semibold" href="/w/${encodeURIComponent(r.slug)}">${escapeHtml(r.slug)}</a>
                                 </h4>
                                 ${snippetHtml}
                                 ${tagsHtml}
@@ -366,21 +366,21 @@
                     `;
                 }).join('');
             } else if (data.mode === 'category') {
-                // 카테고리 검색 결과: 스니펫 없이 제목 목록
+                // 카테고리 검색 결과: 스니펫 없이 슬러그(=제목) 목록
                 itemsHtml = data.results.map(r => `
                     <div class="search-result-item mb-3 pb-2 border-bottom">
                         <h4 class="mb-0 fs-5">
-                            <a class="text-decoration-none text-primary fw-semibold" href="/w/${encodeURIComponent(r.slug)}">${escapeHtml(r.title)}</a>
+                            <a class="text-decoration-none text-primary fw-semibold" href="/w/${encodeURIComponent(r.slug)}">${escapeHtml(r.slug)}</a>
                             ${r.isDeleted ? '<span class="badge bg-danger ms-2">삭제됨</span>' : ''}
                         </h4>
                     </div>
                 `).join('');
             } else {
-                // 제목+내용 검색 결과
+                // 슬러그(=제목)+내용 검색 결과
                 itemsHtml = data.results.map(r => `
                     <div class="search-result-item mb-4 pb-3 border-bottom">
                         <h4 class="mb-2 fs-5">
-                            <a class="text-decoration-none text-primary fw-semibold" href="/w/${encodeURIComponent(r.slug)}">${escapeHtml(r.title)}</a>
+                            <a class="text-decoration-none text-primary fw-semibold" href="/w/${encodeURIComponent(r.slug)}">${escapeHtml(r.slug)}</a>
                             ${r.isDeleted ? '<span class="badge bg-danger ms-2">삭제됨</span>' : ''}
                         </h4>
                         <p class="snippet text-body mb-0" style="line-height: 1.6;">${r.snippet || ''}</p>

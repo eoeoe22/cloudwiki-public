@@ -220,37 +220,37 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                     },
                     {
                         name: 'search_title',
-                        description: '위키 문서의 제목을 검색합니다.',
+                        description: '위키 문서의 슬러그(=제목)를 검색합니다.',
                         inputSchema: { type: 'object', properties: { query: { type: 'string', description: '검색어' } }, required: ['query'] }
                     },
                     {
                         name: 'search_fts',
-                        description: '위키 문서의 본문을 전문 검색(FTS) 합니다. 검색 결과에는 문서 제목, 하이라이트된 부분, 그리고 해당 부분이 속한 목차가 포함됩니다.',
+                        description: '위키 문서의 본문을 전문 검색(FTS) 합니다. 검색 결과에는 문서 슬러그, 하이라이트된 부분, 그리고 해당 부분이 속한 목차가 포함됩니다.',
                         inputSchema: { type: 'object', properties: { query: { type: 'string', description: '검색어' } }, required: ['query'] }
                     },
                     {
                         name: 'get_toc',
                         description: '위키 문서의 목차(section)만 불러옵니다. 목차는 계층적 번호(예: "1.", "1.1", "1.1.1")가 붙은 형식으로 반환됩니다. 긴 문서를 전부 읽기보다 get_toc 도구로 목차를 추출한 뒤 read_section 도구에 번호를 지정해 부분적으로 읽는 것을 권장합니다.',
-                        inputSchema: { type: 'object', properties: { title: { type: 'string', description: '문서 제목' } }, required: ['title'] }
+                        inputSchema: { type: 'object', properties: { title: { type: 'string', description: '문서 슬러그(=제목)' } }, required: ['title'] }
                     },
                     {
                         name: 'read_document',
                         description: '위키 문서의 전체 본문을 읽어옵니다.',
-                        inputSchema: { type: 'object', properties: { title: { type: 'string', description: '문서 제목' }, raw: { type: 'boolean', description: 'true로 설정 시 위키 꾸미기 문법 변환을 건너뛰고 원본 그대로 반환합니다.' } }, required: ['title'] }
+                        inputSchema: { type: 'object', properties: { title: { type: 'string', description: '문서 슬러그(=제목)' }, raw: { type: 'boolean', description: 'true로 설정 시 위키 꾸미기 문법 변환을 건너뛰고 원본 그대로 반환합니다.' } }, required: ['title'] }
                     },
                     {
                         name: 'read_section',
                         description: '위키 문서에서 특정 목차의 내용만 읽어옵니다. 목차는 get_toc 가 반환하는 계층적 번호(예: "1", "1.1", "1.1.1")로 지정합니다.',
-                        inputSchema: { type: 'object', properties: { title: { type: 'string', description: '문서 제목' }, section_number: { type: 'string', description: 'get_toc가 반환한 목차 번호 (예: "1", "1.1", "1.1.1")' }, raw: { type: 'boolean', description: 'true로 설정 시 위키 꾸미기 문법 변환을 건너뛰고 반환합니다. 단, get_toc 의 번호 체계와 맞추기 위해 틀 트랜스클루전({{...}})은 항상 확장된 상태로 반환됩니다.' } }, required: ['title', 'section_number'] }
+                        inputSchema: { type: 'object', properties: { title: { type: 'string', description: '문서 슬러그(=제목)' }, section_number: { type: 'string', description: 'get_toc가 반환한 목차 번호 (예: "1", "1.1", "1.1.1")' }, raw: { type: 'boolean', description: 'true로 설정 시 위키 꾸미기 문법 변환을 건너뛰고 반환합니다. 단, get_toc 의 번호 체계와 맞추기 위해 틀 트랜스클루전({{...}})은 항상 확장된 상태로 반환됩니다.' } }, required: ['title', 'section_number'] }
                     },
                     {
                         name: 'get_tree',
                         description: '해당 문서의 하위 문서 목록을 tree구조로 보여줍니다.',
-                        inputSchema: { type: 'object', properties: { title: { type: 'string', description: '문서 제목' } }, required: ['title'] }
+                        inputSchema: { type: 'object', properties: { title: { type: 'string', description: '문서 슬러그(=제목)' } }, required: ['title'] }
                     },
                     {
                         name: 'search_category',
-                        description: '카테고리를 제목으로 검색합니다.',
+                        description: '카테고리를 이름으로 검색합니다.',
                         inputSchema: { type: 'object', properties: { query: { type: 'string', description: '검색할 카테고리 이름 (부분 문자열)' } }, required: ['query'] }
                     },
                     {
@@ -261,12 +261,12 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                     {
                         name: 'get_document_categoty',
                         description: '해당 문서가 속한 카테고리 목록을 반환합니다.',
-                        inputSchema: { type: 'object', properties: { title: { type: 'string', description: '조회할 문서 제목' } }, required: ['title'] }
+                        inputSchema: { type: 'object', properties: { title: { type: 'string', description: '조회할 문서 슬러그(=제목)' } }, required: ['title'] }
                     },
                     {
                         name: 'get_backlinks',
                         description: '이 문서를 참조하는 역링크(위키링크 [[...]], 틀 트랜스클루전 {{...}}) 문서 목록을 반환합니다.',
-                        inputSchema: { type: 'object', properties: { title: { type: 'string', description: '역링크를 조회할 문서 제목' } }, required: ['title'] }
+                        inputSchema: { type: 'object', properties: { title: { type: 'string', description: '역링크를 조회할 문서 슬러그(=제목)' } }, required: ['title'] }
                     },
                     {
                         name: 'get_recent_changes',
@@ -276,7 +276,7 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                     {
                         name: 'list_discussions',
                         description: '특정 문서에 달린 토론 스레드 목록을 반환합니다. 각 스레드의 id, 제목, 상태(open/closed), 댓글 수, 작성일이 포함됩니다.',
-                        inputSchema: { type: 'object', properties: { title: { type: 'string', description: '문서 제목' } }, required: ['title'] }
+                        inputSchema: { type: 'object', properties: { title: { type: 'string', description: '문서 슬러그(=제목)' } }, required: ['title'] }
                     },
                     {
                         name: 'read_discussion',
@@ -301,7 +301,7 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                 return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: `이 도구는 ${c.env.WIKI_NAME} 의 문서를 탐색할 수 있는 MCP 도구입니다.` }] } };
             }
             if (toolName === 'search_title') {
-                const results = await db.prepare('SELECT title FROM pages WHERE title LIKE ? AND deleted_at IS NULL AND is_private = 0 LIMIT 15')
+                const results = await db.prepare('SELECT slug FROM pages WHERE slug LIKE ? AND deleted_at IS NULL AND is_private = 0 LIMIT 15')
                     .bind(`%${args.query}%`).all();
                 return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(results.results, null, 2) }] } };
             }
@@ -316,18 +316,18 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                 // 또한 따옴표(")는 FTS5 phrase syntax 를 깨뜨리므로 이중 따옴표로 escape 한다.
                 // String.length 는 UTF-16 code unit 기준이라 이모지 등 비-BMP 문자에서 codepoint
                 // 수와 어긋나므로, trigram의 codepoint 단위 기준에 맞춰 [...]로 codepoint 수를 센다.
-                let rows: { slug: string; title: string; content: string; last_revision_id: number | null; snippet: string }[] = [];
+                let rows: { slug: string; content: string; last_revision_id: number | null; snippet: string }[] = [];
                 if ([...rawQuery].length < 3) {
                     // LIKE 메타문자(%, _, \)를 escape 해 사용자가 입력한 문자열 그대로 부분 일치만 수행한다.
                     const likeEscaped = rawQuery.replace(/[\\%_]/g, '\\$&');
                     const likePattern = `%${likeEscaped}%`;
-                    const fbSql = `SELECT p.slug, p.title, p.content, p.last_revision_id FROM pages p WHERE (p.title LIKE ? ESCAPE '\\' OR p.content LIKE ? ESCAPE '\\') AND p.deleted_at IS NULL AND p.is_private = 0 ORDER BY (CASE WHEN p.title LIKE ? ESCAPE '\\' THEN 0 ELSE 1 END), p.updated_at DESC LIMIT 10`;
-                    const fbRes = await db.prepare(fbSql).bind(likePattern, likePattern, likePattern).all<{ slug: string; title: string; content: string; last_revision_id: number | null }>();
+                    const fbSql = `SELECT p.slug, p.content, p.last_revision_id FROM pages p WHERE (p.slug LIKE ? ESCAPE '\\' OR p.content LIKE ? ESCAPE '\\') AND p.deleted_at IS NULL AND p.is_private = 0 ORDER BY (CASE WHEN p.slug LIKE ? ESCAPE '\\' THEN 0 ELSE 1 END), p.updated_at DESC LIMIT 10`;
+                    const fbRes = await db.prepare(fbSql).bind(likePattern, likePattern, likePattern).all<{ slug: string; content: string; last_revision_id: number | null }>();
                     rows = fbRes.results.map(r => ({ ...r, snippet: '' }));
                 } else {
                     const safeMatchQuery = '"' + rawQuery.replace(/"/g, '""') + '"';
-                    const ftsSql = `SELECT p.slug, p.title, p.content, p.last_revision_id, snippet(pages_fts, -1, '<b>', '</b>', '...', 20) as snippet FROM pages_fts JOIN pages p ON pages_fts.rowid = p.id WHERE pages_fts MATCH ? AND p.deleted_at IS NULL AND p.is_private = 0 LIMIT 10`;
-                    const ftsRes = await db.prepare(ftsSql).bind(safeMatchQuery).all<{ slug: string; title: string; content: string; last_revision_id: number | null; snippet: string }>();
+                    const ftsSql = `SELECT p.slug, p.content, p.last_revision_id, snippet(pages_fts, -1, '<b>', '</b>', '...', 20) as snippet FROM pages_fts JOIN pages p ON pages_fts.rowid = p.id WHERE pages_fts MATCH ? AND p.deleted_at IS NULL AND p.is_private = 0 LIMIT 10`;
+                    const ftsRes = await db.prepare(ftsSql).bind(safeMatchQuery).all<{ slug: string; content: string; last_revision_id: number | null; snippet: string }>();
                     rows = ftsRes.results;
                 }
 
@@ -353,7 +353,7 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                             return actualContent.slice(start, end);
                         })();
                     return {
-                        title: row.title,
+                        title: row.slug,
                         section: findSectionForSnippet(actualContent, snippetForSection),
                     };
                 }));
@@ -381,7 +381,14 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
 
                 if (toolName === 'get_toc') {
                     const expanded = await expandTemplates(actualContent, db, 0, slug);
-                    return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: extractTOC(expanded) || '목차가 존재하지 않습니다.' }] } };
+                    // 헤딩 텍스트에 섞인 {mdi:icon} 같은 {...} 위키 문법 마커는 목차에서 가독성을
+                    // 떨어뜨리므로 MCP 응답 단계에서만 제거한다. extractTOC 자체는 다른 호출자에도
+                    // 사용되므로 aiParser.ts 는 건드리지 않는다.
+                    const tocText = (extractTOC(expanded) || '')
+                        .split('\n')
+                        .map(line => line.replace(/\{[^}]*\}/g, '').replace(/[ \t]+/g, ' ').trimEnd())
+                        .join('\n');
+                    return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: tocText || '목차가 존재하지 않습니다.' }] } };
                 }
                 if (toolName === 'read_document') {
                     const text = args.raw === true ? actualContent : await renderForAI(actualContent, db, 0, slug);
@@ -456,8 +463,8 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                 return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(results.results.map(r => r.category), null, 2) }] } };
             }
             if (toolName === 'get_category_info') {
-                const docs = await db.prepare('SELECT p.title FROM page_categories pc JOIN pages p ON pc.page_id = p.id WHERE pc.category = ? AND p.deleted_at IS NULL AND p.is_private = 0 ORDER BY p.title ASC LIMIT 50')
-                    .bind(args.category).all<{title: string}>();
+                const docs = await db.prepare('SELECT p.slug FROM page_categories pc JOIN pages p ON pc.page_id = p.id WHERE pc.category = ? AND p.deleted_at IS NULL AND p.is_private = 0 ORDER BY p.slug ASC LIMIT 50')
+                    .bind(args.category).all<{slug: string}>();
 
                 const catSlug = normalizeSlug(`카테고리:${args.category}`);
                 const catPage = await db.prepare('SELECT slug, content, last_revision_id FROM pages WHERE slug = ? AND deleted_at IS NULL AND is_private = 0').bind(catSlug).first<{slug: string, content: string, last_revision_id: number | null}>();
@@ -482,7 +489,7 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                 }
 
                 const output = {
-                    documents: docs.results.map(r => r.title),
+                    documents: docs.results.map(r => r.slug),
                     categoryContent: renderedCatContent
                 };
                 return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(output, null, 2) }] } };
@@ -506,7 +513,7 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                 }
                 const placeholders = targetSlugs.map(() => '?').join(', ');
                 const query = `
-                    SELECT DISTINCT p.title
+                    SELECT DISTINCT p.slug
                     FROM page_links pl
                     JOIN pages p ON pl.source_page_id = p.id
                     WHERE p.slug != ?
@@ -515,13 +522,13 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                       AND p.deleted_at IS NULL
                     ORDER BY p.updated_at DESC LIMIT 100
                 `;
-                const backlinks = await db.prepare(query).bind(slug, ...targetSlugs).all<{ title: string }>();
-                return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(backlinks.results.map(r => r.title), null, 2) }] } };
+                const backlinks = await db.prepare(query).bind(slug, ...targetSlugs).all<{ slug: string }>();
+                return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(backlinks.results.map(r => r.slug), null, 2) }] } };
             }
             if (toolName === 'get_recent_changes') {
                 const limit = Math.min(50, Math.max(1, Number(args.limit) || 10));
                 const { results } = await db.prepare(`
-                    SELECT p.title, p.updated_at, u.name as author_name
+                    SELECT p.slug, p.updated_at, u.name as author_name
                     FROM pages p
                     LEFT JOIN users u ON p.author_id = u.id
                     WHERE p.deleted_at IS NULL AND p.is_private = 0
@@ -552,7 +559,7 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                 const discussion = await db.prepare(`
                     SELECT d.id, d.title, d.status, d.created_at, d.updated_at,
                            u.name as author_name,
-                           p.title as page_title
+                           p.slug as page_title
                     FROM discussions d
                     LEFT JOIN users u ON d.author_id = u.id
                     JOIN pages p ON d.page_id = p.id

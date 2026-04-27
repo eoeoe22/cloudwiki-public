@@ -428,7 +428,6 @@ app.get('/w/*', async (c) => {
                 _ssrNotFound: false,
                 is_image_doc: true,
                 slug,
-                title: slug,
                 media: {
                     id: mediaRow.id,
                     r2_key: mediaRow.r2_key,
@@ -565,7 +564,7 @@ app.get('/w/*', async (c) => {
             }
 
             // 본문 내용 기반 설명글(Description) 생성
-            let desc = `${page.title} - ${c.env.WIKI_NAME || 'CloudWiki'}`;
+            let desc = `${page.slug} - ${c.env.WIKI_NAME || 'CloudWiki'}`;
             if (page.content) {
                 const extracted = extractMetaDescription(page.content);
                 if (extracted) {
@@ -577,7 +576,7 @@ app.get('/w/*', async (c) => {
                 ...safeJSON({ ...page, author, redirected_from: redirectedFrom }),
                 _ssrSlug: slug,
                 _ssrNotFound: false,
-                _ssrTitle: `${page.title} - ${c.env.WIKI_NAME || 'CloudWiki'}`,
+                _ssrTitle: `${page.slug} - ${c.env.WIKI_NAME || 'CloudWiki'}`,
                 _ssrDescription: desc,
             };
 

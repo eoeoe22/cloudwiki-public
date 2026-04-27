@@ -977,7 +977,7 @@ async function loadRecentChanges() {
             return `
               <a href="/w/${encodeURIComponent(item.slug)}" class="recent-change-item"
                  onclick="if(typeof navigateTo==='function'){navigateTo(this.href);return false;}">
-                <div class="rc-title">${escapeHtml(item.title)}</div>
+                <div class="rc-title">${escapeHtml(item.slug)}</div>
                 <div class="rc-meta">
                   <span class="rc-time">${timeAgo}</span>
                   <span class="rc-author">${escapeHtml(item.author_name || '알 수 없음')}</span>

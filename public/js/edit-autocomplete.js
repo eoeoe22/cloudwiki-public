@@ -1391,7 +1391,7 @@ function renderAutocompleteResults() {
     wikiAc.div.innerHTML = wikiAc.results.map((item, index) => `
         <div class="list-group-item autocomplete-item" data-index="${index}" onclick="selectAutocomplete(${index})">
             <i class="mdi ${wikiAc.type === 'template' ? 'mdi-toy-brick-outline' : 'mdi-file-document-outline'}"></i>
-            <span class="item-title">${escapeHtml(item.title)}</span>
+            <span class="item-title">${escapeHtml(item.slug)}</span>
             <span class="item-type">${wikiAc.type === 'template' ? '틀' : '문서'}</span>
         </div>
     `).join('');
@@ -1435,12 +1435,12 @@ function selectAutocomplete(index) {
     if (lastTriggerIndex !== -1) {
         // [[query 부분을 선택 후 교체 (setMarkdown 전체 교체 방지)
         editor.setSelection([line, lastTriggerIndex + 1], [line, col]);
-        editor.insertText(`${trigger}${item.title}${close}`);
+        editor.insertText(`${trigger}${item.slug}${close}`);
 
         // 틀 선택 시 대상 틀이 파라미터({{{...}}})를 정의하고 있으면
         // 비동기로 스키마(`|name=|...`)를 끼워 넣고 커서를 첫 빈 칸에 둔다.
         if (wikiAc.type === 'template' && item.slug) {
-            _autoInsertTemplateParamSchema(item.slug, line, lastTriggerIndex + 1, item.title);
+            _autoInsertTemplateParamSchema(item.slug, line, lastTriggerIndex + 1, item.slug);
         }
     }
 

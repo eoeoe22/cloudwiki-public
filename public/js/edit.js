@@ -229,8 +229,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // 익스텐션 데이터 문서는 섹션 모드를 지원하지 않는다(raw 편집 UI 사용).
     // URL 에 ?section= 이 붙어 들어오더라도 sectionMode 플래그를 해제하지 않으면,
-    // savePage 가 sectionMode && originalPageMeta 조건으로 title/category/redirect/
-    // is_locked 를 초기 로드 값(originalPageMeta)으로 고정해 송신하여,
+    // savePage 가 sectionMode && originalPageMeta 조건으로 category/redirect/is_locked
+    // 를 초기 로드 값(originalPageMeta)으로 고정해 송신하여,
     // UI 에는 전체 편집 필드가 보이는데도 사용자의 메타데이터 편집이 조용히 버려진다.
     if (isExtensionData && sectionMode) {
         sectionMode = false;
@@ -1982,7 +1982,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         if (res.ok) {
             const page = await res.json();
-            document.getElementById('titleInput').value = page.title;
+            document.getElementById('titleInput').value = page.slug;
             if (page.category) {
                 document.getElementById('categoryInput').value = page.category;
                 categoryTags = page.category.split(',').map(c => c.trim()).filter(c => c);
@@ -1993,7 +1993,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             // 섹션 모드에서는 서버가 보낸 메타데이터를 그대로 유지해 저장 시 함께 송신
             originalPageMeta = {
-                title: page.title,
+                slug: page.slug,
                 category: page.category || '',
                 redirect_to: page.redirect_to || '',
                 is_locked: page.is_locked ? 1 : 0,
@@ -2076,15 +2076,15 @@ document.addEventListener('DOMContentLoaded', async () => {
             pageVersion = page.version;
             document.getElementById('editPageTitle').innerHTML =
                 useSectionMode
-                    ? `<i class="mdi mdi-pencil-box-multiple"></i> 섹션 편집: ${escapeHtml(page.title)}`
-                    : `<i class="mdi mdi-pencil-box-multiple"></i> 편집: ${escapeHtml(page.title)}`;
-            document.title = `편집: ${page.title} - ${appConfig.wikiName}`;
+                    ? `<i class="mdi mdi-pencil-box-multiple"></i> 섹션 편집: ${escapeHtml(page.slug)}`
+                    : `<i class="mdi mdi-pencil-box-multiple"></i> 편집: ${escapeHtml(page.slug)}`;
+            document.title = `편집: ${page.slug} - ${appConfig.wikiName}`;
             document.getElementById('diffPreviewSection').style.display = 'block'; // 편집일 때만 노출
             checkDraft();
         } else {
-            // 새 문서
+            // 새 문서: 슬러그가 곧 제목이므로 readonly 필드를 슬러그로 채운다
             originalContent = '';
-            document.getElementById('titleInput').value = decodeURIComponent(slug).replace(/-/g, ' ');
+            document.getElementById('titleInput').value = decodeURIComponent(slug);
             document.getElementById('editPageTitle').innerHTML =
                 `<i class="mdi mdi-plus-circle"></i> 새 문서 만들기`;
             document.title = `새 문서 - ${appConfig.wikiName}`;
@@ -2240,10 +2240,8 @@ function hasMeaningfulChanges() {
 
 // ── 저장 ──
 async function savePage() {
-    // 섹션 모드에서는 제목/카테고리/잠금/리다이렉트는 서버 값 유지
-    const title = sectionMode && originalPageMeta
-        ? originalPageMeta.title
-        : document.getElementById('titleInput').value.trim();
+    // 섹션 모드에서는 카테고리/잠금/리다이렉트는 서버 값 유지
+    // (slug = 제목은 URL 파라미터가 곧 식별자이자 표시 이름이므로 별도 입력 불필요)
     const category = sectionMode && originalPageMeta
         ? (originalPageMeta.category || '')
         : document.getElementById('categoryInput').value.trim();
@@ -2274,22 +2272,6 @@ async function savePage() {
         return;
     }
 
-    if (!title) {
-        Swal.fire('오류', '제목을 입력해주세요.', 'warning');
-        return;
-    }
-    if (/[\[\]()#%|<>^\x00-\x1F\x7F]/.test(title)) {
-        Swal.fire('오류', '문서 제목에 사용할 수 없는 특수문자가 포함되어 있습니다.', 'warning');
-        return;
-    }
-    if (title.startsWith('이미지:')) {
-        Swal.fire('오류', '"이미지:"는 이미지 문서 전용 네임스페이스이므로 일반 문서 제목으로 사용할 수 없습니다.', 'warning');
-        return;
-    }
-    if (title.length > 30) {
-        Swal.fire('오류', '문서 제목은 최대 30자까지 입력할 수 있습니다.', 'warning');
-        return;
-    }
     if (category && !/^[가-힣a-zA-Z0-9\s,]+$/.test(category)) {
         Swal.fire('오류', '카테고리에는 특수문자를 사용할 수 없습니다.', 'warning');
         return;
@@ -2329,7 +2311,6 @@ async function savePage() {
 
     try {
         const body = {
-            title,
             content,
             category: category || undefined,
             redirect_to: redirect_to || undefined,
@@ -2445,8 +2426,7 @@ async function savePage() {
                 sectionMode = false;
                 sectionRange = null;
                 DRAFT_KEY = 'wiki_draft_' + slug;
-                const titleInput = document.getElementById('titleInput');
-                const resolvedTitle = (titleInput && titleInput.value ? titleInput.value : slug);
+                const resolvedTitle = slug;
                 const editPageTitle = document.getElementById('editPageTitle');
                 if (editPageTitle) {
                     editPageTitle.textContent = '문서 편집: ' + resolvedTitle;
@@ -2481,7 +2461,7 @@ async function savePage() {
                 const categoryEl = document.getElementById('categoryInput');
                 const redirectEl = document.getElementById('redirectInput');
                 const lockedEl = document.getElementById('isLockedCheck');
-                if (titleEl) titleEl.value = freshPageForFallback.title || '';
+                if (titleEl) titleEl.value = freshPageForFallback.slug || slug;
                 const freshCategory = freshPageForFallback.category || '';
                 if (categoryEl) categoryEl.value = freshCategory;
                 categoryTags = freshCategory ? freshCategory.split(',').map(c => c.trim()).filter(c => c) : [];
@@ -2490,7 +2470,7 @@ async function savePage() {
                 if (lockedEl) lockedEl.checked = !!freshPageForFallback.is_locked;
                 // originalPageMeta 도 일관성 유지 (sectionMode 는 false 가 되었지만 방어적으로 갱신)
                 originalPageMeta = {
-                    title: freshPageForFallback.title,
+                    slug: freshPageForFallback.slug,
                     category: freshPageForFallback.category || '',
                     redirect_to: freshPageForFallback.redirect_to || '',
                     is_locked: freshPageForFallback.is_locked ? 1 : 0,

@@ -167,10 +167,10 @@
           const pageData = pageRes.ok ? await pageRes.json() : null;
           isPageDeleted = !!pageData?.deleted_at;
 
-          document.getElementById('revPageTitle').textContent = pageData?.title || slug;
+          document.getElementById('revPageTitle').textContent = pageData?.slug || slug;
           document.getElementById('revBackLink').href = `/w/${encodeURIComponent(slug)}`;
 
-          document.title = `편집 이력 - ${pageData?.title || slug} - ${appConfig.wikiName}`;
+          document.title = `편집 이력 - ${pageData?.slug || slug} - ${appConfig.wikiName}`;
         }
 
         currentRevPage = page;

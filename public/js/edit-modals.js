@@ -2147,9 +2147,9 @@ async function openSubdocInsertModal() {
                 }
                 sugBox.innerHTML = filtered.map((item) =>
                     '<li class="search-suggestion-item" data-slug="' + escapeHtml(item.slug) +
-                    '" data-title="' + escapeHtml(item.title) + '">' +
+                    '" data-title="' + escapeHtml(item.slug) + '">' +
                     '<i class="mdi mdi-file-document-outline"></i> ' +
-                    escapeHtml(item.title) + '</li>'
+                    escapeHtml(item.slug) + '</li>'
                 ).join('');
                 sugBox.style.display = 'block';
                 sugBox.querySelectorAll('.search-suggestion-item').forEach(el => {
@@ -2294,8 +2294,8 @@ async function openTemplateModal() {
                     }
 
                     templates.forEach(t => {
-                        // 템플릿: 틀: template: 등의 접두사를 제외한 제목 표시
-                        const displayTitle = t.title.replace(/^(틀|template|템플릿):/i, '');
+                        // 템플릿: 틀: template: 등의 접두사를 제외한 표시 이름
+                        const displayTitle = t.slug.replace(/^(틀|template|템플릿):/i, '');
                         const btn = document.createElement('button');
                         btn.className = 'list-group-item list-group-item-action';
                         btn.textContent = displayTitle;

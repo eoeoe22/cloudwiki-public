@@ -1294,13 +1294,9 @@
                   ? '<span class="badge bg-warning text-dark ms-1">잠금</span>'
                   : "",
               ].join("");
-              const title = p.title
-                ? `<div class="small text-muted">${escapeHtml(p.title)}</div>`
-                : "";
               return `<tr>
                 <td>
                   <div class="fw-bold small">${escapeHtml(p.slug)}${badges}</div>
-                  ${title}
                 </td>
                 <td class="small text-muted">${new Date(p.deleted_at * 1000).toLocaleString()}</td>
                 <td>

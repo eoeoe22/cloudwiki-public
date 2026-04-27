@@ -239,7 +239,7 @@
         const pageData = await pageRes.json();
         currentDiscussionPageId = pageData.id;
 
-        document.getElementById('discussionPageTitle').textContent = pageData.title;
+        document.getElementById('discussionPageTitle').textContent = pageData.slug;
         document.getElementById('discussionBackLink').href = `/w/${encodeURIComponent(slug)}`;
 
         // 로그인 여부에 따라 새 토론 버튼 표시
@@ -286,7 +286,7 @@
         hideAllPages();
         document.getElementById('newDiscussionForm').classList.add('d-none');
         document.getElementById('discussionListPage').classList.remove('d-none');
-        document.title = `토론 - ${pageData.title} - ${appConfig.wikiName}`;
+        document.title = `토론 - ${pageData.slug} - ${appConfig.wikiName}`;
         initRoleIconPopovers(document.getElementById('discussionsList'));
 
       } catch (err) {

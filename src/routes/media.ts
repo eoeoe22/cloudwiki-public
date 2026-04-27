@@ -356,7 +356,7 @@ media.get('/api/media/doc/:filename/backlinks', async (c) => {
     }
 
     let query = `
-        SELECT DISTINCT p.slug, p.title, p.updated_at, p.is_locked,
+        SELECT DISTINCT p.slug, p.updated_at, p.is_locked,
             CASE WHEN p.deleted_at IS NOT NULL THEN 1 ELSE 0 END AS is_deleted
         FROM page_links pl
         JOIN pages p ON pl.source_page_id = p.id

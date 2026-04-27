@@ -8,6 +8,9 @@ import { fetchMediaTags } from '../utils/mediaTags';
 
 const wiki = new Hono<Env>();
 
+/** 슬러그에 사용할 수 없는 금지 문자 패턴 ({}, [] 는 트랜스클루전/위키링크 문법과 충돌) */
+const SLUG_FORBIDDEN_CHARS = /[\[\]{}()#%|<>^\x00-\x1F\x7F]/;
+
 // ── 커스텀 팔레트 파서 ──
 // PALETTES 환경변수(JSON 문자열)를 정규화된 팔레트 맵으로 변환.
 // 플랫 형태({bg,color})는 light/dark 공통 사용, 분리 형태({light,dark})는 각 모드별 적용.
@@ -64,7 +67,7 @@ async function refreshRecentChangesCache(c: any) {
     const cache = caches.default;
 
     const { results } = await db.prepare(`
-        SELECT p.slug, p.title, p.updated_at, u.name as author_name
+        SELECT p.slug, p.updated_at, u.name as author_name
         FROM pages p
         LEFT JOIN users u ON p.author_id = u.id
         WHERE p.deleted_at IS NULL AND p.is_private = 0
@@ -580,7 +583,7 @@ wiki.get('/w/search-titles', async (c) => {
     const rbac = c.get('rbac') as RBAC;
     const isAdmin = user && rbac.can(user.role, 'admin:access');
 
-    let query = `SELECT title, slug FROM pages WHERE deleted_at IS NULL`;
+    let query = `SELECT slug FROM pages WHERE deleted_at IS NULL`;
     const params: any[] = [];
 
     if (!isAdmin) {
@@ -603,9 +606,9 @@ wiki.get('/w/search-titles', async (c) => {
     }
 
     if (q.length > 0) {
-        query += ' AND title LIKE ?';
+        query += ' AND slug LIKE ?';
         params.push(`%${q}%`);
-        query += ' ORDER BY title ASC';
+        query += ' ORDER BY slug ASC';
     } else {
         // 빈 쿼리: 최근 수정 순 반환
         query += ' ORDER BY updated_at DESC';
@@ -671,7 +674,7 @@ wiki.get('/w/recent-changes', async (c) => {
         }
 
         const { results } = await db.prepare(`
-            SELECT p.slug, p.title, p.updated_at, u.name as author_name
+            SELECT p.slug, p.updated_at, u.name as author_name
             FROM pages p
             LEFT JOIN users u ON p.author_id = u.id
             WHERE p.deleted_at IS NULL AND p.is_private = 0
@@ -692,7 +695,7 @@ wiki.get('/w/recent-changes', async (c) => {
 
     // 관리자: 비공개 문서 포함, 캐싱 없음
     const { results } = await db.prepare(`
-        SELECT p.slug, p.title, p.updated_at, u.name as author_name
+        SELECT p.slug, p.updated_at, u.name as author_name
         FROM pages p
         LEFT JOIN users u ON p.author_id = u.id
         WHERE p.deleted_at IS NULL
@@ -724,13 +727,13 @@ wiki.get('/w/templates', async (c) => {
 
     if (q) {
         const { results } = await db
-            .prepare("SELECT slug, title FROM pages WHERE slug LIKE '템플릿:%' AND title LIKE ? AND deleted_at IS NULL ORDER BY created_at DESC")
+            .prepare("SELECT slug FROM pages WHERE slug LIKE '템플릿:%' AND slug LIKE ? AND deleted_at IS NULL ORDER BY created_at DESC")
             .bind(`%${q}%`)
             .all();
         return c.json({ templates: results });
     } else {
         const { results } = await db
-            .prepare("SELECT slug, title FROM pages WHERE slug LIKE '템플릿:%' AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 10")
+            .prepare("SELECT slug FROM pages WHERE slug LIKE '템플릿:%' AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 10")
             .all();
         return c.json({ templates: results });
     }
@@ -750,7 +753,7 @@ wiki.get('/w/random', async (c) => {
     const isAdmin = user && rbac.can(user.role, 'admin:access');
 
     let query = `
-        SELECT slug, title
+        SELECT slug
         FROM pages
         WHERE deleted_at IS NULL
     `;
@@ -762,13 +765,13 @@ wiki.get('/w/random', async (c) => {
 
     query += ' ORDER BY RANDOM() LIMIT 1';
 
-    const page = await db.prepare(query).first<{ slug: string, title: string }>();
+    const page = await db.prepare(query).first<{ slug: string }>();
 
     if (!page) {
         return c.json({ error: '랜덤 문서를 찾을 수 없습니다.' }, 404);
     }
 
-    return c.json(safeJSON({ slug: page.slug, title: page.title }));
+    return c.json(safeJSON({ slug: page.slug }));
 });
 
 /**
@@ -791,7 +794,7 @@ wiki.get('/w/recent-revisions', async (c) => {
 
     let query = `
         SELECT r.id, r.page_id, r.page_version, r.summary, r.created_at,
-               p.slug, p.title,
+               p.slug,
                u.id as author_id, u.name as author_name, u.picture as author_picture,
                ${ROLE_CASE_SQL} as author_role,
                u.email as _author_email
@@ -824,6 +827,7 @@ wiki.get('/w/recent-revisions', async (c) => {
  * Query: offset (기본 0), limit (기본 20, 최대 50),
  *        sort (title_asc, title_desc, created_asc, created_desc,
  *              updated_asc, updated_desc, category_asc, category_desc)
+ *        ※ title_asc / title_desc 는 이제 slug 기준 정렬과 동일하다 (하위 호환).
  */
 wiki.get('/w/all-pages', async (c) => {
     if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) {
@@ -838,14 +842,14 @@ wiki.get('/w/all-pages', async (c) => {
     const sort = c.req.query('sort') || 'title_asc';
 
     const sortMap: Record<string, string> = {
-        title_asc: 'p.title COLLATE NOCASE ASC',
-        title_desc: 'p.title COLLATE NOCASE DESC',
+        title_asc: 'p.slug COLLATE NOCASE ASC',
+        title_desc: 'p.slug COLLATE NOCASE DESC',
         created_asc: 'p.created_at ASC',
         created_desc: 'p.created_at DESC',
         updated_asc: 'p.updated_at ASC',
         updated_desc: 'p.updated_at DESC',
-        category_asc: 'p.category COLLATE NOCASE ASC, p.title COLLATE NOCASE ASC',
-        category_desc: 'p.category COLLATE NOCASE DESC, p.title COLLATE NOCASE ASC',
+        category_asc: 'p.category COLLATE NOCASE ASC, p.slug COLLATE NOCASE ASC',
+        category_desc: 'p.category COLLATE NOCASE DESC, p.slug COLLATE NOCASE ASC',
     };
     const orderBy = sortMap[sort] || sortMap['title_asc'];
 
@@ -855,7 +859,7 @@ wiki.get('/w/all-pages', async (c) => {
     }
 
     const countQuery = `SELECT COUNT(*) as total FROM pages p WHERE ${whereClause}`;
-    const listQuery = `SELECT p.slug, p.title, p.category, p.created_at, p.updated_at FROM pages p WHERE ${whereClause} ORDER BY ${orderBy} LIMIT ? OFFSET ?`;
+    const listQuery = `SELECT p.slug, p.category, p.created_at, p.updated_at FROM pages p WHERE ${whereClause} ORDER BY ${orderBy} LIMIT ? OFFSET ?`;
 
     const [countResult, listResult] = await db.batch([
         db.prepare(countQuery),
@@ -935,7 +939,6 @@ wiki.get('/w/:slug', async (c) => {
 
             const imageDoc = {
                 slug,
-                title: slug,
                 is_image_doc: true,
                 media: {
                     id: mediaRow.id,
@@ -1065,14 +1068,21 @@ wiki.get('/w/:slug', async (c) => {
 /**
  * PUT /w/:slug
  * 문서 생성 또는 수정 (로그인 필수)
- * Body: { title, content, summary, expected_version? }
+ * Body: { content, summary, expected_version? }
+ * - 슬러그(URL 파라미터)가 곧 문서의 식별자이자 표시 이름이다.
+ *   요청 본문에 별도 title 필드는 없다(있어도 무시).
  */
 wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
     const slug = c.req.param('slug');
+
+    // 슬러그 유효성 검사: 금지 문자 포함 여부
+    if (SLUG_FORBIDDEN_CHARS.test(slug)) {
+        return c.json({ error: '슬러그에 사용할 수 없는 특수문자가 포함되어 있습니다.' }, 400);
+    }
+
     const user = c.get('user')!;
     const rbac = c.get('rbac') as RBAC;
     const body = await c.req.json<{
-        title: string;
         content: string;
         summary?: string;
         category?: string;
@@ -1106,13 +1116,9 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
     const isAdmin = rbac.can(user.role, 'admin:access');
     const db = c.env.DB;
 
-    if (body.title) {
-        body.title = body.title.trim();
-    }
-
-    // 메인 문서는 관리자만 편집 가능
+    // 메인 문서는 관리자만 편집 가능 (slug 기준 판단)
     const mainSlug = normalizeSlug(c.env.WIKI_NAME || 'CloudWiki').toLowerCase();
-    if (normalizeSlug(slug).toLowerCase() === mainSlug || normalizeSlug(body.title).toLowerCase() === mainSlug) {
+    if (normalizeSlug(slug).toLowerCase() === mainSlug) {
         if (!isAdmin) {
             return c.json({ error: '메인 문서는 관리자만 편집할 수 있습니다.' }, 403);
         }
@@ -1120,9 +1126,8 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
 
     // "이미지:" 접두사 문서는 media 테이블 기반의 이미지 문서 전용이며,
     // content 수정은 /api/media/doc/:filename 엔드포인트로만 가능하다.
-    // 일반 문서 제목 금지어: "이미지:" 네임스페이스는 슬러그/제목 어느 쪽에도 사용할 수 없다.
-    if (slug.startsWith('이미지:') || (body.title && body.title.startsWith('이미지:'))) {
-        return c.json({ error: '"이미지:"는 이미지 문서 전용 네임스페이스이므로 일반 문서 제목으로 사용할 수 없습니다.' }, 403);
+    if (slug.startsWith('이미지:')) {
+        return c.json({ error: '"이미지:"는 이미지 문서 전용 네임스페이스이므로 일반 문서 슬러그로 사용할 수 없습니다.' }, 403);
     }
 
     // 관리자 전용 카테고리 검증 (쉼표 구분 지원)
@@ -1144,18 +1149,8 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
         return c.json({ error: '비공개 설정은 관리자만 변경할 수 있습니다.' }, 403);
     }
 
-    if (!body.title || body.content === undefined) {
-        return c.json({ error: 'title과 content는 필수입니다.' }, 400);
-    }
-
-    // 보안: 문서 제목 금지 문자 점검
-    if (/[\[\]()#%|<>^\x00-\x1F\x7F]/.test(body.title)) {
-        return c.json({ error: '문서 제목에 사용할 수 없는 특수문자가 포함되어 있습니다.' }, 400);
-    }
-
-    // 보안: 문서 제목 최대 30자 제한
-    if (body.title.length > 30) {
-        return c.json({ error: '문서 제목은 최대 30자까지 입력할 수 있습니다.' }, 400);
+    if (body.content === undefined) {
+        return c.json({ error: 'content는 필수입니다.' }, 400);
     }
 
     // 보안: 카테고리 특수문자 금지 (한글, 영문, 숫자, 공백, 쉼표만 허용)
@@ -1284,11 +1279,11 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
         await db
             .prepare(
                 `UPDATE pages
-         SET title = ?, content = ?, category = ?, is_locked = ?, is_private = ?, redirect_to = ?, author_id = ?, last_revision_id = ?,
+         SET content = ?, category = ?, is_locked = ?, is_private = ?, redirect_to = ?, author_id = ?, last_revision_id = ?,
              version = ?, updated_at = unixepoch()
          WHERE id = ?`
             )
-            .bind(body.title, contentToStore, body.category || null, finalIsLocked, finalIsPrivate, body.redirect_to || null, user.id, revisionId, newVersion, existing.id)
+            .bind(contentToStore, body.category || null, finalIsLocked, finalIsPrivate, body.redirect_to || null, user.id, revisionId, newVersion, existing.id)
             .run();
 
         // page_links, page_categories 갱신 (비동기)
@@ -1303,7 +1298,7 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
                     if (watchers.length === 0) return;
                     const stmts = watchers.map((w: any) =>
                         db.prepare('INSERT INTO notifications (user_id, type, content, link) VALUES (?, ?, ?, ?)')
-                            .bind(w.user_id, 'page_watch', `${user.name}님이 "${body.title}" 문서를 편집했습니다.`, `/w/${slug}`)
+                            .bind(w.user_id, 'page_watch', `${user.name}님이 "${slug}" 문서를 편집했습니다.`, `/w/${slug}`)
                     );
                     return db.batch(stmts);
                 })
@@ -1330,9 +1325,9 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
 
         const pageResult = await db
             .prepare(
-                'INSERT INTO pages (slug, title, content, category, is_locked, is_private, redirect_to, author_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+                'INSERT INTO pages (slug, content, category, is_locked, is_private, redirect_to, author_id) VALUES (?, ?, ?, ?, ?, ?, ?)'
             )
-            .bind(slug, body.title, contentToStore, body.category || null, finalIsLocked, finalIsPrivate, body.redirect_to || null, user.id)
+            .bind(slug, contentToStore, body.category || null, finalIsLocked, finalIsPrivate, body.redirect_to || null, user.id)
             .run();
 
         const pageId = pageResult.meta.last_row_id;
@@ -1400,7 +1395,7 @@ wiki.get('/w/category/:category', async (c) => {
     const isAdmin = user && rbac.can(user.role, 'admin:access');
 
     let query = `
-        SELECT p.slug, p.title, p.is_locked, p.updated_at
+        SELECT p.slug, p.is_locked, p.updated_at
         FROM page_categories pc
         JOIN pages p ON pc.page_id = p.id
         WHERE p.deleted_at IS NULL
@@ -1595,7 +1590,7 @@ wiki.get('/w/:slug/subdocs', async (c) => {
     const isAdmin = user && rbac.can(user.role, 'admin:access');
 
     let query = `
-        SELECT slug, title, updated_at
+        SELECT slug, updated_at
         FROM pages
         WHERE deleted_at IS NULL
           AND slug LIKE ?
@@ -1645,7 +1640,7 @@ wiki.get('/w/:slug/backlinks', async (c) => {
     // 관리자: soft delete된 문서도 is_deleted 플래그와 함께 반환
     // 일반 사용자: soft delete된 문서 제외 (접근 불가 + 메타데이터 노출 방지)
     let query = `
-        SELECT DISTINCT p.slug, p.title, p.updated_at, p.is_locked,
+        SELECT DISTINCT p.slug, p.updated_at, p.is_locked,
             CASE WHEN p.deleted_at IS NOT NULL THEN 1 ELSE 0 END AS is_deleted
         FROM page_links pl
         JOIN pages p ON pl.source_page_id = p.id
@@ -1825,9 +1820,9 @@ wiki.post('/w/:slug/move', requireAdmin, async (c) => {
 
     const trimmedNewSlug = new_slug.trim();
 
-    // 보안: 문서 제목 금지 문자 점검
-    if (/[\[\]()#%|<>^\x00-\x1F\x7F]/.test(trimmedNewSlug)) {
-        return c.json({ error: '문서 제목에 사용할 수 없는 특수문자가 포함되어 있습니다.' }, 400);
+    // 보안: 슬러그 금지 문자 점검
+    if (SLUG_FORBIDDEN_CHARS.test(trimmedNewSlug)) {
+        return c.json({ error: '슬러그에 사용할 수 없는 특수문자가 포함되어 있습니다.' }, 400);
     }
 
     // "이미지:" 네임스페이스는 media 테이블 기반 이미지 문서 전용이므로 이동 대상/출처가 될 수 없다
@@ -1856,7 +1851,7 @@ wiki.post('/w/:slug/move', requireAdmin, async (c) => {
         return c.json({ error: '해당 이름은 다른 문서로의 넘겨주기(Redirect)로 사용되고 있어 이동할 수 없습니다.' }, 409);
     }
 
-    const page = await db.prepare('SELECT id, title, is_locked, is_private FROM pages WHERE slug = ? AND deleted_at IS NULL').bind(currentSlug).first<{ id: number, title: string, is_locked: number, is_private: number }>();
+    const page = await db.prepare('SELECT id, is_locked, is_private FROM pages WHERE slug = ? AND deleted_at IS NULL').bind(currentSlug).first<{ id: number, is_locked: number, is_private: number }>();
     if (!page) {
         return c.json({ error: '문서를 찾을 수 없습니다.' }, 404);
     }
@@ -1869,9 +1864,9 @@ wiki.post('/w/:slug/move', requireAdmin, async (c) => {
         return c.json({ error: '비공개 문서는 관리자만 이동할 수 있습니다.' }, 403);
     }
 
-    // Update Page Slug and Title
-    await db.prepare('UPDATE pages SET slug = ?, title = ? WHERE id = ?')
-        .bind(trimmedNewSlug, trimmedNewSlug, page.id)
+    // Update Page Slug (slug 가 곧 표시 이름이므로 별도 title 업데이트 불필요)
+    await db.prepare('UPDATE pages SET slug = ? WHERE id = ?')
+        .bind(trimmedNewSlug, page.id)
         .run();
 
     // 관리자 로그 기록

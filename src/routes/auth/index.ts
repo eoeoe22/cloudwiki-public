@@ -458,7 +458,7 @@ auth.get('/api/me/contributions', requireAuth, async (c) => {
     const db = c.env.DB;
 
     const { results } = await db.prepare(
-        `SELECT DISTINCT p.slug, p.title, p.updated_at, p.category
+        `SELECT DISTINCT p.slug, p.updated_at, p.category
          FROM revisions r
          JOIN pages p ON r.page_id = p.id
          WHERE r.author_id = ? AND p.deleted_at IS NULL
@@ -522,7 +522,7 @@ auth.get('/api/users/:id/contributions', async (c) => {
 
     const { results } = await db.prepare(
         `SELECT r.id as revision_id, r.summary, r.created_at,
-                p.slug, p.title
+                p.slug
          FROM revisions r
          JOIN pages p ON r.page_id = p.id
          WHERE r.author_id = ? AND p.deleted_at IS NULL

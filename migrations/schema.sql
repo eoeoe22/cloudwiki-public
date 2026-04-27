@@ -26,10 +26,10 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 
 -- 문서 테이블
+-- slug 가 문서의 고유 식별자이자 표시 이름이다. 별도 title 컬럼은 두지 않는다.
 CREATE TABLE IF NOT EXISTS pages (
   id                INTEGER PRIMARY KEY AUTOINCREMENT,
   slug              TEXT NOT NULL UNIQUE,
-  title             TEXT NOT NULL,
   content           TEXT NOT NULL DEFAULT '',
   author_id         INTEGER,
   last_revision_id  INTEGER,
@@ -96,21 +96,22 @@ CREATE TABLE IF NOT EXISTS media_tags (
 CREATE INDEX IF NOT EXISTS idx_media_tags_tag ON media_tags(tag);
 
 -- FTS5 검색 가상 테이블
+-- 컬럼 0: slug (문서 식별자/표시 이름), 컬럼 1: content (본문)
 CREATE VIRTUAL TABLE IF NOT EXISTS pages_fts
-USING fts5(title, content, content=pages, content_rowid=id, tokenize="trigram");
+USING fts5(slug, content, content=pages, content_rowid=id, tokenize="trigram");
 
 -- FTS 트리거
 CREATE TRIGGER IF NOT EXISTS pages_ai AFTER INSERT ON pages BEGIN
-  INSERT INTO pages_fts(rowid, title, content) VALUES (new.id, new.title, new.content);
+  INSERT INTO pages_fts(rowid, slug, content) VALUES (new.id, new.slug, new.content);
 END;
 
 CREATE TRIGGER IF NOT EXISTS pages_ad AFTER DELETE ON pages BEGIN
-  INSERT INTO pages_fts(pages_fts, rowid, title, content) VALUES('delete', old.id, old.title, old.content);
+  INSERT INTO pages_fts(pages_fts, rowid, slug, content) VALUES('delete', old.id, old.slug, old.content);
 END;
 
 CREATE TRIGGER IF NOT EXISTS pages_au AFTER UPDATE ON pages BEGIN
-  INSERT INTO pages_fts(pages_fts, rowid, title, content) VALUES('delete', old.id, old.title, old.content);
-  INSERT INTO pages_fts(rowid, title, content) VALUES (new.id, new.title, new.content);
+  INSERT INTO pages_fts(pages_fts, rowid, slug, content) VALUES('delete', old.id, old.slug, old.content);
+  INSERT INTO pages_fts(rowid, slug, content) VALUES (new.id, new.slug, new.content);
 END;
 
 -- 관리자 카테고리

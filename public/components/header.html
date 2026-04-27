@@ -98,7 +98,7 @@
                 sugBox.innerHTML = items.map((item, i) =>
                     '<li class="search-suggestion-item" data-slug="' + escapeHtml(item.slug) + '">'
                     + '<i class="mdi mdi-file-document-outline"></i> '
-                    + escapeHtml(item.title) + '</li>'
+                    + escapeHtml(item.slug) + '</li>'
                 ).join('');
                 sugBox.classList.add('show');
 

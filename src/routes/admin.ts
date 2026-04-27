@@ -761,7 +761,7 @@ adminRoutes.get('/media/:id/backlinks', async (c) => {
 
     // 1차: page_links 테이블에서 인덱스 기반 조회
     const indexedResult = await db.prepare(`
-        SELECT DISTINCT p.id, p.slug, p.title
+        SELECT DISTINCT p.id, p.slug
         FROM page_links pl
         JOIN pages p ON pl.source_page_id = p.id
         WHERE pl.link_type = 'image'
@@ -772,7 +772,7 @@ adminRoutes.get('/media/:id/backlinks', async (c) => {
     // 2차: LIKE fallback (아직 page_links에 인덱싱되지 않은 오래된 문서 대응)
     const indexedIds = new Set((indexedResult.results || []).map((r: any) => r.id));
     const likeResult = await db.prepare(`
-        SELECT id, slug, title
+        SELECT id, slug
         FROM pages
         WHERE content LIKE ? AND deleted_at IS NULL
     `).bind(`%${mediaItem.r2_key}%`).all();
@@ -881,14 +881,14 @@ adminRoutes.get('/pages/deleted', async (c) => {
     const conditions: string[] = ['deleted_at IS NOT NULL'];
     const params: any[] = [];
     if (search) {
-        conditions.push('(slug LIKE ? OR title LIKE ?)');
-        params.push(`%${search}%`, `%${search}%`);
+        conditions.push('slug LIKE ?');
+        params.push(`%${search}%`);
     }
     const whereClause = ' WHERE ' + conditions.join(' AND ');
 
     const [pagesResult, countResult] = await Promise.all([
         db.prepare(
-            `SELECT id, slug, title, is_private, is_locked, deleted_at, updated_at
+            `SELECT id, slug, is_private, is_locked, deleted_at, updated_at
              FROM pages${whereClause}
              ORDER BY deleted_at DESC
              LIMIT ? OFFSET ?`

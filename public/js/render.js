@@ -541,7 +541,7 @@ async function _resolveTransclusionsCore(text, depth, cache, pageSlug, options) 
                             // 익스텐션: 원본 데이터를 저장 (마크다운으로 인라인하지 않음)
                             if (data) {
                                 const extName = slug.substring(0, slug.indexOf(':'));
-                                cache.set(slug, { _ext: true, extName, slug, content: data.content, title: data.title });
+                                cache.set(slug, { _ext: true, extName, slug, content: data.content, title: data.slug });
                             } else {
                                 cache.set(slug, `⚠️ [익스텐션 문서를 찾을 수 없음: ${slug}]`);
                             }
@@ -1304,6 +1304,51 @@ function processFootnotes(contentEl) {
     }
 }
 
+// ── 색상값 → [r,g,b] 파서 (캐시). 16진/rgb는 직접 파싱, 그 외는 DOM 폴백. ──
+const _wikiColorRgbCache = new Map();
+function _wikiColorToRgb(value) {
+    if (!value || typeof value !== 'string') return null;
+    const key = value.trim().toLowerCase();
+    if (_wikiColorRgbCache.has(key)) return _wikiColorRgbCache.get(key);
+    let rgb = null;
+    let m = key.match(/^#([0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/);
+    if (m) {
+        const h = m[1];
+        if (h.length === 3 || h.length === 4) {
+            rgb = [parseInt(h[0] + h[0], 16), parseInt(h[1] + h[1], 16), parseInt(h[2] + h[2], 16)];
+        } else {
+            rgb = [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+        }
+    } else if ((m = key.match(/^rgba?\(\s*([\d.]+)\s*,?\s*([\d.]+)\s*,?\s*([\d.]+)/))) {
+        rgb = [Math.round(+m[1]), Math.round(+m[2]), Math.round(+m[3])];
+    } else if (typeof document !== 'undefined' && document.body) {
+        try {
+            const el = document.createElement('div');
+            el.style.color = value;
+            if (el.style.color) {
+                el.style.position = 'absolute';
+                el.style.visibility = 'hidden';
+                document.body.appendChild(el);
+                const c = getComputedStyle(el).color;
+                document.body.removeChild(el);
+                const mm = c.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/);
+                if (mm) rgb = [+mm[1], +mm[2], +mm[3]];
+            }
+        } catch (_) { rgb = null; }
+    }
+    _wikiColorRgbCache.set(key, rgb);
+    return rgb;
+}
+
+// 배경색에 대한 상대휘도 기반 자동 텍스트 색상(WCAG 휘도 공식).
+function _wikiAutoContrastColor(bg) {
+    const rgb = _wikiColorToRgb(bg);
+    if (!rgb) return null;
+    const f = v => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+    const lum = 0.2126 * f(rgb[0]) + 0.7152 * f(rgb[1]) + 0.0722 * f(rgb[2]);
+    return lum > 0.5 ? '#1a1a1a' : '#f5f5f5';
+}
+
 // ── CSS 색상 값 검증 ──
 function _isSafeCssColor(value) {
     if (!value || typeof value !== 'string') return false;
@@ -1716,9 +1761,25 @@ function _processInlineLayoutTokens(html) {
         const valueInner = iconHtml
             ? `${iconHtml}<span class="wiki-stat-value-text">${value}</span>`
             : value;
-        return `<div class="wiki-stat"${buildStyleAttr(bg, color)}>` +
+        // 라벨은 var(--wiki-text-muted) 고정이라 사용자 bg와 대비가 어긋날 수 있다.
+        // 텍스트 색이 없고 bg만 있으면 휘도 기반 대비 색을 컨테이너에 적용해 value/label 모두 따르게 한다.
+        const safeBg = bg && _isSafeCssColor(bg) ? bg : '';
+        const safeColor = color && _isSafeCssColor(color) ? color : '';
+        let resolvedColor = safeColor;
+        if (!resolvedColor && safeBg) {
+            const auto = _wikiAutoContrastColor(safeBg);
+            if (auto) resolvedColor = auto;
+        }
+        let containerStyle = '';
+        if (safeBg) containerStyle += `background-color:${safeBg};`;
+        if (resolvedColor) containerStyle += `color:${resolvedColor};`;
+        const containerStyleAttr = containerStyle ? ` style="${containerStyle}"` : '';
+        const labelStyleAttr = resolvedColor
+            ? ` style="color:${resolvedColor};opacity:0.75;"`
+            : '';
+        return `<div class="wiki-stat"${containerStyleAttr}>` +
             `<div class="wiki-stat-value">${valueInner}</div>` +
-            (label ? `<div class="wiki-stat-label">${label}</div>` : '') +
+            (label ? `<div class="wiki-stat-label"${labelStyleAttr}>${label}</div>` : '') +
             `</div>`;
     });
     // stat이 자신만 있는 단락(<p>...</p>) 안에 래핑된 경우 <p>를 제거해 블록으로 승격.
