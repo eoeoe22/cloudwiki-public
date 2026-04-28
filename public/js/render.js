@@ -2992,12 +2992,24 @@ function _extractMarkdownSectionRanges(markdownText) {
         const line = lines[i];
 
         if (!inFencedCode) {
-            const fenceMatch = line.match(/^(`{3,}|~{3,})/);
+            // CommonMark: 백틱 펜스 오프너의 info string 에는 백틱이 들어갈 수 없다
+            // (예: ```lang`` 는 펜스 오프너가 아닌 인라인 코드 시퀀스).
+            // 틸드 펜스는 info string 에 어떤 문자(틸드 포함)든 허용된다.
+            // edit.js 의 _collectRawHeadingsFromDoc 와 동일한 판정을 적용해
+            // raw 라인 인덱스 부여(data-raw-line) 와 스크롤 동기화 측 헤딩 시퀀스가 어긋나지 않게 한다.
+            const fenceMatch = line.match(/^(`{3,}|~{3,})(.*)$/);
             if (fenceMatch) {
-                inFencedCode = true;
-                fenceChar = fenceMatch[1][0];
-                fenceLen = fenceMatch[1].length;
-                continue;
+                const opener = fenceMatch[1];
+                const rest = fenceMatch[2];
+                const ch = opener[0];
+                const isValidFence = ch !== '`' || !rest.includes('`');
+                if (isValidFence) {
+                    inFencedCode = true;
+                    fenceChar = ch;
+                    fenceLen = opener.length;
+                    continue;
+                }
+                // 유효한 펜스 오프너가 아니면 일반 라인 흐름으로 떨어뜨려 헤딩 판정 계속.
             }
             const hMatch = line.match(/^(#{1,4})\s+(.*)$/);
             if (hMatch) {
@@ -3015,10 +3027,15 @@ function _extractMarkdownSectionRanges(markdownText) {
                 const underlineMatch = line.match(/^(=+|-+)\s*$/);
                 if (underlineMatch) {
                     const prev = lines[i - 1];
+                    // 들여쓰기 코드블록 시작 컨텍스트는 문단이 아니므로 Setext 베이스로 인정 X.
+                    // 4칸 이상 공백/탭으로 시작하면서 직전 라인이 빈 줄(또는 문서 시작) 이면 코드블록.
+                    const isIndentedCodeBlockStart = /^(?: {4,}|\t)/.test(prev)
+                        && (i - 2 < 0 || lines[i - 2].trim() === '');
                     const prevTrim = prev.trim();
                     // 이전 라인이 문단 텍스트여야 setext 로 인정.
-                    // 빈 줄/ATX 헤딩/블록쿼트/리스트 항목 등은 제외.
-                    const isParagraph = prevTrim !== ''
+                    // 빈 줄/ATX 헤딩/블록쿼트/리스트 항목/들여쓰기 코드블록 등은 제외.
+                    const isParagraph = !isIndentedCodeBlockStart
+                        && prevTrim !== ''
                         && !prevTrim.startsWith('#')
                         && !prevTrim.startsWith('>')
                         && !/^[-*_]{3,}\s*$/.test(prevTrim)
@@ -3164,22 +3181,27 @@ function _addHeadingCopyButtons(containerEl, resolvedContent, options = {}) {
         };
         h.appendChild(linkBtn);
 
-        // 편집 권한이 있을 때만 섹션 편집 버튼을 링크 버튼 옆에 추가
-        if (enableSectionEdit && canEdit && editSlug && rawRanges) {
-            // transclusion 주입 헤딩은 원본에 존재하지 않으므로 편집 버튼 미생성.
-            // 판정은 텍스트 매칭이 아니라 센티넬 기반 소스 메타데이터(range.transcluded)로.
-            if (range.transcluded) return;
-
-            // 이 DOM 헤딩은 원본 마크다운의 rawCursor 번째 헤딩에 해당한다(순서 불변).
+        // 비-트랜스클루전 헤딩에 한해, 원본 마크다운의 헤딩 라인 인덱스를 데이터 속성으로 부여한다.
+        // 에디터 스크롤 동기화가 raw 라인 기준으로 프리뷰 anchor 를 정확히 찾을 수 있도록 한다.
+        // (각주 자동 헤딩은 ranges 에 대응 항목이 없어 위에서 이미 return 되었음)
+        let rawRangeForHeading = null;
+        if (rawRanges && !range.transcluded) {
             const rawIdx = rawCursor;
             rawCursor++;
             const rawRange = rawRanges[rawIdx];
-            if (!rawRange) return; // 예기치 않은 불일치 — 방어적 차단
+            if (rawRange) {
+                const normalize = (s) => (s || '').trim();
+                if (normalize(rawRange.headingText) === normalize(range.headingText)) {
+                    rawRangeForHeading = rawRange;
+                    h.dataset.rawLine = String(rawRange.lineIdx);
+                }
+            }
+        }
 
-            // 텍스트 일치 확인(방어적): 원본을 앞서 변경한 뒤 캐시된 이전 render 와
-            // 엇갈리는 극한 경우를 잡기 위한 안전망. 불일치 시 편집 버튼 생략.
-            const normalize = (s) => (s || '').trim();
-            if (normalize(rawRange.headingText) !== normalize(range.headingText)) return;
+        // 편집 권한이 있을 때만 섹션 편집 버튼을 링크 버튼 옆에 추가
+        if (enableSectionEdit && canEdit && editSlug && rawRangeForHeading) {
+            const rawRange = rawRangeForHeading;
+            const rawIdx = rawCursor - 1;
 
             const editLink = document.createElement('a');
             editLink.className = 'wiki-heading-edit-btn';

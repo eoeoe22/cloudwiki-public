@@ -410,7 +410,10 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                 const requestedSlug = normalizeSlug(args.title || '');
                 const topSlug = requestedSlug.includes('/') ? requestedSlug.split('/')[0] : requestedSlug;
 
-                const subdocs = await db.prepare('SELECT slug FROM pages WHERE deleted_at IS NULL AND is_private = 0 AND slug LIKE ? ORDER BY slug ASC LIMIT 200').bind(topSlug + '/%').all<{slug: string}>();
+                const [subdocs, topPage] = await Promise.all([
+                    db.prepare('SELECT slug FROM pages WHERE deleted_at IS NULL AND is_private = 0 AND slug LIKE ? ORDER BY slug ASC LIMIT 200').bind(topSlug + '/%').all<{slug: string}>(),
+                    db.prepare('SELECT slug FROM pages WHERE slug = ? AND deleted_at IS NULL AND is_private = 0').bind(topSlug).first<{slug: string}>()
+                ]);
 
                 if (subdocs.results.length === 0) {
                     return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: '하위 문서가 없습니다.' }] } };
@@ -421,21 +424,20 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                     const relative = doc.slug.substring(topSlug.length + 1);
                     const parts = relative.split('/');
                     let node = tree;
-                    for (const part of parts) {
-                        if (!node[part]) node[part] = { _children: {}, _doc: null };
-                        node = node[part]._children;
-                    }
-                    let target = tree;
                     for (let i = 0; i < parts.length; i++) {
-                        if (i === parts.length - 1) {
-                            target[parts[i]]._doc = doc;
-                        } else {
-                            target = target[parts[i]]._children;
-                        }
+                        const part = parts[i];
+                        if (!node[part]) node[part] = { _children: {}, _exists: false };
+                        if (i === parts.length - 1) node[part]._exists = true;
+                        node = node[part]._children;
                     }
                 }
 
-                function renderTree(nodes: any, parentPrefix: string): string {
+                // 트리 경로상 필요하지만 실제 문서가 없는 노드도 검출해 표시한다.
+                // 부모 슬러그(topSlug/a/b ... )가 pages에 없으면 _exists=false 로 남는다.
+                const missingDocs: string[] = [];
+                if (!topPage) missingDocs.push(topSlug);
+
+                function renderTree(nodes: any, parentPrefix: string, slugPrefix: string): string {
                     const entries = Object.keys(nodes).sort();
                     let text = '';
                     entries.forEach((key, idx) => {
@@ -444,18 +446,25 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                         const hasChildren = Object.keys(node._children).length > 0;
                         const connector = isLast ? '└── ' : '├── ';
                         const childPrefix = parentPrefix + (isLast ? '    ' : '│   ');
+                        const fullSlug = `${slugPrefix}/${key}`;
+                        const marker = node._exists ? '' : ' (문서 없음)';
+                        if (!node._exists) missingDocs.push(fullSlug);
 
-                        text += `${parentPrefix}${connector}${key}\n`;
+                        text += `${parentPrefix}${connector}${key}${marker}\n`;
 
                         if (hasChildren) {
-                            text += renderTree(node._children, childPrefix);
+                            text += renderTree(node._children, childPrefix, fullSlug);
                         }
                     });
                     return text;
                 }
 
-                const treeText = `${topSlug}\n` + renderTree(tree, '');
-                return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: treeText }] } };
+                const topMarker = topPage ? '' : ' (문서 없음)';
+                const treeText = `${topSlug}${topMarker}\n` + renderTree(tree, '', topSlug);
+                const missingSection = missingDocs.length > 0
+                    ? `\n문서가 없는 항목 (${missingDocs.length}):\n${missingDocs.map(s => `- ${s}`).join('\n')}\n`
+                    : '';
+                return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: treeText + missingSection }] } };
             }
             if (toolName === 'search_category') {
                 const results = await db.prepare('SELECT DISTINCT category FROM page_categories WHERE category LIKE ? ORDER BY category ASC LIMIT 15')

@@ -1703,6 +1703,92 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         }
 
+        // 에디터 raw 마크다운에서 헤딩 라인 인덱스 목록을 추출.
+        // - ATX 헤딩(`#`~`####`) + Setext 헤딩(`===`/`---`) 모두 인식
+        // - 펜스 코드블록(백틱/틸드) 내부의 헤딩은 제외
+        // - 반환: [{ lineIdx (0-based) }, ...] (등장 순서)
+        // 프리뷰 측 `data-raw-line` 속성과 동일한 기준으로 산출되어야 한다.
+        function _collectRawHeadingsFromDoc(docText) {
+            const lines = docText.split('\n');
+            const headings = [];
+            let inFencedCode = false;
+            let fenceChar = '';
+            let fenceLen = 0;
+
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i];
+
+                if (!inFencedCode) {
+                    const fenceMatch = line.match(/^(`{3,}|~{3,})(.*)$/);
+                    if (fenceMatch) {
+                        const opener = fenceMatch[1];
+                        const rest = fenceMatch[2];
+                        const ch = opener[0];
+                        // CommonMark: 백틱 펜스 오프너의 info string 에는 백틱이 들어갈 수 없다.
+                        // 틸드 펜스는 info string 에 어떤 문자(틸드 포함)든 허용된다.
+                        const isValidFence = ch !== '`' || !rest.includes('`');
+                        if (isValidFence) {
+                            inFencedCode = true;
+                            fenceChar = ch;
+                            fenceLen = opener.length;
+                            continue;
+                        }
+                    }
+                    if (/^#{1,4}[ \t]/.test(line)) {
+                        headings.push({ lineIdx: i });
+                        continue;
+                    }
+                    // Setext 헤딩 감지: 이전 줄이 문단 텍스트일 때만 인정.
+                    // marked 의 Setext 인식 조건과 일치시켜 프리뷰의 헤딩 수와 어긋나지 않도록 한다.
+                    if (i > 0) {
+                        const underlineMatch = line.match(/^(=+|-+)\s*$/);
+                        if (underlineMatch) {
+                            const prev = lines[i - 1];
+                            // 들여쓰기 코드 컨텍스트(앞에 빈 줄 또는 문서 시작이 있고 prev 가 4칸 이상
+                            // 공백/탭으로 시작) 는 문단이 아니라 코드블록이므로 Setext 베이스가 될 수 없다.
+                            // 들여쓰기 자체로만 판정하지 않고 직전 라인이 빈 줄/문서 시작인지 함께 보아
+                            // 문단 lazy continuation(들여쓴 후속 라인) 케이스를 보존한다.
+                            const isIndentedCodeBlockStart = /^(?: {4,}|\t)/.test(prev)
+                                && (i - 2 < 0 || lines[i - 2].trim() === '');
+                            const prevTrim = prev.trim();
+                            const isParagraph = !isIndentedCodeBlockStart
+                                && prevTrim !== ''
+                                && !prevTrim.startsWith('#')
+                                && !prevTrim.startsWith('>')
+                                && !/^[-*_]{3,}\s*$/.test(prevTrim)
+                                && !/^[-*+]\s+/.test(prevTrim)
+                                && !/^\d+[.)]\s+/.test(prevTrim)
+                                && !/^(`{3,}|~{3,})/.test(prevTrim);
+                            if (isParagraph) {
+                                headings.push({ lineIdx: i - 1 });
+                            }
+                        }
+                    }
+                } else {
+                    const trimmed = line.trim();
+                    if (trimmed[0] === fenceChar
+                        && trimmed.replace(new RegExp('^' + fenceChar + '+'), '').trim() === ''
+                        && trimmed.length >= fenceLen) {
+                        inFencedCode = false;
+                    }
+                }
+            }
+            return headings;
+        }
+
+        // 프리뷰에서 raw 라인 인덱스에 대응하는 anchor 엘리먼트를 찾는다.
+        // data-raw-line 부여 전 렌더본/수동 호출 등에 대비해 data-heading-idx 폴백을 둔다.
+        function _findPreviewAnchorByRawLine(previewEl, rawLineIdx, fallbackIdx) {
+            if (rawLineIdx != null) {
+                const anchor = previewEl.querySelector(`[data-raw-line="${rawLineIdx}"]`);
+                if (anchor) return anchor;
+            }
+            if (fallbackIdx != null && fallbackIdx >= 0) {
+                return previewEl.querySelector(`[data-heading-idx="${fallbackIdx}"]`);
+            }
+            return null;
+        }
+
         function syncEditorScrollToPreview(source) {
             // source: 'cursor' (기본) | 'scroll'
             //  - 'cursor' : 커서(선택의 head) 라인을 기준으로 헤딩 섹션 결정
@@ -1717,14 +1803,21 @@ document.addEventListener('DOMContentLoaded', async () => {
             let refLineNum;
 
             if (source === 'scroll') {
-                // 에디터가 맨 아래에 도달하면 프리뷰를 마지막 헤딩으로 동기화 (끝부분 오차 보정)
+                // 에디터가 맨 아래에 도달하면 프리뷰를 raw 소스의 마지막 헤딩으로 동기화 (끝부분 오차 보정)
                 if (scroller && scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 4) {
-                    const allHeadings = customPreview.querySelectorAll('[data-heading-idx]');
-                    if (allHeadings.length > 0) {
-                        const lastAnchor = allHeadings[allHeadings.length - 1];
-                        const previewRect = customPreview.getBoundingClientRect();
-                        const anchorRect = lastAnchor.getBoundingClientRect();
-                        smoothScrollPreviewTo(customPreview.scrollTop + (anchorRect.top - previewRect.top) - 10);
+                    const rawHeadings = _collectRawHeadingsFromDoc(view.state.doc.toString());
+                    if (rawHeadings.length > 0) {
+                        const last = rawHeadings[rawHeadings.length - 1];
+                        const lastAnchor = _findPreviewAnchorByRawLine(customPreview, last.lineIdx, rawHeadings.length - 1);
+                        if (lastAnchor) {
+                            const previewRect = customPreview.getBoundingClientRect();
+                            const anchorRect = lastAnchor.getBoundingClientRect();
+                            smoothScrollPreviewTo(customPreview.scrollTop + (anchorRect.top - previewRect.top) - 10);
+                        } else {
+                            smoothScrollPreviewTo(customPreview.scrollHeight);
+                        }
+                    } else {
+                        smoothScrollPreviewTo(customPreview.scrollHeight);
                     }
                     return;
                 }
@@ -1743,57 +1836,23 @@ document.addEventListener('DOMContentLoaded', async () => {
                 refLineNum = view.state.doc.lineAt(cursorPos).number; // 1-indexed
             }
 
-            // 프리뷰 DOM의 data-heading-idx는 numberHeadings()가 h1~h4 요소에만 부여한다.
-            // 따라서 마크다운 소스에서도 h1~h4 ATX 헤딩만, 그리고 펜스 코드블록 바깥의
-            // 라인만 카운트해야 프리뷰의 인덱스와 정확히 일치한다.
-            const docLines = view.state.doc.toString().split('\n');
+            // raw 소스에서 헤딩 라인 인덱스 목록을 산출(ATX + Setext, 펜스 외부).
+            // refLineNum 보다 앞서거나 같은 마지막 헤딩의 lineIdx 로 프리뷰 anchor 를 찾는다.
+            const rawHeadings = _collectRawHeadingsFromDoc(view.state.doc.toString());
+            let currentRawLine = -1;
             let currentHeadingIdx = -1;
-            let headingCount = 0;
-            let inFencedCode = false;
-            let fenceChar = '';
-            let fenceLen = 0;
-
-            for (let i = 0; i < docLines.length; i++) {
-                const lineNum = i + 1;
-                const line = docLines[i];
-
-                if (!inFencedCode) {
-                    // CommonMark: 백틱 펜스 오프너는 여는 라인에 추가 백틱이 있으면 안 된다
-                    // (예: ``langx`` 는 인라인 코드이지 펜스 오프너가 아님).
-                    // 틸드 펜스는 info string에 백틱이 있어도 되지만 틸드는 있으면 안 된다.
-                    const fenceMatch = line.match(/^(`{3,}|~{3,})(.*)$/);
-                    if (fenceMatch) {
-                        const opener = fenceMatch[1];
-                        const rest = fenceMatch[2];
-                        const ch = opener[0];
-                        const isValidFence = ch === '`' ? !rest.includes('`') : !rest.includes('~');
-                        if (isValidFence) {
-                            inFencedCode = true;
-                            fenceChar = ch;
-                            fenceLen = opener.length;
-                            continue;
-                        }
-                        // 유효한 펜스 오프너가 아니면 일반 라인으로 처리하여 헤딩 판정 계속
-                    }
-                    if (/^#{1,4}[ \t]/.test(line)) {
-                        if (lineNum <= refLineNum) {
-                            currentHeadingIdx = headingCount;
-                        }
-                        headingCount++;
-                    }
+            for (let k = 0; k < rawHeadings.length; k++) {
+                if (rawHeadings[k].lineIdx + 1 <= refLineNum) {
+                    currentRawLine = rawHeadings[k].lineIdx;
+                    currentHeadingIdx = k;
                 } else {
-                    const trimmed = line.trim();
-                    if (trimmed[0] === fenceChar
-                        && trimmed.replace(new RegExp('^' + fenceChar + '+'), '').trim() === ''
-                        && trimmed.length >= fenceLen) {
-                        inFencedCode = false;
-                    }
+                    break;
                 }
             }
 
             // 프리뷰에서 해당 목차 엘리먼트를 찾아 정확한 오프셋만큼 스크롤
-            if (currentHeadingIdx >= 0) {
-                const anchor = customPreview.querySelector(`[data-heading-idx="${currentHeadingIdx}"]`);
+            if (currentRawLine >= 0) {
+                const anchor = _findPreviewAnchorByRawLine(customPreview, currentRawLine, currentHeadingIdx);
                 if (anchor) {
                     // offsetTop 대신 getBoundingClientRect()를 사용하여
                     // 중간에 위치한 컨테이너 패딩이나 마진의 영향 없이 절대 스크롤 높이를 정확히 계산
