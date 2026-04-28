@@ -202,7 +202,10 @@ function extractLinks(content: string): { target_slug: string; link_type: string
 
     // 3) 이미지 참조: images/로 시작하는 R2 키를 파싱
     // 마크다운 ![alt](/media/images/...) 또는 HTML <img src="...images/..."> 등
-    const imageRegex = /images\/[a-zA-Z0-9가-힣\-_(). ]+\.\w+/g;
+    // 업로더(media.ts FILENAME_FORBIDDEN)는 한글/영숫자뿐 아니라 일본어/한자/악센트
+    // 라틴 등 임의 유니코드를 허용하므로, 화이트리스트 대신 URL/마크다운/HTML 경계를
+    // 끊는 문자만 블랙리스트로 제외한다. 비탐욕(`+?`)으로 첫 `.확장자`에서 종료.
+    const imageRegex = /images\/[^\s\[\]()<>"'\\?#|^]+?\.\w+/g;
     for (const m of cleaned.matchAll(imageRegex)) {
         const r2Key = m[0].trim();
         const key = `image:${r2Key}`;

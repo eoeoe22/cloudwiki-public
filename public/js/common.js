@@ -478,13 +478,24 @@ async function loadNotificationCount() {
         const res = await fetch('/api/notifications/count');
         if (!res.ok) return;
         const data = await res.json();
+        const count = Number(data.count) || 0;
         const badge = document.getElementById('notificationBadge');
         if (badge) {
-            if (data.count > 0) {
+            if (count > 0) {
                 badge.innerHTML = '';
                 badge.classList.remove('d-none');
             } else {
                 badge.classList.add('d-none');
+            }
+        }
+        const menuBadge = document.getElementById('notificationMenuBadge');
+        if (menuBadge) {
+            if (count > 0) {
+                menuBadge.textContent = count > 99 ? '99+' : String(count);
+                menuBadge.classList.remove('d-none');
+            } else {
+                menuBadge.textContent = '';
+                menuBadge.classList.add('d-none');
             }
         }
     } catch (e) { }

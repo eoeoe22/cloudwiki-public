@@ -1889,6 +1889,21 @@ div:where(.swal2-container) .swal2-html-container {
   border: 2px solid var(--wiki-bg);
 }
 
+.notification-menu-badge {
+  display: inline-block;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 6px;
+  background: var(--wiki-primary);
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 600;
+  line-height: 18px;
+  text-align: center;
+  border-radius: 9px;
+  margin-left: 8px;
+}
+
 .notification-panel {
   position: absolute;
   top: 100%;
