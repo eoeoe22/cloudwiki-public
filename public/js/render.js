@@ -1471,7 +1471,10 @@ function _renderBlockHtml(block, blockData) {
     const isCallout = (type === 'info' || type === 'tip' || type === 'success'
                     || type === 'warning' || type === 'danger' || type === 'note');
     if (type === 'card' || isCallout) {
-        let t = innerText.trimStart();
+        // 본문 색상 토큰은 본문 첫 줄, 맨 앞에 있을 때만 소비한다.
+        // 줄바꿈을 만나면 더 이상 흡수하지 않아 다른 줄의 {bg:}/{color:}/{palette:}
+        // 토큰은 인라인 컴포넌트(badge/button/tag 등)의 프리픽스로 그대로 남는다.
+        let t = innerText.replace(/^[ \t]+/, '');
         let replaced = true;
         while (replaced) {
             replaced = false;
@@ -1489,13 +1492,13 @@ function _renderBlockHtml(block, blockData) {
             let bgMatch = t.match(/^\{bg:\s*([^}]+)\}/);
             if (bgMatch) {
                 bodyBg = bgMatch[1].trim();
-                t = t.slice(bgMatch[0].length).trimStart();
+                t = t.slice(bgMatch[0].length).replace(/^[ \t]+/, '');
                 replaced = true;
             }
             let colorMatch = t.match(/^\{color:\s*([^}]+)\}/);
             if (colorMatch) {
                 bodyColor = colorMatch[1].trim();
-                t = t.slice(colorMatch[0].length).trimStart();
+                t = t.slice(colorMatch[0].length).replace(/^[ \t]+/, '');
                 replaced = true;
             }
         }
@@ -2144,14 +2147,29 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
 
             const idx = foldBlocks.length;
 
-            const restoredContent = foldContent.replace(/WIKICODEFPH(\d+)XEND/g, (_, i) => codeBlocksForFold[parseInt(i, 10)]);
+            // ::: 블록 디렉티브 전처리. 코드블록 placeholder 가 살아 있는 상태에서 수행해
+            // 코드 블록 안의 ::: 가 잘못 매칭되는 것을 방지한다.
+            const foldBlockResult = _preprocessBlockDirectives(foldContent);
+            let foldBlockText = foldBlockResult.text;
+            const foldBlockData = foldBlockResult.blockData;
+            // 본문과 블록 innerText 양쪽에서 코드블록 placeholder 복원
+            foldBlockText = foldBlockText.replace(/WIKICODEFPH(\d+)XEND/g, (_, i) => codeBlocksForFold[parseInt(i, 10)]);
+            foldBlockData.forEach(bd => {
+                bd.innerText = bd.innerText.replace(/WIKICODEFPH(\d+)XEND/g, (_, i) => codeBlocksForFold[parseInt(i, 10)]);
+            });
+
             // [[링크|텍스트]] 안의 | 가 마크다운 테이블 구분자와 충돌하지 않도록 보호
-            const { text: restoredContentProt, prot: foldWikiLinkProt } = protectWikiLinks(restoredContent);
+            const { text: restoredContentProt, prot: foldWikiLinkProt } = protectWikiLinks(foldBlockText);
             let rawContentHtml = (typeof marked !== 'undefined') ? marked.parse(restoredContentProt) : restoredContentProt;
             rawContentHtml = restoreWikiLinks(rawContentHtml, foldWikiLinkProt);
             rawContentHtml = _replaceTaskCheckboxesWithIcons(rawContentHtml);
             rawContentHtml = rawContentHtml.replace(/<img([^>]*)>\s*\{size:([a-zA-Z0-9_-]+)\}/g, (_, attrs, size) => `<img${attrs} data-size="${size.trim()}">`);
-            let contentHtml = (typeof DOMPurify !== 'undefined') ? DOMPurify.sanitize(rawContentHtml, { ADD_TAGS: ['i', 'span', 'details', 'summary'], ADD_ATTR: ['class', 'style', 'data-bg', 'data-color', 'data-size', 'data-unix', 'colspan', 'rowspan', 'title'] }) : escapeHtml(rawContentHtml);
+            // 블록 placeholder 를 HTML 로 치환 (중첩 블록은 _renderBlockHtml 내부에서 재귀 처리)
+            rawContentHtml = rawContentHtml.replace(/(?:<p>)?WIKIBLOCKPH(\d+)XEND(?:<\/p>)?/g, (m, blkIdx) => {
+                const b = foldBlockData[parseInt(blkIdx, 10)];
+                return b ? _renderBlockHtml(b, foldBlockData) : '';
+            });
+            let contentHtml = (typeof DOMPurify !== 'undefined') ? DOMPurify.sanitize(rawContentHtml, { ADD_TAGS: ['i', 'span', 'details', 'summary', 'div', 'canvas'], ADD_ATTR: ['class', 'style', 'data-bg', 'data-color', 'data-size', 'data-unix', 'data-ext-name', 'data-ext-idx', 'colspan', 'rowspan', 'title'] }) : escapeHtml(rawContentHtml);
 
             foldBlocks.push({ summaryText, bgAttr, colorAttr, contentHtml });
             return `\n\nWIKIFOLDPH${idx}XEND\n\n`;
