@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { requireAdmin } from '../middleware/session';
 import { isSuperAdmin, getSuperAdmins } from '../utils/auth';
 import { RBAC } from '../utils/role';
+import { fetchMediaTagMap, sanitizeTags } from '../utils/mediaTags';
 import type { Env, User } from '../types';
 
 const adminRoutes = new Hono<Env>();
@@ -586,6 +587,10 @@ adminRoutes.get('/media', async (c) => {
     const search = c.req.query('search')?.trim() || '';
     const sort = c.req.query('sort') || 'date_desc';
 
+    // 태그 필터: tags=쉼표구분 또는 tag=단일. 정제 후 AND 매칭(모든 태그 포함).
+    const rawTagInput = c.req.query('tags') ?? c.req.query('tag') ?? '';
+    const filterTags = sanitizeTags(rawTagInput);
+
     const sortMap: Record<string, string> = {
         date_desc:  'm.created_at DESC',
         date_asc:   'm.created_at ASC',
@@ -596,27 +601,56 @@ adminRoutes.get('/media', async (c) => {
     };
     const orderBy = sortMap[sort] || sortMap['date_desc'];
 
-    let queryStr = `SELECT m.id, m.r2_key, m.filename, m.mime_type, m.size, m.created_at, u.name as uploader_name
-                    FROM media m LEFT JOIN users u ON m.uploader_id = u.id`;
-    let countQueryStr = `SELECT COUNT(*) as count FROM media`;
-    const params: any[] = [];
-
+    const where: string[] = [];
+    const filenameParams: any[] = [];
     if (search) {
-        queryStr += ` WHERE m.filename LIKE ?`;
-        countQueryStr += ` WHERE filename LIKE ?`;
-        params.push(`%${search}%`);
+        where.push('m.filename LIKE ?');
+        filenameParams.push(`%${search}%`);
+    }
+    const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
+
+    let listSql: string;
+    let countSql: string;
+    let listParams: any[];
+    let countParams: any[];
+
+    if (filterTags.length > 0) {
+        const tagWhere = filterTags.map(() => 'm.id IN (SELECT media_id FROM media_tags WHERE tag = ?)');
+        const tagWhereSql = `WHERE ${[...tagWhere, ...where].join(' AND ')}`;
+
+        listSql = `SELECT m.id, m.r2_key, m.filename, m.mime_type, m.size, m.created_at, u.name as uploader_name
+                   FROM media m
+                   LEFT JOIN users u ON m.uploader_id = u.id
+                   ${tagWhereSql}
+                   ORDER BY ${orderBy} LIMIT ? OFFSET ?`;
+        listParams = [...filterTags, ...filenameParams, limit, offset];
+
+        countSql = `SELECT COUNT(*) as count
+                    FROM media m
+                    ${tagWhereSql}`;
+        countParams = [...filterTags, ...filenameParams];
+    } else {
+        listSql = `SELECT m.id, m.r2_key, m.filename, m.mime_type, m.size, m.created_at, u.name as uploader_name
+                   FROM media m LEFT JOIN users u ON m.uploader_id = u.id
+                   ${whereSql}
+                   ORDER BY ${orderBy} LIMIT ? OFFSET ?`;
+        listParams = [...filenameParams, limit, offset];
+
+        countSql = `SELECT COUNT(*) as count FROM media m ${whereSql}`;
+        countParams = [...filenameParams];
     }
 
-    queryStr += ` ORDER BY ${orderBy} LIMIT ? OFFSET ?`;
-    const queryParams = [...params, limit, offset];
-
     const [mediaResult, countResult] = await Promise.all([
-        db.prepare(queryStr).bind(...queryParams).all(),
-        db.prepare(countQueryStr).bind(...params).first<{ count: number }>()
+        db.prepare(listSql).bind(...listParams).all(),
+        db.prepare(countSql).bind(...countParams).first<{ count: number }>()
     ]);
 
+    const rows = (mediaResult.results || []) as Array<{ id: number; [k: string]: unknown }>;
+    const tagMap = await fetchMediaTagMap(db, rows.map(r => r.id));
+    const media = rows.map(r => ({ ...r, tags: tagMap.get(r.id) || [] }));
+
     return c.json({
-        media: mediaResult.results,
+        media,
         total: countResult?.count || 0
     });
 });

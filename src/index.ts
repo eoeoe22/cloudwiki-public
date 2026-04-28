@@ -22,6 +22,7 @@ import analyticsRoutes from './routes/analytics';
 import { trackPageView, trackError, queryAnalytics } from './utils/analytics';
 import { isR2OnlyNamespace } from './utils/slug';
 import { getRevisionContent } from './utils/r2';
+import { renderForAI } from './utils/aiParser';
 
 const app = new Hono<Env>();
 
@@ -126,6 +127,79 @@ app.get('/api/analytics/page-views/:slug', async (c) => {
         return c.json({ total: 0, recent: 0 });
     }
 });
+
+// ── 크롤러 감지 / 크롤러용 미니멀 HTML 렌더링 ──
+// ALLOW_CRAWL=true일 때, 크롤러 User-Agent로 들어온 /w/* 요청은
+// JS 실행이 없는 상태에서도 본문이 보이도록 정적 HTML 페이지로 응답한다.
+// (일반 사용자 브라우저는 그대로 SPA UI를 받는다)
+// WhatsApp 인앱 브라우저 UA에도 "WhatsApp/x.y" 토큰이 포함되므로 일반 사용자가
+// 크롤러 페이지를 받지 않도록 의도적으로 제외한다. 동일한 이유로 검사 토큰은
+// 실 봇 시그니처가 명확한 것만 유지한다.
+const CRAWLER_UA_REGEX = /Claude-User|ClaudeBot|anthropic-ai|GPTBot|OAI-SearchBot|ChatGPT-User|Googlebot|Google-Extended|AdsBot-Google|Mediapartners-Google|bingbot|BingPreview|Applebot|PerplexityBot|YouBot|Amazonbot|facebookexternalhit|Twitterbot|LinkedInBot|Discordbot|TelegramBot|DuckDuckBot|Baiduspider|YandexBot|Slurp|DotBot|MJ12bot|AhrefsBot|SemrushBot|\bbot\b|crawler|spider/i;
+
+function isCrawlerUA(ua: string | null | undefined): boolean {
+    if (!ua) return false;
+    return CRAWLER_UA_REGEX.test(ua);
+}
+
+function shouldServeCrawler(c: Context<Env>): boolean {
+    if (c.env?.ALLOW_CRAWL !== 'true') return false;
+    return isCrawlerUA(c.req.header('user-agent'));
+}
+
+interface CrawlerPageOpts {
+    title: string;
+    description: string;
+    bodyHtml: string;
+    canonicalUrl?: string;
+    status?: number;
+    cacheControl?: string;
+}
+
+function buildCrawlerPage(c: Context<Env>, opts: CrawlerPageOpts): Response {
+    const wikiName = c.env?.WIKI_NAME || 'CloudWiki';
+    const wikiFavicon = c.env?.WIKI_FAVICON_URL || '/favicon.ico';
+    const status = opts.status ?? 200;
+    // 같은 URL이 UA에 따라 SPA HTML 또는 크롤러 HTML 두 가지로 나뉘므로
+    // 공유 캐시(다운스트림 CDN, 브라우저 공유 캐시)가 잘못된 변형을 재사용하지 않도록
+    // 크롤러 응답은 기본적으로 private 캐시만 허용하고 Vary: User-Agent를 명시한다.
+    const cacheControl = opts.cacheControl ?? 'private, max-age=300';
+
+    const title = opts.title || wikiName;
+    const description = opts.description || wikiName;
+
+    const html = `<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="index, follow">
+<title>${escapeHtml(title)}</title>
+<meta name="description" content="${escapeHtml(description)}">
+<meta property="og:title" content="${escapeHtml(title)}">
+<meta property="og:description" content="${escapeHtml(description)}">
+<meta property="og:site_name" content="${escapeHtml(wikiName)}">
+<meta property="og:type" content="article">
+${opts.canonicalUrl ? `<link rel="canonical" href="${escapeHtml(opts.canonicalUrl)}">\n` : ''}<link rel="icon" href="${escapeHtml(wikiFavicon)}">
+</head>
+<body>
+<header><a href="/">${escapeHtml(wikiName)}</a></header>
+<main>
+${opts.bodyHtml}
+</main>
+</body>
+</html>`;
+
+    return new Response(html, {
+        status,
+        headers: {
+            'Content-Type': 'text/html; charset=utf-8',
+            'Cache-Control': cacheControl,
+            'Vary': 'User-Agent',
+            'X-Crawler-Render': '1',
+        },
+    });
+}
 
 // ── 헬퍼: ASSETS에서 HTML 가져오기 ──
 async function fetchAssetHtml(c: any, htmlPath: string): Promise<Response> {
@@ -389,14 +463,19 @@ app.get('/w/*', async (c) => {
     const redirectParam = c.req.query('redirect');
     const isAdmin = user && rbac.can(user.role, 'admin:access');
     const startTime = Date.now();
+    const crawlEnabled = c.env.ALLOW_CRAWL === 'true';
+    const isCrawler = shouldServeCrawler(c);
+    const wikiName = c.env.WIKI_NAME || 'CloudWiki';
+    const canonicalUrl = new URL(c.req.url).origin + `/w/${encodeURIComponent(slug)}`;
 
     // ── 캐시 확인 (비관리자 + redirect=no가 아닌 일반 요청만) ──
+    // 크롤러용 응답은 일반 SPA HTML과 형태가 달라 같은 캐시 키를 공유하면 안 되므로 캐시 우회
     const cache = caches.default;
     // 쿼리 파라미터를 제거한 정규화된 URL을 캐시 키로 사용
     const ssrCacheUrl = new URL(c.req.url);
     ssrCacheUrl.search = '';
     const ssrCacheKey = new Request(ssrCacheUrl.toString(), { method: 'GET' });
-    const canUseCache = !isAdmin && redirectParam !== 'no';
+    const canUseCache = !isAdmin && !isCrawler && redirectParam !== 'no';
 
     if (canUseCache) {
         const cached = await cache.match(ssrCacheKey);
@@ -423,6 +502,33 @@ app.get('/w/*', async (c) => {
         if (mediaRow) {
             const tags = await fetchMediaTags(db, mediaRow.id);
 
+            const description = mediaRow.content
+                ? extractMetaDescription(mediaRow.content) || mediaRow.content.slice(0, 160)
+                : `${mediaRow.filename} - 이미지 문서`;
+            const titleStr = `${slug} - ${wikiName}`;
+
+            if (isCrawler) {
+                trackPageView(c, slug, Date.now() - startTime);
+                const mediaUrl = `/media/${mediaRow.r2_key}`;
+                const tagListHtml = (tags && tags.length)
+                    ? `<p><strong>태그:</strong> ${tags.map(t => escapeHtml(String(t))).join(', ')}</p>`
+                    : '';
+                const aiText = mediaRow.content ? await renderForAI(mediaRow.content, db, 0, slug) : '';
+                const contentBlock = aiText ? `<pre>${escapeHtml(aiText)}</pre>` : '';
+                const body = `<article>
+<h1>${escapeHtml(slug)}</h1>
+<figure>
+<img src="${escapeHtml(mediaUrl)}" alt="${escapeHtml(mediaRow.filename)}">
+<figcaption>${escapeHtml(mediaRow.filename)}</figcaption>
+</figure>
+${tagListHtml}
+${contentBlock}
+</article>`;
+                // 인증된 요청은 공유/개인 캐시 모두 차단 (cross-user 누출 방지)
+                const crawlerCacheControl = user ? 'private, no-store' : 'public, max-age=300';
+                return buildCrawlerPage(c, { title: titleStr, description, bodyHtml: body, canonicalUrl, cacheControl: crawlerCacheControl });
+            }
+
             const ssrData: Record<string, any> = {
                 _ssrSlug: slug,
                 _ssrNotFound: false,
@@ -441,10 +547,8 @@ app.get('/w/*', async (c) => {
                 content: mediaRow.content || '',
                 created_at: mediaRow.created_at,
                 updated_at: mediaRow.created_at,
-                _ssrTitle: `${slug} - ${c.env.WIKI_NAME || 'CloudWiki'}`,
-                _ssrDescription: mediaRow.content
-                    ? mediaRow.content.slice(0, 160)
-                    : `${mediaRow.filename} - 이미지 문서`,
+                _ssrTitle: titleStr,
+                _ssrDescription: description,
             };
 
             const response = await renderHtml(c, '/', ssrData);
@@ -453,9 +557,13 @@ app.get('/w/*', async (c) => {
             if (canUseCache) {
                 const cachedResponse = new Response(response.body, response);
                 cachedResponse.headers.set('Cache-Control', 'public, max-age=86400');
+                // ALLOW_CRAWL=true 일 때만 같은 URL이 UA에 따라 두 변형(SPA / 크롤러)으로
+                // 분기되므로, 그 경우에만 Vary를 추가해 공유 캐시 단편화를 최소화한다.
+                if (crawlEnabled) cachedResponse.headers.set('Vary', 'User-Agent');
                 c.executionCtx.waitUntil(cache.put(ssrCacheKey, cachedResponse.clone()));
                 return cachedResponse;
             }
+            if (crawlEnabled) response.headers.set('Vary', 'User-Agent');
             return response;
         }
         // mediaRow 부재 시 아래 일반 pages 조회로 폴스루 (legacy 이미지: 슬러그 호환)
@@ -468,17 +576,33 @@ app.get('/w/*', async (c) => {
         .first<Page>();
 
     if (page && page.deleted_at && !isAdmin) {
+        if (isCrawler) {
+            const title = `삭제된 문서 - ${wikiName}`;
+            const body = `<article>
+<h1>${escapeHtml(slug)}</h1>
+<p>이 문서는 삭제되었습니다.</p>
+</article>`;
+            return buildCrawlerPage(c, {
+                title,
+                description: `${slug} 문서는 삭제되었습니다.`,
+                bodyHtml: body,
+                canonicalUrl,
+                status: 410,
+                cacheControl: 'no-store, must-revalidate',
+            });
+        }
         // SSR에서도 삭제된 문서 처리
         const deletedSsrData: Record<string, any> = {
             _ssrSlug: slug,
             _ssrNotFound: true,
             _ssrDeleted: true,
-            _ssrTitle: `삭제된 문서 - ${c.env.WIKI_NAME || 'CloudWiki'}`
+            _ssrTitle: `삭제된 문서 - ${wikiName}`
         };
         // 삭제된 문서는 리다이렉트나 본문 조회를 하지 않도록 처리
         const response = await renderHtml(c, '/', deletedSsrData);
         const goneResponse = new Response(response.body, { status: 410, headers: response.headers });
         goneResponse.headers.set('Cache-Control', 'no-store, must-revalidate');
+        if (crawlEnabled) goneResponse.headers.set('Vary', 'User-Agent');
         return goneResponse;
     }
 
@@ -535,15 +659,47 @@ app.get('/w/*', async (c) => {
     let shouldCache = canUseCache;
 
     if (!page) {
+        // 크롤러: 문서 없음을 404로 응답
+        if (isCrawler) {
+            const title = `문서 없음 - ${wikiName}`;
+            const body = `<article>
+<h1>${escapeHtml(slug)}</h1>
+<p>요청하신 문서가 존재하지 않습니다.</p>
+</article>`;
+            return buildCrawlerPage(c, {
+                title,
+                description: `${slug} 문서를 찾을 수 없습니다.`,
+                bodyHtml: body,
+                canonicalUrl,
+                status: 404,
+                cacheControl: 'no-store, must-revalidate',
+            });
+        }
         ssrData._ssrNotFound = true;
-        ssrData._ssrTitle = `문서 없음 - ${c.env.WIKI_NAME || 'CloudWiki'}`;
+        ssrData._ssrTitle = `문서 없음 - ${wikiName}`;
         shouldCache = false; // 미존재 문서는 캐싱하지 않음
     } else {
         // 비공개 문서 접근 제어
         if (page.is_private && !isAdmin) {
+            // 크롤러에는 존재 자체를 노출하지 않도록 404로 응답
+            if (isCrawler) {
+                const title = `문서 없음 - ${wikiName}`;
+                const body = `<article>
+<h1>${escapeHtml(slug)}</h1>
+<p>요청하신 문서가 존재하지 않습니다.</p>
+</article>`;
+                return buildCrawlerPage(c, {
+                    title,
+                    description: `${slug} 문서를 찾을 수 없습니다.`,
+                    bodyHtml: body,
+                    canonicalUrl,
+                    status: 404,
+                    cacheControl: 'no-store, must-revalidate',
+                });
+            }
             ssrData._ssrNotFound = true;
             ssrData._ssrForbidden = true;
-            ssrData._ssrTitle = `비공개 문서 - ${c.env.WIKI_NAME || 'CloudWiki'}`;
+            ssrData._ssrTitle = `비공개 문서 - ${wikiName}`;
             shouldCache = false; // 비공개 문서는 캐싱하지 않음
         } else {
             // 작성자 정보
@@ -564,7 +720,7 @@ app.get('/w/*', async (c) => {
             }
 
             // 본문 내용 기반 설명글(Description) 생성
-            let desc = `${page.slug} - ${c.env.WIKI_NAME || 'CloudWiki'}`;
+            let desc = `${page.slug} - ${wikiName}`;
             if (page.content) {
                 const extracted = extractMetaDescription(page.content);
                 if (extracted) {
@@ -572,11 +728,41 @@ app.get('/w/*', async (c) => {
                 }
             }
 
+            // 크롤러: 본문(마크다운)이 보이는 미니멀 HTML로 응답
+            // renderForAI 결과는 그대로 마크다운이므로 escape 후 <pre>에 넣어 전달한다.
+            if (isCrawler) {
+                trackPageView(c, page.slug, Date.now() - startTime);
+                const title = `${page.slug} - ${wikiName}`;
+                const aiText = page.content ? await renderForAI(page.content, db, 0, page.slug) : '';
+                const redirectedNote = redirectedFrom
+                    ? `<p><em>${escapeHtml(redirectedFrom)} 에서 자동으로 넘어왔습니다.</em></p>`
+                    : '';
+                const contentBlock = aiText
+                    ? `<pre>${escapeHtml(aiText)}</pre>`
+                    : '<p><em>본문이 비어있습니다.</em></p>';
+                const body = `<article>
+<h1>${escapeHtml(page.slug)}</h1>
+${redirectedNote}
+${contentBlock}
+</article>`;
+                // 인증된 요청 또는 비공개 문서(관리자 열람)는 공유/개인 캐시 모두 차단해
+                // Vary: User-Agent만으로는 막을 수 없는 cross-user 누출을 차단한다.
+                const isSensitive = !!user || !!page.is_private;
+                const crawlerCacheControl = isSensitive ? 'private, no-store' : 'public, max-age=300';
+                return buildCrawlerPage(c, {
+                    title,
+                    description: desc,
+                    bodyHtml: body,
+                    canonicalUrl: new URL(c.req.url).origin + `/w/${encodeURIComponent(page.slug)}`,
+                    cacheControl: crawlerCacheControl,
+                });
+            }
+
             ssrData = {
                 ...safeJSON({ ...page, author, redirected_from: redirectedFrom }),
                 _ssrSlug: slug,
                 _ssrNotFound: false,
-                _ssrTitle: `${page.slug} - ${c.env.WIKI_NAME || 'CloudWiki'}`,
+                _ssrTitle: `${page.slug} - ${wikiName}`,
                 _ssrDescription: desc,
             };
 
@@ -597,10 +783,13 @@ app.get('/w/*', async (c) => {
     if (shouldCache) {
         const cachedResponse = new Response(response.body, response);
         cachedResponse.headers.set('Cache-Control', 'public, max-age=86400');
+        // ALLOW_CRAWL=true일 때만 UA에 따라 응답 변형이 갈리므로 그 경우에만 Vary 추가
+        if (crawlEnabled) cachedResponse.headers.set('Vary', 'User-Agent');
         c.executionCtx.waitUntil(cache.put(ssrCacheKey, cachedResponse.clone()));
         return cachedResponse;
     }
 
+    if (crawlEnabled) response.headers.set('Vary', 'User-Agent');
     return response;
 });
 

@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import type { Env } from '../types';
 import { requireAuth, requirePermission } from '../middleware/session';
-import { fetchMediaTagMap, replaceMediaTags } from '../utils/mediaTags';
+import { fetchMediaTagMap, replaceMediaTags, sanitizeTags } from '../utils/mediaTags';
 import { RBAC } from '../utils/role';
 import { safeJSON } from '../utils/json';
 
@@ -40,50 +40,6 @@ function validateUploadFilename(name: string): { ok: true; value: string } | { o
         return { ok: false, error: '파일명은 최대 100자까지 입력할 수 있습니다.' };
     }
     return { ok: true, value: trimmed };
-}
-
-/**
- * 태그 문자열 규칙: 카테고리와 동일 (한글/영숫자/공백/_/./-).
- * 최대 20개, 각 50자 이내. trim, 중복 제거, 정규식 통과 항목만 유효.
- */
-const TAG_VALID_RE = /^[가-힣a-zA-Z0-9 _.-]+$/;
-const TAG_MAX_COUNT = 20;
-const TAG_MAX_LENGTH = 50;
-
-function sanitizeTags(input: unknown): string[] {
-    let raw: unknown[] = [];
-    if (Array.isArray(input)) {
-        raw = input;
-    } else if (typeof input === 'string') {
-        const s = input.trim();
-        if (!s) return [];
-        // JSON 배열 문자열 지원
-        if (s.startsWith('[')) {
-            try {
-                const parsed = JSON.parse(s);
-                if (Array.isArray(parsed)) raw = parsed;
-            } catch { /* fallthrough to comma split */ }
-        }
-        if (raw.length === 0) {
-            raw = s.split(',');
-        }
-    } else {
-        return [];
-    }
-
-    const seen = new Set<string>();
-    const out: string[] = [];
-    for (const item of raw) {
-        if (typeof item !== 'string') continue;
-        const trimmed = item.trim();
-        if (!trimmed || trimmed.length > TAG_MAX_LENGTH) continue;
-        if (!TAG_VALID_RE.test(trimmed)) continue;
-        if (seen.has(trimmed)) continue;
-        seen.add(trimmed);
-        out.push(trimmed);
-        if (out.length >= TAG_MAX_COUNT) break;
-    }
-    return out;
 }
 
 /**

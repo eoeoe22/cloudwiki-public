@@ -124,6 +124,48 @@
         .media-list-scroll .media-item {
             min-width: 560px;
         }
+
+        .media-item-tags {
+            margin-top: 4px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+        }
+
+        .media-item-tag {
+            display: inline-flex;
+            align-items: center;
+            background-color: rgba(88, 166, 255, 0.1);
+            color: var(--wiki-primary);
+            border: 1px solid rgba(88, 166, 255, 0.2);
+            border-radius: 6px;
+            padding: 1px 8px;
+            font-size: 0.75rem;
+            font-weight: 500;
+            line-height: 1.4;
+        }
+
+        .media-tag-filter {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-top: 10px;
+        }
+
+        .media-tag-filter > label {
+            font-size: 0.85rem;
+            color: var(--wiki-text-muted, #888);
+            margin: 0;
+            white-space: nowrap;
+        }
+
+        .media-tag-filter .category-tag-container {
+            flex: 1;
+            min-width: 240px;
+            min-height: 36px;
+            padding: 4px 10px;
+        }
     </style>
 </head>
 
@@ -194,6 +236,13 @@
                                 <button class="btn btn-sm btn-primary" onclick="searchMedia()">검색</button>
                             </div>
                         </div>
+                        <div class="media-tag-filter">
+                            <label for="mediaTagInput"><i class="mdi mdi-tag-multiple-outline"></i> 태그 검색</label>
+                            <div class="category-tag-container" id="mediaTagContainer">
+                                <input type="text" id="mediaTagInput" class="category-tag-input"
+                                    placeholder="(엔터/쉼표로 추가, 모두 포함하는 이미지 표시)">
+                            </div>
+                        </div>
                     </div>
                     <div class="card-body">
                         <div class="media-list-scroll">
@@ -240,6 +289,16 @@
                 document.querySelectorAll('#userAvatar').forEach(el => el.src = currentUser.picture || '');
                 document.querySelectorAll('#userName').forEach(el => el.textContent = currentUser.name);
 
+                mediaTagWidget = mountMediaTagInput({
+                    container: document.getElementById('mediaTagContainer'),
+                    input: document.getElementById('mediaTagInput'),
+                    initial: [],
+                });
+                mediaTagWidget.setOnChange(() => {
+                    mediaTagFilter = mediaTagWidget.getTags();
+                    loadMedia(1);
+                });
+
                 loadMedia();
             } catch (e) {
                 window.location.href = '/login';
@@ -253,6 +312,8 @@
         var mediaSort = 'date_desc';
         var mediaTotal = 0;
         var mediaItems = [];
+        var mediaTagFilter = [];
+        var mediaTagWidget = null;
 
         async function loadMedia(page = 1) {
             try {
@@ -265,6 +326,9 @@
                     sort: mediaSort
                 });
                 if (mediaSearch) params.append('search', mediaSearch);
+                if (mediaTagFilter && mediaTagFilter.length > 0) {
+                    params.append('tags', mediaTagFilter.join(','));
+                }
 
                 document.getElementById('mediaList').innerHTML =
                     '<div class="text-center text-muted py-3">불러오는 중...</div>';
@@ -384,12 +448,17 @@
 
                 const uploaderName = m.uploader_name ? escapeHtml(m.uploader_name) : '알 수 없음';
 
+                const tagsHtml = (m.tags && m.tags.length > 0)
+                    ? `<div class="media-item-tags">${m.tags.map(t => `<span class="media-item-tag">${escapeHtml(t)}</span>`).join('')}</div>`
+                    : '';
+
                 return `
                     <div class="media-item" id="media-item-${m.id}">
                         ${preview}
                         <div class="media-item-info">
                             <div class="filename">${escapeHtml(m.filename)}</div>
                             <div class="meta">${sizeStr} · ${uploadDate} · 업로더: ${uploaderName}</div>
+                            ${tagsHtml}
                         </div>
                         <div class="d-flex gap-2">
                             <button class="btn btn-sm btn-outline-info" data-id="${m.id}" data-filename="${escapeHtml(m.filename)}" onclick="trackBacklinks(+this.dataset.id, this.dataset.filename)"
