@@ -195,6 +195,120 @@ function selectCodeAutocomplete(index) {
     editor.focus();
 }
 
+// ── ::: 블록 컴포넌트 인라인 자동완성 상태 ──
+// 라인 시작이 `:::` 이고 그 뒤에 (선택적) 타입 일부가 입력된 상태에서 트리거.
+// 선택 시 `:::type\n내용\n:::` 스캐폴드를 삽입하고 커서를 type 끝(첫 줄)에 둔다 —
+// 사용자는 이어서 공백+제목을 타이핑하거나 Down 키로 본문에 진입한다.
+const blockAc = {
+    visible: false,
+    selectedIndex: -1,
+    query: '',
+    div: document.getElementById('block-autocomplete'),
+    options: [
+        { id: 'card',    label: '카드',     desc: '제목 + 본문 박스',     icon: 'mdi mdi-card-text-outline' },
+        { id: 'grid',    label: '그리드',   desc: '카드 그리드 레이아웃', icon: 'mdi mdi-grid' },
+        { id: 'row',     label: '가로 정렬',desc: '자식을 가로로 배치',   icon: 'mdi mdi-view-column-outline' },
+        { id: 'embed',   label: '임베드',   desc: '왼쪽 강조선 인용',     icon: 'mdi mdi-format-quote-close' },
+        { id: 'info',    label: '정보',     desc: '정보 콜아웃',          icon: 'mdi mdi-information-outline' },
+        { id: 'tip',     label: '팁',       desc: '팁 콜아웃',            icon: 'mdi mdi-lightbulb-on-outline' },
+        { id: 'success', label: '성공',     desc: '성공 콜아웃',          icon: 'mdi mdi-check-circle-outline' },
+        { id: 'warning', label: '주의',     desc: '주의 콜아웃',          icon: 'mdi mdi-alert-outline' },
+        { id: 'danger',  label: '위험',     desc: '위험 콜아웃',          icon: 'mdi mdi-alert-octagon-outline' },
+        { id: 'note',    label: '노트',     desc: '노트 콜아웃',          icon: 'mdi mdi-note-text-outline' }
+    ],
+    filtered: []
+};
+
+function hideBlockAutocomplete() {
+    blockAc.visible = false;
+    blockAc.selectedIndex = -1;
+    if (blockAc.div) blockAc.div.style.display = 'none';
+}
+
+function showBlockAutocomplete(query) {
+    blockAc.query = (query || '').toLowerCase();
+    blockAc.filtered = blockAc.options.filter(o => {
+        if (!blockAc.query) return true;
+        return o.id.toLowerCase().includes(blockAc.query)
+            || o.label.toLowerCase().includes(blockAc.query);
+    });
+
+    if (blockAc.filtered.length === 0) {
+        hideBlockAutocomplete();
+        return;
+    }
+
+    blockAc.visible = true;
+    positionDropdownAtCursor(blockAc.div, 280);
+    renderBlockAcResults();
+}
+
+function renderBlockAcResults() {
+    const gridEl = document.getElementById('blockAcGrid');
+    if (!gridEl) return;
+
+    gridEl.innerHTML = blockAc.filtered.map((opt, index) => `
+        <div class="list-group-item autocomplete-item" data-index="${index}" onclick="selectBlockAutocomplete(${index})" style="cursor:pointer; padding:6px 10px; display:flex; align-items:center;">
+            <i class="${opt.icon}" style="font-size:1.1rem; width:24px; text-align:center; margin-right:8px; color:var(--wiki-link-color);"></i>
+            <div style="flex:1; min-width:0;">
+                <div style="font-size:0.9rem; line-height:1.2;">${escapeHtml(opt.label)} <span class="text-muted" style="font-family:monospace; font-size:0.8em;">:::${escapeHtml(opt.id)}</span></div>
+                <div class="text-muted" style="font-size:0.75rem; line-height:1.2;">${escapeHtml(opt.desc)}</div>
+            </div>
+        </div>
+    `).join('');
+
+    blockAc.selectedIndex = 0;
+    highlightBlockAcItem();
+}
+
+function highlightBlockAcItem() {
+    if (!blockAc.div) return;
+    const items = blockAc.div.querySelectorAll('.autocomplete-item');
+    items.forEach((item, idx) => {
+        if (idx === blockAc.selectedIndex) {
+            item.classList.add('active');
+            item.scrollIntoView({ block: 'nearest' });
+        } else {
+            item.classList.remove('active');
+        }
+    });
+}
+
+function selectBlockAutocomplete(index) {
+    const opt = blockAc.filtered[index];
+    if (!opt || !editor) return;
+
+    const selection = editor.getSelection();
+    if (!selection) { hideBlockAutocomplete(); return; }
+
+    const [from] = selection;
+    const line = from[0];
+    const col = from[1];
+
+    const md = editor.getMarkdown();
+    const lines = md.split('\n');
+    const lineText = lines[line - 1] || '';
+    const textBefore = lineText.substring(0, col - 1);
+
+    // `:::` 또는 `:::partial` 만 허용 (라인 시작부터). 매치 시작은 항상 col 1.
+    if (!/^:::([a-zA-Z][a-zA-Z0-9_-]*)?$/.test(textBefore)) {
+        hideBlockAutocomplete();
+        return;
+    }
+
+    // 라인 시작부터 현재 커서까지를 통째로 스캐폴드로 교체.
+    editor.setSelection([line, 1], [line, col]);
+    editor.insertText(`:::${opt.id}\n내용\n:::`);
+
+    // 첫 줄 `:::type` 끝(공백 입력 → 제목 타이핑이 자연스러운 위치)에 커서 배치.
+    // 1-based: ":::card" 7글자 → 끝 컬럼 = 8 = 4 + opt.id.length
+    const targetCol = 4 + opt.id.length;
+    editor.setSelection([line, targetCol], [line, targetCol]);
+
+    hideBlockAutocomplete();
+    editor.focus();
+}
+
 // ── 아이콘 인라인 자동완성 상태 ──
 // ※ 아이콘 관련 기능을 수정할 때는 반드시 SELECTED_ICONS_ONLY 설정을 확인할 것.
 //    selectedIconsOnly=true  → icons.json 기반 (icon 문법만 사용)
@@ -1566,7 +1680,8 @@ window.addEventListener('keydown', (e) => {
                     : timestampAc.visible ? 'timestamp'
                         : paletteAc.visible ? 'palette'
                             : codeAc.visible ? 'code'
-                                : null;
+                                : blockAc.visible ? 'block'
+                                    : null;
     if (!activeAc) return;
 
     const key = e.key;
@@ -1793,6 +1908,30 @@ window.addEventListener('keydown', (e) => {
             e.preventDefault(); e.stopPropagation();
             hideCodeAutocomplete();
         }
+    } else if (activeAc === 'block') {
+        if (isDown) {
+            if (blockAc.filtered.length > 0) {
+                e.preventDefault(); e.stopPropagation();
+                blockAc.selectedIndex = (blockAc.selectedIndex + 1) % blockAc.filtered.length;
+                highlightBlockAcItem();
+            } else { hideBlockAutocomplete(); }
+        } else if (isUp) {
+            if (blockAc.filtered.length > 0) {
+                e.preventDefault(); e.stopPropagation();
+                blockAc.selectedIndex = (blockAc.selectedIndex - 1 + blockAc.filtered.length) % blockAc.filtered.length;
+                highlightBlockAcItem();
+            } else { hideBlockAutocomplete(); }
+        } else if (isLeft || isRight) {
+            hideBlockAutocomplete();
+        } else if (isCommit) {
+            if (blockAc.filtered.length > 0 && blockAc.selectedIndex >= 0) {
+                e.preventDefault(); e.stopPropagation();
+                selectBlockAutocomplete(blockAc.selectedIndex);
+            } else { hideBlockAutocomplete(); }
+        } else if (isEsc) {
+            e.preventDefault(); e.stopPropagation();
+            hideBlockAutocomplete();
+        }
     }
 }, true);
 
@@ -1801,7 +1940,7 @@ window.addEventListener('keydown', (e) => {
 // 다른 자동완성 hide 를 예약하지 않는다. 예) {에서 color:를 고른 뒤 세부 색상
 // 자동완성이 RAF 로 뜨는데 mousedown 이 먼저 hide 를 예약하면 그 패널이 닫혀 버림.
 document.addEventListener('mousedown', (e) => {
-    const acDivs = [wikiAc.div, iconAc.div, colorAc.div, imgSizeAc.div, timestampAc.div, paletteAc.div, codeAc.div];
+    const acDivs = [wikiAc.div, iconAc.div, colorAc.div, imgSizeAc.div, timestampAc.div, paletteAc.div, codeAc.div, blockAc.div];
     const clickedInsideAnyAc = acDivs.some(div => div && div.contains(e.target));
     if (clickedInsideAnyAc) return;
 
@@ -1819,6 +1958,7 @@ const _AUTOCOMPLETE_HIDERS = {
     timestamp: hideTimestampAutocomplete,
     imgsize:   hideImgSizeAutocomplete,
     code:      hideCodeAutocomplete,
+    block:     hideBlockAutocomplete,
 };
 
 function hideAutocompletesExcept(keep) {
@@ -1870,6 +2010,8 @@ function attachAutocomplete() {
             const ageMatch = textBefore.match(/\{age:([^}]*)$/);
             const calendarMatch = textBefore.match(/\{calendar:([^}]*)$/);
             const codeMatch = textBefore.match(/(?<!\{)\{([a-zA-Z]*)$/);
+            // `:::` 또는 `:::partial` (라인 시작) — 공백/추가 문자 입력 시 매치 종료.
+            const blockMatch = textBefore.match(/^:::([a-zA-Z][a-zA-Z0-9_-]*)?$/);
 
             if (linkMatch) {
                 hideAutocompletesExcept('wiki');
@@ -1924,6 +2066,9 @@ function attachAutocomplete() {
             } else if (codeMatch) {
                 hideAutocompletesExcept('code');
                 showCodeAutocomplete(codeMatch[1]);
+            } else if (blockMatch) {
+                hideAutocompletesExcept('block');
+                showBlockAutocomplete(blockMatch[1] || '');
             } else {
                 hideAutocompletesExcept(null);
             }
@@ -1945,6 +2090,7 @@ function attachAutocomplete() {
             if (!activeEl || !activeEl.closest('#timestamp-autocomplete')) hideTimestampAutocomplete();
             if (!activeEl || !activeEl.closest('#palette-autocomplete')) hidePaletteAutocomplete();
             if (!activeEl || !activeEl.closest('#code-autocomplete')) hideCodeAutocomplete();
+            if (!activeEl || !activeEl.closest('#block-autocomplete')) hideBlockAutocomplete();
         }, 200);
     });
 }

@@ -1178,6 +1178,20 @@ html[data-theme="dark"] #concurrent-edit-banner {
     margin-left: auto;
 }
 
+/* ── ::: 블록 컴포넌트 자동완성: 선택 상태 가독성 ──
+ * Bootstrap 기본 .list-group-item.active 는 청색 배경+흰 글씨라
+ * 항목 안의 .text-muted 설명/아이콘 색이 묻혀 대비가 깨진다.
+ * 위키/카테고리 자동완성과 동일한 패턴으로 좌측 강조선 + 중립 배경을 사용해
+ * 기존 텍스트 색을 유지한다. */
+#block-autocomplete .list-group-item.autocomplete-item:hover,
+#block-autocomplete .list-group-item.autocomplete-item.active {
+    background-color: var(--wiki-border);
+    color: var(--wiki-text);
+    border-left: 3px solid var(--wiki-primary);
+    /* 항목에 인라인 padding:6px 10px 가 있어 외부 CSS 가 밀린다 — !important 로 좌측 정렬 유지 */
+    padding-left: 7px !important;
+}
+
 /* ── 아이콘 피커 모달 그리드 ── */
 .icon-grid-modal {
     display: grid;
