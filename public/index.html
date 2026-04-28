@@ -107,6 +107,12 @@
                 <li id="shareItemPrint"><button class="dropdown-item" onclick="sharePrint()">
                     <i class="bi bi-printer"></i> 인쇄하기
                   </button></li>
+                <li>
+                  <hr class="dropdown-divider">
+                </li>
+                <li><button class="dropdown-item" onclick="shareAskClaude()">
+                    <i class="bi bi-claude"></i> Claude에게 질문하기
+                  </button></li>
               </ul>
             </div>
             <div class="dropdown">
@@ -1538,6 +1544,12 @@
 
     function sharePrint() {
       window.print();
+    }
+
+    function shareAskClaude() {
+      const cleanUrl = window.location.origin + window.location.pathname;
+      const prompt = '다음 위키 페이지를 읽고 내용에 대한 질문에 답해줘: ' + cleanUrl;
+      window.open('https://claude.ai/new?q=' + encodeURIComponent(prompt), '_blank');
     }
 
     // ── 네비게이션 ──
