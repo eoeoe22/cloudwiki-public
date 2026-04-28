@@ -825,9 +825,8 @@ wiki.get('/w/recent-revisions', async (c) => {
  * GET /w/all-pages
  * 모든 문서 목록 (정렬 + 페이지네이션)
  * Query: offset (기본 0), limit (기본 20, 최대 50),
- *        sort (title_asc, title_desc, created_asc, created_desc,
+ *        sort (slug_asc, slug_desc, created_asc, created_desc,
  *              updated_asc, updated_desc, category_asc, category_desc)
- *        ※ title_asc / title_desc 는 이제 slug 기준 정렬과 동일하다 (하위 호환).
  */
 wiki.get('/w/all-pages', async (c) => {
     if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) {
@@ -839,11 +838,11 @@ wiki.get('/w/all-pages', async (c) => {
     const isAdmin = user && rbac.can(user.role, 'admin:access');
     const offset = Math.max(0, parseInt(c.req.query('offset') || '0', 10));
     const limit = Math.min(50, Math.max(1, parseInt(c.req.query('limit') || '20', 10)));
-    const sort = c.req.query('sort') || 'title_asc';
+    const sort = c.req.query('sort') || 'slug_asc';
 
     const sortMap: Record<string, string> = {
-        title_asc: 'p.slug COLLATE NOCASE ASC',
-        title_desc: 'p.slug COLLATE NOCASE DESC',
+        slug_asc: 'p.slug COLLATE NOCASE ASC',
+        slug_desc: 'p.slug COLLATE NOCASE DESC',
         created_asc: 'p.created_at ASC',
         created_desc: 'p.created_at DESC',
         updated_asc: 'p.updated_at ASC',
@@ -851,7 +850,7 @@ wiki.get('/w/all-pages', async (c) => {
         category_asc: 'p.category COLLATE NOCASE ASC, p.slug COLLATE NOCASE ASC',
         category_desc: 'p.category COLLATE NOCASE DESC, p.slug COLLATE NOCASE ASC',
     };
-    const orderBy = sortMap[sort] || sortMap['title_asc'];
+    const orderBy = sortMap[sort] || sortMap['slug_asc'];
 
     let whereClause = 'p.deleted_at IS NULL';
     if (!isAdmin) {

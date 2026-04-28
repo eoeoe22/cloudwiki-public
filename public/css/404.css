@@ -260,18 +260,18 @@ html {
 /* ── Dark Mode Auto Adjustment (Unified with site theme) ── */
 @media (prefers-color-scheme: dark) {
     .writing {
-        background-color: var(--wiki-card-bg, #161b22);
+        background-color: var(--wiki-card-bg, #000000);
         border-color: var(--wiki-border, #30363d);
     }
     .writing .topbar {
-        background-color: var(--wiki-bg, #0d1117);
+        background-color: var(--wiki-bg, #000000);
         border-bottom: 1px solid var(--wiki-border, #30363d);
     }
     .writing .code ul li {
         background-color: var(--wiki-text-muted, #8b949e);
     }
     .button {
-        color: var(--wiki-bg, #0d1117);
+        color: var(--wiki-bg, #000000);
     }
     .button5 {
         background-color: var(--wiki-text, #c9d1d9);

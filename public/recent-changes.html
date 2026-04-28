@@ -83,8 +83,8 @@
               <div class="d-flex justify-content-end mb-3">
                 <select id="allPagesSortSelect" class="form-select form-select-sm" style="width: auto;"
                   onchange="changeSort()">
-                  <option value="title_asc">문서 제목 가나다순</option>
-                  <option value="title_desc">문서 제목 가나다 역순</option>
+                  <option value="slug_asc">문서 이름 가나다순</option>
+                  <option value="slug_desc">문서 이름 가나다 역순</option>
                   <option value="created_desc">생성일 최신순</option>
                   <option value="created_asc">생성일 오래된순</option>
                   <option value="updated_desc">마지막 수정 최신순</option>
@@ -162,7 +162,7 @@
     // 모든 문서 목록 상태
     const ALL_PAGES_SIZE = 20;
     let allPagesLoaded = false; // 탭 최초 로드 여부
-    let currentSort = 'title_asc';
+    let currentSort = 'slug_asc';
     let currentAllPage = 1;
     let totalAllPages = 0;
     let allPagesAbortController = null;
@@ -221,8 +221,8 @@
           return `
             <div class="revision-item d-flex align-items-center justify-content-between border-bottom py-2">
               <div class="d-flex align-items-center gap-3 flex-grow-1 overflow-hidden">
-                <span class="revision-date text-muted small" style="min-width: 140px;" title="${escapeHtml(date)}">${timeAgo}</span>
-                <a href="/w/${encodeURIComponent(rev.slug)}" class="badge bg-light text-dark border text-decoration-none text-truncate" style="max-width: 200px;" title="${escapeHtml(rev.slug)}"
+                <span class="revision-date text-muted small" title="${escapeHtml(date)}">${timeAgo}</span>
+                <a href="/w/${encodeURIComponent(rev.slug)}" class="text-decoration-none text-truncate" style="max-width: 200px;" title="${escapeHtml(rev.slug)}"
                    onclick="event.preventDefault(); window.location.href=this.href;">
                   ${escapeHtml(rev.slug)}
                 </a>

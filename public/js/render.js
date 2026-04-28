@@ -1043,20 +1043,11 @@ function _wrapLevelSections(containerEl, level) {
                 j++;
             }
 
-            // 헤딩 클릭 분기:
-            //  - 제목 텍스트 영역 클릭 → 섹션 링크(`{문서URL}#s-N`) 복사
-            //  - 왼쪽 chevron / 우측 여백 클릭 → 섹션 접기/펼치기
-            //  - 본문 내 링크/버튼 → 자체 핸들러로 위임
+            // 헤딩 클릭: 본문 내 링크/버튼은 자체 핸들러로 위임하고,
+            // 그 외 영역(텍스트/여백/chevron) 클릭은 섹션 접기/펼치기.
+            // 섹션 링크 복사는 헤딩 우측의 별도 버튼(.wiki-heading-link-btn)에서 처리.
             child.addEventListener('click', function (e) {
                 if (e.target.closest('a, button')) return;
-                if (e.target.closest('.wiki-section-heading-text')) {
-                    const anchorId = _getSectionAnchorId(child);
-                    if (anchorId) {
-                        const url = window.location.origin + window.location.pathname + '#' + anchorId;
-                        _copySectionLinkToClipboard(url);
-                    }
-                    return;
-                }
                 section.classList.toggle('wiki-section-collapsed');
             });
 
@@ -1937,67 +1928,9 @@ const _gridObserverMap = {};
  * 한 줄에 모두 들어가는 경우에는 기본 flex 레이아웃을 유지.
  */
 function _balanceWikiGrids(containerEl, containerId) {
-    // 이전 옵저버 해제 (재렌더링 시 누수 방지)
-    if (_gridObserverMap[containerId]) {
-        _gridObserverMap[containerId].disconnect();
-        delete _gridObserverMap[containerId];
-    }
-    const grids = Array.from(containerEl.querySelectorAll('.wiki-grid'));
-    if (grids.length === 0) return;
-    const ITEM_MIN = 200; // .wiki-grid > * 의 기준 너비 (render.css 참조)
-
-    function reset(grid) {
-        grid.classList.remove('wiki-grid-balanced');
-        grid.style.maxWidth = '';
-        grid.style.width = '';
-        grid.style.gridTemplateColumns = '';
-    }
-
-    function apply(grid) {
-        const N = grid.children.length;
-        if (N <= 1) { reset(grid); return; }
-        // 이전 balanced 상태의 폭 제한을 먼저 해제해 실제 사용 가능 폭을 측정.
-        const prevMax = grid.style.maxWidth;
-        const prevW = grid.style.width;
-        grid.style.maxWidth = '';
-        grid.style.width = '';
-        // getBoundingClientRect 가 서브픽셀 정확도를 가진다.
-        const W = grid.getBoundingClientRect().width;
-        if (W <= 0) {
-            if (prevMax) grid.style.maxWidth = prevMax;
-            if (prevW) grid.style.width = prevW;
-            return;
-        }
-        const cs = getComputedStyle(grid);
-        const gap = parseFloat(cs.columnGap) || parseFloat(cs.gap) || 10;
-        // 부동소수점/서브픽셀 오차 흡수용 1px 마진.
-        const maxFit = Math.max(1, Math.floor((W + gap + 1) / (ITEM_MIN + gap)));
-        if (N <= maxFit) {
-            grid.classList.remove('wiki-grid-balanced');
-            grid.style.gridTemplateColumns = '';
-            // width 는 위에서 이미 비움
-            return;
-        }
-        const rows = Math.ceil(N / maxFit);
-        const cols = Math.ceil(N / rows);
-        grid.classList.add('wiki-grid-balanced');
-        grid.style.gridTemplateColumns = '';
-        // flex-wrap 이 cols 개에서 줄바꿈되도록 컨테이너 폭을 고정.
-        const targetW = cols * ITEM_MIN + (cols - 1) * gap;
-        grid.style.width = `${targetW}px`;
-        grid.style.maxWidth = '100%';
-    }
-
-    // grid 자체는 max-width 로 크기가 제한되어 부모 확장을 감지하지 못하므로,
-    // 부모를 관측하고 변화 시 모든 grid 를 재계산한다.
-    const ro = window.ResizeObserver ? new ResizeObserver(() => {
-        grids.forEach(apply);
-    }) : null;
-    grids.forEach(grid => {
-        apply(grid);
-        if (ro && grid.parentElement) ro.observe(grid.parentElement);
-    });
-    if (ro) _gridObserverMap[containerId] = ro;
+    // CSS flex-grow(1 1 200px)를 통해 왼쪽부터 순차적으로 채우고
+    // 전체 너비를 활용하는 방식으로 변경되었으므로 JS 균형 조절 로직을 비활성화합니다.
+    return;
 }
 
 // containerId → intervalId (타이머 중복 방지)
@@ -2168,6 +2101,20 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
 
         // "- []" (공백 없는 빈 체크박스) → GFM 표준 "- [ ]" 로 정규화
         foldInput = foldInput.replace(/^(\s*[-*+] )\[\](?=[ \t]|$)/gm, '$1[ ]');
+
+        // 줄 시작의 공백/탭을 NBSP(U+00A0)로 치환해 들여쓰기 보존 (트리 구조 등).
+        // 마크다운 블록 마커(리스트/인용/제목/표)로 시작하는 줄은 마크다운 의미를 위해 그대로 둠.
+        // 코드 블록은 이미 WIKICODEFPH 로 보호되어 있어 영향받지 않는다.
+        foldInput = foldInput.split('\n').map(line => {
+            const m = /^([ \t]+)(\S.*)$/.exec(line);
+            if (!m) return line;
+            const ws = m[1];
+            const rest = m[2];
+            if (/^([-*+]|\d+\.)\s/.test(rest)) return line;
+            if (rest[0] === '>' || rest[0] === '|') return line;
+            if (/^#{1,6}\s/.test(rest)) return line;
+            return ' '.repeat(ws.length) + rest;
+        }).join('\n');
 
         const foldRegex = /^\[\+\s*(.*?)\s*\][ \t]*\n((?:(?!^\[-\][ \t]*$)[\s\S])*?)\n\[-\][ \t]*$/gm;
         const foldBlocks = [];
@@ -3180,7 +3127,26 @@ function _addHeadingCopyButtons(containerEl, resolvedContent, options = {}) {
         // (chevron 토글 아이콘은 헤딩 좌측 끝에 위치한다.)
         h.appendChild(copyBtn);
 
-        // 편집 권한이 있을 때만 섹션 편집 버튼을 복사 버튼 옆에 추가
+        // 섹션 링크 복사 버튼 — 섹션 마크다운 복사 버튼과 섹션 편집 버튼 사이에 위치.
+        const linkBtn = document.createElement('button');
+        linkBtn.className = 'wiki-heading-link-btn';
+        linkBtn.title = '섹션 링크 복사';
+        linkBtn.type = 'button';
+        linkBtn.innerHTML = '<i class="bi bi-link-45deg"></i>';
+        linkBtn.onclick = async (e) => {
+            e.stopPropagation();
+            const anchorId = _getSectionAnchorId(h);
+            if (!anchorId) return;
+            const url = window.location.origin + window.location.pathname + '#' + anchorId;
+            const ok = await _copySectionLinkToClipboard(url);
+            if (ok) {
+                linkBtn.innerHTML = '<i class="bi bi-check-lg"></i>';
+                setTimeout(() => { linkBtn.innerHTML = '<i class="bi bi-link-45deg"></i>'; }, 2000);
+            }
+        };
+        h.appendChild(linkBtn);
+
+        // 편집 권한이 있을 때만 섹션 편집 버튼을 링크 버튼 옆에 추가
         if (enableSectionEdit && canEdit && editSlug && rawRanges) {
             // transclusion 주입 헤딩은 원본에 존재하지 않으므로 편집 버튼 미생성.
             // 판정은 텍스트 매칭이 아니라 센티넬 기반 소스 메타데이터(range.transcluded)로.
@@ -3213,9 +3179,9 @@ function _addHeadingCopyButtons(containerEl, resolvedContent, options = {}) {
                 e.stopPropagation();
             });
 
-            // 복사 버튼 바로 다음 형제로 삽입 → [copy][edit][toggle-icon]
-            if (copyBtn.nextSibling) {
-                h.insertBefore(editLink, copyBtn.nextSibling);
+            // 링크 버튼 바로 다음 형제로 삽입 → [copy][link][edit]
+            if (linkBtn.nextSibling) {
+                h.insertBefore(editLink, linkBtn.nextSibling);
             } else {
                 h.appendChild(editLink);
             }

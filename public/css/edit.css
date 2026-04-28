@@ -575,7 +575,7 @@ html[data-theme="dark"] .editor-settings-panel {
 
 @media (prefers-color-scheme: dark) {
     html:not([data-theme="light"]) .cm-toolbar {
-        background: var(--wiki-bg-alt, #1e1e1e);
+        background: var(--wiki-bg-alt, #000000);
     }
 
     html:not([data-theme="light"]) .cm-wiki-link {
@@ -594,7 +594,7 @@ html[data-theme="dark"] .editor-settings-panel {
     }
 }
 html[data-theme="dark"] .cm-toolbar {
-    background: var(--wiki-bg-alt, #1e1e1e);
+    background: var(--wiki-bg-alt, #000000);
 }
 html[data-theme="dark"] .cm-wiki-link {
     color: #58a6ff;
@@ -2677,7 +2677,7 @@ html[data-theme="dark"] .cm-inline-code {
 
 @media (prefers-color-scheme: dark) {
     html:not([data-theme="light"]) .cm-code-block {
-        background-color: #1e1e1e !important;
+        background-color: #111111 !important;
     }
 
     html:not([data-theme="light"]) .cm-code-block,
@@ -2686,7 +2686,7 @@ html[data-theme="dark"] .cm-inline-code {
     }
 }
 html[data-theme="dark"] .cm-code-block {
-    background-color: #1e1e1e !important;
+    background-color: #111111 !important;
 }
 html[data-theme="dark"] .cm-code-block,
 html[data-theme="dark"] .cm-code-block * {

@@ -44,8 +44,8 @@
 @media (prefers-color-scheme: dark) {
   :root {
     /* 🌑 Premium Dark Mode */
-    --wiki-bg: #09090B;
-    --wiki-card-bg: #18181B;
+    --wiki-bg: #000000;
+    --wiki-card-bg: #111111;
     --wiki-text: #f4f4f5;
     --wiki-text-muted: #a1a1aa;
 
@@ -61,10 +61,10 @@
     --wiki-danger: #EF4444;
 
     /* Misc */
-    --wiki-code-bg: #27272a;
-    --wiki-toc-bg: rgba(24, 24, 27, 0.6);
+    --wiki-code-bg: #000000;
+    --wiki-toc-bg: rgba(255, 255, 255, 0.08);
 
-    --wiki-btn-text: #09090b;
+    --wiki-btn-text: #000000;
 
     /* Diff Colors */
     --wiki-diff-add-bg: rgba(16, 185, 129, 0.2);
@@ -77,7 +77,7 @@
     --wiki-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5), 0 2px 4px -2px rgba(0, 0, 0, 0.5);
     --wiki-shadow-md: 0 10px 15px -3px rgba(0, 0, 0, 0.5), 0 4px 6px -4px rgba(0, 0, 0, 0.5);
     --wiki-shadow-lg: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.5);
-    --wiki-glass-bg: rgba(24, 24, 27, 0.75);
+    --wiki-glass-bg: rgba(0, 0, 0, 0.75);
     --wiki-glass-border: rgba(255, 255, 255, 0.05);
     --wiki-glass-blur: blur(16px);
 
@@ -118,8 +118,8 @@ html[data-theme="light"] {
 }
 
 html[data-theme="dark"] {
-  --wiki-bg: #09090B;
-  --wiki-card-bg: #18181B;
+  --wiki-bg: #000000;
+  --wiki-card-bg: #111111;
   --wiki-text: #f4f4f5;
   --wiki-text-muted: #a1a1aa;
   --wiki-border: #27272A;
@@ -131,9 +131,9 @@ html[data-theme="dark"] {
   --wiki-success: #10B981;
   --wiki-warning: #F59E0B;
   --wiki-danger: #EF4444;
-  --wiki-code-bg: #27272a;
-  --wiki-toc-bg: rgba(24, 24, 27, 0.6);
-  --wiki-btn-text: #09090b;
+  --wiki-code-bg: #000000;
+  --wiki-toc-bg: rgba(255, 255, 255, 0.08);
+  --wiki-btn-text: #000000;
   --wiki-diff-add-bg: rgba(16, 185, 129, 0.2);
   --wiki-diff-add-text: #a7f3d0;
   --wiki-diff-del-bg: rgba(239, 68, 68, 0.2);
@@ -142,7 +142,7 @@ html[data-theme="dark"] {
   --wiki-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5), 0 2px 4px -2px rgba(0, 0, 0, 0.5);
   --wiki-shadow-md: 0 10px 15px -3px rgba(0, 0, 0, 0.5), 0 4px 6px -4px rgba(0, 0, 0, 0.5);
   --wiki-shadow-lg: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.5);
-  --wiki-glass-bg: rgba(24, 24, 27, 0.75);
+  --wiki-glass-bg: rgba(0, 0, 0, 0.75);
   --wiki-glass-border: rgba(255, 255, 255, 0.05);
   --wiki-glass-blur: blur(16px);
   color-scheme: dark;

@@ -232,7 +232,7 @@
   .wiki-content pre[class*="language-"],
   .wiki-content pre[class*="language-"] code[class*="language-"] {
     /* VS Code Dark+ */
-    --vscode-bg: #1e1e1e;
+    --vscode-bg: #000000;
     --vscode-fg: #d4d4d4;
     --vscode-comment: #6a9955;
     --vscode-string: #ce9178;
@@ -275,7 +275,7 @@ html[data-theme="light"] .wiki-content pre[class*="language-"] code[class*="lang
 /* 사용자 강제 다크 모드 */
 html[data-theme="dark"] .wiki-content pre[class*="language-"],
 html[data-theme="dark"] .wiki-content pre[class*="language-"] code[class*="language-"] {
-  --vscode-bg: #1e1e1e;
+  --vscode-bg: #000000;
   --vscode-fg: #d4d4d4;
   --vscode-comment: #6a9955;
   --vscode-string: #ce9178;
@@ -455,7 +455,8 @@ html[data-theme="dark"] .wiki-content pre[class*="language-"] code[class*="langu
 }
 
 /* 헤딩 섹션 복사 버튼 */
-.wiki-heading-copy-btn {
+.wiki-heading-copy-btn,
+.wiki-heading-link-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -476,15 +477,23 @@ html[data-theme="dark"] .wiki-content pre[class*="language-"] code[class*="langu
   flex-shrink: 0;
 }
 
+.wiki-heading-link-btn {
+  margin-left: 0.2em;
+  font-size: 0.85em;
+}
+
 .wiki-heading-copy-btn:hover,
-.wiki-heading-copy-btn:focus {
+.wiki-heading-copy-btn:focus,
+.wiki-heading-link-btn:hover,
+.wiki-heading-link-btn:focus {
   background: var(--wiki-card-bg);
   border-color: var(--wiki-border);
   color: var(--wiki-text);
   opacity: 1;
 }
 
-.wiki-heading-copy-btn:active {
+.wiki-heading-copy-btn:active,
+.wiki-heading-link-btn:active {
   transform: translateY(1px);
 }
 
@@ -1420,24 +1429,13 @@ body.raw-mode .wiki-content-raw {
   flex-wrap: wrap;
   gap: 0.625rem;
   margin-bottom: 1rem;
-  justify-content: flex-start;
-  align-items: flex-start;
 }
 
 .wiki-grid > * {
-  flex: 0 0 auto;
-  width: 200px;
+  flex: 1 1 200px;
   max-width: 100%;
   min-width: 0;
   margin-bottom: 0;
-}
-
-/* 줄바꿈시 위아래 개수를 대칭으로 맞추기 위한 JS 주도 균형 모드.
-   flex-wrap 기반 기본 레이아웃을 그대로 쓰고, 컨테이너의 max-width 를
-   _balanceWikiGrids 가 인라인으로 지정해 원하는 위치에서 줄바꿈되도록 한다.
-   카드 자체 크기(200px)와 간격(gap)은 기본값을 유지해 왼쪽 정렬이 보존된다. */
-.wiki-grid.wiki-grid-balanced {
-  margin-right: auto;
 }
 
 .wiki-row {

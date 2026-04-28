@@ -314,7 +314,7 @@
             if (targetFreq) {
                 datasets.push({
                     label: `Target (${targetTitle})`,
-                    data: targetFreq.map((f, i) => ({ x: f, y: targetSpl[i] })),
+                    data: freq.map(f => ({ x: f, y: _interpolateAt(targetFreq, targetSpl, f) })),
                     borderColor: targetColor,
                     backgroundColor: 'transparent',
                     borderWidth: 1.2,
@@ -428,9 +428,12 @@
                 if (targetDs) {
                     targetDs.hidden = phaseVisible;
                     if (compensate) {
-                        targetDs.data = targetFreq.map(f => ({ x: f, y: 0 }));
+                        targetDs.data = freq.map(f => {
+                            const t = _interpolateAt(targetFreq, targetSpl, f);
+                            return { x: f, y: t === null ? null : 0 };
+                        });
                     } else {
-                        targetDs.data = targetFreq.map((f, i) => ({ x: f, y: targetSpl[i] }));
+                        targetDs.data = freq.map(f => ({ x: f, y: _interpolateAt(targetFreq, targetSpl, f) }));
                     }
                 }
 
