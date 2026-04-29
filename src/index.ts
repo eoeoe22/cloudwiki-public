@@ -965,6 +965,18 @@ app.post('/register', (c) => {
     return c.json({ error: 'Dynamic registration not supported' }, 404);
 });
 
+// ── 알 수 없는 경로 → 위키 슬러그 리다이렉트 ──
+// 위의 어떤 라우트에도 매칭되지 않은 경로는 위키 문서 슬러그로 간주해 /w/로 영구 리디렉션
+app.get('*', (c) => {
+    const path = c.req.path;
+    if (path.startsWith('/api/') || path.startsWith('/assets/')) {
+        return c.json({ error: 'Not Found' }, 404);
+    }
+    const slug = path.slice(1); // 앞의 / 제거
+    const searchParams = new URL(c.req.url).search;
+    return c.redirect(`/w/${slug}${searchParams}`, 301);
+});
+
 // ── 404 핸들러 ──
 app.notFound(async (c) => {
     if (c.req.path.startsWith('/api/') || c.req.path.startsWith('/assets/')) {

@@ -245,8 +245,22 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                     },
                     {
                         name: 'get_tree',
-                        description: '해당 문서의 하위 문서 목록을 tree구조로 보여줍니다.',
-                        inputSchema: { type: 'object', properties: { title: { type: 'string', description: '문서 슬러그(=제목)' } }, required: ['title'] }
+                        description: '입력한 문서를 루트로 한 하위 문서 트리를 반환합니다. 예를 들어 "A/B/C" 를 입력하면 "A/B/C" 부터 시작하는 하위 트리만 반환됩니다.',
+                        inputSchema: { type: 'object', properties: { title: { type: 'string', description: '트리의 루트가 될 문서 슬러그(=제목)' } }, required: ['title'] }
+                    },
+                    {
+                        name: 'read_batch',
+                        description: '여러 문서를 한 번에 최대 10개까지 읽어옵니다. 두 가지 모드를 지원합니다. (1) titles: 직접 지정한 문서 슬러그 배열을 한 번에 읽기. (2) parent_title: 지정한 문서의 하위 문서들을 일괄 읽기. parent_title 모드에서 하위 문서가 10개를 초과하면 상위 10개만 읽고, 응답에 읽은/읽지 않은 문서를 표시한 트리와 페이지네이션 정보가 포함됩니다. page 파라미터(1부터 시작)로 다음 페이지를 요청할 수 있습니다. raw=true 설정 시 위키 꾸미기 문법 변환을 건너뜁니다.',
+                        inputSchema: {
+                            type: 'object',
+                            properties: {
+                                titles: { type: 'array', items: { type: 'string' }, description: '직접 지정할 문서 슬러그 목록 (최대 10개). parent_title 과 함께 지정한 경우 titles 가 우선합니다.' },
+                                parent_title: { type: 'string', description: '하위 문서를 일괄 읽을 부모 문서 슬러그' },
+                                page: { type: 'number', description: 'parent_title 모드의 페이지 번호 (1부터 시작, 기본 1)' },
+                                raw: { type: 'boolean' }
+                            },
+                            required: []
+                        }
                     },
                     {
                         name: 'search_category',
@@ -302,7 +316,7 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                 return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: `이 도구는 ${c.env.WIKI_NAME} 의 문서를 탐색할 수 있는 MCP 도구입니다.\n\n이 위키의 문법은 마크다운 기반으로, 기본적으로는 문법 가이드 문서를 읽지 않아도 내용 파악이 가능합니다. 문서를 읽을 때 raw 파라미터를 따로 활성화하지 않으면 마크다운 기반으로 정리된 내용이 반환됩니다. raw 파라미터를 사용하려면 위키 문법 문서를 먼저 읽을 것을 권장합니다.${syntaxNote}` }] } };
             }
             if (toolName === 'search_title') {
-                const results = await db.prepare('SELECT slug FROM pages WHERE slug LIKE ? AND deleted_at IS NULL AND is_private = 0 LIMIT 15')
+                const results = await db.prepare('SELECT slug, rows, characters FROM pages WHERE slug LIKE ? AND deleted_at IS NULL AND is_private = 0 LIMIT 15')
                     .bind(`%${args.query}%`).all();
                 return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(results.results, null, 2) }] } };
             }
@@ -317,18 +331,18 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                 // 또한 따옴표(")는 FTS5 phrase syntax 를 깨뜨리므로 이중 따옴표로 escape 한다.
                 // String.length 는 UTF-16 code unit 기준이라 이모지 등 비-BMP 문자에서 codepoint
                 // 수와 어긋나므로, trigram의 codepoint 단위 기준에 맞춰 [...]로 codepoint 수를 센다.
-                let rows: { slug: string; content: string; last_revision_id: number | null }[] = [];
+                let rows: { slug: string; content: string; last_revision_id: number | null; rows: number | null; characters: number | null }[] = [];
                 if ([...rawQuery].length < 3) {
                     // LIKE 메타문자(%, _, \)를 escape 해 사용자가 입력한 문자열 그대로 부분 일치만 수행한다.
                     const likeEscaped = rawQuery.replace(/[\\%_]/g, '\\$&');
                     const likePattern = `%${likeEscaped}%`;
-                    const fbSql = `SELECT p.slug, p.content, p.last_revision_id FROM pages p WHERE (p.slug LIKE ? ESCAPE '\\' OR p.content LIKE ? ESCAPE '\\') AND p.deleted_at IS NULL AND p.is_private = 0 ORDER BY (CASE WHEN p.slug LIKE ? ESCAPE '\\' THEN 0 ELSE 1 END), p.updated_at DESC LIMIT 10`;
-                    const fbRes = await db.prepare(fbSql).bind(likePattern, likePattern, likePattern).all<{ slug: string; content: string; last_revision_id: number | null }>();
+                    const fbSql = `SELECT p.slug, p.content, p.last_revision_id, p.rows, p.characters FROM pages p WHERE (p.slug LIKE ? ESCAPE '\\' OR p.content LIKE ? ESCAPE '\\') AND p.deleted_at IS NULL AND p.is_private = 0 ORDER BY (CASE WHEN p.slug LIKE ? ESCAPE '\\' THEN 0 ELSE 1 END), p.updated_at DESC LIMIT 10`;
+                    const fbRes = await db.prepare(fbSql).bind(likePattern, likePattern, likePattern).all<{ slug: string; content: string; last_revision_id: number | null; rows: number | null; characters: number | null }>();
                     rows = fbRes.results;
                 } else {
                     const safeMatchQuery = '"' + rawQuery.replace(/"/g, '""') + '"';
-                    const ftsSql = `SELECT p.slug, p.content, p.last_revision_id FROM pages_fts JOIN pages p ON pages_fts.rowid = p.id WHERE pages_fts MATCH ? AND p.deleted_at IS NULL AND p.is_private = 0 LIMIT 10`;
-                    const ftsRes = await db.prepare(ftsSql).bind(safeMatchQuery).all<{ slug: string; content: string; last_revision_id: number | null }>();
+                    const ftsSql = `SELECT p.slug, p.content, p.last_revision_id, p.rows, p.characters FROM pages_fts JOIN pages p ON pages_fts.rowid = p.id WHERE pages_fts MATCH ? AND p.deleted_at IS NULL AND p.is_private = 0 LIMIT 10`;
+                    const ftsRes = await db.prepare(ftsSql).bind(safeMatchQuery).all<{ slug: string; content: string; last_revision_id: number | null; rows: number | null; characters: number | null }>();
                     rows = ftsRes.results;
                 }
 
@@ -348,6 +362,8 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                     // 단일 FTS snippet 위치가 아니라 본문 전체를 훑어 모든 섹션을 모은다.
                     return {
                         title: row.slug,
+                        rows: row.rows,
+                        characters: row.characters,
                         sections: findSectionsForQuery(actualContent, rawQuery),
                     };
                 }));
@@ -401,35 +417,48 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                 }
             }
             if (toolName === 'get_tree') {
-                const requestedSlug = normalizeSlug(args.title || '');
-                const topSlug = requestedSlug.includes('/') ? requestedSlug.split('/')[0] : requestedSlug;
+                const rootSlug = normalizeSlug(args.title || '');
+                if (!rootSlug) {
+                    return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: 'Error: title이 필요합니다.' }], isError: true } };
+                }
+                // D1 의 LIKE 패턴 50바이트 한도를 피하기 위해 prefix 범위 비교를 사용한다.
+                // '/' (0x2F) 의 다음 코드포인트가 '0' (0x30) 이므로 'rootSlug/' 로 시작하는 모든
+                // 슬러그는 ['rootSlug/', 'rootSlug0') 범위에 정확히 들어간다.
+                const prefixLower = rootSlug + '/';
+                const prefixUpper = rootSlug + '0';
 
-                const [subdocs, topPage] = await Promise.all([
-                    db.prepare('SELECT slug FROM pages WHERE deleted_at IS NULL AND is_private = 0 AND slug LIKE ? ORDER BY slug ASC LIMIT 200').bind(topSlug + '/%').all<{ slug: string }>(),
-                    db.prepare('SELECT slug FROM pages WHERE slug = ? AND deleted_at IS NULL AND is_private = 0').bind(topSlug).first<{ slug: string }>()
+                const [subdocs, rootPage] = await Promise.all([
+                    db.prepare('SELECT slug, rows, characters FROM pages WHERE deleted_at IS NULL AND is_private = 0 AND slug > ? AND slug < ? ORDER BY slug ASC LIMIT 200').bind(prefixLower, prefixUpper).all<{ slug: string; rows: number | null; characters: number | null }>(),
+                    db.prepare('SELECT slug, rows, characters FROM pages WHERE slug = ? AND deleted_at IS NULL AND is_private = 0').bind(rootSlug).first<{ slug: string; rows: number | null; characters: number | null }>()
                 ]);
 
+                const formatStats = (r: number | null, ch: number | null) => ` (${r ?? 0}줄, ${ch ?? 0}자)`;
+
                 if (subdocs.results.length === 0) {
-                    return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: '하위 문서가 없습니다.' }] } };
+                    const rootMarker = rootPage ? formatStats(rootPage.rows, rootPage.characters) : ' (문서 없음)';
+                    return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: `${rootSlug}${rootMarker}\n하위 문서가 없습니다.` }] } };
                 }
 
                 const tree: any = {};
                 for (const doc of subdocs.results) {
-                    const relative = doc.slug.substring(topSlug.length + 1);
+                    const relative = doc.slug.substring(rootSlug.length + 1);
                     const parts = relative.split('/');
                     let node = tree;
                     for (let i = 0; i < parts.length; i++) {
                         const part = parts[i];
-                        if (!node[part]) node[part] = { _children: {}, _exists: false };
-                        if (i === parts.length - 1) node[part]._exists = true;
+                        if (!node[part]) node[part] = { _children: {}, _exists: false, _rows: null, _characters: null };
+                        if (i === parts.length - 1) {
+                            node[part]._exists = true;
+                            node[part]._rows = doc.rows;
+                            node[part]._characters = doc.characters;
+                        }
                         node = node[part]._children;
                     }
                 }
 
                 // 트리 경로상 필요하지만 실제 문서가 없는 노드도 검출해 표시한다.
-                // 부모 슬러그(topSlug/a/b ... )가 pages에 없으면 _exists=false 로 남는다.
                 const missingDocs: string[] = [];
-                if (!topPage) missingDocs.push(topSlug);
+                if (!rootPage) missingDocs.push(rootSlug);
 
                 function renderTree(nodes: any, parentPrefix: string, slugPrefix: string): string {
                     const entries = Object.keys(nodes).sort();
@@ -441,7 +470,7 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                         const connector = isLast ? '└── ' : '├── ';
                         const childPrefix = parentPrefix + (isLast ? '    ' : '│   ');
                         const fullSlug = `${slugPrefix}/${key}`;
-                        const marker = node._exists ? '' : ' (문서 없음)';
+                        const marker = node._exists ? formatStats(node._rows, node._characters) : ' (문서 없음)';
                         if (!node._exists) missingDocs.push(fullSlug);
 
                         text += `${parentPrefix}${connector}${key}${marker}\n`;
@@ -453,12 +482,193 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                     return text;
                 }
 
-                const topMarker = topPage ? '' : ' (문서 없음)';
-                const treeText = `${topSlug}${topMarker}\n` + renderTree(tree, '', topSlug);
+                const rootMarker = rootPage ? formatStats(rootPage.rows, rootPage.characters) : ' (문서 없음)';
+                const treeText = `${rootSlug}${rootMarker}\n` + renderTree(tree, '', rootSlug);
                 const missingSection = missingDocs.length > 0
                     ? `\n문서가 없는 항목 (${missingDocs.length}):\n${missingDocs.map(s => `- ${s}`).join('\n')}\n`
                     : '';
                 return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: treeText + missingSection }] } };
+            }
+            if (toolName === 'read_batch') {
+                const BATCH_LIMIT = 10;
+                const TREE_DISPLAY_CAP = 500;
+                const raw = args.raw === true;
+                const origin = new URL(c.req.url).origin;
+                const enabledExt = (c.env.ENABLED_EXTENSIONS || '').split(',').map((s: string) => s.trim()).filter(Boolean);
+
+                let mode: 'titles' | 'parent';
+                let targetSlugs: string[] = [];
+                let allCandidateSlugs: string[] = [];
+                let parentSlug = '';
+                let pageNum = 1;
+                let totalCount = 0;
+                const statsMap = new Map<string, { rows: number | null; characters: number | null }>();
+                const formatBatchStats = (r: number | null | undefined, ch: number | null | undefined) => ` (${r ?? 0}줄, ${ch ?? 0}자)`;
+
+                if (Array.isArray(args.titles) && args.titles.length > 0) {
+                    mode = 'titles';
+                    const normalized = (args.titles as any[])
+                        .map(t => normalizeSlug(String(t || '')))
+                        .filter((s: string) => s.length > 0);
+                    if (normalized.length === 0) {
+                        return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: 'Error: titles 배열이 비어있습니다.' }], isError: true } };
+                    }
+                    if (normalized.length > BATCH_LIMIT) {
+                        return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: `Error: 한 번에 최대 ${BATCH_LIMIT}개까지만 읽을 수 있습니다.` }], isError: true } };
+                    }
+                    // 중복 제거하되 입력 순서 유지
+                    const seen = new Set<string>();
+                    targetSlugs = normalized.filter((s: string) => {
+                        if (seen.has(s)) return false;
+                        seen.add(s);
+                        return true;
+                    });
+                    allCandidateSlugs = targetSlugs;
+                    totalCount = targetSlugs.length;
+                } else if (args.parent_title) {
+                    mode = 'parent';
+                    parentSlug = normalizeSlug(String(args.parent_title || ''));
+                    if (!parentSlug) {
+                        return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: 'Error: parent_title이 비어있습니다.' }], isError: true } };
+                    }
+                    pageNum = Math.max(1, Math.floor(Number(args.page) || 1));
+                    const offset = (pageNum - 1) * BATCH_LIMIT;
+                    // D1 의 LIKE 패턴은 50바이트 한도가 있어 긴 슬러그에서 쿼리가 실패할 수 있다.
+                    // 대신 prefix 범위 비교(slug > 'parent/' AND slug < 'parent0')로 하위 문서를 찾는다.
+                    // '/' (0x2F) 의 바로 다음 코드포인트가 '0' (0x30) 이므로 'parent/' 로 시작하는 모든
+                    // 슬러그는 ['parent/', 'parent0') 범위에 정확히 들어간다. UTF-8 의 codepoint 순서가
+                    // 바이트 사전순과 일치해 비-ASCII 슬러그에서도 안전하다.
+                    const prefixLower = parentSlug + '/';
+                    const prefixUpper = parentSlug + '0';
+
+                    // total 은 트리 표시용 캡(500)과 무관하게 COUNT(*) 로 정확히 구해야 한다.
+                    // 그렇지 않으면 500을 초과한 시점부터 has_next_page 가 거짓이 되어
+                    // 클라이언트가 페이지네이션으로 나머지 문서에 접근할 수 없다.
+                    const totalRow = await db.prepare('SELECT COUNT(*) AS cnt FROM pages WHERE deleted_at IS NULL AND is_private = 0 AND slug > ? AND slug < ?').bind(prefixLower, prefixUpper).first<{ cnt: number }>();
+                    totalCount = totalRow?.cnt ?? 0;
+                    if (totalCount === 0) {
+                        return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: `'${parentSlug}' 의 하위 문서가 없습니다.` }] } };
+                    }
+
+                    // 실제 읽을 페이지는 SQL LIMIT/OFFSET 으로 직접 잘라서 가져온다.
+                    // 트리 표시용 후보(allCandidateSlugs)와 별개로 처리해야 어떤 페이지 번호든 안정적으로 도달 가능하다.
+                    const pageRows = await db.prepare('SELECT slug FROM pages WHERE deleted_at IS NULL AND is_private = 0 AND slug > ? AND slug < ? ORDER BY slug ASC LIMIT ? OFFSET ?').bind(prefixLower, prefixUpper, BATCH_LIMIT, offset).all<{ slug: string }>();
+                    targetSlugs = pageRows.results.map(r => r.slug);
+                    if (targetSlugs.length === 0) {
+                        const totalPages = Math.ceil(totalCount / BATCH_LIMIT);
+                        return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: `Error: page ${pageNum} 에 해당하는 문서가 없습니다. (총 ${totalCount}개, ${totalPages}페이지)` }], isError: true } };
+                    }
+
+                    // 트리 표시는 응답 크기 보호를 위해 500개로 제한한다.
+                    // 500을 초과해도 페이지네이션은 total/COUNT(*) 기준으로 동작하므로 도달 가능성을 잃지 않는다.
+                    const treeRows = await db.prepare('SELECT slug, rows, characters FROM pages WHERE deleted_at IS NULL AND is_private = 0 AND slug > ? AND slug < ? ORDER BY slug ASC LIMIT ?').bind(prefixLower, prefixUpper, TREE_DISPLAY_CAP).all<{ slug: string; rows: number | null; characters: number | null }>();
+                    allCandidateSlugs = treeRows.results.map(r => r.slug);
+                    for (const r of treeRows.results) {
+                        statsMap.set(r.slug, { rows: r.rows, characters: r.characters });
+                    }
+                    // 현재 페이지 슬러그가 트리 캡(500) 이후에 위치한 경우에도 [읽음] 표시가 보이도록 합쳐둔다.
+                    if (offset + targetSlugs.length > allCandidateSlugs.length) {
+                        const merged = new Set(allCandidateSlugs);
+                        for (const s of targetSlugs) merged.add(s);
+                        allCandidateSlugs = Array.from(merged).sort();
+                    }
+                } else {
+                    return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: 'Error: titles 또는 parent_title 중 하나를 지정해야 합니다.' }], isError: true } };
+                }
+
+                // 각 문서를 병렬로 읽는다. 핫패스에서 D1 쿼리 latency가 누적되지 않도록 Promise.all 사용.
+                const documents = await Promise.all(targetSlugs.map(async (slug) => {
+                    if (!isMcpReadableSlug(slug)) {
+                        return { title: slug, error: 'raw 데이터는 읽을 수 없습니다.' };
+                    }
+                    const pageRow = await db.prepare('SELECT slug, content, last_revision_id, rows, characters FROM pages WHERE slug = ? AND deleted_at IS NULL AND is_private = 0').bind(slug).first<{ slug: string, content: string, last_revision_id: number | null, rows: number | null, characters: number | null }>();
+                    if (!pageRow) {
+                        return { title: slug, error: '문서를 찾을 수 없거나 비공개/삭제 상태입니다.' };
+                    }
+                    statsMap.set(pageRow.slug, { rows: pageRow.rows, characters: pageRow.characters });
+                    let actualContent = pageRow.content;
+                    if (isR2OnlyNamespace(pageRow.slug, enabledExt) && (!actualContent || actualContent === '')) {
+                        if (pageRow.last_revision_id) {
+                            const lastRev = await db.prepare('SELECT content, r2_key FROM revisions WHERE id = ?').bind(pageRow.last_revision_id).first<{ content: string, r2_key: string | null }>();
+                            if (lastRev) {
+                                actualContent = await getRevisionContent(c.env.MEDIA, lastRev, origin);
+                            }
+                        }
+                    }
+                    const text = raw ? actualContent : await renderForAI(actualContent, db, 0, slug);
+                    return { title: slug, rows: pageRow.rows, characters: pageRow.characters, content: text || '문서 내용이 존재하지 않습니다.' };
+                }));
+
+                // 읽은 문서/읽지 않은 문서를 트리 또는 목록 형태로 표시
+                const readSet = new Set(targetSlugs);
+                let treeText = '';
+                if (mode === 'parent') {
+                    const tree: any = {};
+                    for (const slug of allCandidateSlugs) {
+                        const relative = slug.substring(parentSlug.length + 1);
+                        const parts = relative.split('/');
+                        let node = tree;
+                        for (let i = 0; i < parts.length; i++) {
+                            const part = parts[i];
+                            if (!node[part]) node[part] = { _children: {}, _slug: '' };
+                            if (i === parts.length - 1) node[part]._slug = slug;
+                            node = node[part]._children;
+                        }
+                    }
+                    function renderBatchTree(nodes: any, parentPrefix: string): string {
+                        const entries = Object.keys(nodes).sort();
+                        let text = '';
+                        entries.forEach((key, idx) => {
+                            const node = nodes[key];
+                            const isLast = idx === entries.length - 1;
+                            const hasChildren = Object.keys(node._children).length > 0;
+                            const connector = isLast ? '└── ' : '├── ';
+                            const childPrefix = parentPrefix + (isLast ? '    ' : '│   ');
+                            let marker = '';
+                            if (node._slug) {
+                                const stats = statsMap.get(node._slug);
+                                const statsText = stats ? formatBatchStats(stats.rows, stats.characters) : '';
+                                marker = (readSet.has(node._slug) ? ' [읽음]' : ' [읽지 않음]') + statsText;
+                            }
+                            text += `${parentPrefix}${connector}${key}${marker}\n`;
+                            if (hasChildren) text += renderBatchTree(node._children, childPrefix);
+                        });
+                        return text;
+                    }
+                    treeText = `${parentSlug}\n` + renderBatchTree(tree, '');
+                } else {
+                    treeText = allCandidateSlugs
+                        .map(s => {
+                            const stats = statsMap.get(s);
+                            const statsText = stats ? formatBatchStats(stats.rows, stats.characters) : '';
+                            return `- ${s} ${readSet.has(s) ? '[읽음]' : '[읽지 않음]'}${statsText}`;
+                        })
+                        .join('\n');
+                }
+
+                const output: any = {
+                    mode,
+                    documents,
+                    tree: treeText,
+                };
+                if (mode === 'parent') {
+                    const totalPages = Math.ceil(totalCount / BATCH_LIMIT);
+                    output.parent = parentSlug;
+                    output.page = pageNum;
+                    output.page_size = BATCH_LIMIT;
+                    output.total = totalCount;
+                    output.total_pages = totalPages;
+                    output.has_next_page = pageNum < totalPages;
+                    if (output.has_next_page) {
+                        output.next_page = pageNum + 1;
+                    }
+                    if (totalCount > TREE_DISPLAY_CAP) {
+                        output.tree_truncated = true;
+                        output.tree_display_cap = TREE_DISPLAY_CAP;
+                        output.notice = `하위 문서가 총 ${totalCount}개로 응답 트리 표시 한도(${TREE_DISPLAY_CAP}개)를 초과합니다. 트리에는 일부만 표시되지만, page 파라미터로 모든 문서를 페이지네이션으로 조회할 수 있습니다.`;
+                    }
+                }
+                return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(output, null, 2) }] } };
             }
             if (toolName === 'search_category') {
                 const results = await db.prepare('SELECT DISTINCT category FROM page_categories WHERE category LIKE ? ORDER BY category ASC LIMIT 15')
@@ -466,8 +676,8 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                 return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(results.results.map(r => r.category), null, 2) }] } };
             }
             if (toolName === 'get_category_info') {
-                const docs = await db.prepare('SELECT p.slug FROM page_categories pc JOIN pages p ON pc.page_id = p.id WHERE pc.category = ? AND p.deleted_at IS NULL AND p.is_private = 0 ORDER BY p.slug ASC LIMIT 50')
-                    .bind(args.category).all<{ slug: string }>();
+                const docs = await db.prepare('SELECT p.slug, p.rows, p.characters FROM page_categories pc JOIN pages p ON pc.page_id = p.id WHERE pc.category = ? AND p.deleted_at IS NULL AND p.is_private = 0 ORDER BY p.slug ASC LIMIT 50')
+                    .bind(args.category).all<{ slug: string; rows: number | null; characters: number | null }>();
 
                 const catSlug = normalizeSlug(`카테고리:${args.category}`);
                 const catPage = await db.prepare('SELECT slug, content, last_revision_id FROM pages WHERE slug = ? AND deleted_at IS NULL AND is_private = 0').bind(catSlug).first<{ slug: string, content: string, last_revision_id: number | null }>();
@@ -492,7 +702,7 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                 }
 
                 const output = {
-                    documents: docs.results.map(r => r.slug),
+                    documents: docs.results.map(r => ({ slug: r.slug, rows: r.rows, characters: r.characters })),
                     categoryContent: renderedCatContent
                 };
                 return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(output, null, 2) }] } };
@@ -516,7 +726,7 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                 }
                 const placeholders = targetSlugs.map(() => '?').join(', ');
                 const query = `
-                    SELECT DISTINCT p.slug
+                    SELECT DISTINCT p.slug, p.rows, p.characters, p.updated_at
                     FROM page_links pl
                     JOIN pages p ON pl.source_page_id = p.id
                     WHERE p.slug != ?
@@ -525,13 +735,13 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                       AND p.deleted_at IS NULL
                     ORDER BY p.updated_at DESC LIMIT 100
                 `;
-                const backlinks = await db.prepare(query).bind(slug, ...targetSlugs).all<{ slug: string }>();
-                return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(backlinks.results.map(r => r.slug), null, 2) }] } };
+                const backlinks = await db.prepare(query).bind(slug, ...targetSlugs).all<{ slug: string; rows: number | null; characters: number | null }>();
+                return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(backlinks.results.map(r => ({ slug: r.slug, rows: r.rows, characters: r.characters })), null, 2) }] } };
             }
             if (toolName === 'get_recent_changes') {
                 const limit = Math.min(50, Math.max(1, Number(args.limit) || 10));
                 const { results } = await db.prepare(`
-                    SELECT p.slug, p.updated_at, u.name as author_name
+                    SELECT p.slug, p.updated_at, p.rows, p.characters, u.name as author_name
                     FROM pages p
                     LEFT JOIN users u ON p.author_id = u.id
                     WHERE p.deleted_at IS NULL AND p.is_private = 0

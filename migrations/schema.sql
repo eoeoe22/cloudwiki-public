@@ -41,6 +41,8 @@ CREATE TABLE IF NOT EXISTS pages (
   is_locked         INTEGER DEFAULT 0,
   is_private        INTEGER DEFAULT 0,
   redirect_to       TEXT,
+  rows              INTEGER,
+  characters        INTEGER,
   FOREIGN KEY (author_id) REFERENCES users(id)
 );
 

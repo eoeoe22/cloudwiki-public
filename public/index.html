@@ -113,6 +113,9 @@
                 <li><button class="dropdown-item" onclick="shareAskClaude()">
                     <i class="bi bi-claude"></i> Claude에게 질문하기
                   </button></li>
+                <li><button class="dropdown-item" onclick="shareAskChatGPT()">
+                    <i class="bi bi-openai"></i> ChatGPT에게 질문하기
+                  </button></li>
               </ul>
             </div>
             <div class="dropdown">
@@ -1550,6 +1553,12 @@
       const cleanUrl = window.location.origin + window.location.pathname;
       const prompt = '다음 위키 페이지를 읽고 내용에 대한 질문에 답해줘: ' + cleanUrl;
       window.open('https://claude.ai/new?q=' + encodeURIComponent(prompt), '_blank');
+    }
+
+    function shareAskChatGPT() {
+      const cleanUrl = window.location.origin + window.location.pathname;
+      const prompt = '다음 위키 페이지를 읽고 내용에 대한 질문에 답해줘: ' + cleanUrl;
+      window.open('https://chatgpt.com/?q=' + encodeURIComponent(prompt), '_blank');
     }
 
     // ── 네비게이션 ──

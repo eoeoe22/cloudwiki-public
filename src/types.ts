@@ -107,6 +107,8 @@ export interface Page {
     created_at: number;
     updated_at: number;
     deleted_at: number | null;
+    rows: number | null;
+    characters: number | null;
 }
 
 export interface Revision {

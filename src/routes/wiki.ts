@@ -146,6 +146,20 @@ async function invalidateBacklinkCaches(c: any, slug: string, db: D1Database): P
 }
 
 /**
+ * 본문 길이/줄 수 메트릭. characters 는 UTF-16 code unit 수,
+ * rows 는 개행으로 분리되는 라인 수(빈 본문 0).
+ */
+function computePageMetrics(content: string): { rows: number; characters: number } {
+    const characters = content.length;
+    if (characters === 0) return { rows: 0, characters: 0 };
+    let rows = 1;
+    for (let i = 0; i < characters; i++) {
+        if (content.charCodeAt(i) === 10) rows++;
+    }
+    return { rows, characters };
+}
+
+/**
  * 문서 content에서 링크를 파싱하여 { target_slug, link_type } 배열을 반환
  */
 function extractLinks(content: string): { target_slug: string; link_type: string }[] {
@@ -487,15 +501,17 @@ async function rewriteBacklinksForRename(
         // author_id도 같이 갱신해 최근 변경 / recent-changes 작성자 표기가 실제 편집자(이동 관리자)를
         // 반영하도록 한다. (기존 편집 핸들러의 UPDATE 패턴과 일치)
         const contentToStore = isR2Only ? '' : rewritten;
+        const metrics = computePageMetrics(rewritten);
         let pagesUpdated = 0;
         try {
             const upd = await db
                 .prepare(
                     `UPDATE pages
-                     SET content = ?, last_revision_id = ?, version = ?, author_id = ?, updated_at = unixepoch()
+                     SET content = ?, last_revision_id = ?, version = ?, author_id = ?,
+                         rows = ?, characters = ?, updated_at = unixepoch()
                      WHERE id = ? AND version = ?`
                 )
-                .bind(contentToStore, revisionId, newVersion, user.id, page.id, page.version)
+                .bind(contentToStore, revisionId, newVersion, user.id, metrics.rows, metrics.characters, page.id, page.version)
                 .run();
             pagesUpdated = (upd.meta?.changes ?? (upd as any).changes ?? 0) as number;
         } catch (e) {
@@ -1278,14 +1294,15 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
 
         // 3. 페이지 업데이트 (pages.content는 R2-only가 아닐 때만 최신 본문 유지)
         const contentToStore = isR2Only ? '' : body.content;
+        const metrics = computePageMetrics(body.content);
         await db
             .prepare(
                 `UPDATE pages
          SET content = ?, category = ?, is_locked = ?, is_private = ?, redirect_to = ?, author_id = ?, last_revision_id = ?,
-             version = ?, updated_at = unixepoch()
+             version = ?, rows = ?, characters = ?, updated_at = unixepoch()
          WHERE id = ?`
             )
-            .bind(contentToStore, body.category || null, finalIsLocked, finalIsPrivate, body.redirect_to || null, user.id, revisionId, newVersion, existing.id)
+            .bind(contentToStore, body.category || null, finalIsLocked, finalIsPrivate, body.redirect_to || null, user.id, revisionId, newVersion, metrics.rows, metrics.characters, existing.id)
             .run();
 
         // page_links, page_categories 갱신 (비동기)
@@ -1325,11 +1342,12 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
         const isR2Only = isR2OnlyNamespace(slug, enabledExtensionsCreate);
         const contentToStore = isR2Only ? '' : body.content;
 
+        const metrics = computePageMetrics(body.content);
         const pageResult = await db
             .prepare(
-                'INSERT INTO pages (slug, content, category, is_locked, is_private, redirect_to, author_id) VALUES (?, ?, ?, ?, ?, ?, ?)'
+                'INSERT INTO pages (slug, content, category, is_locked, is_private, redirect_to, author_id, rows, characters) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
             )
-            .bind(slug, contentToStore, body.category || null, finalIsLocked, finalIsPrivate, body.redirect_to || null, user.id)
+            .bind(slug, contentToStore, body.category || null, finalIsLocked, finalIsPrivate, body.redirect_to || null, user.id, metrics.rows, metrics.characters)
             .run();
 
         const pageId = pageResult.meta.last_row_id;
@@ -2001,8 +2019,9 @@ wiki.post('/w/:slug/revert', requireAuth, async (c) => {
 
     const enabledExtensionsRevert = (c.env.ENABLED_EXTENSIONS || '').split(',').map((s: string) => s.trim()).filter(Boolean);
     const contentToStore = isR2OnlyNamespace(slug, enabledExtensionsRevert) ? '' : revertContent;
-    await db.prepare('UPDATE pages SET content = ?, last_revision_id = ?, version = ?, updated_at = unixepoch() WHERE id = ?')
-        .bind(contentToStore, newRevId, newVersion, page.id)
+    const revertMetrics = computePageMetrics(revertContent);
+    await db.prepare('UPDATE pages SET content = ?, last_revision_id = ?, version = ?, rows = ?, characters = ?, updated_at = unixepoch() WHERE id = ?')
+        .bind(contentToStore, newRevId, newVersion, revertMetrics.rows, revertMetrics.characters, page.id)
         .run();
 
     // 캐시 무효화 (API + SSR) + 최근 변경 즉시 갱신
