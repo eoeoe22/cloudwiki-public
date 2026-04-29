@@ -862,7 +862,7 @@ app.get('/edit/:slug', async (c) => {
     if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) {
         return c.redirect('/login');
     }
-    return renderHtml(c, '/edit.html');
+    return renderHtml(c, '/edit.html', { _wikiSyntax: c.env.WIKI_SYNTAX || '' });
 });
 
 // /edit → edit.html 서빙 (SSR 브랜딩)
@@ -870,7 +870,7 @@ app.get('/edit', async (c) => {
     if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) {
         return c.redirect('/login');
     }
-    return renderHtml(c, '/edit.html');
+    return renderHtml(c, '/edit.html', { _wikiSyntax: c.env.WIKI_SYNTAX || '' });
 });
 
 // /setup-profile 접근 시 서빙

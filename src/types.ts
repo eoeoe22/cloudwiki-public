@@ -42,6 +42,7 @@ export type Env = {
         PRIVACY_POLICY: string;
         ROLE_PERMISSIONS_JSON?: string;
         PALETTES?: string;
+        WIKI_SYNTAX?: string;
     };
     Variables: {
         user: User | null;

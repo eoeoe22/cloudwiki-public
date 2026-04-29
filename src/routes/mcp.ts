@@ -1,7 +1,7 @@
 import { Hono, Context } from 'hono';
 import { cors } from 'hono/cors';
 import type { Env } from '../types';
-import { renderForAI, extractTOC, extractSection, findSectionForSnippet, expandTemplates } from '../utils/aiParser';
+import { renderForAI, extractTOC, extractSection, findSectionsForQuery, expandTemplates } from '../utils/aiParser';
 import { normalizeSlug, isR2OnlyNamespace, isMcpReadableSlug } from '../utils/slug';
 import { getRevisionContent } from '../utils/r2';
 
@@ -204,7 +204,7 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
 
     // 2. 핸드셰이크: initialized 알림 (응답 필요 없음)
     if (method === 'notifications/initialized') {
-        return null; 
+        return null;
     }
 
     // 3. 도구 목록 반환
@@ -215,7 +215,7 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                 tools: [
                     {
                         name: 'information',
-                        description: `이 도구는 ${c.env.WIKI_NAME} 의 문서를 탐색할 수 있는 MCP 도구입니다.`,
+                        description: `이 도구는 ${c.env.WIKI_NAME} 의 문서를 탐색할 수 있는 MCP 도구입니다. 이 위키의 문법은 마크다운 기반으로, 기본적으로는 문법 가이드 문서를 읽지 않아도 내용 파악이 가능합니다. 문서를 읽을 때 raw 설정을 사용하지 않으면 마크다운 기반으로 정리된 내용이 반환됩니다. raw 설정을 사용하려면 위키 문법 문서를 먼저 읽을 것을 권장합니다.${c.env.WIKI_SYNTAX ? ` 문법 가이드 문서: ${c.env.WIKI_SYNTAX}` : ''}`,
                         inputSchema: { type: 'object', properties: {}, required: [] }
                     },
                     {
@@ -225,7 +225,7 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                     },
                     {
                         name: 'search_fts',
-                        description: '위키 문서의 본문을 전문 검색(FTS) 합니다. 검색 결과에는 문서 슬러그, 하이라이트된 부분, 그리고 해당 부분이 속한 목차가 포함됩니다.',
+                        description: '위키 문서의 본문을 전문 검색(FTS) 합니다. 검색 결과에는 문서 슬러그와, 검색어가 등장하는 모든 목차의 목록이 포함됩니다. 한 문서에서 여러 섹션에 걸쳐 등장하면 모든 섹션이 반환됩니다.',
                         inputSchema: { type: 'object', properties: { query: { type: 'string', description: '검색어' } }, required: ['query'] }
                     },
                     {
@@ -235,13 +235,13 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                     },
                     {
                         name: 'read_document',
-                        description: '위키 문서의 전체 본문을 읽어옵니다.',
-                        inputSchema: { type: 'object', properties: { title: { type: 'string', description: '문서 슬러그(=제목)' }, raw: { type: 'boolean', description: 'true로 설정 시 위키 꾸미기 문법 변환을 건너뛰고 원본 그대로 반환합니다.' } }, required: ['title'] }
+                        description: '위키 문서의 전체 본문을 읽어옵니다. raw=true로 설정 시 위키 꾸미기 문법 변환을 건너뛰고 원본 그대로 반환합니다.',
+                        inputSchema: { type: 'object', properties: { title: { type: 'string', description: '문서 슬러그(=제목)' }, raw: { type: 'boolean' } }, required: ['title'] }
                     },
                     {
                         name: 'read_section',
-                        description: '위키 문서에서 특정 목차의 내용만 읽어옵니다. 목차는 get_toc 가 반환하는 계층적 번호(예: "1", "1.1", "1.1.1")로 지정합니다.',
-                        inputSchema: { type: 'object', properties: { title: { type: 'string', description: '문서 슬러그(=제목)' }, section_number: { type: 'string', description: 'get_toc가 반환한 목차 번호 (예: "1", "1.1", "1.1.1")' }, raw: { type: 'boolean', description: 'true로 설정 시 위키 꾸미기 문법 변환을 건너뛰고 반환합니다. 단, get_toc 의 번호 체계와 맞추기 위해 틀 트랜스클루전({{...}})은 항상 확장된 상태로 반환됩니다.' } }, required: ['title', 'section_number'] }
+                        description: '위키 문서에서 특정 목차의 내용만 읽어옵니다. 목차는 get_toc 가 반환하는 계층적 번호(예: "1", "1.1", "1.1.1")로 지정합니다. raw=true로 설정 시 위키 꾸미기 문법 변환을 건너뛰고 반환합니다. 단, get_toc 의 번호 체계와 맞추기 위해 틀 트랜스클루전({{...}})은 항상 확장된 상태로 반환됩니다.',
+                        inputSchema: { type: 'object', properties: { title: { type: 'string', description: '문서 슬러그(=제목)' }, section_number: { type: 'string', description: 'get_toc가 반환한 목차 번호 (예: "1", "1.1", "1.1.1")' }, raw: { type: 'boolean' } }, required: ['title', 'section_number'] }
                     },
                     {
                         name: 'get_tree',
@@ -255,8 +255,8 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                     },
                     {
                         name: 'get_category_info',
-                        description: '해당 카테고리에 속한 문서 목록과 카테고리 설명을 반환합니다.',
-                        inputSchema: { type: 'object', properties: { category: { type: 'string', description: '조회할 카테고리 이름' }, raw: { type: 'boolean', description: 'true로 설정 시 위키 꾸미기 문법 변환을 건너뛰고 원본 그대로 반환합니다.' } }, required: ['category'] }
+                        description: '해당 카테고리에 속한 문서 목록과 카테고리 설명을 반환합니다. raw=true로 설정 시 카테고리 설명의 위키 꾸미기 문법 변환을 건너뛰고 원본 그대로 반환합니다.',
+                        inputSchema: { type: 'object', properties: { category: { type: 'string', description: '조회할 카테고리 이름' }, raw: { type: 'boolean' } }, required: ['category'] }
                     },
                     {
                         name: 'get_document_categoty',
@@ -298,7 +298,8 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
         const args = params?.arguments || {};
         try {
             if (toolName === 'information') {
-                return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: `이 도구는 ${c.env.WIKI_NAME} 의 문서를 탐색할 수 있는 MCP 도구입니다.` }] } };
+                const syntaxNote = c.env.WIKI_SYNTAX ? `\n\n문법 가이드 문서: ${c.env.WIKI_SYNTAX}` : '';
+                return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: `이 도구는 ${c.env.WIKI_NAME} 의 문서를 탐색할 수 있는 MCP 도구입니다.\n\n이 위키의 문법은 마크다운 기반으로, 기본적으로는 문법 가이드 문서를 읽지 않아도 내용 파악이 가능합니다. 문서를 읽을 때 raw 파라미터를 따로 활성화하지 않으면 마크다운 기반으로 정리된 내용이 반환됩니다. raw 파라미터를 사용하려면 위키 문법 문서를 먼저 읽을 것을 권장합니다.${syntaxNote}` }] } };
             }
             if (toolName === 'search_title') {
                 const results = await db.prepare('SELECT slug FROM pages WHERE slug LIKE ? AND deleted_at IS NULL AND is_private = 0 LIMIT 15')
@@ -316,18 +317,18 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                 // 또한 따옴표(")는 FTS5 phrase syntax 를 깨뜨리므로 이중 따옴표로 escape 한다.
                 // String.length 는 UTF-16 code unit 기준이라 이모지 등 비-BMP 문자에서 codepoint
                 // 수와 어긋나므로, trigram의 codepoint 단위 기준에 맞춰 [...]로 codepoint 수를 센다.
-                let rows: { slug: string; content: string; last_revision_id: number | null; snippet: string }[] = [];
+                let rows: { slug: string; content: string; last_revision_id: number | null }[] = [];
                 if ([...rawQuery].length < 3) {
                     // LIKE 메타문자(%, _, \)를 escape 해 사용자가 입력한 문자열 그대로 부분 일치만 수행한다.
                     const likeEscaped = rawQuery.replace(/[\\%_]/g, '\\$&');
                     const likePattern = `%${likeEscaped}%`;
                     const fbSql = `SELECT p.slug, p.content, p.last_revision_id FROM pages p WHERE (p.slug LIKE ? ESCAPE '\\' OR p.content LIKE ? ESCAPE '\\') AND p.deleted_at IS NULL AND p.is_private = 0 ORDER BY (CASE WHEN p.slug LIKE ? ESCAPE '\\' THEN 0 ELSE 1 END), p.updated_at DESC LIMIT 10`;
                     const fbRes = await db.prepare(fbSql).bind(likePattern, likePattern, likePattern).all<{ slug: string; content: string; last_revision_id: number | null }>();
-                    rows = fbRes.results.map(r => ({ ...r, snippet: '' }));
+                    rows = fbRes.results;
                 } else {
                     const safeMatchQuery = '"' + rawQuery.replace(/"/g, '""') + '"';
-                    const ftsSql = `SELECT p.slug, p.content, p.last_revision_id, snippet(pages_fts, -1, '<b>', '</b>', '...', 20) as snippet FROM pages_fts JOIN pages p ON pages_fts.rowid = p.id WHERE pages_fts MATCH ? AND p.deleted_at IS NULL AND p.is_private = 0 LIMIT 10`;
-                    const ftsRes = await db.prepare(ftsSql).bind(safeMatchQuery).all<{ slug: string; content: string; last_revision_id: number | null; snippet: string }>();
+                    const ftsSql = `SELECT p.slug, p.content, p.last_revision_id FROM pages_fts JOIN pages p ON pages_fts.rowid = p.id WHERE pages_fts MATCH ? AND p.deleted_at IS NULL AND p.is_private = 0 LIMIT 10`;
+                    const ftsRes = await db.prepare(ftsSql).bind(safeMatchQuery).all<{ slug: string; content: string; last_revision_id: number | null }>();
                     rows = ftsRes.results;
                 }
 
@@ -343,18 +344,11 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                             }
                         }
                     }
-                    // LIKE fallback 경로에서는 FTS snippet 이 없으므로, 매치 위치 주변 본문을 직접 잘라 섹션을 찾는다.
-                    const snippetForSection = row.snippet
-                        || (() => {
-                            const idx = (actualContent || '').toLowerCase().indexOf(rawQuery.toLowerCase());
-                            if (idx < 0) return '';
-                            const start = Math.max(0, idx - 20);
-                            const end = Math.min(actualContent.length, idx + rawQuery.length + 60);
-                            return actualContent.slice(start, end);
-                        })();
+                    // 키워드가 한 문서에서 여러 섹션에 걸쳐 등장할 수 있으므로,
+                    // 단일 FTS snippet 위치가 아니라 본문 전체를 훑어 모든 섹션을 모은다.
                     return {
                         title: row.slug,
-                        section: findSectionForSnippet(actualContent, snippetForSection),
+                        sections: findSectionsForQuery(actualContent, rawQuery),
                     };
                 }));
                 return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(output, null, 2) }] } };
@@ -364,9 +358,9 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                 if (!isMcpReadableSlug(slug)) {
                     return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: 'raw 데이터는 읽을 수 없습니다.' }], isError: true } };
                 }
-                const page = await db.prepare('SELECT slug, content, last_revision_id FROM pages WHERE slug = ? AND deleted_at IS NULL AND is_private = 0').bind(slug).first<{slug: string, content: string, last_revision_id: number | null}>();
+                const page = await db.prepare('SELECT slug, content, last_revision_id FROM pages WHERE slug = ? AND deleted_at IS NULL AND is_private = 0').bind(slug).first<{ slug: string, content: string, last_revision_id: number | null }>();
                 if (!page) return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: 'Error: 문서를 찾을 수 없거나 비공개/삭제 상태입니다.' }], isError: true } };
-                
+
                 let actualContent = page.content;
                 const origin = new URL(c.req.url).origin;
                 const enabledExtMcp2 = (c.env.ENABLED_EXTENSIONS || '').split(',').map((s: string) => s.trim()).filter(Boolean);
@@ -411,8 +405,8 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                 const topSlug = requestedSlug.includes('/') ? requestedSlug.split('/')[0] : requestedSlug;
 
                 const [subdocs, topPage] = await Promise.all([
-                    db.prepare('SELECT slug FROM pages WHERE deleted_at IS NULL AND is_private = 0 AND slug LIKE ? ORDER BY slug ASC LIMIT 200').bind(topSlug + '/%').all<{slug: string}>(),
-                    db.prepare('SELECT slug FROM pages WHERE slug = ? AND deleted_at IS NULL AND is_private = 0').bind(topSlug).first<{slug: string}>()
+                    db.prepare('SELECT slug FROM pages WHERE deleted_at IS NULL AND is_private = 0 AND slug LIKE ? ORDER BY slug ASC LIMIT 200').bind(topSlug + '/%').all<{ slug: string }>(),
+                    db.prepare('SELECT slug FROM pages WHERE slug = ? AND deleted_at IS NULL AND is_private = 0').bind(topSlug).first<{ slug: string }>()
                 ]);
 
                 if (subdocs.results.length === 0) {
@@ -468,15 +462,15 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
             }
             if (toolName === 'search_category') {
                 const results = await db.prepare('SELECT DISTINCT category FROM page_categories WHERE category LIKE ? ORDER BY category ASC LIMIT 15')
-                    .bind(`%${args.query}%`).all<{category: string}>();
+                    .bind(`%${args.query}%`).all<{ category: string }>();
                 return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(results.results.map(r => r.category), null, 2) }] } };
             }
             if (toolName === 'get_category_info') {
                 const docs = await db.prepare('SELECT p.slug FROM page_categories pc JOIN pages p ON pc.page_id = p.id WHERE pc.category = ? AND p.deleted_at IS NULL AND p.is_private = 0 ORDER BY p.slug ASC LIMIT 50')
-                    .bind(args.category).all<{slug: string}>();
+                    .bind(args.category).all<{ slug: string }>();
 
                 const catSlug = normalizeSlug(`카테고리:${args.category}`);
-                const catPage = await db.prepare('SELECT slug, content, last_revision_id FROM pages WHERE slug = ? AND deleted_at IS NULL AND is_private = 0').bind(catSlug).first<{slug: string, content: string, last_revision_id: number | null}>();
+                const catPage = await db.prepare('SELECT slug, content, last_revision_id FROM pages WHERE slug = ? AND deleted_at IS NULL AND is_private = 0').bind(catSlug).first<{ slug: string, content: string, last_revision_id: number | null }>();
 
                 let renderedCatContent = '카테고리 문서가 존재하지 않습니다.';
                 if (catPage) {
@@ -506,7 +500,7 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
             if (toolName === 'get_document_categoty') {
                 const slug = normalizeSlug(args.title || '');
                 const cats = await db.prepare('SELECT pc.category FROM page_categories pc JOIN pages p ON pc.page_id = p.id WHERE p.slug = ? AND p.deleted_at IS NULL AND p.is_private = 0 ORDER BY pc.category ASC')
-                    .bind(slug).all<{category: string}>();
+                    .bind(slug).all<{ category: string }>();
                 return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(cats.results.map(r => r.category), null, 2) }] } };
             }
             if (toolName === 'get_backlinks') {

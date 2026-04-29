@@ -345,7 +345,12 @@
 
             <!-- Markdown 에디터 -->
             <div class="mb-3">
-                <label class="form-label fw-bold">내용</label>
+                <div class="d-flex align-items-center gap-2 mb-1">
+                    <label class="form-label fw-bold mb-0">내용</label>
+                    <a id="syntaxGuideLink" href="#" target="_blank" rel="noopener" class="small text-muted text-decoration-none" style="display:none">
+                        <i class="mdi mdi-information-outline"></i> 문법 가이드
+                    </a>
+                </div>
                 <div id="editor"></div>
                 <div id="editorTextCounter" class="editor-text-counter" aria-live="off">
                     <span data-counter="lines">1줄</span>
@@ -599,6 +604,21 @@
                 }, 0);
             }
         }
+
+        (function () {
+            const el = document.getElementById('ssr-data');
+            if (!el) return;
+            try {
+                const data = JSON.parse(el.textContent);
+                if (data._wikiSyntax) {
+                    const link = document.getElementById('syntaxGuideLink');
+                    if (link) {
+                        link.href = '/w/' + encodeURIComponent(data._wikiSyntax);
+                        link.style.display = '';
+                    }
+                }
+            } catch (e) { }
+        })();
     </script>
 
     <!-- ── 푸터 Placeholder ── -->

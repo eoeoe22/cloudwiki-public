@@ -657,55 +657,74 @@ export function extractSection(content: string, sectionNumber: string): string {
 }
 
 /**
- * 콘텐츠에서 주어진 위치 이전의 마지막 헤딩을 찾습니다.
- */
-function findLastHeading(textBefore: string): string {
-    const lines = textBefore.split('\n');
-    let inCodeBlock = false;
-    let lastHeading = '';
-
-    for (const line of lines) {
-        if (line.trim().startsWith('```')) {
-            inCodeBlock = !inCodeBlock;
-            continue;
-        }
-        if (inCodeBlock) continue;
-
-        const match = line.match(/^(#{1,6})\s+(.+)$/);
-        if (match) {
-            lastHeading = match[2].trim();
-        }
-    }
-    return lastHeading;
-}
-
-/**
- * FTS snippet이 속한 목차(헤딩)를 문서 원본에서 찾습니다.
+ * 검색어가 등장하는 모든 섹션(헤딩 텍스트)을 문서 원본에서 등장 순서대로 반환합니다.
+ * 한 섹션 아래에서 키워드가 여러 번 등장해도 그 헤딩은 한 번만 포함됩니다.
+ * 펜스 코드블럭(```) 내부의 # 기호는 헤딩으로 간주하지 않지만, 그 안의 라인이
+ * 키워드를 포함하면 직전 헤딩에 포함됩니다.
+ * 헤딩이 등장하기 전 도입부에서 매치되면 빈 문자열 ''이 추가됩니다.
  * @param content 문서 전체 원본 마크다운
- * @param snippet FTS snippet() 결과 (<b>...</b> 태그 포함 가능)
+ * @param query 검색어 (FTS 입력값 그대로). 공백은 \s+ 로 변환되어 줄바꿈 사이 공백도 매치합니다.
  */
-export function findSectionForSnippet(content: string, snippet: string): string {
-    // HTML 태그 및 말줄임표 제거
-    const plainSnippet = snippet.replace(/<\/?b>/g, '').replace(/\.\.\./g, ' ').trim();
+export function findSectionsForQuery(content: string, query: string): string[] {
+    if (!content || !query) return [];
 
-    // 의미있는 단어 추출 (3글자 초과)
-    const words = plainSnippet.split(/\s+/).filter(w => w.length > 3);
-    if (words.length === 0) return '';
+    const escapedTerms = query.split(/\s+/).filter(Boolean)
+        .map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    if (escapedTerms.length === 0) return [];
+    // 'g' 플래그로 본문 전체를 한 번에 스캔한다. 라인별 .test() 로는 \s+ 가
+    // 줄바꿈을 가로지를 때 매치를 놓치므로(하드랩된 문구) 전체 문자열에 대해 매치한다.
+    const regex = new RegExp(escapedTerms.join('\\s+'), 'gi');
 
-    // 연속된 단어로 검색 시도 (최대 4개)
-    const searchWords = words.slice(0, Math.min(4, words.length));
-    const escapedWords = searchWords.map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-    const searchRegex = new RegExp(escapedWords.join('\\s+'), 'i');
-
-    let matchIndex = searchRegex.exec(content)?.index;
-
-    // 실패하면 첫 단어만으로 재시도
-    if (matchIndex === undefined) {
-        const fallbackRegex = new RegExp(escapedWords[0], 'i');
-        matchIndex = fallbackRegex.exec(content)?.index;
+    // 라인별로 활성 헤딩과 라인 시작 오프셋을 미리 수집해, 매치 위치를 헤딩에 매핑한다.
+    // 헤딩 라인 자체에는 '그 라인에서 정의된 헤딩' 을 활성으로 둬서, 헤딩 텍스트에
+    // 키워드가 포함된 경우 한 단계 위 섹션이 아닌 자기 헤딩이 잡히게 한다.
+    // 같은 라벨의 헤딩이 여러 번 등장할 수 있으므로 라인 인덱스를 섹션 식별자로 사용한다
+    // (-1 은 헤딩 등장 전 도입부).
+    const linesMeta: { start: number; headingId: number; headingText: string }[] = [];
+    {
+        const lines = content.split('\n');
+        let pos = 0;
+        let inCodeBlock = false;
+        let currentHeading = '';
+        let currentHeadingId = -1;
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            const isFence = line.trim().startsWith('```');
+            if (!inCodeBlock && !isFence) {
+                const m = line.match(/^(#{1,6})\s+(.+)$/);
+                if (m) {
+                    currentHeading = m[2].trim();
+                    currentHeadingId = i;
+                }
+            }
+            linesMeta.push({ start: pos, headingId: currentHeadingId, headingText: currentHeading });
+            if (isFence) inCodeBlock = !inCodeBlock;
+            pos += line.length + 1; // +1 for '\n'
+        }
     }
 
-    if (matchIndex === undefined) return '';
+    // 매치 시작 오프셋이 속한 라인의 메타를 이진 탐색으로 찾는다.
+    function lineMetaAt(offset: number) {
+        let lo = 0, hi = linesMeta.length - 1, ans = 0;
+        while (lo <= hi) {
+            const mid = (lo + hi) >> 1;
+            if (linesMeta[mid].start <= offset) { ans = mid; lo = mid + 1; }
+            else hi = mid - 1;
+        }
+        return linesMeta[ans];
+    }
 
-    return findLastHeading(content.substring(0, matchIndex));
+    const sections: string[] = [];
+    const seenHeadingIds = new Set<number>();
+    let m: RegExpExecArray | null;
+    while ((m = regex.exec(content)) !== null) {
+        const meta = lineMetaAt(m.index);
+        if (!seenHeadingIds.has(meta.headingId)) {
+            seenHeadingIds.add(meta.headingId);
+            sections.push(meta.headingText);
+        }
+        // 빈 매치 방어: 현재 정규식으로는 일어나지 않지만 lastIndex 정체로 인한 무한 루프 차단.
+        if (m.index === regex.lastIndex) regex.lastIndex++;
+    }
+    return sections;
 }
