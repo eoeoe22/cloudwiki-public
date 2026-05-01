@@ -1286,14 +1286,9 @@
           const html = (data.pages || [])
             .map((p) => {
               const slugAttr = JSON.stringify(p.slug).replace(/"/g, "&quot;");
-              const badges = [
-                p.is_private
-                  ? '<span class="badge bg-secondary ms-1">비공개</span>'
-                  : "",
-                p.is_locked
-                  ? '<span class="badge bg-warning text-dark ms-1">잠금</span>'
-                  : "",
-              ].join("");
+              const badges = p.is_locked
+                ? '<span class="badge bg-warning text-dark ms-1">잠금</span>'
+                : "";
               return `<tr>
                 <td>
                   <div class="fw-bold small">${escapeHtml(p.slug)}${badges}</div>

@@ -100,8 +100,6 @@ export interface Page {
     category: string | null;
     redirect_to: string | null;
     is_locked: number;
-    is_private: number;
-    author_id: number | null;
     last_revision_id: number | null;
     version: number;
     created_at: number;

@@ -551,16 +551,19 @@ async function _resolveTransclusionsCore(text, depth, cache, pageSlug, options) 
                                 cache.set(slug, `⚠️ [틀을 찾을 수 없음: ${slug}]`);
                                 return;
                             }
+                            // 틀 본문도 CRLF/CR → LF 정규화. 이후 펜스/`:::`/폴드 정규식과
+                            // marked.lexer 의 `raw` 매칭이 어긋나지 않도록 한다.
+                            const tplBody = data.content.replace(/\r\n?/g, '\n');
                             const selfReferenceWarning = `⚠️ [자기 자신을 참조하는 틀은 사용할 수 없습니다: ${slug}]`;
                             // 틀 본문 내부의 자기 참조를 치환. 중괄호 균형을 맞추는 파서로 호출을
                             // 찾기 때문에 인자 내부의 {button:...} 같은 토큰이 있어도 정확히 매칭한다.
-                            const innerCalls = _findTemplateCalls(data.content);
+                            const innerCalls = _findTemplateCalls(tplBody);
                             let tplContent = '';
                             let cursor = 0;
                             for (const ic of innerCalls) {
-                                tplContent += data.content.substring(cursor, ic.start);
+                                tplContent += tplBody.substring(cursor, ic.start);
                                 const { name: innerName } = _parseTemplateCall(ic.raw.trim());
-                                const original = data.content.substring(ic.start, ic.fullEnd);
+                                const original = tplBody.substring(ic.start, ic.fullEnd);
                                 if (_isExtensionCall(innerName)) {
                                     tplContent += original;
                                 } else {
@@ -572,7 +575,7 @@ async function _resolveTransclusionsCore(text, depth, cache, pageSlug, options) 
                                 }
                                 cursor = ic.fullEnd;
                             }
-                            tplContent += data.content.substring(cursor);
+                            tplContent += tplBody.substring(cursor);
                             cache.set(slug, tplContent);
                         }
                     })
@@ -700,7 +703,10 @@ async function resolveTransclusions(content, pageSlug) {
     // 매 호출 시 익스텐션 데이터 초기화
     _wikiExtensionData = [];
     const cache = new Map();
-    return await _resolveTransclusionsCore(content, 0, cache, pageSlug, { expandExtensions: true, emitExtensionPlaceholders: true });
+    // CRLF/CR → LF 정규화. 코어의 `marked.lexer(...).raw` 매칭이 LF 기준이라
+    // CRLF 가 섞이면 코드블록 보호가 실패해 코드블록 내부에서도 {{...}} 가 확장된다.
+    const normalized = (content || '').replace(/\r\n?/g, '\n');
+    return await _resolveTransclusionsCore(normalized, 0, cache, pageSlug, { expandExtensions: true, emitExtensionPlaceholders: true });
 }
 
 /**
@@ -709,7 +715,8 @@ async function resolveTransclusions(content, pageSlug) {
  */
 async function resolveTransclusionsForMarkdown(content, pageSlug) {
     const cache = new Map();
-    const expanded = await _resolveTransclusionsCore(content, 0, cache, pageSlug, { expandExtensions: false, emitExtensionPlaceholders: false });
+    const normalized = (content || '').replace(/\r\n?/g, '\n');
+    const expanded = await _resolveTransclusionsCore(normalized, 0, cache, pageSlug, { expandExtensions: false, emitExtensionPlaceholders: false });
     // 마크다운 원문 복사 경로에서는 transclusion 센티넬을 제거해 깔끔한 텍스트로 반환.
     return expanded.replace(/<!--WIKI_TCL_[BE]-->/g, '');
 }

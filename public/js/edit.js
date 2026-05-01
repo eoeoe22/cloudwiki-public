@@ -2056,8 +2056,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 slug: page.slug,
                 category: page.category || '',
                 redirect_to: page.redirect_to || '',
-                is_locked: page.is_locked ? 1 : 0,
-                is_private: page.is_private ? 1 : 0
+                is_locked: page.is_locked ? 1 : 0
             };
 
             let initialContent = page.content || '';
@@ -2533,8 +2532,7 @@ async function savePage() {
                     slug: freshPageForFallback.slug,
                     category: freshPageForFallback.category || '',
                     redirect_to: freshPageForFallback.redirect_to || '',
-                    is_locked: freshPageForFallback.is_locked ? 1 : 0,
-                    is_private: freshPageForFallback.is_private ? 1 : 0
+                    is_locked: freshPageForFallback.is_locked ? 1 : 0
                 };
                 // pageVersion 을 최신값으로 갱신
                 pageVersion = data.current_version;

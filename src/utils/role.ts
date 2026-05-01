@@ -78,7 +78,7 @@ export class RBAC {
                     inherits: ['user']
                 },
                 admin: {
-                    permissions: ['admin:access', 'wiki:delete', 'wiki:lock', 'wiki:private', 'user:manage', 'ticket:manage'],
+                    permissions: ['admin:access', 'wiki:delete', 'wiki:lock', 'user:manage', 'ticket:manage'],
                     inherits: ['discussion_manager']
                 },
                 super_admin: {

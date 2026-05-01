@@ -471,7 +471,7 @@ async function expandTemplateCallsIn(
     const slugList = Array.from(slugMap.keys());
     const templateContents = new Map<string, string>();
     const batchStatements = slugList.map(slug =>
-        db.prepare('SELECT slug, content FROM pages WHERE slug = ? AND deleted_at IS NULL AND is_private = 0').bind(slug)
+        db.prepare('SELECT slug, content FROM pages WHERE slug = ? AND deleted_at IS NULL').bind(slug)
     );
     try {
         const batchResults = await db.batch<{ slug: string; content: string }>(batchStatements);

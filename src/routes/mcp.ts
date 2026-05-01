@@ -364,7 +364,7 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                 return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text }] } };
             }
             if (toolName === 'search_title') {
-                const results = await db.prepare('SELECT slug, rows, characters FROM pages WHERE slug LIKE ? AND deleted_at IS NULL AND is_private = 0 LIMIT 15')
+                const results = await db.prepare('SELECT slug, rows, characters FROM pages WHERE slug LIKE ? AND deleted_at IS NULL LIMIT 15')
                     .bind(`%${args.query}%`).all();
                 return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(results.results, null, 2) }] } };
             }
@@ -384,12 +384,12 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                     // LIKE 메타문자(%, _, \)를 escape 해 사용자가 입력한 문자열 그대로 부분 일치만 수행한다.
                     const likeEscaped = rawQuery.replace(/[\\%_]/g, '\\$&');
                     const likePattern = `%${likeEscaped}%`;
-                    const fbSql = `SELECT p.slug, p.content, p.last_revision_id, p.rows, p.characters FROM pages p WHERE (p.slug LIKE ? ESCAPE '\\' OR p.content LIKE ? ESCAPE '\\') AND p.deleted_at IS NULL AND p.is_private = 0 ORDER BY (CASE WHEN p.slug LIKE ? ESCAPE '\\' THEN 0 ELSE 1 END), p.updated_at DESC LIMIT 10`;
+                    const fbSql = `SELECT p.slug, p.content, p.last_revision_id, p.rows, p.characters FROM pages p WHERE (p.slug LIKE ? ESCAPE '\\' OR p.content LIKE ? ESCAPE '\\') AND p.deleted_at IS NULL ORDER BY (CASE WHEN p.slug LIKE ? ESCAPE '\\' THEN 0 ELSE 1 END), p.updated_at DESC LIMIT 10`;
                     const fbRes = await db.prepare(fbSql).bind(likePattern, likePattern, likePattern).all<{ slug: string; content: string; last_revision_id: number | null; rows: number | null; characters: number | null }>();
                     rows = fbRes.results;
                 } else {
                     const safeMatchQuery = '"' + rawQuery.replace(/"/g, '""') + '"';
-                    const ftsSql = `SELECT p.slug, p.content, p.last_revision_id, p.rows, p.characters FROM pages_fts JOIN pages p ON pages_fts.rowid = p.id WHERE pages_fts MATCH ? AND p.deleted_at IS NULL AND p.is_private = 0 LIMIT 10`;
+                    const ftsSql = `SELECT p.slug, p.content, p.last_revision_id, p.rows, p.characters FROM pages_fts JOIN pages p ON pages_fts.rowid = p.id WHERE pages_fts MATCH ? AND p.deleted_at IS NULL LIMIT 10`;
                     const ftsRes = await db.prepare(ftsSql).bind(safeMatchQuery).all<{ slug: string; content: string; last_revision_id: number | null; rows: number | null; characters: number | null }>();
                     rows = ftsRes.results;
                 }
@@ -422,7 +422,7 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                 if (!isMcpReadableSlug(slug)) {
                     return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: 'raw 데이터는 읽을 수 없습니다.' }], isError: true } };
                 }
-                const page = await db.prepare('SELECT slug, content, last_revision_id FROM pages WHERE slug = ? AND deleted_at IS NULL AND is_private = 0').bind(slug).first<{ slug: string, content: string, last_revision_id: number | null }>();
+                const page = await db.prepare('SELECT slug, content, last_revision_id FROM pages WHERE slug = ? AND deleted_at IS NULL').bind(slug).first<{ slug: string, content: string, last_revision_id: number | null }>();
                 if (!page) return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: 'Error: 문서를 찾을 수 없거나 비공개/삭제 상태입니다.' }], isError: true } };
 
                 let actualContent = page.content;
@@ -476,8 +476,8 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                 const prefixUpper = rootSlug + '0';
 
                 const [subdocs, rootPage] = await Promise.all([
-                    db.prepare('SELECT slug, rows, characters FROM pages WHERE deleted_at IS NULL AND is_private = 0 AND slug > ? AND slug < ? ORDER BY slug ASC LIMIT 200').bind(prefixLower, prefixUpper).all<{ slug: string; rows: number | null; characters: number | null }>(),
-                    db.prepare('SELECT slug, rows, characters FROM pages WHERE slug = ? AND deleted_at IS NULL AND is_private = 0').bind(rootSlug).first<{ slug: string; rows: number | null; characters: number | null }>()
+                    db.prepare('SELECT slug, rows, characters FROM pages WHERE deleted_at IS NULL AND slug > ? AND slug < ? ORDER BY slug ASC LIMIT 200').bind(prefixLower, prefixUpper).all<{ slug: string; rows: number | null; characters: number | null }>(),
+                    db.prepare('SELECT slug, rows, characters FROM pages WHERE slug = ? AND deleted_at IS NULL').bind(rootSlug).first<{ slug: string; rows: number | null; characters: number | null }>()
                 ]);
 
                 const formatStats = (r: number | null, ch: number | null) => ` (${r ?? 0}줄, ${ch ?? 0}자)`;
@@ -593,7 +593,7 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                     // total 은 트리 표시용 캡(500)과 무관하게 COUNT(*) 로 정확히 구해야 한다.
                     // 그렇지 않으면 500을 초과한 시점부터 has_next_page 가 거짓이 되어
                     // 클라이언트가 페이지네이션으로 나머지 문서에 접근할 수 없다.
-                    const totalRow = await db.prepare('SELECT COUNT(*) AS cnt FROM pages WHERE deleted_at IS NULL AND is_private = 0 AND slug > ? AND slug < ?').bind(prefixLower, prefixUpper).first<{ cnt: number }>();
+                    const totalRow = await db.prepare('SELECT COUNT(*) AS cnt FROM pages WHERE deleted_at IS NULL AND slug > ? AND slug < ?').bind(prefixLower, prefixUpper).first<{ cnt: number }>();
                     totalCount = totalRow?.cnt ?? 0;
                     if (totalCount === 0) {
                         return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: `'${parentSlug}' 의 하위 문서가 없습니다.` }] } };
@@ -601,7 +601,7 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
 
                     // 실제 읽을 페이지는 SQL LIMIT/OFFSET 으로 직접 잘라서 가져온다.
                     // 트리 표시용 후보(allCandidateSlugs)와 별개로 처리해야 어떤 페이지 번호든 안정적으로 도달 가능하다.
-                    const pageRows = await db.prepare('SELECT slug FROM pages WHERE deleted_at IS NULL AND is_private = 0 AND slug > ? AND slug < ? ORDER BY slug ASC LIMIT ? OFFSET ?').bind(prefixLower, prefixUpper, BATCH_LIMIT, offset).all<{ slug: string }>();
+                    const pageRows = await db.prepare('SELECT slug FROM pages WHERE deleted_at IS NULL AND slug > ? AND slug < ? ORDER BY slug ASC LIMIT ? OFFSET ?').bind(prefixLower, prefixUpper, BATCH_LIMIT, offset).all<{ slug: string }>();
                     targetSlugs = pageRows.results.map(r => r.slug);
                     if (targetSlugs.length === 0) {
                         const totalPages = Math.ceil(totalCount / BATCH_LIMIT);
@@ -610,7 +610,7 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
 
                     // 트리 표시는 응답 크기 보호를 위해 500개로 제한한다.
                     // 500을 초과해도 페이지네이션은 total/COUNT(*) 기준으로 동작하므로 도달 가능성을 잃지 않는다.
-                    const treeRows = await db.prepare('SELECT slug, rows, characters FROM pages WHERE deleted_at IS NULL AND is_private = 0 AND slug > ? AND slug < ? ORDER BY slug ASC LIMIT ?').bind(prefixLower, prefixUpper, TREE_DISPLAY_CAP).all<{ slug: string; rows: number | null; characters: number | null }>();
+                    const treeRows = await db.prepare('SELECT slug, rows, characters FROM pages WHERE deleted_at IS NULL AND slug > ? AND slug < ? ORDER BY slug ASC LIMIT ?').bind(prefixLower, prefixUpper, TREE_DISPLAY_CAP).all<{ slug: string; rows: number | null; characters: number | null }>();
                     allCandidateSlugs = treeRows.results.map(r => r.slug);
                     for (const r of treeRows.results) {
                         statsMap.set(r.slug, { rows: r.rows, characters: r.characters });
@@ -630,7 +630,7 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                     if (!isMcpReadableSlug(slug)) {
                         return { title: slug, error: 'raw 데이터는 읽을 수 없습니다.' };
                     }
-                    const pageRow = await db.prepare('SELECT slug, content, last_revision_id, rows, characters FROM pages WHERE slug = ? AND deleted_at IS NULL AND is_private = 0').bind(slug).first<{ slug: string, content: string, last_revision_id: number | null, rows: number | null, characters: number | null }>();
+                    const pageRow = await db.prepare('SELECT slug, content, last_revision_id, rows, characters FROM pages WHERE slug = ? AND deleted_at IS NULL').bind(slug).first<{ slug: string, content: string, last_revision_id: number | null, rows: number | null, characters: number | null }>();
                     if (!pageRow) {
                         return { title: slug, error: '문서를 찾을 수 없거나 비공개/삭제 상태입니다.' };
                     }
@@ -682,7 +682,7 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                         if (!isMcpReadableSlug(parentSlug)) {
                             errorBySlug.set(parentSlug, 'raw 데이터는 읽을 수 없습니다.');
                         } else {
-                            const parentRow = await db.prepare('SELECT slug, content, last_revision_id, rows, characters FROM pages WHERE slug = ? AND deleted_at IS NULL AND is_private = 0').bind(parentSlug).first<{ slug: string, content: string, last_revision_id: number | null, rows: number | null, characters: number | null }>();
+                            const parentRow = await db.prepare('SELECT slug, content, last_revision_id, rows, characters FROM pages WHERE slug = ? AND deleted_at IS NULL').bind(parentSlug).first<{ slug: string, content: string, last_revision_id: number | null, rows: number | null, characters: number | null }>();
                             if (parentRow) {
                                 statsMap.set(parentRow.slug, { rows: parentRow.rows, characters: parentRow.characters });
                                 let actualContent = parentRow.content;
@@ -924,11 +924,11 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                 return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(results.results.map(r => r.category), null, 2) }] } };
             }
             if (toolName === 'get_category_info') {
-                const docs = await db.prepare('SELECT p.slug, p.rows, p.characters FROM page_categories pc JOIN pages p ON pc.page_id = p.id WHERE pc.category = ? AND p.deleted_at IS NULL AND p.is_private = 0 ORDER BY p.slug ASC LIMIT 50')
+                const docs = await db.prepare('SELECT p.slug, p.rows, p.characters FROM page_categories pc JOIN pages p ON pc.page_id = p.id WHERE pc.category = ? AND p.deleted_at IS NULL ORDER BY p.slug ASC LIMIT 50')
                     .bind(args.category).all<{ slug: string; rows: number | null; characters: number | null }>();
 
                 const catSlug = normalizeSlug(`카테고리:${args.category}`);
-                const catPage = await db.prepare('SELECT slug, content, last_revision_id FROM pages WHERE slug = ? AND deleted_at IS NULL AND is_private = 0').bind(catSlug).first<{ slug: string, content: string, last_revision_id: number | null }>();
+                const catPage = await db.prepare('SELECT slug, content, last_revision_id FROM pages WHERE slug = ? AND deleted_at IS NULL').bind(catSlug).first<{ slug: string, content: string, last_revision_id: number | null }>();
 
                 let renderedCatContent = '카테고리 문서가 존재하지 않습니다.';
                 if (catPage) {
@@ -957,7 +957,7 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
             }
             if (toolName === 'get_document_categoty') {
                 const slug = normalizeSlug(args.title || '');
-                const cats = await db.prepare('SELECT pc.category FROM page_categories pc JOIN pages p ON pc.page_id = p.id WHERE p.slug = ? AND p.deleted_at IS NULL AND p.is_private = 0 ORDER BY pc.category ASC')
+                const cats = await db.prepare('SELECT pc.category FROM page_categories pc JOIN pages p ON pc.page_id = p.id WHERE p.slug = ? AND p.deleted_at IS NULL ORDER BY pc.category ASC')
                     .bind(slug).all<{ category: string }>();
                 return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(cats.results.map(r => r.category), null, 2) }] } };
             }
@@ -979,7 +979,6 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                     JOIN pages p ON pl.source_page_id = p.id
                     WHERE p.slug != ?
                       AND pl.target_slug IN (${placeholders})
-                      AND p.is_private = 0
                       AND p.deleted_at IS NULL
                     ORDER BY p.updated_at DESC LIMIT 100
                 `;
@@ -991,9 +990,9 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                 const { results } = await db.prepare(`
                     SELECT p.slug, p.updated_at, u.name as author_name, r.summary
                     FROM pages p
-                    LEFT JOIN users u ON p.author_id = u.id
                     LEFT JOIN revisions r ON p.last_revision_id = r.id
-                    WHERE p.deleted_at IS NULL AND p.is_private = 0
+                    LEFT JOIN users u ON r.author_id = u.id
+                    WHERE p.deleted_at IS NULL
                     ORDER BY p.updated_at DESC LIMIT ?
                 `).bind(limit).all<{ slug: string; updated_at: number | null; author_name: string | null; summary: string | null }>();
                 const nowSec = Math.floor(Date.now() / 1000);
@@ -1007,7 +1006,7 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
             }
             if (toolName === 'list_discussions') {
                 const slug = normalizeSlug(args.title || '');
-                const page = await db.prepare('SELECT id FROM pages WHERE slug = ? AND deleted_at IS NULL AND is_private = 0').bind(slug).first<{ id: number }>();
+                const page = await db.prepare('SELECT id FROM pages WHERE slug = ? AND deleted_at IS NULL').bind(slug).first<{ id: number }>();
                 if (!page) return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: 'Error: 문서를 찾을 수 없거나 비공개/삭제 상태입니다.' }], isError: true } };
                 const { results } = await db.prepare(`
                     SELECT d.id, d.title, d.status, d.created_at, d.updated_at,
@@ -1032,7 +1031,7 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                     FROM discussions d
                     LEFT JOIN users u ON d.author_id = u.id
                     JOIN pages p ON d.page_id = p.id
-                    WHERE d.id = ? AND d.deleted_at IS NULL AND p.deleted_at IS NULL AND p.is_private = 0
+                    WHERE d.id = ? AND d.deleted_at IS NULL AND p.deleted_at IS NULL
                 `).bind(dId).first();
                 if (!discussion) return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: 'Error: 토론을 찾을 수 없거나 비공개/삭제 상태입니다.' }], isError: true } };
                 const { results: comments } = await db.prepare(`

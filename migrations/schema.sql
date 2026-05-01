@@ -1,5 +1,6 @@
 -- Cloudflare D1 Database Schema
 
+
 -- 사용자 테이블
 CREATE TABLE IF NOT EXISTS users (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -31,7 +32,6 @@ CREATE TABLE IF NOT EXISTS pages (
   id                INTEGER PRIMARY KEY AUTOINCREMENT,
   slug              TEXT NOT NULL UNIQUE,
   content           TEXT NOT NULL DEFAULT '',
-  author_id         INTEGER,
   last_revision_id  INTEGER,
   version           INTEGER DEFAULT 1,
   created_at        INTEGER DEFAULT (unixepoch()),
@@ -39,17 +39,14 @@ CREATE TABLE IF NOT EXISTS pages (
   deleted_at        INTEGER,
   category          TEXT,
   is_locked         INTEGER DEFAULT 0,
-  is_private        INTEGER DEFAULT 0,
   redirect_to       TEXT,
   rows              INTEGER,
-  characters        INTEGER,
-  FOREIGN KEY (author_id) REFERENCES users(id)
+  characters        INTEGER
 );
 
 
 CREATE INDEX IF NOT EXISTS idx_pages_updated ON pages(updated_at DESC);
-CREATE INDEX IF NOT EXISTS idx_pages_author ON pages(author_id);
-CREATE INDEX IF NOT EXISTS idx_pages_deleted_private ON pages(deleted_at, is_private);
+CREATE INDEX IF NOT EXISTS idx_pages_deleted ON pages(deleted_at);
 
 -- 리비전 테이블
 -- content: 본문이 직접 저장되거나, r2_key가 있으면 R2에서 조회.

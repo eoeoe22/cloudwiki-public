@@ -943,7 +943,7 @@ adminRoutes.get('/pages/deleted', async (c) => {
 
     const [pagesResult, countResult] = await Promise.all([
         db.prepare(
-            `SELECT id, slug, is_private, is_locked, deleted_at, updated_at
+            `SELECT id, slug, is_locked, deleted_at, updated_at
              FROM pages${whereClause}
              ORDER BY deleted_at DESC
              LIMIT ? OFFSET ?`

@@ -320,7 +320,7 @@ media.get('/api/media/doc/:filename/backlinks', async (c) => {
           AND pl.target_slug = ?
     `;
     if (!isAdmin) {
-        query += ' AND p.is_private = 0 AND p.deleted_at IS NULL';
+        query += ' AND p.deleted_at IS NULL';
     }
     query += ' ORDER BY p.updated_at DESC LIMIT 100';
 
@@ -342,7 +342,9 @@ media.put('/api/media/doc/:filename', requireAuth, requirePermission('wiki:edit'
     } catch {
         return c.json({ error: '유효하지 않은 요청입니다.' }, 400);
     }
-    const content = typeof body.content === 'string' ? body.content : '';
+    // CRLF/CR → LF 정규화. 클라이언트에서 \r 가 섞여 들어와도 렌더 파이프라인이
+    // 일관되게 동작하도록 저장 시점에 정규화한다.
+    const content = typeof body.content === 'string' ? body.content.replace(/\r\n?/g, '\n') : '';
 
     // 길이 제한 (과도한 저장 방지)
     if (content.length > 20000) {

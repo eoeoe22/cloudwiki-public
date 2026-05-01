@@ -69,8 +69,9 @@ async function refreshRecentChangesCache(c: any) {
     const { results } = await db.prepare(`
         SELECT p.slug, p.updated_at, u.name as author_name
         FROM pages p
-        LEFT JOIN users u ON p.author_id = u.id
-        WHERE p.deleted_at IS NULL AND p.is_private = 0
+        LEFT JOIN revisions r ON p.last_revision_id = r.id
+        LEFT JOIN users u ON r.author_id = u.id
+        WHERE p.deleted_at IS NULL
         ORDER BY p.updated_at DESC LIMIT 10
     `).all();
 
@@ -395,7 +396,7 @@ async function rewriteBacklinksForRename(
     const { results: sourcePages } = await db
         .prepare(`
             SELECT DISTINCT p.id, p.slug, p.version, p.content, p.category,
-                p.last_revision_id, p.is_locked, p.is_private
+                p.last_revision_id, p.is_locked
             FROM page_links pl
             JOIN pages p ON pl.source_page_id = p.id
             WHERE p.deleted_at IS NULL
@@ -405,7 +406,7 @@ async function rewriteBacklinksForRename(
         .all<{
             id: number; slug: string; version: number; content: string;
             category: string | null; last_revision_id: number | null;
-            is_locked: number; is_private: number;
+            is_locked: number;
         }>();
 
     const total = sourcePages.length;
@@ -424,10 +425,6 @@ async function rewriteBacklinksForRename(
     for (const page of targets) {
         // 안전망: 권한이 없는 경우 스킵 (정상 관리자는 통과)
         if (page.is_locked === 1 && !rbac.can(user.role, 'wiki:lock')) {
-            skipped.push(page.slug);
-            continue;
-        }
-        if (page.is_private === 1 && !rbac.can(user.role, 'wiki:private')) {
             skipped.push(page.slug);
             continue;
         }
@@ -498,8 +495,6 @@ async function rewriteBacklinksForRename(
         }
 
         // 3) pages UPDATE (낙관적 잠금)
-        // author_id도 같이 갱신해 최근 변경 / recent-changes 작성자 표기가 실제 편집자(이동 관리자)를
-        // 반영하도록 한다. (기존 편집 핸들러의 UPDATE 패턴과 일치)
         const contentToStore = isR2Only ? '' : rewritten;
         const metrics = computePageMetrics(rewritten);
         let pagesUpdated = 0;
@@ -507,11 +502,11 @@ async function rewriteBacklinksForRename(
             const upd = await db
                 .prepare(
                     `UPDATE pages
-                     SET content = ?, last_revision_id = ?, version = ?, author_id = ?,
+                     SET content = ?, last_revision_id = ?, version = ?,
                          rows = ?, characters = ?, updated_at = unixepoch()
                      WHERE id = ? AND version = ?`
                 )
-                .bind(contentToStore, revisionId, newVersion, user.id, metrics.rows, metrics.characters, page.id, page.version)
+                .bind(contentToStore, revisionId, newVersion, metrics.rows, metrics.characters, page.id, page.version)
                 .run();
             pagesUpdated = (upd.meta?.changes ?? (upd as any).changes ?? 0) as number;
         } catch (e) {
@@ -598,16 +593,9 @@ wiki.get('/w/search-titles', async (c) => {
     const q = c.req.query('q') || '';
     const type = c.req.query('type') || 'link';
     const exclude = c.req.query('exclude') || '';
-    const user = c.get('user');
-    const rbac = c.get('rbac') as RBAC;
-    const isAdmin = user && rbac.can(user.role, 'admin:access');
 
     let query = `SELECT slug FROM pages WHERE deleted_at IS NULL`;
     const params: any[] = [];
-
-    if (!isAdmin) {
-        query += ' AND is_private = 0';
-    }
 
     if (type === 'template') {
         const enabledExtensions = (c.env.ENABLED_EXTENSIONS || '').split(',').map((s: string) => s.trim()).filter(Boolean);
@@ -679,49 +667,33 @@ wiki.get('/w/recent-changes', async (c) => {
         return c.json({ error: '로그인이 필요합니다.' }, 401);
     }
     const db = c.env.DB;
-    const user = c.get('user');
-    const rbac = c.get('rbac') as RBAC;
-    const isAdmin = user && rbac.can(user.role, 'admin:access');
 
-    // 비관리자(공개 결과)는 Cache API로 24시간 캐싱
-    if (!isAdmin) {
-        const cache = caches.default;
-        const cacheKey = c.req.url;
-        const cached = await cache.match(cacheKey);
-        if (cached) {
-            return new Response(cached.body, cached);
-        }
-
-        const { results } = await db.prepare(`
-            SELECT p.slug, p.updated_at, u.name as author_name
-            FROM pages p
-            LEFT JOIN users u ON p.author_id = u.id
-            WHERE p.deleted_at IS NULL AND p.is_private = 0
-            ORDER BY p.updated_at DESC LIMIT 10
-        `).all();
-
-        const body = JSON.stringify(safeJSON({ changes: results }));
-        const response = new Response(body, {
-            status: 200,
-            headers: {
-                'Content-Type': 'application/json; charset=UTF-8',
-                'Cache-Control': 'public, max-age=60',
-            },
-        });
-        c.executionCtx.waitUntil(cache.put(cacheKey, response.clone()));
-        return response;
+    const cache = caches.default;
+    const cacheKey = c.req.url;
+    const cached = await cache.match(cacheKey);
+    if (cached) {
+        return new Response(cached.body, cached);
     }
 
-    // 관리자: 비공개 문서 포함, 캐싱 없음
     const { results } = await db.prepare(`
         SELECT p.slug, p.updated_at, u.name as author_name
         FROM pages p
-        LEFT JOIN users u ON p.author_id = u.id
+        LEFT JOIN revisions r ON p.last_revision_id = r.id
+        LEFT JOIN users u ON r.author_id = u.id
         WHERE p.deleted_at IS NULL
         ORDER BY p.updated_at DESC LIMIT 10
     `).all();
 
-    return c.json(safeJSON({ changes: results }));
+    const body = JSON.stringify(safeJSON({ changes: results }));
+    const response = new Response(body, {
+        status: 200,
+        headers: {
+            'Content-Type': 'application/json; charset=UTF-8',
+            'Cache-Control': 'public, max-age=60',
+        },
+    });
+    c.executionCtx.waitUntil(cache.put(cacheKey, response.clone()));
+    return response;
 });
 
 /**
@@ -767,18 +739,11 @@ wiki.get('/w/random', async (c) => {
         return c.json({ error: '로그인이 필요합니다.' }, 401);
     }
     const db = c.env.DB;
-    const user = c.get('user');
-    const rbac = c.get('rbac') as RBAC;
-    const isAdmin = user && rbac.can(user.role, 'admin:access');
-
     let query = `
         SELECT slug
         FROM pages
         WHERE deleted_at IS NULL
     `;
-    if (!isAdmin) {
-        query += ' AND is_private = 0';
-    }
     // 관리자 페이지, 틀, 이미지, 카테고리 등 배제
     query += " AND slug NOT LIKE '이미지:%' AND slug NOT LIKE '틀:%' AND slug NOT LIKE 'template:%' AND slug NOT LIKE '템플릿:%' AND slug NOT LIKE '카테고리:%'";
 
@@ -796,8 +761,7 @@ wiki.get('/w/random', async (c) => {
 /**
  * GET /w/recent-revisions
  * 위키 전체에서 가장 최근 리비전 내역 (모든 문서 대상)
- * - 비관리자: 공개 + 삭제되지 않은 문서의 리비전만 표시
- * - 관리자: 비공개 문서 포함, 삭제된 문서 제외
+ * - 삭제되지 않은 문서의 리비전만 표시
  * Query: offset (기본 0), limit (기본 10, 최대 50)
  */
 wiki.get('/w/recent-revisions', async (c) => {
@@ -805,13 +769,10 @@ wiki.get('/w/recent-revisions', async (c) => {
         return c.json({ error: '로그인이 필요합니다.' }, 401);
     }
     const db = c.env.DB;
-    const user = c.get('user');
-    const rbac = c.get('rbac') as RBAC;
-    const isAdmin = user && rbac.can(user.role, 'admin:access');
     const offset = Math.max(0, parseInt(c.req.query('offset') || '0', 10));
     const limit = Math.min(50, Math.max(1, parseInt(c.req.query('limit') || '10', 10)));
 
-    let query = `
+    const query = `
         SELECT r.id, r.page_id, r.page_version, r.summary, r.created_at,
                p.slug,
                u.id as author_id, u.name as author_name, u.picture as author_picture,
@@ -821,11 +782,7 @@ wiki.get('/w/recent-revisions', async (c) => {
         JOIN pages p ON r.page_id = p.id
         LEFT JOIN users u ON r.author_id = u.id
         WHERE p.deleted_at IS NULL
-    `;
-    if (!isAdmin) {
-        query += ' AND p.is_private = 0';
-    }
-    query += ` ORDER BY r.created_at DESC LIMIT ? OFFSET ?`;
+        ORDER BY r.created_at DESC LIMIT ? OFFSET ?`;
 
     const { results } = await db.prepare(query).bind(limit + 1, offset).all();
 
@@ -852,9 +809,6 @@ wiki.get('/w/all-pages', async (c) => {
         return c.json({ error: '로그인이 필요합니다.' }, 401);
     }
     const db = c.env.DB;
-    const user = c.get('user');
-    const rbac = c.get('rbac') as RBAC;
-    const isAdmin = user && rbac.can(user.role, 'admin:access');
     const offset = Math.max(0, parseInt(c.req.query('offset') || '0', 10));
     const limit = Math.min(50, Math.max(1, parseInt(c.req.query('limit') || '20', 10)));
     const sort = c.req.query('sort') || 'slug_asc';
@@ -871,10 +825,7 @@ wiki.get('/w/all-pages', async (c) => {
     };
     const orderBy = sortMap[sort] || sortMap['slug_asc'];
 
-    let whereClause = 'p.deleted_at IS NULL';
-    if (!isAdmin) {
-        whereClause += ' AND p.is_private = 0';
-    }
+    const whereClause = 'p.deleted_at IS NULL';
 
     const countQuery = `SELECT COUNT(*) as total FROM pages p WHERE ${whereClause}`;
     const listQuery = `SELECT p.slug, p.category, p.created_at, p.updated_at FROM pages p WHERE ${whereClause} ORDER BY ${orderBy} LIMIT ? OFFSET ?`;
@@ -1045,19 +996,6 @@ wiki.get('/w/:slug', async (c) => {
         return c.json({ error: '문서를 찾을 수 없습니다.' }, 404);
     }
 
-
-    // 비공개 문서 접근 제어
-    if (page.is_private) {
-        if (!isAdmin) {
-            return c.json({ error: '이 문서는 비공개 상태입니다.' }, 403);
-        }
-    }
-
-    // 작성자 정보도 함께 반환
-    const author = page.author_id
-        ? await db.prepare('SELECT name, picture FROM users WHERE id = ?').bind(page.author_id).first()
-        : null;
-
     // R2-only 네임스페이스인 경우, 본문이 비어있다면 최신 리비전에서 본문을 가져옵니다.
     const origin = new URL(c.req.url).origin;
     const enabledExtensionsRead = (c.env.ENABLED_EXTENSIONS || '').split(',').map((s: string) => s.trim()).filter(Boolean);
@@ -1070,10 +1008,9 @@ wiki.get('/w/:slug', async (c) => {
         }
     }
 
-    const result = safeJSON({ ...page, author, redirected_from: redirectedFrom });
+    const result = safeJSON({ ...page, redirected_from: redirectedFrom });
 
-    // 공개 문서인 경우에만 캐시 저장
-    if (!page.is_private && !nocache) {
+    if (!nocache) {
         response = c.json(result, 200, { 'Cache-Control': 'public, max-age=86400' });
         c.executionCtx.waitUntil(cache.put(cacheKey, response.clone()));
     } else {
@@ -1105,7 +1042,6 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
         summary?: string;
         category?: string;
         is_locked?: number;
-        is_private?: number;
         redirect_to?: string;
         expected_version?: number;
         turnstileToken?: string;
@@ -1162,14 +1098,17 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
         }
     }
 
-    // 비공개 설정 검증
-    if (body.is_private !== undefined && !rbac.can(user.role, 'wiki:private')) {
-        return c.json({ error: '비공개 설정은 관리자만 변경할 수 있습니다.' }, 403);
-    }
-
     if (body.content === undefined) {
         return c.json({ error: 'content는 필수입니다.' }, 400);
     }
+    if (typeof body.content !== 'string') {
+        return c.json({ error: 'content는 문자열이어야 합니다.' }, 400);
+    }
+
+    // CRLF/CR → LF 정규화. 클라이언트 환경(Windows 클립보드, 외부 임포트 등)에서
+    // \r 가 섞여 들어오면 렌더 파이프라인의 펜스/`:::`/폴드 정규식이 깨진다.
+    // 저장 시점에 한 번만 정규화하면 이후 모든 읽기 경로가 안전해진다.
+    body.content = body.content.replace(/\r\n?/g, '\n');
 
     // 보안: 카테고리 특수문자 금지 (한글, 영문, 숫자, 공백, 쉼표만 허용)
     if (body.category) {
@@ -1186,9 +1125,9 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
 
     // 문서 생성/수정 전, 해당 slug가 리다이렉트 소스로 사용되고 있는지 확인 (생성 시)
     const existing = await db
-        .prepare('SELECT id, version, is_locked, is_private, redirect_to, content FROM pages WHERE slug = ? AND deleted_at IS NULL')
+        .prepare('SELECT id, version, is_locked, redirect_to, content FROM pages WHERE slug = ? AND deleted_at IS NULL')
         .bind(slug)
-        .first<{ id: number; version: number; is_locked: number; is_private: number; redirect_to: string | null; content: string }>();
+        .first<{ id: number; version: number; is_locked: number; redirect_to: string | null; content: string }>();
 
     if (!existing) {
         // 새 문서 생성 시: 리다이렉트 충돌 확인
@@ -1202,7 +1141,6 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
     }
 
     let finalIsLocked = 0;
-    let finalIsPrivate = 0;
 
     if (existing) {
         // 기존 문서가 잠겨있을 경우
@@ -1210,25 +1148,22 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
             return c.json({ error: '이 문서는 관리자만 편집할 수 있습니다.' }, 403);
         }
 
-        // 비공개 문서 편집 권한 체크
-        if (existing.is_private === 1 && !rbac.can(user.role, 'wiki:private')) {
-            return c.json({ error: '비공개 문서는 관리자만 편집할 수 있습니다.' }, 403);
-        }
-
-        // 권한에 따른 잠금/비공개 상태 결정
+        // 권한에 따른 잠금 상태 결정
         finalIsLocked = rbac.can(user.role, 'wiki:lock') ? (body.is_locked ?? existing.is_locked) : existing.is_locked;
-        finalIsPrivate = rbac.can(user.role, 'wiki:private') ? (body.is_private ?? existing.is_private) : existing.is_private;
 
         // ── 기존 문서 수정 ──
         // Optimistic Locking 체크
         if (body.expected_version !== undefined && body.expected_version !== existing.version) {
-            // 내용이 완전히 동일하면 충돌로 보지 않고 진행 (Idempotent)
-            if (body.content !== existing.content) {
+            // 내용이 완전히 동일하면 충돌로 보지 않고 진행 (Idempotent).
+            // 레거시 저장 본문은 CRLF 일 수 있으므로 비교 양쪽을 LF 로 정규화한다.
+            // (요청 본문은 이미 위에서 정규화됨)
+            const existingNormalized = (existing.content || '').replace(/\r\n?/g, '\n');
+            if (body.content !== existingNormalized) {
                 return c.json(
                     {
                         error: '편집 충돌이 발생했습니다. 다른 사용자가 문서를 수정했습니다.',
                         current_version: existing.version,
-                        content: existing.content
+                        content: existingNormalized
                     },
                     409
                 );
@@ -1252,14 +1187,16 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
                     }
                 }
             }
+            // 레거시 저장본은 CRLF 일 수 있으므로 비교/응답 양쪽을 LF 로 정규화.
+            const currentNormalized = (currentActualContent || '').replace(/\r\n?/g, '\n');
 
             // 내용이 완전히 동일하면 충돌로 보지 않고 진행 (Idempotent)
-            if (body.content !== currentActualContent) {
+            if (body.content !== currentNormalized) {
                 return c.json(
                     {
                         error: '편집 충돌이 발생했습니다. 다른 사용자가 문서를 수정했습니다.',
                         current_version: existing.version,
-                        content: currentActualContent
+                        content: currentNormalized
                     },
                     409
                 );
@@ -1298,11 +1235,11 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
         await db
             .prepare(
                 `UPDATE pages
-         SET content = ?, category = ?, is_locked = ?, is_private = ?, redirect_to = ?, author_id = ?, last_revision_id = ?,
+         SET content = ?, category = ?, is_locked = ?, redirect_to = ?, last_revision_id = ?,
              version = ?, rows = ?, characters = ?, updated_at = unixepoch()
          WHERE id = ?`
             )
-            .bind(contentToStore, body.category || null, finalIsLocked, finalIsPrivate, body.redirect_to || null, user.id, revisionId, newVersion, metrics.rows, metrics.characters, existing.id)
+            .bind(contentToStore, body.category || null, finalIsLocked, body.redirect_to || null, revisionId, newVersion, metrics.rows, metrics.characters, existing.id)
             .run();
 
         // page_links, page_categories 갱신 (비동기)
@@ -1335,7 +1272,6 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
         return c.json(safeJSON({ slug, version: newVersion, revision_id: revisionId }));
     } else {
         finalIsLocked = rbac.can(user.role, 'wiki:lock') ? (body.is_locked ?? 0) : 0;
-        finalIsPrivate = rbac.can(user.role, 'wiki:private') ? (body.is_private ?? 0) : 0;
 
         // ── 새 문서 생성 ──
         const enabledExtensionsCreate = (c.env.ENABLED_EXTENSIONS || '').split(',').map((s: string) => s.trim()).filter(Boolean);
@@ -1345,9 +1281,9 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
         const metrics = computePageMetrics(body.content);
         const pageResult = await db
             .prepare(
-                'INSERT INTO pages (slug, content, category, is_locked, is_private, redirect_to, author_id, rows, characters) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+                'INSERT INTO pages (slug, content, category, is_locked, redirect_to, rows, characters) VALUES (?, ?, ?, ?, ?, ?, ?)'
             )
-            .bind(slug, contentToStore, body.category || null, finalIsLocked, finalIsPrivate, body.redirect_to || null, user.id, metrics.rows, metrics.characters)
+            .bind(slug, contentToStore, body.category || null, finalIsLocked, body.redirect_to || null, metrics.rows, metrics.characters)
             .run();
 
         const pageId = pageResult.meta.last_row_id;
@@ -1410,21 +1346,15 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
 wiki.get('/w/category/:category', async (c) => {
     const category = c.req.param('category');
     const db = c.env.DB;
-    const user = c.get('user');
-    const rbac = c.get('rbac') as RBAC;
-    const isAdmin = user && rbac.can(user.role, 'admin:access');
 
-    let query = `
+    const query = `
         SELECT p.slug, p.is_locked, p.updated_at
         FROM page_categories pc
         JOIN pages p ON pc.page_id = p.id
         WHERE p.deleted_at IS NULL
           AND pc.category = ?
+        ORDER BY p.updated_at DESC
     `;
-    if (!isAdmin) {
-        query += ' AND p.is_private = 0';
-    }
-    query += ' ORDER BY p.updated_at DESC';
 
     const { results } = await db
         .prepare(query)
@@ -1448,16 +1378,12 @@ wiki.get('/w/:slug/revisions', async (c) => {
     const isAdmin = user && rbac.can(user.role, 'admin:access');
 
     const page = await db
-        .prepare('SELECT id, is_private, deleted_at FROM pages WHERE slug = ?')
+        .prepare('SELECT id, deleted_at FROM pages WHERE slug = ?')
         .bind(slug)
-        .first<{ id: number; is_private: number; deleted_at: number | null }>();
+        .first<{ id: number; deleted_at: number | null }>();
 
     if (!page || (page.deleted_at && !isAdmin)) {
         return c.json({ error: '문서를 찾을 수 없습니다.' }, 404);
-    }
-
-    if (page.is_private && !isAdmin) {
-        return c.json({ error: '비공개 문서입니다.' }, 403);
     }
 
     const [countResult, listResult] = await db.batch([
@@ -1498,16 +1424,12 @@ wiki.get('/w/:slug/revisions/:id', async (c) => {
     const isAdmin = user && rbac.can(user.role, 'admin:access');
 
     const page = await db
-        .prepare('SELECT id, is_private, deleted_at FROM pages WHERE slug = ?')
+        .prepare('SELECT id, deleted_at FROM pages WHERE slug = ?')
         .bind(slug)
-        .first<{ id: number; is_private: number; deleted_at: number | null }>();
+        .first<{ id: number; deleted_at: number | null }>();
 
     if (!page || (page.deleted_at && !isAdmin)) {
         return c.json({ error: '문서를 찾을 수 없습니다.' }, 404);
-    }
-
-    if (page.is_private && !isAdmin) {
-        return c.json({ error: '비공개 문서입니다.' }, 403);
     }
 
     const revision = await db
@@ -1545,16 +1467,12 @@ wiki.get('/w/:slug/revisions/:id/diff', async (c) => {
     const isAdmin = user && rbac.can(user.role, 'admin:access');
 
     const page = await db
-        .prepare('SELECT id, is_private, deleted_at FROM pages WHERE slug = ?')
+        .prepare('SELECT id, deleted_at FROM pages WHERE slug = ?')
         .bind(slug)
-        .first<{ id: number; is_private: number; deleted_at: number | null }>();
+        .first<{ id: number; deleted_at: number | null }>();
 
     if (!page || (page.deleted_at && !isAdmin)) {
         return c.json({ error: '문서를 찾을 수 없습니다.' }, 404);
-    }
-
-    if (page.is_private && !isAdmin) {
-        return c.json({ error: '비공개 문서입니다.' }, 403);
     }
 
     // 해당 리비전 조회
@@ -1605,20 +1523,14 @@ wiki.get('/w/:slug/revisions/:id/diff', async (c) => {
 wiki.get('/w/:slug/subdocs', async (c) => {
     const slug = c.req.param('slug');
     const db = c.env.DB;
-    const user = c.get('user');
-    const rbac = c.get('rbac') as RBAC;
-    const isAdmin = user && rbac.can(user.role, 'admin:access');
 
-    let query = `
+    const query = `
         SELECT slug, updated_at
         FROM pages
         WHERE deleted_at IS NULL
           AND slug LIKE ?
+        ORDER BY slug ASC LIMIT 200
     `;
-    if (!isAdmin) {
-        query += ' AND is_private = 0';
-    }
-    query += ' ORDER BY slug ASC LIMIT 200';
 
     const { results } = await db
         .prepare(query)
@@ -1668,7 +1580,7 @@ wiki.get('/w/:slug/backlinks', async (c) => {
           AND pl.target_slug IN (${placeholders})
     `;
     if (!isAdmin) {
-        query += ' AND p.is_private = 0 AND p.deleted_at IS NULL';
+        query += ' AND p.deleted_at IS NULL';
     }
     query += ' ORDER BY p.updated_at DESC LIMIT 100';
 
@@ -1698,8 +1610,8 @@ wiki.delete('/w/:slug', requireAuth, async (c) => {
     const isAdmin = rbac.can(user.role, 'admin:access');
 
     // Fetch page first to check permissions
-    const page = await db.prepare('SELECT id, is_locked, is_private FROM pages WHERE slug = ? AND deleted_at IS NULL')
-        .bind(slug).first<{ id: number; is_locked: number; is_private: number }>();
+    const page = await db.prepare('SELECT id, is_locked FROM pages WHERE slug = ? AND deleted_at IS NULL')
+        .bind(slug).first<{ id: number; is_locked: number }>();
 
     if (!page) {
         return c.json({ error: '문서를 찾을 수 없습니다.' }, 404);
@@ -1871,17 +1783,13 @@ wiki.post('/w/:slug/move', requireAdmin, async (c) => {
         return c.json({ error: '해당 이름은 다른 문서로의 넘겨주기(Redirect)로 사용되고 있어 이동할 수 없습니다.' }, 409);
     }
 
-    const page = await db.prepare('SELECT id, is_locked, is_private FROM pages WHERE slug = ? AND deleted_at IS NULL').bind(currentSlug).first<{ id: number, is_locked: number, is_private: number }>();
+    const page = await db.prepare('SELECT id, is_locked FROM pages WHERE slug = ? AND deleted_at IS NULL').bind(currentSlug).first<{ id: number, is_locked: number }>();
     if (!page) {
         return c.json({ error: '문서를 찾을 수 없습니다.' }, 404);
     }
 
-    const isAdmin = rbac.can(user.role, 'admin:access');
     if (page.is_locked === 1 && !rbac.can(user.role, 'wiki:lock')) {
         return c.json({ error: '잠긴 문서는 관리자만 이동할 수 있습니다.' }, 403);
-    }
-    if (page.is_private === 1 && !rbac.can(user.role, 'wiki:private')) {
-        return c.json({ error: '비공개 문서는 관리자만 이동할 수 있습니다.' }, 403);
     }
 
     // Update Page Slug (slug 가 곧 표시 이름이므로 별도 title 업데이트 불필요)
@@ -1989,6 +1897,9 @@ wiki.post('/w/:slug/revert', requireAuth, async (c) => {
         console.error('Failed to fetch revert target content:', e);
         return c.json({ error: '리비전 본문을 불러오지 못했습니다.' }, 500);
     }
+
+    // 레거시 리비전이 CRLF 를 포함할 수 있으므로 새 리비전으로 쌓기 전에 LF 로 정규화.
+    revertContent = revertContent.replace(/\r\n?/g, '\n');
 
     // 새 리비전 생성 (리비전 이력은 선형으로 계속 쌓임)
     const newVersion = page.version + 1;

@@ -679,96 +679,64 @@ ${contentBlock}
         ssrData._ssrTitle = `문서 없음 - ${wikiName}`;
         shouldCache = false; // 미존재 문서는 캐싱하지 않음
     } else {
-        // 비공개 문서 접근 제어
-        if (page.is_private && !isAdmin) {
-            // 크롤러에는 존재 자체를 노출하지 않도록 404로 응답
-            if (isCrawler) {
-                const title = `문서 없음 - ${wikiName}`;
-                const body = `<article>
-<h1>${escapeHtml(slug)}</h1>
-<p>요청하신 문서가 존재하지 않습니다.</p>
-</article>`;
-                return buildCrawlerPage(c, {
-                    title,
-                    description: `${slug} 문서를 찾을 수 없습니다.`,
-                    bodyHtml: body,
-                    canonicalUrl,
-                    status: 404,
-                    cacheControl: 'no-store, must-revalidate',
-                });
-            }
-            ssrData._ssrNotFound = true;
-            ssrData._ssrForbidden = true;
-            ssrData._ssrTitle = `비공개 문서 - ${wikiName}`;
-            shouldCache = false; // 비공개 문서는 캐싱하지 않음
-        } else {
-            // 작성자 정보
-            const author = page.author_id
-                ? await db.prepare('SELECT name, picture FROM users WHERE id = ?').bind(page.author_id).first()
-                : null;
-
-            // R2-only 네임스페이스인 경우, 본문이 비어있다면 최신 리비전에서 본문을 가져옵니다.
-            const origin = new URL(c.req.url).origin;
-            const enabledExtSSR = (c.env.ENABLED_EXTENSIONS || '').split(',').map((s: string) => s.trim()).filter(Boolean);
-            if (isR2OnlyNamespace(page.slug, enabledExtSSR) && (!page.content || page.content === '')) {
-                if (page.last_revision_id) {
-                    const lastRev = await db.prepare('SELECT content, r2_key FROM revisions WHERE id = ?').bind(page.last_revision_id).first<{ content: string, r2_key: string | null }>();
-                    if (lastRev) {
-                        page.content = await getRevisionContent(c.env.MEDIA, lastRev, origin);
-                    }
+        // R2-only 네임스페이스인 경우, 본문이 비어있다면 최신 리비전에서 본문을 가져옵니다.
+        const origin = new URL(c.req.url).origin;
+        const enabledExtSSR = (c.env.ENABLED_EXTENSIONS || '').split(',').map((s: string) => s.trim()).filter(Boolean);
+        if (isR2OnlyNamespace(page.slug, enabledExtSSR) && (!page.content || page.content === '')) {
+            if (page.last_revision_id) {
+                const lastRev = await db.prepare('SELECT content, r2_key FROM revisions WHERE id = ?').bind(page.last_revision_id).first<{ content: string, r2_key: string | null }>();
+                if (lastRev) {
+                    page.content = await getRevisionContent(c.env.MEDIA, lastRev, origin);
                 }
             }
+        }
 
-            // 본문 내용 기반 설명글(Description) 생성
-            let desc = `${page.slug} - ${wikiName}`;
-            if (page.content) {
-                const extracted = extractMetaDescription(page.content);
-                if (extracted) {
-                    desc = extracted;
-                }
+        // 본문 내용 기반 설명글(Description) 생성
+        let desc = `${page.slug} - ${wikiName}`;
+        if (page.content) {
+            const extracted = extractMetaDescription(page.content);
+            if (extracted) {
+                desc = extracted;
             }
+        }
 
-            // 크롤러: 본문(마크다운)이 보이는 미니멀 HTML로 응답
-            // renderForAI 결과는 그대로 마크다운이므로 escape 후 <pre>에 넣어 전달한다.
-            if (isCrawler) {
-                trackPageView(c, page.slug, Date.now() - startTime);
-                const title = `${page.slug} - ${wikiName}`;
-                const aiText = page.content ? await renderForAI(page.content, db, 0, page.slug) : '';
-                const redirectedNote = redirectedFrom
-                    ? `<p><em>${escapeHtml(redirectedFrom)} 에서 자동으로 넘어왔습니다.</em></p>`
-                    : '';
-                const contentBlock = aiText
-                    ? `<pre>${escapeHtml(aiText)}</pre>`
-                    : '<p><em>본문이 비어있습니다.</em></p>';
-                const body = `<article>
+        // 크롤러: 본문(마크다운)이 보이는 미니멀 HTML로 응답
+        // renderForAI 결과는 그대로 마크다운이므로 escape 후 <pre>에 넣어 전달한다.
+        if (isCrawler) {
+            trackPageView(c, page.slug, Date.now() - startTime);
+            const title = `${page.slug} - ${wikiName}`;
+            const aiText = page.content ? await renderForAI(page.content, db, 0, page.slug) : '';
+            const redirectedNote = redirectedFrom
+                ? `<p><em>${escapeHtml(redirectedFrom)} 에서 자동으로 넘어왔습니다.</em></p>`
+                : '';
+            const contentBlock = aiText
+                ? `<pre>${escapeHtml(aiText)}</pre>`
+                : '<p><em>본문이 비어있습니다.</em></p>';
+            const body = `<article>
 <h1>${escapeHtml(page.slug)}</h1>
 ${redirectedNote}
 ${contentBlock}
 </article>`;
-                // 인증된 요청 또는 비공개 문서(관리자 열람)는 공유/개인 캐시 모두 차단해
-                // Vary: User-Agent만으로는 막을 수 없는 cross-user 누출을 차단한다.
-                const isSensitive = !!user || !!page.is_private;
-                const crawlerCacheControl = isSensitive ? 'private, no-store' : 'public, max-age=300';
-                return buildCrawlerPage(c, {
-                    title,
-                    description: desc,
-                    bodyHtml: body,
-                    canonicalUrl: new URL(c.req.url).origin + `/w/${encodeURIComponent(page.slug)}`,
-                    cacheControl: crawlerCacheControl,
-                });
-            }
-
-            ssrData = {
-                ...safeJSON({ ...page, author, redirected_from: redirectedFrom }),
-                _ssrSlug: slug,
-                _ssrNotFound: false,
-                _ssrTitle: `${page.slug} - ${wikiName}`,
-                _ssrDescription: desc,
-            };
-
-            // 비공개 문서는 캐싱하지 않음
-            if (page.is_private) shouldCache = false;
+            // 인증된 요청은 공유/개인 캐시 모두 차단해
+            // Vary: User-Agent만으로는 막을 수 없는 cross-user 누출을 차단한다.
+            const isSensitive = !!user;
+            const crawlerCacheControl = isSensitive ? 'private, no-store' : 'public, max-age=300';
+            return buildCrawlerPage(c, {
+                title,
+                description: desc,
+                bodyHtml: body,
+                canonicalUrl: new URL(c.req.url).origin + `/w/${encodeURIComponent(page.slug)}`,
+                cacheControl: crawlerCacheControl,
+            });
         }
+
+        ssrData = {
+            ...safeJSON({ ...page, redirected_from: redirectedFrom }),
+            _ssrSlug: slug,
+            _ssrNotFound: false,
+            _ssrTitle: `${page.slug} - ${wikiName}`,
+            _ssrDescription: desc,
+        };
     }
 
     // 3) HTMLRewriter로 SSR 데이터 주입 + 브랜딩 및 컴포넌트 치환
@@ -907,7 +875,7 @@ app.get('/sitemap.xml', async (c) => {
     const baseUrl = new URL(c.req.url).origin;
 
     const { results: pages } = await db
-        .prepare('SELECT slug, updated_at FROM pages WHERE deleted_at IS NULL AND is_private = 0 AND redirect_to IS NULL')
+        .prepare('SELECT slug, updated_at FROM pages WHERE deleted_at IS NULL AND redirect_to IS NULL')
         .all<{ slug: string; updated_at: number }>();
 
     let xml = '<?xml version="1.0" encoding="UTF-8"?>\n';
