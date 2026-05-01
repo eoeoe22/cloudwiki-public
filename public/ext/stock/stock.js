@@ -2,12 +2,11 @@
  * stock 익스텐션 — TradingView 주식 시세/차트 임베드
  *
  * 호출 형식:
- *   {{stock:005930.KS}}              — 기본 카드 (시세 + 미니 차트)
- *   {{stock:AAPL|chart}}             — TradingView 인터랙티브 차트
- *   {{stock:005930.KS|chart|h=300}}  — 높이 300px 차트
- *   {{stock:AAPL|mini}}              — 컴팩트 시세 위젯
+ *   {{stock:AAPL}}        — 기본 카드 (시세 + 미니 차트)
+ *   {{stock:AAPL|chart}}  — TradingView 인터랙티브 차트
+ *   {{stock:AAPL|mini}}   — 컴팩트 시세 위젯
  *
- * 티커 형식: Yahoo Finance (.KS/.KQ) 또는 TradingView 심볼(AAPL, NASDAQ:AAPL 등)
+ * 티커 형식: TradingView 심볼 (AAPL, NASDAQ:AAPL 등)
  */
 (function () {
     'use strict';
@@ -17,10 +16,7 @@
         return idx >= 0 ? slug.substring(idx + 1).trim() : slug.trim();
     }
 
-    // Yahoo Finance 형식 → TradingView 심볼 변환
     function _toTvSymbol(ticker) {
-        if (/^\d{6}\.KS$/.test(ticker)) return 'KRX:' + ticker.slice(0, 6);
-        if (/^\d{6}\.KQ$/.test(ticker)) return 'KOSDAQ:' + ticker.slice(0, 6);
         return ticker.toUpperCase();
     }
 
@@ -56,9 +52,8 @@
         const mode = typeof rawMode === 'string' ? rawMode.trim().toLowerCase() : '';
 
         if (mode === 'chart') {
-            const h = parseInt((extData.args && extData.args['h']) || '', 10) || 400;
             containerDiv.classList.add('wiki-stock-chart');
-            containerDiv.style.height = h + 'px';
+            containerDiv.style.height = '400px';
 
             _embedTvWidget(containerDiv, 'advanced-chart', {
                 autosize: true,
