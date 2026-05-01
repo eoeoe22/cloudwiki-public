@@ -40,9 +40,14 @@
         <div class="alert alert-warning py-2 px-3 mb-0 d-flex align-items-center justify-content-between"
           style="position: sticky; top: 0; z-index: 100; border-radius: 0; border-left: none; border-right: none; margin-left: calc(-1 * var(--wiki-container-padding, 1.5rem)); margin-right: calc(-1 * var(--wiki-container-padding, 1.5rem));">
           <span><i class="bi bi-clock-history me-2"></i><strong id="revisionViewLabel"></strong></span>
-          <button class="btn btn-sm btn-warning ms-3" onclick="backToRevisions()">
-            <i class="bi bi-arrow-left"></i> 목록으로
-          </button>
+          <div class="d-flex gap-2">
+            <button id="rawViewBtn" class="btn btn-sm btn-outline-secondary" onclick="toggleRawView()">
+              <i class="bi bi-code"></i> Raw
+            </button>
+            <button class="btn btn-sm btn-warning" onclick="backToRevisions()">
+              <i class="bi bi-arrow-left"></i> 목록으로
+            </button>
+          </div>
         </div>
         <div class="wiki-article">
           <h1 class="wiki-article-title" id="revisionViewTitle"></h1>
@@ -124,6 +129,10 @@
     const REV_PAGE_SIZE = 10;
     let currentRevPage = 1;
     let totalRevPages = 0;
+    let currentRevisionRawContent = '';
+    let currentRevisionSlug = '';
+    let isRawView = false;
+    let isExtensionData = false;
 
     // ── URL에서 slug 추출 ──
     function extractSlug() {
@@ -183,13 +192,15 @@
         }
 
         const listEl = document.getElementById('revisionsList');
-        const itemsHtml = data.revisions.map(rev => {
+        const itemsHtml = data.revisions.map((rev, idx) => {
+          const isLatest = page === 1 && idx === 0;
           const date = new Date(rev.created_at * 1000).toLocaleString('ko-KR');
           return `
             <div class="revision-item d-flex align-items-center justify-content-between border-bottom py-2">
               <div class="d-flex align-items-center gap-3 flex-grow-1 overflow-hidden">
                 <span class="revision-date text-muted small" style="min-width: 160px;">${date}</span>
                 ${rev.author_id ? `<a href="${rev.author_role === 'deleted' ? '/404' : '/profile/' + rev.author_id}" class="revision-author badge bg-light text-dark border text-decoration-none">${escapeHtml(rev.author_name || '알 수 없음')}${renderUserRoleIcon(rev.author_role)}</a>` : `<span class="revision-author badge bg-light text-dark border">${escapeHtml(rev.author_name || '알 수 없음')}${renderUserRoleIcon(rev.author_role)}</span>`}
+                ${isLatest ? '<span class="badge text-bg-primary" style="font-size: 0.7em; flex-shrink: 0;">최신</span>' : ''}
                 <span class="revision-summary text-truncate">${escapeHtml(rev.summary || '(요약 없음)')}</span>
               </div>
               <div class="d-flex gap-2 ms-2" style="white-space: nowrap;">
@@ -278,6 +289,10 @@
         if (!res.ok) throw new Error('리비전 불러오기 실패');
         const rev = await res.json();
 
+        currentRevisionRawContent = rev.content || '';
+        currentRevisionSlug = slug;
+        isRawView = false;
+
         const versionLabel = (pageVersion !== '' && pageVersion != null) ? `v${pageVersion}` : `#${revId}`;
         document.getElementById('revisionViewLabel').textContent = `${versionLabel} 리비전 열람중입니다`;
         document.getElementById('revisionViewTitle').textContent = document.getElementById('revPageTitle').textContent || slug;
@@ -287,6 +302,16 @@
         const decodedSlugForExt = decodeURIComponent(slug);
         const enabledExts = (appConfig && appConfig.enabledExtensions) || [];
         const extPrefix = enabledExts.find(ext => decodedSlugForExt.startsWith(ext + ':'));
+        isExtensionData = !!extPrefix;
+
+        const rawBtn = document.getElementById('rawViewBtn');
+        if (rawBtn) {
+          rawBtn.style.display = isExtensionData ? 'none' : '';
+          rawBtn.innerHTML = '<i class="bi bi-code"></i> Raw';
+          rawBtn.classList.remove('btn-secondary');
+          rawBtn.classList.add('btn-outline-secondary');
+        }
+
         if (extPrefix) {
           document.getElementById('revisionViewContent').innerHTML = `<div class="wiki-ext-raw-data">
             <div class="wiki-ext-raw-badge"><i class="bi bi-database"></i> ${escapeHtml(extPrefix)} 익스텐션 데이터</div>
@@ -308,6 +333,26 @@
       document.getElementById('revisionViewPage').classList.add('d-none');
       document.getElementById('revisionsPage').classList.remove('d-none');
       window.scrollTo({ top: 0, behavior: 'instant' });
+    }
+
+    // ── Raw 보기 토글 ──
+    async function toggleRawView() {
+      if (isExtensionData) return;
+      isRawView = !isRawView;
+      const contentEl = document.getElementById('revisionViewContent');
+      const rawBtn = document.getElementById('rawViewBtn');
+      if (isRawView) {
+        contentEl.innerHTML = `<pre class="wiki-ext-raw-pre">${escapeHtml(currentRevisionRawContent)}</pre>`;
+        rawBtn.innerHTML = '<i class="bi bi-eye"></i> 렌더링';
+        rawBtn.classList.remove('btn-outline-secondary');
+        rawBtn.classList.add('btn-secondary');
+      } else {
+        contentEl.innerHTML = '';
+        await renderWikiContent(currentRevisionRawContent, currentRevisionSlug, 'revisionViewContent');
+        rawBtn.innerHTML = '<i class="bi bi-code"></i> Raw';
+        rawBtn.classList.remove('btn-secondary');
+        rawBtn.classList.add('btn-outline-secondary');
+      }
     }
 
     // ── 리비전 Diff 보기 ──

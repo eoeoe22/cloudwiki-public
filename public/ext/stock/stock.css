@@ -1,0 +1,48 @@
+/* ── 익스텐션: stock 주식 시세/차트 ── */
+.wiki-ext-stock {
+  margin: 1rem 0;
+}
+
+/* 기본 카드 모드 */
+.wiki-stock-card {
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--wiki-border);
+  box-shadow: var(--wiki-shadow-sm);
+  transition: box-shadow 0.2s ease;
+  max-width: 600px;
+}
+
+.wiki-stock-card:hover {
+  box-shadow: var(--wiki-shadow);
+}
+
+/* 차트 모드 — 높이는 JS에서 인라인으로 지정 */
+.wiki-stock-chart {
+  width: 100%;
+  min-height: 300px;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--wiki-border);
+}
+
+/* 컴팩트 미니 모드 */
+.wiki-stock-mini {
+  max-width: 360px;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+/* TradingView 컨테이너가 부모를 꽉 채우도록 */
+.wiki-stock-chart .tradingview-widget-container,
+.wiki-stock-chart .tradingview-widget-container__widget {
+  width: 100%;
+  height: 100%;
+}
+
+.wiki-stock-card .tradingview-widget-container,
+.wiki-stock-card .tradingview-widget-container__widget,
+.wiki-stock-mini .tradingview-widget-container,
+.wiki-stock-mini .tradingview-widget-container__widget {
+  width: 100%;
+}

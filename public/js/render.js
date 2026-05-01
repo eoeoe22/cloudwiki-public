@@ -539,11 +539,12 @@ async function _resolveTransclusionsCore(text, depth, cache, pageSlug, options) 
                     .then(data => {
                         if (extensionSlugs.has(slug)) {
                             // 익스텐션: 원본 데이터를 저장 (마크다운으로 인라인하지 않음)
+                            const extName = slug.substring(0, slug.indexOf(':'));
                             if (data) {
-                                const extName = slug.substring(0, slug.indexOf(':'));
                                 cache.set(slug, { _ext: true, extName, slug, content: data.content, title: data.slug });
                             } else {
-                                cache.set(slug, `⚠️ [익스텐션 문서를 찾을 수 없음: ${slug}]`);
+                                // 문서가 없어도 익스텐션 렌더러가 slug/args만으로 동작할 수 있도록 빈 콘텐츠로 처리
+                                cache.set(slug, { _ext: true, extName, slug, content: '', title: slug });
                             }
                         } else {
                             if (!data || typeof data.content !== 'string') {
