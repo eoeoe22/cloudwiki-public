@@ -574,6 +574,7 @@ function advanceCounters(counters: number[], level: number): void {
  * 문서에서 헤딩(#) 기반으로 목차만 추출합니다.
  * 이름 중복 시에도 구분 가능하도록 계층적 번호를 붙입니다.
  * 예: "1. 개요", "1.1 상세", "1.1.1 세부", "2. 다음 장"
+ * 첫 헤딩 이전에 본문 텍스트가 있으면 "0. 도입부" 항목을 맨 앞에 추가합니다.
  */
 export function extractTOC(content: string): string {
     const lines = content.split('\n');
@@ -581,25 +582,38 @@ export function extractTOC(content: string): string {
     const counters = [0, 0, 0, 0, 0, 0]; // 레벨 1-6
 
     let inCodeBlock = false;
+    let firstHeadingSeen = false;
+    let hasPreamble = false;
 
     for (const line of lines) {
-        if (line.trim().startsWith('```')) {
+        const isFence = line.trim().startsWith('```');
+        if (isFence) {
+            // 코드 펜스 라인 자체도 첫 헤딩 이전이면 도입부 텍스트로 인정한다.
+            if (!firstHeadingSeen) hasPreamble = true;
             inCodeBlock = !inCodeBlock;
             continue;
         }
 
-        if (inCodeBlock) continue;
+        if (inCodeBlock) {
+            if (!firstHeadingSeen && line.trim() !== '') hasPreamble = true;
+            continue;
+        }
 
         const match = line.match(/^(#{1,6})\s+(.*)$/);
         if (match) {
+            firstHeadingSeen = true;
             const level = match[1].length;
             advanceCounters(counters, level);
 
             const parts = counters.slice(0, level).map(n => String(n));
             const number = level === 1 ? `${parts[0]}.` : parts.join('.');
             toc.push(`${number} ${match[2].trim()}`);
+        } else if (!firstHeadingSeen && line.trim() !== '') {
+            hasPreamble = true;
         }
     }
+
+    if (hasPreamble) toc.unshift('0. 도입부');
 
     return toc.join('\n');
 }
@@ -621,6 +635,24 @@ export function extractSection(content: string, sectionNumber: string): string {
 
     // 입력 정규화: 공백 제거, 말미의 '.' 제거
     const target = sectionNumber.trim().replace(/\.+$/, '');
+
+    // "0" 은 첫 헤딩 이전 도입부를 가리킨다. 첫 헤딩을 만나기 전까지의 모든 라인을 그대로 반환한다.
+    if (target === '0') {
+        const intro: string[] = [];
+        let inFence = false;
+        for (const line of lines) {
+            if (line.trim().startsWith('```')) {
+                inFence = !inFence;
+                intro.push(line);
+                continue;
+            }
+            if (!inFence && /^#{1,6}\s+/.test(line)) break;
+            intro.push(line);
+        }
+        // 후행 빈 줄은 정리한다.
+        while (intro.length && intro[intro.length - 1].trim() === '') intro.pop();
+        return intro.join('\n');
+    }
 
     for (const line of lines) {
         if (line.trim().startsWith('```')) {

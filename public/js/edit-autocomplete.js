@@ -197,8 +197,8 @@ function selectCodeAutocomplete(index) {
 
 // ── ::: 블록 컴포넌트 인라인 자동완성 상태 ──
 // 라인 시작이 `:::` 이고 그 뒤에 (선택적) 타입 일부가 입력된 상태에서 트리거.
-// 선택 시 `:::type\n내용\n:::` 스캐폴드를 삽입하고 커서를 type 끝(첫 줄)에 둔다 —
-// 사용자는 이어서 공백+제목을 타이핑하거나 Down 키로 본문에 진입한다.
+// 선택 시 `:::type` 첫 줄만 삽입하고 커서를 type 끝에 둔다 —
+// 사용자는 이어서 공백+제목을 타이핑한 뒤 본문/닫는 `:::` 를 직접 작성한다.
 const blockAc = {
     visible: false,
     selectedIndex: -1,
@@ -296,13 +296,14 @@ function selectBlockAutocomplete(index) {
         return;
     }
 
-    // 라인 시작부터 현재 커서까지를 통째로 스캐폴드로 교체.
+    // 라인 시작부터 현재 커서까지를 `:::type` 첫 줄로만 교체.
+    // 내용/닫는 `:::` 는 사용자가 직접 입력하도록 둔다.
     editor.setSelection([line, 1], [line, col]);
-    editor.insertText(`:::${opt.id}\n내용\n:::`);
+    editor.insertText(`:::${opt.id} `);
 
-    // 첫 줄 `:::type` 끝(공백 입력 → 제목 타이핑이 자연스러운 위치)에 커서 배치.
-    // 1-based: ":::card" 7글자 → 끝 컬럼 = 8 = 4 + opt.id.length
-    const targetCol = 4 + opt.id.length;
+    // `:::type ` 끝(바로 제목 타이핑이 가능한 위치)에 커서 배치.
+    // 1-based: ":::card " 8글자 → 끝 컬럼 = 9 = 5 + opt.id.length
+    const targetCol = 5 + opt.id.length;
     editor.setSelection([line, targetCol], [line, targetCol]);
 
     hideBlockAutocomplete();

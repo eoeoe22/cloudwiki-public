@@ -182,10 +182,18 @@
         }
       }
 
+      const escapeHtml = (s) => String(s)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+      const policyHtml = (s) => `<div style="white-space: pre-wrap; text-align: left;">${escapeHtml(s)}</div>`;
+
       document.getElementById("btnTerms").addEventListener("click", () => {
         Swal.fire({
           title: "이용약관",
-          text: ssrData.termsOfService || "이용약관 내용이 없습니다.",
+          html: policyHtml(ssrData.termsOfService || "이용약관 내용이 없습니다."),
           width: "80%",
           customClass: { popup: "text-start" },
           confirmButtonText: "닫기",
@@ -195,7 +203,7 @@
       document.getElementById("btnPrivacy").addEventListener("click", () => {
         Swal.fire({
           title: "개인정보 처리방침",
-          text: ssrData.privacyPolicy || "개인정보 처리방침 내용이 없습니다.",
+          html: policyHtml(ssrData.privacyPolicy || "개인정보 처리방침 내용이 없습니다."),
           width: "80%",
           customClass: { popup: "text-start" },
           confirmButtonText: "닫기",

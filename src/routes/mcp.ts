@@ -22,6 +22,25 @@ const BASE64_CODES = (() => {
 })();
 const BASE64_PAD = 0x3d; // '='
 
+// updated_at(unixepoch 초)을 "방금", "n분 전", "n시간 n분 전", "n일 전",
+// "n달 전", "n년 전" 형식의 한국어 상대 시간으로 변환한다.
+// 1달은 30일, 1년은 365일로 근사한다.
+function formatRelativeTime(unixSec: number | null | undefined, nowSec: number): string {
+    if (unixSec === null || unixSec === undefined || !Number.isFinite(unixSec)) return '';
+    const diff = Math.max(0, Math.floor(nowSec - unixSec));
+    if (diff < 60) return '방금';
+    if (diff < 3600) return `${Math.floor(diff / 60)}분 전`;
+    if (diff < 86400) {
+        const hours = Math.floor(diff / 3600);
+        const minutes = Math.floor((diff % 3600) / 60);
+        return minutes > 0 ? `${hours}시간 ${minutes}분 전` : `${hours}시간 전`;
+    }
+    const days = Math.floor(diff / 86400);
+    if (days < 30) return `${days}일 전`;
+    if (days < 365) return `${Math.floor(days / 30)}달 전`;
+    return `${Math.floor(days / 365)}년 전`;
+}
+
 function bytesToBase64(bytes: Uint8Array): string {
     const len = bytes.length;
     const fullTriples = (len / 3) | 0;
@@ -62,6 +81,113 @@ function bytesToBase64(bytes: Uint8Array): string {
 }
 
 // ... (omitting lines between imports and handleJsonRpc for brevity in this thought, but replace tool needs exact match)
+
+// information 도구를 제외한 MCP 도구들의 정의. tools/list 와 information 도구 호출 응답에서 공유한다.
+const MCP_TOOL_DEFS: Array<{ name: string; description: string; inputSchema: any }> = [
+    {
+        name: 'search_title',
+        description: '위키 문서의 슬러그(=제목)를 검색합니다.',
+        inputSchema: { type: 'object', properties: { query: { type: 'string', description: '검색어' } }, required: ['query'] }
+    },
+    {
+        name: 'search_fts',
+        description: '위키 문서의 본문을 전문 검색(FTS) 합니다. 검색 결과에는 문서 슬러그와, 검색어가 등장하는 모든 목차의 목록이 포함됩니다. 한 문서에서 여러 섹션에 걸쳐 등장하면 모든 섹션이 반환됩니다.',
+        inputSchema: { type: 'object', properties: { query: { type: 'string', description: '검색어' } }, required: ['query'] }
+    },
+    {
+        name: 'get_toc',
+        description: '위키 문서의 목차(section)만 불러옵니다. 목차는 계층적 번호(예: "1.", "1.1", "1.1.1")가 붙은 형식으로 반환됩니다. 첫 헤딩 이전에 본문 텍스트가 있는 경우 "0. 도입부" 항목이 맨 앞에 추가되며, read_section 에 "0" 을 지정하면 그 도입부만 읽을 수 있습니다. 긴 문서를 전부 읽기보다 get_toc 도구로 목차를 추출한 뒤 read_section 도구에 번호를 지정해 부분적으로 읽는 것을 권장합니다.',
+        inputSchema: { type: 'object', properties: { title: { type: 'string', description: '문서 슬러그(=제목)' } }, required: ['title'] }
+    },
+    {
+        name: 'read_document',
+        description: '위키 문서의 전체 본문을 읽어옵니다. raw=true로 설정 시 위키 꾸미기 문법 변환을 건너뛰고 원본 그대로 반환합니다.',
+        inputSchema: { type: 'object', properties: { title: { type: 'string', description: '문서 슬러그(=제목)' }, raw: { type: 'boolean' } }, required: ['title'] }
+    },
+    {
+        name: 'read_section',
+        description: '위키 문서에서 특정 목차의 내용만 읽어옵니다. 목차는 get_toc 가 반환하는 계층적 번호(예: "1", "1.1", "1.1.1")로 지정합니다. raw=true로 설정 시 위키 꾸미기 문법 변환을 건너뛰고 반환합니다. 단, get_toc 의 번호 체계와 맞추기 위해 틀 트랜스클루전({{...}})은 항상 확장된 상태로 반환됩니다.',
+        inputSchema: { type: 'object', properties: { title: { type: 'string', description: '문서 슬러그(=제목)' }, section_number: { type: 'string', description: 'get_toc가 반환한 목차 번호 (예: "1", "1.1", "1.1.1"). "0" 은 첫 헤딩 이전 도입부.' }, raw: { type: 'boolean' } }, required: ['title', 'section_number'] }
+    },
+    {
+        name: 'get_tree',
+        description: '입력한 문서를 루트로 한 하위 문서 트리를 반환합니다. 예를 들어 "A/B/C" 를 입력하면 "A/B/C" 부터 시작하는 하위 트리만 반환됩니다.',
+        inputSchema: { type: 'object', properties: { title: { type: 'string', description: '트리의 루트가 될 문서 슬러그(=제목)' } }, required: ['title'] }
+    },
+    {
+        name: 'read_document_batch',
+        description: '여러 문서를 한 번에 최대 10개까지 읽어옵니다. 두 가지 모드를 지원합니다. (1) titles: 직접 지정한 문서 슬러그 배열을 한 번에 읽기. (2) parent_title: 지정한 문서의 하위 문서들을 일괄 읽기. parent_title 모드에서 하위 문서가 10개를 초과하면 상위 10개만 읽고, 응답에 읽은/읽지 않은 문서를 표시한 트리와 페이지네이션 정보가 포함됩니다. page 파라미터(1부터 시작)로 다음 페이지를 요청할 수 있습니다. raw=true 설정 시 위키 꾸미기 문법 변환을 건너뜁니다.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                titles: { type: 'array', items: { type: 'string' }, description: '직접 지정할 문서 슬러그 목록 (최대 10개). parent_title 과 함께 지정한 경우 titles 가 우선합니다.' },
+                parent_title: { type: 'string', description: '하위 문서를 일괄 읽을 부모 문서 슬러그' },
+                page: { type: 'number', description: 'parent_title 모드의 페이지 번호 (1부터 시작, 기본 1)' },
+                raw: { type: 'boolean' }
+            },
+            required: []
+        }
+    },
+    {
+        name: 'get_toc_batch',
+        description: '여러 문서의 목차(section)를 한 번에 최대 10개까지 불러와, 슬러그 계층을 따라 하나의 트리 텍스트로 반환합니다. 두 가지 모드를 지원합니다. (1) titles: 직접 지정한 문서 슬러그 배열. 슬러그 경로로 트리를 만들 수 있으면 하나의 트리, 최상위 슬러그가 다르면 여러 트리로 분리됩니다. (2) parent_title: 지정한 문서를 루트로 한 하위 문서 트리. 각 문서 노드 아래에 자식 문서들과 함께 해당 문서의 목차 항목이 "#1. 제목", "#1.1. 제목" 형식으로 형제로 표시됩니다. 문서 본문이 없는 경로 노드는 "(문서 없음)" 으로 표시됩니다. parent_title 모드에서 하위 문서가 10개를 초과하면 상위 10개만 목차를 추출하고, 나머지는 "[읽지 않음]" 으로 표시됩니다. page 파라미터(1부터 시작)로 다음 페이지를 요청할 수 있습니다.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                titles: { type: 'array', items: { type: 'string' }, description: '직접 지정할 문서 슬러그 목록 (최대 10개). parent_title 과 함께 지정한 경우 titles 가 우선합니다.' },
+                parent_title: { type: 'string', description: '하위 문서의 목차를 일괄 조회할 부모 문서 슬러그' },
+                page: { type: 'number', description: 'parent_title 모드의 페이지 번호 (1부터 시작, 기본 1)' }
+            },
+            required: []
+        }
+    },
+    {
+        name: 'search_category',
+        description: '카테고리를 이름으로 검색합니다.',
+        inputSchema: { type: 'object', properties: { query: { type: 'string', description: '검색할 카테고리 이름 (부분 문자열)' } }, required: ['query'] }
+    },
+    {
+        name: 'get_category_info',
+        description: '해당 카테고리에 속한 문서 목록과 카테고리 설명을 반환합니다. raw=true로 설정 시 카테고리 설명의 위키 꾸미기 문법 변환을 건너뛰고 원본 그대로 반환합니다.',
+        inputSchema: { type: 'object', properties: { category: { type: 'string', description: '조회할 카테고리 이름' }, raw: { type: 'boolean' } }, required: ['category'] }
+    },
+    {
+        name: 'get_document_categoty',
+        description: '해당 문서가 속한 카테고리 목록을 반환합니다.',
+        inputSchema: { type: 'object', properties: { title: { type: 'string', description: '조회할 문서 슬러그(=제목)' } }, required: ['title'] }
+    },
+    {
+        name: 'get_backlinks',
+        description: '이 문서를 참조하는 역링크(위키링크 [[...]], 틀 트랜스클루전 {{...}}) 문서 목록을 반환합니다.',
+        inputSchema: { type: 'object', properties: { title: { type: 'string', description: '역링크를 조회할 문서 슬러그(=제목)' } }, required: ['title'] }
+    },
+    {
+        name: 'get_recent_changes',
+        description: '위키 전체에서 최근 수정된 문서 목록을 반환합니다.',
+        inputSchema: { type: 'object', properties: { limit: { type: 'number', description: '최대 반환 개수 (기본 10, 최대 50)' } }, required: [] }
+    },
+    {
+        name: 'list_discussions',
+        description: '특정 문서에 달린 토론 스레드 목록을 반환합니다. 각 스레드의 id, 제목, 상태(open/closed), 댓글 수, 작성일이 포함됩니다.',
+        inputSchema: { type: 'object', properties: { title: { type: 'string', description: '문서 슬러그(=제목)' } }, required: ['title'] }
+    },
+    {
+        name: 'read_discussion',
+        description: '특정 토론 스레드의 제목, 상태, 모든 댓글을 읽어옵니다. discussion_id 는 list_discussions 가 반환한 id를 사용합니다.',
+        inputSchema: { type: 'object', properties: { discussion_id: { type: 'number', description: 'list_discussions가 반환한 토론 id' } }, required: ['discussion_id'] }
+    },
+    {
+        name: 'view_image',
+        description: '위키에 업로드된 이미지를 파일명으로 조회하여 이미지 데이터로 반환합니다. 문서 본문에 ![파일명](https://도메인/media/images/파일명) 형식으로 삽입된 그 파일명(확장자 포함)을 사용합니다.',
+        inputSchema: { type: 'object', properties: { filename: { type: 'string', description: '이미지 파일명 (확장자 포함, 예: "example.png")' } }, required: ['filename'] }
+    }
+];
+
+function buildInformationIntro(c: Context<Env>): string {
+    const wikiName = c.env.WIKI_NAME;
+    const syntaxNote = c.env.WIKI_SYNTAX ? `\n\n문법 가이드 문서: ${c.env.WIKI_SYNTAX}` : '';
+    return `이 도구는 ${wikiName} 의 문서를 탐색할 수 있는 MCP 도구입니다.\n\n이 위키의 문법은 마크다운 기반으로, 기본적으로는 문법 가이드 문서를 읽지 않아도 내용 파악이 가능합니다. 문서를 읽을 때 raw 파라미터를 따로 활성화하지 않으면 마크다운 기반으로 정리된 내용이 반환됩니다. raw 파라미터를 사용하려면 위키 문법 문서를 먼저 읽을 것을 권장합니다.${syntaxNote}`;
+}
 
 // CORS 미들웨어 적용
 mcpRoutes.use('*', cors({
@@ -209,99 +335,19 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
 
     // 3. 도구 목록 반환
     if (method === 'tools/list') {
+        const intro = buildInformationIntro(c);
+        const toolNames = MCP_TOOL_DEFS.map(t => t.name).join(', ');
+        const informationDescription = `${intro}\n\n사용 가능한 MCP 도구: ${toolNames}. 각 도구의 세부 설명은 information 도구를 호출하여 확인할 수 있습니다.`;
         return {
             jsonrpc: '2.0', id,
             result: {
                 tools: [
                     {
                         name: 'information',
-                        description: `이 도구는 ${c.env.WIKI_NAME} 의 문서를 탐색할 수 있는 MCP 도구입니다. 이 위키의 문법은 마크다운 기반으로, 기본적으로는 문법 가이드 문서를 읽지 않아도 내용 파악이 가능합니다. 문서를 읽을 때 raw 설정을 사용하지 않으면 마크다운 기반으로 정리된 내용이 반환됩니다. raw 설정을 사용하려면 위키 문법 문서를 먼저 읽을 것을 권장합니다.${c.env.WIKI_SYNTAX ? ` 문법 가이드 문서: ${c.env.WIKI_SYNTAX}` : ''}`,
+                        description: informationDescription,
                         inputSchema: { type: 'object', properties: {}, required: [] }
                     },
-                    {
-                        name: 'search_title',
-                        description: '위키 문서의 슬러그(=제목)를 검색합니다.',
-                        inputSchema: { type: 'object', properties: { query: { type: 'string', description: '검색어' } }, required: ['query'] }
-                    },
-                    {
-                        name: 'search_fts',
-                        description: '위키 문서의 본문을 전문 검색(FTS) 합니다. 검색 결과에는 문서 슬러그와, 검색어가 등장하는 모든 목차의 목록이 포함됩니다. 한 문서에서 여러 섹션에 걸쳐 등장하면 모든 섹션이 반환됩니다.',
-                        inputSchema: { type: 'object', properties: { query: { type: 'string', description: '검색어' } }, required: ['query'] }
-                    },
-                    {
-                        name: 'get_toc',
-                        description: '위키 문서의 목차(section)만 불러옵니다. 목차는 계층적 번호(예: "1.", "1.1", "1.1.1")가 붙은 형식으로 반환됩니다. 긴 문서를 전부 읽기보다 get_toc 도구로 목차를 추출한 뒤 read_section 도구에 번호를 지정해 부분적으로 읽는 것을 권장합니다.',
-                        inputSchema: { type: 'object', properties: { title: { type: 'string', description: '문서 슬러그(=제목)' } }, required: ['title'] }
-                    },
-                    {
-                        name: 'read_document',
-                        description: '위키 문서의 전체 본문을 읽어옵니다. raw=true로 설정 시 위키 꾸미기 문법 변환을 건너뛰고 원본 그대로 반환합니다.',
-                        inputSchema: { type: 'object', properties: { title: { type: 'string', description: '문서 슬러그(=제목)' }, raw: { type: 'boolean' } }, required: ['title'] }
-                    },
-                    {
-                        name: 'read_section',
-                        description: '위키 문서에서 특정 목차의 내용만 읽어옵니다. 목차는 get_toc 가 반환하는 계층적 번호(예: "1", "1.1", "1.1.1")로 지정합니다. raw=true로 설정 시 위키 꾸미기 문법 변환을 건너뛰고 반환합니다. 단, get_toc 의 번호 체계와 맞추기 위해 틀 트랜스클루전({{...}})은 항상 확장된 상태로 반환됩니다.',
-                        inputSchema: { type: 'object', properties: { title: { type: 'string', description: '문서 슬러그(=제목)' }, section_number: { type: 'string', description: 'get_toc가 반환한 목차 번호 (예: "1", "1.1", "1.1.1")' }, raw: { type: 'boolean' } }, required: ['title', 'section_number'] }
-                    },
-                    {
-                        name: 'get_tree',
-                        description: '입력한 문서를 루트로 한 하위 문서 트리를 반환합니다. 예를 들어 "A/B/C" 를 입력하면 "A/B/C" 부터 시작하는 하위 트리만 반환됩니다.',
-                        inputSchema: { type: 'object', properties: { title: { type: 'string', description: '트리의 루트가 될 문서 슬러그(=제목)' } }, required: ['title'] }
-                    },
-                    {
-                        name: 'read_batch',
-                        description: '여러 문서를 한 번에 최대 10개까지 읽어옵니다. 두 가지 모드를 지원합니다. (1) titles: 직접 지정한 문서 슬러그 배열을 한 번에 읽기. (2) parent_title: 지정한 문서의 하위 문서들을 일괄 읽기. parent_title 모드에서 하위 문서가 10개를 초과하면 상위 10개만 읽고, 응답에 읽은/읽지 않은 문서를 표시한 트리와 페이지네이션 정보가 포함됩니다. page 파라미터(1부터 시작)로 다음 페이지를 요청할 수 있습니다. raw=true 설정 시 위키 꾸미기 문법 변환을 건너뜁니다.',
-                        inputSchema: {
-                            type: 'object',
-                            properties: {
-                                titles: { type: 'array', items: { type: 'string' }, description: '직접 지정할 문서 슬러그 목록 (최대 10개). parent_title 과 함께 지정한 경우 titles 가 우선합니다.' },
-                                parent_title: { type: 'string', description: '하위 문서를 일괄 읽을 부모 문서 슬러그' },
-                                page: { type: 'number', description: 'parent_title 모드의 페이지 번호 (1부터 시작, 기본 1)' },
-                                raw: { type: 'boolean' }
-                            },
-                            required: []
-                        }
-                    },
-                    {
-                        name: 'search_category',
-                        description: '카테고리를 이름으로 검색합니다.',
-                        inputSchema: { type: 'object', properties: { query: { type: 'string', description: '검색할 카테고리 이름 (부분 문자열)' } }, required: ['query'] }
-                    },
-                    {
-                        name: 'get_category_info',
-                        description: '해당 카테고리에 속한 문서 목록과 카테고리 설명을 반환합니다. raw=true로 설정 시 카테고리 설명의 위키 꾸미기 문법 변환을 건너뛰고 원본 그대로 반환합니다.',
-                        inputSchema: { type: 'object', properties: { category: { type: 'string', description: '조회할 카테고리 이름' }, raw: { type: 'boolean' } }, required: ['category'] }
-                    },
-                    {
-                        name: 'get_document_categoty',
-                        description: '해당 문서가 속한 카테고리 목록을 반환합니다.',
-                        inputSchema: { type: 'object', properties: { title: { type: 'string', description: '조회할 문서 슬러그(=제목)' } }, required: ['title'] }
-                    },
-                    {
-                        name: 'get_backlinks',
-                        description: '이 문서를 참조하는 역링크(위키링크 [[...]], 틀 트랜스클루전 {{...}}) 문서 목록을 반환합니다.',
-                        inputSchema: { type: 'object', properties: { title: { type: 'string', description: '역링크를 조회할 문서 슬러그(=제목)' } }, required: ['title'] }
-                    },
-                    {
-                        name: 'get_recent_changes',
-                        description: '위키 전체에서 최근 수정된 문서 목록을 반환합니다.',
-                        inputSchema: { type: 'object', properties: { limit: { type: 'number', description: '최대 반환 개수 (기본 10, 최대 50)' } }, required: [] }
-                    },
-                    {
-                        name: 'list_discussions',
-                        description: '특정 문서에 달린 토론 스레드 목록을 반환합니다. 각 스레드의 id, 제목, 상태(open/closed), 댓글 수, 작성일이 포함됩니다.',
-                        inputSchema: { type: 'object', properties: { title: { type: 'string', description: '문서 슬러그(=제목)' } }, required: ['title'] }
-                    },
-                    {
-                        name: 'read_discussion',
-                        description: '특정 토론 스레드의 제목, 상태, 모든 댓글을 읽어옵니다. discussion_id 는 list_discussions 가 반환한 id를 사용합니다.',
-                        inputSchema: { type: 'object', properties: { discussion_id: { type: 'number', description: 'list_discussions가 반환한 토론 id' } }, required: ['discussion_id'] }
-                    },
-                    {
-                        name: 'view_image',
-                        description: '위키에 업로드된 이미지를 파일명으로 조회하여 이미지 데이터로 반환합니다. 문서 본문에 ![파일명](https://도메인/media/images/파일명) 형식으로 삽입된 그 파일명(확장자 포함)을 사용합니다.',
-                        inputSchema: { type: 'object', properties: { filename: { type: 'string', description: '이미지 파일명 (확장자 포함, 예: "example.png")' } }, required: ['filename'] }
-                    }
+                    ...MCP_TOOL_DEFS
                 ]
             }
         };
@@ -312,8 +358,10 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
         const args = params?.arguments || {};
         try {
             if (toolName === 'information') {
-                const syntaxNote = c.env.WIKI_SYNTAX ? `\n\n문법 가이드 문서: ${c.env.WIKI_SYNTAX}` : '';
-                return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: `이 도구는 ${c.env.WIKI_NAME} 의 문서를 탐색할 수 있는 MCP 도구입니다.\n\n이 위키의 문법은 마크다운 기반으로, 기본적으로는 문법 가이드 문서를 읽지 않아도 내용 파악이 가능합니다. 문서를 읽을 때 raw 파라미터를 따로 활성화하지 않으면 마크다운 기반으로 정리된 내용이 반환됩니다. raw 파라미터를 사용하려면 위키 문법 문서를 먼저 읽을 것을 권장합니다.${syntaxNote}` }] } };
+                const intro = buildInformationIntro(c);
+                const toolDetails = MCP_TOOL_DEFS.map(t => `## ${t.name}\n${t.description}`).join('\n\n');
+                const text = `${intro}\n\n## 사용 가능한 도구 목록\n\n${toolDetails}`;
+                return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text }] } };
             }
             if (toolName === 'search_title') {
                 const results = await db.prepare('SELECT slug, rows, characters FROM pages WHERE slug LIKE ? AND deleted_at IS NULL AND is_private = 0 LIMIT 15')
@@ -489,7 +537,8 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                     : '';
                 return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: treeText + missingSection }] } };
             }
-            if (toolName === 'read_batch') {
+            if (toolName === 'read_document_batch' || toolName === 'get_toc_batch') {
+                const isTocMode = toolName === 'get_toc_batch';
                 const BATCH_LIMIT = 10;
                 const TREE_DISPLAY_CAP = 500;
                 const raw = args.raw === true;
@@ -595,12 +644,211 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                             }
                         }
                     }
+                    if (isTocMode) {
+                        const expanded = await expandTemplates(actualContent, db, 0, slug);
+                        const tocText = (extractTOC(expanded) || '')
+                            .split('\n')
+                            .map(line => line.replace(/\{[^}]*\}/g, '').replace(/[ \t]+/g, ' ').trimEnd())
+                            .join('\n');
+                        return { title: slug, rows: pageRow.rows, characters: pageRow.characters, toc: tocText || '목차가 존재하지 않습니다.' };
+                    }
                     const text = raw ? actualContent : await renderForAI(actualContent, db, 0, slug);
                     return { title: slug, rows: pageRow.rows, characters: pageRow.characters, content: text || '문서 내용이 존재하지 않습니다.' };
                 }));
 
-                // 읽은 문서/읽지 않은 문서를 트리 또는 목록 형태로 표시
                 const readSet = new Set(targetSlugs);
+
+                if (isTocMode) {
+                    // 읽은 문서들의 TOC 라인을 슬러그별로 모은다.
+                    const tocBySlug = new Map<string, string[]>();
+                    // 읽기 시도했지만 실패한 슬러그(권한/접근 불가, 문서 미존재 등)의 사유를 기록한다.
+                    // 트리 표시 시 "(문서 없음)" 과 구분하기 위함.
+                    const errorBySlug = new Map<string, string>();
+                    for (const doc of documents as any[]) {
+                        if (typeof doc.toc === 'string' && doc.toc !== '목차가 존재하지 않습니다.') {
+                            const lines = doc.toc.split('\n').map((l: string) => l.trim()).filter((l: string) => l.length > 0);
+                            tocBySlug.set(doc.title, lines);
+                        }
+                        if (typeof doc.error === 'string') {
+                            errorBySlug.set(doc.title, doc.error);
+                        }
+                    }
+
+                    // parent 모드에서는 parent 문서 자체의 stats/TOC도 트리 루트에 표시되도록 별도 조회한다.
+                    // 디스크립턴츠 페이지네이션과 무관하게 매 페이지마다 루트 정보를 표시하기 위함.
+                    // 직접 조회한 슬러그는 confirmedAbsentSlugs 집합에 누적해 "확실한 미존재" 만 단정한다.
+                    const confirmedAbsentSlugs = new Set<string>();
+                    if (mode === 'parent' && parentSlug && !readSet.has(parentSlug)) {
+                        if (!isMcpReadableSlug(parentSlug)) {
+                            errorBySlug.set(parentSlug, 'raw 데이터는 읽을 수 없습니다.');
+                        } else {
+                            const parentRow = await db.prepare('SELECT slug, content, last_revision_id, rows, characters FROM pages WHERE slug = ? AND deleted_at IS NULL AND is_private = 0').bind(parentSlug).first<{ slug: string, content: string, last_revision_id: number | null, rows: number | null, characters: number | null }>();
+                            if (parentRow) {
+                                statsMap.set(parentRow.slug, { rows: parentRow.rows, characters: parentRow.characters });
+                                let actualContent = parentRow.content;
+                                if (isR2OnlyNamespace(parentRow.slug, enabledExt) && (!actualContent || actualContent === '')) {
+                                    if (parentRow.last_revision_id) {
+                                        const lastRev = await db.prepare('SELECT content, r2_key FROM revisions WHERE id = ?').bind(parentRow.last_revision_id).first<{ content: string, r2_key: string | null }>();
+                                        if (lastRev) {
+                                            actualContent = await getRevisionContent(c.env.MEDIA, lastRev, origin);
+                                        }
+                                    }
+                                }
+                                const expanded = await expandTemplates(actualContent, db, 0, parentSlug);
+                                const tocText = (extractTOC(expanded) || '')
+                                    .split('\n')
+                                    .map(line => line.replace(/\{[^}]*\}/g, '').replace(/[ \t]+/g, ' ').trimEnd())
+                                    .join('\n');
+                                const lines = tocText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+                                if (lines.length > 0) tocBySlug.set(parentSlug, lines);
+                                // parent는 페이지 단위로 매번 읽으므로 [읽지 않음] 마커가 붙지 않도록 readSet에 추가한다.
+                                readSet.add(parentSlug);
+                            } else {
+                                // parent 슬러그는 직접 조회했고 결과가 없었으므로 미존재가 확실하다.
+                                confirmedAbsentSlugs.add(parentSlug);
+                            }
+                        }
+                    }
+
+                    // parent 모드에서 totalCount 가 트리 표시 캡(500) 이내라면 treeRows 가 부모의
+                    // 모든 후손을 포괄적으로 조회한 셈이므로, 통계 맵에 없는 후손 합성 노드는 미존재가 확실하다.
+                    // 캡을 초과하거나 titles 모드에서는 합성된 조상 노드의 실제 존재 여부를 확인할 방법이 없으므로
+                    // 이 플래그가 거짓일 때는 "(문서 없음)" 단정 표시를 하지 않는다.
+                    const subtreeCoveredByQuery = mode === 'parent' && totalCount <= TREE_DISPLAY_CAP;
+
+                    type TocTreeNode = { children: Map<string, TocTreeNode>; slug: string };
+                    const makeNode = (slug: string): TocTreeNode => ({ children: new Map(), slug });
+
+                    // 트리 루트별로 후보 슬러그들을 분류한다.
+                    // parent 모드: 루트는 parentSlug. titles 모드: 슬러그의 첫 세그먼트별로 분리.
+                    const treeRoots: { rootSlug: string; allSlugs: string[] }[] = [];
+                    if (mode === 'parent') {
+                        treeRoots.push({ rootSlug: parentSlug, allSlugs: allCandidateSlugs });
+                    } else {
+                        const groups = new Map<string, string[]>();
+                        for (const s of allCandidateSlugs) {
+                            const root = s.split('/')[0];
+                            if (!groups.has(root)) groups.set(root, []);
+                            groups.get(root)!.push(s);
+                        }
+                        for (const root of Array.from(groups.keys()).sort()) {
+                            treeRoots.push({ rootSlug: root, allSlugs: groups.get(root)! });
+                        }
+                    }
+
+                    const missingDocs: string[] = [];
+
+                    function buildTocTree(rootSlug: string, slugs: string[]): TocTreeNode {
+                        const root = makeNode(rootSlug);
+                        for (const slug of slugs) {
+                            if (slug === rootSlug) continue;
+                            if (!slug.startsWith(rootSlug + '/')) continue;
+                            const relative = slug.substring(rootSlug.length + 1);
+                            const parts = relative.split('/');
+                            let node = root;
+                            let pathSoFar = rootSlug;
+                            for (const part of parts) {
+                                pathSoFar += '/' + part;
+                                let child = node.children.get(part);
+                                if (!child) {
+                                    child = makeNode(pathSoFar);
+                                    node.children.set(part, child);
+                                }
+                                node = child;
+                            }
+                        }
+                        return root;
+                    }
+
+                    function renderTocNode(displayName: string, node: TocTreeNode, prefix: string, isRoot: boolean, isLast: boolean): string {
+                        const slug = node.slug;
+                        const stats = statsMap.get(slug);
+                        const wasRead = readSet.has(slug);
+                        const readError = errorBySlug.get(slug);
+
+                        let line: string;
+                        let childPrefix: string;
+                        if (isRoot) {
+                            line = displayName;
+                            childPrefix = '';
+                        } else {
+                            const connector = isLast ? '└── ' : '├── ';
+                            line = `${prefix}${connector}${displayName}`;
+                            childPrefix = prefix + (isLast ? '    ' : '│   ');
+                        }
+                        // 우선순위:
+                        // 1) 통계 맵에 있으면 정상 노드(읽기 성공 또는 트리 후보)
+                        // 2) 직접 조회 후 실패한 슬러그는 "(읽기 실패)" — 경로상 미존재와 구분
+                        // 3) 직접 조회로 미존재가 확정된 슬러그(parent 자체) 또는
+                        //    parent 모드에서 부모 후손 전체가 한 번의 쿼리로 포괄된 경우의 합성 후손 슬러그는
+                        //    "(문서 없음)" 으로 단정 표시
+                        // 4) 그 외(titles 모드의 합성 조상, 트리 캡을 초과한 parent 모드 등)는
+                        //    실제 존재 여부를 확인하지 않았으므로 어떤 단정도 하지 않는다.
+                        if (stats) {
+                            line += formatBatchStats(stats.rows, stats.characters);
+                            if (mode === 'parent' && !wasRead) line += ' [읽지 않음]';
+                        } else if (readError) {
+                            line += ` (읽기 실패: ${readError})`;
+                        } else if (
+                            confirmedAbsentSlugs.has(slug) ||
+                            (subtreeCoveredByQuery && slug !== parentSlug && slug.startsWith(parentSlug + '/'))
+                        ) {
+                            line += ' (문서 없음)';
+                            missingDocs.push(slug);
+                        }
+
+                        let text = line + '\n';
+                        const childKeys = Array.from(node.children.keys()).sort();
+                        const tocLines = tocBySlug.get(slug) || [];
+                        const total = childKeys.length + tocLines.length;
+                        let i = 0;
+                        for (const key of childKeys) {
+                            const childIsLast = i === total - 1;
+                            text += renderTocNode(key, node.children.get(key)!, childPrefix, false, childIsLast);
+                            i++;
+                        }
+                        for (const tocLine of tocLines) {
+                            const childIsLast = i === total - 1;
+                            const conn = childIsLast ? '└── ' : '├── ';
+                            text += `${childPrefix}${conn}#${tocLine}\n`;
+                            i++;
+                        }
+                        return text;
+                    }
+
+                    const treeChunks: string[] = [];
+                    for (const t of treeRoots) {
+                        const subtree = buildTocTree(t.rootSlug, t.allSlugs);
+                        treeChunks.push(renderTocNode(t.rootSlug, subtree, '', true, true).trimEnd());
+                    }
+                    let outputText = treeChunks.join('\n\n');
+
+                    if (missingDocs.length > 0) {
+                        const uniqueMissing = Array.from(new Set(missingDocs));
+                        outputText += `\n\n문서가 없는 항목 (${uniqueMissing.length}):\n${uniqueMissing.map(s => `- ${s}`).join('\n')}`;
+                    }
+
+                    // 읽기 실패(error) 가 있는 항목도 별도로 표기한다.
+                    // documents 외에 parent 모드의 루트 자체 읽기 실패도 errorBySlug 에 누적되어 있으므로
+                    // 통합 맵을 단일 정보원으로 사용한다.
+                    if (errorBySlug.size > 0) {
+                        const erroredEntries = Array.from(errorBySlug.entries());
+                        outputText += `\n\n읽지 못한 문서 (${erroredEntries.length}):\n` + erroredEntries.map(([slug, msg]) => `- ${slug}: ${msg}`).join('\n');
+                    }
+
+                    if (mode === 'parent') {
+                        const totalPages = Math.ceil(totalCount / BATCH_LIMIT);
+                        outputText += `\n\n페이지: ${pageNum}/${totalPages} (총 ${totalCount}개, 페이지 크기 ${BATCH_LIMIT})`;
+                        if (pageNum < totalPages) outputText += ` — 다음 페이지: page=${pageNum + 1}`;
+                        if (totalCount > TREE_DISPLAY_CAP) {
+                            outputText += `\n주의: 하위 문서가 총 ${totalCount}개로 응답 트리 표시 한도(${TREE_DISPLAY_CAP}개)를 초과합니다. 트리에는 일부만 표시되지만, page 파라미터로 모든 문서에 도달할 수 있습니다.`;
+                        }
+                    }
+
+                    return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: outputText }] } };
+                }
+
+                // 읽은 문서/읽지 않은 문서를 트리 또는 목록 형태로 표시 (read_document_batch 전용)
                 let treeText = '';
                 if (mode === 'parent') {
                     const tree: any = {};
@@ -741,13 +989,21 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
             if (toolName === 'get_recent_changes') {
                 const limit = Math.min(50, Math.max(1, Number(args.limit) || 10));
                 const { results } = await db.prepare(`
-                    SELECT p.slug, p.updated_at, p.rows, p.characters, u.name as author_name
+                    SELECT p.slug, p.updated_at, u.name as author_name, r.summary
                     FROM pages p
                     LEFT JOIN users u ON p.author_id = u.id
+                    LEFT JOIN revisions r ON p.last_revision_id = r.id
                     WHERE p.deleted_at IS NULL AND p.is_private = 0
                     ORDER BY p.updated_at DESC LIMIT ?
-                `).bind(limit).all();
-                return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(results, null, 2) }] } };
+                `).bind(limit).all<{ slug: string; updated_at: number | null; author_name: string | null; summary: string | null }>();
+                const nowSec = Math.floor(Date.now() / 1000);
+                const formatted = results.map(r => ({
+                    slug: r.slug,
+                    time_ago: formatRelativeTime(r.updated_at, nowSec),
+                    author_name: r.author_name,
+                    summary: r.summary,
+                }));
+                return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(formatted, null, 2) }] } };
             }
             if (toolName === 'list_discussions') {
                 const slug = normalizeSlug(args.title || '');
