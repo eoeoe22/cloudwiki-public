@@ -317,6 +317,7 @@ media.get('/api/media/doc/:filename/backlinks', async (c) => {
         FROM page_links pl
         JOIN pages p ON pl.source_page_id = p.id
         WHERE pl.link_type = 'image'
+          AND pl.blog = 0
           AND pl.target_slug = ?
     `;
     if (!isAdmin) {

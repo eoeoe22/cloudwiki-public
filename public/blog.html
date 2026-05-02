@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="CloudWiki">
+  <meta property="og:title" content="CloudWiki">
+  <meta property="og:description" content="CloudWiki">
+  <meta property="og:site_name" content="CloudWiki">
+  <meta property="og:type" content="website">
+  <title class="app-wiki-name">블로그 - CloudWiki</title>
+  <link rel="icon" class="app-wiki-favicon" href="/favicon.ico">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.13.1/font/bootstrap-icons.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css" rel="stylesheet">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Outfit:wght@500;600;700;800;900&display=swap"
+    rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <script>try{var t=localStorage.getItem('themeMode');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
+  <link rel="stylesheet" href="/render.css">
+</head>
+
+<body style="-webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;">
+
+  <!-- ── 네비게이션 바 Placeholder ── -->
+  <div id="app-header-placeholder"></div>
+
+  <!-- ── 메인 레이아웃 ── -->
+  <div class="wiki-layout">
+    <div class="wiki-container">
+
+      <!-- 로딩 -->
+      <div id="blogLoading" class="wiki-loading">
+        <div class="spinner-border text-primary" role="status"></div>
+        <span>불러오는 중...</span>
+      </div>
+
+      <!-- 블로그 목록 -->
+      <div id="blogList" class="d-none">
+        <div class="wiki-article">
+          <div class="d-flex align-items-center justify-content-between mb-4">
+            <h1 class="wiki-article-title mb-0">블로그</h1>
+            <div id="blogAdminActions" class="d-none">
+              <a href="/blog-edit" class="btn btn-wiki btn-sm">
+                <i class="bi bi-pencil-square me-1"></i>새 포스트
+              </a>
+            </div>
+          </div>
+          <div id="blogPostsList"></div>
+          <div id="blogPagination" class="mt-4 d-flex justify-content-center gap-2"></div>
+        </div>
+      </div>
+
+      <!-- 블로그 포스트 열람 -->
+      <div id="blogPost" class="d-none">
+        <div class="wiki-article">
+          <div class="d-flex align-items-start justify-content-between mb-2">
+            <h1 class="wiki-article-title mb-0" id="blogPostTitle"></h1>
+            <div id="blogPostAdminActions" class="d-none d-flex gap-2 ms-3 flex-shrink-0">
+              <a id="blogPostEditBtn" href="#" class="btn btn-secondary btn-sm">
+                <i class="bi bi-pencil me-1"></i>수정
+              </a>
+              <button class="btn btn-danger btn-sm" onclick="deleteBlogPost()">
+                <i class="bi bi-trash me-1"></i>삭제
+              </button>
+            </div>
+          </div>
+          <div class="wiki-article-meta mb-3">
+            <span id="blogPostDate" class="text-muted small"></span>
+          </div>
+          <div id="blogPostContent" class="wiki-content"></div>
+          <div class="mt-4">
+            <a href="/blog" class="btn btn-secondary btn-sm">
+              <i class="bi bi-arrow-left me-1"></i>목록으로
+            </a>
+          </div>
+        </div>
+      </div>
+
+      <!-- 에러 -->
+      <div id="blogError" class="d-none">
+        <div class="wiki-article">
+          <h1 class="wiki-article-title">포스트를 찾을 수 없습니다</h1>
+          <p class="text-muted">존재하지 않거나 삭제된 포스트입니다.</p>
+          <a href="/blog" class="btn btn-secondary btn-sm">
+            <i class="bi bi-arrow-left me-1"></i>목록으로
+          </a>
+        </div>
+      </div>
+
+    </div>
+    <!-- 사이드바 Placeholder -->
+    <div id="app-sidebar-placeholder"></div>
+  </div>
+
+  <!-- ── 푸터 Placeholder ── -->
+  <div id="app-footer-placeholder"></div>
+
+  <!-- Scripts -->
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
+  <script src="/js/common.js"></script>
+  <script src="/js/render.js"></script>
+  <script>
+    const BLOG_LIST_LIMIT = 20;
+    let blogCurrentOffset = 0;
+    let blogTotalCount = 0;
+    let currentBlogPostId = null;
+
+    function escHtml(str) {
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    function formatDate(unixTs) {
+      const d = new Date(unixTs * 1000);
+      return d.toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric' });
+    }
+
+    function showView(id) {
+      ['blogLoading', 'blogList', 'blogPost', 'blogError'].forEach(v => {
+        document.getElementById(v).classList.add('d-none');
+      });
+      document.getElementById(id).classList.remove('d-none');
+    }
+
+    // ── 블로그 목록 로드 ──
+    async function loadBlogList(offset) {
+      showView('blogLoading');
+      blogCurrentOffset = offset || 0;
+      try {
+        const res = await fetch(`/api/blog?limit=${BLOG_LIST_LIMIT}&offset=${blogCurrentOffset}`);
+        if (!res.ok) throw new Error('목록 로드 실패');
+        const data = await res.json();
+        blogTotalCount = data.total || 0;
+
+        const listEl = document.getElementById('blogPostsList');
+        if (!data.posts || data.posts.length === 0) {
+          listEl.innerHTML = '<p class="text-muted">포스트가 없습니다.</p>';
+        } else {
+          listEl.innerHTML = data.posts.map(post => `
+            <div class="border-bottom pb-3 mb-3 ${post.deleted_at ? 'opacity-50' : ''}">
+              <a href="/blog/${escHtml(post.id)}" class="text-decoration-none">
+                <h5 class="mb-1">${escHtml(post.title)}${post.deleted_at ? ' <span class="badge bg-danger small">삭제됨</span>' : ''}</h5>
+              </a>
+              <small class="text-muted">${formatDate(post.created_at)}</small>
+            </div>
+          `).join('');
+        }
+
+        // 페이지네이션
+        const pagEl = document.getElementById('blogPagination');
+        pagEl.innerHTML = '';
+        if (blogCurrentOffset > 0) {
+          const prevBtn = document.createElement('button');
+          prevBtn.className = 'btn btn-secondary btn-sm';
+          prevBtn.innerHTML = '<i class="bi bi-chevron-left"></i> 이전';
+          prevBtn.onclick = () => loadBlogList(blogCurrentOffset - BLOG_LIST_LIMIT);
+          pagEl.appendChild(prevBtn);
+        }
+        if (blogCurrentOffset + BLOG_LIST_LIMIT < blogTotalCount) {
+          const nextBtn = document.createElement('button');
+          nextBtn.className = 'btn btn-secondary btn-sm';
+          nextBtn.innerHTML = '다음 <i class="bi bi-chevron-right"></i>';
+          nextBtn.onclick = () => loadBlogList(blogCurrentOffset + BLOG_LIST_LIMIT);
+          pagEl.appendChild(nextBtn);
+        }
+
+        showView('blogList');
+        document.title = '블로그 - ' + (window.appConfig?.wikiName || 'CloudWiki');
+      } catch (e) {
+        Swal.fire('오류', e.message, 'error');
+        showView('blogList');
+      }
+    }
+
+    // ── 블로그 포스트 열람 ──
+    async function loadBlogPost(id) {
+      showView('blogLoading');
+      currentBlogPostId = id;
+      try {
+        const res = await fetch(`/api/blog/${id}`);
+        if (!res.ok) { showView('blogError'); return; }
+        const post = await res.json();
+
+        document.getElementById('blogPostTitle').textContent = post.title;
+        document.getElementById('blogPostDate').textContent = formatDate(post.created_at);
+        document.getElementById('blogPostEditBtn').href = `/blog-edit?id=${post.id}`;
+        document.title = escHtml(post.title) + ' - ' + (window.appConfig?.wikiName || 'CloudWiki');
+
+        // 위키 문법 렌더링
+        await renderWikiContent(post.content || '', post.title, 'blogPostContent');
+
+        showView('blogPost');
+      } catch (e) {
+        showView('blogError');
+      }
+    }
+
+    // ── 블로그 포스트 삭제 ──
+    async function deleteBlogPost() {
+      if (!currentBlogPostId) return;
+      const result = await Swal.fire({
+        title: '포스트를 삭제하시겠습니까?',
+        text: '삭제된 포스트는 관리자만 볼 수 있습니다.',
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonText: '삭제',
+        cancelButtonText: '취소',
+        confirmButtonColor: '#d33',
+      });
+      if (!result.isConfirmed) return;
+
+      try {
+        const res = await fetch(`/api/blog/${currentBlogPostId}`, { method: 'DELETE' });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.error || '삭제 실패');
+        }
+        await Swal.fire({ icon: 'success', title: '삭제되었습니다.', timer: 1500, showConfirmButton: false });
+        window.location.href = '/blog';
+      } catch (e) {
+        Swal.fire('오류', e.message, 'error');
+      }
+    }
+
+    // ── 초기화 ──
+    document.addEventListener('DOMContentLoaded', async () => {
+      await loadConfig();
+
+      // 관리자 UI 표시
+      const user = currentUser;
+      if (user && (user.role === 'admin' || user.role === 'super_admin')) {
+        document.getElementById('blogAdminActions').classList.remove('d-none');
+        document.getElementById('blogPostAdminActions').classList.remove('d-none');
+      }
+
+      // URL 기반 라우팅
+      const match = window.location.pathname.match(/^\/blog\/(\d+)$/);
+      if (match) {
+        await loadBlogPost(match[1]);
+      } else {
+        await loadBlogList(0);
+      }
+    });
+  </script>
+</body>
+</html>

@@ -978,6 +978,7 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                     FROM page_links pl
                     JOIN pages p ON pl.source_page_id = p.id
                     WHERE p.slug != ?
+                      AND pl.blog = 0
                       AND pl.target_slug IN (${placeholders})
                       AND p.deleted_at IS NULL
                     ORDER BY p.updated_at DESC LIMIT 100

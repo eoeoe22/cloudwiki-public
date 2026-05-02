@@ -19,6 +19,7 @@ import notificationRoutes from './routes/notification';
 import ticketRoutes from './routes/ticket';
 import mcpRoutes from './routes/mcp';
 import analyticsRoutes from './routes/analytics';
+import blogRoutes from './routes/blog';
 import { trackPageView, trackError, queryAnalytics } from './utils/analytics';
 import { isR2OnlyNamespace } from './utils/slug';
 import { getRevisionContent } from './utils/r2';
@@ -55,6 +56,7 @@ app.route('/api', notificationRoutes);
 app.route('/api', ticketRoutes);
 app.route('/api/mcp', mcpRoutes);
 app.route('/api/admin/analytics', analyticsRoutes);
+app.route('/api', blogRoutes);
 
 // ── 공개 Analytics API (인기 문서, 문서별 조회수) ──
 app.get('/api/analytics/trending', async (c) => {
@@ -364,8 +366,8 @@ async function renderHtml(c: Context<Env>, targetHtmlPath: string, pageData: Rec
         componentCache = { header: headerHtml, sidebar: sidebarHtml, footer: footerHtml, timestamp: now };
     }
 
-    // CUSTOM_HEADER는 /w/* (문서 열람, 리비전, 토론) 페이지에만 삽입
-    const shouldInjectCustomHeader = c.req.path.startsWith('/w/');
+    // CUSTOM_HEADER는 /w/* (문서 열람, 리비전, 토론), /blog/* 페이지에 삽입
+    const shouldInjectCustomHeader = c.req.path.startsWith('/w/') || c.req.path.startsWith('/blog');
 
     return applyPageSSR(htmlResponse, pageData, {
         WIKI_NAME: wikiName,
@@ -823,6 +825,32 @@ app.get('/admin-media', async (c) => {
 // /mypage 접근 시 mypage.html 서빙 (SSR 브랜딩)
 app.get('/mypage', async (c) => {
     return renderHtml(c, '/mypage.html');
+});
+
+// /blog-edit → blog-edit.html 서빙 (관리자 전용)
+app.get('/blog-edit', async (c) => {
+    const user = c.get('user');
+    const rbac = c.get('rbac') as RBAC;
+    if (!user || !rbac.can(user.role, 'admin:access')) {
+        return c.redirect('/');
+    }
+    return renderHtml(c, '/blog-edit.html');
+});
+
+// /blog/:id → blog.html 서빙 (공개, closed wiki는 로그인 필요)
+app.get('/blog/:id', async (c) => {
+    if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) {
+        return c.redirect('/login');
+    }
+    return renderHtml(c, '/blog.html');
+});
+
+// /blog → blog.html 서빙 (목록, 공개)
+app.get('/blog', async (c) => {
+    if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) {
+        return c.redirect('/login');
+    }
+    return renderHtml(c, '/blog.html');
 });
 
 // /edit/:slug → edit.html 서빙 (SSR 브랜딩)

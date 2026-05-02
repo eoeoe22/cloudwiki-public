@@ -1,4 +1,8 @@
 
+// ── 블로그 모드 (blog-edit.html에서 window.BLOG_MODE = true로 설정) ──
+const BLOG_MODE = !!(window.BLOG_MODE);
+let blogPostId = null; // 기존 포스트 수정 시 ID (?id= 파라미터)
+
 // ── Turnstile 상태 ──
 let turnstileToken = null;
 let turnstileWidgetId = null;
@@ -197,6 +201,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     const params = new URLSearchParams(window.location.search);
     slug = params.get('slug');
 
+    // 블로그 모드: ?id= 파라미터 처리 (섹션 모드 없음, slug 불필요)
+    if (BLOG_MODE) {
+        const idParam = params.get('id');
+        blogPostId = idParam && /^\d+$/.test(idParam) ? idParam : null;
+        slug = '__blog__'; // slug 미입력 체크 우회용 더미값
+        sectionMode = false;
+    }
+
     // 섹션 편집 모드 (?section=N&h=...)
     const sectionParam = params.get('section');
     if (sectionParam !== null && sectionParam !== '') {
@@ -215,7 +227,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // 과거 자동저장 잔여 키 일회성 정리 (오토세이브 기능은 제거됨)
     if (typeof purgeLegacyAutosaveKeys === 'function') purgeLegacyAutosaveKeys();
 
-    if (!slug) {
+    if (!slug && !BLOG_MODE) {
         Swal.fire('오류', '문서 제목이 지정되지 않았습니다.', 'error').then(() => {
             window.location.href = '/';
         });
@@ -2018,7 +2030,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             catWarning.classList.add('d-none');
         }
     });
-    // 기존 문서 불러오기
+    // 기존 문서 불러오기 (블로그 모드는 별도 처리)
+    if (BLOG_MODE) {
+        await loadBlogContentForEdit();
+        return;
+    }
+
     try {
         const res = await fetch(`/api/w/${encodeURIComponent(slug)}?redirect=no&nocache=true`);
 
@@ -2299,6 +2316,10 @@ function hasMeaningfulChanges() {
 
 // ── 저장 ──
 async function savePage() {
+    if (BLOG_MODE) {
+        await saveBlogPost();
+        return;
+    }
     // 섹션 모드에서는 카테고리/잠금/리다이렉트는 서버 값 유지
     // (slug = 제목은 URL 파라미터가 곧 식별자이자 표시 이름이므로 별도 입력 불필요)
     const category = sectionMode && originalPageMeta
@@ -2648,5 +2669,91 @@ async function cancelEdit() {
     } else {
         pageLeft = true;
         window.location.href = await buildReturnUrl();
+    }
+}
+
+// ── 블로그 내용 로드 (DOMContentLoaded 에서 에디터 초기화 완료 후 호출) ──
+async function loadBlogContentForEdit() {
+    const titleInput = document.getElementById('blogTitleInput');
+
+    if (blogPostId) {
+        try {
+            const res = await fetch(`/api/blog/${blogPostId}`);
+            if (!res.ok) throw new Error('포스트를 찾을 수 없습니다.');
+            const post = await res.json();
+            if (titleInput) titleInput.value = post.title || '';
+            if (editor) editor.setMarkdown(post.content || '');
+            originalContent = post.content || '';
+        } catch (e) {
+            Swal.fire('오류', e.message, 'error').then(() => {
+                window.location.href = '/blog';
+            });
+            return;
+        }
+    } else {
+        if (editor) editor.setMarkdown('');
+        originalContent = '';
+    }
+
+    const overlay = document.getElementById('initLoadingOverlay');
+    if (overlay) {
+        overlay.classList.add('hidden');
+        overlay.style.display = 'none';
+    }
+
+    const saveBtn = document.getElementById('saveBtn');
+    if (saveBtn && !appConfig?.turnstileSiteKey) saveBtn.disabled = false;
+}
+
+// ── 블로그 저장 ──
+async function saveBlogPost() {
+    const titleInput = document.getElementById('blogTitleInput');
+    const title = titleInput ? titleInput.value.trim() : '';
+    if (!title) {
+        Swal.fire('오류', '제목을 입력해주세요.', 'warning');
+        return;
+    }
+
+    const content = editor ? editor.getMarkdown() : '';
+
+    const saveBtn = document.getElementById('saveBtn');
+    if (saveInProgress) return;
+    saveInProgress = true;
+    saveBtn.disabled = true;
+    saveBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 저장 중...';
+
+    try {
+        const url = blogPostId ? `/api/blog/${blogPostId}` : '/api/blog';
+        const method = blogPostId ? 'PUT' : 'POST';
+        const res = await fetch(url, {
+            method,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title, content }),
+        });
+
+        if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            throw new Error(data.error || '저장 실패');
+        }
+
+        const data = await res.json();
+        const savedId = blogPostId || data.id;
+
+        if (DRAFT_KEY) localStorage.removeItem(DRAFT_KEY);
+
+        Swal.fire({
+            icon: 'success',
+            title: '저장 완료!',
+            text: '블로그 포스트가 저장되었습니다.',
+            timer: 1500,
+            showConfirmButton: false,
+        }).then(() => {
+            window.location.href = `/blog/${savedId}`;
+        });
+    } catch (err) {
+        Swal.fire('오류', err.message, 'error');
+        saveInProgress = false;
+        saveBtn.innerHTML = '<i class="mdi mdi-check"></i> 저장';
+        saveBtn.disabled = false;
     }
 }

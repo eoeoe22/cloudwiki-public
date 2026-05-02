@@ -137,6 +137,7 @@ async function invalidateBacklinkCaches(c: any, slug: string, db: D1Database): P
             FROM page_links pl
             JOIN pages p ON pl.source_page_id = p.id
             WHERE p.deleted_at IS NULL
+              AND pl.blog = 0
               AND pl.target_slug IN (${placeholders})
         `)
         .bind(...targetSlugs)
@@ -245,11 +246,13 @@ function buildLinkAndCategoryStatements(
     const stmts: D1PreparedStatement[] = [];
 
     // page_links 갱신: 기존 삭제 후 재삽입
-    stmts.push(db.prepare('DELETE FROM page_links WHERE source_page_id = ?').bind(pageId));
+    // blog=0 필터 필수 — pageId 와 blog_posts.id 가 같은 ID 공간을 공유하므로
+    // 필터 없이 삭제하면 같은 ID 의 블로그 역링크가 함께 지워짐.
+    stmts.push(db.prepare('DELETE FROM page_links WHERE source_page_id = ? AND blog = 0').bind(pageId));
     const links = extractLinks(content);
     for (const link of links) {
         stmts.push(
-            db.prepare('INSERT INTO page_links (source_page_id, target_slug, link_type) VALUES (?, ?, ?)')
+            db.prepare('INSERT INTO page_links (source_page_id, target_slug, link_type, blog) VALUES (?, ?, ?, 0)')
                 .bind(pageId, link.target_slug, link.link_type)
         );
     }
@@ -400,6 +403,7 @@ async function rewriteBacklinksForRename(
             FROM page_links pl
             JOIN pages p ON pl.source_page_id = p.id
             WHERE p.deleted_at IS NULL
+              AND pl.blog = 0
               AND pl.target_slug IN (${placeholders})
         `)
         .bind(...targetSlugs)
@@ -1577,6 +1581,7 @@ wiki.get('/w/:slug/backlinks', async (c) => {
         FROM page_links pl
         JOIN pages p ON pl.source_page_id = p.id
         WHERE p.slug != ?
+          AND pl.blog = 0
           AND pl.target_slug IN (${placeholders})
     `;
     if (!isAdmin) {
@@ -1631,7 +1636,9 @@ wiki.delete('/w/:slug', requireAuth, async (c) => {
 
         // Hard Delete Transaction
         const batch = [
-            db.prepare('DELETE FROM page_links WHERE source_page_id = ?').bind(page.id),
+            // blog=0 필터: page.id 와 blog_posts.id 가 같은 ID 공간을 공유하므로
+            // 필터 없이 삭제하면 같은 ID 의 블로그 역링크가 함께 지워짐.
+            db.prepare('DELETE FROM page_links WHERE source_page_id = ? AND blog = 0').bind(page.id),
             db.prepare('DELETE FROM page_categories WHERE page_id = ?').bind(page.id),
             db.prepare('DELETE FROM revisions WHERE page_id = ?').bind(page.id),
             db.prepare('DELETE FROM redirects WHERE target_page_id = ?').bind(page.id),

@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title class="app-wiki-name">블로그 편집 - CloudWiki</title>
+    <link rel="icon" class="app-wiki-favicon" href="/favicon.ico">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.13.1/font/bootstrap-icons.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css" rel="stylesheet">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Outfit:wght@500;600;700;800;900&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="/css/style.css">
+    <script>try { var t = localStorage.getItem('themeMode'); if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t); } catch (e) { }</script>
+    <link rel="stylesheet" href="/render.css">
+    <link rel="stylesheet" href="/css/edit.css">
+
+    <!-- BLOG_MODE 플래그: edit.js 로드 전에 설정 -->
+    <script>window.BLOG_MODE = true;</script>
+
+    <!-- CodeMirror 6 Import Map (ESM CDN) -->
+    <script type="importmap">
+    {
+        "imports": {
+            "@codemirror/state": "https://esm.sh/@codemirror/state@6",
+            "@codemirror/view": "https://esm.sh/@codemirror/view@6",
+            "@codemirror/commands": "https://esm.sh/@codemirror/commands@6",
+            "@codemirror/language": "https://esm.sh/@codemirror/language@6",
+            "@codemirror/lang-markdown": "https://esm.sh/@codemirror/lang-markdown@6",
+            "@codemirror/language-data": "https://esm.sh/@codemirror/language-data@6",
+            "@codemirror/theme-one-dark": "https://esm.sh/@codemirror/theme-one-dark@6",
+            "@codemirror/search": "https://esm.sh/@codemirror/search@6",
+            "@lezer/highlight": "https://esm.sh/@lezer/highlight@1"
+        }
+    }
+    </script>
+    <!-- Turnstile: edit.js의 initTurnstile()/onTurnstileLoad()가 이 스크립트에 의존 -->
+    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?onload=onTurnstileLoad" async defer></script>
+    <!-- Diff (비교 - 블로그에서는 미사용이나 edit-conflict.js 없이도 문제없도록 stub) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jsdiff/5.1.0/diff.min.js"></script>
+</head>
+
+<body style="-webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;">
+
+    <!-- 초기 로딩 오버레이 -->
+    <div id="initLoadingOverlay">
+        <div class="spinner-border" role="status"></div>
+        <span>불러오는 중...</span>
+    </div>
+
+    <!-- 자동완성 드롭다운 (edit.js/edit-autocomplete.js 재사용) -->
+    <div id="category-autocomplete" class="list-group"></div>
+    <div id="wiki-autocomplete" class="list-group"></div>
+    <div id="icon-autocomplete">
+        <div class="icon-ac-header">
+            <i id="iconAc.typeIcon"></i>
+            <span id="iconAc.typeLabel">아이콘</span>
+        </div>
+        <div id="iconAcGrid" class="icon-ac-grid"></div>
+        <div id="iconAcEmpty" class="icon-ac-empty" style="display:none;">결과 없음</div>
+        <div id="iconAcLoading" class="icon-ac-loading" style="display:none;">
+            <span class="spinner-border spinner-border-sm text-primary" role="status"></span> 로딩 중...
+        </div>
+    </div>
+    <div id="imgsize-autocomplete" class="list-group"
+        style="display:none; position:absolute; z-index:9999; background:var(--wiki-bg); border:1px solid var(--wiki-border); border-radius:4px; box-shadow:0 2px 10px rgba(0,0,0,0.1); width:200px; padding:0;">
+        <div class="list-group-item text-muted"
+            style="font-size:0.85rem; background:var(--wiki-bg-alt); padding:6px 10px; border-bottom:1px solid var(--wiki-border);">
+            <i class="mdi mdi-image-size-select-large"></i> 이미지 사이즈 선택
+        </div>
+        <div id="imgsizeAcGrid"></div>
+    </div>
+    <div id="code-autocomplete" class="list-group"
+        style="display:none; position:absolute; z-index:9999; background:var(--wiki-bg); border:1px solid var(--wiki-border); border-radius:4px; box-shadow:0 2px 10px rgba(0,0,0,0.1); width:240px; padding:0;">
+        <div class="list-group-item text-muted"
+            style="font-size:0.85rem; background:var(--wiki-bg-alt); padding:6px 10px; border-bottom:1px solid var(--wiki-border);">
+            <i class="mdi mdi-code-braces"></i> 코드 삽입
+        </div>
+        <div id="codeAcGrid" style="max-height: 300px; overflow-y: auto;"></div>
+    </div>
+    <div id="block-autocomplete" class="list-group"
+        style="display:none; position:absolute; z-index:9999; background:var(--wiki-bg); border:1px solid var(--wiki-border); border-radius:4px; box-shadow:0 2px 10px rgba(0,0,0,0.1); width:280px; padding:0;">
+        <div class="list-group-item text-muted"
+            style="font-size:0.85rem; background:var(--wiki-bg-alt); padding:6px 10px; border-bottom:1px solid var(--wiki-border);">
+            <i class="mdi mdi-view-grid-plus-outline"></i> 블록 컴포넌트 삽입
+        </div>
+        <div id="blockAcGrid" style="max-height: 320px; overflow-y: auto;"></div>
+    </div>
+    <div id="color-autocomplete">
+        <div class="color-ac-header">
+            <i class="mdi mdi-palette"></i>
+            <span id="colorAcTypeLabel">색상 선택</span>
+        </div>
+        <div id="colorAcSwatches" class="color-ac-swatches"></div>
+        <div class="color-palette-area">
+            <canvas id="colorPaletteCanvas" class="color-palette-canvas" width="264" height="120"></canvas>
+            <canvas id="colorHueSlider" class="color-hue-slider" width="264" height="16"></canvas>
+            <div class="color-preview-row">
+                <div id="colorPreviewBox" class="color-preview-box"></div>
+                <input type="text" id="colorHexInput" class="color-hex-input" maxlength="7" placeholder="#000000">
+                <button type="button" id="colorApplyBtn" class="color-apply-btn">적용</button>
+            </div>
+        </div>
+    </div>
+    <div id="palette-autocomplete">
+        <div class="palette-ac-header">
+            <i class="mdi mdi-palette-swatch"></i>
+            <span>팔레트 선택</span>
+        </div>
+        <div id="paletteAcList" class="palette-ac-list"></div>
+        <div id="paletteAcEmpty" class="palette-ac-empty" style="display:none;">결과 없음</div>
+    </div>
+    <div id="timestamp-autocomplete">
+        <div class="ts-ac-header">
+            <i id="tsAcIcon" class="mdi mdi-clock-outline"></i>
+            <span id="tsAcTypeLabel">날짜/시간</span>
+        </div>
+        <div id="tsCalSection" style="display:none;">
+            <div class="ts-cal-nav">
+                <button type="button" id="tsCalPrev" class="ts-cal-nav-btn">&#8249;</button>
+                <button type="button" id="tsCalYearMonth" class="ts-cal-ym-btn"></button>
+                <button type="button" id="tsCalNext" class="ts-cal-nav-btn">&#8250;</button>
+            </div>
+            <div class="ts-cal-weekdays">
+                <span>일</span><span>월</span><span>화</span><span>수</span><span>목</span><span>금</span><span>토</span>
+            </div>
+            <div id="tsCalGrid" class="ts-cal-grid"></div>
+        </div>
+        <div id="tsCalYearPanel" style="display:none;">
+            <div class="ts-cal-ym-panel-header">
+                <button type="button" id="tsCalYearPrev" class="ts-cal-nav-btn">&#8249;</button>
+                <span id="tsCalYearRange"></span>
+                <button type="button" id="tsCalYearNext" class="ts-cal-nav-btn">&#8250;</button>
+            </div>
+            <div id="tsCalYearGrid" class="ts-cal-year-grid"></div>
+        </div>
+        <div id="tsAcPresets" class="ts-ac-presets" style="display:none;"></div>
+        <div class="ts-ac-input-row">
+            <input type="text" id="tsAcInput" class="ts-ac-input" placeholder="">
+            <button type="button" id="tsAcApplyBtn" class="ts-ac-apply-btn">적용</button>
+        </div>
+    </div>
+
+    <!-- 아이콘 선택 모달 -->
+    <div class="modal fade" id="iconPickerModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-xl modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i id="iconPickerTypeIcon" class="mdi mdi-bootstrap me-2"></i>
+                        <span id="iconPickerTitle">아이콘 선택</span>
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="text" id="iconSearchInput" class="form-control mb-3"
+                        placeholder="아이콘 이름 검색... (예: home, user, card)">
+                    <div id="iconLoadingSpinner" class="text-center py-4" style="display:none;">
+                        <span class="spinner-border text-primary" role="status"></span>
+                        <p class="mt-2 text-muted small">아이콘 목록 로딩 중...</p>
+                    </div>
+                    <div id="iconPickerGrid" class="icon-grid-modal"></div>
+                    <div id="iconPickerEmpty" class="text-center text-muted py-3" style="display:none;">
+                        <i class="mdi mdi-magnify-close" style="font-size:2rem;"></i>
+                        <p class="mt-1">검색 결과가 없습니다.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── 네비게이션 바 Placeholder ── -->
+    <div id="app-header-placeholder"></div>
+
+    <!-- 편집 충돌 UI (블로그에서 미사용, edit-conflict.js 불필요하지만 stub ID는 유지) -->
+    <div id="conflict-ui" style="display: none;"></div>
+
+    <div class="wiki-container" id="main-editor-container">
+        <div class="wiki-article">
+
+            <!-- 동시편집 배너 stub (edit.js가 참조할 수 있는 ID) -->
+            <div id="concurrent-edit-banner" style="display:none;"></div>
+
+            <h2 class="mb-4" id="editPageTitle">
+                <i class="mdi mdi-pencil-box-multiple"></i> 블로그 편집
+            </h2>
+
+            <!-- 블로그 제목 입력 -->
+            <div class="mb-3">
+                <label for="blogTitleInput" class="form-label fw-bold">제목</label>
+                <input type="text" id="blogTitleInput" class="edit-title-input" placeholder="블로그 포스트 제목" maxlength="500">
+            </div>
+
+            <!-- 위키 전용 필드 (BLOG_MODE에서 숨김) — edit.js가 참조하는 ID는 유지 -->
+            <div style="display:none;">
+                <input type="text" id="titleInput">
+                <input type="hidden" id="categoryInput">
+                <input type="text" id="categoryTagInput">
+                <div id="categoryTagContainer"></div>
+                <input type="text" id="redirectInput">
+                <input type="checkbox" id="isLockedCheck">
+                <div id="adminLockContainer"></div>
+                <div id="sectionEditBanner"></div>
+                <span id="sectionEditHeading"></span>
+                <a id="sectionEditFullLink" href="#"></a>
+            </div>
+
+            <!-- Markdown 에디터 -->
+            <div class="mb-3">
+                <div class="d-flex align-items-center gap-2 mb-1">
+                    <label class="form-label fw-bold mb-0">내용</label>
+                </div>
+                <div id="editor"></div>
+                <div id="editorTextCounter" class="editor-text-counter" aria-live="off">
+                    <span data-counter="lines">1줄</span>
+                    <span data-counter="chars">0자</span>
+                    <span data-counter="charsWithSpaces">0자(공백포함)</span>
+                    <span data-counter="words">0단어</span>
+                </div>
+            </div>
+
+            <!-- 버튼 -->
+            <div class="edit-actions d-flex align-items-center flex-wrap gap-2">
+                <button class="btn btn-wiki" id="saveBtn" onclick="savePage()" disabled>
+                    <i class="mdi mdi-check"></i> 저장
+                </button>
+                <button class="btn btn-wiki-outline" onclick="window.location.href='/blog'">
+                    <i class="mdi mdi-close"></i> 취소
+                </button>
+                <div class="ms-2 d-flex align-items-center gap-2">
+                    <div id="turnstile-container"></div>
+                    <button type="button" id="turnstileRefreshBtn" class="btn btn-sm btn-outline-secondary"
+                        style="display:none;" onclick="reloadTurnstile()" title="캡챠 다시 로드" aria-label="캡챠 다시 로드">
+                        <i class="mdi mdi-refresh" aria-hidden="true"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 이미지 편집 모달 (edit-image.js 재사용) -->
+    <div class="modal fade" id="imageEditorModal" tabindex="-1" aria-hidden="true" data-bs-backdrop="static">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h6 class="modal-title"><i class="bi bi-crop"></i> 이미지 편집</h6>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="닫기"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="img-editor-canvas-wrap" id="imgEditorCanvasWrap">
+                        <canvas id="imgEditorCanvas"></canvas>
+                        <div class="crop-overlay" id="cropOverlay" style="display:none;">
+                            <div class="crop-box" id="cropBox">
+                                <div class="crop-handle tl" data-handle="tl"></div>
+                                <div class="crop-handle tr" data-handle="tr"></div>
+                                <div class="crop-handle bl" data-handle="bl"></div>
+                                <div class="crop-handle br" data-handle="br"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="img-editor-toolbar">
+                        <button type="button" id="btnCropToggle" title="크롭 모드 전환"><i class="bi bi-crop"></i></button>
+                        <button type="button" id="btnCropApply" style="display:none;" title="크롭 적용"><i class="bi bi-check-lg"></i></button>
+                        <div class="separator"></div>
+                        <button type="button" id="btnRotateLeft" title="왼쪽 90도 회전"><i class="bi bi-arrow-counterclockwise"></i></button>
+                        <button type="button" id="btnRotateRight" title="오른쪽 90도 회전"><i class="bi bi-arrow-clockwise"></i></button>
+                        <div class="separator"></div>
+                        <button type="button" id="btnImgReset" title="원본 복원"><i class="bi bi-arrow-repeat"></i> 초기화</button>
+                    </div>
+                    <div class="img-editor-info" id="imgEditorInfo"></div>
+                </div>
+                <div class="modal-footer d-flex justify-content-between align-items-center w-100">
+                    <div class="dropdown">
+                        <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button"
+                            id="btnImgEditorSizeToggle" data-bs-toggle="dropdown" aria-expanded="false">
+                            <i class="mdi mdi-arrow-expand-all me-1"></i>크게(기본)
+                        </button>
+                        <ul class="dropdown-menu" id="imgEditorSizeDropdown" aria-labelledby="btnImgEditorSizeToggle">
+                            <li><a class="dropdown-item" href="#" data-size="icon"><i class="mdi mdi-square-medium-outline me-2"></i>아이콘</a></li>
+                            <li><a class="dropdown-item" href="#" data-size="small"><i class="mdi mdi-arrow-collapse me-2"></i>작게</a></li>
+                            <li><a class="dropdown-item" href="#" data-size="medium"><i class="mdi mdi-square-outline me-2"></i>중간</a></li>
+                            <li><a class="dropdown-item" href="#" data-size="full"><i class="mdi mdi-arrow-expand-all me-2"></i>크게(기본)</a></li>
+                        </ul>
+                    </div>
+                    <div>
+                        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">취소</button>
+                        <button type="button" class="btn btn-primary btn-sm" id="btnImgEditorDone">
+                            <i class="bi bi-check-lg"></i> 편집 완료
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
+    <script src="/js/common.js"></script>
+    <script src="/js/render.js"></script>
+    <script src="/js/edit-utils.js"></script>
+    <script src="/js/edit-autocomplete.js"></script>
+    <script src="/js/edit-modals.js"></script>
+    <script src="/js/edit-image.js"></script>
+    <!-- edit-conflict.js 미포함: 블로그는 리비전/충돌 관리 없음 -->
+    <script src="/js/edit.js"></script>
+
+    <!-- ── 푸터 Placeholder ── -->
+    <div id="app-footer-placeholder"></div>
+
+</body>
+
+</html>

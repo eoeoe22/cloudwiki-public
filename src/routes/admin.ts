@@ -820,6 +820,7 @@ adminRoutes.get('/media/:id/backlinks', async (c) => {
         FROM page_links pl
         JOIN pages p ON pl.source_page_id = p.id
         WHERE pl.link_type = 'image'
+          AND pl.blog = 0
           AND pl.target_slug = ?
           AND p.deleted_at IS NULL
     `).bind(mediaItem.r2_key).all();

@@ -725,27 +725,45 @@ function jumpToConflict(direction) {
     ta.scrollTop = Math.max(0, lineIndex * lineHeight - ta.clientHeight / 3);
 }
 
-// ── 충돌 해결 (저장 재시도) ──────────────────────────────────────────────
+// ── 충돌 해결 적용 ──
+// 병합된 내용을 메인 에디터에 불러오고, 충돌 UI를 닫아 사용자가 편집을
+// 이어갈 수 있도록 한다. 저장은 사용자가 직접 트리거한다.
 function resolveConflict() {
     const finalContent = conflictEditor ? conflictEditor.getMarkdown() : '';
     const remaining = countRemainingMarkers();
 
     const proceed = () => {
         editor.setMarkdown(finalContent);
-        if (typeof scrollToBottom === 'function') scrollToBottom();
+        // 새 base = 서버 최신본. pageVersion 은 showConflictModal 에서 이미 갱신됨.
+        // 이로써 beforeunload 경고/로컬 diff 가 새 기준점에서 동작하고, 다음 저장 시
+        // 백엔드 충돌 검사가 정상 통과한다.
+        if (typeof conflictState.theirs === 'string') {
+            originalContent = conflictState.theirs;
+        }
         document.getElementById('conflict-ui').style.display = 'none';
         document.getElementById('main-editor-container').style.display = 'block';
-        savePage();
+        if (typeof scrollToBottom === 'function') scrollToBottom();
+        if (typeof Swal !== 'undefined') {
+            Swal.fire({
+                icon: 'success',
+                title: '충돌 해결 내용 적용됨',
+                text: '에디터에서 편집을 이어가신 뒤 저장하세요.',
+                toast: true,
+                position: 'top-end',
+                timer: 2500,
+                showConfirmButton: false,
+            });
+        }
     };
 
     if (remaining > 0) {
         Swal.fire({
             title: '미해결 충돌이 남아있습니다',
-            html: `${remaining}개의 충돌 마커(<code>&lt;&lt;&lt;&lt;&lt;&lt;&lt;</code>)가 본문에 그대로 있습니다. 그래도 저장하시겠습니까?`,
+            html: `${remaining}개의 충돌 마커(<code>&lt;&lt;&lt;&lt;&lt;&lt;&lt;</code>)가 본문에 그대로 있습니다. 그래도 에디터에 적용하시겠습니까?`,
             icon: 'warning',
             showCancelButton: true,
-            confirmButtonText: '그대로 저장',
-            cancelButtonText: '계속 편집하기',
+            confirmButtonText: '그대로 적용',
+            cancelButtonText: '계속 해결하기',
         }).then((result) => {
             if (result.isConfirmed) proceed();
         });

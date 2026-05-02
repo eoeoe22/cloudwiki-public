@@ -193,4 +193,15 @@ export interface Message {
     deleted: number;
 }
 
+export interface BlogPost {
+    id: number;
+    title: string;
+    content: string;
+    created_at: number;
+    updated_at: number;
+    deleted_at: number | null;
+    rows: number | null;
+    characters: number | null;
+}
+
 export type AppContext = Context<Env>;

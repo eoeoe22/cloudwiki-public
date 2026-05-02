@@ -244,12 +244,14 @@ CREATE INDEX IF NOT EXISTS idx_admin_log_user_created ON admin_log(user, created
 
 -- 문서 간 링크 테이블 (역링크 인덱싱용)
 -- 문서 수정 시 content에서 [[링크]]를 파싱하여 이 테이블에 저장
+-- source_page_id는 blog=0 일 때 pages.id, blog=1 일 때 blog_posts.id 를 가리킴.
+-- 두 ID 공간이 겹치므로 pages(id) 외래키는 두지 않는다 (FK 강제 시 블로그 INSERT 실패).
 CREATE TABLE IF NOT EXISTS page_links (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   source_page_id INTEGER NOT NULL,
   target_slug    TEXT NOT NULL,
   link_type      TEXT NOT NULL DEFAULT 'wikilink',  -- 'wikilink', 'template', 'image'
-  FOREIGN KEY (source_page_id) REFERENCES pages(id) ON DELETE CASCADE
+  blog          INTEGER NOT NULL DEFAULT 0          -- 0: 위키 페이지 링크, 1: 블로그 포스트 링크
 );
 CREATE INDEX IF NOT EXISTS idx_page_links_source ON page_links(source_page_id);
 CREATE INDEX IF NOT EXISTS idx_page_links_target ON page_links(target_slug);
@@ -303,3 +305,20 @@ CREATE TABLE IF NOT EXISTS page_watches (
     FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_page_watches_page ON page_watches(page_id);
+
+-- 블로그 포스트 테이블
+-- 위키 문서와 독립된 블로그 기능. 리비전 없음, 관리자만 작성 가능.
+-- URL 식별자는 id (정수), title이 표시 제목 겸 식별자.
+CREATE TABLE IF NOT EXISTS blog_posts (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  title      TEXT NOT NULL,
+  content    TEXT NOT NULL DEFAULT '',
+  created_at INTEGER DEFAULT (unixepoch()),
+  updated_at INTEGER DEFAULT (unixepoch()),
+  deleted_at INTEGER,
+  rows       INTEGER,
+  characters INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_blog_posts_created ON blog_posts(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_blog_posts_deleted ON blog_posts(deleted_at);
+
