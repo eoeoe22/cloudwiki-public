@@ -3,6 +3,7 @@ import type { Env, BlogPost } from '../types';
 import { requireAdmin } from '../middleware/session';
 import { safeJSON } from '../utils/json';
 import { RBAC } from '../utils/role';
+import { writeAdminLog } from './admin';
 
 const blog = new Hono<Env>();
 
@@ -274,7 +275,52 @@ blog.delete('/blog/:id', requireAdmin, async (c) => {
             .catch((e: any) => console.error('Failed to write admin_log for blog_delete:', e))
     );
 
+    // 공지로 발행되어 있던 포스트가 삭제되면 공지도 자동 해제
+    c.executionCtx.waitUntil(
+        db.prepare('UPDATE settings SET announced_blog_post_id = NULL WHERE id = 1 AND announced_blog_post_id = ?')
+            .bind(id)
+            .run()
+            .catch((e: any) => console.error('Failed to clear announcement on delete:', e))
+    );
+
     return c.json({ id });
+});
+
+/**
+ * POST /api/blog/announcement/cancel
+ * 현재 사이트 전역 공지 발행을 취소 (관리자 전용)
+ *
+ * NOTE: `:id` 파라미터 라우트(`/blog/:id`, `/blog/:id/announce`)와의 충돌을 피하기 위해
+ *       정적 세그먼트 두 개로 구성된 경로를 사용한다.
+ */
+blog.post('/blog/announcement/cancel', requireAdmin, async (c) => {
+    await c.env.DB.prepare('UPDATE settings SET announced_blog_post_id = NULL WHERE id = 1').run();
+    writeAdminLog(c, 'announce', '공지 취소', c.get('user')!.id);
+    return c.json({ success: true });
+});
+
+/**
+ * POST /api/blog/:id/announce
+ * 해당 블로그 포스트를 사이트 전역 공지로 발행 (관리자 전용)
+ * 단일 행 settings 에 id를 기록하므로 이전 공지는 자동으로 대체된다.
+ */
+blog.post('/blog/:id/announce', requireAdmin, async (c) => {
+    const idParam = c.req.param('id');
+    if (!/^\d+$/.test(idParam)) return c.json({ error: 'Not Found' }, 404);
+    const id = Number(idParam);
+
+    const post = await c.env.DB
+        .prepare('SELECT id, title, deleted_at FROM blog_posts WHERE id = ?')
+        .bind(id)
+        .first<{ id: number; title: string; deleted_at: number | null }>();
+    if (!post || post.deleted_at) return c.json({ error: 'Not Found' }, 404);
+
+    await c.env.DB
+        .prepare('UPDATE settings SET announced_blog_post_id = ? WHERE id = 1')
+        .bind(id)
+        .run();
+    writeAdminLog(c, 'announce', `공지 발행: blog#${id} (${post.title})`, c.get('user')!.id);
+    return c.json({ success: true, post_id: id, title: post.title });
 });
 
 export default blog;

@@ -306,6 +306,43 @@ async function goRandomPage() {
 }
 
 // ── 설정 로드 + 브랜딩 적용 ──
+// ── 공지 배너 렌더 ──
+function applyAnnouncementBanner() {
+    try {
+        const root = document.getElementById('announcement-banner');
+        if (!root) return;
+        const a = appConfig && appConfig.announcement;
+        if (!a || !a.enabled || !a.postId) {
+            root.classList.add('d-none');
+            return;
+        }
+        const dismissKey = 'announcement:dismissed:' + a.postId;
+        // localStorage 접근은 프라이빗 모드/스토리지 제한 환경에서 throw 할 수 있다.
+        // 페이지 초기화(ensureLayoutComponents/checkAuth)를 막지 않도록 모두 격리.
+        let dismissed = false;
+        try { dismissed = localStorage.getItem(dismissKey) === '1'; } catch (e) { /* ignore */ }
+        if (dismissed) {
+            root.classList.add('d-none');
+            return;
+        }
+        const link = document.getElementById('announcementBannerLink');
+        if (link) {
+            link.href = a.url || ('/blog/' + a.postId);
+            link.textContent = a.title || '새 공지';
+        }
+        root.classList.remove('d-none');
+        const closeBtn = document.getElementById('announcementBannerClose');
+        if (closeBtn) {
+            closeBtn.onclick = () => {
+                try { localStorage.setItem(dismissKey, '1'); } catch (e) { /* ignore */ }
+                root.classList.add('d-none');
+            };
+        }
+    } catch (e) {
+        console.error('applyAnnouncementBanner failed:', e);
+    }
+}
+
 async function loadConfig() {
     try {
         const res = await fetch('/api/config');
@@ -374,6 +411,9 @@ async function loadConfig() {
     } catch (e) {
         console.error('설정 로드 실패', e);
     }
+    // 헤더가 SSR로 이미 주입돼 있는 경우를 대비해 한 번 시도
+    applyAnnouncementBanner();
+
     // 레이아웃 컴포넌트(헤더/사이드바)가 비어있으면 클라이언트에서 로드 시도 (SSR 누락 대비)
     await ensureLayoutComponents();
 
@@ -416,6 +456,8 @@ async function ensureLayoutComponents() {
                 });
                 await checkAuth();
                 if (window.__sidebarLayoutUpdate) window.__sidebarLayoutUpdate();
+                // 헤더가 클라이언트에서 새로 주입된 경우 배너도 다시 적용
+                if (h) applyAnnouncementBanner();
             }
         } catch (e) {
             console.error('Layout component load failed:', e);

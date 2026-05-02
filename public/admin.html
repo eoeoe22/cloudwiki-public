@@ -552,6 +552,23 @@
 
         <!-- ── 탭: 시스템 설정 (Settings) ── -->
         <div id="tab-settings" class="tab-pane">
+          <!-- ── 사이트 공지 ── -->
+          <div class="card shadow-sm border-0 mb-4">
+            <div class="card-header py-3">
+              <h5 class="mb-0">사이트 공지</h5>
+            </div>
+            <div class="card-body">
+              <p class="text-muted small mb-3">
+                블로그 포스트 페이지(<code>/blog/&lt;id&gt;</code>)에서
+                "공지로 발행" 버튼을 눌러 공지를 발행합니다. 여기서는 현재 공지를
+                확인하고 취소할 수 있습니다.
+              </p>
+              <div id="currentAnnouncementBox" class="d-flex align-items-center flex-wrap gap-2">
+                <span class="text-muted">불러오는 중...</span>
+              </div>
+            </div>
+          </div>
+
           <div class="card shadow-sm border-0 mb-4">
             <div class="card-header py-3">
               <h5 class="mb-0">위키 운영 정책</h5>
@@ -1118,8 +1135,48 @@
           } else {
             document.getElementById("mcpServerUrlBox").style.display = "none";
           }
+
+          // 현재 공지 표시
+          renderCurrentAnnouncement(s.announcement);
         } catch (e) {
           console.error("Settings load failed", e);
+        }
+      }
+
+      function renderCurrentAnnouncement(ann) {
+        const box = document.getElementById("currentAnnouncementBox");
+        if (!box) return;
+        if (ann && ann.postId) {
+          const deletedTag = ann.deleted
+            ? ' <span class="badge bg-danger ms-1">삭제됨</span>'
+            : "";
+          box.innerHTML =
+            `<a href="/blog/${ann.postId}" class="fw-bold text-decoration-none" target="_blank" rel="noopener">` +
+            escapeHtml(ann.title || "(제목 없음)") +
+            `</a>${deletedTag}` +
+            `<button class="btn btn-sm btn-outline-danger ms-auto" onclick="cancelAnnouncement()">` +
+            `<i class="mdi mdi-close-circle me-1"></i>공지 취소</button>`;
+        } else {
+          box.innerHTML =
+            '<span class="text-muted">현재 공지로 발행된 포스트가 없습니다.</span>';
+        }
+      }
+
+      async function cancelAnnouncement() {
+        try {
+          const res = await fetch("/api/blog/announcement/cancel", {
+            method: "POST",
+          });
+          if (!res.ok) throw new Error("취소 실패");
+          Swal.fire({
+            icon: "success",
+            title: "공지가 취소되었습니다.",
+            timer: 1000,
+            showConfirmButton: false,
+          });
+          loadWikiSettings();
+        } catch (e) {
+          Swal.fire("오류", e.message || "취소 실패", "error");
         }
       }
 

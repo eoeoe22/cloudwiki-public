@@ -42,7 +42,7 @@ async function invalidateAllPagesCache(c: any) {
 }
 
 // ── 관리 로그 기록 헬퍼 ──
-function writeAdminLog(c: any, type: string, log: string, userId: number) {
+export function writeAdminLog(c: any, type: string, log: string, userId: number) {
     const db = c.env.DB;
     c.executionCtx.waitUntil(
         db.prepare('INSERT INTO admin_log (type, log, user) VALUES (?, ?, ?)')
@@ -276,10 +276,25 @@ adminRoutes.get('/settings', async (c) => {
     const mcpMode = c.env.MCP_MODE || 'disabled';
 
     if (!row) {
-        return c.json({ namechange_ratelimit: 0, allow_direct_message: 0, signup_policy: 'open', mcp_mode: mcpMode });
+        return c.json({ namechange_ratelimit: 0, allow_direct_message: 0, signup_policy: 'open', mcp_mode: mcpMode, announcement: null });
     }
 
     row.mcp_mode = mcpMode;
+
+    // 현재 공지 포스트 정보 (soft-delete 여부 포함)
+    try {
+        const ann = await db.prepare(
+            `SELECT b.id AS postId, b.title, b.deleted_at
+             FROM settings s LEFT JOIN blog_posts b ON b.id = s.announced_blog_post_id
+             WHERE s.id = 1`
+        ).first<{ postId: number | null; title: string | null; deleted_at: number | null }>();
+        row.announcement = ann && ann.postId
+            ? { postId: ann.postId, title: ann.title, deleted: !!ann.deleted_at }
+            : null;
+    } catch (e) {
+        row.announcement = null;
+    }
+
     return c.json(row);
 });
 

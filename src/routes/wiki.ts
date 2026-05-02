@@ -570,7 +570,33 @@ import { uploadRevisionToR2, getRevisionContent } from '../utils/r2';
  * GET /config
  * 동적 설정 (위키 이름 등) 반환
  */
-wiki.get('/config', (c) => {
+wiki.get('/config', async (c) => {
+    // 공지로 발행된 블로그 포스트 조회 (soft-delete된 포스트는 자동 제외)
+    let announcement: { enabled: false } | { enabled: true; postId: number; title: string; url: string }
+        = { enabled: false };
+    if (!(c.env.WIKI_VISIBILITY === 'closed' && !c.get('user'))) {
+        try {
+            const row = await c.env.DB.prepare(
+                `SELECT b.id AS post_id, b.title AS post_title
+                 FROM settings s
+                 LEFT JOIN blog_posts b
+                   ON b.id = s.announced_blog_post_id AND b.deleted_at IS NULL
+                 WHERE s.id = 1`
+            ).first<{ post_id: number | null; post_title: string | null }>();
+            if (row && row.post_id) {
+                announcement = {
+                    enabled: true,
+                    postId: row.post_id,
+                    title: row.post_title || '',
+                    url: `/blog/${row.post_id}`,
+                };
+            }
+        } catch (e) {
+            // 마이그레이션 미적용 등으로 컬럼이 없을 때도 /config 자체는 동작해야 함
+            console.error('announcement lookup failed:', e);
+        }
+    }
+
     return c.json({
         wikiName: c.env.WIKI_NAME || 'CloudWiki',
         wikiLogoUrl: c.env.WIKI_LOGO_URL || '',
@@ -581,6 +607,7 @@ wiki.get('/config', (c) => {
         enabledExtensions: (c.env.ENABLED_EXTENSIONS || '').split(',').map((s: string) => s.trim()).filter(Boolean),
         palettes: parseCustomPalettes(c.env.PALETTES),
         mediaPublicUrl: c.env.MEDIA_PUBLIC_URL || '',
+        announcement,
     });
 });
 

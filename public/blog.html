@@ -62,6 +62,12 @@
           <div class="d-flex align-items-start justify-content-between mb-2">
             <h1 class="wiki-article-title mb-0" id="blogPostTitle"></h1>
             <div id="blogPostAdminActions" class="d-none d-flex gap-2 ms-3 flex-shrink-0">
+              <button id="blogPostAnnounceBtn" class="btn btn-outline-primary btn-sm d-none" onclick="announceBlogPost()">
+                <i class="bi bi-megaphone me-1"></i>공지로 발행
+              </button>
+              <button id="blogPostUnannounceBtn" class="btn btn-warning btn-sm d-none" onclick="unannounceBlogPost()">
+                <i class="bi bi-megaphone-fill me-1"></i>공지 발행 취소
+              </button>
               <a id="blogPostEditBtn" href="#" class="btn btn-secondary btn-sm">
                 <i class="bi bi-pencil me-1"></i>수정
               </a>
@@ -198,12 +204,54 @@
         document.getElementById('blogPostEditBtn').href = `/blog-edit?id=${post.id}`;
         document.title = escHtml(post.title) + ' - ' + (window.appConfig?.wikiName || 'CloudWiki');
 
+        // 현재 공지 발행 여부 동기화
+        syncAnnounceButtons(post.id);
+
         // 위키 문법 렌더링
         await renderWikiContent(post.content || '', post.title, 'blogPostContent');
 
         showView('blogPost');
       } catch (e) {
         showView('blogError');
+      }
+    }
+
+    // ── 공지 발행/취소 ──
+    function syncAnnounceButtons(postId) {
+      const isCurrent = !!(window.appConfig?.announcement?.enabled
+        && Number(window.appConfig.announcement.postId) === Number(postId));
+      const a = document.getElementById('blogPostAnnounceBtn');
+      const u = document.getElementById('blogPostUnannounceBtn');
+      if (!a || !u) return;
+      a.classList.toggle('d-none', isCurrent);
+      u.classList.toggle('d-none', !isCurrent);
+    }
+
+    async function announceBlogPost() {
+      if (!currentBlogPostId) return;
+      try {
+        const res = await fetch(`/api/blog/${currentBlogPostId}/announce`, { method: 'POST' });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.error || '발행 실패');
+        }
+        Swal.fire({ icon: 'success', title: '공지로 발행됨', timer: 1000, showConfirmButton: false });
+        await loadConfig();
+        syncAnnounceButtons(currentBlogPostId);
+      } catch (e) {
+        Swal.fire('오류', e.message, 'error');
+      }
+    }
+
+    async function unannounceBlogPost() {
+      try {
+        const res = await fetch('/api/blog/announcement/cancel', { method: 'POST' });
+        if (!res.ok) throw new Error('취소 실패');
+        Swal.fire({ icon: 'success', title: '공지 취소됨', timer: 1000, showConfirmButton: false });
+        await loadConfig();
+        syncAnnounceButtons(currentBlogPostId);
+      } catch (e) {
+        Swal.fire('오류', e.message, 'error');
       }
     }
 

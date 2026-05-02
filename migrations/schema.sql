@@ -122,10 +122,11 @@ CREATE TABLE IF NOT EXISTS admin_categories (
 
 -- 설정 테이블
 CREATE TABLE IF NOT EXISTS settings (
-  id                    INTEGER PRIMARY KEY CHECK (id = 1),
-  namechange_ratelimit  INTEGER DEFAULT 0,
-  allow_direct_message  INTEGER DEFAULT 0,
-  signup_policy         TEXT DEFAULT 'open'  -- 'open' (모두 허용), 'approval' (관리자 승인제)
+  id                      INTEGER PRIMARY KEY CHECK (id = 1),
+  namechange_ratelimit    INTEGER DEFAULT 0,
+  allow_direct_message    INTEGER DEFAULT 0,
+  signup_policy           TEXT DEFAULT 'open',  -- 'open' (모두 허용), 'approval' (관리자 승인제)
+  announced_blog_post_id  INTEGER DEFAULT NULL  -- 사이트 전역 공지로 발행된 blog_posts.id (없으면 NULL)
 );
 
 -- 설정 초기 데이터 (이미 있는 경우 무시)
