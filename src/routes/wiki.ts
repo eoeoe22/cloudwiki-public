@@ -776,7 +776,7 @@ wiki.get('/w/recent-revisions', async (c) => {
     const offset = Math.max(0, parseInt(c.req.query('offset') || '0', 10));
     const limit = Math.min(50, Math.max(1, parseInt(c.req.query('limit') || '10', 10)));
 
-    const query = `
+    const listQuery = `
         SELECT r.id, r.page_id, r.page_version, r.summary, r.created_at,
                p.slug,
                u.id as author_id, u.name as author_name, u.picture as author_picture,
@@ -787,18 +787,25 @@ wiki.get('/w/recent-revisions', async (c) => {
         LEFT JOIN users u ON r.author_id = u.id
         WHERE p.deleted_at IS NULL
         ORDER BY r.created_at DESC LIMIT ? OFFSET ?`;
+    const countQuery = `
+        SELECT COUNT(*) as total
+        FROM revisions r
+        JOIN pages p ON r.page_id = p.id
+        WHERE p.deleted_at IS NULL`;
 
-    const { results } = await db.prepare(query).bind(limit + 1, offset).all();
+    const [listResult, countResult] = await db.batch([
+        db.prepare(listQuery).bind(limit, offset),
+        db.prepare(countQuery),
+    ]);
 
-    let has_more = false;
-    if (results.length > limit) {
-        has_more = true;
-        results.pop();
-    }
+    const results = listResult.results;
+    const rawTotal = (countResult.results[0] as any)?.total;
+    const parsedTotal = Number(rawTotal);
+    const total = Number.isFinite(parsedTotal) ? parsedTotal : 0;
 
     enrichRoles(results, 'author_role', '_author_email', c.env);
 
-    return c.json(safeJSON({ revisions: results, has_more }));
+    return c.json(safeJSON({ revisions: results, total, has_more: offset + results.length < total }));
 });
 
 /**
@@ -972,30 +979,6 @@ wiki.get('/w/:slug', async (c) => {
         // 만약 대상 문서가 없으면, 원래 문서를 그대로 보여줍니다.
     }
 
-    // 문서가 없으면 리다이렉트 테이블 확인 (alias)
-    if (!page) {
-        const redirect = await db
-            .prepare('SELECT target_page_id FROM redirects WHERE source_slug = ?')
-            .bind(slug)
-            .first<{ target_page_id: number }>();
-
-        if (redirect) {
-            let targetPage = await db
-                .prepare('SELECT * FROM pages WHERE id = ?')
-                .bind(redirect.target_page_id)
-                .first<Page>();
-
-            if (targetPage && targetPage.deleted_at && !isAdmin) {
-                targetPage = null;
-            }
-
-            if (targetPage) {
-                page = targetPage;
-                redirectedFrom = slug;
-            }
-        }
-    }
-
     if (!page) {
         return c.json({ error: '문서를 찾을 수 없습니다.' }, 404);
     }
@@ -1127,22 +1110,10 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
         return c.json({ error: '편집 요약은 최대 50자까지 입력할 수 있습니다.' }, 400);
     }
 
-    // 문서 생성/수정 전, 해당 slug가 리다이렉트 소스로 사용되고 있는지 확인 (생성 시)
     const existing = await db
         .prepare('SELECT id, version, is_locked, redirect_to, content FROM pages WHERE slug = ? AND deleted_at IS NULL')
         .bind(slug)
         .first<{ id: number; version: number; is_locked: number; redirect_to: string | null; content: string }>();
-
-    if (!existing) {
-        // 새 문서 생성 시: 리다이렉트 충돌 확인
-        const redirect = await db
-            .prepare('SELECT id FROM redirects WHERE source_slug = ?')
-            .bind(slug)
-            .first();
-        if (redirect) {
-            return c.json({ error: `"${slug}" 이름은 이미 다른 문서로의 넘겨주기(Redirect)로 사용되고 있어 생성할 수 없습니다.` }, 409);
-        }
-    }
 
     let finalIsLocked = 0;
 
@@ -1641,7 +1612,6 @@ wiki.delete('/w/:slug', requireAuth, async (c) => {
             db.prepare('DELETE FROM page_links WHERE source_page_id = ? AND blog = 0').bind(page.id),
             db.prepare('DELETE FROM page_categories WHERE page_id = ?').bind(page.id),
             db.prepare('DELETE FROM revisions WHERE page_id = ?').bind(page.id),
-            db.prepare('DELETE FROM redirects WHERE target_page_id = ?').bind(page.id),
             db.prepare('DELETE FROM pages WHERE id = ?').bind(page.id)
         ];
         await db.batch(batch);
@@ -1782,12 +1752,6 @@ wiki.post('/w/:slug/move', requireAdmin, async (c) => {
     const targetExists = await db.prepare('SELECT id FROM pages WHERE slug = ? AND deleted_at IS NULL').bind(trimmedNewSlug).first();
     if (targetExists) {
         return c.json({ error: '이미 존재하는 문서 이름입니다.' }, 409);
-    }
-
-    // Check if target is a redirect source
-    const redirectExists = await db.prepare('SELECT id FROM redirects WHERE source_slug = ?').bind(trimmedNewSlug).first();
-    if (redirectExists) {
-        return c.json({ error: '해당 이름은 다른 문서로의 넘겨주기(Redirect)로 사용되고 있어 이동할 수 없습니다.' }, 409);
     }
 
     const page = await db.prepare('SELECT id, is_locked FROM pages WHERE slug = ? AND deleted_at IS NULL').bind(currentSlug).first<{ id: number, is_locked: number }>();
@@ -1950,94 +1914,6 @@ wiki.post('/w/:slug/revert', requireAuth, async (c) => {
 
     return c.json({ message: '문서가 되돌려졌습니다.', version: newVersion });
 });
-
-/**
- * GET /w/:slug/redirects
- * 해당 문서로 연결된 넘겨주기 목록
- */
-wiki.get('/w/:slug/redirects', async (c) => {
-    const slug = c.req.param('slug');
-    const db = c.env.DB;
-
-    const page = await db.prepare('SELECT id FROM pages WHERE slug = ? AND deleted_at IS NULL').bind(slug).first<{ id: number }>();
-    if (!page) {
-        return c.json({ error: '문서를 찾을 수 없습니다.' }, 404);
-    }
-
-    const { results } = await db.prepare('SELECT source_slug, created_at FROM redirects WHERE target_page_id = ? ORDER BY source_slug ASC')
-        .bind(page.id)
-        .all();
-
-    return c.json({ redirects: results });
-});
-
-/**
- * POST /w/:slug/redirects
- * 넘겨주기 추가
- */
-wiki.post('/w/:slug/redirects', requireAuth, async (c) => {
-    const slug = c.req.param('slug');
-    const { source_slug } = await c.req.json<{ source_slug: string }>();
-    const db = c.env.DB;
-
-    if (!source_slug || source_slug.trim().length === 0) {
-        return c.json({ error: '넘겨줄 이름을 입력해주세요.' }, 400);
-    }
-
-    const page = await db.prepare('SELECT id FROM pages WHERE slug = ? AND deleted_at IS NULL').bind(slug).first<{ id: number }>();
-    if (!page) {
-        return c.json({ error: '문서를 찾을 수 없습니다.' }, 404);
-    }
-
-    // Check conflict: source_slug cannot be an existing page
-    const pageConflict = await db.prepare('SELECT id FROM pages WHERE slug = ? AND deleted_at IS NULL').bind(source_slug).first();
-    if (pageConflict) {
-        return c.json({ error: '이미 존재하는 문서 이름입니다.' }, 409);
-    }
-
-    // Check conflict: source_slug cannot be an existing redirect
-    try {
-        await db.prepare('INSERT INTO redirects (source_slug, target_page_id) VALUES (?, ?)')
-            .bind(source_slug, page.id)
-            .run();
-    } catch (e: any) {
-        if (e.message?.includes('UNIQUE')) {
-            return c.json({ error: '이미 존재하는 넘겨주기 이름입니다.' }, 409);
-        }
-        throw e;
-    }
-
-    return c.json({ success: true });
-});
-
-/**
- * DELETE /w/:slug/redirects
- * 넘겨주기 삭제
- */
-wiki.delete('/w/:slug/redirects', requireAuth, async (c) => {
-    const slug = c.req.param('slug'); // The target page slug (context)
-    const source_slug = c.req.query('source');
-    const db = c.env.DB;
-
-    if (!source_slug) {
-        return c.json({ error: '삭제할 넘겨주기 이름을 지정해주세요.' }, 400);
-    }
-
-    // Verify ownership? Or just delete by source_slug?
-    // Usually anyone can edit redirects, or match permissions.
-    // I'll allow it if logged in.
-
-    const result = await db.prepare('DELETE FROM redirects WHERE source_slug = ?')
-        .bind(source_slug)
-        .run();
-
-    if (result.meta.changes === 0) {
-        return c.json({ error: '넘겨주기를 찾을 수 없습니다.' }, 404);
-    }
-
-    return c.json({ success: true });
-});
-
 
 /**
  * GET /w/:slug/watch

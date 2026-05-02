@@ -72,9 +72,9 @@
                 style="width: 100%; max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch;">
                 <div class="revision-list" id="revisionsList" style="min-width: 700px;"></div>
               </div>
-              <button id="loadMoreBtn" class="btn btn-outline-secondary w-100 mt-3 d-none" onclick="loadMore()">
-                <i class="bi bi-chevron-down"></i> 더 로드하기
-              </button>
+              <nav id="recentRevisionsPagination" class="mt-3 d-none" aria-label="최근 수정 내역 페이지네이션">
+                <ul class="pagination justify-content-center flex-wrap" id="recentRevisionsPaginationList"></ul>
+              </nav>
             </div>
 
             <!-- 모든 문서 목록 탭 -->
@@ -156,8 +156,10 @@
   <script src="/js/common.js"></script>
   <script>
     // ── 전역 상태 ──
-    let currentOffset = 0;
     const PAGE_SIZE = 10;
+    let currentRecentPage = 1;
+    let totalRecentPages = 0;
+    let recentRevisionsAbortController = null;
 
     // 모든 문서 목록 상태
     const ALL_PAGES_SIZE = 20;
@@ -199,19 +201,38 @@
     }
 
     // ── 최근 수정 내역 로드 ──
-    async function loadRecentRevisions(append = false) {
+    async function loadRecentRevisions(page = 1) {
+      if (recentRevisionsAbortController) {
+        recentRevisionsAbortController.abort();
+        recentRevisionsAbortController = null;
+      }
+      recentRevisionsAbortController = new AbortController();
+      const signal = recentRevisionsAbortController.signal;
+
+      const isInitial = totalRecentPages === 0;
+
       try {
-        if (!append) {
+        const listEl = document.getElementById('revisionsList');
+        if (isInitial) {
           document.getElementById('loading').classList.remove('d-none');
           document.getElementById('mainContent').classList.add('d-none');
-          currentOffset = 0;
+        } else {
+          listEl.innerHTML = '<div class="text-center py-4"><div class="spinner-border spinner-border-sm text-primary" role="status"></div> 불러오는 중...</div>';
+          document.getElementById('recentRevisionsPagination').classList.add('d-none');
         }
 
-        const res = await fetch(`/api/w/recent-revisions?offset=${currentOffset}&limit=${PAGE_SIZE}`);
+        const offset = (page - 1) * PAGE_SIZE;
+        const res = await fetch(`/api/w/recent-revisions?offset=${offset}&limit=${PAGE_SIZE}`, { signal });
         if (!res.ok) throw new Error('최근 수정 내역 로딩 실패');
 
         const data = await res.json();
-        const listEl = document.getElementById('revisionsList');
+        currentRecentPage = page;
+        totalRecentPages = Math.max(1, Math.ceil((data.total || 0) / PAGE_SIZE));
+
+        if (data.revisions.length === 0 && data.total > 0 && page > totalRecentPages) {
+          loadRecentRevisions(totalRecentPages);
+          return;
+        }
 
         const itemsHtml = data.revisions.map(rev => {
           const date = new Date(rev.created_at * 1000).toLocaleString('ko-KR');
@@ -239,40 +260,73 @@
           `;
         }).join('');
 
-        if (append) {
-          listEl.insertAdjacentHTML('beforeend', itemsHtml);
-        } else {
-          listEl.innerHTML = itemsHtml;
-        }
+        listEl.innerHTML = itemsHtml;
 
         // 빈 결과 처리
-        if (data.revisions.length === 0 && !append) {
+        if (data.revisions.length === 0) {
           listEl.innerHTML = '<div class="text-center text-muted py-5"><i class="bi bi-inbox fs-1 d-block mb-2"></i>최근 수정 내역이 없습니다.</div>';
         }
 
-        const loadMoreBtn = document.getElementById('loadMoreBtn');
-        if (data.has_more) {
-          loadMoreBtn.classList.remove('d-none');
-        } else {
-          loadMoreBtn.classList.add('d-none');
-        }
+        renderRecentRevisionsPagination();
 
         document.getElementById('loading').classList.add('d-none');
         document.getElementById('mainContent').classList.remove('d-none');
         initRoleIconPopovers(listEl);
 
-        currentOffset += data.revisions.length;
-
       } catch (err) {
+        if (err.name === 'AbortError') return;
         console.error(err);
         document.getElementById('loading').classList.add('d-none');
         Swal.fire('오류', '최근 수정 내역을 불러오는 데 실패했습니다.', 'error');
       }
     }
 
-    // ── 더 로드하기 (최근 수정 내역) ──
-    function loadMore() {
-      loadRecentRevisions(true);
+    // ── 최근 수정 내역 페이지네이션 렌더링 ──
+    function renderRecentRevisionsPagination() {
+      const nav = document.getElementById('recentRevisionsPagination');
+      const ul = document.getElementById('recentRevisionsPaginationList');
+
+      if (totalRecentPages <= 1) {
+        nav.classList.add('d-none');
+        ul.innerHTML = '';
+        return;
+      }
+
+      nav.classList.remove('d-none');
+
+      const pages = new Set([1, totalRecentPages]);
+      for (let i = Math.max(2, currentRecentPage - 2); i <= Math.min(totalRecentPages - 1, currentRecentPage + 2); i++) {
+        pages.add(i);
+      }
+      const sortedPages = [...pages].sort((a, b) => a - b);
+
+      let html = `<li class="page-item ${currentRecentPage === 1 ? 'disabled' : ''}">
+        <a class="page-link" href="#" ${currentRecentPage === 1 ? 'tabindex="-1" aria-disabled="true"' : ''} onclick="event.preventDefault(); goToRecentPage(${currentRecentPage - 1})">이전</a>
+      </li>`;
+
+      let prev = 0;
+      for (const p of sortedPages) {
+        if (prev && p - prev > 1) {
+          html += `<li class="page-item disabled"><span class="page-link">…</span></li>`;
+        }
+        html += `<li class="page-item ${p === currentRecentPage ? 'active' : ''}">
+          <a class="page-link" href="#" ${p === currentRecentPage ? 'aria-current="page"' : ''} onclick="event.preventDefault(); goToRecentPage(${p})">${p}</a>
+        </li>`;
+        prev = p;
+      }
+
+      html += `<li class="page-item ${currentRecentPage === totalRecentPages ? 'disabled' : ''}">
+        <a class="page-link" href="#" ${currentRecentPage === totalRecentPages ? 'tabindex="-1" aria-disabled="true"' : ''} onclick="event.preventDefault(); goToRecentPage(${currentRecentPage + 1})">다음</a>
+      </li>`;
+
+      ul.innerHTML = html;
+    }
+
+    // ── 페이지 이동 (최근 수정 내역) ──
+    function goToRecentPage(page) {
+      if (page < 1 || page > totalRecentPages) return;
+      loadRecentRevisions(page);
+      document.getElementById('pane-recent').scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 
     // ── 모든 문서 목록 로드 ──

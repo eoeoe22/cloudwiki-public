@@ -627,30 +627,6 @@ ${contentBlock}
         }
     }
 
-    // 문서가 없으면 리다이렉트 테이블 확인 (alias)
-    if (!page) {
-        const redirect = await db
-            .prepare('SELECT target_page_id FROM redirects WHERE source_slug = ?')
-            .bind(slug)
-            .first<{ target_page_id: number }>();
-
-        if (redirect) {
-            let targetPage = await db
-                .prepare('SELECT * FROM pages WHERE id = ?')
-                .bind(redirect.target_page_id)
-                .first<Page>();
-
-            if (targetPage && targetPage.deleted_at && !isAdmin) {
-                targetPage = null;
-            }
-
-            if (targetPage) {
-                page = targetPage;
-                redirectedFrom = slug;
-            }
-        }
-    }
-
     // 2) SSR 데이터 구성
     let ssrData: Record<string, any> = {
         _ssrSlug: slug,

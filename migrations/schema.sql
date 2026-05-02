@@ -120,17 +120,6 @@ CREATE TABLE IF NOT EXISTS admin_categories (
     created_at INTEGER DEFAULT (unixepoch())
 );
 
--- 리다이렉트 테이블
-CREATE TABLE IF NOT EXISTS redirects (
-  id INTEGER PRIMARY KEY,
-  source_slug TEXT UNIQUE NOT NULL,
-  target_page_id INTEGER NOT NULL,
-  created_at INTEGER DEFAULT (unixepoch())
-);
-
-
-CREATE INDEX IF NOT EXISTS idx_redirects_target ON redirects(target_page_id);
-
 -- 설정 테이블
 CREATE TABLE IF NOT EXISTS settings (
   id                    INTEGER PRIMARY KEY CHECK (id = 1),

@@ -21,8 +21,6 @@ async function invalidateAllPagesCache(c: any) {
     try {
         const { results } = await db.prepare(`
             SELECT slug FROM pages WHERE deleted_at IS NULL
-            UNION
-            SELECT source_slug as slug FROM redirects
         `).all();
 
         // 너무 많은 프로미스가 동시에 실행되지 않도록 배치 처리

@@ -1346,6 +1346,12 @@ div:where(.swal2-container) .swal2-html-container {
   border: 1px solid var(--wiki-border);
 }
 
+.revision-item.is-current {
+  background: color-mix(in srgb, var(--wiki-warning) 15%, var(--wiki-card-bg));
+  border-color: var(--wiki-warning);
+  box-shadow: 0 0 0 1px var(--wiki-warning) inset;
+}
+
 /* 리비전 조작 버튼 (Premium Neutral UI) */
 .btn-rev-action {
   font-size: 0.8rem;
