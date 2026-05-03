@@ -123,6 +123,13 @@ async function updateCustomPreview() {
     } else {
         await renderWikiContent(md, slug, 'custom-wiki-preview');
     }
+    // 프리뷰가 갱신됐으니 스크롤 동기화 가이드 캐시 무효화 + 사후 레이아웃 변동 감시 재설정
+    if (typeof window._invalidateScrollSyncGuides === 'function') {
+        window._invalidateScrollSyncGuides();
+    }
+    if (typeof window._observePreviewLayoutShifts === 'function') {
+        window._observePreviewLayoutShifts();
+    }
 }
 
 // ── 문서 하단으로 스크롤 (에디터 + 프리뷰) ──
@@ -330,7 +337,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         `;
 
         // CM6 모듈 동적 import (Import Map으로 해석)
-        const [cmState, cmViewMod, cmCommands, cmMarkdown, cmLangData, cmOneDark, cmLanguage, cmLezer] = await Promise.all([
+        const [cmState, cmViewMod, cmCommands, cmMarkdown, cmLangData, cmOneDark, cmLanguage, cmLezer, cmSearch] = await Promise.all([
             import("@codemirror/state"),
             import("@codemirror/view"),
             import("@codemirror/commands"),
@@ -339,9 +346,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             import("@codemirror/theme-one-dark"),
             import("@codemirror/language"),
             import("@lezer/highlight"),
+            import("@codemirror/search"),
         ]);
 
-        const { EditorState, Compartment, RangeSetBuilder } = cmState;
+        const { EditorState, Compartment, RangeSetBuilder, StateField, StateEffect } = cmState;
         const { EditorView, keymap: cmKeymap, lineNumbers, highlightActiveLineGutter, drawSelection,
             MatchDecorator, ViewPlugin, Decoration, WidgetType } = cmViewMod;
         const { defaultKeymap, history, historyKeymap, indentWithTab } = cmCommands;
@@ -350,6 +358,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const { oneDark } = cmOneDark;
         const { syntaxHighlighting, defaultHighlightStyle, indentOnInput, bracketMatching, HighlightStyle, syntaxTree } = cmLanguage;
         const { tags: t } = cmLezer;
+        const { SearchCursor } = cmSearch;
 
         // 이벤트 핸들러 저장소 (shim의 editor.on() 용)
         const editorEventHandlers = { change: [], blur: [] };
@@ -376,6 +385,22 @@ document.addEventListener('DOMContentLoaded', async () => {
         const advancedEditCompartment = new Compartment();
         const themeCompartment = new Compartment();
         const darkBgCompartment = new Compartment();
+
+        // ── 찾기/바꾸기 매치 하이라이트 (StateField + StateEffect) ──
+        const setSearchMatchesEffect = StateEffect.define();
+        const searchMatchDeco = Decoration.mark({ class: "cm-search-match" });
+        const searchActiveDeco = Decoration.mark({ class: "cm-search-match-active" });
+        const searchMatchField = StateField.define({
+            create() { return Decoration.none; },
+            update(value, tr) {
+                value = value.map(tr.changes);
+                for (const e of tr.effects) {
+                    if (e.is(setSearchMatchesEffect)) value = e.value;
+                }
+                return value;
+            },
+            provide: f => EditorView.decorations.from(f)
+        });
 
         // ── 마크다운 문법 하이라이트 스타일 ──
         const markdownLightStyle = HighlightStyle.define([
@@ -919,11 +944,15 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         });
 
+        // 찾기/바꾸기 패널이 외부 편집을 감지하기 위한 훅 (find 패널 init 후 할당됨)
+        var _findFeatureOnDocChange = null;
+
         // 문서 변경 감지 리스너
         const updateListener = EditorView.updateListener.of((update) => {
             if (update.docChanged) {
                 editorEventHandlers.change.forEach(cb => cb());
                 updateEditorTextCounterFromDoc(update.state.doc);
+                if (_findFeatureOnDocChange) _findFeatureOnDocChange(update);
             }
             // 커서(선택) 위치가 변하면 스크롤 동기화 (활성화된 경우)
             // 단, 문서가 변경된 업데이트는 프리뷰가 아직 재렌더되기 전이므로 건너뛰고
@@ -1073,10 +1102,12 @@ document.addEventListener('DOMContentLoaded', async () => {
                     bracketMatching(),
                     history(),
                     cmKeymap.of([
+                        { key: "Mod-f", run: () => { if (typeof openFindPanel === 'function') { openFindPanel(); } return true; }, preventDefault: true },
                         ...defaultKeymap,
                         ...historyKeymap,
                         indentWithTab
                     ]),
+                    searchMatchField,
                     themeCompartment.of(isDarkMode ? oneDark : lightTheme),
                     darkBgCompartment.of(buildDarkBgExt()),
                     lineWrappingCompartment.of(
@@ -1598,6 +1629,264 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         });
 
+        // ── 찾기/바꾸기 ──
+        const findBtn = createToolbarBtn(
+            '<i class="mdi mdi-magnify"></i>',
+            '찾기 / 바꾸기 (Ctrl+F)',
+            () => {
+                if (findPanel.style.display === 'block') closeFindPanel();
+                else openFindPanel();
+            }
+        );
+        findBtn.id = 'cm-find-btn';
+        toolbar.insertBefore(findBtn, modeBtn);
+
+        const findPanel = document.createElement('div');
+        findPanel.id = 'cm-find-panel';
+        findPanel.className = 'cm-find-panel';
+        findPanel.style.display = 'none';
+        findPanel.innerHTML = `
+            <div class="cm-find-row">
+                <input type="text" id="cmFindInput" class="cm-find-input" placeholder="찾기" autocomplete="off" spellcheck="false">
+                <span class="cm-find-status" id="cmFindStatus"></span>
+                <button type="button" id="cmFindPrevBtn" class="cm-find-btn" title="이전 (Shift+Enter)"><i class="mdi mdi-chevron-up"></i></button>
+                <button type="button" id="cmFindNextBtn" class="cm-find-btn" title="다음 (Enter)"><i class="mdi mdi-chevron-down"></i></button>
+                <label class="cm-find-toggle" title="대소문자 구분">
+                    <input type="checkbox" id="cmFindCaseSensitive">
+                    <span>Aa</span>
+                </label>
+                <button type="button" id="cmFindCloseBtn" class="cm-find-btn cm-find-close" title="닫기 (Esc)"><i class="mdi mdi-close"></i></button>
+            </div>
+            <div class="cm-find-row">
+                <input type="text" id="cmReplaceInput" class="cm-find-input" placeholder="바꾸기" autocomplete="off" spellcheck="false">
+                <button type="button" id="cmReplaceOneBtn" class="cm-find-btn cm-find-btn-text" title="현재 일치 항목을 바꾸고 다음으로 이동">
+                    <i class="mdi mdi-find-replace"></i> 바꾸기
+                </button>
+            </div>
+        `;
+        document.body.appendChild(findPanel);
+
+        const findInput = findPanel.querySelector('#cmFindInput');
+        const replaceInput = findPanel.querySelector('#cmReplaceInput');
+        const findStatus = findPanel.querySelector('#cmFindStatus');
+        const findPrevBtn = findPanel.querySelector('#cmFindPrevBtn');
+        const findNextBtn = findPanel.querySelector('#cmFindNextBtn');
+        const findCaseCheck = findPanel.querySelector('#cmFindCaseSensitive');
+        const findCloseBtn = findPanel.querySelector('#cmFindCloseBtn');
+        const replaceOneBtn = findPanel.querySelector('#cmReplaceOneBtn');
+
+        const _findState = { matches: [], currentIdx: -1, query: '', caseSensitive: false };
+
+        function _computeFindMatches() {
+            const q = _findState.query;
+            if (!q) return [];
+            // SearchCursor는 원본 Text 트리 위에서 동작하므로 İ→i̇ 처럼 길이가 변하는
+            // Unicode 케이스 매핑이 있어도 from/to 가 항상 원본 인덱스로 반환된다.
+            // 단순 인덱싱(toLowerCase 후 indexOf) 방식은 그런 문자 뒤의 위치가 어긋난다.
+            const doc = cmEditorView.state.doc;
+            const normalize = _findState.caseSensitive ? undefined : (s) => s.toLowerCase();
+            const cursor = new SearchCursor(doc, q, 0, doc.length, normalize);
+            const out = [];
+            while (!cursor.next().done) {
+                out.push({ from: cursor.value.from, to: cursor.value.to });
+                if (out.length > 5000) break;
+            }
+            return out;
+        }
+
+        function _rebuildFindDeco() {
+            if (_findState.matches.length === 0) {
+                cmEditorView.dispatch({ effects: setSearchMatchesEffect.of(Decoration.none) });
+                return;
+            }
+            const builder = new RangeSetBuilder();
+            _findState.matches.forEach((m, i) => {
+                builder.add(m.from, m.to, i === _findState.currentIdx ? searchActiveDeco : searchMatchDeco);
+            });
+            cmEditorView.dispatch({ effects: setSearchMatchesEffect.of(builder.finish()) });
+        }
+
+        function _updateFindStatus() {
+            if (!_findState.query) { findStatus.textContent = ''; return; }
+            if (_findState.matches.length === 0) { findStatus.textContent = '0/0'; return; }
+            findStatus.textContent = `${_findState.currentIdx + 1}/${_findState.matches.length}`;
+        }
+
+        function _scrollFindMatchIntoView() {
+            const m = _findState.matches[_findState.currentIdx];
+            if (!m) return;
+            cmEditorView.dispatch({ effects: EditorView.scrollIntoView(m.from, { y: 'center' }) });
+        }
+
+        // scroll: true 면 활성 매치를 화면에 보이도록 스크롤. 사용자 입력에 의한 본문
+        // 변경(_findFeatureOnDocChange)에서는 false 로 호출해야 한다 — 그렇지 않으면 입력
+        // 위치와 무관하게 매번 활성 매치로 뷰포트가 점프해 다른 곳을 편집하기 힘들어진다.
+        function _refreshFind(useCursorAnchor, scroll) {
+            if (scroll === undefined) scroll = true;
+            _findState.matches = _computeFindMatches();
+            if (_findState.matches.length === 0) {
+                _findState.currentIdx = -1;
+            } else if (useCursorAnchor) {
+                const cursor = cmEditorView.state.selection.main.from;
+                let idx = _findState.matches.findIndex(m => m.from >= cursor);
+                if (idx === -1) idx = 0;
+                _findState.currentIdx = idx;
+            } else {
+                if (_findState.currentIdx < 0) _findState.currentIdx = 0;
+                if (_findState.currentIdx >= _findState.matches.length) _findState.currentIdx = _findState.matches.length - 1;
+            }
+            _rebuildFindDeco();
+            if (_findState.currentIdx >= 0 && scroll) _scrollFindMatchIntoView();
+            _updateFindStatus();
+        }
+
+        function _gotoFindNext() {
+            if (_findState.matches.length === 0) return;
+            _findState.currentIdx = (_findState.currentIdx + 1) % _findState.matches.length;
+            _rebuildFindDeco();
+            _scrollFindMatchIntoView();
+            _updateFindStatus();
+        }
+        function _gotoFindPrev() {
+            if (_findState.matches.length === 0) return;
+            _findState.currentIdx = (_findState.currentIdx - 1 + _findState.matches.length) % _findState.matches.length;
+            _rebuildFindDeco();
+            _scrollFindMatchIntoView();
+            _updateFindStatus();
+        }
+
+        function _replaceCurrentAndAdvance() {
+            if (_findState.matches.length === 0 || _findState.currentIdx < 0) return;
+            const m = _findState.matches[_findState.currentIdx];
+            const replacement = replaceInput.value;
+            cmEditorView.dispatch({
+                changes: { from: m.from, to: m.to, insert: replacement }
+            });
+            // 본문이 바뀌었으므로 매치 재계산. 치환된 위치 다음으로 이동.
+            const after = m.from + replacement.length;
+            _findState.matches = _computeFindMatches();
+            if (_findState.matches.length === 0) {
+                _findState.currentIdx = -1;
+            } else {
+                let idx = _findState.matches.findIndex(mm => mm.from >= after);
+                if (idx === -1) idx = 0;
+                _findState.currentIdx = idx;
+            }
+            _rebuildFindDeco();
+            if (_findState.currentIdx >= 0) _scrollFindMatchIntoView();
+            _updateFindStatus();
+        }
+
+        function _positionFindPanel() {
+            const tb = document.getElementById('cm-toolbar');
+            if (!tb) return;
+            const rect = tb.getBoundingClientRect();
+            const margin = 8;
+            const panelW = findPanel.offsetWidth || 420;
+            const panelH = findPanel.offsetHeight || 90;
+            const viewportW = document.documentElement.clientWidth;
+            const viewportH = document.documentElement.clientHeight;
+            let left = rect.right - panelW - 4;
+            left = Math.max(margin, Math.min(left, viewportW - panelW - margin));
+            let top = rect.bottom + 4;
+            if (top + panelH + margin > viewportH && rect.top - panelH - 4 >= margin) {
+                top = rect.top - panelH - 4;
+            }
+            findPanel.style.left = `${left + window.scrollX}px`;
+            findPanel.style.top = `${top + window.scrollY}px`;
+        }
+
+        function openFindPanel() {
+            const wasHidden = findPanel.style.display !== 'block';
+            findPanel.style.display = 'block';
+            // 측정 후 위치 설정
+            _positionFindPanel();
+            findBtn.classList.add('active');
+            if (wasHidden) {
+                // 에디터에 줄바꿈 없는 선택이 있으면 그걸로 채움
+                const sel = cmEditorView.state.selection.main;
+                if (sel.from !== sel.to) {
+                    const text = cmEditorView.state.sliceDoc(sel.from, sel.to);
+                    if (text && !text.includes('\n')) {
+                        findInput.value = text;
+                    }
+                }
+                _findState.query = findInput.value;
+                _findState.caseSensitive = findCaseCheck.checked;
+                _refreshFind(true);
+            }
+            findInput.focus();
+            findInput.select();
+        }
+
+        function closeFindPanel() {
+            findPanel.style.display = 'none';
+            findBtn.classList.remove('active');
+            _findState.query = '';
+            _findState.matches = [];
+            _findState.currentIdx = -1;
+            _rebuildFindDeco();
+            _updateFindStatus();
+            cmEditorView.focus();
+        }
+
+        findInput.addEventListener('input', () => {
+            _findState.query = findInput.value;
+            _refreshFind(true);
+        });
+        findCaseCheck.addEventListener('change', () => {
+            _findState.caseSensitive = findCaseCheck.checked;
+            _refreshFind(false);
+        });
+        findInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                if (e.shiftKey) _gotoFindPrev(); else _gotoFindNext();
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                closeFindPanel();
+            }
+        });
+        replaceInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                _replaceCurrentAndAdvance();
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                closeFindPanel();
+            }
+        });
+        findNextBtn.addEventListener('click', _gotoFindNext);
+        findPrevBtn.addEventListener('click', _gotoFindPrev);
+        replaceOneBtn.addEventListener('click', () => {
+            _replaceCurrentAndAdvance();
+            // 연속 클릭 시 포커스 유지
+            replaceInput.focus();
+        });
+        findCloseBtn.addEventListener('click', closeFindPanel);
+
+        // 외부에서 본문이 변경되면 매치 재계산. 사용자가 다른 곳을 편집 중일 때 활성
+        // 매치로 자동 스크롤되면 뷰포트가 계속 점프하므로, 여기서는 스크롤하지 않는다
+        // (스크롤은 next/prev/open/replace 등 명시적 네비게이션에서만 수행).
+        _findFeatureOnDocChange = () => {
+            if (findPanel.style.display !== 'block') return;
+            if (!_findState.query) return;
+            _refreshFind(false, false);
+        };
+
+        window.addEventListener('resize', () => {
+            if (findPanel.style.display === 'block') _positionFindPanel();
+        });
+
+        // 브라우저 Ctrl+F (또는 macOS Cmd+F) 인터셉트
+        window.addEventListener('keydown', (e) => {
+            if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && (e.key === 'f' || e.key === 'F')) {
+                if (!document.getElementById('cm-editor')) return;
+                e.preventDefault();
+                openFindPanel();
+            }
+        });
+
         // ── 줄 번호 토글 ──
         document.getElementById('settingLineNumbers').addEventListener('change', (e) => {
             editorSettings.showLineNumbers = e.target.checked;
@@ -1801,83 +2090,142 @@ document.addEventListener('DOMContentLoaded', async () => {
             return null;
         }
 
+        // 가이드포인트 캐시.
+        // 헤딩 anchor 의 절대 scrollTop 위치는 프리뷰 콘텐츠가 변하지 않는 한 불변이므로,
+        // 매 스크롤 이벤트마다 _collectRawHeadingsFromDoc / getBoundingClientRect 를 다시 돌리지 않는다.
+        // 무효화 트리거: 프리뷰 재렌더, 윈도우 리사이즈, 스크롤 동기화 활성화.
+        let _scrollSyncGuidesCache = null;
+        function _invalidateScrollSyncGuides() {
+            _scrollSyncGuidesCache = null;
+        }
+        // updateCustomPreview / 윈도우 리사이즈 등 동기화 함수 외부에서도 무효화할 수 있도록 노출
+        window._invalidateScrollSyncGuides = _invalidateScrollSyncGuides;
+        window.addEventListener('resize', _invalidateScrollSyncGuides, { passive: true });
+
+        // 프리뷰 내부의 비동기 레이아웃 변동(이미지/임베드 지연 로드, 폰트 늦은 적용,
+        // 익스텐션의 사후 DOM 변형 등)도 헤딩 오프셋을 흔들 수 있으므로 감지하여 캐시 무효화.
+        // 매 스크롤 이벤트가 아니라 "레이아웃이 실제로 흔들렸을 때"만 캐시를 버린다.
+        let _scrollSyncResizeObserver = null;
+        function _observePreviewLayoutShifts() {
+            const customPreview = document.getElementById('custom-wiki-preview');
+            if (!customPreview) return;
+            if (typeof ResizeObserver !== 'undefined') {
+                if (!_scrollSyncResizeObserver) {
+                    _scrollSyncResizeObserver = new ResizeObserver(_invalidateScrollSyncGuides);
+                }
+                _scrollSyncResizeObserver.disconnect();
+                // 직접 자식 노드의 크기 변화를 본다 (이미지/임베드/익스텐션 캔버스 등)
+                Array.from(customPreview.children).forEach(child => {
+                    try { _scrollSyncResizeObserver.observe(child); } catch (_) { /* ignore */ }
+                });
+            }
+            // 폰트 늦은 적용으로 인한 텍스트 metrics 재계산 한 번
+            if (document.fonts && document.fonts.ready && typeof document.fonts.ready.then === 'function') {
+                document.fonts.ready.then(_invalidateScrollSyncGuides).catch(() => {});
+            }
+        }
+        window._observePreviewLayoutShifts = _observePreviewLayoutShifts;
+        function _buildScrollSyncGuides() {
+            const customPreview = document.getElementById('custom-wiki-preview');
+            if (!customPreview || !window._cmView) return null;
+            const view = window._cmView;
+            const totalLines = view.state.doc.lines;
+            const rawHeadings = _collectRawHeadingsFromDoc(view.state.doc.toString());
+            const previewRect = customPreview.getBoundingClientRect();
+            const previewScrollTop = customPreview.scrollTop;
+            const maxScroll = Math.max(0, customPreview.scrollHeight - customPreview.clientHeight);
+
+            const guides = [{ line: 0, targetTop: 0 }];
+            for (let k = 0; k < rawHeadings.length; k++) {
+                const anchor = _findPreviewAnchorByRawLine(customPreview, rawHeadings[k].lineIdx, k);
+                if (!anchor) continue;
+                const anchorRect = anchor.getBoundingClientRect();
+                const t = previewScrollTop + (anchorRect.top - previewRect.top) - 10;
+                guides.push({
+                    line: rawHeadings[k].lineIdx,
+                    targetTop: Math.min(maxScroll, Math.max(0, t))
+                });
+            }
+            // refLine0 은 0..totalLines-1 범위라 끝 가이드 라인을 totalLines-1 로 맞춘다.
+            // 단, 끝 라인이 마지막 가이드(시작 가이드 또는 마지막 헤딩) 의 라인보다
+            // 더 크지 않으면 push 하지 않는다. (라인 동일 시 동일라인 가이드의 마지막 항목이
+            // loIdx 로 선택되어 maxScroll 로 잘못 점프하는 회귀 방지)
+            const endLine = Math.max(0, totalLines - 1);
+            if (endLine > guides[guides.length - 1].line) {
+                guides.push({ line: endLine, targetTop: maxScroll });
+            }
+            return guides;
+        }
+
         function syncEditorScrollToPreview(source) {
             // source: 'cursor' (기본) | 'scroll'
-            //  - 'cursor' : 커서(선택의 head) 라인을 기준으로 헤딩 섹션 결정
-            //  - 'scroll' : 에디터 스크롤 영역 최상단 라인을 기준으로 결정 (휠/스크롤바 등으로
+            //  - 'cursor' : 커서(선택의 head) 라인을 기준
+            //  - 'scroll' : 에디터 스크롤 영역 최상단 라인을 기준 (휠/스크롤바 등으로
             //               캐럿 이동 없이 읽어 내려갈 때 프리뷰가 따라오도록)
+            //
+            // 헤딩 anchor 만 사용하던 섹션 단위 스크롤을 줄 단위로 세분화한다.
+            // 헤딩들의 (raw 라인, 프리뷰 scrollTop) 쌍을 가이드포인트로 두고,
+            // 현재 기준 라인이 두 가이드 사이에 있으면 라인 위치로 선형 보간하여
+            // 프리뷰 scrollTop 을 결정한다. 결과적으로 에디터에서 한 줄 움직이면
+            // 프리뷰도 비례해 한 줄만큼 따라간다.
             const customPreview = document.getElementById('custom-wiki-preview');
             if (!customPreview || !window._cmView) return;
 
             const view = window._cmView;
             const scroller = view.scrollDOM;
 
-            let refLineNum;
+            // 에디터가 맨 아래까지 스크롤되면 프리뷰도 맨 아래로 (끝부분 오차 보정)
+            if (source === 'scroll' && scroller
+                && scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 4) {
+                smoothScrollPreviewTo(customPreview.scrollHeight);
+                return;
+            }
 
+            let refLine0; // 0-indexed 기준 라인
             if (source === 'scroll') {
-                // 에디터가 맨 아래에 도달하면 프리뷰를 raw 소스의 마지막 헤딩으로 동기화 (끝부분 오차 보정)
-                if (scroller && scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 4) {
-                    const rawHeadings = _collectRawHeadingsFromDoc(view.state.doc.toString());
-                    if (rawHeadings.length > 0) {
-                        const last = rawHeadings[rawHeadings.length - 1];
-                        const lastAnchor = _findPreviewAnchorByRawLine(customPreview, last.lineIdx, rawHeadings.length - 1);
-                        if (lastAnchor) {
-                            const previewRect = customPreview.getBoundingClientRect();
-                            const anchorRect = lastAnchor.getBoundingClientRect();
-                            smoothScrollPreviewTo(customPreview.scrollTop + (anchorRect.top - previewRect.top) - 10);
-                        } else {
-                            smoothScrollPreviewTo(customPreview.scrollHeight);
-                        }
-                    } else {
-                        smoothScrollPreviewTo(customPreview.scrollHeight);
-                    }
-                    return;
-                }
-
-                // 에디터 스크롤 영역 최상단(툴바 바로 아래)의 문서 위치(pos) 파악
                 const rect = scroller.getBoundingClientRect();
                 let topPos = view.posAtCoords({ x: rect.left + 20, y: rect.top + 10 }, false);
                 if (topPos === null) {
                     if (!view.visibleRanges || !view.visibleRanges.length) return;
                     topPos = view.visibleRanges[0].from;
                 }
-                refLineNum = view.state.doc.lineAt(topPos).number; // 1-indexed
+                refLine0 = view.state.doc.lineAt(topPos).number - 1;
             } else {
-                // 커서(선택의 head) 위치의 라인을 기준
                 const cursorPos = view.state.selection.main.head;
-                refLineNum = view.state.doc.lineAt(cursorPos).number; // 1-indexed
+                refLine0 = view.state.doc.lineAt(cursorPos).number - 1;
             }
 
-            // raw 소스에서 헤딩 라인 인덱스 목록을 산출(ATX + Setext, 펜스 외부).
-            // refLineNum 보다 앞서거나 같은 마지막 헤딩의 lineIdx 로 프리뷰 anchor 를 찾는다.
-            const rawHeadings = _collectRawHeadingsFromDoc(view.state.doc.toString());
-            let currentRawLine = -1;
-            let currentHeadingIdx = -1;
-            for (let k = 0; k < rawHeadings.length; k++) {
-                if (rawHeadings[k].lineIdx + 1 <= refLineNum) {
-                    currentRawLine = rawHeadings[k].lineIdx;
-                    currentHeadingIdx = k;
-                } else {
-                    break;
-                }
+            // 가이드포인트: { line (0-indexed), targetTop (프리뷰 scrollTop) }
+            // - 문서 시작(line=0) → 프리뷰 최상단
+            // - 각 헤딩 → 해당 anchor 가 프리뷰 상단에 오는 scrollTop
+            // - 문서 끝(line=totalLines-1) → 프리뷰 최하단
+            // 캐시가 비어 있을 때만 재계산 (스크롤 이벤트마다 DOM 측정 회피).
+            if (!_scrollSyncGuidesCache) {
+                _scrollSyncGuidesCache = _buildScrollSyncGuides();
             }
+            const guides = _scrollSyncGuidesCache;
+            if (!guides || guides.length === 0) return;
 
-            // 프리뷰에서 해당 목차 엘리먼트를 찾아 정확한 오프셋만큼 스크롤
-            if (currentRawLine >= 0) {
-                const anchor = _findPreviewAnchorByRawLine(customPreview, currentRawLine, currentHeadingIdx);
-                if (anchor) {
-                    // offsetTop 대신 getBoundingClientRect()를 사용하여
-                    // 중간에 위치한 컨테이너 패딩이나 마진의 영향 없이 절대 스크롤 높이를 정확히 계산
-                    const previewRect = customPreview.getBoundingClientRect();
-                    const anchorRect = anchor.getBoundingClientRect();
+            // refLine0 을 포함하는 가이드 구간 [lo, hi] 를 찾는다.
+            // 같은 line 의 가이드가 여러 개면 더 뒤쪽(=헤딩 anchor)을 lo 로 선택해
+            // 헤딩 위치 정확도를 유지한다.
+            let loIdx = 0;
+            for (let k = 0; k < guides.length; k++) {
+                if (guides[k].line <= refLine0) loIdx = k;
+                else break;
+            }
+            const lo = guides[loIdx];
+            const hi = guides[Math.min(loIdx + 1, guides.length - 1)];
 
-                    // 현재 스크롤 위치 + (요소 Y - 뷰포트 Y) - 상단 여백
-                    const targetScrollTop = customPreview.scrollTop + (anchorRect.top - previewRect.top) - 10;
-                    smoothScrollPreviewTo(targetScrollTop);
-                }
+            const lineSpan = hi.line - lo.line;
+            let targetTop;
+            if (lineSpan <= 0) {
+                targetTop = lo.targetTop;
             } else {
-                smoothScrollPreviewTo(0);
+                const ratio = (refLine0 - lo.line) / lineSpan;
+                targetTop = lo.targetTop + (hi.targetTop - lo.targetTop) * ratio;
             }
+            smoothScrollPreviewTo(targetTop);
         }
 
         function setScrollSync(enabled) {
@@ -1894,7 +2242,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (_scrollSyncEnabled && scroller) {
                 _scrollSyncHandler = () => syncEditorScrollToPreview('scroll');
                 scroller.addEventListener('scroll', _scrollSyncHandler, { passive: true });
-                // 활성화 직후 한 번 동기화하여 현재 커서 위치에 맞춤
+                // 활성화 직후 가이드 캐시를 새로 만들고 현재 커서 위치에 맞춤
+                _invalidateScrollSyncGuides();
                 syncEditorScrollToPreview('cursor');
             }
         }

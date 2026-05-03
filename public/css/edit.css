@@ -3153,3 +3153,149 @@ html[data-theme="dark"] .cm-editor span.cm-inline-code::selection {
     max-height: 380px;
     overflow-y: auto;
 }
+
+/* ── 찾기 / 바꾸기 패널 ── */
+.cm-find-panel {
+    position: absolute;
+    z-index: 3000;
+    background: var(--wiki-card-bg);
+    border: 1px solid var(--wiki-border);
+    border-radius: 8px;
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+    padding: 8px;
+    min-width: 380px;
+    max-width: calc(100vw - 16px);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+html[data-theme="dark"] .cm-find-panel {
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+}
+
+.cm-find-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.cm-find-input {
+    flex: 1;
+    min-width: 0;
+    height: 28px;
+    padding: 0 8px;
+    border: 1px solid var(--wiki-border);
+    border-radius: 4px;
+    background: var(--wiki-bg);
+    color: var(--wiki-text);
+    font-size: 0.85rem;
+}
+
+.cm-find-input:focus {
+    outline: none;
+    border-color: var(--wiki-primary, #3b82f6);
+    box-shadow: 0 0 0 2px rgba(var(--wiki-primary-rgb, 59, 130, 246), 0.15);
+}
+
+.cm-find-status {
+    font-size: 0.75rem;
+    color: var(--wiki-text-muted);
+    min-width: 40px;
+    text-align: center;
+    user-select: none;
+    -webkit-user-select: none;
+    white-space: nowrap;
+}
+
+.cm-find-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border: none;
+    background: transparent;
+    color: var(--wiki-text);
+    border-radius: 4px;
+    cursor: pointer;
+    padding: 0;
+    line-height: 1;
+}
+
+.cm-find-btn i {
+    font-size: 16px;
+}
+
+.cm-find-btn:hover {
+    background: var(--wiki-border);
+}
+
+.cm-find-btn-text {
+    width: auto;
+    padding: 0 10px;
+    gap: 4px;
+    font-size: 0.85rem;
+}
+
+.cm-find-toggle {
+    display: inline-flex;
+    align-items: center;
+    margin: 0;
+    cursor: pointer;
+}
+
+.cm-find-toggle input[type="checkbox"] {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.cm-find-toggle > span {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 4px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--wiki-text-muted);
+    user-select: none;
+    -webkit-user-select: none;
+    transition: background-color 0.12s, color 0.12s;
+}
+
+.cm-find-toggle:hover > span {
+    background: var(--wiki-border);
+}
+
+.cm-find-toggle input:checked + span {
+    background: var(--wiki-primary, #3b82f6);
+    color: #fff;
+}
+
+.cm-find-toggle input:focus-visible + span {
+    box-shadow: 0 0 0 2px rgba(var(--wiki-primary-rgb, 59, 130, 246), 0.4);
+}
+
+/* 매치 하이라이트 */
+.cm-search-match {
+    background: rgba(255, 213, 0, 0.35);
+    border-radius: 2px;
+}
+
+.cm-search-match-active {
+    background: rgba(255, 140, 0, 0.65);
+    outline: 1px solid rgba(255, 100, 0, 0.7);
+    border-radius: 2px;
+}
+
+html[data-theme="dark"] .cm-search-match {
+    background: rgba(255, 213, 0, 0.25);
+}
+
+html[data-theme="dark"] .cm-search-match-active {
+    background: rgba(255, 165, 0, 0.55);
+    outline: 1px solid rgba(255, 120, 0, 0.7);
+}

@@ -63,7 +63,7 @@
             <h1 class="wiki-article-title mb-0" id="blogPostTitle"></h1>
             <div id="blogPostAdminActions" class="d-none d-flex gap-2 ms-3 flex-shrink-0">
               <button id="blogPostAnnounceBtn" class="btn btn-outline-primary btn-sm d-none" onclick="announceBlogPost()">
-                <i class="bi bi-megaphone me-1"></i>공지로 발행
+                <i class="bi bi-megaphone me-1"></i>공지로 발행하기
               </button>
               <button id="blogPostUnannounceBtn" class="btn btn-warning btn-sm d-none" onclick="unannounceBlogPost()">
                 <i class="bi bi-megaphone-fill me-1"></i>공지 발행 취소
@@ -155,11 +155,17 @@
           listEl.innerHTML = '<p class="text-muted">포스트가 없습니다.</p>';
         } else {
           listEl.innerHTML = data.posts.map(post => `
-            <div class="border-bottom pb-3 mb-3 ${post.deleted_at ? 'opacity-50' : ''}">
-              <a href="/blog/${escHtml(post.id)}" class="text-decoration-none">
-                <h5 class="mb-1">${escHtml(post.title)}${post.deleted_at ? ' <span class="badge bg-danger small">삭제됨</span>' : ''}</h5>
-              </a>
-              <small class="text-muted">${formatDate(post.created_at)}</small>
+            <div class="border-bottom pb-3 mb-3 d-flex gap-3 align-items-start ${post.deleted_at ? 'opacity-50' : ''}">
+              ${post.thumbnail ? `<a href="/blog/${escHtml(post.id)}" class="flex-shrink-0">
+                <img src="${escHtml(post.thumbnail)}" alt="" loading="lazy"
+                  style="width:120px;height:80px;object-fit:cover;border-radius:6px;display:block;">
+              </a>` : ''}
+              <div class="flex-grow-1 min-w-0">
+                <a href="/blog/${escHtml(post.id)}" class="text-decoration-none">
+                  <h5 class="mb-1">${escHtml(post.title)}${post.deleted_at ? ' <span class="badge bg-danger small">삭제됨</span>' : ''}</h5>
+                </a>
+                <small class="text-muted">${formatDate(post.created_at)}</small>
+              </div>
             </div>
           `).join('');
         }
@@ -229,8 +235,32 @@
 
     async function announceBlogPost() {
       if (!currentBlogPostId) return;
+      // 배너에 노출될 제목을 직접 입력받는다 (블로그 포스트 제목과 별개)
+      const defaultTitle = document.getElementById('blogPostTitle')?.textContent?.trim() || '';
+      const result = await Swal.fire({
+        title: '공지로 발행',
+        text: '배너에 노출될 제목을 입력하세요.',
+        input: 'text',
+        inputValue: defaultTitle,
+        inputAttributes: { maxlength: 200 },
+        showCancelButton: true,
+        confirmButtonText: '발행',
+        cancelButtonText: '취소',
+        inputValidator: (v) => {
+          const trimmed = (v || '').trim();
+          if (!trimmed) return '제목을 입력하세요.';
+          if (trimmed.length > 200) return '200자 이하로 입력하세요.';
+          return null;
+        },
+      });
+      if (!result.isConfirmed) return;
+      const title = (result.value || '').trim();
       try {
-        const res = await fetch(`/api/blog/${currentBlogPostId}/announce`, { method: 'POST' });
+        const res = await fetch(`/api/blog/${currentBlogPostId}/announce`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title }),
+        });
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
           throw new Error(data.error || '발행 실패');

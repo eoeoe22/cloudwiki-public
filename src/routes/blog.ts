@@ -7,6 +7,14 @@ import { writeAdminLog } from './admin';
 
 const blog = new Hono<Env>();
 
+/** 코드 블록(```/~~~ 펜스) 및 인라인 코드(`...`) 를 제거 — 코드 안 이미지 표기는 본문이 아님. */
+function stripCodeBlocks(content: string): string {
+    return content
+        .replace(/```[\s\S]*?```/g, '')
+        .replace(/~~~[\s\S]*?~~~/g, '')
+        .replace(/`[^`\n]+`/g, '');
+}
+
 /**
  * 블로그 본문에서 이미지 R2 키(`images/...`) 를 추출해 target_slug 목록 반환.
  * 에디터는 마크다운 `![alt](/media/images/...)` 또는 HTML `<img src=".../images/...">`
@@ -15,16 +23,23 @@ const blog = new Hono<Env>();
  * 누락 시 사용 중인 블로그 이미지가 미사용으로 분류되어 삭제될 수 있다.
  */
 function extractBlogImageLinks(content: string): string[] {
-    const cleaned = content
-        .replace(/```[\s\S]*?```/g, '')
-        .replace(/`[^`\n]+`/g, '');
-
+    const cleaned = stripCodeBlocks(content);
     const seen = new Set<string>();
     const imageRegex = /images\/[^\s\[\]()<>"'\\?#|^]+?\.\w+/g;
     for (const m of cleaned.matchAll(imageRegex)) {
         seen.add(m[0].trim());
     }
     return [...seen];
+}
+
+/**
+ * 본문에서 첫 번째 이미지(jpg/png/gif/webp)를 찾아 썸네일 URL 로 반환.
+ * 동영상(mp4/webm/ogg) 등은 제외한다. 이미지가 없으면 null.
+ */
+function extractFirstThumbnail(content: string): string | null {
+    const cleaned = stripCodeBlocks(content);
+    const m = cleaned.match(/images\/[^\s\[\]()<>"'\\?#|^]+?\.(?:jpe?g|png|gif|webp)/i);
+    return m ? `/media/${m[0]}` : null;
 }
 
 /** 블로그 포스트 저장 후 page_links 테이블의 이미지 역링크를 갱신 */
@@ -68,7 +83,7 @@ blog.get('/blog', async (c) => {
 
     const [posts, countRow] = await Promise.all([
         db.prepare(
-            `SELECT id, title, created_at, updated_at, deleted_at, rows, characters
+            `SELECT id, title, created_at, updated_at, deleted_at, rows, characters, thumbnail
              FROM blog_posts ${whereClause}
              ORDER BY created_at DESC LIMIT ? OFFSET ?`
         ).bind(limit, offset).all<Omit<BlogPost, 'content'>>(),
@@ -145,11 +160,13 @@ blog.post('/blog', requireAdmin, async (c) => {
     const rows = content ? content.split('\n').length : 0;
     const characters = content ? content.length : 0;
 
+    const thumbnail = extractFirstThumbnail(content);
+
     const result = await db
         .prepare(
-            'INSERT INTO blog_posts (title, content, rows, characters) VALUES (?, ?, ?, ?)'
+            'INSERT INTO blog_posts (title, content, rows, characters, thumbnail) VALUES (?, ?, ?, ?, ?)'
         )
-        .bind(title, content, rows, characters)
+        .bind(title, content, rows, characters, thumbnail)
         .run();
 
     const newId = result.meta?.last_row_id;
@@ -213,10 +230,11 @@ blog.put('/blog/:id', requireAdmin, async (c) => {
     if (content !== undefined) {
         const rows = content ? content.split('\n').length : 0;
         const characters = content ? content.length : 0;
+        const thumbnail = extractFirstThumbnail(content);
 
         await db.prepare(
-            'UPDATE blog_posts SET title = ?, content = ?, rows = ?, characters = ?, updated_at = unixepoch() WHERE id = ?'
-        ).bind(title, content, rows, characters, id).run();
+            'UPDATE blog_posts SET title = ?, content = ?, rows = ?, characters = ?, thumbnail = ?, updated_at = unixepoch() WHERE id = ?'
+        ).bind(title, content, rows, characters, thumbnail, id).run();
 
         c.executionCtx.waitUntil(rebuildBlogImageLinks(db, id, content));
     } else {
@@ -277,8 +295,11 @@ blog.delete('/blog/:id', requireAdmin, async (c) => {
 
     // 공지로 발행되어 있던 포스트가 삭제되면 공지도 자동 해제
     c.executionCtx.waitUntil(
-        db.prepare('UPDATE settings SET announced_blog_post_id = NULL WHERE id = 1 AND announced_blog_post_id = ?')
-            .bind(id)
+        db.prepare(
+            `UPDATE settings
+             SET announce_post = NULL, announce_title = '', announced_time = unixepoch()
+             WHERE id = 1 AND announce_post = ?`
+        ).bind(id)
             .run()
             .catch((e: any) => console.error('Failed to clear announcement on delete:', e))
     );
@@ -294,7 +315,11 @@ blog.delete('/blog/:id', requireAdmin, async (c) => {
  *       정적 세그먼트 두 개로 구성된 경로를 사용한다.
  */
 blog.post('/blog/announcement/cancel', requireAdmin, async (c) => {
-    await c.env.DB.prepare('UPDATE settings SET announced_blog_post_id = NULL WHERE id = 1').run();
+    await c.env.DB.prepare(
+        `UPDATE settings
+         SET announce_post = NULL, announce_title = '', announced_time = unixepoch()
+         WHERE id = 1`
+    ).run();
     writeAdminLog(c, 'announce', '공지 취소', c.get('user')!.id);
     return c.json({ success: true });
 });
@@ -302,12 +327,24 @@ blog.post('/blog/announcement/cancel', requireAdmin, async (c) => {
 /**
  * POST /api/blog/:id/announce
  * 해당 블로그 포스트를 사이트 전역 공지로 발행 (관리자 전용)
- * 단일 행 settings 에 id를 기록하므로 이전 공지는 자동으로 대체된다.
+ * Body: { title: string }  — 배너에 노출되는 제목 (관리자 직접 입력)
+ *
+ * 단일 행 settings 에 기록하므로 이전 공지는 자동으로 대체되며,
+ * announced_time 은 항상 현재 시각(초)으로 갱신되어 클라이언트의
+ * "다시 보지 않기" 비교 기준이 된다.
  */
 blog.post('/blog/:id/announce', requireAdmin, async (c) => {
     const idParam = c.req.param('id');
     if (!/^\d+$/.test(idParam)) return c.json({ error: 'Not Found' }, 404);
     const id = Number(idParam);
+
+    const body = await c.req.json<{ title?: unknown }>().catch(() => ({} as any));
+    if (typeof body.title !== 'string') {
+        return c.json({ error: '제목은 문자열이어야 합니다.' }, 400);
+    }
+    const title = body.title.trim();
+    if (!title) return c.json({ error: '제목을 입력하세요.' }, 400);
+    if (title.length > 200) return c.json({ error: '제목은 200자 이하여야 합니다.' }, 400);
 
     const post = await c.env.DB
         .prepare('SELECT id, title, deleted_at FROM blog_posts WHERE id = ?')
@@ -316,11 +353,15 @@ blog.post('/blog/:id/announce', requireAdmin, async (c) => {
     if (!post || post.deleted_at) return c.json({ error: 'Not Found' }, 404);
 
     await c.env.DB
-        .prepare('UPDATE settings SET announced_blog_post_id = ? WHERE id = 1')
-        .bind(id)
+        .prepare(
+            `UPDATE settings
+             SET announce_post = ?, announce_title = ?, announced_time = unixepoch()
+             WHERE id = 1`
+        )
+        .bind(id, title)
         .run();
-    writeAdminLog(c, 'announce', `공지 발행: blog#${id} (${post.title})`, c.get('user')!.id);
-    return c.json({ success: true, post_id: id, title: post.title });
+    writeAdminLog(c, 'announce', `공지 발행: blog#${id} "${title}"`, c.get('user')!.id);
+    return c.json({ success: true, post_id: id, title });
 });
 
 export default blog;

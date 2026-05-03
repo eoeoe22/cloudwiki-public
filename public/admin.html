@@ -1150,10 +1150,23 @@
           const deletedTag = ann.deleted
             ? ' <span class="badge bg-danger ms-1">삭제됨</span>'
             : "";
+          const announcedAt = ann.announcedTime
+            ? new Date(ann.announcedTime * 1000).toLocaleString("ko-KR")
+            : "";
+          const announcedAtHtml = announcedAt
+            ? `<div class="text-muted small mt-1">발행 시각: ${escapeHtml(announcedAt)}</div>`
+            : "";
+          const postTitleHtml = ann.postTitle
+            ? `<div class="text-muted small">연결 포스트: ${escapeHtml(ann.postTitle)}</div>`
+            : "";
           box.innerHTML =
-            `<a href="/blog/${ann.postId}" class="fw-bold text-decoration-none" target="_blank" rel="noopener">` +
-            escapeHtml(ann.title || "(제목 없음)") +
-            `</a>${deletedTag}` +
+            `<div class="flex-grow-1">` +
+              `<a href="/blog/${ann.postId}" class="fw-bold text-decoration-none" target="_blank" rel="noopener">` +
+                escapeHtml(ann.title || "(제목 없음)") +
+              `</a>${deletedTag}` +
+              postTitleHtml +
+              announcedAtHtml +
+            `</div>` +
             `<button class="btn btn-sm btn-outline-danger ms-auto" onclick="cancelAnnouncement()">` +
             `<i class="mdi mdi-close-circle me-1"></i>공지 취소</button>`;
         } else {

@@ -307,6 +307,10 @@ async function goRandomPage() {
 
 // ── 설정 로드 + 브랜딩 적용 ──
 // ── 공지 배너 렌더 ──
+// "다시 보지 않기" 는 마지막으로 무시한 announced_time 을 localStorage 에 저장하고,
+// 다음 페이지 로드에서 현재 announced_time 이 그보다 크면 다시 노출하는 방식.
+// X 닫기 버튼은 현재 세션에서만 숨기며 저장하지 않는다.
+const ANNOUNCEMENT_SKIP_KEY = 'announcement:skipUntil';
 function applyAnnouncementBanner() {
     try {
         const root = document.getElementById('announcement-banner');
@@ -316,12 +320,15 @@ function applyAnnouncementBanner() {
             root.classList.add('d-none');
             return;
         }
-        const dismissKey = 'announcement:dismissed:' + a.postId;
+        const announcedTime = Number(a.announcedTime) || 0;
         // localStorage 접근은 프라이빗 모드/스토리지 제한 환경에서 throw 할 수 있다.
         // 페이지 초기화(ensureLayoutComponents/checkAuth)를 막지 않도록 모두 격리.
-        let dismissed = false;
-        try { dismissed = localStorage.getItem(dismissKey) === '1'; } catch (e) { /* ignore */ }
-        if (dismissed) {
+        let skipUntil = 0;
+        try {
+            const raw = localStorage.getItem(ANNOUNCEMENT_SKIP_KEY);
+            skipUntil = Number(raw) || 0;
+        } catch (e) { /* ignore */ }
+        if (announcedTime > 0 && announcedTime <= skipUntil) {
             root.classList.add('d-none');
             return;
         }
@@ -330,14 +337,23 @@ function applyAnnouncementBanner() {
             link.href = a.url || ('/blog/' + a.postId);
             link.textContent = a.title || '새 공지';
         }
-        root.classList.remove('d-none');
+        const skipCheckbox = document.getElementById('announcementBannerSkip');
+        if (skipCheckbox) {
+            skipCheckbox.checked = false;
+            skipCheckbox.onchange = () => {
+                if (skipCheckbox.checked) {
+                    try { localStorage.setItem(ANNOUNCEMENT_SKIP_KEY, String(announcedTime)); } catch (e) { /* ignore */ }
+                    root.classList.add('d-none');
+                }
+            };
+        }
         const closeBtn = document.getElementById('announcementBannerClose');
         if (closeBtn) {
             closeBtn.onclick = () => {
-                try { localStorage.setItem(dismissKey, '1'); } catch (e) { /* ignore */ }
                 root.classList.add('d-none');
             };
         }
+        root.classList.remove('d-none');
     } catch (e) {
         console.error('applyAnnouncementBanner failed:', e);
     }

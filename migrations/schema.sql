@@ -126,7 +126,9 @@ CREATE TABLE IF NOT EXISTS settings (
   namechange_ratelimit    INTEGER DEFAULT 0,
   allow_direct_message    INTEGER DEFAULT 0,
   signup_policy           TEXT DEFAULT 'open',  -- 'open' (모두 허용), 'approval' (관리자 승인제)
-  announced_blog_post_id  INTEGER DEFAULT NULL  -- 사이트 전역 공지로 발행된 blog_posts.id (없으면 NULL)
+  announce_title          TEXT DEFAULT '',      -- 사이트 전역 공지의 제목 (관리자가 직접 입력)
+  announce_post           INTEGER DEFAULT NULL, -- 공지가 가리키는 blog_posts.id (없으면 NULL)
+  announced_time          INTEGER DEFAULT 0     -- 공지가 발행/변경된 시각 (unixepoch, 초 단위)
 );
 
 -- 설정 초기 데이터 (이미 있는 경우 무시)
@@ -307,7 +309,8 @@ CREATE TABLE IF NOT EXISTS blog_posts (
   updated_at INTEGER DEFAULT (unixepoch()),
   deleted_at INTEGER,
   rows       INTEGER,
-  characters INTEGER
+  characters INTEGER,
+  thumbnail  TEXT  -- 본문 첫 이미지 캐시 (/media/images/...). 없으면 NULL
 );
 CREATE INDEX IF NOT EXISTS idx_blog_posts_created ON blog_posts(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_blog_posts_deleted ON blog_posts(deleted_at);

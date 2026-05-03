@@ -571,24 +571,26 @@ import { uploadRevisionToR2, getRevisionContent } from '../utils/r2';
  * 동적 설정 (위키 이름 등) 반환
  */
 wiki.get('/config', async (c) => {
-    // 공지로 발행된 블로그 포스트 조회 (soft-delete된 포스트는 자동 제외)
-    let announcement: { enabled: false } | { enabled: true; postId: number; title: string; url: string }
+    // 공지 정보 조회 (soft-delete 된 포스트는 LEFT JOIN 으로 자동 제외)
+    let announcement: { enabled: false }
+        | { enabled: true; postId: number; title: string; url: string; announcedTime: number }
         = { enabled: false };
     if (!(c.env.WIKI_VISIBILITY === 'closed' && !c.get('user'))) {
         try {
             const row = await c.env.DB.prepare(
-                `SELECT b.id AS post_id, b.title AS post_title
+                `SELECT s.announce_title AS title, s.announced_time AS time, b.id AS post_id
                  FROM settings s
                  LEFT JOIN blog_posts b
-                   ON b.id = s.announced_blog_post_id AND b.deleted_at IS NULL
+                   ON b.id = s.announce_post AND b.deleted_at IS NULL
                  WHERE s.id = 1`
-            ).first<{ post_id: number | null; post_title: string | null }>();
+            ).first<{ title: string | null; time: number | null; post_id: number | null }>();
             if (row && row.post_id) {
                 announcement = {
                     enabled: true,
                     postId: row.post_id,
-                    title: row.post_title || '',
+                    title: row.title || '',
                     url: `/blog/${row.post_id}`,
+                    announcedTime: row.time || 0,
                 };
             }
         } catch (e) {

@@ -281,15 +281,31 @@ adminRoutes.get('/settings', async (c) => {
 
     row.mcp_mode = mcpMode;
 
-    // 현재 공지 포스트 정보 (soft-delete 여부 포함)
+    // 현재 공지 정보 (soft-delete 여부 포함)
     try {
         const ann = await db.prepare(
-            `SELECT b.id AS postId, b.title, b.deleted_at
-             FROM settings s LEFT JOIN blog_posts b ON b.id = s.announced_blog_post_id
+            `SELECT s.announce_title AS title,
+                    s.announced_time AS announcedTime,
+                    b.id AS postId,
+                    b.title AS postTitle,
+                    b.deleted_at AS deletedAt
+             FROM settings s LEFT JOIN blog_posts b ON b.id = s.announce_post
              WHERE s.id = 1`
-        ).first<{ postId: number | null; title: string | null; deleted_at: number | null }>();
+        ).first<{
+            title: string | null;
+            announcedTime: number | null;
+            postId: number | null;
+            postTitle: string | null;
+            deletedAt: number | null;
+        }>();
         row.announcement = ann && ann.postId
-            ? { postId: ann.postId, title: ann.title, deleted: !!ann.deleted_at }
+            ? {
+                postId: ann.postId,
+                title: ann.title || '',
+                postTitle: ann.postTitle,
+                announcedTime: ann.announcedTime || 0,
+                deleted: !!ann.deletedAt,
+            }
             : null;
     } catch (e) {
         row.announcement = null;

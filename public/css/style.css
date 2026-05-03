@@ -2265,8 +2265,22 @@ div:where(.swal2-container) .swal2-html-container {
   text-decoration: underline;
   color: inherit;
 }
+.announcement-banner-skip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  margin: 0;
+  font-size: 0.85rem;
+  color: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.announcement-banner-skip .form-check-input {
+  margin-top: 0;
+  cursor: pointer;
+}
 .announcement-banner-close {
-  margin-left: auto;
   flex-shrink: 0;
   font-size: 0.75rem;
 }

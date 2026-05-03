@@ -202,6 +202,7 @@ export interface BlogPost {
     deleted_at: number | null;
     rows: number | null;
     characters: number | null;
+    thumbnail: string | null;
 }
 
 export type AppContext = Context<Env>;
