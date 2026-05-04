@@ -1134,9 +1134,9 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
         }
     }
 
-    // 보안: 편집 요약 최대 50자 제한
-    if (body.summary && body.summary.length > 50) {
-        return c.json({ error: '편집 요약은 최대 50자까지 입력할 수 있습니다.' }, 400);
+    // 보안: 편집 요약 최대 255자 제한
+    if (body.summary && body.summary.length > 255) {
+        return c.json({ error: '편집 요약은 최대 255자까지 입력할 수 있습니다.' }, 400);
     }
 
     const existing = await db
@@ -1311,7 +1311,7 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
                 .prepare(
                     'INSERT INTO revisions (page_id, page_version, content, r2_key, summary, author_id) VALUES (?, ?, ?, ?, ?, ?)'
                 )
-                .bind(pageId, 1, '', firstR2Key, body.summary ?? '문서 생성', user.id)
+                .bind(pageId, 1, '', firstR2Key, body.summary ?? null, user.id)
                 .run();
             revisionId = revResult.meta.last_row_id;
         } catch (e) {

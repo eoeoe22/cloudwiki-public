@@ -451,8 +451,24 @@
           }
         }
 
+        function annotateDescendants(children) {
+          let total = 0;
+          for (const key of Object.keys(children)) {
+            const sub = annotateDescendants(children[key]._children);
+            children[key]._descendants = sub;
+            total += 1 + sub;
+          }
+          return total;
+        }
+        annotateDescendants(tree);
+
         function renderTree(nodes, parentPrefix) {
-          const entries = Object.keys(nodes).sort();
+          const entries = Object.keys(nodes).sort((a, b) => {
+            const ca = nodes[a]._descendants;
+            const cb = nodes[b]._descendants;
+            if (ca !== cb) return cb - ca;
+            return a.localeCompare(b);
+          });
           let html = '';
           entries.forEach((key, idx) => {
             const node = nodes[key];

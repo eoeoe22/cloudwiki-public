@@ -318,9 +318,9 @@ html[data-theme="dark"] #cm-editor .cm-editor {
     flex-shrink: 0;
 }
 
-/* 툴바 오른쪽 끝 설정 버튼 영역 */
-.cm-toolbar-spacer {
-    flex: 1;
+/* 툴바 오른쪽 정렬 그룹 시작점: 찾기/바꾸기 + 보기 방식 + 설정 버튼 */
+#cm-find-btn {
+    margin-left: auto;
 }
 
 /* ── 에디터 설정 패널 ── */

@@ -389,9 +389,35 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                     rows = fbRes.results;
                 } else {
                     const safeMatchQuery = '"' + rawQuery.replace(/"/g, '""') + '"';
-                    const ftsSql = `SELECT p.slug, p.content, p.last_revision_id, p.rows, p.characters FROM pages_fts JOIN pages p ON pages_fts.rowid = p.id WHERE pages_fts MATCH ? AND p.deleted_at IS NULL LIMIT 10`;
-                    const ftsRes = await db.prepare(ftsSql).bind(safeMatchQuery).all<{ slug: string; content: string; last_revision_id: number | null; rows: number | null; characters: number | null }>();
-                    rows = ftsRes.results;
+                    // FTS5 MATCH 를 IN 서브쿼리로 격리한다. JOIN+MATCH 결합에서 SELECT/ORDER BY 가
+                    // pages_fts 의 보조 컬럼(rank, snippet 등)을 참조하지 않으면, D1 의 옵티마이저가
+                    // LIMIT 을 FTS 측으로 밀어넣고 그 결과에만 deleted_at 필터를 적용해 빈 결과를
+                    // 반환하는 케이스가 있다(웹 /search 는 ORDER BY rank 가 있어 영향 없음).
+                    // 서브쿼리는 매칭된 rowid 전부를 먼저 모은 뒤 외부에서 deleted_at 필터와 LIMIT 을
+                    // 적용하므로 위 경합이 사라진다.
+                    try {
+                        const ftsSql = `SELECT slug, content, last_revision_id, rows, characters
+                                        FROM pages
+                                        WHERE id IN (SELECT rowid FROM pages_fts WHERE pages_fts MATCH ?)
+                                          AND deleted_at IS NULL
+                                        LIMIT 10`;
+                        const ftsRes = await db.prepare(ftsSql).bind(safeMatchQuery).all<{ slug: string; content: string; last_revision_id: number | null; rows: number | null; characters: number | null }>();
+                        rows = ftsRes.results;
+                    } catch (ftsErr: any) {
+                        // FTS5 phrase parser 실패만 LIKE 폴백으로 흡수한다. 사용자 입력이
+                        // FTS5 가 인식하지 못하는 토큰을 포함해도 빈 응답 대신 LIKE 결과로
+                        // 응답할 수 있게 한다. 그 외 예외(테이블/스키마/D1 일시 장애 등)는
+                        // 빈 결과로 위장된 운영 장애를 만들지 않도록 RPC 에러로 surface 한다.
+                        const msg = String(ftsErr?.message || '');
+                        if (!/fts5.*(syntax|parse)/i.test(msg)) {
+                            throw ftsErr;
+                        }
+                        const likeEscaped = rawQuery.replace(/[\\%_]/g, '\\$&');
+                        const likePattern = `%${likeEscaped}%`;
+                        const fbSql = `SELECT p.slug, p.content, p.last_revision_id, p.rows, p.characters FROM pages p WHERE (p.slug LIKE ? ESCAPE '\\' OR p.content LIKE ? ESCAPE '\\') AND p.deleted_at IS NULL ORDER BY (CASE WHEN p.slug LIKE ? ESCAPE '\\' THEN 0 ELSE 1 END), p.updated_at DESC LIMIT 10`;
+                        const fbRes = await db.prepare(fbSql).bind(likePattern, likePattern, likePattern).all<{ slug: string; content: string; last_revision_id: number | null; rows: number | null; characters: number | null }>();
+                        rows = fbRes.results;
+                    }
                 }
 
                 const origin = new URL(c.req.url).origin;
@@ -508,8 +534,24 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                 const missingDocs: string[] = [];
                 if (!rootPage) missingDocs.push(rootSlug);
 
+                function annotateDescendants(children: any): number {
+                    let total = 0;
+                    for (const key of Object.keys(children)) {
+                        const sub = annotateDescendants(children[key]._children);
+                        children[key]._descendants = sub;
+                        total += 1 + sub;
+                    }
+                    return total;
+                }
+                annotateDescendants(tree);
+
                 function renderTree(nodes: any, parentPrefix: string, slugPrefix: string): string {
-                    const entries = Object.keys(nodes).sort();
+                    const entries = Object.keys(nodes).sort((a, b) => {
+                        const ca = nodes[a]._descendants;
+                        const cb = nodes[b]._descendants;
+                        if (ca !== cb) return cb - ca;
+                        return a.localeCompare(b);
+                    });
                     let text = '';
                     entries.forEach((key, idx) => {
                         const node = nodes[key];

@@ -294,7 +294,10 @@
         isRawView = false;
 
         const versionLabel = (pageVersion !== '' && pageVersion != null) ? `v${pageVersion}` : `#${revId}`;
-        document.getElementById('revisionViewLabel').textContent = `${versionLabel} 리비전 열람중입니다`;
+        const revDate = rev.created_at ? new Date(rev.created_at * 1000).toLocaleString('ko-KR') : '';
+        document.getElementById('revisionViewLabel').textContent = revDate
+          ? `${revDate} 에 저장된 ${versionLabel} 리비전 열람 중입니다.`
+          : `${versionLabel} 리비전 열람 중입니다.`;
         document.getElementById('revisionViewTitle').textContent = document.getElementById('revPageTitle').textContent || slug;
         document.getElementById('revisionViewContent').innerHTML = '';
 

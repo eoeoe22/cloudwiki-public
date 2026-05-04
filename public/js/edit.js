@@ -1429,10 +1429,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             });
         });
 
-        // ── 툴바 오른쪽 끝: 프리뷰 모드 / 설정 버튼 ──
-        const toolbarSpacer = document.createElement('span');
-        toolbarSpacer.className = 'cm-toolbar-spacer';
-        toolbar.appendChild(toolbarSpacer);
+        // ── 툴바 오른쪽 끝: 찾기/바꾸기 + 프리뷰 모드 + 설정 버튼 ──
+        // 우측 정렬은 #cm-find-btn 의 margin-left:auto 로 처리 (findBtn 이 이 그룹의 첫 항목)
 
         // PC 전용: 보기/작성/일반 모드 전환 드롭다운
         const PC_MODES = {
@@ -2378,7 +2376,15 @@ document.addEventListener('DOMContentLoaded', async () => {
         } else {
             catWarning.classList.add('d-none');
         }
+        // 카테고리 추가/삭제 시 편집 요약 자동 갱신 (renderCategoryTags에서 input 이벤트가 디스패치된다)
+        refreshAutoSummary();
     });
+
+    // 관리자 전용(잠금) 토글 시 편집 요약 자동 갱신
+    const lockEl = document.getElementById('isLockedCheck');
+    if (lockEl) {
+        lockEl.addEventListener('change', refreshAutoSummary);
+    }
     // 기존 문서 불러오기 (블로그 모드는 별도 처리)
     if (BLOG_MODE) {
         await loadBlogContentForEdit();
@@ -2409,6 +2415,18 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (res.ok) {
             const page = await res.json();
             document.getElementById('titleInput').value = page.slug;
+
+            // 섹션 모드에서는 서버가 보낸 메타데이터를 그대로 유지해 저장 시 함께 송신.
+            // renderCategoryTags()가 input 이벤트를 디스패치해 자동 편집 요약을 갱신하기 전에
+            // 베이스라인을 먼저 확정해야 카테고리 변경이 없는데도 '문서 생성'이 표시되는
+            // 깜빡임을 방지할 수 있다.
+            originalPageMeta = {
+                slug: page.slug,
+                category: page.category || '',
+                redirect_to: page.redirect_to || '',
+                is_locked: page.is_locked ? 1 : 0
+            };
+
             if (page.category) {
                 document.getElementById('categoryInput').value = page.category;
                 categoryTags = page.category.split(',').map(c => c.trim()).filter(c => c);
@@ -2416,14 +2434,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
             if (page.redirect_to) document.getElementById('redirectInput').value = page.redirect_to;
             if (page.is_locked) document.getElementById('isLockedCheck').checked = true;
-
-            // 섹션 모드에서는 서버가 보낸 메타데이터를 그대로 유지해 저장 시 함께 송신
-            originalPageMeta = {
-                slug: page.slug,
-                category: page.category || '',
-                redirect_to: page.redirect_to || '',
-                is_locked: page.is_locked ? 1 : 0
-            };
 
             let initialContent = page.content || '';
             if (!isExtensionData) {
@@ -2506,6 +2516,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             document.title = `편집: ${page.slug} - ${appConfig.wikiName}`;
             document.getElementById('diffPreviewSection').style.display = 'block'; // 편집일 때만 노출
             checkDraft();
+            // 기존 문서: 카테고리/잠금 변경 시 자동 요약이 입력되도록 초기 상태 동기화
+            refreshAutoSummary();
         } else {
             // 새 문서: 슬러그가 곧 제목이므로 readonly 필드를 슬러그로 채운다
             originalContent = '';
@@ -2521,10 +2533,13 @@ document.addEventListener('DOMContentLoaded', async () => {
             templateBtn.onclick = openTemplateModal;
             document.getElementById('editPageTitle').appendChild(templateBtn);
             checkDraft();
+            // 새 문서: 편집 요약을 '문서 생성'으로 자동 채움
+            refreshAutoSummary();
         }
     } catch (e) {
         // 새 문서로 취급
         originalContent = '';
+        refreshAutoSummary();
     }
 
     // 변경 사항 미리보기 이벤트 연동
@@ -2600,10 +2615,12 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 // ── 자동 편집 요약 생성 ──
-// 원본 대비 카테고리 추가/삭제, 관리자 전용(잠금) 변경을 감지해 요약 문자열을 만든다.
-// 섹션 모드나 신규 문서(originalPageMeta 미설정)에서는 호출 측에서 빈 문자열을 사용해야 한다.
+// 신규 문서: '문서 생성'
+// 기존 문서: 카테고리 추가/삭제, 관리자 전용(잠금) 변경을 감지해 요약 문자열을 생성.
+// 섹션 모드에서는 호출 측에서 빈 문자열을 사용해야 한다.
 function buildAutoEditSummary() {
-    if (!originalPageMeta) return '';
+    // 신규 문서: 카테고리/잠금은 생성에 포함되므로 '문서 생성'만 표시
+    if (!originalPageMeta) return '문서 생성';
 
     const origCats = originalPageMeta.category
         ? originalPageMeta.category.split(',').map(c => c.trim()).filter(Boolean)
@@ -2623,6 +2640,40 @@ function buildAutoEditSummary() {
         parts.push(currLocked ? '관리자 전용 설정' : '관리자 전용 해제');
     }
     return parts.join(', ');
+}
+
+// ── 편집 요약 입력 칸 자동 채우기 ──
+// 카테고리/잠금 변경, 신규 문서 생성을 감지해 summaryInput 값을 갱신한다.
+// 사용자가 직접 입력한 텍스트(자동 부분 뒤에 ' / '로 이어진 부분)는 보존한다.
+let lastAutoSummaryPrefix = '';
+function refreshAutoSummary() {
+    const summaryEl = document.getElementById('summaryInput');
+    if (!summaryEl) return;
+    // 섹션 모드: 자동 요약 적용 안 함
+    if (sectionMode) return;
+
+    const newAutoSummary = buildAutoEditSummary();
+
+    // 현재 값에서 직전 자동 prefix를 떼어내 사용자 입력 부분만 추출
+    let userPart = summaryEl.value;
+    if (lastAutoSummaryPrefix) {
+        if (userPart.startsWith(lastAutoSummaryPrefix + ' / ')) {
+            userPart = userPart.slice((lastAutoSummaryPrefix + ' / ').length);
+        } else if (userPart === lastAutoSummaryPrefix) {
+            userPart = '';
+        }
+    }
+
+    let combined;
+    if (newAutoSummary && userPart) {
+        combined = `${newAutoSummary} / ${userPart}`;
+    } else {
+        combined = newAutoSummary || userPart;
+    }
+    if (combined.length > 255) combined = combined.slice(0, 255);
+
+    summaryEl.value = combined;
+    lastAutoSummaryPrefix = newAutoSummary;
 }
 
 // ── 변경 사항 검증 (프론트 전용) ──
@@ -2705,20 +2756,16 @@ async function savePage() {
         Swal.fire('오류', '카테고리에는 특수문자를 사용할 수 없습니다.', 'warning');
         return;
     }
-    if (userSummary && userSummary.length > 50) {
-        Swal.fire('오류', '편집 요약은 최대 50자까지 입력할 수 있습니다.', 'warning');
+    if (userSummary && userSummary.length > 255) {
+        Swal.fire('오류', '편집 요약은 최대 255자까지 입력할 수 있습니다.', 'warning');
         return;
     }
 
-    // 카테고리/관리자 전용 변경은 편집 요약에 자동 기재한다. (섹션 모드에서는 해당 값 변경 불가)
-    const autoSummary = sectionMode ? '' : buildAutoEditSummary();
-    let summary;
-    if (autoSummary && userSummary) {
-        summary = `${autoSummary} / ${userSummary}`;
-    } else {
-        summary = autoSummary || userSummary;
-    }
-    if (summary.length > 50) summary = summary.slice(0, 50);
+    // 자동 요약(신규 문서/카테고리/잠금 변경)은 페이지 로드·필드 변경 시 입력 칸에
+    // 이미 채워져 있으므로 별도 결합 없이 그대로 사용한다. 섹션 모드는 자동 요약을
+    // 적용하지 않으므로 사용자 입력만 남는다.
+    let summary = userSummary;
+    if (summary.length > 255) summary = summary.slice(0, 255);
 
     if (appConfig.turnstileSiteKey && !turnstileToken) {
         Swal.fire('오류', 'Turnstile 검증을 완료해주세요.', 'warning');
@@ -2904,6 +2951,8 @@ async function savePage() {
                     redirect_to: freshPageForFallback.redirect_to || '',
                     is_locked: freshPageForFallback.is_locked ? 1 : 0
                 };
+                // 새 베이스라인이 적용되었으므로 자동 요약을 재계산해 입력 칸을 동기화
+                if (typeof refreshAutoSummary === 'function') refreshAutoSummary();
                 // pageVersion 을 최신값으로 갱신
                 pageVersion = data.current_version;
 
