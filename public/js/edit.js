@@ -377,6 +377,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             wordWrap: localStorage.getItem('editor_word_wrap') !== 'false',
             syntaxHighlight: localStorage.getItem('editor_syntax_highlight') !== 'false',
             advancedEdit: localStorage.getItem('editor_advanced_edit') !== 'false',
+            autoSummary: localStorage.getItem('editor_auto_summary') !== 'false',
         };
 
         // ── CM6 동적 재설정용 Compartment ──
@@ -1584,6 +1585,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                 <input type="radio" name="settingWrapMode" value="scroll" ${!editorSettings.wordWrap ? 'checked' : ''}>
                 <span>가로 스크롤</span>
             </label>
+            <div class="editor-settings-divider"></div>
+            <label class="editor-settings-item">
+                <span>편집 요약 자동 작성</span>
+                <input type="checkbox" id="settingAutoSummary" ${editorSettings.autoSummary ? 'checked' : ''}>
+            </label>
         `;
         document.body.appendChild(settingsPanel);
 
@@ -1978,6 +1984,16 @@ document.addEventListener('DOMContentLoaded', async () => {
                 }
             });
         });
+
+        // ── 편집 요약 자동 작성 토글 ──
+        const autoSummaryCheckbox = document.getElementById('settingAutoSummary');
+        if (autoSummaryCheckbox) {
+            autoSummaryCheckbox.addEventListener('change', (e) => {
+                editorSettings.autoSummary = e.target.checked;
+                localStorage.setItem('editor_auto_summary', editorSettings.autoSummary);
+                if (typeof refreshAutoSummary === 'function') refreshAutoSummary();
+            });
+        }
 
         // ── 스크롤 동기화 로직 ──
         let _scrollSyncHandler = null;        // 에디터 → 프리뷰

@@ -8,7 +8,11 @@
 //                    섹션 내부 하위 헤딩 추가/삭제도 합성
 //   - 신규 문서:      "문서 생성"
 //   - 기존 문서:      카테고리 추가/삭제, 관리자 전용(잠금) 변경,
-//                    본문 헤딩 추가/삭제/이름 변경을 합성
+//                    본문 헤딩 추가/삭제/이름 변경,
+//                    공통 섹션 본문 편집("섹션 'X' 편집") 을 합성
+//
+// 사용자가 에디터 설정에서 자동 작성을 끄면(localStorage editor_auto_summary
+// = "false") refreshAutoSummary 가 직전 prefix 만 정리하고 즉시 종료한다.
 //
 // 의존하는 외부(edit.js / render.js) 전역:
 //   sectionMode, sectionRange, originalContent, originalPageMeta, categoryTags, editor
@@ -27,10 +31,37 @@ const _HEADING_LIST_CAP = 3;
 function _extractHeadingsForSummary(text) {
     if (typeof _extractMarkdownSectionRanges !== 'function') return [];
     const ranges = _extractMarkdownSectionRanges(text || '');
+    const lines = (text || '').split('\n');
+    // 각 헤딩의 "own body" — 다음 헤딩(레벨 무관) 직전까지의 본문.
+    // 부모/자식 섹션이 동일한 변화로 동시에 마킹되는 잡음을 피하려면 own body 비교가
+    // 적절하다. ATX 면 body 시작은 lineIdx+1, setext(=== 또는 ---)면 lineIdx+2
+    // (제목 라인 다음 underline 라인까지 헤딩으로 간주).
+    const nextNonTransIdx = [];
+    for (let i = 0; i < ranges.length; i++) {
+        let next = lines.length;
+        for (let j = i + 1; j < ranges.length; j++) {
+            if (!ranges[j].transcluded) { next = ranges[j].lineIdx; break; }
+        }
+        nextNonTransIdx.push(next);
+    }
     const out = [];
-    for (const r of ranges) {
+    for (let i = 0; i < ranges.length; i++) {
+        const r = ranges[i];
         if (r.transcluded) continue;
-        out.push({ level: r.level, text: (r.headingText || '').trim(), lineIdx: r.lineIdx });
+        const headingLine = lines[r.lineIdx] || '';
+        const isAtx = /^#{1,4}\s+/.test(headingLine);
+        const bodyStart = isAtx ? r.lineIdx + 1 : r.lineIdx + 2;
+        const bodyEnd = nextNonTransIdx[i];
+        const bodyLines = lines.slice(bodyStart, Math.max(bodyStart, bodyEnd));
+        // 잡음 줄이기: 시작/끝의 빈 줄 정규화
+        while (bodyLines.length && bodyLines[0].trim() === '') bodyLines.shift();
+        while (bodyLines.length && bodyLines[bodyLines.length - 1].trim() === '') bodyLines.pop();
+        out.push({
+            level: r.level,
+            text: (r.headingText || '').trim(),
+            lineIdx: r.lineIdx,
+            body: bodyLines.join('\n')
+        });
     }
     return out;
 }
@@ -67,9 +98,11 @@ function _diffHeadings(orig, curr) {
     }
     const removed = [];
     const added = [];
+    const matched = []; // {origIdx, currIdx} — 본문 비교에 사용
     let i = 0, j = 0;
     while (i < m && j < n) {
         if (orig[i].level === curr[j].level && orig[i].text === curr[j].text) {
+            matched.push({ origIdx: i, currIdx: j });
             i++; j++;
         } else if (dp[i + 1][j] >= dp[i][j + 1]) {
             removed.push(orig[i]); i++;
@@ -96,7 +129,7 @@ function _diffHeadings(orig, curr) {
             remRemoved.push(r);
         }
     }
-    return { added: remAdded, removed: remRemoved, renamed };
+    return { added: remAdded, removed: remRemoved, renamed, matched };
 }
 
 function _formatHeadingList(items, mapToLabel) {
@@ -108,6 +141,7 @@ function _formatHeadingList(items, mapToLabel) {
 
 function _buildHeadingDiffParts(origHeadings, currHeadings, opts) {
     const labelPrefix = (opts && opts.labelPrefix) || '섹션';
+    const includeBodyEdits = !!(opts && opts.includeBodyEdits);
     const diff = _diffHeadings(origHeadings, currHeadings);
     const parts = [];
     if (diff.renamed.length === 1) {
@@ -122,6 +156,22 @@ function _buildHeadingDiffParts(origHeadings, currHeadings, opts) {
     }
     if (diff.removed.length) {
         parts.push(`${labelPrefix} ${_formatHeadingList(diff.removed, h => `'${h.text}'`)} 삭제`);
+    }
+    // 헤딩이 동일한(공통) 섹션의 본문이 바뀐 경우 "섹션 'X' 편집" 으로 보고.
+    // 부모-자식 섹션이 같은 변화로 중복 표시되는 잡음을 피하려고 own-body
+    // (다음 헤딩 직전까지) 만 비교한다.
+    if (includeBodyEdits && diff.matched.length) {
+        const edited = [];
+        for (const pair of diff.matched) {
+            const o = origHeadings[pair.origIdx];
+            const c = currHeadings[pair.currIdx];
+            if (o && c && (o.body || '') !== (c.body || '')) {
+                edited.push(c);
+            }
+        }
+        if (edited.length) {
+            parts.push(`${labelPrefix} ${_formatHeadingList(edited, h => `'${h.text}'`)} 편집`);
+        }
     }
     return parts;
 }
@@ -213,17 +263,57 @@ function buildAutoEditSummary() {
     if (editorAvailable) {
         const currHeadings = _extractHeadingsForSummary(currentContent);
         const origHeadings = _getOriginalHeadingsForSummary();
-        const headingParts = _buildHeadingDiffParts(origHeadings, currHeadings, { labelPrefix: '섹션' });
+        const headingParts = _buildHeadingDiffParts(origHeadings, currHeadings, {
+            labelPrefix: '섹션',
+            includeBodyEdits: true
+        });
         for (const p of headingParts) parts.push(p);
+
+        // 헤딩이 하나도 없는 문서에서 본문만 변경된 경우에는 섹션 단위로 분류할
+        // 수 없으므로 대표 prefix '본문 편집' 을 추가한다(다른 헤딩/카테고리/잠금
+        // 변화가 이미 있다면 추가하지 않아 잡음을 늘리지 않는다).
+        if (!headingParts.length && parts.length === 0
+            && origHeadings.length === 0 && currHeadings.length === 0
+            && (originalContent || '') !== (currentContent || '')) {
+            parts.push('본문 편집');
+        }
     }
 
     return parts.join(', ');
+}
+
+// 자동 prefix 만 떼어내고 사용자 입력 부분만 반환.
+function _stripAutoPrefix(value) {
+    if (!lastAutoSummaryPrefix) return value;
+    if (value.startsWith(lastAutoSummaryPrefix + ' / ')) {
+        return value.slice((lastAutoSummaryPrefix + ' / ').length);
+    }
+    if (value === lastAutoSummaryPrefix) return '';
+    return value;
+}
+
+function isAutoSummaryEnabled() {
+    try {
+        return localStorage.getItem('editor_auto_summary') !== 'false';
+    } catch (e) {
+        return true;
+    }
 }
 
 // 사용자가 직접 입력한 텍스트(자동 prefix 뒤 ' / ')는 보존한 채 prefix만 갱신.
 function refreshAutoSummary() {
     const summaryEl = document.getElementById('summaryInput');
     if (!summaryEl) return;
+
+    // 자동 작성 토글 OFF: 직전 prefix 만 정리하고 사용자 입력은 보존.
+    // 직전 prefix 가 없거나 이미 정리되어 있으면 입력값을 건드리지 않는다.
+    if (!isAutoSummaryEnabled()) {
+        if (lastAutoSummaryPrefix) {
+            summaryEl.value = _stripAutoPrefix(summaryEl.value);
+            lastAutoSummaryPrefix = '';
+        }
+        return;
+    }
 
     // 사용자가 summaryInput 에 직접 타이핑 중이라면 prefix 가 동일할 때만 갱신해
     // 커서 점프를 방지한다(헤딩 변경이 prefix 길이를 바꾸지 않을 때만 통과).
@@ -237,14 +327,7 @@ function refreshAutoSummary() {
     }
 
     // 현재 값에서 직전 자동 prefix를 떼어내 사용자 입력 부분만 추출
-    let userPart = summaryEl.value;
-    if (lastAutoSummaryPrefix) {
-        if (userPart.startsWith(lastAutoSummaryPrefix + ' / ')) {
-            userPart = userPart.slice((lastAutoSummaryPrefix + ' / ').length);
-        } else if (userPart === lastAutoSummaryPrefix) {
-            userPart = '';
-        }
-    }
+    const userPart = _stripAutoPrefix(summaryEl.value);
 
     let combined;
     if (newAutoSummary && userPart) {
