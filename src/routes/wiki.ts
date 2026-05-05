@@ -1256,9 +1256,16 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
                 .bind(existing.id, user.id).all()
                 .then(({ results: watchers }) => {
                     if (watchers.length === 0) return;
+                    const watchLink = `/w/${encodeURIComponent(slug)}?mode=revisions&diff=${revisionId}`;
+                    const rawSummary = (body.summary ?? '').trim();
+                    const truncatedSummary = [...rawSummary].length > 15
+                        ? [...rawSummary].slice(0, 15).join('') + '...'
+                        : rawSummary;
+                    const summarySuffix = truncatedSummary ? ` (${truncatedSummary})` : '';
+                    const notifContent = `${user.name}님이 "${slug}" 문서를 편집했습니다.${summarySuffix}`;
                     const stmts = watchers.map((w: any) =>
                         db.prepare('INSERT INTO notifications (user_id, type, content, link) VALUES (?, ?, ?, ?)')
-                            .bind(w.user_id, 'page_watch', `${user.name}님이 "${slug}" 문서를 편집했습니다.`, `/w/${slug}`)
+                            .bind(w.user_id, 'page_watch', notifContent, watchLink)
                     );
                     return db.batch(stmts);
                 })

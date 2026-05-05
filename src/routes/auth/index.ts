@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { getCookie } from 'hono/cookie';
 import type { Env } from '../../types';
-import { requireAuth } from '../../middleware/session';
+import { requireAuth, requireAuthAllowBanned } from '../../middleware/session';
 import { getSuperAdmins } from '../../utils/auth';
 import type { OAuthProvider, OAuthProfile, OAuthStateData } from './providers/base';
 import { googleProvider } from './providers/google';
@@ -543,6 +543,94 @@ auth.get('/api/users/:id/contributions', async (c) => {
         total: countResult?.total || 0,
         has_more: offset + limit < (countResult?.total || 0),
     });
+});
+
+/**
+ * GET /api/me/sessions
+ * 현재 로그인 유저의 활성 세션 목록 (User-Agent 포함, 만료된 세션 제외)
+ * 차단된 사용자도 자신의 세션을 관리할 수 있도록 허용
+ */
+auth.get('/api/me/sessions', requireAuthAllowBanned, async (c) => {
+    const user = c.get('user')!;
+    const db = c.env.DB;
+    const now = Math.floor(Date.now() / 1000);
+    const currentSessionId = getCookie(c, 'wiki_session') || null;
+
+    const { results } = await db.prepare(
+        `SELECT id, expires_at, user_agent, created_at
+         FROM sessions
+         WHERE user_id = ? AND expires_at > ?
+         ORDER BY COALESCE(created_at, expires_at - 604800) DESC`
+    ).bind(user.id, now).all<{
+        id: string;
+        expires_at: number;
+        user_agent: string | null;
+        created_at: number | null;
+    }>();
+
+    const sessions = (results || []).map(s => ({
+        id: s.id,
+        expires_at: s.expires_at,
+        // created_at 컬럼이 없는 기존 세션은 expires_at에서 7일을 빼서 추정
+        created_at: s.created_at ?? (s.expires_at - 60 * 60 * 24 * 7),
+        user_agent: s.user_agent,
+        current: s.id === currentSessionId,
+    }));
+
+    return c.json({ sessions });
+});
+
+/**
+ * DELETE /api/me/sessions/:id
+ * 본인 소유의 특정 세션 종료 (현재 세션은 /auth/logout 사용)
+ */
+auth.delete('/api/me/sessions/:id', requireAuthAllowBanned, async (c) => {
+    const user = c.get('user')!;
+    const db = c.env.DB;
+    const sessionId = c.req.param('id');
+    const currentSessionId = getCookie(c, 'wiki_session') || null;
+
+    if (sessionId === currentSessionId) {
+        return c.json({ error: '현재 세션은 로그아웃 메뉴로 종료해주세요.' }, 400);
+    }
+
+    const result = await db.prepare(
+        'DELETE FROM sessions WHERE id = ? AND user_id = ?'
+    ).bind(sessionId, user.id).run();
+
+    if (!result.meta.changes) {
+        return c.json({ error: '세션을 찾을 수 없습니다.' }, 404);
+    }
+
+    await c.env.KV.delete(`session:${sessionId}`);
+    return c.json({ success: true });
+});
+
+/**
+ * DELETE /api/me/sessions
+ * 현재 세션을 제외한 본인의 모든 활성 세션 일괄 종료
+ */
+auth.delete('/api/me/sessions', requireAuthAllowBanned, async (c) => {
+    const user = c.get('user')!;
+    const db = c.env.DB;
+    const now = Math.floor(Date.now() / 1000);
+    const currentSessionId = getCookie(c, 'wiki_session') || '';
+
+    const { results } = await db.prepare(
+        'SELECT id FROM sessions WHERE user_id = ? AND expires_at > ? AND id != ?'
+    ).bind(user.id, now, currentSessionId).all<{ id: string }>();
+
+    const sessionIds = (results || []).map(s => s.id);
+
+    if (sessionIds.length > 0) {
+        await db.prepare(
+            'DELETE FROM sessions WHERE user_id = ? AND id != ?'
+        ).bind(user.id, currentSessionId).run();
+
+        await Promise.all(sessionIds.map(id => c.env.KV.delete(`session:${id}`)));
+    }
+
+    return c.json({ success: true, count: sessionIds.length });
 });
 
 /**

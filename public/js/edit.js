@@ -373,6 +373,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const editorSettings = {
             showLineNumbers: localStorage.getItem('editor_show_line_numbers') !== 'false',
             scrollSync: localStorage.getItem('editor_scroll_sync') === 'true',
+            scrollSyncMode: localStorage.getItem('editor_scroll_sync_mode') === 'twoway' ? 'twoway' : 'oneway',
             wordWrap: localStorage.getItem('editor_word_wrap') !== 'false',
             syntaxHighlight: localStorage.getItem('editor_syntax_highlight') !== 'false',
             advancedEdit: localStorage.getItem('editor_advanced_edit') !== 'false',
@@ -953,14 +954,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                 editorEventHandlers.change.forEach(cb => cb());
                 updateEditorTextCounterFromDoc(update.state.doc);
                 if (_findFeatureOnDocChange) _findFeatureOnDocChange(update);
-            }
-            // 커서(선택) 위치가 변하면 스크롤 동기화 (활성화된 경우)
-            // 단, 문서가 변경된 업데이트는 프리뷰가 아직 재렌더되기 전이므로 건너뛰고
-            // 디바운스된 updateCustomPreview() 완료 후에 동기화한다.
-            if (_scrollSyncEnabled && update.selectionSet && !update.docChanged) {
-                if (typeof syncEditorScrollToPreview === 'function') {
-                    syncEditorScrollToPreview('cursor');
-                }
             }
             // 빈 표 셀 병합 미니툴바 위치/표시 갱신
             if (update.selectionSet || update.docChanged || update.viewportChanged) {
@@ -1559,6 +1552,18 @@ document.addEventListener('DOMContentLoaded', async () => {
                 <span>스크롤 동기화</span>
                 <input type="checkbox" id="settingScrollSync" ${editorSettings.scrollSync ? 'checked' : ''}>
             </label>
+            <label class="editor-settings-item editor-settings-subitem">
+                <input type="radio" name="settingScrollSyncMode" value="oneway"
+                    ${editorSettings.scrollSyncMode === 'oneway' ? 'checked' : ''}
+                    ${editorSettings.scrollSync ? '' : 'disabled'}>
+                <span>단방향 (에디터 → 프리뷰)</span>
+            </label>
+            <label class="editor-settings-item editor-settings-subitem">
+                <input type="radio" name="settingScrollSyncMode" value="twoway"
+                    ${editorSettings.scrollSyncMode === 'twoway' ? 'checked' : ''}
+                    ${editorSettings.scrollSync ? '' : 'disabled'}>
+                <span>양방향</span>
+            </label>
             <label class="editor-settings-item">
                 <span>문법 하이라이트</span>
                 <input type="checkbox" id="settingSyntaxHighlight" ${editorSettings.syntaxHighlight ? 'checked' : ''}>
@@ -1902,7 +1907,21 @@ document.addEventListener('DOMContentLoaded', async () => {
         document.getElementById('settingScrollSync').addEventListener('change', (e) => {
             editorSettings.scrollSync = e.target.checked;
             localStorage.setItem('editor_scroll_sync', editorSettings.scrollSync);
+            // 체크박스 상태에 따라 모드 라디오 활성/비활성 토글
+            settingsPanel.querySelectorAll('input[name="settingScrollSyncMode"]').forEach(r => {
+                r.disabled = !editorSettings.scrollSync;
+            });
             setScrollSync(editorSettings.scrollSync);
+        });
+
+        // ── 스크롤 동기화 방향 모드 ──
+        settingsPanel.querySelectorAll('input[name="settingScrollSyncMode"]').forEach(radio => {
+            radio.addEventListener('change', (e) => {
+                if (!e.target.checked) return;
+                editorSettings.scrollSyncMode = e.target.value === 'twoway' ? 'twoway' : 'oneway';
+                localStorage.setItem('editor_scroll_sync_mode', editorSettings.scrollSyncMode);
+                if (editorSettings.scrollSync) setScrollSync(true);
+            });
         });
 
         // ── 문법 하이라이트 / 고급 편집 토글 ──
@@ -1961,10 +1980,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
 
         // ── 스크롤 동기화 로직 ──
-        let _scrollSyncHandler = null;
+        let _scrollSyncHandler = null;        // 에디터 → 프리뷰
+        let _previewScrollHandler = null;     // 프리뷰 → 에디터 (양방향 모드 한정)
         let _previewScrollTarget = null;
         let _previewLerpRAF = null;
         let _lerpLastSetScrollTop = null;
+        let _editorScrollTarget = null;
+        let _editorLerpRAF = null;
+        let _lerpLastSetEditorScrollTop = null;
 
         function runPreviewLerp() {
             const customPreview = document.getElementById('custom-wiki-preview');
@@ -1999,6 +2022,41 @@ document.addEventListener('DOMContentLoaded', async () => {
             _lerpLastSetScrollTop = null; // 새 lerp 시작 시 초기화
             if (!_previewLerpRAF) {
                 _previewLerpRAF = requestAnimationFrame(runPreviewLerp);
+            }
+        }
+
+        function runEditorLerp() {
+            const scroller = window._cmView && window._cmView.scrollDOM;
+            if (!scroller || _editorScrollTarget === null) {
+                _editorLerpRAF = null;
+                return;
+            }
+            if (_lerpLastSetEditorScrollTop !== null && Math.abs(scroller.scrollTop - _lerpLastSetEditorScrollTop) > 2) {
+                _editorScrollTarget = null;
+                _editorLerpRAF = null;
+                _lerpLastSetEditorScrollTop = null;
+                return;
+            }
+            const current = scroller.scrollTop;
+            const diff = _editorScrollTarget - current;
+            if (Math.abs(diff) < 0.5) {
+                scroller.scrollTop = _editorScrollTarget;
+                _editorScrollTarget = null;
+                _editorLerpRAF = null;
+                _lerpLastSetEditorScrollTop = null;
+                return;
+            }
+            const newScrollTop = current + diff * 0.15;
+            scroller.scrollTop = newScrollTop;
+            _lerpLastSetEditorScrollTop = newScrollTop;
+            _editorLerpRAF = requestAnimationFrame(runEditorLerp);
+        }
+
+        function smoothScrollEditorTo(targetTop) {
+            _editorScrollTarget = Math.max(0, targetTop);
+            _lerpLastSetEditorScrollTop = null;
+            if (!_editorLerpRAF) {
+                _editorLerpRAF = requestAnimationFrame(runEditorLerp);
             }
         }
 
@@ -2155,11 +2213,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             return guides;
         }
 
-        function syncEditorScrollToPreview(source) {
-            // source: 'cursor' (기본) | 'scroll'
-            //  - 'cursor' : 커서(선택의 head) 라인을 기준
-            //  - 'scroll' : 에디터 스크롤 영역 최상단 라인을 기준 (휠/스크롤바 등으로
-            //               캐럿 이동 없이 읽어 내려갈 때 프리뷰가 따라오도록)
+        function syncEditorScrollToPreview() {
+            // 에디터 스크롤 영역 최상단 라인을 기준으로 프리뷰 scrollTop 을 결정한다.
+            // (커서 위치는 사용하지 않음 — 휠/스크롤바 등 스크롤 위치 변화에만 반응)
             //
             // 헤딩 anchor 만 사용하던 섹션 단위 스크롤을 줄 단위로 세분화한다.
             // 헤딩들의 (raw 라인, 프리뷰 scrollTop) 쌍을 가이드포인트로 두고,
@@ -2169,29 +2225,27 @@ document.addEventListener('DOMContentLoaded', async () => {
             const customPreview = document.getElementById('custom-wiki-preview');
             if (!customPreview || !window._cmView) return;
 
+            // 양방향 모드: 프리뷰 → 에디터 lerp 가 진행 중이면 에디터 스크롤은
+            // 프로그램에 의한 것이므로 다시 프리뷰로 되돌리지 않는다.
+            if (_editorScrollTarget !== null) return;
+
             const view = window._cmView;
             const scroller = view.scrollDOM;
+            if (!scroller) return;
 
             // 에디터가 맨 아래까지 스크롤되면 프리뷰도 맨 아래로 (끝부분 오차 보정)
-            if (source === 'scroll' && scroller
-                && scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 4) {
+            if (scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 4) {
                 smoothScrollPreviewTo(customPreview.scrollHeight);
                 return;
             }
 
-            let refLine0; // 0-indexed 기준 라인
-            if (source === 'scroll') {
-                const rect = scroller.getBoundingClientRect();
-                let topPos = view.posAtCoords({ x: rect.left + 20, y: rect.top + 10 }, false);
-                if (topPos === null) {
-                    if (!view.visibleRanges || !view.visibleRanges.length) return;
-                    topPos = view.visibleRanges[0].from;
-                }
-                refLine0 = view.state.doc.lineAt(topPos).number - 1;
-            } else {
-                const cursorPos = view.state.selection.main.head;
-                refLine0 = view.state.doc.lineAt(cursorPos).number - 1;
+            const rect = scroller.getBoundingClientRect();
+            let topPos = view.posAtCoords({ x: rect.left + 20, y: rect.top + 10 }, false);
+            if (topPos === null) {
+                if (!view.visibleRanges || !view.visibleRanges.length) return;
+                topPos = view.visibleRanges[0].from;
             }
+            const refLine0 = view.state.doc.lineAt(topPos).number - 1;
 
             // 가이드포인트: { line (0-indexed), targetTop (프리뷰 scrollTop) }
             // - 문서 시작(line=0) → 프리뷰 최상단
@@ -2226,10 +2280,78 @@ document.addEventListener('DOMContentLoaded', async () => {
             smoothScrollPreviewTo(targetTop);
         }
 
+        // 양방향 모드에서 사용: 프리뷰 스크롤 위치 → 에디터 스크롤 위치 동기화.
+        // 가이드포인트의 (line, targetTop) 쌍을 역으로 보간하여 대응 라인을 얻고,
+        // 그 라인의 픽셀 위치로 에디터 스크롤을 부드럽게 이동시킨다.
+        function syncPreviewScrollToEditor() {
+            const customPreview = document.getElementById('custom-wiki-preview');
+            if (!customPreview || !window._cmView) return;
+
+            // 에디터 → 프리뷰 lerp 가 진행 중이면 프리뷰 스크롤은 프로그램에 의한 것
+            if (_previewScrollTarget !== null) return;
+
+            const view = window._cmView;
+            const scroller = view.scrollDOM;
+            if (!scroller) return;
+
+            // 프리뷰가 맨 아래까지 스크롤되면 에디터도 맨 아래로
+            if (customPreview.scrollTop + customPreview.clientHeight >= customPreview.scrollHeight - 4) {
+                smoothScrollEditorTo(scroller.scrollHeight);
+                return;
+            }
+
+            if (!_scrollSyncGuidesCache) {
+                _scrollSyncGuidesCache = _buildScrollSyncGuides();
+            }
+            const guides = _scrollSyncGuidesCache;
+            if (!guides || guides.length === 0) return;
+
+            const previewTop = customPreview.scrollTop;
+
+            // previewTop 을 포함하는 가이드 구간 [lo, hi] 찾기 (targetTop 기준).
+            // 가이드는 line 오름차순으로 만들어졌고 targetTop 도 단조 증가가 보장되지 않을 수
+            // 있으나(설계상 헤딩 순서대로 늘어남), 안전하게 targetTop 을 기준으로 다시 찾는다.
+            let loIdx = 0;
+            for (let k = 0; k < guides.length; k++) {
+                if (guides[k].targetTop <= previewTop) loIdx = k;
+                else break;
+            }
+            const lo = guides[loIdx];
+            const hi = guides[Math.min(loIdx + 1, guides.length - 1)];
+
+            const topSpan = hi.targetTop - lo.targetTop;
+            let refLine0;
+            if (topSpan <= 0) {
+                refLine0 = lo.line;
+            } else {
+                const ratio = (previewTop - lo.targetTop) / topSpan;
+                refLine0 = lo.line + (hi.line - lo.line) * ratio;
+            }
+
+            // 라인 → 에디터 픽셀 위치 변환.
+            // 1차: view.coordsAtPos 는 뷰포트 기준 좌표를 주므로 문서 좌표로 변환.
+            // 2차(폴백): 대상 라인이 렌더된 뷰포트 밖이면 coordsAtPos 가 null 을 반환할 수
+            //   있으므로, 문서 전체에 대해 유효한 view.lineBlockAt 으로 절대 top 을 얻는다.
+            //   (lineBlockAt 의 top 은 문서 시작 기준 오프셋이라 그대로 scrollTop 에 사용 가능)
+            const totalLines = view.state.doc.lines;
+            const lineNum = Math.max(1, Math.min(totalLines, Math.round(refLine0) + 1));
+            const linePos = view.state.doc.line(lineNum).from;
+            let targetTop;
+            const coords = view.coordsAtPos(linePos);
+            if (coords) {
+                const scrollerRect = scroller.getBoundingClientRect();
+                targetTop = scroller.scrollTop + (coords.top - scrollerRect.top) - 10;
+            } else {
+                const block = view.lineBlockAt(linePos);
+                if (!block) return;
+                targetTop = block.top - 10;
+            }
+            smoothScrollEditorTo(targetTop);
+        }
+
         function setScrollSync(enabled) {
-            // 트리거별 판단 기준:
-            //  - 커서 변경(updateListener) / 프리뷰 재렌더 후 → 커서 라인
-            //  - 에디터 스크롤 → 뷰포트 최상단 라인
+            // 에디터 스크롤(뷰포트 최상단 라인)을 기준으로 프리뷰를 따라가게 한다.
+            // 양방향(twoway) 모드에서는 프리뷰 스크롤 시 에디터도 따라간다.
             _scrollSyncEnabled = !!enabled;
 
             const scroller = cmEditorView && cmEditorView.scrollDOM;
@@ -2237,12 +2359,37 @@ document.addEventListener('DOMContentLoaded', async () => {
                 scroller.removeEventListener('scroll', _scrollSyncHandler);
                 _scrollSyncHandler = null;
             }
+            const customPreview = document.getElementById('custom-wiki-preview');
+            if (customPreview && _previewScrollHandler) {
+                customPreview.removeEventListener('scroll', _previewScrollHandler);
+                _previewScrollHandler = null;
+            }
+            // 진행 중인 lerp RAF 가 있으면 즉시 취소하고 타깃 상태를 비운다.
+            // (리스너만 떼면 이미 큐된 RAF 콜백이 한두 프레임 더 scrollTop 을 움직여
+            //  사용자가 토글을 끈 직후에도 자동 스크롤이 잠깐 이어지는 문제 방지)
+            if (_previewLerpRAF) {
+                cancelAnimationFrame(_previewLerpRAF);
+                _previewLerpRAF = null;
+            }
+            _previewScrollTarget = null;
+            _lerpLastSetScrollTop = null;
+            if (_editorLerpRAF) {
+                cancelAnimationFrame(_editorLerpRAF);
+                _editorLerpRAF = null;
+            }
+            _editorScrollTarget = null;
+            _lerpLastSetEditorScrollTop = null;
+
             if (_scrollSyncEnabled && scroller) {
-                _scrollSyncHandler = () => syncEditorScrollToPreview('scroll');
+                _scrollSyncHandler = () => syncEditorScrollToPreview();
                 scroller.addEventListener('scroll', _scrollSyncHandler, { passive: true });
-                // 활성화 직후 가이드 캐시를 새로 만들고 현재 커서 위치에 맞춤
+                if (editorSettings.scrollSyncMode === 'twoway' && customPreview) {
+                    _previewScrollHandler = () => syncPreviewScrollToEditor();
+                    customPreview.addEventListener('scroll', _previewScrollHandler, { passive: true });
+                }
+                // 활성화 직후 가이드 캐시를 새로 만들고 현재 스크롤 위치에 맞춤
                 _invalidateScrollSyncGuides();
-                syncEditorScrollToPreview('cursor');
+                syncEditorScrollToPreview();
             }
         }
 
@@ -2282,10 +2429,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             clearTimeout(previewDebounce);
             previewDebounce = setTimeout(async () => {
                 await updateCustomPreview();
-                // 프리뷰 재렌더가 끝난 뒤에 커서 기준 스크롤 동기화
+                // 프리뷰 재렌더 후 현재 에디터 스크롤 위치에 맞춰 동기화
                 // (헤딩 추가/삭제 시 data-heading-idx 가 갱신된 후에 매칭되도록)
                 if (_scrollSyncEnabled && typeof syncEditorScrollToPreview === 'function') {
-                    syncEditorScrollToPreview('cursor');
+                    syncEditorScrollToPreview();
                 }
             }, 300);
         });
@@ -2515,7 +2662,13 @@ document.addEventListener('DOMContentLoaded', async () => {
                     : `<i class="mdi mdi-pencil-box-multiple"></i> 편집: ${escapeHtml(page.slug)}`;
             document.title = `편집: ${page.slug} - ${appConfig.wikiName}`;
             document.getElementById('diffPreviewSection').style.display = 'block'; // 편집일 때만 노출
-            checkDraft();
+            // 전체 편집 모드일 때만 같은 슬러그의 섹션 초안 잔여분을 추가로 안내한다.
+            // (섹션 모드에서는 checkDraft 가 자체 초안을 처리한다.)
+            checkDraft().then(() => {
+                if (!useSectionMode && typeof checkSectionDrafts === 'function') {
+                    checkSectionDrafts();
+                }
+            });
             // 기존 문서: 카테고리/잠금 변경 시 자동 요약이 입력되도록 초기 상태 동기화
             refreshAutoSummary();
         } else {
@@ -2614,67 +2767,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 });
 
-// ── 자동 편집 요약 생성 ──
-// 신규 문서: '문서 생성'
-// 기존 문서: 카테고리 추가/삭제, 관리자 전용(잠금) 변경을 감지해 요약 문자열을 생성.
-// 섹션 모드에서는 호출 측에서 빈 문자열을 사용해야 한다.
-function buildAutoEditSummary() {
-    // 신규 문서: 카테고리/잠금은 생성에 포함되므로 '문서 생성'만 표시
-    if (!originalPageMeta) return '문서 생성';
-
-    const origCats = originalPageMeta.category
-        ? originalPageMeta.category.split(',').map(c => c.trim()).filter(Boolean)
-        : [];
-    const currCats = Array.isArray(categoryTags) ? categoryTags.slice() : [];
-    const added = currCats.filter(c => !origCats.includes(c));
-    const removed = origCats.filter(c => !currCats.includes(c));
-
-    const origLocked = originalPageMeta.is_locked ? 1 : 0;
-    const lockEl = document.getElementById('isLockedCheck');
-    const currLocked = lockEl && lockEl.checked ? 1 : 0;
-
-    const parts = [];
-    if (added.length) parts.push(`분류 ${added.map(c => `'${c}'`).join(', ')} 추가`);
-    if (removed.length) parts.push(`분류 ${removed.map(c => `'${c}'`).join(', ')} 삭제`);
-    if (origLocked !== currLocked) {
-        parts.push(currLocked ? '관리자 전용 설정' : '관리자 전용 해제');
-    }
-    return parts.join(', ');
-}
-
-// ── 편집 요약 입력 칸 자동 채우기 ──
-// 카테고리/잠금 변경, 신규 문서 생성을 감지해 summaryInput 값을 갱신한다.
-// 사용자가 직접 입력한 텍스트(자동 부분 뒤에 ' / '로 이어진 부분)는 보존한다.
-let lastAutoSummaryPrefix = '';
-function refreshAutoSummary() {
-    const summaryEl = document.getElementById('summaryInput');
-    if (!summaryEl) return;
-    // 섹션 모드: 자동 요약 적용 안 함
-    if (sectionMode) return;
-
-    const newAutoSummary = buildAutoEditSummary();
-
-    // 현재 값에서 직전 자동 prefix를 떼어내 사용자 입력 부분만 추출
-    let userPart = summaryEl.value;
-    if (lastAutoSummaryPrefix) {
-        if (userPart.startsWith(lastAutoSummaryPrefix + ' / ')) {
-            userPart = userPart.slice((lastAutoSummaryPrefix + ' / ').length);
-        } else if (userPart === lastAutoSummaryPrefix) {
-            userPart = '';
-        }
-    }
-
-    let combined;
-    if (newAutoSummary && userPart) {
-        combined = `${newAutoSummary} / ${userPart}`;
-    } else {
-        combined = newAutoSummary || userPart;
-    }
-    if (combined.length > 255) combined = combined.slice(0, 255);
-
-    summaryEl.value = combined;
-    lastAutoSummaryPrefix = newAutoSummary;
-}
+// 자동 편집 요약(buildAutoEditSummary / refreshAutoSummary)은 edit-summary.js 로 분리됨.
 
 // ── 변경 사항 검증 (프론트 전용) ──
 // 본문이 바뀌지 않았어도 카테고리/리다이렉트/관리자 잠금이 변경되었다면 저장을 허용한다.
@@ -2761,9 +2854,8 @@ async function savePage() {
         return;
     }
 
-    // 자동 요약(신규 문서/카테고리/잠금 변경)은 페이지 로드·필드 변경 시 입력 칸에
-    // 이미 채워져 있으므로 별도 결합 없이 그대로 사용한다. 섹션 모드는 자동 요약을
-    // 적용하지 않으므로 사용자 입력만 남는다.
+    // 자동 요약(신규 문서/카테고리/잠금 변경/섹션 편집)은 페이지 로드·필드 변경 시
+    // 입력 칸에 이미 채워져 있으므로 별도 결합 없이 그대로 사용한다.
     let summary = userSummary;
     if (summary.length > 255) summary = summary.slice(0, 255);
 

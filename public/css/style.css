@@ -1425,6 +1425,13 @@ div:where(.swal2-container) .swal2-html-container {
   color: inherit !important;
 }
 
+/* 좁은 화면에서 아이콘 버튼의 텍스트 숨기기 */
+@media (max-width: 575.98px) {
+  .btn-icon-collapse .btn-collapse-text {
+    display: none;
+  }
+}
+
 /* ── Home Page / Welcome ── */
 .wiki-welcome h1 {
   color: var(--wiki-text);

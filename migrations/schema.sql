@@ -23,8 +23,10 @@ CREATE TABLE IF NOT EXISTS sessions (
   user_id    INTEGER NOT NULL,
   expires_at INTEGER NOT NULL,
   user_agent TEXT,
+  created_at INTEGER DEFAULT (unixepoch()),
   FOREIGN KEY (user_id) REFERENCES users(id)
 );
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 
 -- 문서 테이블
 -- slug 가 문서의 고유 식별자이자 표시 이름이다. 별도 title 컬럼은 두지 않는다.

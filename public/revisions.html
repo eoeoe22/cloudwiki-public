@@ -41,11 +41,11 @@
           style="position: sticky; top: 0; z-index: 100; border-radius: 0; border-left: none; border-right: none; margin-left: calc(-1 * var(--wiki-container-padding, 1.5rem)); margin-right: calc(-1 * var(--wiki-container-padding, 1.5rem));">
           <span><i class="bi bi-clock-history me-2"></i><strong id="revisionViewLabel"></strong></span>
           <div class="d-flex gap-2">
-            <button id="rawViewBtn" class="btn btn-sm btn-outline-secondary" onclick="toggleRawView()">
-              <i class="bi bi-code"></i> Raw
+            <button id="rawViewBtn" class="btn btn-sm btn-outline-secondary btn-icon-collapse" onclick="toggleRawView()">
+              <i class="bi bi-code"></i><span class="btn-collapse-text"> Raw</span>
             </button>
-            <button class="btn btn-sm btn-warning" onclick="backToRevisions()">
-              <i class="bi bi-arrow-left"></i> 목록으로
+            <button class="btn btn-sm btn-warning btn-icon-collapse" onclick="backToRevisions()">
+              <i class="bi bi-arrow-left"></i><span class="btn-collapse-text"> 목록으로</span>
             </button>
           </div>
         </div>
@@ -147,7 +147,13 @@
       await checkAuth();
       currentSlug = extractSlug();
       if (currentSlug) {
-        showRevisions(currentSlug);
+        await showRevisions(currentSlug);
+        // URL의 ?diff=<revId> 파라미터가 있으면 즉시 diff 모달 표시
+        const diffParam = new URLSearchParams(window.location.search).get('diff');
+        const diffRevId = diffParam ? Number(diffParam) : NaN;
+        if (Number.isInteger(diffRevId) && diffRevId > 0) {
+          showDiff(currentSlug, diffRevId);
+        }
       } else {
         document.getElementById('loading').classList.add('d-none');
         Swal.fire('오류', '문서를 찾을 수 없습니다.', 'error');
@@ -294,9 +300,13 @@
         isRawView = false;
 
         const versionLabel = (pageVersion !== '' && pageVersion != null) ? `v${pageVersion}` : `#${revId}`;
-        const revDate = rev.created_at ? new Date(rev.created_at * 1000).toLocaleString('ko-KR') : '';
+        let revDate = '';
+        if (rev.created_at) {
+          const d = new Date(rev.created_at * 1000);
+          revDate = `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')}`;
+        }
         document.getElementById('revisionViewLabel').textContent = revDate
-          ? `${revDate} 에 저장된 ${versionLabel} 리비전 열람 중입니다.`
+          ? `${revDate} ${versionLabel} 리비전 열람 중입니다.`
           : `${versionLabel} 리비전 열람 중입니다.`;
         document.getElementById('revisionViewTitle').textContent = document.getElementById('revPageTitle').textContent || slug;
         document.getElementById('revisionViewContent').innerHTML = '';
@@ -310,7 +320,7 @@
         const rawBtn = document.getElementById('rawViewBtn');
         if (rawBtn) {
           rawBtn.style.display = isExtensionData ? 'none' : '';
-          rawBtn.innerHTML = '<i class="bi bi-code"></i> Raw';
+          rawBtn.innerHTML = '<i class="bi bi-code"></i><span class="btn-collapse-text"> Raw</span>';
           rawBtn.classList.remove('btn-secondary');
           rawBtn.classList.add('btn-outline-secondary');
         }
@@ -346,13 +356,13 @@
       const rawBtn = document.getElementById('rawViewBtn');
       if (isRawView) {
         contentEl.innerHTML = `<pre class="wiki-ext-raw-pre">${escapeHtml(currentRevisionRawContent)}</pre>`;
-        rawBtn.innerHTML = '<i class="bi bi-eye"></i> 렌더링';
+        rawBtn.innerHTML = '<i class="bi bi-eye"></i><span class="btn-collapse-text"> 렌더링</span>';
         rawBtn.classList.remove('btn-outline-secondary');
         rawBtn.classList.add('btn-secondary');
       } else {
         contentEl.innerHTML = '';
         await renderWikiContent(currentRevisionRawContent, currentRevisionSlug, 'revisionViewContent');
-        rawBtn.innerHTML = '<i class="bi bi-code"></i> Raw';
+        rawBtn.innerHTML = '<i class="bi bi-code"></i><span class="btn-collapse-text"> Raw</span>';
         rawBtn.classList.remove('btn-secondary');
         rawBtn.classList.add('btn-outline-secondary');
       }

@@ -397,6 +397,14 @@ html[data-theme="dark"] #cm-editor .cm-editor {
     margin-right: 4px;
 }
 
+.editor-settings-item input[type="radio"]:disabled {
+    cursor: not-allowed;
+}
+
+.editor-settings-subitem {
+    padding-left: 28px;
+}
+
 .editor-settings-divider {
     height: 1px;
     background: var(--wiki-border);

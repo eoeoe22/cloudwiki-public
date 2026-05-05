@@ -549,7 +549,7 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                     const entries = Object.keys(nodes).sort((a, b) => {
                         const ca = nodes[a]._descendants;
                         const cb = nodes[b]._descendants;
-                        if (ca !== cb) return cb - ca;
+                        if (ca !== cb) return ca - cb;
                         return a.localeCompare(b);
                     });
                     let text = '';

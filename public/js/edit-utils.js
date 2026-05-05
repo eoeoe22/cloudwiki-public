@@ -340,6 +340,10 @@ function saveDraftToLocal() {
         base: typeof originalContent === 'string' ? originalContent : '',
         savedAt: Date.now(),
     };
+    if (sectionMode) {
+        payload.sectionIndex = sectionIndex;
+        payload.sectionHeading = (sectionRange && sectionRange.headingText) || sectionHeadingParam || '';
+    }
     try {
         localStorage.setItem(DRAFT_KEY, JSON.stringify(payload));
         Swal.fire({
@@ -461,6 +465,109 @@ async function checkDraft() {
         });
     } else {
         localStorage.removeItem(DRAFT_KEY);
+    }
+}
+
+// 전체 문서 편집으로 진입했을 때, 같은 슬러그의 섹션 편집 초안이
+// localStorage 에 남아 있으면 사용자에게 불러올지 묻는다.
+// 키 포맷: 'wiki_draft_{slug}#section={N}' — saveDraftToLocal 이 sectionMode 일 때 sectionIndex/sectionHeading 도 함께 기록한다.
+async function checkSectionDrafts() {
+    if (!slug || sectionMode || isExtensionData) return;
+    if (!editor || typeof editor.getMarkdown !== 'function') return;
+    // 충돌 해결 UI 가 열려 있으면 건너뛴다.
+    // checkDraft 가 버전 충돌 분기에서 showConflictModal 을 띄우면 메인 에디터는 숨겨지고,
+    // 사용자가 충돌을 해결할 때 resolveConflict 가 conflictEditor 의 내용으로 메인 에디터를
+    // 덮어쓴다. 이 시점에 섹션 초안을 메인 에디터에 setMarkdown 해도 곧 사라지므로 스킵.
+    const conflictUi = document.getElementById('conflict-ui');
+    if (conflictUi && conflictUi.style.display !== 'none' && conflictUi.offsetParent !== null) return;
+
+    const prefix = 'wiki_draft_' + slug + '#section=';
+    const keys = [];
+    try {
+        for (let i = 0; i < localStorage.length; i++) {
+            const k = localStorage.key(i);
+            if (k && k.startsWith(prefix)) keys.push(k);
+        }
+    } catch (e) {
+        return;
+    }
+    if (!keys.length) return;
+
+    for (const key of keys) {
+        let draft;
+        try {
+            const raw = localStorage.getItem(key);
+            if (!raw) continue;
+            draft = JSON.parse(raw);
+        } catch (e) {
+            localStorage.removeItem(key);
+            continue;
+        }
+        if (!draft || typeof draft.content !== 'string') {
+            localStorage.removeItem(key);
+            continue;
+        }
+
+        const sIdxRaw = (typeof draft.sectionIndex === 'number')
+            ? draft.sectionIndex
+            : parseInt(key.substring(prefix.length), 10);
+        const sIdx = Number.isFinite(sIdxRaw) ? sIdxRaw : -1;
+        const sHeading = typeof draft.sectionHeading === 'string' ? draft.sectionHeading : '';
+
+        // 에디터의 현재 본문 기준으로 섹션을 찾는다 — checkDraft 가 먼저 전체 초안을
+        // 불러와 에디터 내용을 바꿨을 수도 있으므로 originalContent 가 아닌 editor 기준이 안전하다.
+        const baseContent = editor.getMarkdown();
+        const range = findSectionRange(baseContent, sIdx, sHeading);
+        const headingDisplay = (range && range.headingText) || sHeading || `섹션 #${sIdx + 1}`;
+
+        // 현재 본문의 해당 섹션 텍스트와 초안이 동일하면 의미 없음 — 정리
+        if (range) {
+            const lines = baseContent.split('\n');
+            const currentSection = lines.slice(range.lineIdx, range.endLine).join('\n');
+            if (currentSection.trim() === draft.content.trim()) {
+                localStorage.removeItem(key);
+                continue;
+            }
+        }
+
+        if (!range) {
+            const result = await Swal.fire({
+                title: '섹션 위치를 찾지 못했습니다',
+                html: `<b>${escapeHtml(headingDisplay)}</b> 섹션의 저장된 초안이 있지만 문서 구조가 변경되어 위치를 찾을 수 없습니다.`,
+                icon: 'warning',
+                showCancelButton: true,
+                confirmButtonText: '초안 삭제',
+                cancelButtonText: '나중에'
+            });
+            if (result.isConfirmed) localStorage.removeItem(key);
+            continue;
+        }
+
+        const result = await Swal.fire({
+            title: '저장된 섹션 초안',
+            html: `<b>${escapeHtml(headingDisplay)}</b> 에 저장된 초안이 있습니다.<br>본문에 불러오시겠습니까?`,
+            icon: 'info',
+            showCancelButton: true,
+            showDenyButton: true,
+            confirmButtonText: '예, 불러오기',
+            denyButtonText: '아니오, 삭제',
+            cancelButtonText: '나중에'
+        });
+
+        if (result.isConfirmed) {
+            const merged = mergeSectionIntoFull(baseContent, range, draft.content);
+            editor.setMarkdown(merged);
+            localStorage.removeItem(key);
+            await Swal.fire({
+                icon: 'success',
+                title: '불러옴',
+                text: `'${headingDisplay}' 섹션 초안을 본문에 병합했습니다.`,
+                timer: 1500,
+                showConfirmButton: false
+            });
+        } else if (result.isDenied) {
+            localStorage.removeItem(key);
+        }
     }
 }
 

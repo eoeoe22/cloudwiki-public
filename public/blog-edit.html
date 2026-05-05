@@ -309,6 +309,9 @@
     <script src="/js/edit-modals.js"></script>
     <script src="/js/edit-image.js"></script>
     <!-- edit-conflict.js 미포함: 블로그는 리비전/충돌 관리 없음 -->
+    <!-- edit-summary.js 는 요약 입력란이 없어도 edit.js 가 refreshAutoSummary 를
+         리스너로 참조하므로 ReferenceError 방지를 위해 로드한다. -->
+    <script src="/js/edit-summary.js"></script>
     <script src="/js/edit.js"></script>
 
     <!-- ── 푸터 Placeholder ── -->

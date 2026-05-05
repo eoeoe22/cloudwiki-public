@@ -139,12 +139,13 @@ export async function handleOAuthLogin(c: Context<Env>, profile: OAuthProfile): 
  */
 export async function createSession(c: Context<Env>, userId: number): Promise<void> {
     const sessionId = crypto.randomUUID();
-    const expiresAt = Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 7; // 7일
+    const now = Math.floor(Date.now() / 1000);
+    const expiresAt = now + 60 * 60 * 24 * 7; // 7일
     const userAgent = c.req.header('User-Agent') || null;
 
     await c.env.DB
-        .prepare('INSERT INTO sessions (id, user_id, expires_at, user_agent) VALUES (?, ?, ?, ?)')
-        .bind(sessionId, userId, expiresAt, userAgent)
+        .prepare('INSERT INTO sessions (id, user_id, expires_at, user_agent, created_at) VALUES (?, ?, ?, ?, ?)')
+        .bind(sessionId, userId, expiresAt, userAgent, now)
         .run();
 
     c.header(
