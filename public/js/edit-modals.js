@@ -447,6 +447,161 @@ function setupTableInsertPopover(tableBtn) {
     });
 }
 
+// ── 특수문자 삽입 팝오버 ──
+const SPECIAL_CHAR_GROUPS = [
+    {
+        name: '그리스 문자',
+        chars: [
+            'α', 'β', 'γ', 'δ', 'ε', 'ζ', 'η', 'θ', 'ι', 'κ', 'λ', 'μ',
+            'ν', 'ξ', 'ο', 'π', 'ρ', 'σ', 'τ', 'υ', 'φ', 'χ', 'ψ', 'ω',
+            'Α', 'Β', 'Γ', 'Δ', 'Ε', 'Ζ', 'Η', 'Θ', 'Ι', 'Κ', 'Λ', 'Μ',
+            'Ν', 'Ξ', 'Ο', 'Π', 'Ρ', 'Σ', 'Τ', 'Υ', 'Φ', 'Χ', 'Ψ', 'Ω'
+        ]
+    },
+    {
+        name: '수학 기호',
+        chars: ['±', '×', '÷', '∓', '⋅', '∘', '≠', '≈', '≃', '≅', '≡', '≤', '≥', '≪', '≫',
+                '∞', '∝', '∑', '∏', '∫', '∮', '√', '∛', '∂', '∇', '∆', 'π', '∅',
+                '∈', '∉', '∋', '⊂', '⊃', '⊆', '⊇', '∪', '∩', '∖', '∀', '∃', '∄',
+                '∧', '∨', '¬', '⊕', '⊗', '⊥', '∥', 'ℝ', 'ℕ', 'ℤ', 'ℚ', 'ℂ']
+    },
+    {
+        name: '화살표',
+        chars: ['←', '→', '↑', '↓', '↔', '↕', '↖', '↗', '↘', '↙',
+                '⇐', '⇒', '⇑', '⇓', '⇔', '⇕', '⟵', '⟶', '⟷', '⟹', '⟺',
+                '↩', '↪', '⤴', '⤵', '↺', '↻', '➜', '➤', '➥', '➦']
+    },
+    {
+        name: '통화',
+        chars: ['₩', '€', '£', '¥', '¢', '$', '₿', '₽', '₹', '₺', '₪', '₫', '฿', '₱', '₴', '₦', '₡', '₲', '₵']
+    },
+    {
+        name: '문장 부호',
+        chars: ['§', '¶', '†', '‡', '•', '·', '…', '–', '—', '‒', '⁓',
+                '“', '”', '‘', '’', '«', '»', '‹', '›', '„', '‚',
+                '¡', '¿', '©', '®', '™', '℠', '№', '⁂', '⁕', '※']
+    },
+    {
+        name: '숫자/단위',
+        chars: ['½', '⅓', '⅔', '¼', '¾', '⅕', '⅖', '⅗', '⅘', '⅙', '⅚', '⅛', '⅜', '⅝', '⅞',
+                '⁰', '¹', '²', '³', '⁴', '⁵', '⁶', '⁷', '⁸', '⁹', 'ⁿ',
+                '₀', '₁', '₂', '₃', '₄', '₅', '₆', '₇', '₈', '₉',
+                '°', '′', '″', '‰', '‱', '℃', '℉', 'Å', 'Ω', 'µ', 'ℓ']
+    },
+    {
+        name: '도형/기타',
+        chars: ['★', '☆', '✦', '✧', '✪', '✯', '♥', '♡', '♦', '♢', '♣', '♠', '♪', '♫', '♬',
+                '✓', '✔', '✗', '✘', '☑', '☒', '☐',
+                '▲', '△', '▶', '▷', '▼', '▽', '◀', '◁',
+                '◆', '◇', '●', '○', '◎', '◉', '■', '□', '▪', '▫',
+                '☀', '☁', '☂', '☃', '☎', '☞', '☜', '☝', '☟', '⌘', '⌥', '⏎', '␣']
+    }
+];
+
+function setupSpecialCharPicker(triggerBtn) {
+    const popup = document.createElement('div');
+    popup.className = 'special-char-popup';
+
+    const tabsHtml = SPECIAL_CHAR_GROUPS.map((g, i) => {
+        const active = i === 0 ? ' active' : '';
+        return `<button type="button" class="special-char-tab${active}" data-group="${i}">${escapeHtml(g.name)}</button>`;
+    }).join('');
+
+    popup.innerHTML = `
+        <div class="special-char-header">
+            <span class="special-char-title"><span class="special-char-omega">Ω</span> 특수문자</span>
+        </div>
+        <div class="special-char-tabs">${tabsHtml}</div>
+        <div class="special-char-grid" id="specialCharGrid"></div>
+    `;
+    document.body.appendChild(popup);
+
+    const grid = popup.querySelector('#specialCharGrid');
+    const tabs = popup.querySelectorAll('.special-char-tab');
+
+    function renderGroup(idx) {
+        const group = SPECIAL_CHAR_GROUPS[idx] || SPECIAL_CHAR_GROUPS[0];
+        grid.innerHTML = group.chars.map(ch => {
+            return `<button type="button" class="special-char-cell" data-char="${escapeHtml(ch)}" title="${escapeHtml(ch)} (U+${ch.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')})">${escapeHtml(ch)}</button>`;
+        }).join('');
+    }
+
+    renderGroup(0);
+
+    tabs.forEach(tab => {
+        tab.addEventListener('click', (e) => {
+            e.stopPropagation();
+            tabs.forEach(t => t.classList.remove('active'));
+            tab.classList.add('active');
+            renderGroup(parseInt(tab.dataset.group, 10));
+        });
+    });
+
+    // 셀 클릭 시 문자 삽입(팝업은 닫지 않음)
+    grid.addEventListener('mousedown', (e) => {
+        // 에디터 포커스 상실 방지
+        e.preventDefault();
+    });
+    grid.addEventListener('click', (e) => {
+        const cell = e.target.closest('.special-char-cell');
+        if (!cell) return;
+        e.stopPropagation();
+        const ch = cell.dataset.char;
+        if (typeof editor !== 'undefined' && editor && typeof editor.insertText === 'function') {
+            editor.insertText(ch);
+        }
+    });
+
+    function positionPopup() {
+        const rect = triggerBtn.getBoundingClientRect();
+        const popupW = popup.offsetWidth || 340;
+        const popupH = popup.offsetHeight || 320;
+        const viewportW = document.documentElement.clientWidth;
+        const viewportH = document.documentElement.clientHeight;
+        const margin = 8;
+        const triggerCenterX = rect.left + (rect.width / 2);
+
+        let left = triggerCenterX - (popupW / 2);
+        left = Math.max(margin, Math.min(left, viewportW - popupW - margin));
+
+        let top = rect.bottom + 6;
+        if (top + popupH + margin > viewportH && rect.top - popupH - 6 >= margin) {
+            top = rect.top - popupH - 6;
+        }
+        top = Math.max(margin, Math.min(top, viewportH - popupH - margin));
+
+        popup.style.left = (left + window.scrollX) + 'px';
+        popup.style.top = (top + window.scrollY) + 'px';
+    }
+
+    triggerBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const isActive = popup.classList.contains('active');
+        if (isActive) {
+            popup.classList.remove('active');
+        } else {
+            popup.classList.add('active');
+            positionPopup();
+        }
+    });
+
+    document.addEventListener('click', (e) => {
+        if (!popup.classList.contains('active')) return;
+        if (popup.contains(e.target) || triggerBtn.contains(e.target)) return;
+        popup.classList.remove('active');
+    });
+
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && popup.classList.contains('active')) {
+            popup.classList.remove('active');
+        }
+    });
+
+    window.addEventListener('resize', () => {
+        if (popup.classList.contains('active')) positionPopup();
+    });
+}
+
 // ── 타임스탬프 삽입 모달 ──
 function openTimestampInsertModal() {
     const TYPES = [

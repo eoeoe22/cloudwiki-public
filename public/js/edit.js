@@ -1298,6 +1298,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         toolbar.appendChild(createToolbarBtn('<i class="bi bi-diagram-3-fill"></i>', '하위 문서', () => openSubdocInsertModal()));
         toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-calendar-clock"></i>', '타임스탬프 삽입', () => openTimestampInsertModal()));
         toolbar.appendChild(createToolbarSep());
+        const specialCharBtn = createToolbarBtn('<span class="cm-toolbar-omega">Ω</span>', '특수문자 삽입', () => { });
+        toolbar.appendChild(specialCharBtn);
+        setupSpecialCharPicker(specialCharBtn);
+        toolbar.appendChild(createToolbarSep());
         if (selectedIconsOnly) {
             toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-vector-square"></i>', '아이콘 삽입', () => openSelectedIconsPicker()));
         } else {
@@ -2540,12 +2544,13 @@ document.addEventListener('DOMContentLoaded', async () => {
             catWarning.classList.add('d-none');
         }
         // 카테고리 추가/삭제 시 편집 요약 자동 갱신 (renderCategoryTags에서 input 이벤트가 디스패치된다)
-        refreshAutoSummary();
+        // 블로그 모드는 edit-summary.js 를 로드하지 않으므로 typeof 가드.
+        if (typeof refreshAutoSummary === 'function') refreshAutoSummary();
     });
 
-    // 관리자 전용(잠금) 토글 시 편집 요약 자동 갱신
+    // 관리자 전용(잠금) 토글 시 편집 요약 자동 갱신 (블로그 모드 미적용)
     const lockEl = document.getElementById('isLockedCheck');
-    if (lockEl) {
+    if (lockEl && typeof refreshAutoSummary === 'function') {
         lockEl.addEventListener('change', refreshAutoSummary);
     }
     // 기존 문서 불러오기 (블로그 모드는 별도 처리)

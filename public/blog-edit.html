@@ -41,8 +41,6 @@
     </script>
     <!-- Turnstile: edit.js의 initTurnstile()/onTurnstileLoad()가 이 스크립트에 의존 -->
     <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?onload=onTurnstileLoad" async defer></script>
-    <!-- Diff (비교 - 블로그에서는 미사용이나 edit-conflict.js 없이도 문제없도록 stub) -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jsdiff/5.1.0/diff.min.js"></script>
 </head>
 
 <body style="-webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;">
@@ -177,14 +175,8 @@
     <!-- ── 네비게이션 바 Placeholder ── -->
     <div id="app-header-placeholder"></div>
 
-    <!-- 편집 충돌 UI (블로그에서 미사용, edit-conflict.js 불필요하지만 stub ID는 유지) -->
-    <div id="conflict-ui" style="display: none;"></div>
-
     <div class="wiki-container" id="main-editor-container">
         <div class="wiki-article">
-
-            <!-- 동시편집 배너 stub (edit.js가 참조할 수 있는 ID) -->
-            <div id="concurrent-edit-banner" style="display:none;"></div>
 
             <h2 class="mb-4" id="editPageTitle">
                 <i class="mdi mdi-pencil-box-multiple"></i> 블로그 편집
@@ -196,18 +188,14 @@
                 <input type="text" id="blogTitleInput" class="edit-title-input" placeholder="블로그 포스트 제목" maxlength="500">
             </div>
 
-            <!-- 위키 전용 필드 (BLOG_MODE에서 숨김) — edit.js가 참조하는 ID는 유지 -->
+            <!-- 위키 전용 필드 stub: edit.js 가 BLOG_MODE return 이전에 무가드로 접근하는
+                 ID 만 남긴다. 그 외 위키 전용 ID(titleInput, redirectInput, sectionEdit*,
+                 categoryTagInput/Container 등) 의 참조 경로는 모두 BLOG_MODE return 이후이거나
+                 null 가드를 가지므로 stub 이 필요 없다. -->
             <div style="display:none;">
-                <input type="text" id="titleInput">
                 <input type="hidden" id="categoryInput">
-                <input type="text" id="categoryTagInput">
-                <div id="categoryTagContainer"></div>
-                <input type="text" id="redirectInput">
                 <input type="checkbox" id="isLockedCheck">
                 <div id="adminLockContainer"></div>
-                <div id="sectionEditBanner"></div>
-                <span id="sectionEditHeading"></span>
-                <a id="sectionEditFullLink" href="#"></a>
             </div>
 
             <!-- Markdown 에디터 -->
@@ -309,9 +297,9 @@
     <script src="/js/edit-modals.js"></script>
     <script src="/js/edit-image.js"></script>
     <!-- edit-conflict.js 미포함: 블로그는 리비전/충돌 관리 없음 -->
-    <!-- edit-summary.js 는 요약 입력란이 없어도 edit.js 가 refreshAutoSummary 를
-         리스너로 참조하므로 ReferenceError 방지를 위해 로드한다. -->
-    <script src="/js/edit-summary.js"></script>
+    <!-- edit-summary.js 미포함: 블로그에는 #summaryInput 이 없어 자동 요약이
+         의미를 갖지 않는다. edit.js 의 refreshAutoSummary 참조는 모두
+         typeof 가드로 보호되므로 ReferenceError 가 발생하지 않는다. -->
     <script src="/js/edit.js"></script>
 
     <!-- ── 푸터 Placeholder ── -->
