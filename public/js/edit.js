@@ -2717,6 +2717,19 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
+    // 본문 헤딩(목차) 변화 실시간 감지 → 자동 편집 요약 갱신.
+    // 별도 디바운스로 미리보기/diff 와 독립 동작하며, 헤딩 추가/삭제/이름변경 시
+    // refreshAutoSummary 가 새 prefix 를 합성한다.
+    if (editor && typeof editor.on === 'function') {
+        let summaryDebounce = null;
+        editor.on('change', () => {
+            clearTimeout(summaryDebounce);
+            summaryDebounce = setTimeout(() => {
+                if (typeof refreshAutoSummary === 'function') refreshAutoSummary();
+            }, 400);
+        });
+    }
+
     // 동시편집 감지: 하트비트 전송 + 편집자 체크 시작
     startEditingHeartbeat();
     checkConcurrentEditors();
