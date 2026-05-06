@@ -9,6 +9,8 @@
 # production
 /dist
 /build
+# Vite client build output (산출물은 deploy 시 자동 생성)
+/public/dist
 
 # wrangler / cloudflare
 .wrangler

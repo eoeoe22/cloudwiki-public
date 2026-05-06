@@ -104,7 +104,7 @@
             }
             const script = document.createElement('script');
             script.id = 'chartjs-script';
-            script.src = 'https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js';
+            script.src = 'https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js';
             script.onload = resolve;
             script.onerror = reject;
             document.body.appendChild(script);
