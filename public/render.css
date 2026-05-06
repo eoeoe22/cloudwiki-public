@@ -737,23 +737,6 @@ html[data-theme="dark"] .wiki-content pre[class*="language-"] code[class*="langu
   white-space: pre;
   line-height: 1.6;
 }
-/* ── Spoiler (스포일러) ── */
-.spoiler {
-  background-color: var(--wiki-text, #333);
-  color: transparent;
-  border-radius: 8px;
-  padding: 0 4px;
-  cursor: pointer;
-  transition: color 0.3s, background-color 0.3s;
-  user-select: none;
-}
-
-.spoiler.revealed {
-  background-color: var(--wiki-card-bg, #eee);
-  color: var(--wiki-text, #333);
-  user-select: auto;
-}
-
 /* ── Folding Block (펼치기/접기) ── */
 .wiki-fold {
   background-color: var(--wiki-card-bg);

@@ -7,7 +7,7 @@
 //                    헤딩 텍스트 자체가 바뀌면 "'OLD' → 'NEW' 섹션 이름 변경"
 //                    섹션 내부 하위 헤딩 추가/삭제도 합성
 //   - 신규 문서:      "문서 생성"
-//   - 기존 문서:      카테고리 추가/삭제, 관리자 전용(잠금) 변경,
+//   - 기존 문서:      카테고리 추가/삭제, 넘겨주기 설정/해제, 관리자 전용(잠금) 변경,
 //                    본문 헤딩 추가/삭제/이름 변경,
 //                    공통 섹션 본문 편집("섹션 'X' 편집") 을 합성
 //
@@ -17,7 +17,7 @@
 // 의존하는 외부(edit.js / render.js) 전역:
 //   sectionMode, sectionRange, originalContent, originalPageMeta, categoryTags, editor
 //   _extractMarkdownSectionRanges (render.js)
-//   #summaryInput, #isLockedCheck DOM
+//   #summaryInput, #isLockedCheck, #redirectInput DOM
 
 let lastAutoSummaryPrefix = '';
 
@@ -249,6 +249,10 @@ function buildAutoEditSummary() {
     const added = currCats.filter(c => !origCats.includes(c));
     const removed = origCats.filter(c => !currCats.includes(c));
 
+    const origRedirect = originalPageMeta.redirect_to || '';
+    const redirectEl = document.getElementById('redirectInput');
+    const currRedirect = redirectEl ? redirectEl.value.trim() : '';
+
     const origLocked = originalPageMeta.is_locked ? 1 : 0;
     const lockEl = document.getElementById('isLockedCheck');
     const currLocked = lockEl && lockEl.checked ? 1 : 0;
@@ -256,6 +260,9 @@ function buildAutoEditSummary() {
     const parts = [];
     if (added.length) parts.push(`분류 ${added.map(c => `'${c}'`).join(', ')} 추가`);
     if (removed.length) parts.push(`분류 ${removed.map(c => `'${c}'`).join(', ')} 삭제`);
+    if (origRedirect !== currRedirect) {
+        parts.push(currRedirect ? `넘겨주기 '${currRedirect}' 설정` : '넘겨주기 해제');
+    }
     if (origLocked !== currLocked) {
         parts.push(currLocked ? '관리자 전용 설정' : '관리자 전용 해제');
     }

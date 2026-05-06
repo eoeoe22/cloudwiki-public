@@ -79,9 +79,49 @@ function splitPipeTopLevel(raw: string): string[] {
 }
 
 /**
+ * part 내부에서 named-arg 구분자로 쓸 첫 번째 `=` 위치를 반환합니다.
+ * `{button:text|url?k=v}`, `{{nested|k=v}}`, `[[link|k=v]]` 등 중첩 토큰 내부의
+ * `=` 는 무시합니다. 없으면 -1. splitPipeTopLevel 과 동일한 깊이 규칙을 사용합니다.
+ */
+function findTopLevelEquals(part: string): number {
+    let depth = 0;
+    let singleBrace = 0;
+    let i = 0;
+    while (i < part.length) {
+        const ch = part[i];
+        if (ch === '{') {
+            if (part[i + 1] === '{') {
+                depth++;
+                i += (part[i + 2] === '{') ? 3 : 2;
+                continue;
+            }
+            singleBrace++;
+            i++;
+            continue;
+        }
+        if (ch === '}') {
+            if (singleBrace > 0) { singleBrace--; i++; continue; }
+            if (part[i + 1] === '}') {
+                if (depth > 0) depth--;
+                i += (part[i + 2] === '}') ? 3 : 2;
+                continue;
+            }
+            i++;
+            continue;
+        }
+        if (ch === '[' && part[i + 1] === '[') { depth++; i += 2; continue; }
+        if (ch === ']' && part[i + 1] === ']') { if (depth > 0) depth--; i += 2; continue; }
+        if (ch === '=' && depth === 0 && singleBrace === 0 && i > 0) return i;
+        i++;
+    }
+    return -1;
+}
+
+/**
  * {{틀이름|값1|key=값2}} 형태의 호출 내부 텍스트(틀이름 포함)를 파싱합니다.
  * 첫 토큰은 틀 이름, 이후 토큰은 좌→우 순으로:
- *   - `=` 가 있으면 `key=value` 이름 인자로 저장
+ *   - 최상위 `=` 가 있으면 `key=value` 이름 인자로 저장
+ *     (단일 중괄호 `{...}`, 중첩 `{{...}}`, `[[...]]` 내부의 `=` 는 무시)
  *   - 없으면 현재 위치 카운터(1부터 시작)를 키로 하는 이름 인자로 저장
  * 같은 키가 반복되면 나중 값이 이전 값을 덮어쓴다. 따라서 호출자가 `1=value` 형태로
  * 명시적 위치 인자를 넘겨도 `{{{1}}}` 참조가 올바르게 해결된다.
@@ -92,7 +132,7 @@ function parseTemplateCall(raw: string): TemplateCall {
     const args: Record<string, string> = {};
     let posIndex = 1;
     for (const part of parts) {
-        const eq = part.indexOf('=');
+        const eq = findTopLevelEquals(part);
         if (eq > 0) {
             args[part.substring(0, eq).trim()] = part.substring(eq + 1).trim();
         } else {

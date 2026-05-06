@@ -698,12 +698,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
         const timePlugin = makePlugin(timeMatcher);
 
-        const spoilerMatcher = new MatchDecorator({
-            regexp: /\|\|(.*?)\|\|/g,
-            decoration: Decoration.mark({ class: "cm-inline-code" })
-        });
-        const spoilerPlugin = makePlugin(spoilerMatcher);
-
         const inlineCodeMatcher = new MatchDecorator({
             regexp: /`([^`]+)`/g,
             decoration: Decoration.mark({ class: "cm-inline-code" })
@@ -1068,7 +1062,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             iconMarkerPlugin,
             highlightPlugin,
             timePlugin,
-            spoilerPlugin,
             inlineCodePlugin,
             quoteListPlugin,
             paramTokenPlugin,
@@ -1271,7 +1264,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         toolbar.appendChild(createToolbarBtn('<s>S</s>', '취소선', () => wrapSelection('~~', '~~')));
         toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-format-underline"></i>', '밑줄', () => wrapSelection('__', '__')));
         toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-marker"></i>', '형광펜', () => wrapSelection('==', '==')));
-        toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-eye-off-outline"></i>', '스포일러', () => wrapSelection('||', '||')));
         toolbar.appendChild(createToolbarSep());
         toolbar.appendChild(createToolbarBtn('─', '구분선', () => editor.insertText('\n---\n')));
         toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-format-quote-close"></i>', '인용', () => insertPrefix('> ')));
@@ -2553,6 +2545,22 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (lockEl && typeof refreshAutoSummary === 'function') {
         lockEl.addEventListener('change', refreshAutoSummary);
     }
+
+    // 넘겨주기(redirect) 변경 시 편집 요약 자동 갱신
+    // input: 매 키 입력마다 디바운스로 갱신 (입력 중간 prefix 가 길어졌다 짧아졌다 반복하는 것 완화)
+    // change: blur 직후 즉시 확정
+    const redirectInputEl = document.getElementById('redirectInput');
+    if (redirectInputEl) {
+        let redirectDebounce = null;
+        redirectInputEl.addEventListener('input', () => {
+            clearTimeout(redirectDebounce);
+            redirectDebounce = setTimeout(refreshAutoSummary, 300);
+        });
+        redirectInputEl.addEventListener('change', () => {
+            clearTimeout(redirectDebounce);
+            refreshAutoSummary();
+        });
+    }
     // 기존 문서 불러오기 (블로그 모드는 별도 처리)
     if (BLOG_MODE) {
         await loadBlogContentForEdit();
@@ -2866,6 +2874,9 @@ async function savePage() {
     } else {
         content = editor.getMarkdown();
     }
+    // 디바운스로 대기 중인 자동 요약(특히 넘겨주기 input)을 즉시 반영해야
+    // Ctrl/Cmd+S 단축키로 저장할 때 최신 변경이 누락되지 않는다.
+    if (typeof refreshAutoSummary === 'function') refreshAutoSummary();
     const userSummary = document.getElementById('summaryInput').value.trim();
 
     // 본문/메타데이터 변경이 전혀 없으면 저장 거부 (프론트 전용 검증).

@@ -1017,12 +1017,6 @@ async function sendMessage(receiverId, receiverName) {
     }
 })();
 
-// ── 스포일러 클릭 이벤트 위임 ──
-document.addEventListener('click', function (e) {
-    const spoiler = e.target.closest('.spoiler');
-    if (spoiler) spoiler.classList.toggle('revealed');
-});
-
 // ── 상대 시간 변환 ──
 function getRelativeTime(unixTs) {
     const now = Math.floor(Date.now() / 1000);

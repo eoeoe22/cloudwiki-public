@@ -7,14 +7,25 @@ function initMarkedConfig() {
             {
                 name: 'highlight',
                 level: 'inline',
-                start(src) { return src.indexOf('=='); },
+                // ==text== 의 시작이 어디 있는지를 찾되, 선행 스타일 토큰
+                // ({color:...}, {bg:...}, {palette:...}) 가 있을 수 있는 가장 이른 위치도 후보로 삼는다.
+                start(src) {
+                    let min = -1;
+                    for (const needle of ['==', '{color:', '{bg:', '{palette:']) {
+                        const idx = src.indexOf(needle);
+                        if (idx >= 0 && (min === -1 || idx < min)) min = idx;
+                    }
+                    return min;
+                },
                 tokenizer(src) {
-                    const match = src.match(/^==([^=]+)==/);
-                    if (match) {
+                    // 선행 스타일 토큰을 0개 이상 흡수하고 ==text== 본문을 캡처.
+                    const match = src.match(/^((?:\{(?:palette|bg|color):[^}]+\})*)==([^=]+)==/);
+                    if (match && match[2]) {
                         const token = {
                             type: 'highlight',
                             raw: match[0],
-                            text: match[1],
+                            prefix: match[1] || '',
+                            text: match[2],
                             tokens: []
                         };
                         this.lexer.inline(token.text, token.tokens);
@@ -23,7 +34,33 @@ function initMarkedConfig() {
                 },
                 childTokens: ['tokens'],
                 renderer(token) {
-                    return '<mark>' + this.parser.parseInline(token.tokens) + '</mark>';
+                    let bg = '', color = '';
+                    if (token.prefix) {
+                        // _processInlineLayoutTokens.parseStylePrefix 와 동일하게
+                        // 모든 토큰을 순서대로 소비하며 덮어써, 뒤쪽 토큰이 우선하도록 한다.
+                        // 예: {palette:primary}{bg:blue} → palette 가 풀린 후의 {bg:#CFE2FF}
+                        // 보다 뒤의 {bg:blue} 가 최종값이 된다.
+                        let t = _resolvePaletteTokens(token.prefix);
+                        let replaced = true;
+                        while (replaced) {
+                            replaced = false;
+                            const bm = t.match(/\{bg:\s*([^}]+)\}/);
+                            if (bm) { bg = bm[1].trim(); t = t.replace(bm[0], ''); replaced = true; }
+                            const cm = t.match(/\{color:\s*([^}]+)\}/);
+                            if (cm) { color = cm[1].trim(); t = t.replace(cm[0], ''); replaced = true; }
+                        }
+                    }
+                    const safeBg = bg && _isSafeCssColor(bg) ? bg : '';
+                    const safeColor = color && _isSafeCssColor(color) ? color : '';
+                    // color 만 지정된 경우: 형광펜 강조 없이 글씨색만 변경한 <span> 으로 렌더.
+                    if (safeColor && !safeBg) {
+                        return `<span style="color:${safeColor};">` + this.parser.parseInline(token.tokens) + '</span>';
+                    }
+                    let style = '';
+                    if (safeBg) style += `background-color:${safeBg};`;
+                    if (safeColor) style += `color:${safeColor};`;
+                    const styleAttr = style ? ` style="${style}"` : '';
+                    return `<mark${styleAttr}>` + this.parser.parseInline(token.tokens) + '</mark>';
                 }
             },
             {
@@ -76,28 +113,6 @@ function initMarkedConfig() {
                         style = 'max-width: 100%; height: auto;';
                     }
                     return `<img src="${escapeHtml(token.href)}" alt="${escapeHtml(token.text)}" style="${style}" data-size="${token.size}">`;
-                }
-            },
-            {
-                name: 'spoiler',
-                level: 'inline',
-                start(src) { return src.indexOf('||'); },
-                tokenizer(src) {
-                    const match = src.match(/^\|\|([^|]+(?:\|[^|]+)*?)\|\|/);
-                    if (match) {
-                        const token = {
-                            type: 'spoiler',
-                            raw: match[0],
-                            text: match[1],
-                            tokens: []
-                        };
-                        this.lexer.inline(token.text, token.tokens);
-                        return token;
-                    }
-                },
-                childTokens: ['tokens'],
-                renderer(token) {
-                    return '<span class="spoiler">' + this.parser.parseInline(token.tokens) + '</span>';
                 }
             },
             {
@@ -221,8 +236,48 @@ function _splitPipeTopLevel(raw) {
 }
 
 /**
+ * part 내부에서 named-arg 구분자로 쓸 첫 번째 `=` 위치를 반환한다.
+ * `{button:text|url?k=v}`, `{{nested|k=v}}`, `[[link|k=v]]` 등 중첩 토큰 내부의
+ * `=` 는 무시한다. 없으면 -1. _splitPipeTopLevel 과 동일한 깊이 규칙을 사용.
+ */
+function _findTopLevelEquals(part) {
+    let depth = 0;        // {{...}} / [[...]] / {{{...}}} 합산 깊이
+    let singleBrace = 0;  // {...} 단일 중괄호 토큰 깊이
+    let i = 0;
+    while (i < part.length) {
+        const ch = part[i];
+        if (ch === '{') {
+            if (part[i + 1] === '{') {
+                depth++;
+                i += (part[i + 2] === '{') ? 3 : 2;
+                continue;
+            }
+            singleBrace++;
+            i++;
+            continue;
+        }
+        if (ch === '}') {
+            if (singleBrace > 0) { singleBrace--; i++; continue; }
+            if (part[i + 1] === '}') {
+                if (depth > 0) depth--;
+                i += (part[i + 2] === '}') ? 3 : 2;
+                continue;
+            }
+            i++;
+            continue;
+        }
+        if (ch === '[' && part[i + 1] === '[') { depth++; i += 2; continue; }
+        if (ch === ']' && part[i + 1] === ']') { if (depth > 0) depth--; i += 2; continue; }
+        if (ch === '=' && depth === 0 && singleBrace === 0 && i > 0) return i;
+        i++;
+    }
+    return -1;
+}
+
+/**
  * {{틀이름|값1|key=값2}} 호출 내부 텍스트를 파싱한다. 첫 토큰은 틀 이름, 이후 토큰은 좌→우 순으로:
- *   - `=` 가 있으면 `key=value` 이름 인자로 저장
+ *   - 최상위 `=` 가 있으면 `key=value` 이름 인자로 저장
+ *     (단일 중괄호 `{...}`, 중첩 `{{...}}`, `[[...]]` 내부의 `=` 는 무시)
  *   - 없으면 현재 위치 카운터(1부터 시작) 를 키로 하는 이름 인자로 저장
  * 같은 키가 반복되면 나중 값이 이전 값을 덮어쓴다. 따라서 호출자가 `1=value` 형태로
  * 명시적 위치 인자를 넘겨도 `{{{1}}}` 참조가 올바르게 해결된다.
@@ -233,7 +288,7 @@ function _parseTemplateCall(raw) {
     const args = {};
     let posIndex = 1;
     for (const part of parts) {
-        const eq = part.indexOf('=');
+        const eq = _findTopLevelEquals(part);
         if (eq > 0) {
             args[part.substring(0, eq).trim()] = part.substring(eq + 1).trim();
         } else {
