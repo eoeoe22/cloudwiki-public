@@ -233,6 +233,38 @@ function getOriginalHeadingsForSummary(): HeadingForSummary[] {
     return extractHeadingsForSummary(text);
 }
 
+// jsdiff(window.Diff) 기반 라인 단위 +/- 카운트.
+// part.value 는 트레일링 \n 을 포함하므로 conflict.ts 의 splitLines 와 동일하게
+// 마지막 빈 토큰을 제거한 길이로 라인 수를 센다. jsdiff 미로드/예외 시 빈 문자열.
+function formatLineDiffStats(orig: string, curr: string): string {
+    const Diff = window.Diff;
+    if (!Diff || typeof Diff.diffLines !== 'function') return '';
+    let added = 0;
+    let removed = 0;
+    try {
+        const parts = Diff.diffLines(orig || '', curr || '');
+        for (const p of parts) {
+            if (!p.added && !p.removed) continue;
+            const arr = (p.value || '').split('\n');
+            if (arr.length > 0 && arr[arr.length - 1] === '') arr.pop();
+            const n = arr.length;
+            if (p.added) added += n;
+            else if (p.removed) removed += n;
+        }
+    } catch {
+        return '';
+    }
+    if (!added && !removed) return '';
+    if (added && removed) return `[+${added}줄 -${removed}줄]`;
+    if (added) return `[+${added}줄]`;
+    return `[-${removed}줄]`;
+}
+
+function appendLineStats(summary: string, stats: string): string {
+    if (!stats) return summary;
+    return summary ? `${summary} ${stats}` : stats;
+}
+
 function buildAutoEditSummary(): string {
     const editor = window.editor;
     const editorAvailable = !!editor && typeof editor.getMarkdown === 'function';
@@ -283,12 +315,18 @@ function buildAutoEditSummary(): string {
             prefix = `'${baseHeading}' 편집`;
         }
         if (subParts.length) prefix += ', ' + subParts.join(', ');
-        return prefix;
+        const sectionStats = editorAvailable
+            ? formatLineDiffStats(window.originalContent || '', currentContent)
+            : '';
+        return appendLineStats(prefix, sectionStats);
     }
 
     // 신규 문서: 카테고리/잠금/헤딩은 생성에 포함되므로 '문서 생성'만 표시
     const originalPageMeta = window.originalPageMeta;
-    if (!originalPageMeta) return '문서 생성';
+    if (!originalPageMeta) {
+        const newDocStats = editorAvailable ? formatLineDiffStats('', currentContent) : '';
+        return appendLineStats('문서 생성', newDocStats);
+    }
 
     const origCats = originalPageMeta.category
         ? originalPageMeta.category.split(',').map(c => c.trim()).filter(Boolean)
@@ -336,7 +374,11 @@ function buildAutoEditSummary(): string {
         }
     }
 
-    return parts.join(', ');
+    const summary = parts.join(', ');
+    const stats = editorAvailable
+        ? formatLineDiffStats(window.originalContent || '', currentContent)
+        : '';
+    return appendLineStats(summary, stats);
 }
 
 // 자동 prefix 만 떼어내고 사용자 입력 부분만 반환.
