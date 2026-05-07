@@ -1,48 +1,116 @@
-// 편집 충돌 해결 UI (GitHub PR conflict editor 스타일)
-//
-// 용어:
-//   base   = 사용자가 편집을 시작했을 때의 본문 (originalContent, 클라이언트 보유)
-//   ours   = 내 수정본 (editor.getMarkdown())
-//   theirs = 서버 최신본 (409 응답의 data.content)
-//
-// 자동 병합(diff3) 알고리즘은 도입하지 않는다. 대신 3-way 정보를
-// 활용해 (1) 충돌 마커가 자동 삽입된 병합 초안을 통합 textarea에 채우고,
-// (2) 비교 패널에서 "내 vs 서버 / 내 vs base / 서버 vs base" 세 가지
-// 시점의 GitHub 스타일 hunk 테이블을 보여준다.
+/**
+ * 편집 충돌 해결 UI (GitHub PR conflict editor 스타일).
+ * 기존 public/js/edit-conflict.js 의 ES 모듈 이전.
+ *
+ * edit.html 만 로드 (블로그 편집은 의도적으로 미포함 — 블로그는 리비전/충돌 관리 없음).
+ *
+ * 용어:
+ *   base   = 사용자가 편집을 시작했을 때의 본문 (originalContent, 클라이언트 보유)
+ *   ours   = 내 수정본 (editor.getMarkdown())
+ *   theirs = 서버 최신본 (409 응답의 data.content)
+ *
+ * 자동 병합(diff3) 알고리즘은 도입하지 않는다. 대신 3-way 정보를 활용해
+ *  (1) 충돌 마커가 자동 삽입된 병합 초안을 통합 textarea 에 채우고,
+ *  (2) 비교 패널에서 "내 vs 서버 / 내 vs base / 서버 vs base" 세 시점의 GitHub
+ *      스타일 hunk 테이블을 보여준다.
+ *
+ * 외부 노출 (브리지):
+ *   - window.showConflictModal      ← edit.js (raw) 의 409 응답 핸들러,
+ *                                     edit/utils.ts 의 checkDraft 가 호출
+ *   - window.renderLocalDiff        ← edit.js 의 diff details 토글 핸들러
+ *   - window.startEditingHeartbeat  ← edit.js 의 DOMContentLoaded 부트스트랩
+ *   - window.stopEditingHeartbeat   ← 본 모듈 자체가 beforeunload 에 등록
+ *   - HTML 인라인 onclick 으로 호출되는 함수 (edit.html 충돌 UI 마크업):
+ *     resolveConflict, cancelConflict, jumpToConflict, setDiffMode,
+ *     renderDiffView, toggleServerView, toggleServerPreview
+ *
+ * 외부 의존:
+ *   - window.Diff (jsdiff CDN, edit.html 만 로드)
+ *   - window.Swal (CDN sweetalert2)
+ *   - window.editor / originalContent / pageVersion / slug / isExtensionData /
+ *     conflictEditor / serverViewer / scrollToBottom (types.ts 단일 소스)
+ *   - window.appConfig.enableConcurrentEditDetection (common.js)
+ *   - window.renderWikiContent (render.js — 서버 본문 프리뷰용)
+ *   - common.js 의 escapeHtml 글로벌 (sloppy 모드 bare reference) — 본 모듈에서는
+ *     utils/html.ts 의 ESM escapeHtml 을 import 해서 정확한 타입으로 사용한다.
+ */
+
+import { escapeHtml } from '../utils/html';
+import './types';
+import type {
+    AppConfig,
+    ConcurrentEditorsResponse,
+    ConflictEditor,
+    JsDiffApi,
+    JsDiffPart,
+    JsDiffPatch,
+    ServerViewer,
+} from './types';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 상수 및 상태
+// ─────────────────────────────────────────────────────────────────────────────
 
 const CONFLICT_CONTEXT_LINES = 3;
 
-// 현재 충돌 세션 상태
-let conflictState = {
+interface ConflictHunk {
+    id: number;
+    ours: string;
+    theirs: string;
+    resolved: boolean;
+}
+
+interface ConflictState {
+    base: string;
+    ours: string;
+    theirs: string;
+    serverVersion: number | string | null;
+    diffMode: 'unified' | 'split';
+    compareMode: 'mine-vs-server' | 'mine-vs-base' | 'server-vs-base';
+    serverPaneMode: 'diff' | 'raw';
+    serverPreviewMode: 'raw' | 'preview';
+    conflicts: ConflictHunk[];
+}
+
+const conflictState: ConflictState = {
     base: '',
     ours: '',
     theirs: '',
     serverVersion: null,
-    diffMode: 'unified',          // 'unified' | 'split'
-    compareMode: 'mine-vs-server', // 'mine-vs-server' | 'mine-vs-base' | 'server-vs-base'
-    serverPaneMode: 'diff',        // 'diff' | 'raw' (서버 본문 raw/preview 보기)
-    serverPreviewMode: 'raw',      // 'raw' | 'preview'
-    conflicts: [],                 // [{ id, ours, theirs, resolved }]
+    diffMode: 'unified',
+    compareMode: 'mine-vs-server',
+    serverPaneMode: 'diff',
+    serverPreviewMode: 'raw',
+    conflicts: [],
 };
 
-// ── 라인 분할 / 결합 헬퍼 
-// jsdiff가 생성하는 part.value 는 보통 트레일링 \n 을 포함하므로,
+// ─────────────────────────────────────────────────────────────────────────────
+// 라인 분할 / 결합 헬퍼
+// jsdiff 가 생성하는 part.value 는 보통 트레일링 \n 을 포함하므로,
 // split('\n') 결과의 마지막 빈 토큰을 제거해 라인 배열로 만든다.
-function splitLines(text) {
+// ─────────────────────────────────────────────────────────────────────────────
+
+function splitLines(text: string): string[] {
     if (!text) return [];
     const arr = text.split('\n');
     if (arr.length > 0 && arr[arr.length - 1] === '') arr.pop();
     return arr;
 }
 
-// ── jsdiff 결과 → base 라인 범위에 매핑된 hunk 배열 
-// 반환: [{ baseStart, baseEnd, replacement }]
+interface BaseHunk {
+    baseStart: number;
+    baseEnd: number;
+    replacement: string[];
+}
+
+// jsdiff 결과 → base 라인 범위에 매핑된 hunk 배열
 //   baseStart..baseEnd 는 base 라인 인덱스 [0-based, end exclusive]
 //   replacement 는 해당 영역을 대체할 modified 측 텍스트(라인 배열)
-function extractHunks(base, modified) {
-    if (typeof Diff === 'undefined' || !Diff.diffLines) return [];
-    const parts = Diff.diffLines(base, modified);
-    const hunks = [];
+function extractHunks(base: string, modified: string): BaseHunk[] {
+    const Diff: JsDiffApi | undefined = window.Diff;
+    if (!Diff || !Diff.diffLines) return [];
+    const parts: JsDiffPart[] = Diff.diffLines(base, modified);
+    const hunks: BaseHunk[] = [];
     let baseLine = 0;
     let i = 0;
     while (i < parts.length) {
@@ -53,8 +121,8 @@ function extractHunks(base, modified) {
             continue;
         }
         // 변경 시작 — 인접한 added/removed 들을 한 hunk 로 묶는다(순서 무관).
-        let removedLines = [];
-        let addedLines = [];
+        let removedLines: string[] = [];
+        let addedLines: string[] = [];
         while (i < parts.length && (parts[i].added || parts[i].removed)) {
             if (parts[i].removed) removedLines = removedLines.concat(splitLines(parts[i].value));
             else if (parts[i].added) addedLines = addedLines.concat(splitLines(parts[i].value));
@@ -70,20 +138,34 @@ function extractHunks(base, modified) {
     return hunks;
 }
 
-// ── 3-way 합성: 충돌 마커가 삽입된 병합 초안 생성
+// ─────────────────────────────────────────────────────────────────────────────
+// 3-way 합성: 충돌 마커가 삽입된 병합 초안 생성
 // 자동 병합이 아닌 "표기 초안". 겹치는 변경은 충돌 블록으로 감싸 사용자가
 // 직접 결정하도록 남긴다.
-function buildConflictDraft(base, ours, theirs, serverVer) {
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface ConflictDraft {
+    merged: string;
+    conflicts: ConflictHunk[];
+}
+
+function buildConflictDraft(
+    base: string,
+    ours: string,
+    theirs: string,
+    serverVer: number | string | null,
+): ConflictDraft {
     const oursHunks = extractHunks(base, ours);
     const theirsHunks = extractHunks(base, theirs);
     const baseLines = splitLines(base);
 
-    const result = [];
-    const conflicts = [];
+    const result: string[] = [];
+    const conflicts: ConflictHunk[] = [];
     let baseIdx = 0;
-    let oI = 0, tI = 0;
+    let oI = 0;
+    let tI = 0;
 
-    function copyBase(upTo) {
+    function copyBase(upTo: number): void {
         const end = Math.min(upTo, baseLines.length);
         while (baseIdx < end) {
             result.push(baseLines[baseIdx]);
@@ -91,7 +173,7 @@ function buildConflictDraft(base, ours, theirs, serverVer) {
         }
     }
 
-    function pushConflict(oursLines, theirsLines) {
+    function pushConflict(oursLines: string[], theirsLines: string[]): void {
         const id = conflicts.length + 1;
         const verLabel = serverVer != null ? `서버 v${serverVer}` : '서버 최신본';
         result.push(`<<<<<<< 내 수정본 [#${id}]`);
@@ -115,7 +197,7 @@ function buildConflictDraft(base, ours, theirs, serverVer) {
         });
     }
 
-    function arraysEqual(a, b) {
+    function arraysEqual(a: string[], b: string[]): boolean {
         if (a.length !== b.length) return false;
         for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
         return true;
@@ -152,10 +234,10 @@ function buildConflictDraft(base, ours, theirs, serverVer) {
         }
 
         // 한쪽 hunk 가 다른쪽 hunk 와 겹치는지 검사
-        const oOverlapsT = oH && tH && oH.baseStart < tH.baseEnd && tH.baseStart < oH.baseEnd;
+        const oOverlapsT = !!(oH && tH && oH.baseStart < tH.baseEnd && tH.baseStart < oH.baseEnd);
 
         if (oH && (!tH || oH.baseStart < tH.baseStart)) {
-            if (oOverlapsT) {
+            if (oOverlapsT && tH) {
                 // 겹치는 영역 — 두 hunk를 한 번에 묶어 충돌로 표기
                 const oursReplace = oH.replacement;
                 const theirsReplace = tH.replacement;
@@ -173,7 +255,7 @@ function buildConflictDraft(base, ours, theirs, serverVer) {
         }
 
         if (tH) {
-            if (oOverlapsT) {
+            if (oOverlapsT && oH) {
                 const oursReplace = oH.replacement;
                 const theirsReplace = tH.replacement;
                 const newBaseEnd = Math.max(oH.baseEnd, tH.baseEnd);
@@ -204,28 +286,46 @@ function buildConflictDraft(base, ours, theirs, serverVer) {
     };
 }
 
-// ── 비교 모드별 source/target 텍스트 산출 ───────────────────────────────
-function getCompareSources(mode) {
+// ─────────────────────────────────────────────────────────────────────────────
+// 비교 모드별 source/target 텍스트 산출
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface CompareSources {
+    left: string;
+    right: string;
+    leftLabel: string;
+    rightLabel: string;
+}
+
+function getCompareSources(mode: ConflictState['compareMode']): CompareSources {
     const s = conflictState;
     if (mode === 'mine-vs-base') return { left: s.base, right: s.ours, leftLabel: 'base', rightLabel: '내 수정본' };
     if (mode === 'server-vs-base') return { left: s.base, right: s.theirs, leftLabel: 'base', rightLabel: '서버 최신본' };
     return { left: s.theirs, right: s.ours, leftLabel: '서버', rightLabel: '내 수정본' };
 }
 
-// ── 변경 hunk 개수 (요약 칩용) ───────────────────────────────────────────
-function countChangeHunks(oldStr, newStr) {
+// ─────────────────────────────────────────────────────────────────────────────
+// 변경 hunk 개수 (요약 칩용)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function countChangeHunks(oldStr: string, newStr: string): number {
     if (oldStr === newStr) return 0;
-    if (typeof Diff === 'undefined' || !Diff.structuredPatch) return 0;
+    const Diff = window.Diff;
+    if (!Diff || !Diff.structuredPatch) return 0;
     const patch = Diff.structuredPatch('a', 'b', oldStr || '', newStr || '', '', '', { context: 0 });
     return patch.hunks ? patch.hunks.length : 0;
 }
 
-// ── Diff 테이블 빌드 ────────────────────────────────────────────────────
-function buildDiffTable(oldStr, newStr, mode) {
+// ─────────────────────────────────────────────────────────────────────────────
+// Diff 테이블 빌드
+// ─────────────────────────────────────────────────────────────────────────────
+
+function buildDiffTable(oldStr: string, newStr: string, mode: ConflictState['diffMode']): string {
     if (oldStr === newStr) {
         return '<div class="diff-empty">변경된 내용이 없습니다.</div>';
     }
-    if (typeof Diff === 'undefined' || !Diff.structuredPatch) {
+    const Diff = window.Diff;
+    if (!Diff || !Diff.structuredPatch) {
         return '<div class="diff-empty">diff 라이브러리를 불러오지 못했습니다.</div>';
     }
     const patch = Diff.structuredPatch('a', 'b', oldStr || '', newStr || '', '', '', { context: CONFLICT_CONTEXT_LINES });
@@ -235,8 +335,8 @@ function buildDiffTable(oldStr, newStr, mode) {
     return mode === 'split' ? buildSplitTable(patch) : buildUnifiedTable(patch);
 }
 
-function buildUnifiedTable(patch) {
-    const rows = [];
+function buildUnifiedTable(patch: JsDiffPatch): string {
+    const rows: string[] = [];
     patch.hunks.forEach(h => {
         rows.push(
             '<tr class="hunk-header"><td class="diff-gutter"></td><td class="diff-gutter"></td>'
@@ -247,7 +347,10 @@ function buildUnifiedTable(patch) {
             const ch = line.charAt(0);
             const text = line.substring(1);
             if (ch === '\\') return; // "\ No newline at end of file"
-            let type, oldCol, newCol, prefix;
+            let type: 'add' | 'del' | 'same';
+            let oldCol: number | string;
+            let newCol: number | string;
+            let prefix: string;
             if (ch === '+') { type = 'add'; oldCol = ''; newCol = newLn++; prefix = '+'; }
             else if (ch === '-') { type = 'del'; oldCol = oldLn++; newCol = ''; prefix = '-'; }
             else { type = 'same'; oldCol = oldLn++; newCol = newLn++; prefix = ' '; }
@@ -264,16 +367,16 @@ function buildUnifiedTable(patch) {
     return '<table class="conflict-diff-table mode-unified">' + rows.join('') + '</table>';
 }
 
-function buildSplitTable(patch) {
-    const rows = [];
+function buildSplitTable(patch: JsDiffPatch): string {
+    const rows: string[] = [];
     patch.hunks.forEach(h => {
         rows.push(
             `<tr class="hunk-header"><td colspan="4" class="diff-line">@@ -${h.oldStart},${h.oldLines} +${h.newStart},${h.newLines} @@</td></tr>`
         );
         let oldLn = h.oldStart, newLn = h.newStart;
-        let pendingDel = [];
-        let pendingAdd = [];
-        const flushPending = () => {
+        let pendingDel: { num: number; text: string }[] = [];
+        let pendingAdd: { num: number; text: string }[] = [];
+        const flushPending = (): void => {
             const max = Math.max(pendingDel.length, pendingAdd.length);
             for (let i = 0; i < max; i++) {
                 const d = pendingDel[i], a = pendingAdd[i];
@@ -313,27 +416,36 @@ function buildSplitTable(patch) {
     return '<table class="conflict-diff-table mode-split">' + rows.join('') + '</table>';
 }
 
-// ── 줄바꿈 모드 반영 ────────────────────────────────────────────────────
-function applyDiffPreviewWrapMode(container) {
+// ─────────────────────────────────────────────────────────────────────────────
+// 줄바꿈 모드 반영
+// ─────────────────────────────────────────────────────────────────────────────
+
+function applyDiffPreviewWrapMode(container: HTMLElement | null): void {
     if (!container) return;
     const wrap = localStorage.getItem('editor_word_wrap') !== 'false';
     container.classList.toggle('wrap-mode', wrap);
 }
 
-// ── 변경 사항(내 수정본 기준) 미리보기 — 메인 에디터의 diff 패널에서 사용 ──
-function renderLocalDiff() {
+// ─────────────────────────────────────────────────────────────────────────────
+// 변경 사항(내 수정본 기준) 미리보기 — 메인 에디터의 diff 패널에서 사용
+// ─────────────────────────────────────────────────────────────────────────────
+
+function renderLocalDiff(): void {
     const container = document.getElementById('diffPreviewContainer');
     if (!container) return;
 
     applyDiffPreviewWrapMode(container);
 
+    const editor = window.editor;
+    const originalContent = typeof window.originalContent === 'string' ? window.originalContent : '';
     const currentContent = editor ? editor.getMarkdown() : '';
     if (originalContent === currentContent) {
         container.innerHTML = '<span class="text-muted">변경 사항이 없습니다.</span>';
         return;
     }
 
-    if (typeof Diff === 'undefined' || !Diff.diffLines) {
+    const Diff = window.Diff;
+    if (!Diff || !Diff.diffLines) {
         container.textContent = currentContent;
         return;
     }
@@ -342,8 +454,8 @@ function renderLocalDiff() {
     container.innerHTML = renderInlineDiffSummary(diffData, CONFLICT_CONTEXT_LINES);
 }
 
-// (작은 인라인 diff: 메인 에디터의 변경 미리보기용 — 기존 동작 유지)
-function renderInlineDiffSummary(diffData, contextLines) {
+// 작은 인라인 diff: 메인 에디터의 변경 미리보기용 — 기존 동작 유지
+function renderInlineDiffSummary(diffData: JsDiffPart[], contextLines: number): string {
     let html = '';
     diffData.forEach((part, i) => {
         if (part.added || part.removed) {
@@ -375,12 +487,21 @@ function renderInlineDiffSummary(diffData, contextLines) {
     return html;
 }
 
-// ── 충돌 모달 표시 ──────────────────────────────────────────────────────
-function showConflictModal(data) {
-    pageVersion = data.current_version;
+// ─────────────────────────────────────────────────────────────────────────────
+// 충돌 모달 표시
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface ConflictPayload {
+    current_version: number | string | null;
+    content: string;
+}
+
+function showConflictModal(data: ConflictPayload): void {
+    window.pageVersion = data.current_version;
     const serverContent = data.content || '';
+    const editor = window.editor;
     const localContent = editor ? editor.getMarkdown() : '';
-    const baseContent = typeof originalContent === 'string' ? originalContent : '';
+    const baseContent = typeof window.originalContent === 'string' ? window.originalContent : '';
 
     conflictState.base = baseContent;
     conflictState.ours = localContent;
@@ -397,14 +518,14 @@ function showConflictModal(data) {
     const serverChEl = document.getElementById('conflict-server-changes');
     const mineChEl = document.getElementById('conflict-mine-changes');
     if (baseVerEl) baseVerEl.textContent = '?'; // 클라이언트는 base 버전 정보를 보유하지 않음
-    if (serverVerEl) serverVerEl.textContent = data.current_version != null ? data.current_version : '?';
-    if (serverChEl) serverChEl.textContent = countChangeHunks(baseContent, serverContent);
-    if (mineChEl) mineChEl.textContent = countChangeHunks(baseContent, localContent);
+    if (serverVerEl) serverVerEl.textContent = data.current_version != null ? String(data.current_version) : '?';
+    if (serverChEl) serverChEl.textContent = String(countChangeHunks(baseContent, serverContent));
+    if (mineChEl) mineChEl.textContent = String(countChangeHunks(baseContent, localContent));
 
     // 서버 본문 raw 채우기
     const serverRawEl = document.getElementById('conflict-server-raw');
     if (serverRawEl) serverRawEl.textContent = serverContent;
-    const serverPreviewEl = document.getElementById('conflict-server-preview');
+    const serverPreviewEl = document.getElementById('conflict-server-preview') as HTMLElement | null;
     if (serverPreviewEl) {
         serverPreviewEl.style.display = 'none';
         serverPreviewEl.innerHTML = '';
@@ -413,21 +534,23 @@ function showConflictModal(data) {
     if (serverViewToggleBtn) serverViewToggleBtn.innerHTML = '<i class="mdi mdi-eye"></i> 서버 본문';
     const serverPreviewToggleBtn = document.getElementById('serverPreviewToggle');
     if (serverPreviewToggleBtn) serverPreviewToggleBtn.innerHTML = '<i class="mdi mdi-eye"></i> 프리뷰';
-    const serverRawPane = document.getElementById('conflict-server-raw-pane');
+    const serverRawPane = document.getElementById('conflict-server-raw-pane') as HTMLElement | null;
     if (serverRawPane) serverRawPane.style.display = 'none';
-    const diffViewEl = document.getElementById('conflict-diff-view');
+    const diffViewEl = document.getElementById('conflict-diff-view') as HTMLElement | null;
     if (diffViewEl) diffViewEl.style.display = '';
 
     // 비교 모드 셀렉터 초기화
-    const compareSelect = document.getElementById('diffCompareMode');
+    const compareSelect = document.getElementById('diffCompareMode') as HTMLSelectElement | null;
     if (compareSelect) compareSelect.value = 'mine-vs-server';
 
     // diff 모드 버튼 상태
     syncDiffModeButtons();
 
     // 충돌 UI 표시
-    document.getElementById('conflict-ui').style.display = 'block';
-    document.getElementById('main-editor-container').style.display = 'none';
+    const conflictUiEl = document.getElementById('conflict-ui') as HTMLElement | null;
+    if (conflictUiEl) conflictUiEl.style.display = 'block';
+    const mainEditorEl = document.getElementById('main-editor-container') as HTMLElement | null;
+    if (mainEditorEl) mainEditorEl.style.display = 'none';
     window.scrollTo(0, 0);
 
     // 병합 초안 생성
@@ -437,20 +560,23 @@ function showConflictModal(data) {
 
     // 충돌 해결용 textarea 마운트(또는 기존 객체 재사용)
     const conflictEl = document.querySelector('#conflict-local-editor');
-    if (!conflictEditor) {
-        const textareaId = isExtensionData ? 'conflictRawTextarea' : 'conflictTextarea';
+    if (!window.conflictEditor) {
+        if (!conflictEl) return;
+        const textareaId = window.isExtensionData ? 'conflictRawTextarea' : 'conflictTextarea';
         conflictEl.innerHTML = `<textarea id="${textareaId}" class="wiki-ext-raw-textarea" spellcheck="false"></textarea>`;
-        const conflictTextarea = document.getElementById(textareaId);
+        const conflictTextarea = document.getElementById(textareaId) as HTMLTextAreaElement | null;
+        if (!conflictTextarea) return;
         conflictTextarea.value = initialContent;
-        conflictEditor = {
+        const ce: ConflictEditor = {
             getMarkdown: () => conflictTextarea.value,
-            setMarkdown: (md) => { conflictTextarea.value = md; },
+            setMarkdown: (md: string) => { conflictTextarea.value = md; },
             _textarea: conflictTextarea,
         };
+        window.conflictEditor = ce;
         // 사용자가 직접 마커를 지웠을 때도 카운터/리스트가 갱신되도록 input 후크
         conflictTextarea.addEventListener('input', updateConflictMarkerStateFromTextarea);
     } else {
-        conflictEditor.setMarkdown(initialContent);
+        window.conflictEditor.setMarkdown(initialContent);
     }
     applyDiffPreviewWrapMode(document.getElementById('conflict-local-editor'));
 
@@ -459,10 +585,18 @@ function showConflictModal(data) {
     updateMarkerCount();
 }
 
-// ── Diff 비교 패널 렌더 ─────────────────────────────────────────────────
-function renderDiffView() {
-    const compareSelect = document.getElementById('diffCompareMode');
-    if (compareSelect) conflictState.compareMode = compareSelect.value;
+// ─────────────────────────────────────────────────────────────────────────────
+// Diff 비교 패널 렌더
+// ─────────────────────────────────────────────────────────────────────────────
+
+function renderDiffView(): void {
+    const compareSelect = document.getElementById('diffCompareMode') as HTMLSelectElement | null;
+    if (compareSelect) {
+        const v = compareSelect.value;
+        if (v === 'mine-vs-server' || v === 'mine-vs-base' || v === 'server-vs-base') {
+            conflictState.compareMode = v;
+        }
+    }
 
     const container = document.getElementById('conflict-diff-view');
     if (!container) return;
@@ -472,26 +606,32 @@ function renderDiffView() {
     container.innerHTML = buildDiffTable(left, right, conflictState.diffMode);
 }
 
-// ── Diff 모드 토글 (Unified / Split) ────────────────────────────────────
-function setDiffMode(mode) {
+// ─────────────────────────────────────────────────────────────────────────────
+// Diff 모드 토글 (Unified / Split)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function setDiffMode(mode: string): void {
     if (mode !== 'unified' && mode !== 'split') return;
     conflictState.diffMode = mode;
     syncDiffModeButtons();
     renderDiffView();
 }
 
-function syncDiffModeButtons() {
+function syncDiffModeButtons(): void {
     const unifiedBtn = document.getElementById('diffModeUnifiedBtn');
     const splitBtn = document.getElementById('diffModeSplitBtn');
     if (unifiedBtn) unifiedBtn.classList.toggle('active', conflictState.diffMode === 'unified');
     if (splitBtn) splitBtn.classList.toggle('active', conflictState.diffMode === 'split');
 }
 
-// ── 서버 본문 raw 보기 토글 (비교 패널 ↔ 서버 raw 패널) ──────────────────
-function toggleServerView() {
+// ─────────────────────────────────────────────────────────────────────────────
+// 서버 본문 raw 보기 토글 (비교 패널 ↔ 서버 raw 패널)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function toggleServerView(): void {
     conflictState.serverPaneMode = conflictState.serverPaneMode === 'raw' ? 'diff' : 'raw';
-    const diffEl = document.getElementById('conflict-diff-view');
-    const rawPane = document.getElementById('conflict-server-raw-pane');
+    const diffEl = document.getElementById('conflict-diff-view') as HTMLElement | null;
+    const rawPane = document.getElementById('conflict-server-raw-pane') as HTMLElement | null;
     const btn = document.getElementById('serverViewToggle');
     if (conflictState.serverPaneMode === 'raw') {
         if (diffEl) diffEl.style.display = 'none';
@@ -504,13 +644,17 @@ function toggleServerView() {
     }
 }
 
-// ── 서버 본문 raw ↔ 프리뷰 토글 ──────────────────────────────────────────
-function toggleServerPreview() {
-    const raw = document.getElementById('conflict-server-raw');
-    const preview = document.getElementById('conflict-server-preview');
+// ─────────────────────────────────────────────────────────────────────────────
+// 서버 본문 raw ↔ 프리뷰 토글
+// ─────────────────────────────────────────────────────────────────────────────
+
+function toggleServerPreview(): void {
+    const raw = document.getElementById('conflict-server-raw') as HTMLElement | null;
+    const preview = document.getElementById('conflict-server-preview') as HTMLElement | null;
     const btn = document.getElementById('serverPreviewToggle');
     if (!raw || !preview) return;
 
+    const slug = window.slug ?? null;
     if (conflictState.serverPreviewMode === 'raw') {
         // raw → preview
         preview.innerHTML = '';
@@ -518,18 +662,21 @@ function toggleServerPreview() {
         previewContent.id = 'conflict-server-preview-content';
         previewContent.className = 'wiki-content';
         preview.appendChild(previewContent);
-        if (typeof renderWikiContent === 'function') {
-            renderWikiContent(raw.textContent, slug, 'conflict-server-preview-content');
+        const renderFn = window.renderWikiContent;
+        if (typeof renderFn === 'function') {
+            void renderFn(raw.textContent || '', slug, 'conflict-server-preview-content');
         } else {
             previewContent.textContent = raw.textContent;
         }
-        serverViewer = {
-            setMarkdown: (md) => {
-                if (typeof renderWikiContent === 'function') {
-                    renderWikiContent(md, slug, 'conflict-server-preview-content');
+        const sv: ServerViewer = {
+            setMarkdown: (md: string): void => {
+                const fn = window.renderWikiContent;
+                if (typeof fn === 'function') {
+                    void fn(md, slug, 'conflict-server-preview-content');
                 }
             },
         };
+        window.serverViewer = sv;
         raw.style.display = 'none';
         preview.style.display = 'block';
         if (btn) btn.innerHTML = '<i class="mdi mdi-code-tags"></i> Raw';
@@ -543,8 +690,11 @@ function toggleServerPreview() {
     }
 }
 
-// ── 충돌 hunk 액션 리스트 렌더 ───────────────────────────────────────────
-function renderHunkList() {
+// ─────────────────────────────────────────────────────────────────────────────
+// 충돌 hunk 액션 리스트 렌더
+// ─────────────────────────────────────────────────────────────────────────────
+
+function renderHunkList(): void {
     const list = document.getElementById('conflict-hunk-list');
     if (!list) return;
     list.innerHTML = '';
@@ -576,7 +726,7 @@ function renderHunkList() {
     });
 }
 
-function makeHunkBtn(label, cls, handler) {
+function makeHunkBtn(label: string, cls: string, handler: () => void): HTMLButtonElement {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = `btn ${cls}`;
@@ -585,18 +735,27 @@ function makeHunkBtn(label, cls, handler) {
     return btn;
 }
 
-function truncate(s, n) {
+function truncate(s: string, n: number): string {
     if (!s) return '(빈 줄)';
     const oneLine = s.replace(/\n/g, ' ↵ ');
     return oneLine.length > n ? oneLine.substring(0, n - 1) + '…' : oneLine;
 }
 
-// ── 특정 충돌 hunk 영역을 본문에서 찾기 ──────────────────────────────────
-// 반환: { start, end, body } 또는 null
+// ─────────────────────────────────────────────────────────────────────────────
+// 특정 충돌 hunk 영역을 본문에서 찾기
+// 반환: { start, end, lines } 또는 null
 //   start: '<<<<<<<' 시작 줄 인덱스(0-based)
-//   end: '>>>>>>>' 줄 인덱스(0-based)
-//   body: 라인 배열
-function findConflictRange(textareaValue, conflictId) {
+//   end:   '>>>>>>>' 줄 인덱스(0-based)
+//   lines: 라인 배열 (split('\n') 결과 그대로)
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface ConflictRange {
+    start: number;
+    end: number;
+    lines: string[];
+}
+
+function findConflictRange(textareaValue: string, conflictId: number): ConflictRange | null {
     const lines = textareaValue.split('\n');
     const startTag = `<<<<<<<`;
     const endTag = `>>>>>>>`;
@@ -614,9 +773,10 @@ function findConflictRange(textareaValue, conflictId) {
     return { start, end, lines };
 }
 
-function focusConflict(conflictId) {
-    if (!conflictEditor || !conflictEditor._textarea) return;
-    const ta = conflictEditor._textarea;
+function focusConflict(conflictId: number): void {
+    const ce = window.conflictEditor;
+    if (!ce || !ce._textarea) return;
+    const ta = ce._textarea;
     const range = findConflictRange(ta.value, conflictId);
     if (!range) return;
     // 텍스트 시작 오프셋 계산
@@ -629,22 +789,26 @@ function focusConflict(conflictId) {
     ta.scrollTop = Math.max(0, range.start * lineHeight - ta.clientHeight / 3);
 }
 
-// ── hunk 단위 채택 액션 ──────────────────────────────────────────────────
-function applyHunkAction(conflictId, action) {
-    if (!conflictEditor || !conflictEditor._textarea) return;
-    const ta = conflictEditor._textarea;
+// ─────────────────────────────────────────────────────────────────────────────
+// hunk 단위 채택 액션
+// ─────────────────────────────────────────────────────────────────────────────
+
+function applyHunkAction(conflictId: number, action: 'mine' | 'theirs' | 'both'): void {
+    const ce = window.conflictEditor;
+    if (!ce || !ce._textarea) return;
+    const ta = ce._textarea;
     const range = findConflictRange(ta.value, conflictId);
     if (!range) return;
 
     const conflict = conflictState.conflicts.find(c => c.id === conflictId);
     if (!conflict) return;
 
-    let replacement;
+    let replacement: string;
     if (action === 'mine') replacement = conflict.ours;
     else if (action === 'theirs') replacement = conflict.theirs;
     else if (action === 'both') {
         // 내 것 다음에 서버 것을 이어 붙임
-        const parts = [];
+        const parts: string[] = [];
         if (conflict.ours) parts.push(conflict.ours);
         if (conflict.theirs) parts.push(conflict.theirs);
         replacement = parts.join('\n');
@@ -663,8 +827,11 @@ function applyHunkAction(conflictId, action) {
     updateMarkerCount();
 }
 
-// ── 마커 카운터 갱신 ────────────────────────────────────────────────────
-function updateMarkerCount() {
+// ─────────────────────────────────────────────────────────────────────────────
+// 마커 카운터 갱신
+// ─────────────────────────────────────────────────────────────────────────────
+
+function updateMarkerCount(): void {
     const badge = document.getElementById('conflict-marker-count');
     if (!badge) return;
     const remaining = countRemainingMarkers();
@@ -674,21 +841,23 @@ function updateMarkerCount() {
     badge.classList.toggle('bg-success', remaining === 0);
 }
 
-function countRemainingMarkers() {
-    if (!conflictEditor) return 0;
-    const text = conflictEditor.getMarkdown();
+function countRemainingMarkers(): number {
+    const ce = window.conflictEditor;
+    if (!ce) return 0;
+    const text = ce.getMarkdown();
     const matches = text.match(/^<{7}\s/gm);
     return matches ? matches.length : 0;
 }
 
 // 사용자가 textarea 를 직접 편집했을 때 호출 — hunk 객체의 resolved 플래그도 동기화
-function updateConflictMarkerStateFromTextarea() {
-    if (!conflictEditor) return;
-    const text = conflictEditor.getMarkdown();
+function updateConflictMarkerStateFromTextarea(): void {
+    const ce = window.conflictEditor;
+    if (!ce) return;
+    const text = ce.getMarkdown();
     if (conflictState.conflicts) {
         for (const c of conflictState.conflicts) {
             const present = text.includes(`<<<<<<< 내 수정본 [#${c.id}]`)
-                && text.includes(`>>>>>>> `) // end tag 존재 + id marker 검사
+                && text.includes(`>>>>>>> `)
                 && text.includes(`[#${c.id}]`);
             c.resolved = !present;
         }
@@ -697,19 +866,23 @@ function updateConflictMarkerStateFromTextarea() {
     updateMarkerCount();
 }
 
-// ── 충돌 순회 ───────────────────────────────────────────────────────────
-function jumpToConflict(direction) {
-    if (!conflictEditor || !conflictEditor._textarea) return;
-    const ta = conflictEditor._textarea;
+// ─────────────────────────────────────────────────────────────────────────────
+// 충돌 순회
+// ─────────────────────────────────────────────────────────────────────────────
+
+function jumpToConflict(direction: number): void {
+    const ce = window.conflictEditor;
+    if (!ce || !ce._textarea) return;
+    const ta = ce._textarea;
     const text = ta.value;
-    const positions = [];
+    const positions: number[] = [];
     const re = /^<{7} /gm;
-    let m;
+    let m: RegExpExecArray | null;
     while ((m = re.exec(text)) !== null) positions.push(m.index);
     if (positions.length === 0) return;
 
     const cursor = ta.selectionStart;
-    let target;
+    let target: number | undefined;
     if (direction > 0) {
         target = positions.find(p => p > cursor);
         if (target == null) target = positions[0]; // wrap
@@ -717,6 +890,7 @@ function jumpToConflict(direction) {
         const before = positions.filter(p => p < cursor);
         target = before.length ? before[before.length - 1] : positions[positions.length - 1];
     }
+    if (target == null) return;
     ta.focus();
     ta.setSelectionRange(target, target);
     // 라인 인덱스 계산해 스크롤
@@ -725,39 +899,46 @@ function jumpToConflict(direction) {
     ta.scrollTop = Math.max(0, lineIndex * lineHeight - ta.clientHeight / 3);
 }
 
-// ── 충돌 해결 적용 ──
-// 병합된 내용을 메인 에디터에 불러오고, 충돌 UI를 닫아 사용자가 편집을
-// 이어갈 수 있도록 한다. 저장은 사용자가 직접 트리거한다.
-function resolveConflict() {
-    const finalContent = conflictEditor ? conflictEditor.getMarkdown() : '';
+// ─────────────────────────────────────────────────────────────────────────────
+// 충돌 해결 적용
+// 병합된 내용을 메인 에디터에 불러오고, 충돌 UI를 닫아 사용자가 편집을 이어갈
+// 수 있도록 한다. 저장은 사용자가 직접 트리거한다.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function resolveConflict(): void {
+    const ce = window.conflictEditor;
+    const finalContent = ce ? ce.getMarkdown() : '';
     const remaining = countRemainingMarkers();
 
-    const proceed = () => {
-        editor.setMarkdown(finalContent);
+    const proceed = (): void => {
+        const editor = window.editor;
+        if (editor) editor.setMarkdown(finalContent);
         // 새 base = 서버 최신본. pageVersion 은 showConflictModal 에서 이미 갱신됨.
         // 이로써 beforeunload 경고/로컬 diff 가 새 기준점에서 동작하고, 다음 저장 시
         // 백엔드 충돌 검사가 정상 통과한다.
         if (typeof conflictState.theirs === 'string') {
-            originalContent = conflictState.theirs;
+            window.originalContent = conflictState.theirs;
         }
-        document.getElementById('conflict-ui').style.display = 'none';
-        document.getElementById('main-editor-container').style.display = 'block';
-        if (typeof scrollToBottom === 'function') scrollToBottom();
-        if (typeof Swal !== 'undefined') {
-            Swal.fire({
-                icon: 'success',
-                title: '충돌 해결 내용 적용됨',
-                text: '에디터에서 편집을 이어가신 뒤 저장하세요.',
-                toast: true,
-                position: 'top-end',
-                timer: 2500,
-                showConfirmButton: false,
-            });
-        }
+        const conflictUi = document.getElementById('conflict-ui') as HTMLElement | null;
+        if (conflictUi) conflictUi.style.display = 'none';
+        const mainEditor = document.getElementById('main-editor-container') as HTMLElement | null;
+        if (mainEditor) mainEditor.style.display = 'block';
+        window.scrollToBottom?.();
+        window.Swal?.fire({
+            icon: 'success',
+            title: '충돌 해결 내용 적용됨',
+            text: '에디터에서 편집을 이어가신 뒤 저장하세요.',
+            toast: true,
+            position: 'top-end',
+            timer: 2500,
+            showConfirmButton: false,
+        });
     };
 
     if (remaining > 0) {
-        Swal.fire({
+        const swal = window.Swal;
+        if (!swal) { proceed(); return; }
+        void swal.fire({
             title: '미해결 충돌이 남아있습니다',
             html: `${remaining}개의 충돌 마커(<code>&lt;&lt;&lt;&lt;&lt;&lt;&lt;</code>)가 본문에 그대로 있습니다. 그래도 에디터에 적용하시겠습니까?`,
             icon: 'warning',
@@ -773,14 +954,16 @@ function resolveConflict() {
     proceed();
 }
 
-function cancelConflict() {
-    Swal.fire({
+function cancelConflict(): void {
+    const swal = window.Swal;
+    if (!swal) { window.location.reload(); return; }
+    void swal.fire({
         title: '충돌 해결 취소',
         text: '편집 내용을 버리고 최신 버전으로 새로고침 하시겠습니까?',
         icon: 'warning',
         showCancelButton: true,
         confirmButtonText: '새로고침 (내용 버림)',
-        cancelButtonText: '계속 해결하기'
+        cancelButtonText: '계속 해결하기',
     }).then((result) => {
         if (result.isConfirmed) {
             window.location.reload();
@@ -788,25 +971,34 @@ function cancelConflict() {
     });
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// 동시편집 감지 (기존 동작 유지)
+// ─────────────────────────────────────────────────────────────────────────────
 
-// ── 동시편집 감지 (기존 동작 유지) ───────────────────────────────────────
-const heartbeat = {
+interface HeartbeatState {
+    interval: ReturnType<typeof setInterval> | null;
+    editorCheckInterval: ReturnType<typeof setInterval> | null;
+}
+
+const heartbeat: HeartbeatState = {
     interval: null,
     editorCheckInterval: null,
 };
 
-function startEditingHeartbeat() {
+function startEditingHeartbeat(): void {
+    const slug = window.slug;
     if (!slug) return;
-    if (appConfig.enableConcurrentEditDetection === false) return;
+    const cfg: AppConfig | undefined = window.appConfig;
+    if (cfg && cfg.enableConcurrentEditDetection === false) return;
 
-    sendHeartbeat();
+    void sendHeartbeat();
     heartbeat.interval = setInterval(sendHeartbeat, 50000);
     heartbeat.editorCheckInterval = setInterval(checkConcurrentEditors, 50000);
 
     window.addEventListener('beforeunload', stopEditingHeartbeat);
 }
 
-function stopEditingHeartbeat() {
+function stopEditingHeartbeat(): void {
     if (heartbeat.interval) {
         clearInterval(heartbeat.interval);
         heartbeat.interval = null;
@@ -817,25 +1009,27 @@ function stopEditingHeartbeat() {
     }
 }
 
-async function sendHeartbeat() {
+async function sendHeartbeat(): Promise<void> {
+    const slug = window.slug;
     if (!slug) return;
     try {
         await fetch(`/api/w/${encodeURIComponent(slug)}/editing`, {
             method: 'POST',
         });
-    } catch (e) {
+    } catch {
         // 하트비트 실패는 무시
     }
 }
 
-async function checkConcurrentEditors() {
+async function checkConcurrentEditors(): Promise<void> {
+    const slug = window.slug;
     if (!slug) return;
     try {
         const res = await fetch(`/api/w/${encodeURIComponent(slug)}/editors`);
         if (!res.ok) return;
-        const data = await res.json();
+        const data = await res.json() as ConcurrentEditorsResponse;
 
-        const banner = document.getElementById('concurrent-edit-banner');
+        const banner = document.getElementById('concurrent-edit-banner') as HTMLElement | null;
         const textEl = document.getElementById('concurrent-edit-text');
         if (!banner || !textEl) return;
 
@@ -852,7 +1046,50 @@ async function checkConcurrentEditors() {
         } else {
             banner.style.display = 'none';
         }
-    } catch (e) {
+    } catch {
         // 조회 실패는 무시
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 브리지: edit.js (raw) 와 edit.html 의 인라인 onclick 핸들러가 호출하므로
+// window 에 노출. 모듈은 deferred — 모든 classic top-level 실행 후 / 어떤
+// DOMContentLoaded 핸들러보다 앞에 평가되므로 안전.
+//
+// showConflictModal 은 src/client/edit/types.ts 가 단일 소스 (utils.ts 의
+// checkDraft 도 동일 시그니처로 read), 그 외 함수들은 본 모듈 자체의 브리지로
+// declare 한다.
+// ─────────────────────────────────────────────────────────────────────────────
+
+declare global {
+    interface Window {
+        renderLocalDiff?: typeof renderLocalDiff;
+        startEditingHeartbeat?: typeof startEditingHeartbeat;
+        stopEditingHeartbeat?: typeof stopEditingHeartbeat;
+        /**
+         * edit.js 부트스트랩이 startEditingHeartbeat() 직후 별도로 호출 (line 2764).
+         * 노출 누락 시 ReferenceError 로 이후 초기화가 끊기므로 반드시 브리지로 노출.
+         */
+        checkConcurrentEditors?: typeof checkConcurrentEditors;
+        resolveConflict?: typeof resolveConflict;
+        cancelConflict?: typeof cancelConflict;
+        jumpToConflict?: typeof jumpToConflict;
+        setDiffMode?: typeof setDiffMode;
+        renderDiffView?: typeof renderDiffView;
+        toggleServerView?: typeof toggleServerView;
+        toggleServerPreview?: typeof toggleServerPreview;
+    }
+}
+
+window.showConflictModal = showConflictModal;
+window.renderLocalDiff = renderLocalDiff;
+window.startEditingHeartbeat = startEditingHeartbeat;
+window.stopEditingHeartbeat = stopEditingHeartbeat;
+window.checkConcurrentEditors = checkConcurrentEditors;
+window.resolveConflict = resolveConflict;
+window.cancelConflict = cancelConflict;
+window.jumpToConflict = jumpToConflict;
+window.setDiffMode = setDiffMode;
+window.renderDiffView = renderDiffView;
+window.toggleServerView = toggleServerView;
+window.toggleServerPreview = toggleServerPreview;

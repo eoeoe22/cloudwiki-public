@@ -1,6 +1,12 @@
 import type { Context } from 'hono';
+import type { User } from './shared/models';
 
-// Cloudflare Workers 바인딩 타입
+// DB 모델 인터페이스(User, Page, Revision, ...) 는 src/shared/models 로 분리되어 있고,
+// 기존 코드의 `import type { User } from '../types'` 같은 경로 호환을 위해 그대로 re-export 한다.
+// 새 코드는 가능한 한 src/shared/models 를 직접 참조하는 것을 권장한다.
+export * from './shared/models';
+
+// Cloudflare Workers 바인딩 타입 (서버 전용)
 export type Env = {
     Bindings: {
         DB: D1Database;
@@ -57,152 +63,6 @@ export interface RolePermissions {
             inherits?: string[];
         };
     };
-}
-
-export interface Settings {
-    id: number;
-    namechange_ratelimit: number;
-    allow_direct_message: number;
-    signup_policy: string;
-}
-
-// DB 모델 타입
-export interface User {
-    id: number;
-    provider: string;    // 'google' | 'github' | 'discord' | ...
-    uid: string;         // 공급자 측 사용자 ID
-    email: string;
-    name: string;
-    picture: string | null;
-    role: 'user' | 'discussion_manager' | 'admin' | 'super_admin' | 'banned' | 'deleted';
-    banned_until: number | null;
-    last_namechange: number | null;
-    created_at: number;
-}
-
-export interface Redirect {
-    id: number;
-    source_slug: string;
-    target_page_id: number;
-    created_at: number;
-}
-
-export interface Session {
-    id: string;
-    user_id: number;
-    expires_at: number;
-}
-
-export interface Page {
-    id: number;
-    slug: string;
-    content: string;
-    category: string | null;
-    redirect_to: string | null;
-    is_locked: number;
-    last_revision_id: number | null;
-    version: number;
-    created_at: number;
-    updated_at: number;
-    deleted_at: number | null;
-    rows: number | null;
-    characters: number | null;
-}
-
-export interface Revision {
-    id: number;
-    page_id: number;
-    page_version: number | null;
-    content: string;          // 기존 리비전: 본문 직접 저장. 신규 리비전: '' (r2_key 사용)
-    r2_key: string | null;    // R2 저장 경로 (revisions/{pageId}/{pageVersion}.md)
-    summary: string | null;
-    author_id: number | null;
-    created_at: number;
-}
-
-export interface Media {
-    id: number;
-    r2_key: string;
-    filename: string;
-    mime_type: string;
-    size: number;
-    uploader_id: number | null;
-    content: string;
-    created_at: number;
-}
-
-export interface Discussion {
-    id: number;
-    page_id: number;
-    title: string;
-    status: 'open' | 'closed';
-    author_id: number | null;
-    created_at: number;
-    updated_at: number;
-    deleted_at: number | null;
-}
-
-export interface DiscussionComment {
-    id: number;
-    discussion_id: number;
-    author_id: number | null;
-    content: string;
-    parent_id: number | null;
-    created_at: number;
-    deleted_at: number | null;
-}
-
-export interface Ticket {
-    id: number;
-    title: string;
-    type: 'general' | 'document' | 'discussion' | 'account';
-    status: 'open' | 'closed';
-    user_id: number;
-    created_at: number;
-    updated_at: number;
-    deleted_at: number | null;
-}
-
-export interface TicketComment {
-    id: number;
-    ticket_id: number;
-    author_id: number | null;
-    content: string;
-    parent_id: number | null;
-    created_at: number;
-    deleted_at: number | null;
-}
-
-export interface Notification {
-    id: number;
-    user_id: number;
-    type: 'discussion_comment' | 'banned' | 'message' | 'ticket_comment' | 'ticket_created' | 'signup_request' | 'page_watch';
-    content: string;
-    link: string | null;
-    ref_id: number | null;
-    created_at: number;
-}
-
-export interface Message {
-    id: number;
-    sender_id: number;
-    receiver_id: number;
-    content: string;
-    reply_to: number | null;
-    created_at: number;
-    deleted: number;
-}
-
-export interface BlogPost {
-    id: number;
-    title: string;
-    content: string;
-    created_at: number;
-    updated_at: number;
-    deleted_at: number | null;
-    rows: number | null;
-    characters: number | null;
-    thumbnail: string | null;
 }
 
 export type AppContext = Context<Env>;

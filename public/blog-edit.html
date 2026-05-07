@@ -39,7 +39,20 @@
         }
     }
     </script>
-    <!-- Turnstile: edit.js의 initTurnstile()/onTurnstileLoad()가 이 스크립트에 의존 -->
+    <!-- Turnstile pre-bootstrap stub: 같은 페이지의 deferred ESM 모듈 (edit-main.js)
+         이 평가되기 전에 Turnstile API 가 ?onload=onTurnstileLoad 를 호출할 수 있다.
+         이 inline 스크립트가 stub 을 등록해 모듈 평가 시점까지 fire 를 기록하고,
+         모듈이 실제 핸들러를 등록하면 큐된 fire 를 즉시 replay 한다. -->
+    <script>
+      window.__turnstileEarlyFire = false;
+      window.onTurnstileLoad = function () {
+        if (typeof window.__turnstileLoadHandler === 'function') {
+          window.__turnstileLoadHandler();
+        } else {
+          window.__turnstileEarlyFire = true;
+        }
+      };
+    </script>
     <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?onload=onTurnstileLoad" async defer></script>
 </head>
 
@@ -290,17 +303,17 @@
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11.26.24"></script>
     <script src="https://cdn.jsdelivr.net/npm/marked@18.0.3/lib/marked.umd.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/dompurify@3.4.2/dist/purify.min.js"></script>
-    <script src="/js/common.js"></script>
-    <script src="/js/render.js"></script>
-    <script src="/js/edit-utils.js"></script>
-    <script src="/js/edit-autocomplete.js"></script>
-    <script src="/js/edit-modals.js"></script>
-    <script src="/js/edit-image.js"></script>
+    <script type="module" src="/dist/common.js"></script>
+    <script type="module" src="/dist/render.js"></script>
+    <script type="module" src="/dist/edit-utils.js"></script>
+    <script type="module" src="/dist/edit-autocomplete.js"></script>
+    <script type="module" src="/dist/edit-modals.js"></script>
+    <script type="module" src="/dist/edit-image.js"></script>
     <!-- edit-conflict.js 미포함: 블로그는 리비전/충돌 관리 없음 -->
     <!-- edit-summary.js 미포함: 블로그에는 #summaryInput 이 없어 자동 요약이
          의미를 갖지 않는다. edit.js 의 refreshAutoSummary 참조는 모두
          typeof 가드로 보호되므로 ReferenceError 가 발생하지 않는다. -->
-    <script src="/js/edit.js"></script>
+    <script type="module" src="/dist/edit-main.js"></script>
 
     <!-- ── 푸터 Placeholder ── -->
     <div id="app-footer-placeholder"></div>

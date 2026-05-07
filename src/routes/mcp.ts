@@ -183,10 +183,30 @@ const MCP_TOOL_DEFS: Array<{ name: string; description: string; inputSchema: any
     }
 ];
 
-function buildInformationIntro(c: Context<Env>): string {
+type McpMode = 'lite' | 'full';
+
+// lite 엔드포인트(/api/mcp)에서 노출되는 도구 이름 집합. information 은 두 엔드포인트 모두에서
+// 항상 사용 가능하므로 별도로 처리한다.
+const LITE_TOOL_NAMES = new Set<string>([
+    'search_title',
+    'search_fts',
+    'get_toc',
+    'read_document',
+    'read_section'
+]);
+
+function getToolDefsForMode(mode: McpMode) {
+    return mode === 'lite' ? MCP_TOOL_DEFS.filter(t => LITE_TOOL_NAMES.has(t.name)) : MCP_TOOL_DEFS;
+}
+
+function buildInformationIntro(c: Context<Env>, mode: McpMode): string {
     const wikiName = c.env.WIKI_NAME;
     const syntaxNote = c.env.WIKI_SYNTAX ? `\n\n문법 가이드 문서: ${c.env.WIKI_SYNTAX}` : '';
-    return `이 도구는 ${wikiName} 의 문서를 탐색할 수 있는 MCP 도구입니다.\n\n이 위키의 문법은 마크다운 기반으로, 기본적으로는 문법 가이드 문서를 읽지 않아도 내용 파악이 가능합니다. 문서를 읽을 때 raw 파라미터를 따로 활성화하지 않으면 마크다운 기반으로 정리된 내용이 반환됩니다. raw 파라미터를 사용하려면 위키 문법 문서를 먼저 읽을 것을 권장합니다.${syntaxNote}`;
+    const base = `이 도구는 ${wikiName} 의 문서를 탐색할 수 있는 MCP 도구입니다.\n\n이 위키의 문법은 마크다운 기반으로, 기본적으로는 문법 가이드 문서를 읽지 않아도 내용 파악이 가능합니다. 문서를 읽을 때 raw 파라미터를 따로 활성화하지 않으면 마크다운 기반으로 정리된 내용이 반환됩니다. raw 파라미터를 사용하려면 위키 문법 문서를 먼저 읽을 것을 권장합니다.${syntaxNote}`;
+    if (mode === 'lite') {
+        return `${base}\n\n[Lite 엔드포인트] 현재 /api/mcp 엔드포인트에 연결되어 있어, 기본 탐색 도구(information, search_title, search_fts, get_toc, read_document, read_section)만 사용할 수 있습니다. 카테고리/역링크/하위 트리/배치 읽기/토론/이미지 등 확장 도구가 필요하면 /api/mcp/full 엔드포인트로 요청하세요.`;
+    }
+    return `${base}\n\n[Full 엔드포인트] 현재 /api/mcp/full 엔드포인트에 연결되어 있어, 모든 MCP 도구를 사용할 수 있습니다.`;
 }
 
 // CORS 미들웨어 적용
@@ -215,8 +235,8 @@ mcpRoutes.use('*', async (c, next) => {
     await next();
 });
 
-// GET /api/mcp - 기본 정보 (브라우저 접속 시 안내 페이지)
-mcpRoutes.get('/', async (c) => {
+// GET /api/mcp, /api/mcp/full - 기본 정보 (브라우저 접속 시 안내 페이지)
+async function handleMcpGet(c: Context<Env>, mode: McpMode): Promise<Response> {
     const accept = c.req.header('Accept') || '';
 
     // 브라우저 접속 감지
@@ -294,16 +314,25 @@ mcpRoutes.get('/', async (c) => {
         });
     }
 
+    const origin = new URL(c.req.url).origin;
     return c.json({
         mcp: true,
         version: '1.0.0',
         transport: 'http',
-        endpoint: `${new URL(c.req.url).origin}/api/mcp`
+        mode,
+        endpoint: mode === 'lite' ? `${origin}/api/mcp` : `${origin}/api/mcp/full`,
+        endpoints: {
+            lite: `${origin}/api/mcp`,
+            full: `${origin}/api/mcp/full`
+        }
     });
-});
+}
+
+mcpRoutes.get('/', (c) => handleMcpGet(c, 'lite'));
+mcpRoutes.get('/full', (c) => handleMcpGet(c, 'full'));
 
 // 공통 JSON-RPC 처리 함수
-async function handleJsonRpc(c: Context<Env>, body: any) {
+async function handleJsonRpc(c: Context<Env>, body: any, mode: McpMode) {
     const { jsonrpc, method, params, id } = body;
     if (jsonrpc !== '2.0') return { jsonrpc: '2.0', error: { code: -32600, message: 'Invalid Request' }, id: id || null };
 
@@ -335,8 +364,9 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
 
     // 3. 도구 목록 반환
     if (method === 'tools/list') {
-        const intro = buildInformationIntro(c);
-        const toolNames = MCP_TOOL_DEFS.map(t => t.name).join(', ');
+        const intro = buildInformationIntro(c, mode);
+        const visibleTools = getToolDefsForMode(mode);
+        const toolNames = visibleTools.map(t => t.name).join(', ');
         const informationDescription = `${intro}\n\n사용 가능한 MCP 도구: ${toolNames}. 각 도구의 세부 설명은 information 도구를 호출하여 확인할 수 있습니다.`;
         return {
             jsonrpc: '2.0', id,
@@ -347,7 +377,7 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                         description: informationDescription,
                         inputSchema: { type: 'object', properties: {}, required: [] }
                     },
-                    ...MCP_TOOL_DEFS
+                    ...visibleTools
                 ]
             }
         };
@@ -358,10 +388,24 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
         const args = params?.arguments || {};
         try {
             if (toolName === 'information') {
-                const intro = buildInformationIntro(c);
-                const toolDetails = MCP_TOOL_DEFS.map(t => `## ${t.name}\n${t.description}`).join('\n\n');
+                const intro = buildInformationIntro(c, mode);
+                const visibleTools = getToolDefsForMode(mode);
+                const toolDetails = visibleTools.map(t => `## ${t.name}\n${t.description}`).join('\n\n');
                 const text = `${intro}\n\n## 사용 가능한 도구 목록\n\n${toolDetails}`;
                 return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text }] } };
+            }
+            // lite 엔드포인트에서 허용 외 도구 호출 차단
+            if (mode === 'lite' && !LITE_TOOL_NAMES.has(toolName)) {
+                return {
+                    jsonrpc: '2.0', id,
+                    result: {
+                        content: [{
+                            type: 'text',
+                            text: `Error: '${toolName}' 도구는 /api/mcp (lite) 엔드포인트에서 사용할 수 없습니다. 이 도구를 사용하려면 /api/mcp/full 엔드포인트로 요청을 보내 주세요.`
+                        }],
+                        isError: true
+                    }
+                };
             }
             if (toolName === 'search_title') {
                 const results = await db.prepare('SELECT slug, rows, characters FROM pages WHERE slug LIKE ? AND deleted_at IS NULL LIMIT 15')
@@ -1151,10 +1195,17 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
     return { jsonrpc: '2.0', error: { code: -32601, message: 'Method not found' }, id };
 }
 
-// POST /api/mcp - HTTP 방식 JSON-RPC 엔드포인트
+// POST /api/mcp - HTTP 방식 JSON-RPC 엔드포인트 (lite: 6개 기본 도구만 노출)
 mcpRoutes.post('/', async (c) => {
     const body = await c.req.json();
-    const response = await handleJsonRpc(c, body);
+    const response = await handleJsonRpc(c, body, 'lite');
+    return c.json(response);
+});
+
+// POST /api/mcp/full - HTTP 방식 JSON-RPC 엔드포인트 (full: 모든 도구 노출)
+mcpRoutes.post('/full', async (c) => {
+    const body = await c.req.json();
+    const response = await handleJsonRpc(c, body, 'full');
     return c.json(response);
 });
 

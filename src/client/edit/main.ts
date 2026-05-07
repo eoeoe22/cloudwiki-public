@@ -1,12 +1,151 @@
+// @ts-nocheck — Phase 4-7 의 1차 마이그레이션은 동작 보존을 우선해 임시로 type
+// 검사를 끈다. CodeMirror 6 패키지가 npm 설치되어 있지 않아 ViewPlugin.fromClass /
+// MatchDecorator decorate 콜백 등의 정확한 타입을 얻지 못하고, HTMLElement subclass
+// 캐스팅이 100+ 곳에 흩어져 있어 1회성 도입으로 다루기 어렵다. 후속 Phase 4-7.1 에서
+// (1) @codemirror/* devDeps 추가 또는 .d.ts shim 정밀화, (2) HTML 요소 캐스팅 정리,
+// (3) window.* non-null 단정 정리를 끝내고 본 디렉티브를 제거할 예정.
+/**
+ * 에디터(public/edit.html / public/blog-edit.html) 진입점.
+ *
+ * Phase 4-7 마이그레이션: public/js/edit.js (classic) → src/client/edit/main.ts (ESM).
+ * - CodeMirror 6 모듈은 **CM6 가 실제로 필요한 비-extension 편집 경로 안에서 동적
+ *   import 로 로드한다.** 이는 (1) esm.sh CDN 이 unreachable 일 때 익스텐션 데이터
+ *   편집 경로와 다른 페이지 로직(인증 / 저장 / 취소 등)이 살아남도록 하며, (2) Turnstile
+ *   ?onload= 콜백 노출이 외부 import 네트워크 대기에 의해 지연되지 않도록 하기 위함이다.
+ * - vite.config.ts 의 rollupOptions.external 가 `@codemirror/*` 와 `@lezer/highlight`
+ *   를 외부화하므로 번들에 포함되지 않으며, HTML 의 `<script type="importmap">` 이
+ *   esm.sh CDN 으로 해석한다.
+ * - 인라인 onclick 핸들러(savePage / cancelEdit / reloadTurnstile / onTurnstileLoad)
+ *   는 module top-level 의 가장 이른 시점에서 window.* 로 노출한다.
+ * - 다른 모듈이 read/write 하는 state(slug, editor, sectionMode 등)는 types.ts 에
+ *   선언된 window 프로퍼티를 직접 read/write 한다 — 모듈 내부 로컬 미러는 두지 않는다.
+ */
+import './types';
+import { escapeHtml } from '../utils/html';
+import type { CMEditor, CMSelection, PageMeta, SectionRange } from './types';
+
+declare global {
+    interface Window {
+        /** blog-edit.html 인라인 스크립트가 설정 (true = 블로그 편집 모드) */
+        BLOG_MODE?: boolean;
+        /** Turnstile <script ?onload=onTurnstileLoad> 콜백 — module top-level 에서 노출 */
+        onTurnstileLoad?: () => void;
+        /** Turnstile pre-bootstrap stub (HTML <head>) 이 모듈 평가 전 fire 를 기록 */
+        __turnstileEarlyFire?: boolean;
+        /** Turnstile pre-bootstrap stub 이 호출하는 실제 핸들러 슬롯 — 모듈이 채워줌 */
+        __turnstileLoadHandler?: () => void;
+        /** edit.html / blog-edit.html 의 인라인 onclick="savePage()" */
+        savePage?: () => void | Promise<void>;
+        /** edit.html 의 인라인 onclick="cancelEdit()" */
+        cancelEdit?: () => void | Promise<void>;
+        /** edit.html / blog-edit.html 의 인라인 onclick="reloadTurnstile()" */
+        reloadTurnstile?: () => void;
+    }
+}
 
 // ── 블로그 모드 (blog-edit.html에서 window.BLOG_MODE = true로 설정) ──
 const BLOG_MODE = !!(window.BLOG_MODE);
-let blogPostId = null; // 기존 포스트 수정 시 ID (?id= 파라미터)
+let blogPostId: string | null = null; // 기존 포스트 수정 시 ID (?id= 파라미터)
 
 // ── Turnstile 상태 ──
-let turnstileToken = null;
-let turnstileWidgetId = null;
+let turnstileToken: string | null = null;
+let turnstileWidgetId: string | null = null;
 let turnstileReady = false;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 인라인 onclick / 외부 CDN 콜백 브리지 — module body 의 가장 이른 시점에서 노출.
+//
+// Turnstile 콜백 처리:
+//   <head> 의 inline <script> 가 사전에 stub `window.onTurnstileLoad` 를 등록하고,
+//   모듈 평가 전 Turnstile 이 fire 하면 `window.__turnstileEarlyFire = true` 로
+//   기록한다. 이 모듈은 실제 핸들러를 `window.__turnstileLoadHandler` 슬롯에
+//   채워주고 (이후의 fire 는 stub → 슬롯으로 디스패치), 큐된 fire 가 있으면 즉시
+//   replay 한다. `window.onTurnstileLoad` 도 reloadTurnstile 의 재주입 경로와
+//   호환되도록 실제 핸들러로 덮어쓴다.
+// 동일한 이유로 인라인 onclick 핸들러(savePage / cancelEdit / reloadTurnstile) 와
+// scrollToBottom (다른 모듈이 호출 가능) 도 즉시 노출. CodeMirrorView 는 CM6 가 로드된
+// 후에만 의미가 있으므로 CM6 path 안에서 노출한다.
+// ─────────────────────────────────────────────────────────────────────────────
+window.__turnstileLoadHandler = onTurnstileLoad;
+window.onTurnstileLoad = onTurnstileLoad;
+if (window.__turnstileEarlyFire) {
+    window.__turnstileEarlyFire = false;
+    onTurnstileLoad();
+}
+window.reloadTurnstile = reloadTurnstile;
+window.savePage = savePage;
+window.cancelEdit = cancelEdit;
+window.scrollToBottom = scrollToBottom;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 모듈 로컬 에디터 상태 — 동시에 window.* 로 mirror 한다.
+//
+// edit/utils.ts (먼저 평가되는 ESM) 가 이미 window.editor / window.slug 등을
+// 초기화하므로 모듈 평가 시점의 값을 그대로 가져와 시작한다. 이후 main.ts 가
+// state 를 갱신할 때마다 window.* 도 동시에 갱신해야 다른 모듈이 본다.
+// (`assignState` 헬퍼로 두 갱신을 한 줄로 처리)
+// ─────────────────────────────────────────────────────────────────────────────
+let editor: CMEditor | null = window.editor ?? null;
+let slug: string | null = window.slug ?? null;
+let sectionMode: boolean = window.sectionMode ?? false;
+let sectionIndex: number = window.sectionIndex ?? -1;
+let sectionHeadingParam: string = window.sectionHeadingParam ?? '';
+let DRAFT_KEY: string = window.DRAFT_KEY ?? '';
+let originalContent: string = window.originalContent ?? '';
+let originalPageMeta: PageMeta | null = (window.originalPageMeta as PageMeta | null) ?? null;
+let pageVersion: number | string | null = window.pageVersion ?? null;
+let categoryTags: string[] = window.categoryTags ?? [];
+let fullOriginalContent: string = window.fullOriginalContent ?? '';
+let sectionRange: SectionRange | null = window.sectionRange ?? null;
+let pageLeft: boolean = window.pageLeft ?? false;
+let isExtensionData: boolean = window.isExtensionData ?? false;
+let selectedIconsOnly: boolean = window.selectedIconsOnly ?? false;
+
+// 모듈-내부 read 는 위 로컬 변수를 그대로 사용하고, write 는 항상 이 헬퍼로
+// 모아 window.* 로도 동기화한다. (다른 모듈이 window.editor / window.slug 등을
+// 직접 읽는다)
+function syncStateToWindow(): void {
+    window.editor = editor;
+    window.slug = slug;
+    window.sectionMode = sectionMode;
+    window.sectionIndex = sectionIndex;
+    window.sectionHeadingParam = sectionHeadingParam;
+    window.DRAFT_KEY = DRAFT_KEY;
+    window.originalContent = originalContent;
+    window.originalPageMeta = originalPageMeta;
+    window.pageVersion = pageVersion;
+    window.categoryTags = categoryTags;
+    window.fullOriginalContent = fullOriginalContent;
+    window.sectionRange = sectionRange;
+    window.pageLeft = pageLeft;
+    window.isExtensionData = isExtensionData;
+    window.selectedIconsOnly = selectedIconsOnly;
+}
+// utils.ts 의 checkDraft 가 section→full-edit promotion 시 window.sectionMode /
+// sectionRange / DRAFT_KEY / originalContent 등을 직접 갱신한다. 모듈 로컬 변수를
+// 그대로 두면 savePage 가 stale 한 sectionMode=true / sectionRange 를 읽어
+// editor 의 (이미 full doc 인) 본문을 다시 mergeSectionIntoFull 로 감싸 본문이
+// 손상된다. 따라서 외부에서 window.* 만 쓰는 분기가 끝나면 이 헬퍼로 로컬을
+// 다시 끌어와 동기 상태로 맞춘다.
+function syncStateFromWindow(): void {
+    if (window.editor !== undefined) editor = window.editor;
+    if (typeof window.slug === 'string' || window.slug === null) slug = window.slug;
+    if (typeof window.sectionMode === 'boolean') sectionMode = window.sectionMode;
+    if (typeof window.sectionIndex === 'number') sectionIndex = window.sectionIndex;
+    if (typeof window.sectionHeadingParam === 'string') sectionHeadingParam = window.sectionHeadingParam;
+    if (typeof window.DRAFT_KEY === 'string') DRAFT_KEY = window.DRAFT_KEY;
+    if (typeof window.originalContent === 'string') originalContent = window.originalContent;
+    if (window.originalPageMeta !== undefined) originalPageMeta = window.originalPageMeta as PageMeta | null;
+    if (window.pageVersion !== undefined) pageVersion = window.pageVersion;
+    if (Array.isArray(window.categoryTags)) categoryTags = window.categoryTags;
+    if (typeof window.fullOriginalContent === 'string') fullOriginalContent = window.fullOriginalContent;
+    if (window.sectionRange !== undefined) sectionRange = window.sectionRange;
+    if (typeof window.pageLeft === 'boolean') pageLeft = window.pageLeft;
+    if (typeof window.isExtensionData === 'boolean') isExtensionData = window.isExtensionData;
+    if (typeof window.selectedIconsOnly === 'boolean') selectedIconsOnly = window.selectedIconsOnly;
+}
+// 초기 상태 미러 (특히 default 값을 처음 적용)
+syncStateToWindow();
 
 function onTurnstileLoad() {
     turnstileReady = true;
@@ -14,7 +153,7 @@ function onTurnstileLoad() {
 }
 
 function initTurnstile() {
-    const siteKey = appConfig && appConfig.turnstileSiteKey;
+    const siteKey = window.appConfig && window.appConfig.turnstileSiteKey;
     if (!siteKey) {
         // Turnstile 미설정 시 저장 버튼 활성화
         const btn = document.getElementById('saveBtn');
@@ -28,7 +167,7 @@ function initTurnstile() {
     if (!turnstileReady) return;
     const container = document.getElementById('turnstile-container');
     if (!container || turnstileWidgetId !== null) return;
-    turnstileWidgetId = turnstile.render(container, {
+    turnstileWidgetId = window.turnstile!.render(container, {
         sitekey: siteKey,
         callback: function (token) {
             turnstileToken = token;
@@ -50,7 +189,7 @@ function refreshTurnstile() {
     if (turnstileWidgetId !== null) {
         turnstileToken = null;
         document.getElementById('saveBtn').disabled = true;
-        turnstile.reset(turnstileWidgetId);
+        window.turnstile!.reset(turnstileWidgetId);
     }
 }
 
@@ -61,8 +200,8 @@ function reloadTurnstile() {
     const container = document.getElementById('turnstile-container');
     if (!container) return;
 
-    if (typeof turnstile !== 'undefined' && turnstileWidgetId !== null) {
-        try { turnstile.remove(turnstileWidgetId); } catch (e) { /* ignore */ }
+    if (typeof window.turnstile !== 'undefined' && turnstileWidgetId !== null) {
+        try { window.turnstile!.remove(turnstileWidgetId); } catch (e) { /* ignore */ }
     }
     turnstileWidgetId = null;
     turnstileToken = null;
@@ -71,7 +210,7 @@ function reloadTurnstile() {
     const btn = document.getElementById('saveBtn');
     if (btn) btn.disabled = true;
 
-    if (typeof turnstile !== 'undefined' && turnstileReady) {
+    if (typeof window.turnstile !== 'undefined' && turnstileReady) {
         initTurnstile();
     } else {
         turnstileReady = false;
@@ -85,18 +224,11 @@ function reloadTurnstile() {
     }
 }
 
-// ── 아이콘 설정 변수 ──
-let selectedIconsOnly = false; // SELECTED_ICONS_ONLY 환경변수 (true: icons.json만 허용)
-let selectedIconsList = null;  // icons.json에서 로드된 아이콘 목록
+// 아이콘 피커 상태(biIconList, mdiIconList, selectedIconsList, iconPickerToken,
+// iconPickerSavedSelection, pendingIconInsertion)는 edit/modals.ts(ESM)가 관리.
+// selectedIconsOnly (SELECTED_ICONS_ONLY 환경변수) 는 위쪽 모듈 상태 블록에서 선언했다.
 
-// ── 아이콘 피커 변수 ──
-let biIconList = null;       // Bootstrap Icons 목록 (지연 로딩됨)
-let mdiIconList = null;      // MDI 목록 (지연 로딩됨)
-let iconPickerSavedSelection = null; // 모달 열기 전 에디터 선택 위치
-let pendingIconInsertion = null;     // 모달에서 선택된 아이콘 삽입 대기
-let iconPickerToken = 0;             // 아이콘 피커 호출 토큰 (경쟁 조건 방지)
-
-// ── 커스텀 프리뷰 렌더링 (render.js의 renderWikiContent 모듈 사용) ──
+// ── 커스텀 프리뷰 렌더링 (render.js의 window.renderWikiContent 모듈 사용) ──
 let previewDebounce;
 let saveInProgress = false;
 
@@ -113,7 +245,7 @@ async function updateCustomPreview() {
 
     const md = editor.getMarkdown();
     // 익스텐션 데이터 문서는 프리뷰 렌더링 비활성화
-    const enabledExts = (appConfig && appConfig.enabledExtensions) || [];
+    const enabledExts = (window.appConfig && window.appConfig.enabledExtensions) || [];
     const extPrefix = enabledExts.find(ext => slug && slug.startsWith(ext + ':'));
     if (extPrefix) {
         customPreview.innerHTML = `<div class="wiki-ext-raw-data">
@@ -121,7 +253,7 @@ async function updateCustomPreview() {
         <pre class="wiki-ext-raw-pre">${escapeHtml(md)}</pre>
     </div>`;
     } else {
-        await renderWikiContent(md, slug, 'custom-wiki-preview');
+        await window.renderWikiContent(md, slug, 'custom-wiki-preview');
     }
     // 프리뷰가 갱신됐으니 스크롤 동기화 가이드 캐시 무효화 + 사후 레이아웃 변동 감시 재설정
     if (typeof window._invalidateScrollSyncGuides === 'function') {
@@ -173,23 +305,24 @@ function scrollToBottom() {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
-    await loadConfig();
-    selectedIconsOnly = !!(appConfig && appConfig.selectedIconsOnly);
+    await window.loadConfig();
+    selectedIconsOnly = !!(window.appConfig && window.appConfig.selectedIconsOnly);
+    window.selectedIconsOnly = selectedIconsOnly; // ESM 모듈에서 읽기 위한 노출
     initTurnstile();
     // 인증 확인
     try {
         const res = await fetch('/api/me');
         if (res.ok) {
-            currentUser = await res.json();
-            document.querySelectorAll('#navUserName, #userName').forEach(el => el.textContent = currentUser.name);
-            document.querySelectorAll('#userAvatar').forEach(el => el.src = currentUser.picture || '');
+            window.currentUser = await res.json();
+            document.querySelectorAll('#navUserName, #userName').forEach(el => el.textContent = window.currentUser.name);
+            document.querySelectorAll('#userAvatar').forEach(el => el.src = window.currentUser.picture || '');
             document.querySelectorAll('#navLogin').forEach(el => el.classList.add('d-none'));
             document.querySelectorAll('#navUser').forEach(el => el.classList.remove('d-none'));
-            if (currentUser.role === 'admin' || currentUser.role === 'super_admin') {
+            if (window.currentUser.role === 'admin' || window.currentUser.role === 'super_admin') {
                 document.querySelectorAll('#navAdminConsole').forEach(el => el.classList.remove('d-none'));
             }
         } else {
-            Swal.fire({
+            window.Swal.fire({
                 icon: 'warning',
                 title: '로그인 필요',
                 text: '문서를 편집하려면 로그인이 필요합니다.',
@@ -232,17 +365,18 @@ document.addEventListener('DOMContentLoaded', async () => {
             + (sectionMode ? ('#section=' + sectionIndex) : '');
     }
     // 과거 자동저장 잔여 키 일회성 정리 (오토세이브 기능은 제거됨)
-    if (typeof purgeLegacyAutosaveKeys === 'function') purgeLegacyAutosaveKeys();
+    if (typeof window.purgeLegacyAutosaveKeys === 'function') window.purgeLegacyAutosaveKeys();
 
+    syncStateToWindow();
     if (!slug && !BLOG_MODE) {
-        Swal.fire('오류', '문서 제목이 지정되지 않았습니다.', 'error').then(() => {
+        window.Swal.fire('오류', '문서 제목이 지정되지 않았습니다.', 'error').then(() => {
             window.location.href = '/';
         });
         return;
     }
 
     // 익스텐션 데이터 문서 감지 (freq: 등)
-    const enabledExts = (appConfig && appConfig.enabledExtensions) || [];
+    const enabledExts = (window.appConfig && window.appConfig.enabledExtensions) || [];
     const extPrefix = enabledExts.find(ext => slug.startsWith(ext + ':'));
     isExtensionData = !!extPrefix;
 
@@ -274,11 +408,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         const rawTextarea = document.getElementById('rawExtTextarea');
 
         function updateRawCounts() {
-            updateEditorTextCounter(rawTextarea.value);
+            window.updateEditorTextCounter(rawTextarea.value);
         }
         // 키스트로크마다 전체 regex/split 스캔이 돌지 않도록 input에는 디바운스 버전 사용
         rawTextarea.addEventListener('input', () => {
-            updateEditorTextCounterFromTextDebounced(rawTextarea.value);
+            window.updateEditorTextCounterFromTextDebounced(rawTextarea.value);
         });
         updateRawCounts();
 
@@ -300,6 +434,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             // 프리뷰, diff 등에서 참조하는 메서드 추가 방지
         };
 
+        syncStateToWindow();
         // 변경 사항 미리보기, 스크롤 동기화, 자동 프리뷰 등 건너뜀
     } else {
         // ── CodeMirror 6 에디터 초기화 ──
@@ -336,17 +471,21 @@ document.addEventListener('DOMContentLoaded', async () => {
             </div>
         `;
 
-        // CM6 모듈 동적 import (Import Map으로 해석)
+        // CM6 모듈 동적 import — CM6 가 필요한 이 경로에서만 네트워크를 기다린다.
+        // (importmap 으로 해석되며 vite.config.ts 의 rollupOptions.external 가
+        //  번들에서 제외한다. esm.sh 가 unreachable 이면 이 경로가 throw 하지만
+        //  익스텐션 데이터 편집 경로와 모듈 top-level 에서 노출한 인라인 핸들러는
+        //  여전히 동작한다.)
         const [cmState, cmViewMod, cmCommands, cmMarkdown, cmLangData, cmOneDark, cmLanguage, cmLezer, cmSearch] = await Promise.all([
-            import("@codemirror/state"),
-            import("@codemirror/view"),
-            import("@codemirror/commands"),
-            import("@codemirror/lang-markdown"),
-            import("@codemirror/language-data"),
-            import("@codemirror/theme-one-dark"),
-            import("@codemirror/language"),
-            import("@lezer/highlight"),
-            import("@codemirror/search"),
+            import('@codemirror/state'),
+            import('@codemirror/view'),
+            import('@codemirror/commands'),
+            import('@codemirror/lang-markdown'),
+            import('@codemirror/language-data'),
+            import('@codemirror/theme-one-dark'),
+            import('@codemirror/language'),
+            import('@lezer/highlight'),
+            import('@codemirror/search'),
         ]);
 
         const { EditorState, Compartment, RangeSetBuilder, StateField, StateEffect } = cmState;
@@ -356,18 +495,18 @@ document.addEventListener('DOMContentLoaded', async () => {
         const { markdown, markdownLanguage } = cmMarkdown;
         const { languages } = cmLangData;
         const { oneDark } = cmOneDark;
-        const { syntaxHighlighting, defaultHighlightStyle, indentOnInput, bracketMatching, HighlightStyle, syntaxTree } = cmLanguage;
+        const { syntaxHighlighting, indentOnInput, bracketMatching, HighlightStyle, syntaxTree } = cmLanguage;
         const { tags: t } = cmLezer;
         const { SearchCursor } = cmSearch;
 
         // 이벤트 핸들러 저장소 (shim의 editor.on() 용)
-        const editorEventHandlers = { change: [], blur: [] };
+        const editorEventHandlers: { change: Array<() => void>; blur: Array<() => void> } = { change: [], blur: [] };
 
         // 스크롤 동기화 활성화 플래그 (커서 위치 기반)
         let _scrollSyncEnabled = false;
 
         // 다크모드 감지
-        let isDarkMode = getIsDarkMode();
+        let isDarkMode = window.getIsDarkMode();
 
         // ── 에디터 설정 (localStorage에서 불러오기) ──
         const editorSettings = {
@@ -646,7 +785,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const name = (match[1] || '').trim();
                 let variant = null;
                 try {
-                    const merged = (typeof getMergedWikiPalettes === 'function') ? getMergedWikiPalettes() : {};
+                    const merged = (typeof window.getMergedWikiPalettes === 'function') ? window.getMergedWikiPalettes() : {};
                     const entry = merged[name];
                     if (entry) {
                         const isDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
@@ -656,8 +795,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                 if (!variant) return null;
                 const rawBg = variant.bg || 'transparent';
                 const rawColor = variant.color || 'inherit';
-                const safeBg = (typeof _isSafeCssColor === 'function' && _isSafeCssColor(rawBg)) ? rawBg : 'transparent';
-                const safeColor = (typeof _isSafeCssColor === 'function' && _isSafeCssColor(rawColor)) ? rawColor : 'inherit';
+                const safeBg = (typeof window._isSafeCssColor === 'function' && window._isSafeCssColor(rawBg)) ? rawBg : 'transparent';
+                const safeColor = (typeof window._isSafeCssColor === 'function' && window._isSafeCssColor(rawColor)) ? rawColor : 'inherit';
                 return Decoration.mark({
                     class: "cm-palette-badge",
                     attributes: { style: `--palette-bg: ${safeBg}; --palette-color: ${safeColor};` }
@@ -947,7 +1086,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const updateListener = EditorView.updateListener.of((update) => {
             if (update.docChanged) {
                 editorEventHandlers.change.forEach(cb => cb());
-                updateEditorTextCounterFromDoc(update.state.doc);
+                window.updateEditorTextCounterFromDoc(update.state.doc);
                 if (_findFeatureOnDocChange) _findFeatureOnDocChange(update);
             }
             // 빈 표 셀 병합 미니툴바 위치/표시 갱신
@@ -985,7 +1124,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                                 if (pos !== null) {
                                     const endPos = pos + text.length;
                                     view.dispatch({ selection: { anchor: endPos } });
-                                    showColorAutocomplete(colorCode, type);
+                                    window.showColorAutocomplete(colorCode, type);
                                     return true;
                                 }
                             }
@@ -1034,13 +1173,13 @@ document.addEventListener('DOMContentLoaded', async () => {
                                         tokenTo = tmp;
                                     }
                                     view.dispatch({ selection: { anchor: tokenTo } });
-                                    if (typeof hideAutocomplete === 'function') hideAutocomplete();
-                                    if (typeof hideIconAutocomplete === 'function') hideIconAutocomplete();
-                                    if (typeof hideColorAutocomplete === 'function') hideColorAutocomplete();
-                                    if (typeof hideTimestampAutocomplete === 'function') hideTimestampAutocomplete();
-                                    if (typeof hideImgSizeAutocomplete === 'function') hideImgSizeAutocomplete();
-                                    paletteAc.replaceRange = { from: tokenFrom, to: tokenTo };
-                                    showPaletteAutocomplete('', { showAll: true });
+                                    if (typeof window.hideAutocomplete === 'function') window.hideAutocomplete();
+                                    if (typeof window.hideIconAutocomplete === 'function') window.hideIconAutocomplete();
+                                    if (typeof window.hideColorAutocomplete === 'function') window.hideColorAutocomplete();
+                                    if (typeof window.hideTimestampAutocomplete === 'function') window.hideTimestampAutocomplete();
+                                    if (typeof window.hideImgSizeAutocomplete === 'function') window.hideImgSizeAutocomplete();
+                                    window.paletteAc.replaceRange = { from: tokenFrom, to: tokenTo };
+                                    window.showPaletteAutocomplete('', { showAll: true });
                                     return true;
                                 }
                             }
@@ -1114,7 +1253,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         window.CodeMirrorView = cmViewMod;
 
         // 초기 텍스트 카운터 상태 반영
-        updateEditorTextCounter(cmEditorView.state.doc.toString());
+        window.updateEditorTextCounter(cmEditorView.state.doc.toString());
 
         // ── 에디터 Shim 객체 (기존 edit.js 코드와 호환) ──
         editor = {
@@ -1167,6 +1306,15 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         };
 
+        syncStateToWindow();
+        // 에디터 shim 이 준비됐으니 자동완성 부착을 즉시 트리거.
+        // autocomplete.ts 의 setTimeout(attachAutocomplete, 500) 폴링과 무관하게
+        // 부착이 일어나도록 명시 호출 — 부착 자체는 _autocompleteAttached 가드로
+        // idempotent. 블로그 에디터처럼 편집 흐름이 일찍 끝나는 경로에서 폴링
+        // 타이밍에 의존하지 않고 에디터가 켜진 직후 결정적으로 부착된다.
+        if (typeof window.ensureAutocompleteAttached === 'function') {
+            window.ensureAutocompleteAttached();
+        }
         // ── 모바일 탭 전환 로직 ──
         const cmTabBtns = document.querySelectorAll('.cm-tab-btn');
         const cmEditorPane = document.getElementById('cm-editor-pane');
@@ -1277,7 +1425,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         toolbar.appendChild(createToolbarSep());
         const tableBtn = createToolbarBtn('<i class="mdi mdi-table"></i>', '표', () => { });
         toolbar.appendChild(tableBtn);
-        setupTableInsertPopover(tableBtn);
+        window.setupTableInsertPopover(tableBtn);
         toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-link-variant"></i>', '링크', () => wrapSelection('[', '](url)')));
         toolbar.appendChild(createToolbarSep());
 
@@ -1287,28 +1435,28 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         toolbar.appendChild(createToolbarBtn('[*]', '각주 삽입', () => editor.insertText('[* 각주 내용]')));
         toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-form-dropdown"></i>', '펼치기 접기', () => editor.insertText('[+ 펼치기/접기 제목]\n여기에 숨겨진 내용이 들어갑니다.\n[-]')));
-        toolbar.appendChild(createToolbarBtn('<i class="bi bi-diagram-3-fill"></i>', '하위 문서', () => openSubdocInsertModal()));
-        toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-calendar-clock"></i>', '타임스탬프 삽입', () => openTimestampInsertModal()));
+        toolbar.appendChild(createToolbarBtn('<i class="bi bi-diagram-3-fill"></i>', '하위 문서', () => window.openSubdocInsertModal()));
+        toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-calendar-clock"></i>', '타임스탬프 삽입', () => window.openTimestampInsertModal()));
         toolbar.appendChild(createToolbarSep());
         const specialCharBtn = createToolbarBtn('<span class="cm-toolbar-omega">Ω</span>', '특수문자 삽입', () => { });
         toolbar.appendChild(specialCharBtn);
-        setupSpecialCharPicker(specialCharBtn);
+        window.setupSpecialCharPicker(specialCharBtn);
         toolbar.appendChild(createToolbarSep());
         if (selectedIconsOnly) {
-            toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-vector-square"></i>', '아이콘 삽입', () => openSelectedIconsPicker()));
+            toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-vector-square"></i>', '아이콘 삽입', () => window.openSelectedIconsPicker()));
         } else {
-            toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-vector-square"></i>', 'MDI 아이콘', () => openIconPicker('mdi')));
-            toolbar.appendChild(createToolbarBtn('<i class="bi bi-bootstrap-fill"></i>', 'Bootstrap 아이콘', () => openIconPicker('bi')));
+            toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-vector-square"></i>', 'MDI 아이콘', () => window.openIconPicker('mdi')));
+            toolbar.appendChild(createToolbarBtn('<i class="bi bi-bootstrap-fill"></i>', 'Bootstrap 아이콘', () => window.openIconPicker('bi')));
         }
         toolbar.appendChild(createToolbarSep());
-        toolbar.appendChild(createToolbarBtn('<i class="bi bi-card-heading"></i>', '카드 블록', () => openCardInsertModal()));
-        toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-palette-outline"></i>', '색상 삽입', () => openPaletteColorModal()));
-        toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-label-outline"></i>', '배지', () => openBadgeInsertModal()));
+        toolbar.appendChild(createToolbarBtn('<i class="bi bi-card-heading"></i>', '카드 블록', () => window.openCardInsertModal()));
+        toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-palette-outline"></i>', '색상 삽입', () => window.openPaletteColorModal()));
+        toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-label-outline"></i>', '배지', () => window.openBadgeInsertModal()));
         toolbar.appendChild(createToolbarSep());
         toolbar.appendChild(createToolbarBtn('<code>&lt;/&gt;</code>', '인라인 코드', () => wrapSelection('`', '`')));
         toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-code-braces"></i>', '코드 블록', () => wrapSelection('\n```\n', '\n```\n')));
         toolbar.appendChild(createToolbarSep());
-        toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-google-maps"></i>', '구글 지도 삽입', () => openGoogleMapsEmbedModal()));
+        toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-google-maps"></i>', '구글 지도 삽입', () => window.openGoogleMapsEmbedModal()));
 
         // 이미지 업로드 버튼 + 드래그앤드롭 팝업
         const imageUploadBtn = createToolbarBtn('<i class="mdi mdi-image-plus"></i>', '이미지 업로드', () => { });
@@ -1333,7 +1481,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         imgSearchBtn.addEventListener('click', async () => {
             imgUploadPopup.classList.remove('active');
-            await openExistingImageSearch((url, alt, size) => {
+            await window.openExistingImageSearch((url, alt, size) => {
                 let insertTxt = `![${alt}](${url})`;
                 if (size && size !== 'full') insertTxt += `{size:${size}}`;
                 insertTxt += '\n';
@@ -1385,7 +1533,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             const file = e.target.files[0];
             if (!file) return;
             imgUploadPopup.classList.remove('active');
-            await handleImageUpload(file, (url, alt, size) => {
+            await window.handleImageUpload(file, (url, alt, size) => {
                 let insertTxt = `![${alt}](${url})`;
                 if (size && size !== 'full') insertTxt += `{size:${size}}`;
                 insertTxt += '\n';
@@ -1407,11 +1555,11 @@ document.addEventListener('DOMContentLoaded', async () => {
             const acceptTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp',
                 'video/mp4', 'video/webm', 'video/ogg'];
             if (!acceptTypes.includes(file.type)) {
-                Swal.fire('오류', '지원하지 않는 파일 형식입니다.', 'warning');
+                window.Swal.fire('오류', '지원하지 않는 파일 형식입니다.', 'warning');
                 return;
             }
             imgUploadPopup.classList.remove('active');
-            await handleImageUpload(file, (url, alt, size) => {
+            await window.handleImageUpload(file, (url, alt, size) => {
                 let insertTxt = `![${alt}](${url})`;
                 if (size && size !== 'full') insertTxt += `{size:${size}}`;
                 insertTxt += '\n';
@@ -1987,7 +2135,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             autoSummaryCheckbox.addEventListener('change', (e) => {
                 editorSettings.autoSummary = e.target.checked;
                 localStorage.setItem('editor_auto_summary', editorSettings.autoSummary);
-                if (typeof refreshAutoSummary === 'function') refreshAutoSummary();
+                if (typeof window.refreshAutoSummary === 'function') window.refreshAutoSummary();
             });
         }
 
@@ -2410,15 +2558,15 @@ document.addEventListener('DOMContentLoaded', async () => {
             setScrollSync(true);
         }
 
-        // ── 아이콘 피커 모달 닫힘 후 아이콘 삽입 ──
+        // ── 아이콘 피커 모달 닫힘 후 아이콘 삽입 (상태는 edit/modals.ts 가 window.* 로 노출) ──
         document.getElementById('iconPickerModal').addEventListener('hidden.bs.modal', () => {
-            if (pendingIconInsertion && editor) {
+            if (window.pendingIconInsertion && editor) {
                 editor.focus();
-                if (iconPickerSavedSelection) {
-                    editor.setSelection(iconPickerSavedSelection[0], iconPickerSavedSelection[1]);
+                if (window.iconPickerSavedSelection) {
+                    editor.setSelection(window.iconPickerSavedSelection[0], window.iconPickerSavedSelection[1]);
                 }
-                editor.insertText(pendingIconInsertion);
-                pendingIconInsertion = null;
+                editor.insertText(window.pendingIconInsertion);
+                window.pendingIconInsertion = null;
             }
         });
 
@@ -2461,7 +2609,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         // 테마 변경 시 에디터 실시간 업데이트
         const applyEditorTheme = () => {
-            const newIsDarkMode = getIsDarkMode();
+            const newIsDarkMode = window.getIsDarkMode();
             if (newIsDarkMode === isDarkMode) return;
             isDarkMode = newIsDarkMode;
 
@@ -2503,7 +2651,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 
     // 관리자면 Lock ui 노출
-    if (currentUser.role === 'admin' || currentUser.role === 'super_admin') {
+    if (window.currentUser.role === 'admin' || window.currentUser.role === 'super_admin') {
         document.getElementById('adminLockContainer').style.display = 'block';
     }
 
@@ -2526,7 +2674,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     catInput.parentNode.appendChild(catWarning);
 
     catInput.addEventListener('input', () => {
-        const isAdmin = currentUser.role === 'admin' || currentUser.role === 'super_admin';
+        const isAdmin = window.currentUser.role === 'admin' || window.currentUser.role === 'super_admin';
         const cats = catInput.value.split(',').map(c => c.trim()).filter(c => c);
         const blockedCat = !isAdmin && cats.find(c => adminCategories.includes(c));
         if (blockedCat) {
@@ -2537,13 +2685,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
         // 카테고리 추가/삭제 시 편집 요약 자동 갱신 (renderCategoryTags에서 input 이벤트가 디스패치된다)
         // 블로그 모드는 edit-summary.js 를 로드하지 않으므로 typeof 가드.
-        if (typeof refreshAutoSummary === 'function') refreshAutoSummary();
+        if (typeof window.refreshAutoSummary === 'function') window.refreshAutoSummary();
     });
 
     // 관리자 전용(잠금) 토글 시 편집 요약 자동 갱신 (블로그 모드 미적용)
     const lockEl = document.getElementById('isLockedCheck');
-    if (lockEl && typeof refreshAutoSummary === 'function') {
-        lockEl.addEventListener('change', refreshAutoSummary);
+    if (lockEl && typeof window.refreshAutoSummary === 'function') {
+        lockEl.addEventListener('change', window.refreshAutoSummary);
     }
 
     // 넘겨주기(redirect) 변경 시 편집 요약 자동 갱신
@@ -2554,11 +2702,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         let redirectDebounce = null;
         redirectInputEl.addEventListener('input', () => {
             clearTimeout(redirectDebounce);
-            redirectDebounce = setTimeout(refreshAutoSummary, 300);
+            redirectDebounce = setTimeout(window.refreshAutoSummary, 300);
         });
         redirectInputEl.addEventListener('change', () => {
             clearTimeout(redirectDebounce);
-            refreshAutoSummary();
+            window.refreshAutoSummary();
         });
     }
     // 기존 문서 불러오기 (블로그 모드는 별도 처리)
@@ -2577,7 +2725,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 overlay.classList.add('hidden');
                 overlay.style.display = 'none';
             }
-            Swal.fire({
+            window.Swal.fire({
                 icon: 'error',
                 title: '삭제된 문서',
                 text: '삭제된 문서는 열람하거나 편집할 수 없습니다.',
@@ -2593,7 +2741,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             document.getElementById('titleInput').value = page.slug;
 
             // 섹션 모드에서는 서버가 보낸 메타데이터를 그대로 유지해 저장 시 함께 송신.
-            // renderCategoryTags()가 input 이벤트를 디스패치해 자동 편집 요약을 갱신하기 전에
+            // window.renderCategoryTags()가 input 이벤트를 디스패치해 자동 편집 요약을 갱신하기 전에
             // 베이스라인을 먼저 확정해야 카테고리 변경이 없는데도 '문서 생성'이 표시되는
             // 깜빡임을 방지할 수 있다.
             originalPageMeta = {
@@ -2606,7 +2754,11 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (page.category) {
                 document.getElementById('categoryInput').value = page.category;
                 categoryTags = page.category.split(',').map(c => c.trim()).filter(c => c);
-                renderCategoryTags();
+                // window.renderCategoryTags() / 자동 요약은 window.categoryTags 를 읽는다.
+                // 로컬 categoryTags 만 갱신하면 window 측이 빈 배열인 채로 남아 태그 렌더가
+                // 비고 자동 요약이 '문서 생성' 으로 잘못 분류된다 → 즉시 미러링.
+                syncStateToWindow();
+                window.renderCategoryTags();
             }
             if (page.redirect_to) document.getElementById('redirectInput').value = page.redirect_to;
             if (page.is_locked) document.getElementById('isLockedCheck').checked = true;
@@ -2624,7 +2776,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             // (익스텐션 데이터 문서는 섹션 모드 비활성)
             let useSectionMode = false;
             if (sectionMode && !isExtensionData) {
-                const range = findSectionRange(initialContent, sectionIndex, sectionHeadingParam);
+                const range = window.findSectionRange(initialContent, sectionIndex, sectionHeadingParam);
                 if (range) {
                     useSectionMode = true;
                     fullOriginalContent = initialContent;
@@ -2666,8 +2818,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                     sectionMode = false;
                     sectionIndex = -1;
                     DRAFT_KEY = 'wiki_draft_' + slug;
-                    if (typeof Swal !== 'undefined') {
-                        Swal.fire({
+                    if (typeof window.Swal !== 'undefined') {
+                        window.Swal.fire({
                             icon: 'warning',
                             title: '섹션을 찾지 못했습니다',
                             text: '문서 구조가 변경되어 전체 편집 모드로 전환합니다.',
@@ -2689,39 +2841,55 @@ document.addEventListener('DOMContentLoaded', async () => {
                 useSectionMode
                     ? `<i class="mdi mdi-pencil-box-multiple"></i> 섹션 편집: ${escapeHtml(page.slug)}`
                     : `<i class="mdi mdi-pencil-box-multiple"></i> 편집: ${escapeHtml(page.slug)}`;
-            document.title = `편집: ${page.slug} - ${appConfig.wikiName}`;
+            document.title = `편집: ${page.slug} - ${window.appConfig.wikiName}`;
             document.getElementById('diffPreviewSection').style.display = 'block'; // 편집일 때만 노출
             // 전체 편집 모드일 때만 같은 슬러그의 섹션 초안 잔여분을 추가로 안내한다.
-            // (섹션 모드에서는 checkDraft 가 자체 초안을 처리한다.)
-            checkDraft().then(() => {
-                if (!useSectionMode && typeof checkSectionDrafts === 'function') {
-                    checkSectionDrafts();
+            // (섹션 모드에서는 window.checkDraft 가 자체 초안을 처리한다.)
+            window.checkDraft().then(() => {
+                // checkDraft 가 section→full-edit promotion 을 수행했을 수 있으므로
+                // 로컬 변수를 window 상태에서 다시 끌어와 동기화한다. 그렇지 않으면
+                // savePage 가 stale 한 sectionMode/sectionRange 를 사용해 editor 의
+                // 본문(이미 full doc) 을 다시 mergeSectionIntoFull 로 감싸 본문이 손상된다.
+                syncStateFromWindow();
+                // promotion 으로 useSectionMode 가 사실상 무효화된 경우에도 같은 슬러그의
+                // 다른 섹션 초안이 남아 있을 수 있으므로 현재 sectionMode 상태를 다시 본다.
+                if (!sectionMode && typeof window.checkSectionDrafts === 'function') {
+                    window.checkSectionDrafts();
                 }
             });
+            // 기존 문서 로드 완료 — 로컬 originalContent / originalPageMeta /
+            // pageVersion / sectionRange / fullOriginalContent 를 window.* 로 미러링.
+            // (summary.ts 는 window.originalPageMeta 로 신규/기존 문서를 분기하고,
+            //  conflict.ts 의 renderLocalDiff 는 window.originalContent 를 base 로
+            //  사용하므로, 동기화가 빠지면 미수정 상태가 '문서 생성' / 전체 신규로
+            //  잘못 표시된다.)
+            syncStateToWindow();
             // 기존 문서: 카테고리/잠금 변경 시 자동 요약이 입력되도록 초기 상태 동기화
-            refreshAutoSummary();
+            window.refreshAutoSummary();
         } else {
             // 새 문서: 슬러그가 곧 제목이므로 readonly 필드를 슬러그로 채운다
+            syncStateToWindow();
             originalContent = '';
             document.getElementById('titleInput').value = decodeURIComponent(slug);
             document.getElementById('editPageTitle').innerHTML =
                 `<i class="mdi mdi-plus-circle"></i> 새 문서 만들기`;
-            document.title = `새 문서 - ${appConfig.wikiName}`;
+            document.title = `새 문서 - ${window.appConfig.wikiName}`;
 
             // 템플릿 불러오기 버튼 추가
             const templateBtn = document.createElement('button');
             templateBtn.className = 'btn btn-sm btn-outline-primary ms-3';
             templateBtn.innerHTML = '<i class="mdi mdi-content-copy"></i> 템플릿으로 시작하기';
-            templateBtn.onclick = openTemplateModal;
+            templateBtn.onclick = window.openTemplateModal;
             document.getElementById('editPageTitle').appendChild(templateBtn);
-            checkDraft();
+            window.checkDraft();
             // 새 문서: 편집 요약을 '문서 생성'으로 자동 채움
-            refreshAutoSummary();
+            window.refreshAutoSummary();
         }
     } catch (e) {
         // 새 문서로 취급
+        syncStateToWindow();
         originalContent = '';
-        refreshAutoSummary();
+        window.refreshAutoSummary();
     }
 
     // 변경 사항 미리보기 이벤트 연동
@@ -2748,20 +2916,20 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // 본문 헤딩(목차) 변화 실시간 감지 → 자동 편집 요약 갱신.
     // 별도 디바운스로 미리보기/diff 와 독립 동작하며, 헤딩 추가/삭제/이름변경 시
-    // refreshAutoSummary 가 새 prefix 를 합성한다.
+    // window.refreshAutoSummary 가 새 prefix 를 합성한다.
     if (editor && typeof editor.on === 'function') {
         let summaryDebounce = null;
         editor.on('change', () => {
             clearTimeout(summaryDebounce);
             summaryDebounce = setTimeout(() => {
-                if (typeof refreshAutoSummary === 'function') refreshAutoSummary();
+                if (typeof window.refreshAutoSummary === 'function') window.refreshAutoSummary();
             }, 400);
         });
     }
 
     // 동시편집 감지: 하트비트 전송 + 편집자 체크 시작
-    startEditingHeartbeat();
-    checkConcurrentEditors();
+    window.startEditingHeartbeat();
+    window.checkConcurrentEditors();
 
     // 미저장 변경사항 이탈 경고
     window.addEventListener('beforeunload', (e) => {
@@ -2781,8 +2949,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         // 새 pageVersion 으로 그대로 제출되는 것을 방지한다.
         const conflictUi = document.getElementById('conflict-ui');
         if (conflictUi && conflictUi.offsetParent !== null) return;
-        if (appConfig && appConfig.turnstileSiteKey && !turnstileToken) {
-            Swal.fire({
+        if (window.appConfig && window.appConfig.turnstileSiteKey && !turnstileToken) {
+            window.Swal.fire({
                 icon: 'warning',
                 title: 'Turnstile 미완료',
                 text: 'Turnstile 검증이 완료된 뒤 저장할 수 있습니다.',
@@ -2809,7 +2977,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 });
 
-// 자동 편집 요약(buildAutoEditSummary / refreshAutoSummary)은 edit-summary.js 로 분리됨.
+// 자동 편집 요약(buildAutoEditSummary / window.refreshAutoSummary)은 edit-summary.js 로 분리됨.
 
 // ── 변경 사항 검증 (프론트 전용) ──
 // 본문이 바뀌지 않았어도 카테고리/리다이렉트/관리자 잠금이 변경되었다면 저장을 허용한다.
@@ -2831,8 +2999,10 @@ function hasMeaningfulChanges() {
     const origCats = baseMeta.category
         ? baseMeta.category.split(',').map(c => c.trim()).filter(Boolean).sort()
         : [];
-    const currCats = Array.isArray(categoryTags)
-        ? categoryTags.slice().map(c => String(c).trim()).filter(Boolean).sort()
+    // edit/autocomplete.ts 가 사용자 입력에 따라 window.categoryTags 를 직접 갱신하므로
+    // 모듈 로컬 categoryTags 가 아닌 window 값을 비교 기준으로 사용한다.
+    const currCats = Array.isArray(window.categoryTags)
+        ? window.categoryTags.slice().map(c => String(c).trim()).filter(Boolean).sort()
         : [];
     if (origCats.join('\u0000') !== currCats.join('\u0000')) return true;
 
@@ -2870,19 +3040,31 @@ async function savePage() {
     // 섹션 모드: 에디터 내용(= 섹션 텍스트)을 원본에 재주입한 전체 본문을 전송
     let content;
     if (sectionMode && sectionRange) {
-        content = mergeSectionIntoFull(fullOriginalContent, sectionRange, editor.getMarkdown());
+        // fullOriginalContent 가 비어 있으면 mergeSectionIntoFull 이 섹션 텍스트만
+        // 반환해 다른 섹션 본문이 모두 사라진다. 정상 흐름에선 발생하지 않지만
+        // checkDraft 등이 섹션 상태를 잘못 두고 떠난 경우에 대비해 마지막 방어선으로
+        // 저장을 차단한다 (saveInProgress 진입 전이라 별도 정리 불필요).
+        if (!fullOriginalContent) {
+            window.Swal.fire({
+                icon: 'error',
+                title: '문서 상태가 손상되었습니다',
+                text: '안전을 위해 저장을 중단합니다. 페이지를 새로고침 한 뒤 다시 시도해주세요.',
+            });
+            return;
+        }
+        content = window.mergeSectionIntoFull(fullOriginalContent, sectionRange, editor.getMarkdown());
     } else {
         content = editor.getMarkdown();
     }
     // 디바운스로 대기 중인 자동 요약(특히 넘겨주기 input)을 즉시 반영해야
     // Ctrl/Cmd+S 단축키로 저장할 때 최신 변경이 누락되지 않는다.
-    if (typeof refreshAutoSummary === 'function') refreshAutoSummary();
+    if (typeof window.refreshAutoSummary === 'function') window.refreshAutoSummary();
     const userSummary = document.getElementById('summaryInput').value.trim();
 
     // 본문/메타데이터 변경이 전혀 없으면 저장 거부 (프론트 전용 검증).
     // 카테고리, 관리자 전용 잠금, 리다이렉트 중 하나라도 바뀌었다면 본문 변경이 없어도 저장 허용.
     if (!hasMeaningfulChanges()) {
-        Swal.fire({
+        window.Swal.fire({
             icon: 'info',
             title: '변경된 내용이 없습니다',
             text: '본문을 편집하거나 카테고리, 리다이렉트 설정을 변경해주세요.',
@@ -2891,11 +3073,11 @@ async function savePage() {
     }
 
     if (category && !/^[가-힣a-zA-Z0-9\s,]+$/.test(category)) {
-        Swal.fire('오류', '카테고리에는 특수문자를 사용할 수 없습니다.', 'warning');
+        window.Swal.fire('오류', '카테고리에는 특수문자를 사용할 수 없습니다.', 'warning');
         return;
     }
     if (userSummary && userSummary.length > 255) {
-        Swal.fire('오류', '편집 요약은 최대 255자까지 입력할 수 있습니다.', 'warning');
+        window.Swal.fire('오류', '편집 요약은 최대 255자까지 입력할 수 있습니다.', 'warning');
         return;
     }
 
@@ -2904,8 +3086,8 @@ async function savePage() {
     let summary = userSummary;
     if (summary.length > 255) summary = summary.slice(0, 255);
 
-    if (appConfig.turnstileSiteKey && !turnstileToken) {
-        Swal.fire('오류', 'Turnstile 검증을 완료해주세요.', 'warning');
+    if (window.appConfig.turnstileSiteKey && !turnstileToken) {
+        window.Swal.fire('오류', 'Turnstile 검증을 완료해주세요.', 'warning');
         return;
     }
 
@@ -2965,7 +3147,7 @@ async function savePage() {
                 if (serverContentStr === '') {
                     sameSectionChangedByOther = true;
                 } else {
-                    serverRange = findSectionRange(serverContentStr, sectionIndex, sectionRange.headingText);
+                    serverRange = window.findSectionRange(serverContentStr, sectionIndex, sectionRange.headingText);
                     if (serverRange) {
                         const serverLines = serverContentStr.split('\n');
                         const newServerSection = serverLines.slice(serverRange.lineIdx, serverRange.endLine).join('\n');
@@ -3002,7 +3184,7 @@ async function savePage() {
                     // 메타 재조회 실패 → 재저장 차단(finally 에서 버튼 재활성화 금지)
                     // 사용자는 페이지 새로고침 후 다시 편집해야 함.
                     blockResave = true;
-                    await Swal.fire({
+                    await window.Swal.fire({
                         icon: 'error',
                         title: '문서 정보를 다시 가져오지 못했습니다',
                         text: '다른 사용자의 변경을 덮어쓸 수 있어 저장을 중단합니다. 페이지를 새로고침 해주세요.',
@@ -3010,7 +3192,7 @@ async function savePage() {
                     return;
                 }
 
-                await Swal.fire({
+                await window.Swal.fire({
                     icon: 'warning',
                     title: '편집 충돌이 발생했습니다',
                     text: sameSectionChangedByOther
@@ -3027,10 +3209,10 @@ async function savePage() {
                 let mergedLocal;
                 if (!sameSectionChangedByOther && serverRange && data.content) {
                     mergedBase = data.content;
-                    mergedLocal = mergeSectionIntoFull(data.content, serverRange, editor.getMarkdown());
+                    mergedLocal = window.mergeSectionIntoFull(data.content, serverRange, editor.getMarkdown());
                 } else {
                     mergedBase = fullOriginalContent;
-                    mergedLocal = mergeSectionIntoFull(fullOriginalContent, sectionRange, editor.getMarkdown());
+                    mergedLocal = window.mergeSectionIntoFull(fullOriginalContent, sectionRange, editor.getMarkdown());
                 }
                 editor.setMarkdown(mergedLocal);
                 // 충돌 모달은 originalContent 를 base 로 사용하므로 섹션 텍스트 조각이 아닌
@@ -3065,7 +3247,7 @@ async function savePage() {
                 // 일반 사용자에게는 보여선 안 됨.
                 const adminLockWrapper = document.getElementById('adminLockContainer');
                 if (adminLockWrapper) {
-                    const isAdminUser = currentUser && (currentUser.role === 'admin' || currentUser.role === 'super_admin');
+                    const isAdminUser = window.currentUser && (window.currentUser.role === 'admin' || window.currentUser.role === 'super_admin');
                     adminLockWrapper.style.display = isAdminUser ? 'block' : 'none';
                 }
 
@@ -3078,7 +3260,6 @@ async function savePage() {
                 const freshCategory = freshPageForFallback.category || '';
                 if (categoryEl) categoryEl.value = freshCategory;
                 categoryTags = freshCategory ? freshCategory.split(',').map(c => c.trim()).filter(c => c) : [];
-                if (typeof renderCategoryTags === 'function') renderCategoryTags();
                 if (redirectEl) redirectEl.value = freshPageForFallback.redirect_to || '';
                 if (lockedEl) lockedEl.checked = !!freshPageForFallback.is_locked;
                 // originalPageMeta 도 일관성 유지 (sectionMode 는 false 가 되었지만 방어적으로 갱신)
@@ -3088,14 +3269,18 @@ async function savePage() {
                     redirect_to: freshPageForFallback.redirect_to || '',
                     is_locked: freshPageForFallback.is_locked ? 1 : 0
                 };
-                // 새 베이스라인이 적용되었으므로 자동 요약을 재계산해 입력 칸을 동기화
-                if (typeof refreshAutoSummary === 'function') refreshAutoSummary();
                 // pageVersion 을 최신값으로 갱신
                 pageVersion = data.current_version;
 
+                // refreshAutoSummary / renderCategoryTags 모두 window.* 를 읽으므로
+                // 호출 전에 최신 state 를 미러링해야 한다.
+                syncStateToWindow();
+                if (typeof window.renderCategoryTags === 'function') window.renderCategoryTags();
+                // 새 베이스라인이 적용되었으므로 자동 요약을 재계산해 입력 칸을 동기화
+                if (typeof window.refreshAutoSummary === 'function') window.refreshAutoSummary();
                 if (sameSectionChangedByOther) {
                     // 동시 편집: 서버의 최신 전체 본문을 기준으로 충돌 UI 표시
-                    showConflictModal({ current_version: data.current_version, content: data.content });
+                    window.showConflictModal({ current_version: data.current_version, content: data.content });
                 }
                 // 경계 변경: 충돌 UI 없이 전체 편집 모드로 전환 완료 → 사용자가 재저장 가능
                 saveBtn.innerHTML = '<i class="mdi mdi-check"></i> 저장';
@@ -3103,7 +3288,7 @@ async function savePage() {
             }
 
             // 버전 충돌 (Optimistic Locking Failure) — 일반 편집
-            showConflictModal(data);
+            window.showConflictModal(data);
 
             saveBtn.innerHTML = '<i class="mdi mdi-check"></i> 저장';
             return;
@@ -3115,21 +3300,28 @@ async function savePage() {
         }
 
         if (DRAFT_KEY) localStorage.removeItem(DRAFT_KEY);
+        // checkDraft 의 section→full promotion 으로 인해 원래 section 초안 키가
+        // DRAFT_KEY 와 달라진 경우, 그 키도 함께 정리한다.
+        if (window.promotedFromDraftKey && window.promotedFromDraftKey !== DRAFT_KEY) {
+            localStorage.removeItem(window.promotedFromDraftKey);
+            window.promotedFromDraftKey = null;
+        }
 
         isSuccess = true;
         // 섹션 모드: originalContent 는 섹션 텍스트 기준이어야 beforeunload 경고가 정상 동작
         originalContent = sectionMode ? editor.getMarkdown() : content;
         // 섹션 편집 완료 시 해당 섹션의 열람 페이지 앵커로 복귀하여 같은 위치로 스크롤한다.
-        // 열람 페이지의 s-X.Y 앵커는 resolveTransclusions 이후의 헤딩 순서를 기준으로
+        // 열람 페이지의 s-X.Y 앵커는 window.resolveTransclusions 이후의 헤딩 순서를 기준으로
         // 생성되므로, 틀(transclusion)이 포함된 문서에서도 올바른 번호를 구하기 위해
         // 저장된 전체 본문을 먼저 트랜스클루전 전개한 뒤 섹션 번호를 계산한다.
+        syncStateToWindow();
         let redirectHash = '';
         if (sectionMode) {
             try {
-                const resolvedContent = typeof resolveTransclusions === 'function'
-                    ? await resolveTransclusions(content, slug)
+                const resolvedContent = typeof window.resolveTransclusions === 'function'
+                    ? await window.resolveTransclusions(content, slug)
                     : content;
-                const sectionNum = computeSectionNumber(
+                const sectionNum = window.computeSectionNumber(
                     resolvedContent,
                     sectionIndex,
                     sectionRange ? sectionRange.headingText : ''
@@ -3137,7 +3329,7 @@ async function savePage() {
                 if (sectionNum) redirectHash = `#s-${sectionNum}`;
             } catch (e) { /* 앵커 계산 실패 시 최상단으로 이동 */ }
         }
-        Swal.fire({
+        window.Swal.fire({
             icon: 'success',
             title: '저장 완료!',
             text: '문서가 성공적으로 저장되었습니다.',
@@ -3148,7 +3340,7 @@ async function savePage() {
         });
 
     } catch (err) {
-        Swal.fire('오류', err.message, 'error');
+        window.Swal.fire('오류', err.message, 'error');
     } finally {
         saveInProgress = false;
         // blockResave 가 true 이면 재저장으로 인한 덮어쓰기 위험이 있으므로 버튼을 비활성 상태로 유지.
@@ -3166,17 +3358,17 @@ async function savePage() {
 // ── 취소 ──
 async function cancelEdit() {
     // 섹션 편집을 취소할 때도 사용자가 보고 있던 섹션 위치로 복귀한다.
-    // 열람 페이지의 s-X.Y 앵커는 resolveTransclusions 이후 헤딩 기준이므로
+    // 열람 페이지의 s-X.Y 앵커는 window.resolveTransclusions 이후 헤딩 기준이므로
     // 원본 본문도 트랜스클루전 전개 후 섹션 번호를 계산한다.
     const buildReturnUrl = async () => {
         if (!slug) return '/';
         let hash = '';
         if (sectionMode && fullOriginalContent) {
             try {
-                const resolvedContent = typeof resolveTransclusions === 'function'
-                    ? await resolveTransclusions(fullOriginalContent, slug)
+                const resolvedContent = typeof window.resolveTransclusions === 'function'
+                    ? await window.resolveTransclusions(fullOriginalContent, slug)
                     : fullOriginalContent;
-                const sectionNum = computeSectionNumber(
+                const sectionNum = window.computeSectionNumber(
                     resolvedContent,
                     sectionIndex,
                     sectionRange ? sectionRange.headingText : ''
@@ -3189,7 +3381,7 @@ async function cancelEdit() {
 
     if (editor && editor.getMarkdown().trim()) {
         // 내용 변경 여부 확인
-        const result = await Swal.fire({
+        const result = await window.Swal.fire({
             title: '편집을 취소하시겠습니까?',
             text: '저장하지 않은 변경사항이 사라집니다.',
             icon: 'question',
@@ -3198,10 +3390,12 @@ async function cancelEdit() {
             cancelButtonText: '계속 편집',
         });
         if (result.isConfirmed) {
+            syncStateToWindow();
             pageLeft = true;
             window.location.href = await buildReturnUrl();
         }
     } else {
+        syncStateToWindow();
         pageLeft = true;
         window.location.href = await buildReturnUrl();
     }
@@ -3218,15 +3412,17 @@ async function loadBlogContentForEdit() {
             const post = await res.json();
             if (titleInput) titleInput.value = post.title || '';
             if (editor) editor.setMarkdown(post.content || '');
+            syncStateToWindow();
             originalContent = post.content || '';
         } catch (e) {
-            Swal.fire('오류', e.message, 'error').then(() => {
+            window.Swal.fire('오류', e.message, 'error').then(() => {
                 window.location.href = '/blog';
             });
             return;
         }
     } else {
         if (editor) editor.setMarkdown('');
+        syncStateToWindow();
         originalContent = '';
     }
 
@@ -3237,7 +3433,7 @@ async function loadBlogContentForEdit() {
     }
 
     const saveBtn = document.getElementById('saveBtn');
-    if (saveBtn && !appConfig?.turnstileSiteKey) saveBtn.disabled = false;
+    if (saveBtn && !window.appConfig?.turnstileSiteKey) saveBtn.disabled = false;
 }
 
 // ── 블로그 저장 ──
@@ -3245,7 +3441,7 @@ async function saveBlogPost() {
     const titleInput = document.getElementById('blogTitleInput');
     const title = titleInput ? titleInput.value.trim() : '';
     if (!title) {
-        Swal.fire('오류', '제목을 입력해주세요.', 'warning');
+        window.Swal.fire('오류', '제목을 입력해주세요.', 'warning');
         return;
     }
 
@@ -3276,7 +3472,7 @@ async function saveBlogPost() {
 
         if (DRAFT_KEY) localStorage.removeItem(DRAFT_KEY);
 
-        Swal.fire({
+        window.Swal.fire({
             icon: 'success',
             title: '저장 완료!',
             text: '블로그 포스트가 저장되었습니다.',
@@ -3286,9 +3482,14 @@ async function saveBlogPost() {
             window.location.href = `/blog/${savedId}`;
         });
     } catch (err) {
-        Swal.fire('오류', err.message, 'error');
+        window.Swal!.fire('오류', (err as Error).message, 'error');
         saveInProgress = false;
         saveBtn.innerHTML = '<i class="mdi mdi-check"></i> 저장';
         saveBtn.disabled = false;
     }
 }
+
+// 인라인 onclick / Turnstile 콜백 / scrollToBottom 의 window 노출은 module body
+// 상단(BLOG_MODE 선언 바로 다음) 에서 수행한다 — 함수 선언은 hoisting 되므로 안전하며,
+// 외부 CDN(Turnstile) 이 우리 모듈보다 먼저 fire 하더라도 즉시 콜백을 발견할 수 있다.
+// CodeMirrorView 는 CM6 동적 import 후 본문 내부에서 노출한다.

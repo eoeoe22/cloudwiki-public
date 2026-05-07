@@ -1,3 +1,26 @@
+// @ts-nocheck — Phase 4-8 의 1차 마이그레이션은 동작 보존을 우선해 임시로 type
+// 검사를 끈다. marked / DOMPurify / Prism 패키지가 npm 설치되지 않은 상태이고,
+// 마크다운 렌더 파이프라인의 광범위한 DOM/Element 캐스팅이 100+ 곳에 흩어져 있어
+// 1회성 도입으로 다루기 어렵다. 후속 Phase 4-8.1 에서 (1) marked / DOMPurify
+// devDeps 또는 .d.ts shim 도입, (2) HTML 요소 캐스팅 정리, (3) window.* 글로벌
+// 단정 정리를 끝내고 본 디렉티브를 제거할 예정.
+/**
+ * 위키 렌더링 엔진 — public/js/render.js (3,350 줄, classic) 를 1:1 로 ESM 으로
+ * 이전한 모듈. public/edit.html / public/blog-edit.html / public/index.html /
+ * public/blog.html / public/revisions.html 다섯 페이지가 사용한다.
+ *
+ * Phase 4-8 마이그레이션:
+ * - 모든 top-level function 을 그대로 유지하되, 파일 하단에서 window.* 로 노출해
+ *   기존 classic-script-global 동작을 보존한다 (freq 익스텐션 등 외부 코드와의 계약).
+ * - escapeHtml / isSafeUrl 은 ESM 으로 import. 그 외 CDN/공통 글로벌(marked,
+ *   DOMPurify, appConfig, Swal, bootstrap, Prism) 은 bare 참조 — 모듈 평가 시점에
+ *   common.js (classic, 먼저 로드) 가 이미 globalThis 에 노출했으므로 안전.
+ * - DOMContentLoaded 시점 처리(_setupArticleTitleCopy 등) 는 module top-level 에서
+ *   동기적으로 호출되며, 모듈은 deferred 이므로 DOM 이 이미 준비된 상태이다.
+ */
+import { escapeHtml } from './utils/html';
+import { isSafeUrl } from './utils/url';
+
 // ── Marked 설정 및 렌더링 코어 로직 ──
 // ── Marked 설정 (1회 초기화) ──
 function initMarkedConfig() {
@@ -3348,3 +3371,44 @@ function _processExtensions(containerEl) {
     });
 }
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+// window 브리지 — classic public/js/render.js 시절 모든 top-level 함수가
+// classic-script-global 로 자동 노출되었으므로, ESM 으로 이전한 뒤에도 동일한
+// 외부 계약을 유지한다. 다른 모듈(edit/main.ts / edit/conflict.ts / freq 익스텐션
+// / inline HTML 핸들러) 이 window.X 로 호출하므로 누락 시 회귀가 발생한다.
+// ─────────────────────────────────────────────────────────────────────────────
+window.initMarkedConfig = initMarkedConfig;
+window._isExtensionCall = _isExtensionCall;
+window._splitPipeTopLevel = _splitPipeTopLevel;
+window._findTopLevelEquals = _findTopLevelEquals;
+window._parseTemplateCall = _parseTemplateCall;
+window._findParamRefEnd = _findParamRefEnd;
+window._findParamRefs = _findParamRefs;
+window._substituteTemplateParams = _substituteTemplateParams;
+window._findTemplateCallEnd = _findTemplateCallEnd;
+window._findTemplateCalls = _findTemplateCalls;
+window._replaceSelfCalls = _replaceSelfCalls;
+window.resolveTransclusions = resolveTransclusions;
+window.resolveTransclusionsForMarkdown = resolveTransclusionsForMarkdown;
+window.fetchCategoryList = fetchCategoryList;
+window.numberHeadings = numberHeadings;
+window.generateTOC = generateTOC;
+window.makeCollapsibleSections = makeCollapsibleSections;
+window.processWikiLinks = processWikiLinks;
+window.processFootnotes = processFootnotes;
+window._isSafeCssColor = _isSafeCssColor;
+window.WIKI_HARDCODED_PALETTES = WIKI_HARDCODED_PALETTES;
+window.getMergedWikiPalettes = getMergedWikiPalettes;
+window._processInlineLayoutTokens = _processInlineLayoutTokens;
+window._processTimestampsInHtml = _processTimestampsInHtml;
+window.protectWikiLinks = protectWikiLinks;
+window.restoreWikiLinks = restoreWikiLinks;
+window.renderWikiContent = renderWikiContent;
+window._extractMarkdownSectionRanges = _extractMarkdownSectionRanges;
+window._extractMarkdownSections = _extractMarkdownSections;
+window._addHeadingCopyButtons = _addHeadingCopyButtons;
+
+// initMarkedConfig() / _setupArticleTitleCopy() 의 즉시 호출은 원본 render.js
+// 와 동일하게 파일 본문 안에서 수행된다(상단의 `initMarkedConfig()` / 본문 끝의
+// `if (document.readyState === 'loading') ...`). ESM 모듈 평가 시점에 그대로 호출.

@@ -79,6 +79,47 @@
           <div class="wiki-article-meta mb-3">
             <span id="blogPostDate" class="text-muted small"></span>
           </div>
+
+          <!-- 공유하기 드롭다운 -->
+          <div class="d-flex justify-content-end mb-2 gap-2">
+            <div class="dropdown">
+              <button class="btn btn-secondary dropdown-toggle no-caret" type="button" id="shareDropdown"
+                data-bs-toggle="dropdown" data-bs-display="static" data-bs-flip="false" aria-expanded="false"
+                title="공유하기">
+                <i class="bi bi-share"></i>
+              </button>
+              <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="shareDropdown">
+                <li><button class="dropdown-item" onclick="shareNative()">
+                    <i class="bi bi-share"></i> 공유하기
+                  </button></li>
+                <li>
+                  <hr class="dropdown-divider">
+                </li>
+                <li><button class="dropdown-item" onclick="shareCopyLink()">
+                    <i class="bi bi-link"></i> 링크 복사하기
+                  </button></li>
+                <li><button class="dropdown-item" onclick="shareCopyText()">
+                    <i class="bi bi-copy"></i> 문서 텍스트 복사
+                  </button></li>
+                <li><button class="dropdown-item" onclick="shareCopyMarkdown()">
+                    <i class="bi bi-markdown"></i> 문서 복사 (마크다운)
+                  </button></li>
+                <li><button class="dropdown-item" onclick="sharePrint()">
+                    <i class="bi bi-printer"></i> 인쇄하기
+                  </button></li>
+                <li>
+                  <hr class="dropdown-divider">
+                </li>
+                <li><button class="dropdown-item" onclick="shareAskClaude()">
+                    <i class="bi bi-claude"></i> Claude에게 질문하기
+                  </button></li>
+                <li><button class="dropdown-item" onclick="shareAskChatGPT()">
+                    <i class="bi bi-openai"></i> ChatGPT에게 질문하기
+                  </button></li>
+              </ul>
+            </div>
+          </div>
+
           <div id="blogPostContent" class="wiki-content"></div>
           <div class="mt-4">
             <a href="/blog" class="btn btn-secondary btn-sm">
@@ -100,8 +141,43 @@
       </div>
 
     </div>
-    <!-- 사이드바 Placeholder -->
-    <div id="app-sidebar-placeholder"></div>
+    <!-- 오른쪽 사이드바 (PC 전용 오프캔버스 컨테이너 및 최근 변경) -->
+    <aside class="wiki-sidebar" id="wikiSidebar">
+      <!-- 사이드바 네비게이션 (모바일 오프캔버스 렌더링 영역 공유) -->
+      <div id="app-sidebar-placeholder"></div>
+
+      <!-- 실시간 트렌딩 -->
+      <div class="mb-4">
+        <div class="sidebar-section">
+          <h6 class="sidebar-title d-flex justify-content-between align-items-center mb-2">
+            <span><i class="bi bi-graph-up-arrow text-danger"></i> 실시간 트렌딩</span>
+            <a href="#" class="small text-muted text-decoration-none trending-expand-btn" style="font-size: 0.8rem;">펼치기
+              <i class="bi bi-chevron-down"></i></a>
+          </h6>
+          <div class="position-relative overflow-hidden trending-ticker-wrapper" style="height: 38px;">
+            <div id="trendingListPc" class="trending-container trending-ticker-list">
+              <div class="placeholder-glow px-2 py-2">
+                <span class="placeholder w-100 d-block" style="height: 1.5rem; border-radius: 4px;"></span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 최근 변경 -->
+      <div class="mb-4">
+        <div class="sidebar-section">
+          <h6 class="sidebar-title"><i class="bi bi-clock-history"></i> 최근 변경</h6>
+          <div id="recentChangesListPc" class="recent-changes-list recent-changes-container">
+            <div class="placeholder-glow">
+              <span class="placeholder w-100 d-block mb-2" style="height: 2.5rem; border-radius: 6px;"></span>
+              <span class="placeholder w-100 d-block mb-2" style="height: 2.5rem; border-radius: 6px;"></span>
+              <span class="placeholder w-100 d-block" style="height: 2.5rem; border-radius: 6px;"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </aside>
   </div>
 
   <!-- ── 푸터 Placeholder ── -->
@@ -112,13 +188,14 @@
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11.26.24"></script>
   <script src="https://cdn.jsdelivr.net/npm/marked@18.0.3/lib/marked.umd.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/dompurify@3.4.2/dist/purify.min.js"></script>
-  <script src="/js/common.js"></script>
-  <script src="/js/render.js"></script>
+  <script type="module" src="/dist/common.js"></script>
+  <script type="module" src="/dist/render.js"></script>
   <script>
     const BLOG_LIST_LIMIT = 20;
     let blogCurrentOffset = 0;
     let blogTotalCount = 0;
     let currentBlogPostId = null;
+    let currentBlogPost = null;
 
     function escHtml(str) {
       return String(str)
@@ -156,16 +233,16 @@
         } else {
           listEl.innerHTML = data.posts.map(post => `
             <div class="border-bottom pb-3 mb-3 d-flex gap-3 align-items-start ${post.deleted_at ? 'opacity-50' : ''}">
-              ${post.thumbnail ? `<a href="/blog/${escHtml(post.id)}" class="flex-shrink-0">
-                <img src="${escHtml(post.thumbnail)}" alt="" loading="lazy"
-                  style="width:120px;height:80px;object-fit:cover;border-radius:6px;display:block;">
-              </a>` : ''}
               <div class="flex-grow-1 min-w-0">
                 <a href="/blog/${escHtml(post.id)}" class="text-decoration-none">
                   <h5 class="mb-1">${escHtml(post.title)}${post.deleted_at ? ' <span class="badge bg-danger small">삭제됨</span>' : ''}</h5>
                 </a>
                 <small class="text-muted">${formatDate(post.created_at)}</small>
               </div>
+              ${post.thumbnail ? `<a href="/blog/${escHtml(post.id)}" class="flex-shrink-0">
+                <img src="${escHtml(post.thumbnail)}" alt="" loading="lazy"
+                  style="width:120px;height:80px;object-fit:cover;border-radius:6px;display:block;">
+              </a>` : ''}
             </div>
           `).join('');
         }
@@ -204,6 +281,7 @@
         const res = await fetch(`/api/blog/${id}`);
         if (!res.ok) { showView('blogError'); return; }
         const post = await res.json();
+        currentBlogPost = post;
 
         document.getElementById('blogPostTitle').textContent = post.title;
         document.getElementById('blogPostDate').textContent = formatDate(post.created_at);
@@ -312,9 +390,99 @@
       }
     }
 
+    // ── 공유하기 기능 ──
+    function getShareTitle() {
+      return currentBlogPost && currentBlogPost.title ? currentBlogPost.title : document.title;
+    }
+
+    async function shareNative() {
+      const cleanUrl = window.location.origin + window.location.pathname;
+      const wikiName = typeof appConfig !== 'undefined' && appConfig.wikiName ? appConfig.wikiName : 'CloudWiki';
+      const postTitle = getShareTitle();
+      try {
+        await navigator.share({
+          title: `${wikiName} - ${postTitle}`,
+          text: `${wikiName} - ${postTitle}`,
+          url: cleanUrl
+        });
+      } catch (err) {
+        if (err.name !== 'AbortError') {
+          console.error('공유 실패:', err);
+        }
+      }
+    }
+
+    async function shareCopyLink() {
+      const cleanUrl = window.location.origin + window.location.pathname;
+      try {
+        await navigator.clipboard.writeText(cleanUrl);
+        Swal.fire({ icon: 'success', title: '복사 완료', text: '포스트 링크가 클립보드에 복사되었습니다.', timer: 1500, showConfirmButton: false });
+      } catch (err) {
+        console.error('복사 실패:', err);
+        Swal.fire('오류', '클립보드 복사에 실패했습니다.', 'error');
+      }
+    }
+
+    async function shareCopyText() {
+      const content = document.getElementById('blogPostContent');
+      if (!content) return;
+      try {
+        const postTitle = getShareTitle();
+        const textWithTitle = postTitle ? postTitle + '\n' + content.innerText : content.innerText;
+        await navigator.clipboard.writeText(textWithTitle);
+        Swal.fire({ icon: 'success', title: '복사 완료', text: '포스트 내용이 클립보드에 복사되었습니다.', timer: 1500, showConfirmButton: false });
+      } catch (err) {
+        console.error('복사 실패:', err);
+        Swal.fire('오류', '클립보드 복사에 실패했습니다.', 'error');
+      }
+    }
+
+    async function shareCopyMarkdown() {
+      if (!currentBlogPost || typeof currentBlogPost.content !== 'string') {
+        Swal.fire('오류', '포스트 내용을 가져올 수 없습니다.', 'error');
+        return;
+      }
+      try {
+        let resolvedContent = currentBlogPost.content;
+        if (typeof window.resolveTransclusionsForMarkdown === 'function') {
+          resolvedContent = await window.resolveTransclusionsForMarkdown(
+            currentBlogPost.content,
+            currentBlogPost.title || ''
+          );
+        }
+        const postTitle = getShareTitle();
+        const markdownWithTitle = postTitle ? postTitle + '\n\n' + resolvedContent : resolvedContent;
+        await navigator.clipboard.writeText(markdownWithTitle);
+        Swal.fire({ icon: 'success', title: '복사 완료', text: '마크다운 원문이 클립보드에 복사되었습니다.', timer: 1500, showConfirmButton: false });
+      } catch (err) {
+        console.error('복사 실패:', err);
+        Swal.fire('오류', '클립보드 복사에 실패했습니다.', 'error');
+      }
+    }
+
+    function sharePrint() {
+      window.print();
+    }
+
+    function shareAskClaude() {
+      const cleanUrl = window.location.origin + window.location.pathname;
+      const prompt = '다음 블로그 페이지를 읽고 내용에 대한 질문에 답해줘: ' + cleanUrl;
+      window.open('https://claude.ai/new?q=' + encodeURIComponent(prompt), '_blank');
+    }
+
+    function shareAskChatGPT() {
+      const cleanUrl = window.location.origin + window.location.pathname;
+      const prompt = '다음 블로그 페이지를 읽고 내용에 대한 질문에 답해줘: ' + cleanUrl;
+      window.open('https://chatgpt.com/?q=' + encodeURIComponent(prompt), '_blank');
+    }
+
     // ── 초기화 ──
     document.addEventListener('DOMContentLoaded', async () => {
       await loadConfig();
+
+      // 사이드바: 실시간 트렌딩 / 최근 변경
+      if (typeof loadTrending === 'function') loadTrending();
+      if (typeof loadRecentChanges === 'function') loadRecentChanges();
 
       // 관리자 UI 표시
       const user = currentUser;

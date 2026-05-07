@@ -704,24 +704,61 @@
                   <div class="fw-bold mb-2">
                     MCP 서버 주소 (에이전트 연결용)
                   </div>
-                  <div class="input-group input-group-sm">
-                    <input
-                      type="text"
-                      id="mcpServerUrlInput"
-                      class="form-control font-monospace"
-                      style="
-                        background: var(--wiki-card-bg);
-                        color: var(--wiki-text);
-                        border-color: var(--wiki-border);
-                      "
-                      readonly
-                    />
-                    <button
-                      class="btn btn-outline-secondary"
-                      onclick="copyMcpUrl()"
-                    >
-                      복사
-                    </button>
+                  <div class="mb-2">
+                    <div class="d-flex align-items-center gap-2 mb-1">
+                      <span class="badge bg-primary">Lite</span>
+                      <span class="text-muted"
+                        >기본 탐색 도구 6개 (information, search_title,
+                        search_fts, get_toc, read_document, read_section)</span
+                      >
+                    </div>
+                    <div class="input-group input-group-sm">
+                      <input
+                        type="text"
+                        id="mcpServerUrlInput"
+                        class="form-control font-monospace"
+                        style="
+                          background: var(--wiki-card-bg);
+                          color: var(--wiki-text);
+                          border-color: var(--wiki-border);
+                        "
+                        readonly
+                      />
+                      <button
+                        class="btn btn-outline-secondary"
+                        onclick="copyMcpUrl('mcpServerUrlInput')"
+                      >
+                        복사
+                      </button>
+                    </div>
+                  </div>
+                  <div>
+                    <div class="d-flex align-items-center gap-2 mb-1">
+                      <span class="badge bg-success">Full</span>
+                      <span class="text-muted"
+                        >모든 MCP 도구 (카테고리, 역링크, 하위 트리, 배치 읽기,
+                        토론, 이미지 포함)</span
+                      >
+                    </div>
+                    <div class="input-group input-group-sm">
+                      <input
+                        type="text"
+                        id="mcpServerUrlFullInput"
+                        class="form-control font-monospace"
+                        style="
+                          background: var(--wiki-card-bg);
+                          color: var(--wiki-text);
+                          border-color: var(--wiki-border);
+                        "
+                        readonly
+                      />
+                      <button
+                        class="btn btn-outline-secondary"
+                        onclick="copyMcpUrl('mcpServerUrlFullInput')"
+                      >
+                        복사
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -897,7 +934,7 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11.26.24"></script>
 
-    <script src="/js/common.js"></script>
+    <script type="module" src="/dist/common.js"></script>
     <script>
       // ── 탭 전환 로직 ──
       function showTab(tabId) {
@@ -1132,6 +1169,8 @@
             document.getElementById("mcpServerUrlBox").style.display = "";
             document.getElementById("mcpServerUrlInput").value =
               window.location.origin + "/api/mcp";
+            document.getElementById("mcpServerUrlFullInput").value =
+              window.location.origin + "/api/mcp/full";
           } else {
             document.getElementById("mcpServerUrlBox").style.display = "none";
           }
@@ -1193,8 +1232,8 @@
         }
       }
 
-      async function copyMcpUrl() {
-        const input = document.getElementById("mcpServerUrlInput");
+      async function copyMcpUrl(inputId) {
+        const input = document.getElementById(inputId || "mcpServerUrlInput");
         if (!input) return;
         try {
           await navigator.clipboard.writeText(input.value);

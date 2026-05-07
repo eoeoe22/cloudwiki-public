@@ -1,12 +1,87 @@
-// ※ 아이콘 관련 기능을 수정할 때는 반드시 SELECTED_ICONS_ONLY 설정을 확인할 것.
-//    selectedIconsOnly=true  → icons.json 기반 (icon 문법만 사용)
-//    selectedIconsOnly=false → 라이브러리 직접 검색 (bi, mdi 문법 사용)
-// ── Bootstrap Icons 목록 로딩 (지연 로딩, 캐시됨) ──
-async function loadBiIcons() {
+/**
+ * 에디터(public/edit.html / public/blog-edit.html) 의 다양한 삽입 모달 UI.
+ *
+ * - 표/CSV/고급표/특수문자/타임스탬프/구글 지도/카드/팔레트색상/배지/하위문서/템플릿 등.
+ * - 아이콘 피커(라이브러리 그리드)도 함께 담당.
+ *
+ * 외부 의존성:
+ *   - window.editor / window._cmView (edit.js 가 만드는 CodeMirror6 래퍼와 EditorView)
+ *   - window.Swal (sweetalert2 CDN)
+ *   - window.bootstrap (Bootstrap 5 Modal CDN)
+ *   - window.selectedIconsOnly (edit.js 가 노출 — appConfig.selectedIconsOnly 반영)
+ *   - window._processTimestampsInHtml / window._processInlineLayoutTokens (render.js)
+ *   - window._isSafeCssColor (render.js)
+ *   - window.getAllPalettesForEditor (edit/autocomplete.ts)
+ *   - window.hsvToHex / window.hexToHsv (edit/utils.ts)
+ *   - window.scrollToBottom (edit.js 의 미리보기 스크롤)
+ *
+ * 노출 글로벌(window.*):
+ *   - 아이콘 목록 로더 4종 (loadBiIcons, loadMdiIcons, loadSelectedIcons, filterIcons)
+ *     → edit/autocomplete.ts 에서 호출.
+ *   - 모달 진입점 (openSelectedIconsPicker, openIconPicker, openTimestampInsertModal,
+ *     openSubdocInsertModal, openCardInsertModal, openPaletteColorModal,
+ *     openBadgeInsertModal, openGoogleMapsEmbedModal, openTemplateModal,
+ *     setupTableInsertPopover, setupSpecialCharPicker)
+ *     → edit.js 의 toolbar 가 클릭 핸들러에서 호출.
+ *   - 아이콘 피커 결과 상태 (window.pendingIconInsertion / window.iconPickerSavedSelection)
+ *     → edit.js 의 hidden.bs.modal 리스너가 읽어 본문에 삽입.
+ *
+ * 아이콘 ※ 아이콘 관련 기능을 수정할 때는 반드시 SELECTED_ICONS_ONLY 설정을 확인할 것.
+ *    selectedIconsOnly=true  → icons.json 기반 (icon 문법만 사용)
+ *    selectedIconsOnly=false → 라이브러리 직접 검색 (bi, mdi 문법 사용)
+ */
+
+import './types';
+import { escapeHtml } from '../utils/html';
+import type { CMSelection } from './types';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 모듈 고유 window 증강 (공유 자산은 types.ts 에 있음)
+// ─────────────────────────────────────────────────────────────────────────────
+
+declare global {
+    interface Window {
+        // edit.js 의 toolbar 핸들러에서 호출되는 모달 진입점
+        openSelectedIconsPicker?: () => Promise<void>;
+        openIconPicker?: (type: 'bi' | 'mdi') => Promise<void>;
+        setupTableInsertPopover?: (tableBtn: HTMLElement) => void;
+        setupSpecialCharPicker?: (triggerBtn: HTMLElement) => void;
+        openTimestampInsertModal?: () => void;
+        openSubdocInsertModal?: () => Promise<void>;
+        openCardInsertModal?: () => void;
+        openPaletteColorModal?: () => void;
+        openBadgeInsertModal?: () => void;
+        openComponentInsertModal?: () => void;
+        openGoogleMapsEmbedModal?: () => void;
+        openTemplateModal?: () => Promise<void>;
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 모듈 로컬 상태 (단일 모듈 내부에서만 사용)
+// ─────────────────────────────────────────────────────────────────────────────
+
+let biIconList: string[] | null = null;
+let mdiIconList: string[] | null = null;
+let selectedIconsList: string[] | null = null;
+let iconPickerToken = 0;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 크로스-스크립트 상태 — edit.js 의 hidden.bs.modal 리스너가 읽어감
+// ─────────────────────────────────────────────────────────────────────────────
+
+window.pendingIconInsertion = null;
+window.iconPickerSavedSelection = null;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 아이콘 목록 로딩 (지연 로딩, 캐시됨)
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function loadBiIcons(): Promise<string[]> {
     if (biIconList) return biIconList;
     try {
         const res = await fetch('https://cdn.jsdelivr.net/npm/bootstrap-icons@1.13.1/font/bootstrap-icons.json');
-        const data = await res.json();
+        const data = await res.json() as Record<string, unknown>;
         biIconList = Object.keys(data).sort();
     } catch (e) {
         console.error('BI icon list load failed:', e);
@@ -15,8 +90,7 @@ async function loadBiIcons() {
     return biIconList;
 }
 
-// ── MDI 목록 로딩 (지연 로딩, 캐시됨) - CSS에서 아이콘명 추출 ──
-async function loadMdiIcons() {
+async function loadMdiIcons(): Promise<string[]> {
     if (mdiIconList) return mdiIconList;
     try {
         const res = await fetch('https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css');
@@ -30,12 +104,11 @@ async function loadMdiIcons() {
     return mdiIconList;
 }
 
-// ── 선택된 아이콘 목록 로딩 (icons.json) ──
-async function loadSelectedIcons() {
+async function loadSelectedIcons(): Promise<string[]> {
     if (selectedIconsList) return selectedIconsList;
     try {
         const res = await fetch('/icons.json');
-        selectedIconsList = await res.json();
+        selectedIconsList = await res.json() as string[];
     } catch (e) {
         console.error('icons.json load failed:', e);
         selectedIconsList = [];
@@ -44,7 +117,7 @@ async function loadSelectedIcons() {
 }
 
 // ── 아이콘 필터링 (우선순위: 정확일치 → startsWith → contains) ──
-function filterIcons(iconList, query) {
+function filterIcons(iconList: string[] | null | undefined, query: string): string[] {
     if (!iconList || iconList.length === 0) return [];
     if (!query || !query.trim()) return iconList;
     const q = query.toLowerCase().trim();
@@ -54,27 +127,33 @@ function filterIcons(iconList, query) {
     return [...exact, ...sw, ...inc];
 }
 
-// ── 선택된 아이콘 전체 피커 열기 (icons.json의 mdi+bi 모두 표시) ──
-async function openSelectedIconsPicker() {
+// ─────────────────────────────────────────────────────────────────────────────
+// 아이콘 피커 모달
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function openSelectedIconsPicker(): Promise<void> {
+    const editor = window.editor;
     if (editor) {
-        iconPickerSavedSelection = editor.getSelection();
+        window.iconPickerSavedSelection = editor.getSelection?.() ?? null;
     }
-    pendingIconInsertion = null;
+    window.pendingIconInsertion = null;
     const myToken = ++iconPickerToken;
 
     const titleEl = document.getElementById('iconPickerTitle');
     const typeIconEl = document.getElementById('iconPickerTypeIcon');
     const gridEl = document.getElementById('iconPickerGrid');
     const spinner = document.getElementById('iconLoadingSpinner');
-    const searchInput = document.getElementById('iconSearchInput');
+    const searchInput = document.getElementById('iconSearchInput') as HTMLInputElement | null;
     const emptyEl = document.getElementById('iconPickerEmpty');
+    if (!titleEl || !typeIconEl || !gridEl || !spinner || !searchInput || !emptyEl) return;
 
     titleEl.textContent = '아이콘 선택';
     typeIconEl.className = 'mdi mdi-vector-square me-2';
 
     const modalEl = document.getElementById('iconPickerModal');
-    const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
-    modal.show();
+    if (!modalEl) return;
+    const modal = window.bootstrap?.Modal.getOrCreateInstance(modalEl);
+    modal?.show();
 
     searchInput.value = '';
     gridEl.innerHTML = '';
@@ -86,10 +165,10 @@ async function openSelectedIconsPicker() {
     spinner.style.display = 'none';
     renderMixedIconGrid(gridEl, emptyEl, allIcons, '');
 
-    let searchTimer;
+    let searchTimer: number | undefined;
     searchInput.oninput = () => {
         clearTimeout(searchTimer);
-        searchTimer = setTimeout(() => {
+        searchTimer = window.setTimeout(() => {
             renderMixedIconGrid(gridEl, emptyEl, allIcons, searchInput.value);
         }, 200);
     };
@@ -103,8 +182,12 @@ async function openSelectedIconsPicker() {
     setTimeout(() => searchInput.focus(), 300);
 }
 
-// ── 혼합 아이콘 그리드 렌더링 (mdi + bi) ──
-function renderMixedIconGrid(gridEl, emptyEl, iconList, query) {
+function renderMixedIconGrid(
+    gridEl: HTMLElement,
+    emptyEl: HTMLElement,
+    iconList: string[],
+    query: string,
+): void {
     const filtered = filterIcons(iconList, query);
     gridEl.innerHTML = '';
 
@@ -121,7 +204,7 @@ function renderMixedIconGrid(gridEl, emptyEl, iconList, query) {
         const end = Math.min(renderIndex + batchSize, filtered.length);
         const slice = filtered.slice(renderIndex, end);
         slice.forEach(fullName => {
-            let cssClass, type, iconName;
+            let cssClass: string, type: string, iconName: string;
             if (fullName.startsWith('bi-')) {
                 type = 'bi';
                 iconName = fullName.slice(3);
@@ -139,8 +222,10 @@ function renderMixedIconGrid(gridEl, emptyEl, iconList, query) {
             item.title = fullName;
             item.innerHTML = `<i class="${cssClass}"></i><span>${escapeHtml(fullName)}</span>`;
             item.addEventListener('click', () => {
-                pendingIconInsertion = selectedIconsOnly ? `{icon:${fullName}}` : `{${type}:${iconName}}`;
-                bootstrap.Modal.getOrCreateInstance(document.getElementById('iconPickerModal')).hide();
+                const onlyIcons = window.selectedIconsOnly ?? false;
+                window.pendingIconInsertion = onlyIcons ? `{icon:${fullName}}` : `{${type}:${iconName}}`;
+                const m = document.getElementById('iconPickerModal');
+                if (m) window.bootstrap?.Modal.getOrCreateInstance(m).hide();
             });
             gridEl.appendChild(item);
         });
@@ -158,20 +243,21 @@ function renderMixedIconGrid(gridEl, emptyEl, iconList, query) {
     appendItems();
 }
 
-// ── 아이콘 피커 모달 열기 ──
-async function openIconPicker(type) {
+async function openIconPicker(type: 'bi' | 'mdi'): Promise<void> {
+    const editor = window.editor;
     if (editor) {
-        iconPickerSavedSelection = editor.getSelection();
+        window.iconPickerSavedSelection = editor.getSelection?.() ?? null;
     }
-    pendingIconInsertion = null;
+    window.pendingIconInsertion = null;
     const myToken = ++iconPickerToken;
 
     const titleEl = document.getElementById('iconPickerTitle');
     const typeIconEl = document.getElementById('iconPickerTypeIcon');
     const gridEl = document.getElementById('iconPickerGrid');
     const spinner = document.getElementById('iconLoadingSpinner');
-    const searchInput = document.getElementById('iconSearchInput');
+    const searchInput = document.getElementById('iconSearchInput') as HTMLInputElement | null;
     const emptyEl = document.getElementById('iconPickerEmpty');
+    if (!titleEl || !typeIconEl || !gridEl || !spinner || !searchInput || !emptyEl) return;
 
     if (type === 'bi') {
         titleEl.textContent = 'Bootstrap Icons 선택';
@@ -181,20 +267,19 @@ async function openIconPicker(type) {
         typeIconEl.className = 'mdi mdi-material-design me-2';
     }
 
-    // 모달 표시
     const modalEl = document.getElementById('iconPickerModal');
-    const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
-    modal.show();
+    if (!modalEl) return;
+    const modal = window.bootstrap?.Modal.getOrCreateInstance(modalEl);
+    modal?.show();
 
-    // 상태 초기화
     searchInput.value = '';
     gridEl.innerHTML = '';
     emptyEl.style.display = 'none';
     spinner.style.display = 'block';
 
-    // 아이콘 목록 로딩
-    let icons;
-    if (selectedIconsOnly) {
+    let icons: string[];
+    const onlyIcons = window.selectedIconsOnly ?? false;
+    if (onlyIcons) {
         const all = await loadSelectedIcons();
         const prefix = type === 'bi' ? 'bi-' : 'mdi-';
         icons = all.filter(n => n.startsWith(prefix)).map(n => n.slice(prefix.length));
@@ -205,11 +290,10 @@ async function openIconPicker(type) {
     spinner.style.display = 'none';
     renderIconPickerGrid(gridEl, emptyEl, icons, '', type);
 
-    // 검색 핸들러
-    let searchTimer;
+    let searchTimer: number | undefined;
     searchInput.oninput = () => {
         clearTimeout(searchTimer);
-        searchTimer = setTimeout(() => {
+        searchTimer = window.setTimeout(() => {
             renderIconPickerGrid(gridEl, emptyEl, icons, searchInput.value, type);
         }, 200);
     };
@@ -220,12 +304,16 @@ async function openIconPicker(type) {
         }
     };
 
-    // 검색창 자동 포커스
     setTimeout(() => searchInput.focus(), 300);
 }
 
-// ── 아이콘 피커 그리드 렌더링 ──
-function renderIconPickerGrid(gridEl, emptyEl, iconList, query, type) {
+function renderIconPickerGrid(
+    gridEl: HTMLElement,
+    emptyEl: HTMLElement,
+    iconList: string[],
+    query: string,
+    type: 'bi' | 'mdi',
+): void {
     const filtered = filterIcons(iconList, query);
     gridEl.innerHTML = '';
 
@@ -249,8 +337,10 @@ function renderIconPickerGrid(gridEl, emptyEl, iconList, query, type) {
             item.title = iconName;
             item.innerHTML = `<i class="${prefix}${iconName}"></i><span>${escapeHtml(iconName)}</span>`;
             item.addEventListener('click', () => {
-                pendingIconInsertion = selectedIconsOnly ? `{icon:${type}-${iconName}}` : `{${type}:${iconName}}`;
-                bootstrap.Modal.getOrCreateInstance(document.getElementById('iconPickerModal')).hide();
+                const onlyIcons = window.selectedIconsOnly ?? false;
+                window.pendingIconInsertion = onlyIcons ? `{icon:${type}-${iconName}}` : `{${type}:${iconName}}`;
+                const m = document.getElementById('iconPickerModal');
+                if (m) window.bootstrap?.Modal.getOrCreateInstance(m).hide();
             });
             gridEl.appendChild(item);
         });
@@ -268,8 +358,11 @@ function renderIconPickerGrid(gridEl, emptyEl, iconList, query, type) {
     appendItems();
 }
 
-// ── 표 삽입 팝오버 (그리드 + CSV) ──
-function setupTableInsertPopover(tableBtn) {
+// ─────────────────────────────────────────────────────────────────────────────
+// 표 삽입 팝오버 (그리드 + CSV)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function setupTableInsertPopover(tableBtn: HTMLElement): void {
     const MAX_ROWS = 8;
     const MAX_COLS = 10;
 
@@ -301,21 +394,21 @@ function setupTableInsertPopover(tableBtn) {
             `;
     document.body.appendChild(popup);
 
-    const grid = popup.querySelector('.table-insert-grid');
-    const cells = popup.querySelectorAll('.table-insert-cell');
-    const labelText = popup.querySelector('.table-insert-label-text');
-    const csvBtn = popup.querySelector('.table-insert-csv-btn');
-    const advancedBtn = popup.querySelector('.table-insert-advanced-btn');
+    const grid = popup.querySelector<HTMLElement>('.table-insert-grid')!;
+    const cells = popup.querySelectorAll<HTMLElement>('.table-insert-cell');
+    const labelText = popup.querySelector<HTMLElement>('.table-insert-label-text')!;
+    const csvBtn = popup.querySelector<HTMLElement>('.table-insert-csv-btn')!;
+    const advancedBtn = popup.querySelector<HTMLElement>('.table-insert-advanced-btn')!;
 
-    function getCell(rows, cols) {
-        return popup.querySelector(`.table-insert-cell[data-row="${rows}"][data-col="${cols}"]`);
+    function getCell(rows: number, cols: number): HTMLElement | null {
+        return popup.querySelector<HTMLElement>(`.table-insert-cell[data-row="${rows}"][data-col="${cols}"]`);
     }
 
-    function setActiveCell(rows, cols, shouldFocus) {
+    function setActiveCell(rows: number, cols: number, shouldFocus: boolean) {
         activeRow = Math.min(MAX_ROWS, Math.max(1, rows));
         activeCol = Math.min(MAX_COLS, Math.max(1, cols));
         cells.forEach(cell => {
-            const isActive = parseInt(cell.dataset.row, 10) === activeRow && parseInt(cell.dataset.col, 10) === activeCol;
+            const isActive = parseInt(cell.dataset.row || '', 10) === activeRow && parseInt(cell.dataset.col || '', 10) === activeCol;
             cell.tabIndex = isActive ? 0 : -1;
         });
         const activeCell = getCell(activeRow, activeCol);
@@ -324,10 +417,10 @@ function setupTableInsertPopover(tableBtn) {
         }
     }
 
-    function highlight(rows, cols) {
+    function highlight(rows: number, cols: number) {
         cells.forEach(cell => {
-            const r = parseInt(cell.dataset.row, 10);
-            const c = parseInt(cell.dataset.col, 10);
+            const r = parseInt(cell.dataset.row || '', 10);
+            const c = parseInt(cell.dataset.col || '', 10);
             cell.classList.toggle('highlighted', r <= rows && c <= cols);
         });
         labelText.textContent = `${rows} × ${cols}`;
@@ -338,7 +431,7 @@ function setupTableInsertPopover(tableBtn) {
         labelText.textContent = '크기 선택';
     }
 
-    function insertSelectedTable(rows, cols) {
+    function insertSelectedTable(rows: number, cols: number) {
         insertMarkdownTable(rows, cols);
         popup.classList.remove('active');
         tableBtn.focus();
@@ -346,28 +439,28 @@ function setupTableInsertPopover(tableBtn) {
 
     cells.forEach(cell => {
         cell.addEventListener('mouseenter', () => {
-            const r = parseInt(cell.dataset.row, 10);
-            const c = parseInt(cell.dataset.col, 10);
+            const r = parseInt(cell.dataset.row || '', 10);
+            const c = parseInt(cell.dataset.col || '', 10);
             setActiveCell(r, c, false);
             highlight(r, c);
         });
 
         cell.addEventListener('focus', () => {
-            const r = parseInt(cell.dataset.row, 10);
-            const c = parseInt(cell.dataset.col, 10);
+            const r = parseInt(cell.dataset.row || '', 10);
+            const c = parseInt(cell.dataset.col || '', 10);
             setActiveCell(r, c, false);
             highlight(r, c);
         });
 
         cell.addEventListener('click', () => {
-            const rows = parseInt(cell.dataset.row, 10);
-            const cols = parseInt(cell.dataset.col, 10);
+            const rows = parseInt(cell.dataset.row || '', 10);
+            const cols = parseInt(cell.dataset.col || '', 10);
             insertSelectedTable(rows, cols);
         });
 
         cell.addEventListener('keydown', (e) => {
-            const row = parseInt(cell.dataset.row, 10);
-            const col = parseInt(cell.dataset.col, 10);
+            const row = parseInt(cell.dataset.row || '', 10);
+            const col = parseInt(cell.dataset.col || '', 10);
 
             switch (e.key) {
                 case 'ArrowRight':
@@ -410,7 +503,6 @@ function setupTableInsertPopover(tableBtn) {
 
     grid.addEventListener('mouseleave', clearHighlight);
 
-    // 드래그 중 텍스트 선택 방지
     grid.addEventListener('mousedown', (e) => { e.preventDefault(); });
 
     tableBtn.addEventListener('click', (e) => {
@@ -431,7 +523,8 @@ function setupTableInsertPopover(tableBtn) {
     });
 
     document.addEventListener('click', (e) => {
-        if (!popup.contains(e.target) && !tableBtn.contains(e.target)) {
+        const target = e.target as Node;
+        if (!popup.contains(target) && !tableBtn.contains(target)) {
             popup.classList.remove('active');
         }
     });
@@ -445,10 +538,21 @@ function setupTableInsertPopover(tableBtn) {
         popup.classList.remove('active');
         openAdvancedTableModal();
     });
+
+    // suppress unused-warning: activeRow/activeCol are state vars used inside setActiveCell.
+    void activeRow; void activeCol;
 }
 
-// ── 특수문자 삽입 팝오버 ──
-const SPECIAL_CHAR_GROUPS = [
+// ─────────────────────────────────────────────────────────────────────────────
+// 특수문자 삽입 팝오버
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface SpecialCharGroup {
+    name: string;
+    chars: string[];
+}
+
+const SPECIAL_CHAR_GROUPS: SpecialCharGroup[] = [
     {
         name: '그리스 문자',
         chars: [
@@ -498,7 +602,7 @@ const SPECIAL_CHAR_GROUPS = [
     }
 ];
 
-function setupSpecialCharPicker(triggerBtn) {
+function setupSpecialCharPicker(triggerBtn: HTMLElement): void {
     const popup = document.createElement('div');
     popup.className = 'special-char-popup';
 
@@ -516,13 +620,13 @@ function setupSpecialCharPicker(triggerBtn) {
     `;
     document.body.appendChild(popup);
 
-    const grid = popup.querySelector('#specialCharGrid');
-    const tabs = popup.querySelectorAll('.special-char-tab');
+    const grid = popup.querySelector<HTMLElement>('#specialCharGrid')!;
+    const tabs = popup.querySelectorAll<HTMLElement>('.special-char-tab');
 
-    function renderGroup(idx) {
+    function renderGroup(idx: number) {
         const group = SPECIAL_CHAR_GROUPS[idx] || SPECIAL_CHAR_GROUPS[0];
         grid.innerHTML = group.chars.map(ch => {
-            return `<button type="button" class="special-char-cell" data-char="${escapeHtml(ch)}" title="${escapeHtml(ch)} (U+${ch.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')})">${escapeHtml(ch)}</button>`;
+            return `<button type="button" class="special-char-cell" data-char="${escapeHtml(ch)}" title="${escapeHtml(ch)} (U+${(ch.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, '0')})">${escapeHtml(ch)}</button>`;
         }).join('');
     }
 
@@ -533,21 +637,21 @@ function setupSpecialCharPicker(triggerBtn) {
             e.stopPropagation();
             tabs.forEach(t => t.classList.remove('active'));
             tab.classList.add('active');
-            renderGroup(parseInt(tab.dataset.group, 10));
+            renderGroup(parseInt(tab.dataset.group || '0', 10));
         });
     });
 
-    // 셀 클릭 시 문자 삽입(팝업은 닫지 않음)
     grid.addEventListener('mousedown', (e) => {
-        // 에디터 포커스 상실 방지
         e.preventDefault();
     });
     grid.addEventListener('click', (e) => {
-        const cell = e.target.closest('.special-char-cell');
+        const target = e.target as HTMLElement;
+        const cell = target.closest<HTMLElement>('.special-char-cell');
         if (!cell) return;
         e.stopPropagation();
         const ch = cell.dataset.char;
-        if (typeof editor !== 'undefined' && editor && typeof editor.insertText === 'function') {
+        const editor = window.editor;
+        if (editor && typeof editor.insertText === 'function' && ch) {
             editor.insertText(ch);
         }
     });
@@ -587,7 +691,8 @@ function setupSpecialCharPicker(triggerBtn) {
 
     document.addEventListener('click', (e) => {
         if (!popup.classList.contains('active')) return;
-        if (popup.contains(e.target) || triggerBtn.contains(e.target)) return;
+        const target = e.target as Node;
+        if (popup.contains(target) || triggerBtn.contains(target)) return;
         popup.classList.remove('active');
     });
 
@@ -602,9 +707,16 @@ function setupSpecialCharPicker(triggerBtn) {
     });
 }
 
-// ── 타임스탬프 삽입 모달 ──
-function openTimestampInsertModal() {
-    const TYPES = [
+// ─────────────────────────────────────────────────────────────────────────────
+// 타임스탬프 삽입 모달
+// ─────────────────────────────────────────────────────────────────────────────
+
+function openTimestampInsertModal(): void {
+    const Swal = window.Swal;
+    if (!Swal) return;
+
+    interface TimestampType { id: string; label: string; desc: string; icon: string; }
+    const TYPES: TimestampType[] = [
         { id: 'dday', label: 'D-Day', desc: '남은/지난 날짜', icon: 'mdi mdi-calendar-clock' },
         { id: 'age', label: '만 나이', desc: '생년월일 기준', icon: 'mdi mdi-cake-variant-outline' },
         { id: 'time', label: '표시 시간', desc: '고정 시각 표시', icon: 'mdi mdi-clock-outline' },
@@ -614,9 +726,9 @@ function openTimestampInsertModal() {
 
     const state = {
         type: 'dday',
-        date: '',       // YYYY-MM-DD (dday, age, calendar)
-        omitYear: false, // dday, calendar
-        datetime: '',   // YYYY-MM-DDTHH:MM[:SS] (time, timer)
+        date: '',
+        omitYear: false,
+        datetime: '',
     };
 
     function typeTabsHtml() {
@@ -643,7 +755,6 @@ function openTimestampInsertModal() {
                     <div class="timestamp-insert-help">${help}</div>
                 </div>`;
         }
-        // dday | age | calendar
         const supportsOmitYear = (state.type === 'dday' || state.type === 'calendar');
         const label = state.type === 'age' ? '생년월일' : '날짜';
         const help = state.type === 'age'
@@ -665,7 +776,7 @@ function openTimestampInsertModal() {
             </div>`;
     }
 
-    function buildToken() {
+    function buildToken(): string {
         if (state.type === 'time' || state.type === 'timer') {
             if (!state.datetime) return '';
             const t = Date.parse(state.datetime);
@@ -691,9 +802,9 @@ function openTimestampInsertModal() {
             return;
         }
         try {
-            if (typeof _processTimestampsInHtml === 'function') {
-                const rendered = _processTimestampsInHtml(token);
-                // 렌더러가 토큰을 처리하지 못하면(유효성 실패) 원본을 그대로 돌려주므로 경고 표시
+            const proc = window._processTimestampsInHtml;
+            if (typeof proc === 'function') {
+                const rendered = proc(token);
                 if (rendered === token) {
                     preview.innerHTML = `<span class="timestamp-insert-preview-empty">입력 값이 올바르지 않습니다.</span>`;
                 } else {
@@ -707,7 +818,7 @@ function openTimestampInsertModal() {
         }
     }
 
-    function validate() {
+    function validate(): boolean {
         const err = document.getElementById('timestampInsertValidation');
         let message = '';
         if (state.type === 'time' || state.type === 'timer') {
@@ -738,17 +849,17 @@ function openTimestampInsertModal() {
             </div>
         `;
 
-        root.querySelectorAll('.timestamp-insert-type-tab').forEach(btn => {
+        root.querySelectorAll<HTMLElement>('.timestamp-insert-type-tab').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 e.preventDefault();
-                const newType = btn.dataset.type;
+                const newType = btn.dataset.type || 'dday';
                 if (newType === state.type) return;
                 state.type = newType;
                 render();
             });
         });
 
-        const dateInput = document.getElementById('timestampInsertDate');
+        const dateInput = document.getElementById('timestampInsertDate') as HTMLInputElement | null;
         if (dateInput) {
             dateInput.addEventListener('input', () => {
                 state.date = dateInput.value;
@@ -756,7 +867,7 @@ function openTimestampInsertModal() {
                 validate();
             });
         }
-        const omitYearCb = document.getElementById('timestampInsertOmitYear');
+        const omitYearCb = document.getElementById('timestampInsertOmitYear') as HTMLInputElement | null;
         if (omitYearCb) {
             omitYearCb.addEventListener('change', () => {
                 state.omitYear = omitYearCb.checked;
@@ -764,7 +875,7 @@ function openTimestampInsertModal() {
                 validate();
             });
         }
-        const datetimeInput = document.getElementById('timestampInsertDatetime');
+        const datetimeInput = document.getElementById('timestampInsertDatetime') as HTMLInputElement | null;
         if (datetimeInput) {
             datetimeInput.addEventListener('input', () => {
                 state.datetime = datetimeInput.value;
@@ -780,7 +891,7 @@ function openTimestampInsertModal() {
         if (firstInput) setTimeout(() => firstInput.focus(), 0);
     }
 
-    Swal.fire({
+    Swal.fire<string>({
         title: '<i class="mdi mdi-calendar-clock me-2"></i>타임스탬프 삽입',
         width: 560,
         html: '<div id="timestampInsertRoot"></div>',
@@ -803,36 +914,40 @@ function openTimestampInsertModal() {
         }
     }).then(result => {
         if (!result.isConfirmed || !result.value) return;
-        if (typeof editor !== 'undefined' && editor) {
-            editor.insertText(result.value);
-            if (typeof cmEditorView !== 'undefined' && cmEditorView) cmEditorView.focus();
+        const editor = window.editor;
+        if (editor) {
+            editor.insertText?.(result.value);
+            window._cmView?.focus();
         }
     });
 }
 
-function insertMarkdownTable(rows, cols) {
+// ─────────────────────────────────────────────────────────────────────────────
+// 마크다운 표 삽입 / CSV 변환 / CSV 모달
+// ─────────────────────────────────────────────────────────────────────────────
+
+function insertMarkdownTable(rows: number, cols: number): void {
     const headerCells = Array.from({ length: cols }, (_, i) => `제목${i + 1}`);
     const headerLine = '| ' + headerCells.join(' | ') + ' |';
     const sepLine = '|' + ' --- |'.repeat(cols);
-    const bodyLines = [];
+    const bodyLines: string[] = [];
     const bodyRows = Math.max(0, rows - 1);
     for (let r = 0; r < bodyRows; r++) {
         const rowCells = Array.from({ length: cols }, (_, i) => `내용${i + 1}`);
         bodyLines.push('| ' + rowCells.join(' | ') + ' |');
     }
     const table = '\n' + [headerLine, sepLine, ...bodyLines].join('\n') + '\n';
-    editor.insertText(table);
+    window.editor?.insertText?.(table);
 }
 
-function parseCsvRecords(text) {
-    const rows = [];
-    let row = [];
+function parseCsvRecords(text: string): string[][] {
+    const rows: string[][] = [];
+    let row: string[] = [];
     let cell = '';
     let inQuotes = false;
 
     for (let i = 0; i < text.length; i++) {
         const ch = text[i];
-
         if (inQuotes) {
             if (ch === '"') {
                 if (text[i + 1] === '"') {
@@ -866,8 +981,8 @@ function parseCsvRecords(text) {
     return rows;
 }
 
-function convertCsvToMarkdownTable(csv) {
-    let text = csv.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+function convertCsvToMarkdownTable(csv: string): string {
+    let text = csv.replace(/^﻿/, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
     text = text.replace(/^\s+|\s+$/g, '');
     if (!text) throw new Error('내용이 비어있습니다');
     if (text.indexOf(',') === -1) throw new Error('쉼표 구분자를 찾을 수 없습니다');
@@ -883,12 +998,12 @@ function convertCsvToMarkdownTable(csv) {
         throw new Error(`${mismatchIdx + 1}번째 행의 열 개수(${parsed[mismatchIdx].length})가 헤더(${colCount})와 다릅니다`);
     }
 
-    const escapeCell = (s) => (s == null ? '' : String(s))
+    const escapeCell = (s: string | null | undefined) => (s == null ? '' : String(s))
         .replace(/\|/g, '\\|')
         .replace(/\r?\n/g, ' ')
         .trim();
 
-    const toRow = (row) => '| ' + row.map(escapeCell).join(' | ') + ' |';
+    const toRow = (row: string[]) => '| ' + row.map(escapeCell).join(' | ') + ' |';
 
     const headerLine = toRow(parsed[0]);
     const sepLine = '|' + ' --- |'.repeat(colCount);
@@ -896,8 +1011,10 @@ function convertCsvToMarkdownTable(csv) {
     return [headerLine, sepLine, ...bodyLines].join('\n');
 }
 
-function openCsvTableModal() {
-    Swal.fire({
+function openCsvTableModal(): void {
+    const Swal = window.Swal;
+    if (!Swal) return;
+    Swal.fire<string>({
         title: '<i class="mdi mdi-file-delimited-outline me-2"></i>CSV 표 삽입',
         width: 620,
         html: `
@@ -914,11 +1031,12 @@ function openCsvTableModal() {
         confirmButtonText: '삽입',
         cancelButtonText: '취소',
         didOpen: () => {
-            const el = document.getElementById('swal-csv-input');
+            const el = document.getElementById('swal-csv-input') as HTMLTextAreaElement | null;
             if (el) el.focus();
         },
         preConfirm: () => {
-            const input = document.getElementById('swal-csv-input').value;
+            const inputEl = document.getElementById('swal-csv-input') as HTMLTextAreaElement | null;
+            const input = inputEl?.value ?? '';
             if (!input || !input.trim()) {
                 Swal.showValidationMessage('CSV 데이터를 입력해주세요.');
                 return false;
@@ -926,44 +1044,51 @@ function openCsvTableModal() {
             try {
                 return convertCsvToMarkdownTable(input);
             } catch (err) {
-                Swal.showValidationMessage('CSV 형식이 아닙니다: ' + (err && err.message ? err.message : '알 수 없는 오류'));
+                const msg = err instanceof Error ? err.message : '알 수 없는 오류';
+                Swal.showValidationMessage('CSV 형식이 아닙니다: ' + msg);
                 return false;
             }
         }
     }).then(result => {
         if (result.isConfirmed && result.value) {
-            editor.insertText('\n' + result.value + '\n');
-            if (typeof cmEditorView !== 'undefined' && cmEditorView) cmEditorView.focus();
+            window.editor?.insertText?.('\n' + result.value + '\n');
+            window._cmView?.focus();
         }
     });
 }
 
-// ── 고급 표 삽입 모달 (셀 병합) ──
-function openAdvancedTableModal() {
+// ─────────────────────────────────────────────────────────────────────────────
+// 고급 표 삽입 모달 (셀 병합)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function openAdvancedTableModal(): void {
+    const Swal = window.Swal;
+    if (!Swal) return;
     const MAX_ROWS = 12;
     const MAX_COLS = 10;
-    const MERGE_TYPES = [
+    interface MergeType { id: string; label: string; icon: string; token: string; }
+    const MERGE_TYPES: MergeType[] = [
         { id: '',     label: '일반 셀',   icon: 'mdi-square-outline',          token: '' },
         { id: 'left', label: '좌측 병합', icon: 'mdi-arrow-left-bold-outline', token: '{<}' },
         { id: 'right',label: '우측 병합', icon: 'mdi-arrow-right-bold-outline',token: '{>}' },
         { id: 'up',   label: '상단 병합', icon: 'mdi-arrow-up-bold-outline',   token: '{^}' },
         { id: 'mid',  label: '가운데 모음',icon: 'mdi-arrow-collapse-horizontal',token: '{><}' }
     ];
-    const MERGE_BY_ID = Object.fromEntries(MERGE_TYPES.map(m => [m.id, m]));
+    const MERGE_BY_ID: Record<string, MergeType> = Object.fromEntries(MERGE_TYPES.map(m => [m.id, m]));
 
-    const state = {
+    const state: { rows: number; cols: number; merge: Record<string, string>; } = {
         rows: 3,
         cols: 3,
-        merge: {} // key "r-c" → mergeId
+        merge: {}
     };
 
-    function clampRows(v) { return Math.min(MAX_ROWS, Math.max(2, parseInt(v, 10) || 2)); }
-    function clampCols(v) { return Math.min(MAX_COLS, Math.max(2, parseInt(v, 10) || 2)); }
+    function clampRows(v: string): number { return Math.min(MAX_ROWS, Math.max(2, parseInt(v, 10) || 2)); }
+    function clampCols(v: string): number { return Math.min(MAX_COLS, Math.max(2, parseInt(v, 10) || 2)); }
 
-    function cellKey(r, c) { return `${r}-${c}`; }
+    function cellKey(r: number, c: number): string { return `${r}-${c}`; }
 
     function pruneMergeMap() {
-        const next = {};
+        const next: Record<string, string> = {};
         for (const k in state.merge) {
             const [r, c] = k.split('-').map(Number);
             if (r < state.rows && c < state.cols) next[k] = state.merge[k];
@@ -996,19 +1121,19 @@ function openAdvancedTableModal() {
         html += '</tbody></table>';
         root.innerHTML = html;
 
-        root.querySelectorAll('.adv-table-cell-btn').forEach(btn => {
+        root.querySelectorAll<HTMLElement>('.adv-table-cell-btn').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                const r = parseInt(btn.dataset.r, 10);
-                const c = parseInt(btn.dataset.c, 10);
+                const r = parseInt(btn.dataset.r || '0', 10);
+                const c = parseInt(btn.dataset.c || '0', 10);
                 openMergePopover(btn, r, c);
             });
         });
     }
 
-    let popoverEl = null;
-    let outsideHandler = null;
+    let popoverEl: HTMLElement | null = null;
+    let outsideHandler: ((e: MouseEvent) => void) | null = null;
 
     function closeMergePopover() {
         if (popoverEl && popoverEl.parentNode) popoverEl.parentNode.removeChild(popoverEl);
@@ -1019,7 +1144,7 @@ function openAdvancedTableModal() {
         }
     }
 
-    function openMergePopover(anchor, r, c) {
+    function openMergePopover(anchor: HTMLElement, r: number, c: number) {
         closeMergePopover();
         const currentId = state.merge[cellKey(r, c)] || '';
         popoverEl = document.createElement('div');
@@ -1041,7 +1166,7 @@ function openAdvancedTableModal() {
         popoverEl.style.top = `${top + window.scrollY}px`;
         popoverEl.style.left = `${Math.max(8, rect.left + window.scrollX)}px`;
 
-        popoverEl.querySelectorAll('.adv-table-merge-option').forEach(opt => {
+        popoverEl.querySelectorAll<HTMLElement>('.adv-table-merge-option').forEach(opt => {
             opt.addEventListener('click', (e) => {
                 e.preventDefault();
                 e.stopPropagation();
@@ -1053,18 +1178,19 @@ function openAdvancedTableModal() {
             });
         });
 
-        outsideHandler = (e) => {
-            if (popoverEl && popoverEl.contains(e.target)) return;
-            if (e.target.closest && e.target.closest('.adv-table-cell-btn')) return;
+        outsideHandler = (e: MouseEvent) => {
+            const target = e.target as HTMLElement;
+            if (popoverEl && popoverEl.contains(target)) return;
+            if (target.closest && target.closest('.adv-table-cell-btn')) return;
             closeMergePopover();
         };
         document.addEventListener('mousedown', outsideHandler, true);
     }
 
-    function buildMarkdown() {
-        const lines = [];
+    function buildMarkdown(): string {
+        const lines: string[] = [];
         for (let r = 0; r < state.rows; r++) {
-            const cells = [];
+            const cells: string[] = [];
             for (let c = 0; c < state.cols; c++) {
                 const id = state.merge[cellKey(r, c)];
                 if (id) cells.push(MERGE_BY_ID[id].token);
@@ -1102,8 +1228,8 @@ function openAdvancedTableModal() {
         cancelButtonText: '취소',
         didOpen: () => {
             renderTable();
-            const rowsInput = document.getElementById('advTableRows');
-            const colsInput = document.getElementById('advTableCols');
+            const rowsInput = document.getElementById('advTableRows') as HTMLInputElement | null;
+            const colsInput = document.getElementById('advTableCols') as HTMLInputElement | null;
             if (rowsInput) {
                 rowsInput.addEventListener('input', () => {
                     state.rows = clampRows(rowsInput.value);
@@ -1125,14 +1251,19 @@ function openAdvancedTableModal() {
     }).then(result => {
         if (!result.isConfirmed) return;
         const md = buildMarkdown();
-        editor.insertText('\n' + md + '\n');
-        if (typeof cmEditorView !== 'undefined' && cmEditorView) cmEditorView.focus();
+        window.editor?.insertText?.('\n' + md + '\n');
+        window._cmView?.focus();
     });
 }
 
-// ── 구글 지도 퍼가기 모달 ──
-function openGoogleMapsEmbedModal() {
-    Swal.fire({
+// ─────────────────────────────────────────────────────────────────────────────
+// 구글 지도 퍼가기 모달
+// ─────────────────────────────────────────────────────────────────────────────
+
+function openGoogleMapsEmbedModal(): void {
+    const Swal = window.Swal;
+    if (!Swal) return;
+    Swal.fire<string>({
         title: '<i class="mdi mdi-google-maps me-2"></i>구글 지도 삽입',
         width: 580,
         html: `
@@ -1149,10 +1280,11 @@ function openGoogleMapsEmbedModal() {
         confirmButtonText: '삽입',
         cancelButtonText: '취소',
         didOpen: () => {
-            document.getElementById('swal-maps-input').focus();
+            (document.getElementById('swal-maps-input') as HTMLTextAreaElement | null)?.focus();
         },
         preConfirm: () => {
-            const input = document.getElementById('swal-maps-input').value.trim();
+            const inputEl = document.getElementById('swal-maps-input') as HTMLTextAreaElement | null;
+            const input = (inputEl?.value ?? '').trim();
             if (!input) {
                 Swal.showValidationMessage('iframe HTML을 입력해주세요.');
                 return false;
@@ -1179,24 +1311,38 @@ function openGoogleMapsEmbedModal() {
         }
     }).then(result => {
         if (result.isConfirmed && result.value) {
-            editor.insertText(result.value + '\n');
-            cmEditorView.focus();
+            window.editor?.insertText?.(result.value + '\n');
+            window._cmView?.focus();
         }
     });
 }
 
-// ── 카드 블록 삽입 모달 (제목 + 제목/본문 팔레트 선택) ──
-function openCardInsertModal() {
-    const palettes = getAllPalettesForEditor();
+// ─────────────────────────────────────────────────────────────────────────────
+// 카드 / 임베드 / 콜아웃 블록 삽입 모달
+// ─────────────────────────────────────────────────────────────────────────────
 
-    function paletteSwatchHtml(containerId) {
+interface CardInsertResult {
+    type: string;
+    title: string;
+    titlePalette: string;
+    bodyPalette: string;
+    calloutType: string;
+    body: string;
+}
+
+function openCardInsertModal(): void {
+    const Swal = window.Swal;
+    if (!Swal) return;
+    const palettes = window.getAllPalettesForEditor?.() ?? [];
+
+    function paletteSwatchHtml(containerId: string): string {
         let html = `<div id="${containerId}" class="card-insert-palette-swatches">`;
         html += `<button type="button" class="card-insert-palette-swatch" data-palette="" title="선택 안 함">
                     <span class="card-insert-palette-swatch-none">없음</span>
                 </button>`;
         for (const p of palettes) {
-            const bg = _isSafeCssColor(p.variant.bg || '') ? p.variant.bg : 'transparent';
-            const color = _isSafeCssColor(p.variant.color || '') ? p.variant.color : 'inherit';
+            const bg = window._isSafeCssColor?.(p.variant.bg || '') ? p.variant.bg! : 'transparent';
+            const color = window._isSafeCssColor?.(p.variant.color || '') ? p.variant.color! : 'inherit';
             html += `<button type="button" class="card-insert-palette-swatch" data-palette="${escapeHtml(p.name)}" title="${escapeHtml(p.name)}" style="background:${bg};color:${color};">${escapeHtml(p.name)}</button>`;
         }
         html += `</div>`;
@@ -1217,7 +1363,7 @@ function openCardInsertModal() {
             <span>${c.label}</span>
         </button>`).join('');
 
-    Swal.fire({
+    Swal.fire<CardInsertResult>({
         title: '<i class="bi bi-card-heading me-2"></i>카드 / 임베드 / 콜아웃 블록 삽입',
         width: 560,
         html: `
@@ -1267,16 +1413,16 @@ function openCardInsertModal() {
         confirmButtonText: '삽입',
         cancelButtonText: '취소',
         didOpen: () => {
-            const titleInput = document.getElementById('cardInsertTitle');
+            const titleInput = document.getElementById('cardInsertTitle') as HTMLInputElement | null;
             if (titleInput) titleInput.focus();
 
-            function wireSwatches(containerId, hiddenId) {
+            function wireSwatches(containerId: string, hiddenId: string) {
                 const container = document.getElementById(containerId);
-                const hidden = document.getElementById(hiddenId);
+                const hidden = document.getElementById(hiddenId) as HTMLInputElement | null;
                 if (!container || !hidden) return;
-                const swatches = container.querySelectorAll('.card-insert-palette-swatch');
-                function setActive(val) {
-                    hidden.value = val || '';
+                const swatches = container.querySelectorAll<HTMLElement>('.card-insert-palette-swatch');
+                function setActive(val: string) {
+                    hidden!.value = val || '';
                     swatches.forEach(sw => {
                         sw.classList.toggle('active', (sw.dataset.palette || '') === (val || ''));
                     });
@@ -1292,16 +1438,16 @@ function openCardInsertModal() {
             wireSwatches('cardInsertTitleSwatches', 'cardInsertTitlePalette');
             wireSwatches('cardInsertBodySwatches', 'cardInsertBodyPalette');
 
-            const typeHidden = document.getElementById('cardInsertType');
-            const typeButtons = document.querySelectorAll('#cardInsertTypeToggle button[data-type]');
+            const typeHidden = document.getElementById('cardInsertType') as HTMLInputElement;
+            const typeButtons = document.querySelectorAll<HTMLElement>('#cardInsertTypeToggle button[data-type]');
             const bodyGroup = document.getElementById('cardInsertBodyPaletteGroup');
             const titlePaletteGroup = document.getElementById('cardInsertTitlePaletteGroup');
             const titlePaletteLabel = document.getElementById('cardInsertTitlePaletteLabel');
             const titleLabel = document.getElementById('cardInsertTitleLabel');
-            const titleInputEl = document.getElementById('cardInsertTitle');
+            const titleInputEl = document.getElementById('cardInsertTitle') as HTMLInputElement | null;
             const calloutGroup = document.getElementById('cardInsertCalloutTypeGroup');
 
-            function applyType(t) {
+            function applyType(t: string) {
                 typeHidden.value = t;
                 typeButtons.forEach(b => b.classList.toggle('active', b.dataset.type === t));
                 if (t === 'embed') {
@@ -1312,7 +1458,6 @@ function openCardInsertModal() {
                     if (titleLabel) titleLabel.textContent = '제목 (선택)';
                     if (titleInputEl) titleInputEl.placeholder = '임베드 제목';
                 } else if (t === 'callout') {
-                    // 콜아웃은 컬러 코드를 무시하므로 팔레트 입력을 모두 숨김
                     if (bodyGroup) bodyGroup.style.display = 'none';
                     if (titlePaletteGroup) titlePaletteGroup.style.display = 'none';
                     if (calloutGroup) calloutGroup.style.display = '';
@@ -1330,33 +1475,31 @@ function openCardInsertModal() {
             applyType('card');
             typeButtons.forEach(b => b.addEventListener('click', (e) => {
                 e.preventDefault();
-                applyType(b.dataset.type);
+                applyType(b.dataset.type || 'card');
             }));
 
-            // 콜아웃 타입 칩 핸들러
-            const calloutTypeHidden = document.getElementById('cardInsertCalloutType');
-            const calloutChips = document.querySelectorAll('#cardInsertCalloutChips .card-insert-callout-chip');
+            const calloutTypeHidden = document.getElementById('cardInsertCalloutType') as HTMLInputElement | null;
+            const calloutChips = document.querySelectorAll<HTMLElement>('#cardInsertCalloutChips .card-insert-callout-chip');
             calloutChips.forEach(chip => {
                 chip.addEventListener('click', (e) => {
                     e.preventDefault();
-                    const val = chip.dataset.callout;
-                    calloutTypeHidden.value = val;
+                    const val = chip.dataset.callout || '';
+                    if (calloutTypeHidden) calloutTypeHidden.value = val;
                     calloutChips.forEach(c => c.classList.toggle('active', c.dataset.callout === val));
                 });
             });
         },
-        preConfirm: () => {
-            const type = (document.getElementById('cardInsertType').value || 'card').trim();
-            const title = (document.getElementById('cardInsertTitle').value || '')
+        preConfirm: (): CardInsertResult | false => {
+            const type = ((document.getElementById('cardInsertType') as HTMLInputElement | null)?.value || 'card').trim();
+            const title = ((document.getElementById('cardInsertTitle') as HTMLInputElement | null)?.value || '')
                 .replace(/[\r\n]+/g, ' ')
                 .trim();
-            const titlePalette = (document.getElementById('cardInsertTitlePalette').value || '').trim();
-            const bodyPalette = (document.getElementById('cardInsertBodyPalette').value || '').trim();
-            const calloutType = (document.getElementById('cardInsertCalloutType').value || 'info').trim();
-            const bodyRaw = (document.getElementById('cardInsertBody').value || '')
+            const titlePalette = ((document.getElementById('cardInsertTitlePalette') as HTMLInputElement | null)?.value || '').trim();
+            const bodyPalette = ((document.getElementById('cardInsertBodyPalette') as HTMLInputElement | null)?.value || '').trim();
+            const calloutType = ((document.getElementById('cardInsertCalloutType') as HTMLInputElement | null)?.value || 'info').trim();
+            const bodyRaw = ((document.getElementById('cardInsertBody') as HTMLTextAreaElement | null)?.value || '')
                 .replace(/\r\n/g, '\n')
                 .replace(/\r/g, '\n');
-            // 본문에 :::로 시작하는 라인이 있으면 블록 닫힘과 충돌하므로 차단
             if (bodyRaw.split('\n').some(l => /^\s*:::/.test(l))) {
                 Swal.showValidationMessage('본문에 :::로 시작하는 줄은 블록을 닫아버려 사용할 수 없습니다.');
                 return false;
@@ -1368,12 +1511,11 @@ function openCardInsertModal() {
         if (!result.isConfirmed || !result.value) return;
         const { type, title, titlePalette, bodyPalette, calloutType, body: bodyContent } = result.value;
 
-        let blockType;
+        let blockType: string;
         if (type === 'embed') blockType = 'embed';
         else if (type === 'callout') blockType = calloutType;
         else blockType = 'card';
 
-        // 콜아웃은 컬러 코드를 무시하므로 팔레트 토큰을 출력하지 않는다.
         const useTitlePalette = type !== 'callout' && titlePalette;
         const useBodyPalette = type !== 'callout' && type !== 'embed' && bodyPalette;
 
@@ -1381,9 +1523,8 @@ function openCardInsertModal() {
         const titlePart = titleTokens && title ? `${titleTokens} ${title}` : (titleTokens || title);
         const header = titlePart ? `:::${blockType} ${titlePart}` : `:::${blockType}`;
 
-        // 본문: 비워두면 '내용' 자리표시자, 카드는 첫 줄에 본문 팔레트 토큰을 prefix.
         const bodyText = bodyContent || '내용';
-        let body;
+        let body: string;
         if (useBodyPalette) {
             const lines = bodyText.split('\n');
             lines[0] = `{palette:${bodyPalette}}${lines[0]}`;
@@ -1392,19 +1533,24 @@ function openCardInsertModal() {
             body = bodyText;
         }
 
-        editor.insertText(`${header}\n${body}\n:::`);
-        if (typeof cmEditorView !== 'undefined' && cmEditorView) cmEditorView.focus();
+        window.editor?.insertText?.(`${header}\n${body}\n:::`);
+        window._cmView?.focus();
     });
 }
 
-// ── 색상 팔레트 / 커스텀 색상 삽입 모달 ──
-function openPaletteColorModal() {
-    const palettes = getAllPalettesForEditor();
+// ─────────────────────────────────────────────────────────────────────────────
+// 색상 팔레트 / 커스텀 색상 삽입 모달
+// ─────────────────────────────────────────────────────────────────────────────
+
+function openPaletteColorModal(): void {
+    const Swal = window.Swal;
+    if (!Swal) return;
+    const palettes = window.getAllPalettesForEditor?.() ?? [];
 
     let paletteHtml = `<div class="d-flex flex-wrap gap-2 mb-3">`;
     for (const p of palettes) {
-        const bg = _isSafeCssColor(p.variant.bg || '') ? p.variant.bg : 'transparent';
-        const color = _isSafeCssColor(p.variant.color || '') ? p.variant.color : 'inherit';
+        const bg = window._isSafeCssColor?.(p.variant.bg || '') ? p.variant.bg! : 'transparent';
+        const color = window._isSafeCssColor?.(p.variant.color || '') ? p.variant.color! : 'inherit';
         paletteHtml += `<button type="button" class="btn btn-sm palette-insert-btn" data-name="${escapeHtml(p.name)}" style="background:${bg};color:${color};border:1px solid var(--wiki-border);">${escapeHtml(p.name)}</button>`;
     }
     paletteHtml += `</div>`;
@@ -1457,7 +1603,8 @@ function openPaletteColorModal() {
                 </div>
             `;
 
-    const modalColorState = {
+    interface ColorState { hue: number; saturation: number; brightness: number; hex: string; dragging: string | null; }
+    const modalColorState: { bg: ColorState; color: ColorState } = {
         bg: { hue: 0, saturation: 0, brightness: 0, hex: '#000000', dragging: null },
         color: { hue: 0, saturation: 0, brightness: 1, hex: '#FFFFFF', dragging: null }
     };
@@ -1470,16 +1617,18 @@ function openPaletteColorModal() {
         }
     };
 
-    const drawPalette = (canvasId, state) => {
-        const canvas = document.getElementById(canvasId);
+    const drawPalette = (canvasId: string, state: ColorState) => {
+        const canvas = document.getElementById(canvasId) as HTMLCanvasElement | null;
         if (!canvas) return;
         const ctx = canvas.getContext('2d');
+        if (!ctx) return;
         const w = canvas.width, h = canvas.height;
+        const hsv = window.hsvToHex;
         for (let x = 0; x < w; x++) {
             const s = x / w;
             for (let y = 0; y < h; y++) {
                 const v = 1 - y / h;
-                ctx.fillStyle = hsvToHex(state.hue, s, v);
+                ctx.fillStyle = hsv ? hsv(state.hue, s, v) : '#000';
                 ctx.fillRect(x, y, 1, 1);
             }
         }
@@ -1489,13 +1638,15 @@ function openPaletteColorModal() {
         ctx.beginPath(); ctx.arc(cx, cy, 7, 0, Math.PI * 2); ctx.strokeStyle = '#000'; ctx.lineWidth = 1; ctx.stroke();
     };
 
-    const drawHue = (canvasId, state) => {
-        const canvas = document.getElementById(canvasId);
+    const drawHue = (canvasId: string, state: ColorState) => {
+        const canvas = document.getElementById(canvasId) as HTMLCanvasElement | null;
         if (!canvas) return;
         const ctx = canvas.getContext('2d');
+        if (!ctx) return;
         const w = canvas.width, h = canvas.height;
+        const hsv = window.hsvToHex;
         const gradient = ctx.createLinearGradient(0, 0, w, 0);
-        for (let i = 0; i <= 6; i++) gradient.addColorStop(i / 6, hsvToHex(i * 60, 1, 1));
+        for (let i = 0; i <= 6; i++) gradient.addColorStop(i / 6, hsv ? hsv(i * 60, 1, 1) : '#000');
         ctx.fillStyle = gradient;
         ctx.fillRect(0, 0, w, h);
         const cx = (state.hue / 360) * w;
@@ -1503,9 +1654,9 @@ function openPaletteColorModal() {
         ctx.beginPath(); ctx.rect(cx - 4, -1, 8, h + 2); ctx.strokeStyle = '#000'; ctx.lineWidth = 1; ctx.stroke();
     };
 
-    const wcagContrastHex = (hex) => {
+    const wcagContrastHex = (hex: string): string => {
         const h = hex.replace('#', '');
-        const toLinear = (c) => {
+        const toLinear = (c: number): number => {
             c = c / 255;
             return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
         };
@@ -1516,39 +1667,40 @@ function openPaletteColorModal() {
         return L > 0.179 ? '#000000' : '#FFFFFF';
     };
 
-    const isAutoContrastOn = () => {
-        const cb = document.getElementById('modalAutoContrast');
+    const isAutoContrastOn = (): boolean => {
+        const cb = document.getElementById('modalAutoContrast') as HTMLInputElement | null;
         return cb ? cb.checked : false;
     };
 
     const applyAutoContrast = () => {
         const contrastHex = wcagContrastHex(modalColorState.bg.hex);
-        const hsv = typeof hexToHsv !== 'undefined' ? hexToHsv(contrastHex) : { h: 0, s: 0, v: contrastHex === '#FFFFFF' ? 1 : 0 };
+        const hsv = window.hexToHsv ? window.hexToHsv(contrastHex) : { h: 0, s: 0, v: contrastHex === '#FFFFFF' ? 1 : 0 };
         modalColorState.color.hue = hsv.h;
         modalColorState.color.saturation = hsv.s;
         modalColorState.color.brightness = hsv.v;
         updateUI('color');
     };
 
-    const updateUI = (type) => {
+    const updateUI = (type: 'bg' | 'color') => {
         const state = modalColorState[type];
-        state.hex = hsvToHex(state.hue, state.saturation, state.brightness).toUpperCase();
+        const hsv = window.hsvToHex;
+        state.hex = (hsv ? hsv(state.hue, state.saturation, state.brightness) : '#000000').toUpperCase();
         drawPalette(`modal${type === 'bg' ? 'Bg' : 'Color'}Canvas`, state);
         drawHue(`modal${type === 'bg' ? 'Bg' : 'Color'}Hue`, state);
-        const hexInput = document.getElementById(`modal${type === 'bg' ? 'Bg' : 'Color'}Hex`);
+        const hexInput = document.getElementById(`modal${type === 'bg' ? 'Bg' : 'Color'}Hex`) as HTMLInputElement | null;
         if (hexInput) hexInput.value = state.hex;
         updatePreview();
         if (type === 'bg' && isAutoContrastOn()) applyAutoContrast();
     };
 
-    const setColorControlsDisabled = (disabled) => {
+    const setColorControlsDisabled = (disabled: boolean) => {
         ['modalColorSwatches', 'modalColorCanvas', 'modalColorHue'].forEach(id => {
-            const el = document.getElementById(id);
+            const el = document.getElementById(id) as HTMLElement | null;
             if (!el) return;
             el.style.pointerEvents = disabled ? 'none' : '';
             el.style.opacity = disabled ? '0.5' : '';
         });
-        const hexInput = document.getElementById('modalColorHex');
+        const hexInput = document.getElementById('modalColorHex') as HTMLInputElement | null;
         if (hexInput) {
             hexInput.disabled = disabled;
             hexInput.style.opacity = disabled ? '0.5' : '';
@@ -1561,7 +1713,7 @@ function openPaletteColorModal() {
         '#FF00FF', '#FF0080', '#808080', '#C0C0C0'
     ];
 
-    Swal.fire({
+    Swal.fire<string>({
         title: '<i class="mdi mdi-palette-outline me-2"></i>색상 삽입',
         width: 650,
         html: modalHtml,
@@ -1572,18 +1724,24 @@ function openPaletteColorModal() {
             const confirmBtn = Swal.getConfirmButton();
             if (confirmBtn) confirmBtn.style.display = 'none';
 
-            const tabElements = document.querySelectorAll('#colorModalTabs button[data-bs-toggle="tab"]');
+            const tabElements = document.querySelectorAll<HTMLElement>('#colorModalTabs button[data-bs-toggle="tab"]');
             tabElements.forEach(btn => {
                 btn.addEventListener('click', (e) => {
                     e.preventDefault();
                     tabElements.forEach(b => {
                         b.classList.remove('active');
-                        const target = document.querySelector(b.dataset.bsTarget);
-                        if (target) target.classList.remove('show', 'active');
+                        const targetSel = b.dataset.bsTarget;
+                        if (targetSel) {
+                            const target = document.querySelector(targetSel);
+                            if (target) target.classList.remove('show', 'active');
+                        }
                     });
                     btn.classList.add('active');
-                    const activeTarget = document.querySelector(btn.dataset.bsTarget);
-                    if (activeTarget) activeTarget.classList.add('show', 'active');
+                    const activeTargetSel = btn.dataset.bsTarget;
+                    if (activeTargetSel) {
+                        const activeTarget = document.querySelector(activeTargetSel);
+                        if (activeTarget) activeTarget.classList.add('show', 'active');
+                    }
 
                     if (confirmBtn) {
                         confirmBtn.style.display = btn.id === 'palette-tab' ? 'none' : 'inline-block';
@@ -1591,23 +1749,24 @@ function openPaletteColorModal() {
                 });
             });
 
-            document.querySelectorAll('.palette-insert-btn').forEach(btn => {
+            document.querySelectorAll<HTMLElement>('.palette-insert-btn').forEach(btn => {
                 btn.addEventListener('click', (e) => {
                     e.preventDefault();
-                    const paletteName = btn.dataset.name;
+                    const paletteName = btn.dataset.name || '';
                     Swal.close();
-                    if (typeof editor !== 'undefined' && editor) {
-                        editor.insertText(`{palette:${paletteName}}`);
-                        if (typeof cmEditorView !== 'undefined' && cmEditorView) cmEditorView.focus();
+                    const editor = window.editor;
+                    if (editor) {
+                        editor.insertText?.(`{palette:${paletteName}}`);
+                        window._cmView?.focus();
                     }
                 });
             });
 
-            ['bg', 'color'].forEach(type => {
+            (['bg', 'color'] as const).forEach(type => {
                 const prefix = type === 'bg' ? 'Bg' : 'Color';
-                const paletteCanvas = document.getElementById(`modal${prefix}Canvas`);
-                const hueCanvas = document.getElementById(`modal${prefix}Hue`);
-                const hexInput = document.getElementById(`modal${prefix}Hex`);
+                const paletteCanvas = document.getElementById(`modal${prefix}Canvas`) as HTMLCanvasElement | null;
+                const hueCanvas = document.getElementById(`modal${prefix}Hue`) as HTMLCanvasElement | null;
+                const hexInput = document.getElementById(`modal${prefix}Hex`) as HTMLInputElement | null;
                 const swatchContainer = document.getElementById(`modal${prefix}Swatches`);
                 const state = modalColorState[type];
 
@@ -1615,10 +1774,10 @@ function openPaletteColorModal() {
                     swatchContainer.innerHTML = SWATCHES.map(color =>
                         `<div class="color-modal-swatch" style="background:${color};" title="${color}" data-color="${color}"></div>`
                     ).join('');
-                    swatchContainer.querySelectorAll('.color-modal-swatch').forEach(sw => {
+                    swatchContainer.querySelectorAll<HTMLElement>('.color-modal-swatch').forEach(sw => {
                         sw.addEventListener('click', (e) => {
                             e.preventDefault();
-                            const hsv = typeof hexToHsv !== 'undefined' ? hexToHsv(sw.dataset.color) : { h: 0, s: 0, v: 0 };
+                            const hsv = window.hexToHsv ? window.hexToHsv(sw.dataset.color || '#000000') : { h: 0, s: 0, v: 0 };
                             state.hue = hsv.h;
                             state.saturation = hsv.s;
                             state.brightness = hsv.v;
@@ -1627,25 +1786,34 @@ function openPaletteColorModal() {
                     });
                 }
 
-                function getPos(canvas, e) {
+                function getPos(canvas: HTMLCanvasElement, e: MouseEvent | TouchEvent) {
                     const rect = canvas.getBoundingClientRect();
-                    let cx, cy;
-                    if (e.touches && e.touches.length > 0) { cx = e.touches[0].clientX; cy = e.touches[0].clientY; }
-                    else { cx = e.clientX; cy = e.clientY; }
+                    let cx: number, cy: number;
+                    const touchEvent = e as TouchEvent;
+                    if (touchEvent.touches && touchEvent.touches.length > 0) {
+                        cx = touchEvent.touches[0].clientX;
+                        cy = touchEvent.touches[0].clientY;
+                    } else {
+                        const mouseEvent = e as MouseEvent;
+                        cx = mouseEvent.clientX;
+                        cy = mouseEvent.clientY;
+                    }
                     return {
                         x: Math.max(0, Math.min(1, (cx - rect.left) / rect.width)),
                         y: Math.max(0, Math.min(1, (cy - rect.top) / rect.height))
                     };
                 }
 
-                const handlePalette = (e) => {
+                const handlePalette = (e: MouseEvent | TouchEvent) => {
+                    if (!paletteCanvas) return;
                     const pos = getPos(paletteCanvas, e);
                     state.saturation = pos.x;
                     state.brightness = 1 - pos.y;
                     updateUI(type);
                 };
 
-                const handleHue = (e) => {
+                const handleHue = (e: MouseEvent | TouchEvent) => {
+                    if (!hueCanvas) return;
                     const pos = getPos(hueCanvas, e);
                     state.hue = pos.x * 360;
                     updateUI(type);
@@ -1676,7 +1844,7 @@ function openPaletteColorModal() {
                     hexInput.addEventListener('input', () => {
                         const val = hexInput.value.trim();
                         if (/^#[0-9A-Fa-f]{6}$/.test(val)) {
-                            const hsv = typeof hexToHsv !== 'undefined' ? hexToHsv(val) : { h: 0, s: 0, v: 0 };
+                            const hsv = window.hexToHsv ? window.hexToHsv(val) : { h: 0, s: 0, v: 0 };
                             state.hue = hsv.h;
                             state.saturation = hsv.s;
                             state.brightness = hsv.v;
@@ -1688,7 +1856,7 @@ function openPaletteColorModal() {
                 updateUI(type);
             });
 
-            const autoContrastCb = document.getElementById('modalAutoContrast');
+            const autoContrastCb = document.getElementById('modalAutoContrast') as HTMLInputElement | null;
             if (autoContrastCb) {
                 autoContrastCb.addEventListener('change', () => {
                     setColorControlsDisabled(autoContrastCb.checked);
@@ -1704,8 +1872,8 @@ function openPaletteColorModal() {
                 return false;
             }
 
-            const bgHex = document.getElementById('modalBgHex').value.trim();
-            const colorHex = document.getElementById('modalColorHex').value.trim();
+            const bgHex = ((document.getElementById('modalBgHex') as HTMLInputElement | null)?.value || '').trim();
+            const colorHex = ((document.getElementById('modalColorHex') as HTMLInputElement | null)?.value || '').trim();
 
             if (!/^#[0-9A-Fa-f]{6}$/.test(bgHex) || !/^#[0-9A-Fa-f]{6}$/.test(colorHex)) {
                 Swal.showValidationMessage('유효한 색상 코드(Hex)를 입력하세요.');
@@ -1716,54 +1884,73 @@ function openPaletteColorModal() {
         }
     }).then(result => {
         if (result.isConfirmed && result.value) {
-            if (typeof editor !== 'undefined' && editor) {
-                editor.insertText(result.value);
-                if (typeof cmEditorView !== 'undefined' && cmEditorView) cmEditorView.focus();
+            const editor = window.editor;
+            if (editor) {
+                editor.insertText?.(result.value);
+                window._cmView?.focus();
             }
         }
     });
 }
 
-// ── 배지 / 태그 / 스탯 / 버튼 삽입 모달 ──
-function openBadgeInsertModal() {
-    return openComponentInsertModal();
+// ─────────────────────────────────────────────────────────────────────────────
+// 배지 / 태그 / 스탯 / 버튼 삽입 모달
+// ─────────────────────────────────────────────────────────────────────────────
+
+function openBadgeInsertModal(): void {
+    openComponentInsertModal();
 }
 
-function openComponentInsertModal() {
-    const palettes = getAllPalettesForEditor();
+interface BadgeIcon { type: 'bi' | 'mdi'; name: string; }
+interface BadgeState {
+    type: 'badge' | 'tag' | 'stat' | 'button';
+    palette: string;
+    text: string;
+    label: string;
+    url: string;
+    icon: BadgeIcon | null;
+    iconType: 'bi' | 'mdi' | null;
+    iconQuery: string;
+    iconList: string[] | null;
+}
 
-    const state = {
-        type: 'badge', // 'badge' | 'tag' | 'stat' | 'button'
+function openComponentInsertModal(): void {
+    const Swal = window.Swal;
+    if (!Swal) return;
+    const palettes = window.getAllPalettesForEditor?.() ?? [];
+
+    const state: BadgeState = {
+        type: 'badge',
         palette: '',
-        text: '',   // badge/tag: 텍스트, stat: 값, button: 제목
-        label: '',  // stat 전용: 라벨
-        url: '',    // button 전용: URL
-        icon: null, // { type: 'mdi'|'bi', name } - button 전용
+        text: '',
+        label: '',
+        url: '',
+        icon: null,
         iconType: null,
         iconQuery: '',
         iconList: null,
     };
 
-    const TYPE_META = {
+    const TYPE_META: Record<string, { label: string; icon: string }> = {
         badge: { label: '배지', icon: 'mdi mdi-label-outline' },
         tag: { label: '태그', icon: 'mdi mdi-tag-outline' },
         stat: { label: '스탯', icon: 'mdi mdi-chart-box-outline' },
         button: { label: '버튼', icon: 'mdi mdi-gesture-tap-button' },
     };
 
-    function paletteSwatchesHtml() {
+    function paletteSwatchesHtml(): string {
         let html = `<button type="button" class="badge-insert-palette-swatch" data-palette="" title="선택 안 함">
                     <span class="badge-insert-palette-swatch-none">없음</span>
                 </button>`;
         for (const p of palettes) {
-            const bg = _isSafeCssColor(p.variant.bg || '') ? p.variant.bg : 'transparent';
-            const color = _isSafeCssColor(p.variant.color || '') ? p.variant.color : 'inherit';
+            const bg = window._isSafeCssColor?.(p.variant.bg || '') ? p.variant.bg! : 'transparent';
+            const color = window._isSafeCssColor?.(p.variant.color || '') ? p.variant.color! : 'inherit';
             html += `<button type="button" class="badge-insert-palette-swatch" data-palette="${escapeHtml(p.name)}" title="${escapeHtml(p.name)}" style="background:${bg};color:${color};">${escapeHtml(p.name)}</button>`;
         }
         return html;
     }
 
-    function typeTabsHtml() {
+    function typeTabsHtml(): string {
         return Object.entries(TYPE_META).map(([key, m]) => {
             const active = state.type === key ? ' active' : '';
             return `<button type="button" class="badge-insert-type-tab${active}" data-type="${key}">
@@ -1773,14 +1960,14 @@ function openComponentInsertModal() {
         }).join('');
     }
 
-    function iconFieldHtml() {
+    function iconFieldHtml(): string {
         const hasIcon = !!state.icon;
-        const iconPreview = hasIcon
+        const iconPreview = hasIcon && state.icon
             ? (state.icon.type === 'bi'
                 ? `<i class="bi bi-${escapeHtml(state.icon.name)}"></i>`
                 : `<span class="mdi mdi-${escapeHtml(state.icon.name)}"></span>`)
             : `<span class="badge-insert-icon-placeholder">없음</span>`;
-        const iconLabel = hasIcon ? `${state.icon.type}:${state.icon.name}` : '아이콘 선택 안 함';
+        const iconLabel = hasIcon && state.icon ? `${state.icon.type}:${state.icon.name}` : '아이콘 선택 안 함';
         return `
                         <div class="badge-insert-field">
                             <label class="form-label">아이콘</label>
@@ -1798,7 +1985,7 @@ function openComponentInsertModal() {
                         </div>`;
     }
 
-    function fieldsHtml() {
+    function fieldsHtml(): string {
         if (state.type === 'stat') {
             return `
                         <div class="badge-insert-field-row">
@@ -1833,7 +2020,6 @@ function openComponentInsertModal() {
                         </div>
                         ${iconFieldHtml()}`;
         }
-        // badge | tag
         const placeholder = state.type === 'tag' ? '예: Beta' : '예: NEW';
         return `
                     <div class="badge-insert-field">
@@ -1845,9 +2031,10 @@ function openComponentInsertModal() {
                     ${iconFieldHtml()}`;
     }
 
-    function buildToken() {
+    function buildToken(): string {
+        const onlyIcons = window.selectedIconsOnly ?? false;
         const palettePrefix = state.palette ? `{palette:${state.palette}}` : '';
-        const iconPrefix = state.icon ? (selectedIconsOnly ? `{icon:${state.icon.type}-${state.icon.name}}` : `{${state.icon.type}:${state.icon.name}}`) : '';
+        const iconPrefix = state.icon ? (onlyIcons ? `{icon:${state.icon.type}-${state.icon.name}}` : `{${state.icon.type}:${state.icon.name}}`) : '';
         const text = (state.text || '').trim();
         if (state.type === 'badge') {
             if (!text) return '';
@@ -1879,10 +2066,10 @@ function openComponentInsertModal() {
             preview.innerHTML = `<span class="badge-insert-preview-empty">필수 입력을 채우면 미리보기가 표시됩니다.</span>`;
             return;
         }
-        // render.js의 _processInlineLayoutTokens로 실제 렌더링 수행
         try {
-            if (typeof _processInlineLayoutTokens === 'function') {
-                preview.innerHTML = _processInlineLayoutTokens(token);
+            const proc = window._processInlineLayoutTokens;
+            if (typeof proc === 'function') {
+                preview.innerHTML = proc(token);
             } else {
                 preview.textContent = token;
             }
@@ -1891,7 +2078,7 @@ function openComponentInsertModal() {
         }
     }
 
-    function validate() {
+    function validate(): boolean {
         const err = document.getElementById('badgeInsertValidation');
         const text = (state.text || '').trim();
         const invalidChars = /[|\}\{\r\n]/;
@@ -1938,29 +2125,27 @@ function openComponentInsertModal() {
                     </div>
                 `;
 
-        // 종류 탭 이벤트
-        root.querySelectorAll('.badge-insert-type-tab').forEach(btn => {
+        root.querySelectorAll<HTMLElement>('.badge-insert-type-tab').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 e.preventDefault();
-                const newType = btn.dataset.type;
-                if (newType === state.type) return;
+                const newType = btn.dataset.type as BadgeState['type'] | undefined;
+                if (!newType || newType === state.type) return;
                 state.type = newType;
                 renderFormView();
             });
         });
 
-        // 팔레트 스와치
         const swatchesEl = document.getElementById('badgeInsertPaletteSwatches');
         if (swatchesEl) {
             swatchesEl.innerHTML = paletteSwatchesHtml();
-            swatchesEl.querySelectorAll('.badge-insert-palette-swatch').forEach(sw => {
+            swatchesEl.querySelectorAll<HTMLElement>('.badge-insert-palette-swatch').forEach(sw => {
                 if ((sw.dataset.palette || '') === (state.palette || '')) {
                     sw.classList.add('active');
                 }
                 sw.addEventListener('click', (e) => {
                     e.preventDefault();
                     state.palette = sw.dataset.palette || '';
-                    swatchesEl.querySelectorAll('.badge-insert-palette-swatch').forEach(s => {
+                    swatchesEl.querySelectorAll<HTMLElement>('.badge-insert-palette-swatch').forEach(s => {
                         s.classList.toggle('active', (s.dataset.palette || '') === state.palette);
                     });
                     updatePreview();
@@ -1968,8 +2153,7 @@ function openComponentInsertModal() {
             });
         }
 
-        // 입력 필드 바인딩
-        const textInput = document.getElementById('badgeInsertText');
+        const textInput = document.getElementById('badgeInsertText') as HTMLInputElement | null;
         if (textInput) {
             textInput.addEventListener('input', () => {
                 state.text = textInput.value;
@@ -1977,7 +2161,7 @@ function openComponentInsertModal() {
                 validate();
             });
         }
-        const labelInput = document.getElementById('badgeInsertLabel');
+        const labelInput = document.getElementById('badgeInsertLabel') as HTMLInputElement | null;
         if (labelInput) {
             labelInput.addEventListener('input', () => {
                 state.label = labelInput.value;
@@ -1985,7 +2169,7 @@ function openComponentInsertModal() {
                 validate();
             });
         }
-        const urlInput = document.getElementById('badgeInsertUrl');
+        const urlInput = document.getElementById('badgeInsertUrl') as HTMLInputElement | null;
         if (urlInput) {
             urlInput.addEventListener('input', () => {
                 state.url = urlInput.value;
@@ -1994,7 +2178,6 @@ function openComponentInsertModal() {
             });
         }
 
-        // 아이콘 선택 버튼 (모든 타입 지원)
         const iconPickBtn = document.getElementById('badgeInsertIconPickBtn');
         if (iconPickBtn) {
             iconPickBtn.addEventListener('click', (e) => {
@@ -2013,14 +2196,14 @@ function openComponentInsertModal() {
 
         updatePreview();
         validate();
-        // 첫 렌더링 시 텍스트 필드에 포커스
         if (textInput && !state.text) {
             setTimeout(() => textInput.focus(), 0);
         }
     }
 
-    async function ensureIconList() {
-        if (selectedIconsOnly) {
+    async function ensureIconList(): Promise<string[]> {
+        const onlyIcons = window.selectedIconsOnly ?? false;
+        if (onlyIcons) {
             if (state.iconList) return state.iconList;
             try {
                 state.iconList = await loadSelectedIcons();
@@ -2066,7 +2249,7 @@ function openComponentInsertModal() {
             const slice = filtered.slice(renderIndex, end);
             const SAFE_ICON_NAME = /^[\w-]+$/;
             slice.forEach(fullName => {
-                let type, iconName;
+                let type: 'bi' | 'mdi', iconName: string;
                 if (fullName.startsWith('bi-')) {
                     type = 'bi';
                     iconName = fullName.slice(3);
@@ -2076,7 +2259,6 @@ function openComponentInsertModal() {
                 } else {
                     return;
                 }
-                // icons.json 값을 class 속성으로 사용하기 전 화이트리스트 검증 (DOM XSS 방지)
                 if (!SAFE_ICON_NAME.test(iconName)) return;
                 const item = document.createElement('button');
                 item.type = 'button';
@@ -2092,7 +2274,7 @@ function openComponentInsertModal() {
                     state.icon = { type, name: iconName };
                     renderFormView();
                 });
-                gridEl.appendChild(item);
+                gridEl!.appendChild(item);
             });
             renderIndex = end;
         }
@@ -2111,8 +2293,9 @@ function openComponentInsertModal() {
     async function renderIconView() {
         const root = document.getElementById('badgeInsertRoot');
         if (!root) return;
+        const onlyIcons = window.selectedIconsOnly ?? false;
 
-        if (!selectedIconsOnly && !state.iconType) {
+        if (!onlyIcons && !state.iconType) {
             root.innerHTML = `
                         <div class="badge-insert-icon-view text-start">
                             <div class="badge-insert-icon-toolbar" style="margin-bottom: 24px;">
@@ -2134,15 +2317,15 @@ function openComponentInsertModal() {
                             </div>
                         </div>
                     `;
-            document.getElementById('badgeInsertIconBackType').addEventListener('click', (e) => {
+            document.getElementById('badgeInsertIconBackType')?.addEventListener('click', (e) => {
                 e.preventDefault();
                 renderFormView();
             });
-            root.querySelectorAll('.badge-insert-type-select-btn').forEach(btn => {
+            root.querySelectorAll<HTMLElement>('.badge-insert-type-select-btn').forEach(btn => {
                 btn.addEventListener('click', (e) => {
                     e.preventDefault();
-                    state.iconType = btn.dataset.type;
-                    state.iconList = null; // force reload
+                    state.iconType = (btn.dataset.type as 'bi' | 'mdi') || null;
+                    state.iconList = null;
                     renderIconView();
                 });
             });
@@ -2154,7 +2337,7 @@ function openComponentInsertModal() {
                         <div class="badge-insert-icon-toolbar">
                             <button type="button" id="badgeInsertIconBack" class="badge-insert-back-btn">
                                 <i class="mdi mdi-arrow-left"></i>
-                                <span>${!selectedIconsOnly ? '라이브러리 변경' : '돌아가기'}</span>
+                                <span>${!onlyIcons ? '라이브러리 변경' : '돌아가기'}</span>
                             </button>
                             <input type="text" id="badgeInsertIconSearch" class="form-control form-control-sm"
                                 placeholder="아이콘 이름 검색..." value="${escapeHtml(state.iconQuery)}"
@@ -2176,7 +2359,7 @@ function openComponentInsertModal() {
         if (backBtn) {
             backBtn.addEventListener('click', (e) => {
                 e.preventDefault();
-                if (!selectedIconsOnly) {
+                if (!onlyIcons) {
                     state.iconType = null;
                     state.iconQuery = '';
                     renderIconView();
@@ -2185,13 +2368,13 @@ function openComponentInsertModal() {
                 }
             });
         }
-        const searchInput = document.getElementById('badgeInsertIconSearch');
+        const searchInput = document.getElementById('badgeInsertIconSearch') as HTMLInputElement | null;
         const loadingEl = document.getElementById('badgeInsertIconLoading');
-        let searchTimer;
+        let searchTimer: number | undefined;
         if (searchInput) {
             searchInput.addEventListener('input', () => {
                 clearTimeout(searchTimer);
-                searchTimer = setTimeout(() => {
+                searchTimer = window.setTimeout(() => {
                     state.iconQuery = searchInput.value;
                     renderIconGrid();
                 }, 150);
@@ -2202,14 +2385,13 @@ function openComponentInsertModal() {
         if (!state.iconList) {
             if (loadingEl) loadingEl.style.display = 'block';
             await ensureIconList();
-            // 뷰가 여전히 아이콘 뷰일 때만 렌더
             if (!document.getElementById('badgeInsertIconGrid')) return;
             if (loadingEl) loadingEl.style.display = 'none';
         }
         renderIconGrid();
     }
 
-    Swal.fire({
+    Swal.fire<string>({
         title: '<i class="mdi mdi-label-multiple-outline me-2"></i>배지 삽입',
         width: 640,
         html: '<div id="badgeInsertRoot"></div>',
@@ -2232,21 +2414,35 @@ function openComponentInsertModal() {
         }
     }).then(result => {
         if (!result.isConfirmed || !result.value) return;
-        if (typeof editor !== 'undefined' && editor) {
-            editor.insertText(result.value);
-            if (typeof cmEditorView !== 'undefined' && cmEditorView) cmEditorView.focus();
+        const editor = window.editor;
+        if (editor) {
+            editor.insertText?.(result.value);
+            window._cmView?.focus();
         }
     });
 }
 
-// ── 하위 문서 구조 삽입 모달 ──
-async function openSubdocInsertModal() {
-    let subdocSelectedSlug = null;
+// ─────────────────────────────────────────────────────────────────────────────
+// 하위 문서 구조 삽입 모달
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface SubdocSuggestion { slug: string; }
+interface SubdocItem { slug: string; }
+interface SubdocTreeNode {
+    _children: Record<string, SubdocTreeNode>;
+    _doc: SubdocItem | null;
+    _descendants?: number;
+}
+
+async function openSubdocInsertModal(): Promise<void> {
+    const Swal = window.Swal;
+    if (!Swal) return;
+    let subdocSelectedSlug: string | null = null;
     let subdocPreviewText = '';
-    let subdocDebounceTimer = null;
+    let subdocDebounceTimer: number | undefined;
     let subdocActiveIdx = -1;
 
-    const result = await Swal.fire({
+    const result = await Swal.fire<string>({
         title: '<i class="bi bi-diagram-3-fill me-2"></i>하위 문서 구조 삽입',
         html: `
                 <div class="text-start">
@@ -2262,15 +2458,18 @@ async function openSubdocInsertModal() {
                             style="max-height:200px;overflow-y:auto;font-size:0.85rem;margin:0;text-align:left; background: var(--wiki-code-bg); border-color: var(--wiki-border) !important; color: var(--wiki-text);"></pre>
                         </div>
                         </div>
-                        `, width: 600,
+                        `,
+        width: 600,
         showCancelButton: true,
         cancelButtonText: '취소',
         confirmButtonText: '삽입',
         didOpen: () => {
-            Swal.getConfirmButton().disabled = true;
+            const confirmBtn = Swal.getConfirmButton();
+            if (confirmBtn) confirmBtn.disabled = true;
 
-            const input = document.getElementById('subdocSearchInput');
-            const sugBox = document.getElementById('subdocSuggestions');
+            const input = document.getElementById('subdocSearchInput') as HTMLInputElement | null;
+            const sugBox = document.getElementById('subdocSuggestions') as HTMLElement | null;
+            if (!input || !sugBox) return;
 
             input.addEventListener('input', function () {
                 clearTimeout(subdocDebounceTimer);
@@ -2280,52 +2479,52 @@ async function openSubdocInsertModal() {
                     sugBox.innerHTML = '';
                     return;
                 }
-                subdocDebounceTimer = setTimeout(() => fetchSubdocSuggestions(q), 250);
+                subdocDebounceTimer = window.setTimeout(() => fetchSubdocSuggestions(q), 250);
             });
 
-            async function fetchSubdocSuggestions(q) {
+            async function fetchSubdocSuggestions(q: string) {
                 try {
                     const res = await fetch('/api/search/suggest?q=' + encodeURIComponent(q));
                     if (!res.ok) return;
-                    const data = await res.json();
+                    const data = await res.json() as { suggestions?: SubdocSuggestion[] };
                     renderSubdocSuggestions(data.suggestions || []);
-                } catch (e) { }
+                } catch (e) { /* ignore */ }
             }
 
-            function renderSubdocSuggestions(items) {
+            function renderSubdocSuggestions(items: SubdocSuggestion[]) {
                 subdocActiveIdx = -1;
                 const filtered = items.filter(item => !item.slug.includes(':'));
                 if (!filtered.length) {
-                    sugBox.style.display = 'none';
-                    sugBox.innerHTML = '';
+                    sugBox!.style.display = 'none';
+                    sugBox!.innerHTML = '';
                     return;
                 }
-                sugBox.innerHTML = filtered.map((item) =>
+                sugBox!.innerHTML = filtered.map((item) =>
                     '<li class="search-suggestion-item" data-slug="' + escapeHtml(item.slug) +
                     '" data-title="' + escapeHtml(item.slug) + '">' +
                     '<i class="mdi mdi-file-document-outline"></i> ' +
                     escapeHtml(item.slug) + '</li>'
                 ).join('');
-                sugBox.style.display = 'block';
-                sugBox.querySelectorAll('.search-suggestion-item').forEach(el => {
+                sugBox!.style.display = 'block';
+                sugBox!.querySelectorAll<HTMLElement>('.search-suggestion-item').forEach(el => {
                     el.addEventListener('mousedown', function (e) {
                         e.preventDefault();
-                        selectSubdocItem(this.dataset.slug, this.dataset.title);
+                        selectSubdocItem(el.dataset.slug || '', el.dataset.title || '');
                     });
                 });
             }
 
-            function selectSubdocItem(slug, title) {
+            function selectSubdocItem(slug: string, title: string) {
                 subdocSelectedSlug = slug;
-                input.value = title;
-                sugBox.style.display = 'none';
-                sugBox.innerHTML = '';
+                input!.value = title;
+                sugBox!.style.display = 'none';
+                sugBox!.innerHTML = '';
                 loadSubdocPreview(slug);
             }
 
             input.addEventListener('keydown', function (e) {
-                const items = sugBox.querySelectorAll('.search-suggestion-item');
-                if (sugBox.style.display !== 'none' && items.length) {
+                const items = sugBox!.querySelectorAll<HTMLElement>('.search-suggestion-item');
+                if (sugBox!.style.display !== 'none' && items.length) {
                     if (e.key === 'ArrowDown') {
                         e.preventDefault();
                         subdocActiveIdx = Math.min(subdocActiveIdx + 1, items.length - 1);
@@ -2337,18 +2536,94 @@ async function openSubdocInsertModal() {
                     } else if (e.key === 'Enter' && subdocActiveIdx >= 0) {
                         e.preventDefault();
                         const el = items[subdocActiveIdx];
-                        selectSubdocItem(el.dataset.slug, el.dataset.title);
+                        selectSubdocItem(el.dataset.slug || '', el.dataset.title || '');
                     } else if (e.key === 'Escape') {
-                        sugBox.style.display = 'none';
+                        sugBox!.style.display = 'none';
                     }
                 }
             });
 
             input.addEventListener('blur', function () {
-                setTimeout(() => { sugBox.style.display = 'none'; }, 150);
+                setTimeout(() => { sugBox!.style.display = 'none'; }, 150);
             });
 
             input.focus();
+
+            async function loadSubdocPreview(slug: string) {
+                try {
+                    const res = await fetch('/api/w/' + encodeURIComponent(slug) + '/subdocs');
+                    const data = await res.json() as { subdocs?: SubdocItem[] };
+                    const subdocs = data.subdocs || [];
+
+                    const tree: Record<string, SubdocTreeNode> = {};
+                    for (const doc of subdocs) {
+                        const relative = doc.slug.substring(slug.length + 1);
+                        const parts = relative.split('/');
+                        let node: Record<string, SubdocTreeNode> = tree;
+                        for (const part of parts) {
+                            if (!node[part]) node[part] = { _children: {}, _doc: null };
+                            node = node[part]._children;
+                        }
+                        let target: Record<string, SubdocTreeNode> = tree;
+                        for (let i = 0; i < parts.length; i++) {
+                            if (i === parts.length - 1) {
+                                target[parts[i]]._doc = doc;
+                            } else {
+                                target = target[parts[i]]._children;
+                            }
+                        }
+                    }
+
+                    function annotateDescendants(children: Record<string, SubdocTreeNode>): number {
+                        let total = 0;
+                        for (const key of Object.keys(children)) {
+                            const sub = annotateDescendants(children[key]._children);
+                            children[key]._descendants = sub;
+                            total += 1 + sub;
+                        }
+                        return total;
+                    }
+                    annotateDescendants(tree);
+
+                    function renderTree(nodes: Record<string, SubdocTreeNode>, parentPrefix: string): string {
+                        const entries = Object.keys(nodes).sort((a, b) => {
+                            const ca = nodes[a]._descendants ?? 0;
+                            const cb = nodes[b]._descendants ?? 0;
+                            if (ca !== cb) return ca - cb;
+                            return a.localeCompare(b);
+                        });
+                        let text = '';
+                        entries.forEach((key, idx) => {
+                            const node = nodes[key];
+                            const isLast = idx === entries.length - 1;
+                            const connector = isLast ? '└── ' : '├── ';
+                            const childPrefix = parentPrefix + (isLast ? '    ' : '│   ');
+                            if (node._doc) {
+                                text += parentPrefix + connector + '[[' + node._doc.slug + '|' + key + ']]\n';
+                            } else {
+                                text += parentPrefix + connector + key + '\n';
+                            }
+                            if (Object.keys(node._children).length > 0) {
+                                text += renderTree(node._children, childPrefix);
+                            }
+                        });
+                        return text;
+                    }
+
+                    subdocPreviewText = '[[' + slug + ']]\n' + renderTree(tree, '');
+
+                    const previewEl = document.getElementById('subdocPreview');
+                    const previewContent = document.getElementById('subdocPreviewContent');
+                    if (previewEl && previewContent) {
+                        previewContent.textContent = subdocPreviewText;
+                        previewEl.style.display = '';
+                    }
+                    const cb = window.Swal?.getConfirmButton();
+                    if (cb) cb.disabled = false;
+                } catch (e) {
+                    console.error(e);
+                }
+            }
         },
         preConfirm: () => {
             if (!subdocPreviewText) return false;
@@ -2356,88 +2631,27 @@ async function openSubdocInsertModal() {
         }
     });
 
+    // suppress unused-warning: subdocSelectedSlug is set inside selectSubdocItem.
+    void subdocSelectedSlug;
+
     if (result.isConfirmed && result.value) {
-        editor.insertText(result.value);
-        editor.focus();
-    }
-
-    async function loadSubdocPreview(slug) {
-        try {
-            const res = await fetch('/api/w/' + encodeURIComponent(slug) + '/subdocs');
-            const data = await res.json();
-            const subdocs = data.subdocs || [];
-
-            const tree = {};
-            for (const doc of subdocs) {
-                const relative = doc.slug.substring(slug.length + 1);
-                const parts = relative.split('/');
-                let node = tree;
-                for (const part of parts) {
-                    if (!node[part]) node[part] = { _children: {}, _doc: null };
-                    node = node[part]._children;
-                }
-                let target = tree;
-                for (let i = 0; i < parts.length; i++) {
-                    if (i === parts.length - 1) {
-                        target[parts[i]]._doc = doc;
-                    } else {
-                        target = target[parts[i]]._children;
-                    }
-                }
-            }
-
-            function annotateDescendants(children) {
-                let total = 0;
-                for (const key of Object.keys(children)) {
-                    const sub = annotateDescendants(children[key]._children);
-                    children[key]._descendants = sub;
-                    total += 1 + sub;
-                }
-                return total;
-            }
-            annotateDescendants(tree);
-
-            function renderTree(nodes, parentPrefix) {
-                const entries = Object.keys(nodes).sort((a, b) => {
-                    const ca = nodes[a]._descendants;
-                    const cb = nodes[b]._descendants;
-                    if (ca !== cb) return ca - cb;
-                    return a.localeCompare(b);
-                });
-                let text = '';
-                entries.forEach((key, idx) => {
-                    const node = nodes[key];
-                    const isLast = idx === entries.length - 1;
-                    const connector = isLast ? '└── ' : '├── ';
-                    const childPrefix = parentPrefix + (isLast ? '    ' : '│   ');
-                    if (node._doc) {
-                        text += parentPrefix + connector + '[[' + node._doc.slug + '|' + key + ']]\n';
-                    } else {
-                        text += parentPrefix + connector + key + '\n';
-                    }
-                    if (Object.keys(node._children).length > 0) {
-                        text += renderTree(node._children, childPrefix);
-                    }
-                });
-                return text;
-            }
-
-            subdocPreviewText = '[[' + slug + ']]\n' + renderTree(tree, '');
-
-            const previewEl = document.getElementById('subdocPreview');
-            const previewContent = document.getElementById('subdocPreviewContent');
-            if (previewEl && previewContent) {
-                previewContent.textContent = subdocPreviewText;
-                previewEl.style.display = '';
-            }
-            Swal.getConfirmButton().disabled = false;
-        } catch (e) {
-            console.error(e);
+        const editor = window.editor;
+        if (editor) {
+            editor.insertText?.(result.value);
+            editor.focus?.();
         }
     }
 }
-// ── 템플릿 모달 ──
-async function openTemplateModal() {
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 템플릿 모달
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface TemplateItem { slug: string; }
+
+async function openTemplateModal(): Promise<void> {
+    const Swal = window.Swal;
+    if (!Swal) return;
     try {
         Swal.fire({
             title: '템플릿 불러오기',
@@ -2451,13 +2665,13 @@ async function openTemplateModal() {
                 </div>
             `,
             showConfirmButton: false,
-            showCloseButton: true,
             didOpen: async () => {
-                const searchInput = document.getElementById('templateSearchInput');
+                const searchInput = document.getElementById('templateSearchInput') as HTMLInputElement | null;
                 const searchBtn = document.getElementById('templateSearchBtn');
                 const listContainer = document.getElementById('templateList');
+                if (!searchInput || !searchBtn || !listContainer) return;
 
-                const renderTemplates = (templates) => {
+                const renderTemplates = (templates: TemplateItem[] | undefined) => {
                     listContainer.innerHTML = '';
                     if (!templates || templates.length === 0) {
                         listContainer.innerHTML = '<div class="p-3 text-center text-muted">검색 결과가 없습니다.</div>';
@@ -2465,7 +2679,6 @@ async function openTemplateModal() {
                     }
 
                     templates.forEach(t => {
-                        // 템플릿: 틀: template: 등의 접두사를 제외한 표시 이름
                         const displayTitle = t.slug.replace(/^(틀|template|템플릿):/i, '');
                         const btn = document.createElement('button');
                         btn.className = 'list-group-item list-group-item-action';
@@ -2478,22 +2691,21 @@ async function openTemplateModal() {
                     });
                 };
 
-                const fetchTemplates = async (query = '') => {
+                const fetchTemplates = async (query: string = '') => {
                     listContainer.innerHTML = '<div class="p-3 text-center"><span class="spinner-border spinner-border-sm text-primary" role="status"></span> 불러오는 중...</div>';
                     try {
                         const res = await fetch(`/api/w/templates${query ? `?q=${encodeURIComponent(query)}` : ''}`);
                         if (!res.ok) throw new Error('템플릿 목록을 불러올 수 없습니다.');
-                        const data = await res.json();
+                        const data = await res.json() as { templates?: TemplateItem[] };
                         renderTemplates(data.templates);
                     } catch (err) {
-                        listContainer.innerHTML = `<div class="p-3 text-center text-danger">${err.message}</div>`;
+                        const msg = err instanceof Error ? err.message : '오류';
+                        listContainer.innerHTML = `<div class="p-3 text-center text-danger">${escapeHtml(msg)}</div>`;
                     }
                 };
 
-                // 초기 로딩 (최신 템플릿 10개)
                 await fetchTemplates();
 
-                // 검색 이벤트
                 searchBtn.onclick = () => fetchTemplates(searchInput.value.trim());
                 searchInput.onkeypress = (e) => {
                     if (e.key === 'Enter') {
@@ -2504,13 +2716,16 @@ async function openTemplateModal() {
             }
         });
 
-        async function applyTemplate(selectedSlug) {
+        async function applyTemplate(selectedSlug: string) {
+            const Swal = window.Swal;
+            if (!Swal) return;
             try {
                 const tRes = await fetch(`/api/w/${encodeURIComponent(selectedSlug)}`);
                 if (!tRes.ok) throw new Error('템플릿 내용을 불러올 수 없습니다.');
-                const tPage = await tRes.json();
+                const tPage = await tRes.json() as { content?: string };
 
-                if (editor.getMarkdown().trim()) {
+                const editor = window.editor;
+                if (editor && (editor.getMarkdown?.() ?? '').trim()) {
                     const confirm = await Swal.fire({
                         title: '내용 덮어쓰기',
                         text: '현재 작성 중인 내용이 사라집니다. 계속하시겠습니까?',
@@ -2528,15 +2743,45 @@ async function openTemplateModal() {
                 } else if (!tContent.endsWith('\n\n')) {
                     tContent += '\n';
                 }
-                editor.setMarkdown(tContent);
-                scrollToBottom();
+                if (editor) {
+                    editor.setMarkdown?.(tContent);
+                }
+                window.scrollToBottom?.();
                 Swal.fire('완료', '템플릿을 불러왔습니다.', 'success');
             } catch (err) {
-                Swal.fire('오류', err.message, 'error');
+                const msg = err instanceof Error ? err.message : '오류';
+                Swal.fire('오류', msg, 'error');
             }
         }
     } catch (err) {
-        Swal.fire('오류', err.message, 'error');
+        const msg = err instanceof Error ? err.message : '오류';
+        Swal.fire('오류', msg, 'error');
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Window 브리지 — edit.js (raw) / autocomplete.ts 에서 호출
+// ─────────────────────────────────────────────────────────────────────────────
+
+// 아이콘 목록 로더 — autocomplete.ts 가 호출
+window.loadBiIcons        = loadBiIcons;
+window.loadMdiIcons       = loadMdiIcons;
+window.loadSelectedIcons  = loadSelectedIcons;
+window.filterIcons        = filterIcons;
+
+// edit.js 의 toolbar 핸들러에서 호출
+window.openSelectedIconsPicker = openSelectedIconsPicker;
+window.openIconPicker          = openIconPicker;
+window.setupTableInsertPopover = setupTableInsertPopover;
+window.setupSpecialCharPicker  = setupSpecialCharPicker;
+window.openTimestampInsertModal = openTimestampInsertModal;
+window.openSubdocInsertModal   = openSubdocInsertModal;
+window.openCardInsertModal     = openCardInsertModal;
+window.openPaletteColorModal   = openPaletteColorModal;
+window.openBadgeInsertModal    = openBadgeInsertModal;
+window.openComponentInsertModal = openComponentInsertModal;
+window.openGoogleMapsEmbedModal = openGoogleMapsEmbedModal;
+window.openTemplateModal       = openTemplateModal;
+
+// 사용 흐름상 export 하지 않아도 무방한 타입 — CMSelection import 가 lint 미사용으로 트리쉐이킹 되지 않게 사용 표시.
+export type { CMSelection };

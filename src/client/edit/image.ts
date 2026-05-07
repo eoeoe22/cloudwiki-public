@@ -1,20 +1,102 @@
-// ── 기존 이미지 검색 모달 ──
-async function openExistingImageSearch(callback) {
+/**
+ * 이미지 업로드 / 기존 이미지 검색 / 이미지 편집기 (크롭 + 90도 회전, 터치 지원).
+ * 기존 public/js/edit-image.js 의 ES 모듈 이전.
+ *
+ * edit.html / blog-edit.html 양쪽에서 로드 (양 페이지 동일한 #imageEditorModal 마크업).
+ *
+ * 외부 노출 (브리지):
+ *   - window.openExistingImageSearch(callback)  ← edit.js 가 호출
+ *   - window.handleImageUpload(blob, callback)   ← edit.js 가 호출
+ *
+ *   ImageEditor 는 모듈 내부에서만 사용 (handleImageUpload 가 직접 참조). 외부 어떤
+ *   raw script 도 ImageEditor 글로벌을 직접 사용하지 않음을 grep 으로 확인했으므로
+ *   window 노출 불필요.
+ *
+ * 외부 의존:
+ *   - window.Swal (CDN sweetalert2)
+ *   - window.mountMediaTagInput (common.js)
+ *   - window.bootstrap.Modal (CDN bootstrap)
+ *   - DOM: #imageEditorModal 외 (edit.html / blog-edit.html 양쪽 동일)
+ *
+ * 모듈 평가 타이밍:
+ *   type="module" 스크립트는 deferred — 모든 classic top-level 실행 후, 어떤
+ *   DOMContentLoaded 핸들러보다 앞이다. 따라서 브리지 노출과 ImageEditor 의
+ *   내부 setTimeout(init, 300) 모두 안전.
+ */
+
+import './types';
+import type { MediaTagWidget } from './types';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 내부 타입
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface MediaItem {
+    id: number;
+    url: string;
+    filename: string;
+    tags?: string[];
+}
+
+type ImageInsertCallback = (url: string, alt: string, size: string) => void;
+
+interface EditResult {
+    blob: Blob;
+    size: string;
+}
+
+interface MediaSearchResponse {
+    total?: number;
+    items?: MediaItem[];
+    error?: string;
+}
+
+interface MediaUploadResponse {
+    url: string;
+    filename: string;
+    error?: string;
+}
+
+declare global {
+    interface Window {
+        /** 기존 이미지 검색 모달 — edit.js 의 imageUploadBtn 핸들러가 호출 */
+        openExistingImageSearch?: (callback: ImageInsertCallback) => Promise<void>;
+        /** 이미지 업로드 처리 — edit.js 의 파일 input / 드롭 핸들러가 호출 */
+        handleImageUpload?: (blob: File | Blob | null, callback: ImageInsertCallback) => Promise<void>;
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HTML 이스케이프 (이미지 검색 결과 안전 출력)
+// 모듈 로컬 작은 유틸 — common.js / utils/html.ts 의 escapeHtml 과 동일 동작이지만
+// 클로저 내부 호출 빈도 / 의존 최소화를 위해 인라인 유지 (원본 edit-image.js 와 동일).
+// ─────────────────────────────────────────────────────────────────────────────
+
+const ESCAPE_MAP: Record<string, string> = {
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+};
+const escapeHtml = (s: unknown): string =>
+    String(s ?? '').replace(/[&<>"']/g, (m) => ESCAPE_MAP[m] ?? m);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 기존 이미지 검색 모달
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function openExistingImageSearch(callback: ImageInsertCallback): Promise<void> {
+    const Swal = window.Swal;
+    if (!Swal) return;
+
     let offset = 0;
     const limit = 24;
     let total = 0;
-    let items = [];
+    let items: MediaItem[] = [];
     let currentQuery = '';
-    let currentTags = [];
+    let currentTags: string[] = [];
     let loading = false;
     let finished = false;
-    let tagWidget = null;
+    let tagWidget: MediaTagWidget | null = null;
 
-    const escapeHtml = (s) => String(s ?? '').replace(/[&<>"']/g, (m) => ({
-        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-    }[m]));
-
-    let pickedItem = null;
+    let pickedItem: MediaItem | null = null;
 
     await Swal.fire({
         title: '기존 이미지 검색',
@@ -49,11 +131,14 @@ async function openExistingImageSearch(callback) {
             </div>
         `,
         didOpen: () => {
-            const input = document.getElementById('existingImgSearchInput');
+            const input = document.getElementById('existingImgSearchInput') as HTMLInputElement | null;
             const searchBtn = document.getElementById('existingImgSearchBtn');
             const moreBtn = document.getElementById('existingImgMoreBtn');
+            const tagContainer = document.getElementById('existingImgTagContainer');
+            const tagInput = document.getElementById('existingImgTagInput') as HTMLInputElement | null;
+            if (!input || !searchBtn || !moreBtn || !tagContainer || !tagInput) return;
 
-            const doSearch = (reset) => {
+            const doSearch = (reset: boolean): void => {
                 if (reset) {
                     offset = 0;
                     items = [];
@@ -61,21 +146,24 @@ async function openExistingImageSearch(callback) {
                     currentQuery = input.value.trim();
                     currentTags = tagWidget ? tagWidget.getTags() : [];
                 }
-                loadPage();
+                void loadPage();
             };
 
-            tagWidget = mountMediaTagInput({
-                container: document.getElementById('existingImgTagContainer'),
-                input: document.getElementById('existingImgTagInput'),
-                initial: [],
-            });
-            tagWidget.setOnChange(() => doSearch(true));
+            const mount = window.mountMediaTagInput;
+            if (mount) {
+                tagWidget = mount({
+                    container: tagContainer,
+                    input: tagInput,
+                    initial: [],
+                });
+                tagWidget.setOnChange(() => doSearch(true));
+            }
 
             searchBtn.addEventListener('click', () => doSearch(true));
             input.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter') { e.preventDefault(); doSearch(true); }
             });
-            moreBtn.addEventListener('click', () => loadPage());
+            moreBtn.addEventListener('click', () => { void loadPage(); });
 
             doSearch(true);
         },
@@ -83,12 +171,13 @@ async function openExistingImageSearch(callback) {
         preConfirm: () => pickedItem,
     });
 
-    async function loadPage() {
+    async function loadPage(): Promise<void> {
         if (loading || finished) return;
         loading = true;
         const grid = document.getElementById('existingImgSearchGrid');
         const info = document.getElementById('existingImgSearchInfo');
-        const moreWrap = document.getElementById('existingImgSearchMore');
+        const moreWrap = document.getElementById('existingImgSearchMore') as HTMLElement | null;
+        if (!grid || !info || !moreWrap) { loading = false; return; }
 
         if (offset === 0) {
             grid.innerHTML = '<div class="existing-img-search-empty">불러오는 중...</div>';
@@ -102,10 +191,10 @@ async function openExistingImageSearch(callback) {
 
             const res = await fetch(`/api/media/search?${params.toString()}`);
             if (!res.ok) {
-                const data = await res.json().catch(() => ({}));
+                const data = await res.json().catch(() => ({})) as MediaSearchResponse;
                 throw new Error(data.error || '검색 실패');
             }
-            const data = await res.json();
+            const data = await res.json() as MediaSearchResponse;
             total = data.total || 0;
             const fetched = data.items || [];
             if (offset === 0) items = [];
@@ -119,13 +208,14 @@ async function openExistingImageSearch(callback) {
                 : '결과가 없습니다.';
             moreWrap.style.display = finished ? 'none' : '';
         } catch (err) {
-            grid.innerHTML = `<div class="existing-img-search-empty text-danger">${escapeHtml(err.message)}</div>`;
+            const msg = err instanceof Error ? err.message : String(err);
+            grid.innerHTML = `<div class="existing-img-search-empty text-danger">${escapeHtml(msg)}</div>`;
         } finally {
             loading = false;
         }
     }
 
-    function renderGrid(grid) {
+    function renderGrid(grid: HTMLElement): void {
         if (!items.length) {
             grid.innerHTML = '<div class="existing-img-search-empty">이미지가 없습니다.</div>';
             return;
@@ -147,22 +237,22 @@ async function openExistingImageSearch(callback) {
             </div>`;
         }).join('');
 
-        grid.querySelectorAll('.existing-img-tile').forEach((tile) => {
+        grid.querySelectorAll<HTMLElement>('.existing-img-tile').forEach((tile) => {
             tile.addEventListener('click', async () => {
                 const id = Number(tile.dataset.id);
                 const picked = items.find((it) => it.id === id);
                 if (!picked) return;
                 const size = await askImageSize(picked);
                 if (size === null) return;
-                Swal.close();
+                Swal!.close();
                 const altBase = picked.filename.replace(/\.[^.]+$/, '');
                 callback(picked.url, altBase, size);
             });
         });
     }
 
-    async function askImageSize(picked) {
-        const result = await Swal.fire({
+    async function askImageSize(picked: MediaItem): Promise<string | null> {
+        const result = await Swal!.fire<string>({
             title: '이미지 크기 선택',
             html: `
                 <div class="existing-img-size-preview">
@@ -180,7 +270,7 @@ async function openExistingImageSearch(callback) {
             confirmButtonText: '삽입',
             cancelButtonText: '취소',
             preConfirm: () => {
-                const sel = document.querySelector('input[name="existingImgSize"]:checked');
+                const sel = document.querySelector<HTMLInputElement>('input[name="existingImgSize"]:checked');
                 return sel ? sel.value : 'full';
             },
         });
@@ -188,35 +278,41 @@ async function openExistingImageSearch(callback) {
     }
 }
 
-// ── 미디어 업로드 처리 ──
-// mountMediaTagInput은 common.js에서 제공한다.
-async function handleImageUpload(blob, callback) {
+// ─────────────────────────────────────────────────────────────────────────────
+// 미디어 업로드 처리
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function handleImageUpload(
+    blob: File | Blob | null,
+    callback: ImageInsertCallback,
+): Promise<void> {
     if (!blob) return;
+    const Swal = window.Swal;
 
     if (blob.size > 15 * 1024 * 1024) {
-        Swal.fire('오류', '파일 크기는 15MB 이하만 허용됩니다.', 'warning');
+        Swal?.fire('오류', '파일 크기는 15MB 이하만 허용됩니다.', 'warning');
         return;
     }
 
     let selectedSize = 'full';
+    let workingBlob: File | Blob = blob;
 
     // 이미지인 경우 편집기를 먼저 실행 (동영상은 바로 업로드)
-    if (blob.type && !blob.type.startsWith('video/') && typeof ImageEditor !== 'undefined') {
-        const editResult = await ImageEditor.open(blob);
+    if (workingBlob.type && !workingBlob.type.startsWith('video/')) {
+        const editResult = await ImageEditor.open(workingBlob);
         if (!editResult) return; // 편집 취소
-        blob = new File([editResult.blob], blob.name || 'image', { type: editResult.blob.type });
+        const fileName = (workingBlob as File).name || 'image';
+        workingBlob = new File([editResult.blob], fileName, { type: editResult.blob.type });
         selectedSize = editResult.size || 'full';
     }
 
     // 사용자에게 파일명 + 태그 입력 요청
-    const originalName = blob.name || 'image';
+    const originalName = (workingBlob as File).name || 'image';
     const nameWithoutExt = originalName.replace(/\.[^.]+$/, '');
-    const nameDefaultAttr = String(nameWithoutExt).replace(/[&<>"']/g, (m) => ({
-        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-    }[m]));
+    const nameDefaultAttr = escapeHtml(nameWithoutExt);
 
-    let tagWidget = null;
-    const { value: formResult, isConfirmed } = await Swal.fire({
+    let tagWidget: MediaTagWidget | null = null;
+    const result = await (Swal?.fire<{ filename: string; tags: string[] }>({
         title: '이미지 업로드',
         html: `
             <div style="text-align:left;">
@@ -234,33 +330,40 @@ async function handleImageUpload(blob, callback) {
         cancelButtonText: '취소',
         focusConfirm: false,
         didOpen: () => {
-            const fnInput = document.getElementById('uploadFilenameInput');
+            const fnInput = document.getElementById('uploadFilenameInput') as HTMLInputElement | null;
+            const tagContainer = document.getElementById('uploadTagContainer');
+            const tagInput = document.getElementById('uploadTagInput') as HTMLInputElement | null;
+            if (!fnInput || !tagContainer || !tagInput) return;
             fnInput.focus();
             fnInput.select();
-            tagWidget = mountMediaTagInput({
-                container: document.getElementById('uploadTagContainer'),
-                input: document.getElementById('uploadTagInput'),
-                initial: [],
-            });
+            const mount = window.mountMediaTagInput;
+            if (mount) {
+                tagWidget = mount({
+                    container: tagContainer,
+                    input: tagInput,
+                    initial: [],
+                });
+            }
         },
         willClose: () => { if (tagWidget) tagWidget.destroy(); },
         preConfirm: () => {
-            const fn = document.getElementById('uploadFilenameInput').value.trim();
+            const fnInput = document.getElementById('uploadFilenameInput') as HTMLInputElement | null;
+            const fn = fnInput ? fnInput.value.trim() : '';
             if (!fn) {
-                Swal.showValidationMessage('파일명을 입력해주세요.');
+                Swal?.showValidationMessage('파일명을 입력해주세요.');
                 return false;
             }
             if (tagWidget) tagWidget.flush();
             return { filename: fn, tags: tagWidget ? tagWidget.getTags() : [] };
         },
-    });
+    })) ?? { isConfirmed: false, isDenied: false, isDismissed: true, value: undefined };
 
-    if (!isConfirmed || !formResult) return;
-    const customFilename = formResult.filename;
-    const uploadTags = formResult.tags || [];
+    if (!result.isConfirmed || !result.value) return;
+    const customFilename = result.value.filename;
+    const uploadTags = result.value.tags || [];
 
     const formData = new FormData();
-    formData.append('file', blob);
+    formData.append('file', workingBlob);
     formData.append('filename', customFilename);
     if (uploadTags.length > 0) {
         formData.append('tags', JSON.stringify(uploadTags));
@@ -273,61 +376,71 @@ async function handleImageUpload(blob, callback) {
         });
 
         if (!res.ok) {
-            const data = await res.json();
+            const data = await res.json() as MediaUploadResponse;
             throw new Error(data.error || '업로드 실패');
         }
 
-        const data = await res.json();
+        const data = await res.json() as MediaUploadResponse;
 
         // callback(url, altText, size)
         callback(data.url, data.filename, selectedSize);
 
     } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
         console.error(err);
-        Swal.fire('오류', err.message, 'error');
+        Swal?.fire('오류', msg, 'error');
     }
 }
 
-// ── 이미지 편집기 (크롭 + 90도 회전, 터치 지원) ──
-// ══════════════════════════════════════════════════
+// ─────────────────────────────────────────────────────────────────────────────
+// 이미지 편집기 (크롭 + 90도 회전, 터치 지원)
+// ─────────────────────────────────────────────────────────────────────────────
+
 const ImageEditor = (() => {
-    let modal, canvas, ctx;
-    let originalImg = null;       // 원본 Image 객체
-    let currentImg = null;        // 현재 편집 상태 Image
-    let rotation = 0;             // 누적 회전 (0, 90, 180, 270)
+    let modal: { show(): void; hide(): void } | null = null;
+    let canvas: HTMLCanvasElement | null = null;
+    let ctx: CanvasRenderingContext2D | null = null;
+    let originalImg: HTMLImageElement | null = null; // 원본 Image 객체
+    let currentImg: HTMLImageElement | null = null;  // 현재 편집 상태 Image
+    let rotation = 0;            // 누적 회전 (0, 90, 180, 270)
     let cropMode = false;
-    let crop = { x: 0, y: 0, w: 0, h: 0 }; // 캔버스 좌표 기준
-    let resolvePromise = null;
-    let originalBlob = null;
+    const crop = { x: 0, y: 0, w: 0, h: 0 }; // 캔버스 좌표 기준
+    let resolvePromise: ((value: EditResult | null) => void) | null = null;
+    let originalBlob: File | Blob | null = null;
     let selectedSize = 'full';
 
-    function init() {
-        modal = new bootstrap.Modal(document.getElementById('imageEditorModal'));
-        canvas = document.getElementById('imgEditorCanvas');
-        ctx = canvas.getContext('2d');
+    function init(): void {
+        const modalEl = document.getElementById('imageEditorModal');
+        const canvasEl = document.getElementById('imgEditorCanvas') as HTMLCanvasElement | null;
+        if (!modalEl || !canvasEl || !window.bootstrap) return;
+        modal = new window.bootstrap.Modal(modalEl);
+        canvas = canvasEl;
+        ctx = canvasEl.getContext('2d');
 
-        document.getElementById('btnRotateLeft').addEventListener('click', () => rotate(-90));
-        document.getElementById('btnRotateRight').addEventListener('click', () => rotate(90));
-        document.getElementById('btnCropToggle').addEventListener('click', toggleCrop);
-        document.getElementById('btnCropApply').addEventListener('click', applyCrop);
-        document.getElementById('btnImgReset').addEventListener('click', resetImage);
-        document.getElementById('btnImgEditorDone').addEventListener('click', finishEdit);
+        document.getElementById('btnRotateLeft')?.addEventListener('click', () => rotate(-90));
+        document.getElementById('btnRotateRight')?.addEventListener('click', () => rotate(90));
+        document.getElementById('btnCropToggle')?.addEventListener('click', toggleCrop);
+        document.getElementById('btnCropApply')?.addEventListener('click', applyCrop);
+        document.getElementById('btnImgReset')?.addEventListener('click', resetImage);
+        document.getElementById('btnImgEditorDone')?.addEventListener('click', finishEdit);
 
         // 사이즈 드롭다운 이벤트 연동
-        const dropdownItems = document.querySelectorAll('#imgEditorSizeDropdown .dropdown-item');
+        const dropdownItems = document.querySelectorAll<HTMLElement>('#imgEditorSizeDropdown .dropdown-item');
         if (dropdownItems.length) {
-            dropdownItems.forEach(item => {
+            dropdownItems.forEach((item) => {
                 item.addEventListener('click', (e) => {
                     e.preventDefault();
-                    const size = e.currentTarget.dataset.size;
-                    const label = e.currentTarget.innerHTML;
+                    const target = e.currentTarget as HTMLElement;
+                    const size = target.dataset.size || 'full';
+                    const label = target.innerHTML;
                     selectedSize = size;
-                    document.getElementById('btnImgEditorSizeToggle').innerHTML = label;
+                    const toggleBtn = document.getElementById('btnImgEditorSizeToggle');
+                    if (toggleBtn) toggleBtn.innerHTML = label;
                 });
             });
         }
 
-        document.getElementById('imageEditorModal').addEventListener('hidden.bs.modal', () => {
+        modalEl.addEventListener('hidden.bs.modal', () => {
             if (resolvePromise) {
                 resolvePromise(null);
                 resolvePromise = null;
@@ -338,7 +451,7 @@ const ImageEditor = (() => {
     }
 
     // 외부에서 호출: 이미지 파일 → 편집 모달 → 편집된 Blob 반환
-    function open(blob) {
+    function open(blob: File | Blob): Promise<EditResult | null> {
         originalBlob = blob;
         rotation = 0;
         cropMode = false;
@@ -347,9 +460,11 @@ const ImageEditor = (() => {
         if (toggleBtn) {
             toggleBtn.innerHTML = '<i class="mdi mdi-arrow-expand-all me-1"></i>크게(기본)';
         }
-        document.getElementById('cropOverlay').style.display = 'none';
-        document.getElementById('btnCropToggle').classList.remove('active');
-        document.getElementById('btnCropApply').style.display = 'none';
+        const cropOverlay = document.getElementById('cropOverlay') as HTMLElement | null;
+        if (cropOverlay) cropOverlay.style.display = 'none';
+        document.getElementById('btnCropToggle')?.classList.remove('active');
+        const cropApplyBtn = document.getElementById('btnCropApply') as HTMLElement | null;
+        if (cropApplyBtn) cropApplyBtn.style.display = 'none';
 
         return new Promise((resolve) => {
             resolvePromise = resolve;
@@ -361,7 +476,7 @@ const ImageEditor = (() => {
                 currentImg = img;
                 drawImage();
                 updateInfo();
-                modal.show();
+                modal?.show();
             };
             img.onerror = () => {
                 URL.revokeObjectURL(url);
@@ -371,8 +486,8 @@ const ImageEditor = (() => {
         });
     }
 
-    function drawImage() {
-        if (!currentImg) return;
+    function drawImage(): void {
+        if (!currentImg || !canvas || !ctx) return;
         const w = currentImg.width;
         const h = currentImg.height;
 
@@ -396,20 +511,20 @@ const ImageEditor = (() => {
         updateInfo();
     }
 
-    function rotate(deg) {
+    function rotate(deg: number): void {
         exitCropMode();
         rotation = (rotation + deg + 360) % 360;
         drawImage();
     }
 
-    function resetImage() {
+    function resetImage(): void {
         exitCropMode();
         currentImg = originalImg;
         rotation = 0;
         drawImage();
     }
 
-    function toggleCrop() {
+    function toggleCrop(): void {
         if (cropMode) {
             exitCropMode();
         } else {
@@ -417,13 +532,16 @@ const ImageEditor = (() => {
         }
     }
 
-    function enterCropMode() {
+    function enterCropMode(): void {
+        if (!canvas) return;
         cropMode = true;
-        document.getElementById('btnCropToggle').classList.add('active');
-        document.getElementById('btnCropApply').style.display = '';
+        document.getElementById('btnCropToggle')?.classList.add('active');
+        const cropApplyBtn = document.getElementById('btnCropApply') as HTMLElement | null;
+        if (cropApplyBtn) cropApplyBtn.style.display = '';
 
-        const overlay = document.getElementById('cropOverlay');
+        const overlay = document.getElementById('cropOverlay') as HTMLElement | null;
         const wrap = document.getElementById('imgEditorCanvasWrap');
+        if (!overlay || !wrap) return;
         overlay.style.display = '';
 
         // 캔버스의 실제 표시 크기 계산
@@ -446,23 +564,26 @@ const ImageEditor = (() => {
         updateCropBox();
     }
 
-    function exitCropMode() {
+    function exitCropMode(): void {
         cropMode = false;
-        document.getElementById('btnCropToggle').classList.remove('active');
-        document.getElementById('btnCropApply').style.display = 'none';
-        document.getElementById('cropOverlay').style.display = 'none';
+        document.getElementById('btnCropToggle')?.classList.remove('active');
+        const cropApplyBtn = document.getElementById('btnCropApply') as HTMLElement | null;
+        if (cropApplyBtn) cropApplyBtn.style.display = 'none';
+        const overlay = document.getElementById('cropOverlay') as HTMLElement | null;
+        if (overlay) overlay.style.display = 'none';
     }
 
-    function updateCropBox() {
-        const box = document.getElementById('cropBox');
+    function updateCropBox(): void {
+        const box = document.getElementById('cropBox') as HTMLElement | null;
+        if (!box) return;
         box.style.left = crop.x + 'px';
         box.style.top = crop.y + 'px';
         box.style.width = crop.w + 'px';
         box.style.height = crop.h + 'px';
     }
 
-    function applyCrop() {
-        if (!cropMode) return;
+    function applyCrop(): void {
+        if (!cropMode || !canvas) return;
 
         const rect = canvas.getBoundingClientRect();
         const scaleX = canvas.width / rect.width;
@@ -474,7 +595,7 @@ const ImageEditor = (() => {
         const sh = Math.round(crop.h * scaleY);
 
         if (sw < 10 || sh < 10) {
-            Swal.fire('오류', '크롭 영역이 너무 작습니다.', 'warning');
+            window.Swal?.fire('오류', '크롭 영역이 너무 작습니다.', 'warning');
             return;
         }
 
@@ -483,6 +604,7 @@ const ImageEditor = (() => {
         tmpCanvas.width = sw;
         tmpCanvas.height = sh;
         const tmpCtx = tmpCanvas.getContext('2d');
+        if (!tmpCtx) return;
         tmpCtx.drawImage(canvas, sx, sy, sw, sh, 0, 0, sw, sh);
 
         // 결과를 새 이미지로
@@ -497,23 +619,31 @@ const ImageEditor = (() => {
     }
 
     // ── 크롭 인터랙션 (마우스 + 터치) ──
-    function initCropInteraction() {
+    function initCropInteraction(): void {
         const overlay = document.getElementById('cropOverlay');
-        const cropBox = document.getElementById('cropBox');
-        let dragging = null; // null | 'move' | 'tl' | 'tr' | 'bl' | 'br'
+        if (!overlay) return;
+        let dragging: null | 'move' | 'tl' | 'tr' | 'bl' | 'br' = null;
         let startPos = { x: 0, y: 0 };
-        let startCrop = {};
+        let startCrop = { x: 0, y: 0, w: 0, h: 0 };
 
-        function getPos(e) {
-            const t = e.touches ? e.touches[0] : e;
-            const rect = overlay.getBoundingClientRect();
+        function getPos(e: MouseEvent | TouchEvent): { x: number; y: number } {
+            const t: { clientX: number; clientY: number } = ('touches' in e && e.touches.length > 0)
+                ? e.touches[0]
+                : (e as MouseEvent);
+            const rect = overlay!.getBoundingClientRect();
             return { x: t.clientX - rect.left, y: t.clientY - rect.top };
         }
 
-        function onStart(e) {
-            const target = e.target;
+        function onStart(e: MouseEvent | TouchEvent): void {
+            const target = e.target as HTMLElement | null;
+            if (!target) return;
             if (target.classList.contains('crop-handle')) {
-                dragging = target.dataset.handle;
+                const handle = target.dataset.handle;
+                if (handle === 'tl' || handle === 'tr' || handle === 'bl' || handle === 'br') {
+                    dragging = handle;
+                } else {
+                    return;
+                }
             } else if (target.id === 'cropBox' || target.closest('#cropBox')) {
                 dragging = 'move';
             } else {
@@ -524,14 +654,14 @@ const ImageEditor = (() => {
             startCrop = { ...crop };
         }
 
-        function onMove(e) {
+        function onMove(e: MouseEvent | TouchEvent): void {
             if (!dragging) return;
             e.preventDefault();
             const pos = getPos(e);
             const dx = pos.x - startPos.x;
             const dy = pos.y - startPos.y;
 
-            const overlayRect = overlay.getBoundingClientRect();
+            const overlayRect = overlay!.getBoundingClientRect();
             const maxW = overlayRect.width;
             const maxH = overlayRect.height;
             const minSize = 20;
@@ -560,7 +690,7 @@ const ImageEditor = (() => {
             updateCropBox();
         }
 
-        function onEnd() {
+        function onEnd(): void {
             dragging = null;
         }
 
@@ -575,30 +705,42 @@ const ImageEditor = (() => {
         document.addEventListener('touchend', onEnd);
     }
 
-    function finishEdit() {
+    function finishEdit(): void {
+        if (!canvas) return;
         // 캔버스 → Blob
-        const mimeType = originalBlob.type && originalBlob.type.startsWith('image/')
+        const mimeType = originalBlob && originalBlob.type && originalBlob.type.startsWith('image/')
             ? originalBlob.type : 'image/png';
         const quality = mimeType === 'image/jpeg' ? 0.92 : undefined;
 
         canvas.toBlob((blob) => {
             if (resolvePromise) {
-                resolvePromise({ blob, size: selectedSize });
+                if (blob) {
+                    resolvePromise({ blob, size: selectedSize });
+                } else {
+                    resolvePromise(null);
+                }
                 resolvePromise = null;
             }
-            modal.hide();
+            modal?.hide();
         }, mimeType, quality);
     }
 
-    function updateInfo() {
+    function updateInfo(): void {
         const info = document.getElementById('imgEditorInfo');
-        if (canvas.width && canvas.height) {
+        if (info && canvas && canvas.width && canvas.height) {
             info.textContent = `${canvas.width} × ${canvas.height}px`;
         }
     }
 
-    // DOM 로드 후 초기화
+    // DOM 로드 후 초기화 (원본 edit-image.js 와 동일하게 setTimeout 으로 지연)
     setTimeout(init, 300);
 
     return { open };
 })();
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 브리지: edit.js (raw) 가 bare reference 로 호출하므로 window 에 노출
+// ─────────────────────────────────────────────────────────────────────────────
+
+window.openExistingImageSearch = openExistingImageSearch;
+window.handleImageUpload = handleImageUpload;

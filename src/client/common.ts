@@ -1,6 +1,21 @@
+// @ts-nocheck — Phase 4-9 의 1차 마이그레이션은 동작 보존을 우선해 임시로 type
+// 검사를 끈다. Bootstrap / Swal CDN 글로벌 의존, 광범위한 DOM/Element 캐스팅,
+// 알림 패널 등 dynamically-built innerHTML 처리 때문에 1회성 도입으로 다루기 어렵다.
+// 후속 Phase 4-9.1 에서 (1) Bootstrap / Swal devDeps 또는 .d.ts shim 도입,
+// (2) HTMLElement 캐스팅 정리, (3) window.* 단정 정리 후 본 디렉티브 제거 예정.
 /**
- * CloudWiki Common JavaScript Module
- * 모든 페이지에서 공통으로 사용되는 함수와 변수를 모아놓은 파일입니다.
+ * CloudWiki 공통 클라이언트 모듈 — 전역 변수, 인증, 테마, 알림/쪽지, 사이드바
+ * 레이아웃, 트렌딩 / 최근 변경 사이드바 등 모든 페이지에서 공통으로 사용한다.
+ *
+ * Phase 4-9 마이그레이션: public/js/common.js (1,203 줄, classic) → src/client/common.ts.
+ * - 모든 top-level function 과 var 선언을 그대로 유지하되, 파일 끝의 window 브리지
+ *   블록에서 window.* 로 노출해 기존 classic-script-global 동작을 보존한다.
+ * - 14개 HTML 페이지가 사용. 각 페이지의 inline classic <script> 가 bare 식별자
+ *   (loadConfig / currentUser / escapeHtml / cycleTheme 등) 로 호출하므로 브리지 필수.
+ * - HTML <head> 의 inline 테마 FOUC 방지 스크립트는 유지 (deferred ESM 보다 먼저 실행).
+ *   본 모듈의 동일 IIFE 는 fallback 으로 남겨두며 실질적으로 no-op.
+ * - escapeHtml / isSafeUrl 은 src/client/utils/* 에도 동일 구현이 있으나, 다른 클래식
+ *   inline <script> 와의 호환성을 위해 본 모듈도 자체 정의 + window 노출 유지.
  */
 
 // ── 테마 초기화 (body 내 fallback, head의 인라인 스크립트가 먼저 실행됨) ──
@@ -364,6 +379,10 @@ async function loadConfig() {
         const res = await fetch('/api/config');
         if (res.ok) {
             appConfig = await res.json();
+            // ESM 모듈은 var 재바인딩이 globalThis 에 자동 반영되지 않으므로 명시적 미러.
+            // 다른 ESM 모듈 (edit/main.ts 등) 과 inline classic <script> 가 window.appConfig
+            // 를 읽으므로 fetch 결과를 즉시 노출해야 한다.
+            window.appConfig = appConfig;
 
             // 위키 이름 적용
             document.querySelectorAll('.app-wiki-name').forEach(el => {
@@ -487,6 +506,10 @@ async function checkAuth() {
         const res = await fetch('/api/me');
         if (res.ok) {
             currentUser = await res.json();
+            // ESM 모듈은 var 재바인딩이 globalThis 에 자동 반영되지 않으므로 명시적 미러.
+            // 다른 ESM 모듈 (edit/main.ts 등) 과 inline classic <script> 가 window.currentUser
+            // 를 읽어 인증 UI / 권한 분기를 처리하므로 즉시 노출해야 한다.
+            window.currentUser = currentUser;
             document.querySelectorAll('#navLogin').forEach(el => el.classList.add('d-none'));
             document.querySelectorAll('#navUser').forEach(el => el.classList.remove('d-none'));
 
@@ -1201,3 +1224,44 @@ function initTrendingTicker(container, count) {
         });
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// window 브리지 — classic public/js/common.js 시절 모든 top-level 선언이
+// classic-script-global 로 자동 노출되었으므로, ESM 으로 이전한 뒤에도 동일한
+// 외부 계약을 유지한다. 14개 HTML 페이지의 inline classic <script> 가
+// bare 식별자로 호출 (`loadConfig`, `currentUser`, `escapeHtml`, `cycleTheme`,
+// `goRandomPage`, `toggleNotificationPanel`, `doSearch` 등) 하므로 누락 시 회귀.
+// ESM 모듈 (edit/main.ts / render.ts 등) 도 window.* 로 읽으므로 동일하게 필수.
+// ─────────────────────────────────────────────────────────────────────────────
+window.appConfig = appConfig;
+window.currentUser = currentUser;
+window.isSafeUrl = isSafeUrl;
+window.escapeHtml = escapeHtml;
+window.mountMediaTagInput = mountMediaTagInput;
+window.doSearch = doSearch;
+window.applyThemeClass = applyThemeClass;
+window.setTheme = setTheme;
+window.getCurrentTheme = getCurrentTheme;
+window.cycleTheme = cycleTheme;
+window.updateThemeToggleUI = updateThemeToggleUI;
+window.goRandomPage = goRandomPage;
+window.applyAnnouncementBanner = applyAnnouncementBanner;
+window.loadConfig = loadConfig;
+window.ensureLayoutComponents = ensureLayoutComponents;
+window.checkAuth = checkAuth;
+window.startNotifPolling = startNotifPolling;
+window.stopNotifPolling = stopNotifPolling;
+window.loadNotificationCount = loadNotificationCount;
+window.toggleNotificationPanel = toggleNotificationPanel;
+window.handleNotificationClick = handleNotificationClick;
+window.loadNotifications = loadNotifications;
+window.deleteNotification = deleteNotification;
+window.renderUserRoleIcon = renderUserRoleIcon;
+window.initRoleIconPopovers = initRoleIconPopovers;
+window.viewMessage = viewMessage;
+window.replyToMessage = replyToMessage;
+window.sendMessage = sendMessage;
+window.getRelativeTime = getRelativeTime;
+window.loadRecentChanges = loadRecentChanges;
+window.loadTrending = loadTrending;
+window.initTrendingTicker = initTrendingTicker;

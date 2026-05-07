@@ -9,6 +9,7 @@ import { googleProvider } from './providers/google';
 import { discordProvider } from './providers/discord';
 import { handleOAuthLogin } from './common';
 import type { RBAC } from '../../utils/role';
+import type { AuthProvidersResponse } from '../../shared/api/auth';
 
 const auth = new Hono<Env>();
 
@@ -145,7 +146,7 @@ auth.get('/api/auth/providers', (c) => {
             name,
             label: providerRegistry[name].label,
         }));
-    return c.json({ providers });
+    return c.json<AuthProvidersResponse>({ providers });
 });
 
 /**
