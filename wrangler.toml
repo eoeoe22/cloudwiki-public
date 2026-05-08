@@ -108,6 +108,10 @@ ROLE_PERMISSIONS_JSON = """
 PALETTES = """
 {"cloudflare":{"bg":"#FF8000","color":"#000000"},"anthropic":{"bg":"#F0EEE6","color":"#C15F3C"},"typescript":{"bg":"#0080FF","color":"#FFFFFF"},"reverse":{"light":{"bg":"#000000","color":"#000000"},"dark":{"bg":"#FFFFFF","color":"#FFFFFF"}}}
 """
+# DISCORD_COMMUNITY_WEBHOOK_URL, DISCORD_ADMIN_WEBHOOK_URL 은 Workers 대시보드에서 시크릿으로 설정
+DISCORD_ADMIN_EVENTS = "signup_pending,signup_rejected,ticket_create,ticket_status,user_ban,user_role_change,super_admin_action"
+DISCORD_COMMUNITY_EVENTS = "user_joined,discussion_create,announcement_publish"
+WIKI_PUBLIC_BASE_URL = "https://도메인"
 
 
 [triggers]
