@@ -1023,8 +1023,22 @@ function _expandAncestorsForScroll(targetEl) {
             el.open = true;
             changed = true;
         }
-        // 목차 아코디언(#collapseTOC) — Bootstrap Collapse API 로 열기
-        if (el.id === 'collapseTOC' && el.classList.contains('collapse') && !el.classList.contains('show')) {
+        // 비활성 Bootstrap 탭 패널 → 대응 nav-tab 버튼을 활성화
+        if (el.classList && el.classList.contains('tab-pane') && !el.classList.contains('active')) {
+            try {
+                const elId = el.id;
+                if (elId && window.bootstrap && window.bootstrap.Tab) {
+                    const trigger = document.querySelector(`[data-bs-target="#${CSS.escape(elId)}"]`)
+                                 || (el.getAttribute('aria-labelledby') ? document.getElementById(el.getAttribute('aria-labelledby')) : null);
+                    if (trigger) {
+                        window.bootstrap.Tab.getOrCreateInstance(trigger).show();
+                        changed = true;
+                    }
+                }
+            } catch (_) { /* ignore */ }
+        }
+        // 접힌 Bootstrap collapse(.accordion-collapse 포함, 목차 #collapseTOC 도 동일 로직)
+        if (el.classList && el.classList.contains('collapse') && !el.classList.contains('show')) {
             try {
                 if (window.bootstrap && window.bootstrap.Collapse) {
                     const inst = window.bootstrap.Collapse.getOrCreateInstance(el, { toggle: false });
@@ -1491,6 +1505,91 @@ function _resolvePaletteTokens(text) {
 
 // ── 고급 레이아웃: ::: 블록 디렉티브 & 인라인 칩 ──
 
+// 페이지 내 동일 컴포넌트 인스턴스 간 ID 충돌 방지용 카운터.
+// (탭/아코디언은 BS data-bs-target / aria-controls 가 unique id 를 요구)
+var _wikiBsBlockCounter = 0;
+function _nextWikiBsId(prefix) {
+    _wikiBsBlockCounter++;
+    return `${prefix}-${_wikiBsBlockCounter}`;
+}
+
+/**
+ * 컨테이너 블록(:::tabs / :::accordion / :::steps) 의 innerText 에서
+ * WIKIBLOCKPH<i>XEND 플레이스홀더를 순서대로 수집해 자식 block 객체로 반환.
+ * 자식 type 이 allowedTypes 에 없으면 무시한다.
+ */
+function _collectWikiChildBlocks(parentInnerText, blockData, allowedTypes) {
+    if (!parentInnerText) return [];
+    const re = /WIKIBLOCKPH(\d+)XEND/g;
+    const out = [];
+    let m;
+    while ((m = re.exec(parentInnerText)) !== null) {
+        const idx = parseInt(m[1], 10);
+        const child = blockData[idx];
+        if (!child) continue;
+        if (allowedTypes && !allowedTypes.includes(child.type)) continue;
+        out.push(child);
+    }
+    return out;
+}
+
+/** 특정 토큰 키만 추출하고 반환된 cleanTitle 에서 제거. enum 검증으로 자유 CSS 차단. */
+function _extractStrictTokens(titleLine, schema) {
+    let t = titleLine || '';
+    const found = {};
+    for (const key of Object.keys(schema)) {
+        const spec = schema[key];
+        if (spec.type === 'enum') {
+            const re = new RegExp(`\\{${key}:\\s*([^}\\s]+)\\s*\\}`);
+            const m = t.match(re);
+            if (m) {
+                const v = m[1].trim();
+                if (spec.values.includes(v)) found[key] = v;
+                t = t.replace(m[0], '');
+            }
+        } else if (spec.type === 'flag') {
+            const re = new RegExp(`\\{${key}\\}`);
+            const m = t.match(re);
+            if (m) {
+                found[key] = true;
+                t = t.replace(m[0], '');
+            }
+        } else if (spec.type === 'icon') {
+            const re = new RegExp(`\\{${key}:\\s*([a-zA-Z0-9_-]+)\\s*\\}`);
+            const m = t.match(re);
+            if (m) {
+                const v = m[1].trim();
+                if (/^(bi-|mdi-)[a-zA-Z0-9_-]+$/.test(v)) found[key] = v;
+                t = t.replace(m[0], '');
+            }
+        }
+    }
+    return { cleanTitle: t.replace(/\s+/g, ' ').trim(), tokens: found };
+}
+
+/** 자식 블록 본문(innerText)을 marked 로 렌더링. 중첩 WIKIBLOCKPH 도 재귀 치환. */
+function _renderChildInnerHtml(innerText, blockData) {
+    const { text: protectedInner, prot: wlProt } = protectWikiLinks(innerText || '');
+    let innerHtml = (typeof marked !== 'undefined') ? marked.parse(protectedInner) : protectedInner;
+    innerHtml = restoreWikiLinks(innerHtml, wlProt);
+    innerHtml = innerHtml.replace(/<img([^>]*)>\s*\{size:([a-zA-Z0-9_-]+)\}/g, (_, attrs, size) => `<img${attrs} data-size="${size.trim()}">`);
+    innerHtml = innerHtml.replace(/(?:<p>)?WIKIBLOCKPH(\d+)XEND(?:<\/p>)?/g, (m, i) => {
+        const sub = blockData[parseInt(i, 10)];
+        return sub ? _renderBlockHtml(sub, blockData) : '';
+    });
+    return innerHtml;
+}
+
+/** 아이콘 토큰을 HTML 로 변환 (bi-* / mdi-*) */
+function _iconHtmlFromToken(iconCode) {
+    if (!iconCode) return '';
+    if (iconCode.startsWith('bi-')) return `<i class="bi ${escapeHtml(iconCode)}" aria-hidden="true"></i>`;
+    if (iconCode.startsWith('mdi-')) return `<span class="mdi ${escapeHtml(iconCode)}" aria-hidden="true"></span>`;
+    return '';
+}
+
+
+
 /**
  * 라인 기반 스택 파서. `:::type 제목` 오프너와 단독 `:::` 클로저로 블록을 수집.
  * 코드블록은 외부에서 이미 WIKICODEFPH 로 보호됐다고 가정.
@@ -1608,7 +1707,7 @@ function _renderBlockHtml(block, blockData) {
 
     switch (type) {
         case 'card': {
-            // 헤더(제목)와 바디(내용)에 스타일을 분리 적용
+            // 헤더(제목)와 바디(내용)에 스타일을 분리 적용. Bootstrap .card 와 호환.
             let headerStyle = '';
             if (bg && _isSafeCssColor(bg)) headerStyle += `background-color:${bg};`;
             if (color && _isSafeCssColor(color)) headerStyle += `color:${color};`;
@@ -1619,15 +1718,130 @@ function _renderBlockHtml(block, blockData) {
             if (bodyColor && _isSafeCssColor(bodyColor)) bodyStyle += `color:${bodyColor};`;
             const bodyStyleAttr = bodyStyle ? ` style="${bodyStyle}"` : '';
 
-            return `<div class="wiki-card">` +
-                (titleEsc ? `<div class="wiki-card-header"${headerStyleAttr}>${titleEsc}</div>` : '') +
-                `<div class="wiki-card-body"${bodyStyleAttr}>${innerHtml}</div>` +
+            return `<div class="card wiki-card">` +
+                (titleEsc ? `<div class="card-header wiki-card-header"${headerStyleAttr}>${titleEsc}</div>` : '') +
+                `<div class="card-body wiki-card-body"${bodyStyleAttr}>${innerHtml}</div>` +
                 `</div>`;
         }
         case 'grid':
             return `<div class="wiki-grid"${styleAttr}>${innerHtml}</div>`;
         case 'row':
             return `<div class="wiki-row"${styleAttr}>${innerHtml}</div>`;
+        case 'tabs': {
+            const { tokens } = _extractStrictTokens(block.titleLine, {
+                align: { type: 'enum', values: ['start', 'center', 'end'] }
+            });
+            const align = tokens.align || 'start';
+            const children = _collectWikiChildBlocks(block.innerText, blockData, ['tab']);
+            if (children.length === 0) return `<div class="wiki-tabs-empty"></div>`;
+            const groupId = _nextWikiBsId('wiki-tabs');
+            const navItems = [];
+            const panes = [];
+            children.forEach((child, i) => {
+                const meta = _extractStrictTokens(child.titleLine, {
+                    icon: { type: 'icon' }
+                });
+                const tabId = `${groupId}-pane-${i}`;
+                const navId = `${groupId}-tab-${i}`;
+                const isActive = i === 0;
+                const iconHtml = meta.tokens.icon ? _iconHtmlFromToken(meta.tokens.icon) + ' ' : '';
+                const labelEsc = escapeHtml(meta.cleanTitle || `탭 ${i + 1}`);
+                navItems.push(
+                    `<li class="nav-item" role="presentation">` +
+                    `<button class="nav-link${isActive ? ' active' : ''}" id="${navId}" ` +
+                    `data-bs-toggle="tab" data-bs-target="#${tabId}" type="button" ` +
+                    `role="tab" aria-controls="${tabId}" aria-selected="${isActive ? 'true' : 'false'}">` +
+                    `${iconHtml}${labelEsc}</button></li>`
+                );
+                const childInner = _renderChildInnerHtml(child.innerText, blockData);
+                panes.push(
+                    `<div class="tab-pane fade${isActive ? ' show active' : ''}" id="${tabId}" ` +
+                    `role="tabpanel" aria-labelledby="${navId}" tabindex="0">${childInner}</div>`
+                );
+            });
+            const alignCls = align === 'center' ? ' justify-content-center'
+                            : align === 'end' ? ' justify-content-end' : '';
+            return `<div class="wiki-tabs">` +
+                `<ul class="nav nav-tabs${alignCls}" role="tablist">${navItems.join('')}</ul>` +
+                `<div class="tab-content">${panes.join('')}</div>` +
+                `</div>`;
+        }
+        case 'accordion': {
+            const { tokens } = _extractStrictTokens(block.titleLine, {
+                multiple: { type: 'flag' }
+            });
+            const children = _collectWikiChildBlocks(block.innerText, blockData, ['item']);
+            if (children.length === 0) return `<div class="wiki-accordion-empty"></div>`;
+            const groupId = _nextWikiBsId('wiki-acc');
+            // 단일 열림 모드(default)에서 data-bs-parent 는 후속 토글에만 적용된다.
+            // 초기 렌더에 여러 {open} 이 있으면 BS 가 강제로 닫지 않으므로 첫 번째만 인정.
+            const allowMultiple = !!tokens.multiple;
+            let openSeen = false;
+            const items = children.map((child, i) => {
+                const meta = _extractStrictTokens(child.titleLine, {
+                    open: { type: 'flag' },
+                    icon: { type: 'icon' }
+                });
+                const itemId = `${groupId}-item-${i}`;
+                const headId = `${groupId}-head-${i}`;
+                let isOpen = !!meta.tokens.open;
+                if (isOpen && !allowMultiple) {
+                    if (openSeen) isOpen = false;
+                    else openSeen = true;
+                }
+                const iconHtml = meta.tokens.icon ? _iconHtmlFromToken(meta.tokens.icon) + ' ' : '';
+                const labelEsc = escapeHtml(meta.cleanTitle || `항목 ${i + 1}`);
+                const parentAttr = allowMultiple ? '' : ` data-bs-parent="#${groupId}"`;
+                const childInner = _renderChildInnerHtml(child.innerText, blockData);
+                return `<div class="accordion-item">` +
+                    `<h2 class="accordion-header" id="${headId}">` +
+                    `<button class="accordion-button${isOpen ? '' : ' collapsed'}" type="button" ` +
+                    `data-bs-toggle="collapse" data-bs-target="#${itemId}" ` +
+                    `aria-expanded="${isOpen ? 'true' : 'false'}" aria-controls="${itemId}">` +
+                    `${iconHtml}${labelEsc}</button></h2>` +
+                    `<div id="${itemId}" class="accordion-collapse collapse${isOpen ? ' show' : ''}" ` +
+                    `aria-labelledby="${headId}"${parentAttr}>` +
+                    `<div class="accordion-body">${childInner}</div>` +
+                    `</div></div>`;
+            });
+            return `<div class="accordion wiki-accordion" id="${groupId}">${items.join('')}</div>`;
+        }
+        case 'steps': {
+            const { tokens } = _extractStrictTokens(block.titleLine, {
+                layout: { type: 'enum', values: ['vertical', 'horizontal'] }
+            });
+            const layout = tokens.layout || 'vertical';
+            const children = _collectWikiChildBlocks(block.innerText, blockData, ['step']);
+            if (children.length === 0) return `<div class="wiki-steps-empty"></div>`;
+            const items = children.map((child, i) => {
+                const meta = _extractStrictTokens(child.titleLine, {
+                    status: { type: 'enum', values: ['done', 'current', 'todo'] }
+                });
+                const status = meta.tokens.status || 'todo';
+                const labelEsc = escapeHtml(meta.cleanTitle || `${i + 1}단계`);
+                const ariaCurrent = status === 'current' ? ' aria-current="step"' : '';
+                const iconCls = status === 'done' ? 'bi-check-circle-fill'
+                              : status === 'current' ? 'bi-circle-fill'
+                              : 'bi-circle';
+                const childInner = _renderChildInnerHtml(child.innerText, blockData);
+                return `<li class="wiki-step wiki-step-${status}"${ariaCurrent}>` +
+                    `<div class="wiki-step-marker"><span class="wiki-step-num">${i + 1}</span>` +
+                    `<i class="bi ${iconCls} wiki-step-icon" aria-hidden="true"></i></div>` +
+                    `<div class="wiki-step-content">` +
+                    `<div class="wiki-step-title">${labelEsc}</div>` +
+                    `<div class="wiki-step-body">${childInner}</div>` +
+                    `</div></li>`;
+            });
+            return `<ol class="wiki-steps wiki-steps-${layout}">${items.join('')}</ol>`;
+        }
+        case 'tab':
+        case 'item':
+        case 'step':
+            // 부모(tabs/accordion/steps) 밖에서 단독 사용된 경우: 일반 블록으로 폴백.
+            return `<div class="wiki-block wiki-block-${escapeHtml(type)}"${styleAttr}>` +
+                (titleEsc ? `<div class="wiki-block-title">${titleEsc}</div>` : '') +
+                innerHtml +
+                `</div>`;
         case 'embed': {
             const accentRaw = (bg && _isSafeCssColor(bg)) ? bg
                             : (color && _isSafeCssColor(color)) ? color
@@ -1645,16 +1859,17 @@ function _renderBlockHtml(block, blockData) {
         case 'warning':
         case 'danger':
         case 'note': {
+            // Bootstrap .alert 변종으로 매핑. note/tip 은 BS 에 직접 대응이 없어 secondary/info 로.
             const calloutMeta = {
-                info:    { icon: 'mdi-information-outline',   title: '정보' },
-                tip:     { icon: 'mdi-lightbulb-on-outline',  title: '팁' },
-                success: { icon: 'mdi-check-circle-outline',  title: '성공' },
-                warning: { icon: 'mdi-alert-outline',         title: '주의' },
-                danger:  { icon: 'mdi-alert-octagon-outline', title: '위험' },
-                note:    { icon: 'mdi-note-text-outline',     title: '노트' }
+                info:    { icon: 'mdi-information-outline',   title: '정보',   bsVariant: 'info' },
+                tip:     { icon: 'mdi-lightbulb-on-outline',  title: '팁',     bsVariant: 'info' },
+                success: { icon: 'mdi-check-circle-outline',  title: '성공',   bsVariant: 'success' },
+                warning: { icon: 'mdi-alert-outline',         title: '주의',   bsVariant: 'warning' },
+                danger:  { icon: 'mdi-alert-octagon-outline', title: '위험',   bsVariant: 'danger' },
+                note:    { icon: 'mdi-note-text-outline',     title: '노트',   bsVariant: 'secondary' }
             }[type];
             const headerTitle = titleEsc || escapeHtml(calloutMeta.title);
-            return `<div class="wiki-callout wiki-callout-${type}">` +
+            return `<div class="alert alert-${calloutMeta.bsVariant} wiki-callout wiki-callout-${type}" role="note">` +
                 `<div class="wiki-callout-header">` +
                     `<span class="mdi ${calloutMeta.icon} wiki-callout-icon" aria-hidden="true"></span>` +
                     `<span class="wiki-callout-title">${headerTitle}</span>` +

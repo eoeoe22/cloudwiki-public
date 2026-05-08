@@ -49,6 +49,14 @@ export type Env = {
         ROLE_PERMISSIONS_JSON?: string;
         PALETTES?: string;
         WIKI_SYNTAX?: string;
+        // === Discord Webhook (Secret 으로 등록) ===
+        DISCORD_ADMIN_WEBHOOK_URL?: string;
+        DISCORD_COMMUNITY_WEBHOOK_URL?: string;
+        // === Discord Webhook 이벤트 화이트리스트 (vars) ===
+        DISCORD_ADMIN_EVENTS?: string;
+        DISCORD_COMMUNITY_EVENTS?: string;
+        // === 절대 URL 보정용 (avatar_url, 임베드 링크) ===
+        WIKI_PUBLIC_BASE_URL?: string;
     };
     Variables: {
         user: User | null;

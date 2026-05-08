@@ -18,6 +18,16 @@ export function applyStoredTheme(): void {
         if (saved === 'light' || saved === 'dark') {
             document.documentElement.setAttribute('data-theme', saved);
         }
+        // Bootstrap 5.3 컴포넌트(.nav-tabs / .accordion / .alert 등) 다크모드 미러링.
+        let bsResolved: 'light' | 'dark' = 'light';
+        if (saved === 'dark') bsResolved = 'dark';
+        else if (saved === 'light') bsResolved = 'light';
+        else {
+            try {
+                bsResolved = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+            } catch { bsResolved = 'light'; }
+        }
+        document.documentElement.setAttribute('data-bs-theme', bsResolved);
     } catch {
         /* 스토리지 접근 불가(예: 시크릿 모드 일부) 시 auto 테마 유지 */
     }

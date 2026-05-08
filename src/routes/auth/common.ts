@@ -2,6 +2,8 @@ import type { Context } from 'hono';
 import type { Env } from '../../types';
 import type { OAuthProfile } from './providers/base';
 import { isEmailDomainAllowed } from '../../utils/auth';
+import { dispatchDiscord } from '../../utils/webhook/discord';
+import { userJoined } from '../../utils/webhook/events/signup';
 
 /**
  * OAuth 로그인 공통 처리:
@@ -108,10 +110,19 @@ export async function handleOAuthLogin(c: Context<Env>, profile: OAuthProfile): 
         // 모두 허용: 바로 유저 생성
         const finalName = await resolveUniqueName(db, profile.name);
 
-        await db
+        const insertResult = await db
             .prepare('INSERT INTO users (provider, uid, email, name, picture) VALUES (?, ?, ?, ?, ?)')
             .bind(profile.provider, profile.uid, profile.email, finalName, profile.picture || null)
             .run();
+
+        // open 정책 신규 가입 → community 채널 환영 알림
+        const newUserId = Number(insertResult.meta?.last_row_id ?? 0);
+        if (newUserId > 0) {
+            dispatchDiscord(c.env, c.executionCtx, userJoined({
+                user: { id: newUserId, name: finalName, picture: profile.picture || null },
+                env: c.env,
+            }));
+        }
     }
 
     // 2. user id 조회

@@ -386,10 +386,26 @@ export async function renderForAI(content: string, db: D1Database, depth = 0, cu
         info: '정보', tip: '팁', success: '성공',
         warning: '주의', danger: '위험', note: '노트'
     };
+    // 컨테이너 블록(tabs/accordion/steps)의 오프너 라인은 제거.
+    // 자식 블록(tab/item/step): 제목을 평문으로 보존. step 은 자동 번호 부여.
+    const CONTAINER_TYPES = new Set(['tabs', 'accordion', 'steps']);
+    let _stepCounter = 0;
     processed = processed.replace(/^:::([a-zA-Z][a-zA-Z0-9_-]*)(?:[ \t]+([^\n]*))?[ \t]*$/gm, (_, type, title) => {
-        const t = (title || '').replace(/\{(?:palette|bg|color):[^}]+\}/g, '').trim();
+        const t = (title || '')
+            .replace(/\{(?:palette|bg|color):[^}]+\}/g, '')
+            .replace(/\{(?:align|multiple|layout|status|open|icon)(?::[^}]*)?\}/g, '')
+            .trim();
         const calloutLabel = CALLOUT_LABELS[type as string];
         if (calloutLabel) return t ? `${calloutLabel}: ${t}` : `${calloutLabel}:`;
+        if (CONTAINER_TYPES.has(type as string)) {
+            if (type === 'steps') _stepCounter = 0;
+            return '';
+        }
+        if (type === 'step') {
+            _stepCounter++;
+            return `${_stepCounter}. ${t || '단계'}`;
+        }
+        if (type === 'tab' || type === 'item') return t || '';
         return t ? t : '';
     });
     processed = processed.replace(/^:::[ \t]*$/gm, '');

@@ -180,33 +180,60 @@ const MCP_TOOL_DEFS: Array<{ name: string; description: string; inputSchema: any
         name: 'view_image',
         description: '위키에 업로드된 이미지를 파일명으로 조회하여 이미지 데이터로 반환합니다. 문서 본문에 ![파일명](https://도메인/media/images/파일명) 형식으로 삽입된 그 파일명(확장자 포함)을 사용합니다.',
         inputSchema: { type: 'object', properties: { filename: { type: 'string', description: '이미지 파일명 (확장자 포함, 예: "example.png")' } }, required: ['filename'] }
+    },
+    {
+        name: 'list_blog_posts',
+        description: '블로그(/blog) 포스트 목록을 최신순으로 반환합니다. 한 페이지에 최대 20개 항목이 포함되며, 각 포스트의 id, title, 작성 시점(time_ago), 줄 수, 글자 수가 포함됩니다. 블로그 포스트는 제목이 아닌 정수 id 로 식별합니다. 다음 페이지가 있으면 응답에 next_page 가 포함됩니다.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                page: { type: 'number', description: '페이지 번호 (1부터 시작, 기본 1)' }
+            },
+            required: []
+        }
+    },
+    {
+        name: 'read_blog_post',
+        description: '블로그 포스트의 전체 본문을 읽어옵니다. id 는 list_blog_posts 가 반환한 정수 id 를 사용합니다. raw=true 로 설정 시 마크다운/위키 문법 변환을 건너뛰고 원본 그대로 반환합니다.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                id: { type: 'number', description: '블로그 포스트 id (정수)' },
+                raw: { type: 'boolean' }
+            },
+            required: ['id']
+        }
+    },
+    {
+        name: 'get_blog_toc',
+        description: '블로그 포스트의 목차(section)만 불러옵니다. 목차는 계층적 번호(예: "1.", "1.1")가 붙은 형식으로 반환됩니다. 첫 헤딩 이전에 본문 텍스트가 있으면 "0. 도입부" 항목이 맨 앞에 추가되며, read_blog_section 에 "0" 을 지정하면 그 도입부만 읽을 수 있습니다.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                id: { type: 'number', description: '블로그 포스트 id (정수)' }
+            },
+            required: ['id']
+        }
+    },
+    {
+        name: 'read_blog_section',
+        description: '블로그 포스트에서 특정 목차의 내용만 읽어옵니다. 목차 번호는 get_blog_toc 가 반환한 계층적 번호(예: "1", "1.1") 로 지정합니다. raw=true 로 설정 시 위키 문법 변환을 건너뛰고 반환합니다.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                id: { type: 'number', description: '블로그 포스트 id (정수)' },
+                section_number: { type: 'string', description: 'get_blog_toc 가 반환한 목차 번호 (예: "1", "1.1"). "0" 은 첫 헤딩 이전 도입부.' },
+                raw: { type: 'boolean' }
+            },
+            required: ['id', 'section_number']
+        }
     }
 ];
 
-type McpMode = 'lite' | 'full';
-
-// lite 엔드포인트(/api/mcp)에서 노출되는 도구 이름 집합. information 은 두 엔드포인트 모두에서
-// 항상 사용 가능하므로 별도로 처리한다.
-const LITE_TOOL_NAMES = new Set<string>([
-    'search_title',
-    'search_fts',
-    'get_toc',
-    'read_document',
-    'read_section'
-]);
-
-function getToolDefsForMode(mode: McpMode) {
-    return mode === 'lite' ? MCP_TOOL_DEFS.filter(t => LITE_TOOL_NAMES.has(t.name)) : MCP_TOOL_DEFS;
-}
-
-function buildInformationIntro(c: Context<Env>, mode: McpMode): string {
+function buildInformationIntro(c: Context<Env>): string {
     const wikiName = c.env.WIKI_NAME;
     const syntaxNote = c.env.WIKI_SYNTAX ? `\n\n문법 가이드 문서: ${c.env.WIKI_SYNTAX}` : '';
-    const base = `이 도구는 ${wikiName} 의 문서를 탐색할 수 있는 MCP 도구입니다.\n\n이 위키의 문법은 마크다운 기반으로, 기본적으로는 문법 가이드 문서를 읽지 않아도 내용 파악이 가능합니다. 문서를 읽을 때 raw 파라미터를 따로 활성화하지 않으면 마크다운 기반으로 정리된 내용이 반환됩니다. raw 파라미터를 사용하려면 위키 문법 문서를 먼저 읽을 것을 권장합니다.${syntaxNote}`;
-    if (mode === 'lite') {
-        return `${base}\n\n[Lite 엔드포인트] 현재 /api/mcp 엔드포인트에 연결되어 있어, 기본 탐색 도구(information, search_title, search_fts, get_toc, read_document, read_section)만 사용할 수 있습니다. 카테고리/역링크/하위 트리/배치 읽기/토론/이미지 등 확장 도구가 필요하면 /api/mcp/full 엔드포인트로 요청하세요.`;
-    }
-    return `${base}\n\n[Full 엔드포인트] 현재 /api/mcp/full 엔드포인트에 연결되어 있어, 모든 MCP 도구를 사용할 수 있습니다.`;
+    return `이 도구는 ${wikiName} 의 문서를 탐색할 수 있는 MCP 도구입니다.\n\n이 위키의 문법은 마크다운 기반으로, 기본적으로는 문법 가이드 문서를 읽지 않아도 내용 파악이 가능합니다. 문서를 읽을 때 raw 파라미터를 따로 활성화하지 않으면 마크다운 기반으로 정리된 내용이 반환됩니다. raw 파라미터를 사용하려면 위키 문법 문서를 먼저 읽을 것을 권장합니다.${syntaxNote}\n\n위키 문서 외에도 블로그(/blog) 포스트를 list_blog_posts / read_blog_post / get_blog_toc / read_blog_section 도구로 탐색할 수 있습니다. 블로그 포스트는 제목이 아닌 정수 id 로 식별합니다.`;
 }
 
 // CORS 미들웨어 적용
@@ -235,8 +262,8 @@ mcpRoutes.use('*', async (c, next) => {
     await next();
 });
 
-// GET /api/mcp, /api/mcp/full - 기본 정보 (브라우저 접속 시 안내 페이지)
-async function handleMcpGet(c: Context<Env>, mode: McpMode): Promise<Response> {
+// GET /api/mcp - 기본 정보 (브라우저 접속 시 안내 페이지)
+async function handleMcpGet(c: Context<Env>): Promise<Response> {
     const accept = c.req.header('Accept') || '';
 
     // 브라우저 접속 감지
@@ -319,20 +346,16 @@ async function handleMcpGet(c: Context<Env>, mode: McpMode): Promise<Response> {
         mcp: true,
         version: '1.0.0',
         transport: 'http',
-        mode,
-        endpoint: mode === 'lite' ? `${origin}/api/mcp` : `${origin}/api/mcp/full`,
-        endpoints: {
-            lite: `${origin}/api/mcp`,
-            full: `${origin}/api/mcp/full`
-        }
+        endpoint: `${origin}/api/mcp`
     });
 }
 
-mcpRoutes.get('/', (c) => handleMcpGet(c, 'lite'));
-mcpRoutes.get('/full', (c) => handleMcpGet(c, 'full'));
+mcpRoutes.get('/', (c) => handleMcpGet(c));
+// 과거 /api/mcp/full 엔드포인트 호환을 위해 동일 핸들러로 연결한다 (lite/full 분리 폐지).
+mcpRoutes.get('/full', (c) => handleMcpGet(c));
 
 // 공통 JSON-RPC 처리 함수
-async function handleJsonRpc(c: Context<Env>, body: any, mode: McpMode) {
+async function handleJsonRpc(c: Context<Env>, body: any) {
     const { jsonrpc, method, params, id } = body;
     if (jsonrpc !== '2.0') return { jsonrpc: '2.0', error: { code: -32600, message: 'Invalid Request' }, id: id || null };
 
@@ -364,9 +387,8 @@ async function handleJsonRpc(c: Context<Env>, body: any, mode: McpMode) {
 
     // 3. 도구 목록 반환
     if (method === 'tools/list') {
-        const intro = buildInformationIntro(c, mode);
-        const visibleTools = getToolDefsForMode(mode);
-        const toolNames = visibleTools.map(t => t.name).join(', ');
+        const intro = buildInformationIntro(c);
+        const toolNames = MCP_TOOL_DEFS.map(t => t.name).join(', ');
         const informationDescription = `${intro}\n\n사용 가능한 MCP 도구: ${toolNames}. 각 도구의 세부 설명은 information 도구를 호출하여 확인할 수 있습니다.`;
         return {
             jsonrpc: '2.0', id,
@@ -377,7 +399,7 @@ async function handleJsonRpc(c: Context<Env>, body: any, mode: McpMode) {
                         description: informationDescription,
                         inputSchema: { type: 'object', properties: {}, required: [] }
                     },
-                    ...visibleTools
+                    ...MCP_TOOL_DEFS
                 ]
             }
         };
@@ -388,24 +410,10 @@ async function handleJsonRpc(c: Context<Env>, body: any, mode: McpMode) {
         const args = params?.arguments || {};
         try {
             if (toolName === 'information') {
-                const intro = buildInformationIntro(c, mode);
-                const visibleTools = getToolDefsForMode(mode);
-                const toolDetails = visibleTools.map(t => `## ${t.name}\n${t.description}`).join('\n\n');
+                const intro = buildInformationIntro(c);
+                const toolDetails = MCP_TOOL_DEFS.map(t => `## ${t.name}\n${t.description}`).join('\n\n');
                 const text = `${intro}\n\n## 사용 가능한 도구 목록\n\n${toolDetails}`;
                 return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text }] } };
-            }
-            // lite 엔드포인트에서 허용 외 도구 호출 차단
-            if (mode === 'lite' && !LITE_TOOL_NAMES.has(toolName)) {
-                return {
-                    jsonrpc: '2.0', id,
-                    result: {
-                        content: [{
-                            type: 'text',
-                            text: `Error: '${toolName}' 도구는 /api/mcp (lite) 엔드포인트에서 사용할 수 없습니다. 이 도구를 사용하려면 /api/mcp/full 엔드포인트로 요청을 보내 주세요.`
-                        }],
-                        isError: true
-                    }
-                };
             }
             if (toolName === 'search_title') {
                 const results = await db.prepare('SELECT slug, rows, characters FROM pages WHERE slug LIKE ? AND deleted_at IS NULL LIMIT 15')
@@ -1187,6 +1195,74 @@ async function handleJsonRpc(c: Context<Env>, body: any, mode: McpMode) {
                     }
                 };
             }
+            if (toolName === 'list_blog_posts') {
+                const BLOG_PAGE_SIZE = 20;
+                const pageNum = Math.max(1, Math.floor(Number(args.page) || 1));
+                const offset = (pageNum - 1) * BLOG_PAGE_SIZE;
+
+                const [postsRes, totalRow] = await Promise.all([
+                    db.prepare('SELECT id, title, created_at, updated_at, rows, characters FROM blog_posts WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT ? OFFSET ?')
+                        .bind(BLOG_PAGE_SIZE, offset)
+                        .all<{ id: number; title: string; created_at: number | null; updated_at: number | null; rows: number | null; characters: number | null }>(),
+                    db.prepare('SELECT COUNT(*) AS cnt FROM blog_posts WHERE deleted_at IS NULL').first<{ cnt: number }>()
+                ]);
+
+                const total = totalRow?.cnt ?? 0;
+                const totalPages = total === 0 ? 0 : Math.ceil(total / BLOG_PAGE_SIZE);
+                const nowSec = Math.floor(Date.now() / 1000);
+
+                if (postsRes.results.length === 0 && total > 0) {
+                    return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: `Error: page ${pageNum} 에 해당하는 블로그 포스트가 없습니다. (총 ${total}개, ${totalPages}페이지)` }], isError: true } };
+                }
+
+                const output: any = {
+                    page: pageNum,
+                    page_size: BLOG_PAGE_SIZE,
+                    total,
+                    total_pages: totalPages,
+                    has_next_page: pageNum < totalPages,
+                    posts: postsRes.results.map(p => ({
+                        id: p.id,
+                        title: p.title,
+                        time_ago: formatRelativeTime(p.created_at, nowSec),
+                        rows: p.rows,
+                        characters: p.characters,
+                    })),
+                };
+                if (output.has_next_page) output.next_page = pageNum + 1;
+                return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(output, null, 2) }] } };
+            }
+            if (toolName === 'read_blog_post' || toolName === 'get_blog_toc' || toolName === 'read_blog_section') {
+                const blogId = Number(args.id);
+                if (!Number.isFinite(blogId) || !Number.isInteger(blogId) || blogId <= 0) {
+                    return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: 'Error: id 는 양의 정수여야 합니다.' }], isError: true } };
+                }
+                const post = await db.prepare('SELECT id, title, content, rows, characters FROM blog_posts WHERE id = ? AND deleted_at IS NULL')
+                    .bind(blogId)
+                    .first<{ id: number; title: string; content: string; rows: number | null; characters: number | null }>();
+                if (!post) {
+                    return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: 'Error: 블로그 포스트를 찾을 수 없거나 삭제되었습니다.' }], isError: true } };
+                }
+                const blogSlug = `blog:${post.id}`;
+
+                if (toolName === 'get_blog_toc') {
+                    const expanded = await expandTemplates(post.content, db, 0, blogSlug);
+                    const tocText = (extractTOC(expanded) || '')
+                        .split('\n')
+                        .map(line => line.replace(/\{[^}]*\}/g, '').replace(/[ \t]+/g, ' ').trimEnd())
+                        .join('\n');
+                    return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: tocText || '목차가 존재하지 않습니다.' }] } };
+                }
+                if (toolName === 'read_blog_post') {
+                    const text = args.raw === true ? post.content : await renderForAI(post.content, db, 0, blogSlug);
+                    return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: text || '포스트 내용이 존재하지 않습니다.' }] } };
+                }
+                // read_blog_section
+                const expanded = await expandTemplates(post.content, db, 0, blogSlug);
+                const sectionContent = extractSection(expanded, args.section_number || '');
+                const text = args.raw === true ? sectionContent : await renderForAI(sectionContent, db, 0, blogSlug);
+                return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: text || '해당 목차를 찾을 수 없습니다.' }] } };
+            }
             return { jsonrpc: '2.0', error: { code: -32601, message: `Tool not found: ${toolName}` }, id };
         } catch (e: any) {
             return { jsonrpc: '2.0', error: { code: -32000, message: e.message }, id };
@@ -1195,17 +1271,17 @@ async function handleJsonRpc(c: Context<Env>, body: any, mode: McpMode) {
     return { jsonrpc: '2.0', error: { code: -32601, message: 'Method not found' }, id };
 }
 
-// POST /api/mcp - HTTP 방식 JSON-RPC 엔드포인트 (lite: 6개 기본 도구만 노출)
+// POST /api/mcp - HTTP 방식 JSON-RPC 엔드포인트 (모든 도구 노출)
 mcpRoutes.post('/', async (c) => {
     const body = await c.req.json();
-    const response = await handleJsonRpc(c, body, 'lite');
+    const response = await handleJsonRpc(c, body);
     return c.json(response);
 });
 
-// POST /api/mcp/full - HTTP 방식 JSON-RPC 엔드포인트 (full: 모든 도구 노출)
+// 과거 /api/mcp/full 엔드포인트와의 호환을 위해 동일 핸들러로 연결한다 (lite/full 분리 폐지).
 mcpRoutes.post('/full', async (c) => {
     const body = await c.req.json();
-    const response = await handleJsonRpc(c, body, 'full');
+    const response = await handleJsonRpc(c, body);
     return c.json(response);
 });
 

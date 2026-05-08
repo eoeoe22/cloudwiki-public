@@ -4,6 +4,10 @@ import { isSuperAdmin, getSuperAdmins } from '../utils/auth';
 import { RBAC } from '../utils/role';
 import { fetchMediaTagMap, sanitizeTags } from '../utils/mediaTags';
 import type { Env, User } from '../types';
+import { dispatchDiscord } from '../utils/webhook/discord';
+import { signupRejected, userJoined } from '../utils/webhook/events/signup';
+import { userBan, userRoleChange } from '../utils/webhook/events/user';
+import { superAdminAction } from '../utils/webhook/events/superAdmin';
 
 const adminRoutes = new Hono<Env>();
 
@@ -190,6 +194,7 @@ adminRoutes.put('/users/:id/role', async (c) => {
         return c.json({ error: '관리자 임명/해제는 최고 관리자만 가능합니다.' }, 403);
     }
 
+    const oldRole = targetUser.role;
     await db.prepare(`UPDATE users SET role = ? WHERE id = ?`).bind(role, targetUserId).run();
 
     // 세션 KV 캐시 무효화 (사용자 정보가 변경되었으므로)
@@ -199,6 +204,16 @@ adminRoutes.put('/users/:id/role', async (c) => {
             .then(({ results }) => Promise.all(results.map((s: any) => c.env.KV.delete(`session:${s.id}`))))
             .catch(e => console.error('Failed to invalidate session cache:', e))
     );
+
+    // Discord admin 채널에 권한 변경 알림 (자기 자신 변경 / no-op 은 제외)
+    if (Number(targetUserId) !== currentUser.id && oldRole !== role) {
+        dispatchDiscord(c.env, c.executionCtx, userRoleChange({
+            targetName: targetUser.name,
+            oldRole,
+            newRole: role,
+            actorName: currentUser.name,
+        }));
+    }
 
     writeAdminLog(c, 'role_change', `유저 #${targetUserId}(${targetUser.name})의 권한을 '${role}'(으)로 변경`, currentUser.id);
     return c.json({ success: true });
@@ -258,6 +273,14 @@ adminRoutes.put('/users/:id/ban', async (c) => {
             console.error('Failed to create ban notification:', e);
         }
     }
+
+    // Discord admin 채널에 차단/해제 알림
+    dispatchDiscord(c.env, c.executionCtx, userBan({
+        targetName: targetUser.name,
+        actorName: currentUser.name,
+        action: days === 0 ? 'unban' : 'ban',
+        days: days > 0 ? days : undefined,
+    }));
 
     writeAdminLog(c, 'ban', days === 0 ? `유저 #${targetUserId}(${targetUser.name}) 차단 해제` : `유저 #${targetUserId}(${targetUser.name})를 ${days}일간 차단`, currentUser.id);
     return c.json({ success: true, banned_until: bannedUntil });
@@ -320,11 +343,19 @@ adminRoutes.get('/settings', async (c) => {
  */
 adminRoutes.put('/settings', async (c) => {
     const db = c.env.DB;
-    const body = await c.req.json<{ 
-        namechange_ratelimit?: number; 
+    const currentUser = c.get('user')!;
+    const body = await c.req.json<{
+        namechange_ratelimit?: number;
         allow_direct_message?: number;
         signup_policy?: string;
     }>();
+
+    // 기존 값 스냅샷 (변경 detail 알림용)
+    const oldRow = await db
+        .prepare('SELECT namechange_ratelimit, allow_direct_message, signup_policy FROM settings WHERE id = 1')
+        .first<{ namechange_ratelimit: number; allow_direct_message: number; signup_policy: string }>();
+
+    const changes: string[] = [];
 
     if (body.namechange_ratelimit !== undefined) {
         const val = Number(body.namechange_ratelimit);
@@ -334,6 +365,9 @@ adminRoutes.put('/settings', async (c) => {
         await db.prepare('UPDATE settings SET namechange_ratelimit = ? WHERE id = 1')
             .bind(val)
             .run();
+        if (oldRow && oldRow.namechange_ratelimit !== val) {
+            changes.push(`namechange_ratelimit: ${oldRow.namechange_ratelimit} → ${val}`);
+        }
     }
 
     if (body.allow_direct_message !== undefined) {
@@ -341,6 +375,9 @@ adminRoutes.put('/settings', async (c) => {
         await db.prepare('UPDATE settings SET allow_direct_message = ? WHERE id = 1')
             .bind(val)
             .run();
+        if (oldRow && oldRow.allow_direct_message !== val) {
+            changes.push(`allow_direct_message: ${oldRow.allow_direct_message} → ${val}`);
+        }
     }
 
     if (body.signup_policy !== undefined) {
@@ -351,9 +388,23 @@ adminRoutes.put('/settings', async (c) => {
         await db.prepare('UPDATE settings SET signup_policy = ? WHERE id = 1')
             .bind(val)
             .run();
+        if (oldRow && oldRow.signup_policy !== val) {
+            changes.push(`signup_policy: ${oldRow.signup_policy} → ${val}`);
+        }
     }
 
-    writeAdminLog(c, 'settings', `위키 설정 변경: ${JSON.stringify(body)}`, c.get('user')!.id);
+    // super_admin 이 settings 변경한 경우만 감사 알림 (다른 admin 도 settings 호출 가능하나
+    // 지금 정책상 settings 수정은 모두 admin 권한이라 super 한정으로 좁혀야 노이즈가 적다).
+    const rbac = c.get('rbac') as RBAC;
+    if (changes.length > 0 && rbac.can(currentUser.role, '*')) {
+        dispatchDiscord(c.env, c.executionCtx, superAdminAction({
+            actorName: currentUser.name,
+            label: '전역 설정 변경',
+            target: changes.join('\n'),
+        }));
+    }
+
+    writeAdminLog(c, 'settings', `위키 설정 변경: ${JSON.stringify(body)}`, currentUser.id);
     return c.json({ success: true });
 });
 
@@ -452,7 +503,7 @@ adminRoutes.put('/signup-requests/:id/approve', async (c) => {
     }
 
     // users 테이블에 유저 생성
-    await db.prepare(
+    const insertResult = await db.prepare(
         'INSERT INTO users (provider, uid, email, name, picture) VALUES (?, ?, ?, ?, ?)'
     ).bind(request.provider, request.uid, request.email, finalName, request.picture).run();
 
@@ -466,6 +517,15 @@ adminRoutes.put('/signup-requests/:id/approve', async (c) => {
     await db.prepare(
         "DELETE FROM notifications WHERE type = 'signup_request' AND ref_id = ?"
     ).bind(requestId).run();
+
+    // Discord community 채널에 가입 완료 환영 알림
+    const newUserId = Number(insertResult.meta?.last_row_id ?? 0);
+    if (newUserId > 0) {
+        dispatchDiscord(c.env, c.executionCtx, userJoined({
+            user: { id: newUserId, name: finalName, picture: request.picture },
+            env: c.env,
+        }));
+    }
 
     writeAdminLog(c, 'signup_approve', `가입 신청 승인: ${request.name} (${request.email})`, currentUser.id);
     return c.json({ success: true });
@@ -500,6 +560,13 @@ adminRoutes.put('/signup-requests/:id/reject', async (c) => {
     await db.prepare(
         "DELETE FROM notifications WHERE type = 'signup_request' AND ref_id = ?"
     ).bind(requestId).run();
+
+    // Discord admin 채널에 거부 감사 알림
+    dispatchDiscord(c.env, c.executionCtx, signupRejected({
+        name: request.name,
+        email: request.email,
+        actorName: currentUser.name,
+    }));
 
     writeAdminLog(c, 'signup_reject', `가입 신청 거절: ${request.name} (${request.email})`, currentUser.id);
     return c.json({ success: true });

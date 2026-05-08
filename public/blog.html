@@ -59,29 +59,27 @@
       <!-- 블로그 포스트 열람 -->
       <div id="blogPost" class="d-none">
         <div class="wiki-article">
-          <div class="d-flex align-items-start justify-content-between mb-2">
-            <h1 class="wiki-article-title mb-0" id="blogPostTitle"></h1>
-            <div id="blogPostAdminActions" class="d-none d-flex gap-2 ms-3 flex-shrink-0">
-              <button id="blogPostAnnounceBtn" class="btn btn-outline-primary btn-sm d-none" onclick="announceBlogPost()">
-                <i class="bi bi-megaphone me-1"></i>공지로 발행하기
-              </button>
-              <button id="blogPostUnannounceBtn" class="btn btn-warning btn-sm d-none" onclick="unannounceBlogPost()">
-                <i class="bi bi-megaphone-fill me-1"></i>공지 발행 취소
-              </button>
-              <a id="blogPostEditBtn" href="#" class="btn btn-secondary btn-sm">
-                <i class="bi bi-pencil me-1"></i>수정
-              </a>
-              <button class="btn btn-danger btn-sm" onclick="deleteBlogPost()">
-                <i class="bi bi-trash me-1"></i>삭제
-              </button>
-            </div>
-          </div>
+          <h1 class="wiki-article-title mb-0" id="blogPostTitle"></h1>
           <div class="wiki-article-meta mb-3">
             <span id="blogPostDate" class="text-muted small"></span>
           </div>
 
-          <!-- 공유하기 드롭다운 -->
-          <div class="d-flex justify-content-end mb-2 gap-2">
+          <!-- 관리자 액션 + 공유하기 드롭다운 -->
+          <div class="d-flex justify-content-end mb-2 gap-2 flex-wrap">
+            <div id="blogPostAdminActions" class="d-none d-flex gap-2" role="group" aria-label="관리자 액션">
+              <button id="blogPostAnnounceBtn" class="btn btn-outline-primary d-none" onclick="announceBlogPost()">
+                <i class="bi bi-megaphone me-1"></i>공지로 발행
+              </button>
+              <button id="blogPostUnannounceBtn" class="btn btn-outline-warning d-none" onclick="unannounceBlogPost()">
+                <i class="bi bi-megaphone-fill me-1"></i>공지 취소
+              </button>
+              <a id="blogPostEditBtn" href="#" class="btn btn-outline-secondary">
+                <i class="bi bi-pencil me-1"></i>수정
+              </a>
+              <button class="btn btn-outline-danger" onclick="deleteBlogPost()">
+                <i class="bi bi-trash me-1"></i>삭제
+              </button>
+            </div>
             <div class="dropdown">
               <button class="btn btn-secondary dropdown-toggle no-caret" type="button" id="shareDropdown"
                 data-bs-toggle="dropdown" data-bs-display="static" data-bs-flip="false" aria-expanded="false"

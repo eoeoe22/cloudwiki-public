@@ -59,7 +59,7 @@ function buildLikeSnippet(slug: string, content: string, query: string): string 
 
 /**
  * GET /search?q=키워드&mode=content|category
- * mode=content (기본값): FTS5 기반 전문 검색, 정확한 제목 일치 시 redirect 반환
+ * mode=content (기본값): FTS5 기반 전문 검색
  * mode=category: 카테고리 이름으로 문서 목록 반환
  *
  * 이미지 문서 검색: 쿼리가 "이미지:"로 시작하면 media 테이블에서 filename/content를 검색한다.
@@ -102,18 +102,6 @@ search.get('/search', async (c) => {
             return c.json({ error: '로그인이 필요합니다.' }, 401);
         }
         const imageQuery = query.trim().substring('이미지:'.length).trim();
-
-        // "이미지:파일명" 정확 일치 시 해당 이미지 문서로 리다이렉트
-        if (imageQuery.length > 0) {
-            const exactImage = await db
-                .prepare('SELECT filename FROM media WHERE filename = ? LIMIT 1')
-                .bind(imageQuery)
-                .first<{ filename: string }>();
-            if (exactImage) {
-                if (shouldTrack) trackSearch(c, query.trim(), 1, Date.now() - searchStartTime);
-                return c.json({ redirect: `/w/${encodeURIComponent('이미지:' + exactImage.filename)}` });
-            }
-        }
 
         // filename 또는 content에 LIKE 매치
         const likePattern = imageQuery.length > 0 ? `%${imageQuery}%` : '%';
@@ -179,13 +167,28 @@ search.get('/search', async (c) => {
         // media에서 결과가 없으면 아래 일반 pages 검색으로 폴스루
     }
 
+    const trimmedQuery = query.trim();
+
+    // 페이지네이션 결과만으로는 정확 일치 여부를 확정할 수 없으므로(슬러그가 페이지 2 이후로
+    // 밀려나는 경우 가능) 별도로 정확 일치 존재 여부를 조회해 응답에 포함시킨다. 클라이언트는
+    // 이 플래그로 "새 문서 만들기" CTA 노출 여부를 결정한다. category 모드에서도 동일한
+    // CTA 가 노출될 수 있으므로 mode 분기 이전에 한 번만 계산해 모든 응답에 포함시킨다.
+    // pages.slug 의 UNIQUE 인덱스를 활용하기 위해 case-sensitive 동등 비교를 사용한다.
+    // case-insensitive 대조는 클라이언트가 결과 페이지 슬러그를 toLowerCase() 로 보조 검사한다.
+    const exactMatchVisibility = isAdmin ? '' : ' AND deleted_at IS NULL';
+    const exactMatchRow = await db
+        .prepare(`SELECT 1 FROM pages WHERE slug = ?${exactMatchVisibility} LIMIT 1`)
+        .bind(trimmedQuery)
+        .first();
+    const exactMatch = !!exactMatchRow;
+
     // 카테고리 검색 모드
     if (mode === 'category') {
         const visibility = isAdmin ? '' : ' AND deleted_at IS NULL';
 
         const totalRow = await db
             .prepare(`SELECT COUNT(*) as total FROM pages WHERE category = ?${visibility}`)
-            .bind(query.trim())
+            .bind(trimmedQuery)
             .first<{ total: number }>();
         const total = totalRow?.total ?? 0;
         const { page, offset } = clampPage(total);
@@ -196,30 +199,12 @@ search.get('/search', async (c) => {
             WHERE category = ?${visibility}
             ORDER BY slug LIMIT ? OFFSET ?
         `;
-        const results = await db.prepare(sql).bind(query.trim(), PAGE_SIZE, offset).all();
-        if (shouldTrack) trackSearch(c, query.trim(), total, Date.now() - searchStartTime);
-        return c.json({ results: results.results, mode: 'category', total, page, pageSize: PAGE_SIZE });
+        const results = await db.prepare(sql).bind(trimmedQuery, PAGE_SIZE, offset).all();
+        if (shouldTrack) trackSearch(c, trimmedQuery, total, Date.now() - searchStartTime);
+        return c.json({ results: results.results, mode: 'category', total, page, pageSize: PAGE_SIZE, exact_match: exactMatch });
     }
 
     // 제목(=slug)+내용 검색 모드 (FTS5)
-    // FTS 쿼리 전에 먼저 정확한 슬러그 일치 여부를 확인
-    let exactSql = `
-        SELECT slug FROM pages
-        WHERE slug = ?
-    `;
-    if (!isAdmin) {
-        exactSql += ' AND deleted_at IS NULL';
-    }
-    exactSql += ' LIMIT 1';
-
-    const exactMatch = await db.prepare(exactSql).bind(query.trim()).first();
-    if (exactMatch) {
-        if (shouldTrack) trackSearch(c, query.trim(), 1, Date.now() - searchStartTime);
-        return c.json({ redirect: `/w/${encodeURIComponent((exactMatch as any).slug)}` });
-    }
-
-    // 정확 일치 없을 때만 검색 실행
-    const trimmedQuery = query.trim();
 
     // Trigram 토크나이저: 3 codepoint 미만은 FTS5 MATCH에서 매치 불가 → LIKE fallback.
     // String.length 는 UTF-16 code unit 기준이라 비-BMP 문자(이모지 등)에서 codepoint 수와
@@ -257,7 +242,7 @@ search.get('/search', async (c) => {
         }));
 
         if (shouldTrack) trackSearch(c, trimmedQuery, total, Date.now() - searchStartTime);
-        return c.json({ results: safeResults, total, page, pageSize: PAGE_SIZE });
+        return c.json({ results: safeResults, total, page, pageSize: PAGE_SIZE, exact_match: exactMatch });
     }
 
     // FTS5 Trigram 검색 (3글자 이상)
@@ -319,7 +304,7 @@ search.get('/search', async (c) => {
         });
 
         if (shouldTrack) trackSearch(c, trimmedQuery, total, Date.now() - searchStartTime);
-        return c.json({ results: safeResults, total, page, pageSize: PAGE_SIZE });
+        return c.json({ results: safeResults, total, page, pageSize: PAGE_SIZE, exact_match: exactMatch });
     } catch (ftsError) {
         // FTS5 쿼리 실패 시 LIKE fallback
         console.error('FTS5 search failed, falling back to LIKE:', ftsError);
@@ -353,7 +338,7 @@ search.get('/search', async (c) => {
         }));
 
         if (shouldTrack) trackSearch(c, trimmedQuery, total, Date.now() - searchStartTime);
-        return c.json({ results: safeResults, total, page, pageSize: PAGE_SIZE });
+        return c.json({ results: safeResults, total, page, pageSize: PAGE_SIZE, exact_match: exactMatch });
     }
 });
 

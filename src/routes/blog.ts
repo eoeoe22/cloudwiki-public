@@ -4,6 +4,8 @@ import { requireAdmin } from '../middleware/session';
 import { safeJSON } from '../utils/json';
 import { RBAC } from '../utils/role';
 import { writeAdminLog } from './admin';
+import { dispatchDiscord } from '../utils/webhook/discord';
+import { announcementPublish } from '../utils/webhook/events/blog';
 
 const blog = new Hono<Env>();
 
@@ -347,10 +349,16 @@ blog.post('/blog/:id/announce', requireAdmin, async (c) => {
     if (title.length > 200) return c.json({ error: '제목은 200자 이하여야 합니다.' }, 400);
 
     const post = await c.env.DB
-        .prepare('SELECT id, title, deleted_at FROM blog_posts WHERE id = ?')
+        .prepare('SELECT id, title, content, thumbnail, deleted_at FROM blog_posts WHERE id = ?')
         .bind(id)
-        .first<{ id: number; title: string; deleted_at: number | null }>();
+        .first<{ id: number; title: string; content: string; thumbnail: string | null; deleted_at: number | null }>();
     if (!post || post.deleted_at) return c.json({ error: 'Not Found' }, 404);
+
+    // 동일 게시물에 동일 제목으로 다시 발행하는 no-op 은 community 알림에서 제외하기 위해
+    // 현재 announce 상태를 미리 스냅샷.
+    const currentAnnounce = await c.env.DB
+        .prepare('SELECT announce_post, announce_title FROM settings WHERE id = 1')
+        .first<{ announce_post: number | null; announce_title: string | null }>();
 
     await c.env.DB
         .prepare(
@@ -360,7 +368,24 @@ blog.post('/blog/:id/announce', requireAdmin, async (c) => {
         )
         .bind(id, title)
         .run();
-    writeAdminLog(c, 'announce', `공지 발행: blog#${id} "${title}"`, c.get('user')!.id);
+    const currentUser = c.get('user')!;
+    writeAdminLog(c, 'announce', `공지 발행: blog#${id} "${title}"`, currentUser.id);
+
+    // Discord community 채널에 공지 발행 알림.
+    // 동일 postId + 동일 title 인 단순 메타 갱신은 제외한다.
+    const isMetaOnlyRefresh = currentAnnounce?.announce_post === id
+        && (currentAnnounce?.announce_title || '') === title;
+    if (!isMetaOnlyRefresh) {
+        dispatchDiscord(c.env, c.executionCtx, announcementPublish({
+            postId: id,
+            announceTitle: title,
+            postContent: post.content,
+            thumbnail: post.thumbnail,
+            actorName: currentUser.name,
+            env: c.env,
+        }));
+    }
+
     return c.json({ success: true, post_id: id, title });
 });
 

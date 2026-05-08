@@ -1749,3 +1749,171 @@ html[data-theme="dark"] .wiki-callout-note    { --callout-bg-tint: rgba(161, 161
   border-radius: 999px;
   transition: width 0.2s ease;
 }
+
+/* ── Bootstrap 컴포넌트 위키 통합 (callout / card / tabs / accordion / steps) ── */
+
+/* :::card 는 Bootstrap .card 위에 wiki-card 변수를 덮어 위키 배경/테두리 색을 유지 */
+.wiki-card.card {
+  background: var(--wiki-card-bg);
+  border-color: var(--wiki-border);
+  color: var(--wiki-text);
+  margin: 0.75rem 0;
+}
+.wiki-card.card > .wiki-card-header.card-header {
+  background: var(--wiki-card-header-bg, var(--wiki-card-bg));
+  border-bottom-color: var(--wiki-border);
+  color: var(--wiki-text);
+}
+
+/* :::info / :::tip / ... 는 Bootstrap .alert 위에 wiki-callout 색상 변수를 우선 적용 */
+.wiki-callout.alert {
+  background: var(--callout-bg-tint);
+  color: var(--wiki-text);
+  border: 1px solid var(--wiki-border);
+  border-left: 4px solid var(--callout-accent);
+  padding: 0;
+}
+.wiki-callout.alert > .wiki-callout-header { color: var(--callout-accent); }
+.wiki-callout.alert hr { border-top-color: var(--wiki-border); }
+
+/* :::tabs — Bootstrap nav-tabs 위에 위키 카드 배경 적용 */
+.wiki-tabs {
+  margin: 0.75rem 0;
+  border-radius: 6px;
+  overflow: visible;
+}
+.wiki-tabs > .nav-tabs {
+  margin-bottom: 0;
+  border-bottom: 1px solid var(--wiki-border);
+  flex-wrap: wrap;
+  gap: 2px;
+}
+.wiki-tabs > .nav-tabs .nav-link {
+  color: var(--wiki-text-muted);
+  border: 1px solid transparent;
+  border-bottom: 0;
+  background: transparent;
+  font-size: 0.93rem;
+  padding: 0.45rem 0.85rem;
+}
+.wiki-tabs > .nav-tabs .nav-link:hover { color: var(--wiki-text); }
+.wiki-tabs > .nav-tabs .nav-link.active {
+  color: var(--wiki-text);
+  background: var(--wiki-card-bg);
+  border-color: var(--wiki-border);
+  border-bottom-color: var(--wiki-card-bg);
+}
+.wiki-tabs > .tab-content {
+  background: var(--wiki-card-bg);
+  border: 1px solid var(--wiki-border);
+  border-top: 0;
+  border-radius: 0 6px 6px 6px;
+  padding: 0.85rem 1rem;
+  color: var(--wiki-text);
+}
+.wiki-tabs > .tab-content > .tab-pane > :first-child { margin-top: 0; }
+.wiki-tabs > .tab-content > .tab-pane > :last-child  { margin-bottom: 0; }
+
+/* :::accordion — Bootstrap accordion 위에 위키 카드 변수 적용 */
+.wiki-accordion {
+  --bs-accordion-bg: var(--wiki-card-bg);
+  --bs-accordion-color: var(--wiki-text);
+  --bs-accordion-border-color: var(--wiki-border);
+  --bs-accordion-active-bg: var(--wiki-card-bg);
+  --bs-accordion-active-color: var(--wiki-text);
+  --bs-accordion-btn-color: var(--wiki-text);
+  margin: 0.75rem 0;
+}
+.wiki-accordion .accordion-button { font-size: 0.95rem; font-weight: 600; }
+.wiki-accordion .accordion-body > :first-child { margin-top: 0; }
+.wiki-accordion .accordion-body > :last-child  { margin-bottom: 0; }
+
+/* :::steps — Bootstrap 에 stepper 가 없어 커스텀. bi 아이콘 + 가로/세로 레이아웃 */
+.wiki-steps {
+  list-style: none;
+  margin: 0.75rem 0;
+  padding: 0;
+  display: flex;
+  gap: 0.5rem;
+}
+.wiki-steps-vertical { flex-direction: column; gap: 0; }
+.wiki-steps-horizontal { flex-direction: row; flex-wrap: wrap; gap: 1rem; }
+
+.wiki-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  position: relative;
+  padding: 0.4rem 0;
+}
+.wiki-steps-horizontal > .wiki-step {
+  flex: 1 1 200px;
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.wiki-step-marker {
+  position: relative;
+  flex-shrink: 0;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--wiki-card-bg);
+  border: 2px solid var(--wiki-border);
+  color: var(--wiki-text-muted);
+  font-weight: 700;
+  font-size: 0.85rem;
+}
+.wiki-step-marker .wiki-step-icon { display: none; font-size: 1rem; }
+.wiki-step-marker .wiki-step-num  { display: inline; }
+
+.wiki-step-done   .wiki-step-marker { background: var(--wiki-primary); border-color: var(--wiki-primary); color: #fff; }
+.wiki-step-done   .wiki-step-marker .wiki-step-icon { display: inline; }
+.wiki-step-done   .wiki-step-marker .wiki-step-num  { display: none; }
+.wiki-step-current .wiki-step-marker { border-color: var(--wiki-primary); color: var(--wiki-primary); }
+.wiki-step-todo    .wiki-step-marker { /* default */ }
+
+/* 세로 레이아웃: 마커 사이를 잇는 세로선 */
+.wiki-steps-vertical > .wiki-step:not(:last-child)::before {
+  content: "";
+  position: absolute;
+  left: calc(1rem - 1px);
+  top: 2.4rem;
+  bottom: -0.4rem;
+  width: 2px;
+  background: var(--wiki-border);
+}
+.wiki-steps-vertical > .wiki-step.wiki-step-done:not(:last-child)::before { background: var(--wiki-primary); }
+
+/* 가로 레이아웃: 마커 옆 가로선 */
+.wiki-steps-horizontal > .wiki-step:not(:last-child) .wiki-step-marker::after {
+  content: "";
+  position: absolute;
+  left: calc(100% + 4px);
+  top: 50%;
+  width: calc(1rem - 8px);
+  height: 2px;
+  background: var(--wiki-border);
+  transform: translateY(-50%);
+}
+
+.wiki-step-content { flex: 1; min-width: 0; }
+.wiki-step-title {
+  font-weight: 600;
+  color: var(--wiki-text);
+  line-height: 1.3;
+  padding-top: 0.3rem;
+}
+.wiki-step-current .wiki-step-title { color: var(--wiki-primary); }
+.wiki-step-body { color: var(--wiki-text); font-size: 0.95rem; }
+.wiki-step-body > :first-child { margin-top: 0.25rem; }
+.wiki-step-body > :last-child  { margin-bottom: 0; }
+.wiki-step-body:empty { display: none; }
+
+/* 빈 컨테이너(자식 0개)는 출력 흔적을 남기지 않음 */
+.wiki-tabs-empty,
+.wiki-accordion-empty,
+.wiki-steps-empty { display: none; }

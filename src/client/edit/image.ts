@@ -279,6 +279,43 @@ async function openExistingImageSearch(callback: ImageInsertCallback): Promise<v
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// 업로드 파일명 검증 (서버 src/routes/media.ts 의 validateUploadFilename 와 규칙 일치)
+//
+// 사용자 요청 보정 규칙:
+//   1) 모든 공백류는 '-' 로 치환한다.
+//   2) 양 끝의 공백·'-' 는 제거한다.
+// 그 후에도 남는 금지 문자(/[\[\]()#%|<>^/\\.?\x00-\x1F\x7F]/) 가 있거나 길이가
+// 100 자를 초과하거나 빈 문자열이면 오류로 처리한다.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const FILENAME_FORBIDDEN_CHARS = /[\[\]()#%|<>^/\\.?\x00-\x1F\x7F]/g;
+const FILENAME_MAX_LENGTH = 100;
+
+function normalizeUploadFilename(raw: string): string {
+    return raw.replace(/\s+/g, '-').replace(/^-+|-+$/g, '');
+}
+
+type FilenameValidation =
+    | { ok: true; value: string }
+    | { ok: false; error: string };
+
+function validateUploadFilenameClient(raw: string): FilenameValidation {
+    const normalized = normalizeUploadFilename(raw);
+    if (!normalized) {
+        return { ok: false, error: '파일명을 입력해주세요.' };
+    }
+    const matches = normalized.match(FILENAME_FORBIDDEN_CHARS);
+    if (matches) {
+        const unique = Array.from(new Set(matches)).join(' ');
+        return { ok: false, error: `파일명에 사용할 수 없는 문자가 있습니다: ${unique}` };
+    }
+    if (normalized.length > FILENAME_MAX_LENGTH) {
+        return { ok: false, error: `파일명은 최대 ${FILENAME_MAX_LENGTH}자까지 입력할 수 있습니다.` };
+    }
+    return { ok: true, value: normalized };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // 미디어 업로드 처리
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -309,7 +346,12 @@ async function handleImageUpload(
     // 사용자에게 파일명 + 태그 입력 요청
     const originalName = (workingBlob as File).name || 'image';
     const nameWithoutExt = originalName.replace(/\.[^.]+$/, '');
-    const nameDefaultAttr = escapeHtml(nameWithoutExt);
+    const initialNormalized = normalizeUploadFilename(nameWithoutExt);
+    const nameDefaultAttr = escapeHtml(initialNormalized || nameWithoutExt);
+    const FILENAME_HELP_DEFAULT =
+        '공백은 <code>-</code> 로 변환되고, 양 끝의 공백·<code>-</code> 는 제거됩니다. ' +
+        '<code>[</code> <code>]</code> <code>(</code> <code>)</code> <code>#</code> <code>%</code> <code>|</code> ' +
+        '<code>&lt;</code> <code>&gt;</code> <code>^</code> <code>/</code> <code>\\</code> <code>.</code> <code>?</code> 는 사용할 수 없습니다.';
 
     let tagWidget: MediaTagWidget | null = null;
     const result = await (Swal?.fire<{ filename: string; tags: string[] }>({
@@ -317,7 +359,8 @@ async function handleImageUpload(
         html: `
             <div style="text-align:left;">
                 <label for="uploadFilenameInput" class="form-label fw-bold" style="display:block; margin-bottom:4px;">파일명 (확장자 제외)</label>
-                <input type="text" id="uploadFilenameInput" class="swal2-input" style="margin:0 0 14px 0; width:100%;" placeholder="파일명을 입력하세요" value="${nameDefaultAttr}" maxlength="100">
+                <input type="text" id="uploadFilenameInput" class="swal2-input" style="margin:0; width:100%;" placeholder="파일명을 입력하세요" value="${nameDefaultAttr}" maxlength="120">
+                <div id="uploadFilenameFeedback" class="form-text text-muted" style="margin:4px 0 14px 0; font-size:0.82rem; min-height:1.2em;">${FILENAME_HELP_DEFAULT}</div>
                 <label class="form-label fw-bold" style="display:block; margin-bottom:4px;">태그 (선택)</label>
                 <div class="category-tag-container" id="uploadTagContainer" style="max-width:100%;">
                     <input type="text" id="uploadTagInput" class="category-tag-input" placeholder="태그 입력 후 엔터나 쉼표">
@@ -331,11 +374,38 @@ async function handleImageUpload(
         focusConfirm: false,
         didOpen: () => {
             const fnInput = document.getElementById('uploadFilenameInput') as HTMLInputElement | null;
+            const fnFeedback = document.getElementById('uploadFilenameFeedback');
             const tagContainer = document.getElementById('uploadTagContainer');
             const tagInput = document.getElementById('uploadTagInput') as HTMLInputElement | null;
             if (!fnInput || !tagContainer || !tagInput) return;
             fnInput.focus();
             fnInput.select();
+
+            const updateFnFeedback = (): void => {
+                if (!fnFeedback) return;
+                const raw = fnInput.value;
+                if (!raw) {
+                    fnFeedback.innerHTML = FILENAME_HELP_DEFAULT;
+                    fnFeedback.className = 'form-text text-muted';
+                    return;
+                }
+                const v = validateUploadFilenameClient(raw);
+                if (!v.ok) {
+                    fnFeedback.textContent = v.error;
+                    fnFeedback.className = 'form-text text-danger';
+                    return;
+                }
+                if (v.value === raw) {
+                    fnFeedback.innerHTML = FILENAME_HELP_DEFAULT;
+                    fnFeedback.className = 'form-text text-muted';
+                } else {
+                    fnFeedback.innerHTML = `저장될 파일명: <code>${escapeHtml(v.value)}</code>`;
+                    fnFeedback.className = 'form-text text-success';
+                }
+            };
+            fnInput.addEventListener('input', updateFnFeedback);
+            updateFnFeedback();
+
             const mount = window.mountMediaTagInput;
             if (mount) {
                 tagWidget = mount({
@@ -348,13 +418,13 @@ async function handleImageUpload(
         willClose: () => { if (tagWidget) tagWidget.destroy(); },
         preConfirm: () => {
             const fnInput = document.getElementById('uploadFilenameInput') as HTMLInputElement | null;
-            const fn = fnInput ? fnInput.value.trim() : '';
-            if (!fn) {
-                Swal?.showValidationMessage('파일명을 입력해주세요.');
+            const v = validateUploadFilenameClient(fnInput ? fnInput.value : '');
+            if (!v.ok) {
+                Swal?.showValidationMessage(v.error);
                 return false;
             }
             if (tagWidget) tagWidget.flush();
-            return { filename: fn, tags: tagWidget ? tagWidget.getTags() : [] };
+            return { filename: v.value, tags: tagWidget ? tagWidget.getTags() : [] };
         },
     })) ?? { isConfirmed: false, isDenied: false, isDismissed: true, value: undefined };
 

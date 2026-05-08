@@ -253,12 +253,6 @@
                 if (activeAbortController !== controller) return;
                 activeAbortController = null;
 
-                // 정확한 제목 일치 시 바로 문서로 이동 — redirect 응답은 캐싱하지 않는다.
-                if (data.redirect) {
-                    window.location.href = data.redirect;
-                    return;
-                }
-
                 loadingEl.classList.add('d-none');
                 cacheSet(q, mode, page, data);
                 renderSearchResponse(q, page, data);
@@ -291,20 +285,24 @@
                 history.replaceState({}, '', `?${params.toString()}`);
             }
 
-            // 서버가 이미 정확 일치 시 redirect 로 응답하므로, 여기 도달했다면 정확 일치는 없는 상태다.
+            // 서버가 페이지네이션과 무관하게 정확 일치 존재 여부를 exact_match 로 알려준다.
+            // (정확 일치 슬러그가 페이지 2 이후로 밀려나도 false-positive CTA 가 뜨지 않게 함)
+            // 추가로 SQLite LOWER() 가 ASCII-only 라 비-ASCII 케이스 변형(예: 'Äpfel' vs 'äpfel')은
+            // 서버 플래그가 놓칠 수 있어, 결과 페이지 내 슬러그를 JS toLowerCase() 로 한 번 더 검사해 보완한다.
             // "이미지:" 네임스페이스는 일반 문서 슬러그로 저장이 거부되므로 CTA 를 숨긴다.
             const normalizedQuery = q.trim().toLowerCase();
-            const hasCaseInsensitiveExactMatch = Array.isArray(data.results)
+            const hasUnicodeExactMatchInResults = Array.isArray(data.results)
                 && normalizedQuery !== ''
                 && data.results.some(result =>
                     typeof result?.slug === 'string'
                     && result.slug.trim().toLowerCase() === normalizedQuery
                 );
+            const hasExactMatch = !!data.exact_match || hasUnicodeExactMatchInResults;
             const isImageNamespaceQuery = q.trim().startsWith('이미지:');
             const canCreate = currentUser && currentUser.role !== 'banned'
                 && !data.image_mode && !isImageNamespaceQuery;
             let newDocumentButtonHtml = '';
-            if (q.trim() !== '' && canCreate && currentPage === 1 && !hasCaseInsensitiveExactMatch) {
+            if (q.trim() !== '' && canCreate && currentPage === 1 && !hasExactMatch) {
                 newDocumentButtonHtml = `
                 <div class="mb-4">
                     <div class="alert alert-light border d-flex justify-content-between align-items-center">

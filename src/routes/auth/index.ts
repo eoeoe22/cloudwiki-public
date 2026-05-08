@@ -10,6 +10,8 @@ import { discordProvider } from './providers/discord';
 import { handleOAuthLogin } from './common';
 import type { RBAC } from '../../utils/role';
 import type { AuthProvidersResponse } from '../../shared/api/auth';
+import { dispatchDiscord } from '../../utils/webhook/discord';
+import { signupPending } from '../../utils/webhook/events/signup';
 
 const auth = new Hono<Env>();
 
@@ -264,6 +266,15 @@ auth.post('/api/auth/signup-request', async (c) => {
 
     // 토큰 삭제
     await c.env.KV.delete(`signup_token:${token}`);
+
+    // Discord admin 채널에 가입 신청 알림
+    dispatchDiscord(c.env, c.executionCtx, signupPending({
+        requestId: Number(requestId),
+        name: name.trim(),
+        email: userInfo.email,
+        provider: userInfo.provider,
+        env: c.env,
+    }));
 
     return c.json({ success: true, message: '가입 신청이 접수되었습니다.' });
 });

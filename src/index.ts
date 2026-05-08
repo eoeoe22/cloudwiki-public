@@ -878,9 +878,14 @@ app.get('/sitemap.xml', async (c) => {
     const db = c.env.DB;
     const baseUrl = new URL(c.req.url).origin;
 
-    const { results: pages } = await db
-        .prepare('SELECT slug, updated_at FROM pages WHERE deleted_at IS NULL AND redirect_to IS NULL')
-        .all<{ slug: string; updated_at: number }>();
+    const [{ results: pages }, { results: blogPosts }] = await Promise.all([
+        db
+            .prepare('SELECT slug, updated_at FROM pages WHERE deleted_at IS NULL AND redirect_to IS NULL')
+            .all<{ slug: string; updated_at: number }>(),
+        db
+            .prepare('SELECT id, updated_at FROM blog_posts WHERE deleted_at IS NULL ORDER BY created_at DESC')
+            .all<{ id: number; updated_at: number }>(),
+    ]);
 
     let xml = '<?xml version="1.0" encoding="UTF-8"?>\n';
     xml += '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n';
@@ -899,6 +904,23 @@ app.get('/sitemap.xml', async (c) => {
         xml += `    <lastmod>${lastmod}</lastmod>\n`;
         xml += '    <changefreq>weekly</changefreq>\n';
         xml += '    <priority>0.8</priority>\n';
+        xml += '  </url>\n';
+    }
+
+    // 블로그 목록 페이지
+    xml += '  <url>\n';
+    xml += `    <loc>${baseUrl}/blog</loc>\n`;
+    xml += '    <changefreq>daily</changefreq>\n';
+    xml += '    <priority>0.8</priority>\n';
+    xml += '  </url>\n';
+
+    for (const post of blogPosts || []) {
+        const lastmod = new Date(post.updated_at * 1000).toISOString().split('T')[0];
+        xml += '  <url>\n';
+        xml += `    <loc>${baseUrl}/blog/${post.id}</loc>\n`;
+        xml += `    <lastmod>${lastmod}</lastmod>\n`;
+        xml += '    <changefreq>weekly</changefreq>\n';
+        xml += '    <priority>0.7</priority>\n';
         xml += '  </url>\n';
     }
 

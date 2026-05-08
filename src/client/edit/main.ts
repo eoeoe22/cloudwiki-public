@@ -2322,6 +2322,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         // 익스텐션의 사후 DOM 변형 등)도 헤딩 오프셋을 흔들 수 있으므로 감지하여 캐시 무효화.
         // 매 스크롤 이벤트가 아니라 "레이아웃이 실제로 흔들렸을 때"만 캐시를 버린다.
         let _scrollSyncResizeObserver = null;
+        let _scrollSyncBsListenersBound = false;
         function _observePreviewLayoutShifts() {
             const customPreview = document.getElementById('custom-wiki-preview');
             if (!customPreview) return;
@@ -2334,6 +2335,13 @@ document.addEventListener('DOMContentLoaded', async () => {
                 Array.from(customPreview.children).forEach(child => {
                     try { _scrollSyncResizeObserver.observe(child); } catch (_) { /* ignore */ }
                 });
+            }
+            // Bootstrap 탭/아코디언 토글은 패널 display 만 바꿔서 자식 크기 변화로
+            // 잡히지 않을 수 있다. shown/hidden 이벤트는 버블되므로 prev 자식에서 받는다.
+            if (!_scrollSyncBsListenersBound) {
+                ['shown.bs.tab', 'hidden.bs.tab', 'shown.bs.collapse', 'hidden.bs.collapse']
+                    .forEach(evt => customPreview.addEventListener(evt, _invalidateScrollSyncGuides));
+                _scrollSyncBsListenersBound = true;
             }
             // 폰트 늦은 적용으로 인한 텍스트 metrics 재계산 한 번
             if (document.fonts && document.fonts.ready && typeof document.fonts.ready.then === 'function') {
@@ -2351,9 +2359,23 @@ document.addEventListener('DOMContentLoaded', async () => {
             const previewScrollTop = customPreview.scrollTop;
             const maxScroll = Math.max(0, customPreview.scrollHeight - customPreview.clientHeight);
 
+            // 헤딩 anchor 가 비활성 탭 패널(display:none) / 접힌 아코디언 내부면
+            // getBoundingClientRect 가 0/누락 좌표를 돌려준다. 가시 조상 컨테이너로
+            // 폴백해 최소한 해당 컴포넌트 위치까지는 따라가도록 한다.
+            function _resolveMeasurableAnchor(anchorEl) {
+                if (!anchorEl) return null;
+                if (anchorEl.offsetParent !== null) return anchorEl;
+                let cur = anchorEl.parentElement;
+                while (cur && cur !== customPreview) {
+                    if (cur.offsetParent !== null) return cur;
+                    cur = cur.parentElement;
+                }
+                return null;
+            }
             const guides = [{ line: 0, targetTop: 0 }];
             for (let k = 0; k < rawHeadings.length; k++) {
-                const anchor = _findPreviewAnchorByRawLine(customPreview, rawHeadings[k].lineIdx, k);
+                const anchorRaw = _findPreviewAnchorByRawLine(customPreview, rawHeadings[k].lineIdx, k);
+                const anchor = _resolveMeasurableAnchor(anchorRaw);
                 if (!anchor) continue;
                 const anchorRect = anchor.getBoundingClientRect();
                 const t = previewScrollTop + (anchorRect.top - previewRect.top) - 10;

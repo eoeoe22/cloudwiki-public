@@ -3,6 +3,8 @@ import type { Env, Ticket, TicketComment } from '../types';
 import { requireAuth, requirePermission } from '../middleware/session';
 import { safeJSON } from '../utils/json';
 import { ROLE_CASE_SQL, enrichRoles, enrichRole, RBAC } from '../utils/role';
+import { dispatchDiscord } from '../utils/webhook/discord';
+import { ticketCreate, ticketStatus } from '../utils/webhook/events/ticket';
 
 const ticketRoutes = new Hono<Env>();
 
@@ -165,6 +167,16 @@ ticketRoutes.post('/tickets', requireAuth, requirePermission('ticket:create'), a
     } catch (e) {
         console.error('Failed to create ticket notifications:', e);
     }
+
+    // Discord admin 채널에 티켓 생성 알림
+    dispatchDiscord(c.env, c.executionCtx, ticketCreate({
+        ticketId: Number(ticketId),
+        title: title.trim(),
+        body: content.trim(),
+        category: typeLabels[type] || type,
+        actor: { name: user.name, picture: user.picture },
+        env: c.env,
+    }));
 
     return c.json(safeJSON({ id: ticketId, title: title.trim() }), 201);
 });
@@ -330,7 +342,7 @@ ticketRoutes.put('/tickets/:id/status', requireAuth, async (c) => {
     }
 
     const ticket = await db.prepare(
-        'SELECT id, user_id, deleted_at, type FROM tickets WHERE id = ?'
+        'SELECT id, user_id, deleted_at, type, status, title FROM tickets WHERE id = ?'
     ).bind(ticketId).first<Ticket>();
 
     if (!ticket || ticket.deleted_at) {
@@ -345,6 +357,7 @@ ticketRoutes.put('/tickets/:id/status', requireAuth, async (c) => {
         return c.json({ error: '티켓 상태를 변경할 권한이 없습니다.' }, 403);
     }
 
+    const oldStatus = ticket.status;
     await db.prepare(
         'UPDATE tickets SET status = ?, updated_at = unixepoch() WHERE id = ?'
     ).bind(status, ticketId).run();
@@ -357,6 +370,18 @@ ticketRoutes.put('/tickets/:id/status', requireAuth, async (c) => {
         } catch (e) {
             console.error('Failed to clear ticket notifications on close:', e);
         }
+    }
+
+    // Discord admin 채널에 상태 전이 알림 (no-op 제외)
+    if (oldStatus !== status) {
+        dispatchDiscord(c.env, c.executionCtx, ticketStatus({
+            ticketId,
+            title: ticket.title,
+            oldStatus,
+            newStatus: status,
+            actorName: user.name,
+            env: c.env,
+        }));
     }
 
     return c.json({ success: true, status });
