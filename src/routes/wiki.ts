@@ -5,11 +5,12 @@ import { normalizeSlug, isR2OnlyNamespace } from '../utils/slug';
 import { safeJSON } from '../utils/json';
 import { ROLE_CASE_SQL, enrichRoles, RBAC } from '../utils/role';
 import { fetchMediaTags } from '../utils/mediaTags';
+import { pushToUser } from '../utils/push';
 
 const wiki = new Hono<Env>();
 
 /** 슬러그에 사용할 수 없는 금지 문자 패턴 ({}, [] 는 트랜스클루전/위키링크 문법과 충돌) */
-const SLUG_FORBIDDEN_CHARS = /[\[\]{}()#%|<>^\x00-\x1F\x7F]/;
+export const SLUG_FORBIDDEN_CHARS = /[\[\]{}()#%|<>^\x00-\x1F\x7F]/;
 
 // ── 커스텀 팔레트 파서 ──
 // PALETTES 환경변수(JSON 문자열)를 정규화된 팔레트 맵으로 변환.
@@ -60,7 +61,7 @@ function parseCustomPalettes(raw: string | undefined): Record<string, { light: {
  * 최근 변경 캐시를 즉시 새 데이터로 갱신
  * (delete 후 재요청 대기 대신, 직접 put하여 즉시 반영)
  */
-async function refreshRecentChangesCache(c: any) {
+export async function refreshRecentChangesCache(c: any) {
     const db = c.env.DB;
     const origin = new URL(c.req.url).origin;
     const cacheUrl = `${origin}/api/w/recent-changes`;
@@ -89,7 +90,7 @@ async function refreshRecentChangesCache(c: any) {
 /**
  * 문서의 캐시를 무효화하는 유틸리티 함수
  */
-function invalidatePageCache(c: any, slug: string) {
+export function invalidatePageCache(c: any, slug: string) {
     const origin = new URL(c.req.url).origin;
     const cache = caches.default;
     // encodeURIComponent는 ':'를 %3A로 인코딩하지만 브라우저는 URL 경로의 ':'를 인코딩하지 않는 경우도 있다.
@@ -112,7 +113,7 @@ function invalidatePageCache(c: any, slug: string) {
  * 콜론이 포함된 문서(틀, 익스텐션 등)가 변경될 때
  * 해당 문서를 참조하는 모든 문서의 캐시를 무효화
  */
-async function invalidateBacklinkCaches(c: any, slug: string, db: D1Database): Promise<void> {
+export async function invalidateBacklinkCaches(c: any, slug: string, db: D1Database): Promise<void> {
     if (!slug.includes(':')) return;
 
     const targetSlugs: string[] = [slug];
@@ -151,7 +152,7 @@ async function invalidateBacklinkCaches(c: any, slug: string, db: D1Database): P
  * 본문 길이/줄 수 메트릭. characters 는 UTF-16 code unit 수,
  * rows 는 개행으로 분리되는 라인 수(빈 본문 0).
  */
-function computePageMetrics(content: string): { rows: number; characters: number } {
+export function computePageMetrics(content: string): { rows: number; characters: number } {
     const characters = content.length;
     if (characters === 0) return { rows: 0, characters: 0 };
     let rows = 1;
@@ -237,7 +238,7 @@ function extractLinks(content: string): { target_slug: string; link_type: string
 /**
  * page_links 및 page_categories 테이블을 갱신하는 D1 배치 문 생성
  */
-function buildLinkAndCategoryStatements(
+export function buildLinkAndCategoryStatements(
     db: D1Database,
     pageId: number,
     content: string,
@@ -280,7 +281,7 @@ function buildLinkAndCategoryStatements(
  * - 익스텐션 슬러그(콜론 포함, 틀 접두사 아님)는 `{{namespace:Name}}` 형태 치환
  * - 원문과 결과가 동일하면 호출자가 새 리비전 생성을 생략할 수 있도록 문자열 비교로 판단
  */
-function rewriteContentForRename(
+export function rewriteContentForRename(
     content: string,
     oldSlug: string,
     newSlug: string
@@ -1267,7 +1268,19 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
                         db.prepare('INSERT INTO notifications (user_id, type, content, link) VALUES (?, ?, ?, ?)')
                             .bind(w.user_id, 'page_watch', notifContent, watchLink)
                     );
-                    return db.batch(stmts);
+                    return db.batch(stmts).then(() => {
+                        // best-effort 푸시 (in-app 알림이 truth source)
+                        for (const w of watchers as Array<{ user_id: number }>) {
+                            c.executionCtx.waitUntil(
+                                pushToUser(c.env, w.user_id, {
+                                    title: `${slug}`,
+                                    body: notifContent,
+                                    url: watchLink,
+                                    tag: `page_watch:${existing.id}`,
+                                }),
+                            );
+                        }
+                    });
                 })
                 .catch(e => console.error('Failed to notify watchers:', e))
         );

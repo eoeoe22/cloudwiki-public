@@ -129,12 +129,22 @@
                 style="resize: vertical; font-size: 1rem; padding: 0.8rem;"></textarea>
         </div>
 
+        <!-- 승인제 모드: 결과 푸시 옵트인 (브라우저 지원 + 서버 활성 시에만 표시) -->
+        <div class="form-group" id="pushOptInGroup" style="display: none;">
+            <label class="form-label" style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                <input type="checkbox" id="pushOptIn" checked style="width: 1.1rem; height: 1.1rem;">
+                <span style="color: var(--wiki-text);">승인 / 거절 결과를 브라우저 푸시로 받기</span>
+            </label>
+            <div class="warning-text"><i class="mdi mdi-information-outline"></i> 브라우저 알림 권한을 허용하면 결과를 즉시 알려드립니다.</div>
+        </div>
+
         <button class="submit-btn" id="submitBtn" onclick="saveProfile()">시작하기</button>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11.26.24"></script>
     <script type="module" src="/dist/common.js"></script>
+    <script type="module" src="/dist/setup-profile.js"></script>
     <script>
         // 승인제 모드 여부 확인
         const urlParams = new URLSearchParams(window.location.search);
@@ -211,6 +221,20 @@
                 if (isApprovalMode) {
                     // 승인제: 가입 신청 제출
                     const message = document.getElementById('signupMessage').value.trim();
+
+                    // user gesture 컨텍스트 보존: Firefox/Safari 는 await 이후 권한 요청을 거부한다.
+                    // 따라서 옵트인된 경우 fetch 보다 먼저 권한+PushManager.subscribe 를 받아둔다.
+                    let preparedPush = null;
+                    const pushOptIn = document.getElementById('pushOptIn');
+                    if (pushOptIn && pushOptIn.checked && typeof window.prepareSignupPushSubscription === 'function') {
+                        try {
+                            const prep = await window.prepareSignupPushSubscription();
+                            if (prep && prep.ok) preparedPush = prep.payload;
+                        } catch (e) {
+                            console.warn('push prepare failed', e);
+                        }
+                    }
+
                     const res = await fetch('/api/auth/signup-request', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
@@ -219,6 +243,11 @@
 
                     const data = await res.json();
                     if (!res.ok) throw new Error(data.error || '가입 신청에 실패했습니다.');
+
+                    // 신청 성공 + 미리 받아둔 구독이 있으면 단발성 push_token 으로 서버 등록 (실패는 무시)
+                    if (preparedPush && typeof window.registerSignupPushSubscription === 'function' && data.push_token) {
+                        try { await window.registerSignupPushSubscription(preparedPush, data.push_token); } catch (e) { console.warn('push register failed', e); }
+                    }
 
                     Swal.fire({
                         icon: 'success',

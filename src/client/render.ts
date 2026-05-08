@@ -870,7 +870,8 @@ async function fetchCategoryList(category) {
 // 헤딩에 계층적 번호 프리픽스 삽입 (예: 1., 1.1., 1.1.1.)
 function numberHeadings(contentEl) {
     if (!contentEl) return;
-    const headings = contentEl.querySelectorAll('h1, h2, h3, h4');
+    // .accordion-header 는 :::accordion 의 항목 헤더(h2) — 본문 헤딩이 아니므로 제외
+    const headings = contentEl.querySelectorAll('h1:not(.accordion-header), h2:not(.accordion-header), h3:not(.accordion-header), h4:not(.accordion-header)');
     if (headings.length < 1) return;
 
     const minLevel = Math.min(...Array.from(headings).map(h => parseInt(h.tagName[1], 10)));
@@ -918,7 +919,7 @@ function numberHeadings(contentEl) {
 
 function generateTOC(contentEl, tocContainerId, tocNavId) {
     if (!contentEl) return;
-    const headings = contentEl.querySelectorAll('h1, h2, h3, h4');
+    const headings = contentEl.querySelectorAll('h1:not(.accordion-header), h2:not(.accordion-header), h3:not(.accordion-header), h4:not(.accordion-header)');
     const tocContainer = document.getElementById(tocContainerId);
     if (!tocContainer) return;
 
@@ -1069,7 +1070,7 @@ function _scrollToElementWithAncestors(el, options) {
 
 // ── 본문 섹션 접기/펼치기 ──
 function makeCollapsibleSections(containerEl) {
-    const headings = containerEl.querySelectorAll('h1, h2, h3, h4, h5, h6');
+    const headings = containerEl.querySelectorAll('h1:not(.accordion-header), h2:not(.accordion-header), h3:not(.accordion-header), h4:not(.accordion-header), h5:not(.accordion-header), h6:not(.accordion-header)');
     if (headings.length < 1) return;
     const minLevel = Math.min(...Array.from(headings).map(h => parseInt(h.tagName[1], 10)));
     _wrapLevelSections(containerEl, minLevel);
@@ -1728,10 +1729,7 @@ function _renderBlockHtml(block, blockData) {
         case 'row':
             return `<div class="wiki-row"${styleAttr}>${innerHtml}</div>`;
         case 'tabs': {
-            const { tokens } = _extractStrictTokens(block.titleLine, {
-                align: { type: 'enum', values: ['start', 'center', 'end'] }
-            });
-            const align = tokens.align || 'start';
+            // 탭은 항상 좌측 정렬 (align 토큰 미지원)
             const children = _collectWikiChildBlocks(block.innerText, blockData, ['tab']);
             if (children.length === 0) return `<div class="wiki-tabs-empty"></div>`;
             const groupId = _nextWikiBsId('wiki-tabs');
@@ -1759,10 +1757,8 @@ function _renderBlockHtml(block, blockData) {
                     `role="tabpanel" aria-labelledby="${navId}" tabindex="0">${childInner}</div>`
                 );
             });
-            const alignCls = align === 'center' ? ' justify-content-center'
-                            : align === 'end' ? ' justify-content-end' : '';
             return `<div class="wiki-tabs">` +
-                `<ul class="nav nav-tabs${alignCls}" role="tablist">${navItems.join('')}</ul>` +
+                `<ul class="nav nav-tabs" role="tablist">${navItems.join('')}</ul>` +
                 `<div class="tab-content">${panes.join('')}</div>` +
                 `</div>`;
         }
@@ -3397,7 +3393,7 @@ function _extractMarkdownSections(markdownText) {
 function _addHeadingCopyButtons(containerEl, resolvedContent, options = {}) {
     const ranges = _extractMarkdownSectionRanges(resolvedContent);
     const lines = resolvedContent.split('\n');
-    const headingEls = Array.from(containerEl.querySelectorAll('h1, h2, h3, h4'));
+    const headingEls = Array.from(containerEl.querySelectorAll('h1:not(.accordion-header), h2:not(.accordion-header), h3:not(.accordion-header), h4:not(.accordion-header)'));
 
     const enableSectionEdit = !!options.enableSectionEdit;
     const canEdit = !!options.canEdit;

@@ -4,6 +4,7 @@ import { requireAuth, requireAuthAllowBanned } from '../middleware/session';
 import { safeJSON } from '../utils/json';
 import { isSuperAdmin } from '../utils/auth';
 import { RBAC } from '../utils/role';
+import { pushToUser } from '../utils/push';
 
 const notificationRoutes = new Hono<Env>();
 
@@ -195,6 +196,15 @@ notificationRoutes.post('/messages', requireAuth, async (c) => {
         `${user.name}님이 쪽지를 보냈습니다.`,
         messageId
     ).run();
+
+    c.executionCtx.waitUntil(
+        pushToUser(c.env, receiver_id, {
+            title: `${user.name}님의 쪽지`,
+            body: content.trim().slice(0, 120),
+            url: '/mypage#messages',
+            tag: `message:${messageId}`,
+        }),
+    );
 
     return c.json(safeJSON({ id: messageId }), 201);
 });

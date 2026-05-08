@@ -16,8 +16,11 @@ import mediaRoutes from './routes/media';
 import adminRoutes from './routes/admin';
 import discussionRoutes from './routes/discussion';
 import notificationRoutes from './routes/notification';
+import pushRoutes from './routes/push';
 import ticketRoutes from './routes/ticket';
 import mcpRoutes from './routes/mcp';
+import adminMcpRoutes from './routes/admin-mcp';
+import oauthRoutes from './routes/oauth';
 import analyticsRoutes from './routes/analytics';
 import blogRoutes from './routes/blog';
 import { trackPageView, trackError, queryAnalytics } from './utils/analytics';
@@ -33,11 +36,13 @@ const app = new Hono<Env>();
 app.use('*', secureHeaders());
 
 // CSRF 보호 (GET/HEAD/OPTIONS 제외)
-// MCP API 경로는 외부 서비스(Claude 등)에서 호출하므로 CSRF 제외
+// MCP / OAuth 토큰 엔드포인트는 외부 서비스(Claude 등)에서 호출하므로 CSRF 제외.
+// /oauth/authorize 는 위키 도메인의 동의 폼에서 POST 되므로 CSRF 적용 (Origin 자동 검증).
 app.use('*', (c, next) => {
-    if (c.req.path === '/api/mcp' || c.req.path.startsWith('/api/mcp/')) {
-        return next();
-    }
+    const path = c.req.path;
+    if (path === '/api/mcp' || path.startsWith('/api/mcp/')) return next();
+    if (path === '/api/admin-mcp' || path.startsWith('/api/admin-mcp/')) return next();
+    if (path === '/oauth/token' || path === '/oauth/register' || path === '/oauth/revoke') return next();
     return csrf()(c, next);
 });
 
@@ -53,10 +58,28 @@ app.route('/', mediaRoutes);
 app.route('/api/admin', adminRoutes);
 app.route('/api', discussionRoutes);
 app.route('/api', notificationRoutes);
+app.route('/api', pushRoutes);
 app.route('/api', ticketRoutes);
 app.route('/api/mcp', mcpRoutes);
+app.route('/api/admin-mcp', adminMcpRoutes);
+app.route('/', oauthRoutes); // /.well-known/* + /oauth/*
 app.route('/api/admin/analytics', analyticsRoutes);
 app.route('/api', blogRoutes);
+
+// ── Service Worker (/sw.js) ──
+// Vite 빌드 산출물을 /dist/sw.js 로 두고, 루트 스코프 부여를 위해 /sw.js 로 위임한다.
+// Service-Worker-Allowed: / 헤더와 짧은 캐시를 함께 부여.
+app.get('/sw.js', async (c) => {
+    const url = new URL(c.req.url);
+    url.pathname = '/dist/sw.js';
+    const inner = await c.env.ASSETS.fetch(new Request(url.toString(), c.req.raw));
+    if (!inner.ok) return inner;
+    const headers = new Headers(inner.headers);
+    headers.set('Service-Worker-Allowed', '/');
+    headers.set('Content-Type', 'application/javascript; charset=utf-8');
+    headers.set('Cache-Control', 'no-cache');
+    return new Response(inner.body, { status: inner.status, headers });
+});
 
 // ── 공개 Analytics API (인기 문서, 문서별 조회수) ──
 app.get('/api/analytics/trending', async (c) => {

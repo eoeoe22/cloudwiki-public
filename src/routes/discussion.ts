@@ -6,6 +6,7 @@ import { ROLE_CASE_SQL, enrichRoles, enrichRole, RBAC } from '../utils/role';
 import { dispatchDiscord } from '../utils/webhook/discord';
 import { discussionCreate } from '../utils/webhook/events/discussion';
 import { isR2OnlyNamespace } from '../utils/slug';
+import { pushToUser } from '../utils/push';
 
 const discussionRoutes = new Hono<Env>();
 
@@ -227,6 +228,17 @@ discussionRoutes.post('/discussions/thread/:id/comments', requireAuth, requirePe
 
             if (batchStmts.length > 0) {
                 await db.batch(batchStmts);
+                // best-effort 푸시
+                for (const p of participants) {
+                    c.executionCtx.waitUntil(
+                        pushToUser(c.env, p.author_id, {
+                            title: discussionInfo.title,
+                            body: notifContent,
+                            url: link,
+                            tag: `discussion:${discussionId}`,
+                        }),
+                    );
+                }
             }
         }
     } catch (e) {

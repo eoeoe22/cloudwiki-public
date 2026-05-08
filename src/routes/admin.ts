@@ -8,6 +8,7 @@ import { dispatchDiscord } from '../utils/webhook/discord';
 import { signupRejected, userJoined } from '../utils/webhook/events/signup';
 import { userBan, userRoleChange } from '../utils/webhook/events/user';
 import { superAdminAction } from '../utils/webhook/events/superAdmin';
+import { pushToUser, pushToSignupRequest, promoteSignupSubscriptions, deleteSignupSubscriptions } from '../utils/push';
 
 const adminRoutes = new Hono<Env>();
 
@@ -269,6 +270,14 @@ adminRoutes.put('/users/:id/ban', async (c) => {
                 'banned',
                 `관리자에 의해 ${days}일간 차단되었습니다.`
             ).run();
+            c.executionCtx.waitUntil(
+                pushToUser(c.env, Number(targetUserId), {
+                    title: '차단 안내',
+                    body: `관리자에 의해 ${days}일간 차단되었습니다.`,
+                    url: '/',
+                    tag: `ban:${targetUserId}`,
+                }),
+            );
         } catch (e) {
             console.error('Failed to create ban notification:', e);
         }
@@ -525,6 +534,17 @@ adminRoutes.put('/signup-requests/:id/approve', async (c) => {
             user: { id: newUserId, name: finalName, picture: request.picture },
             env: c.env,
         }));
+
+        // 가입 신청 단계에 옵트인된 구독을 새 user_id 로 승격한 뒤 승인 푸시 발송
+        c.executionCtx.waitUntil((async () => {
+            await promoteSignupSubscriptions(c.env, requestId, newUserId);
+            await pushToUser(c.env, newUserId, {
+                title: '가입이 승인되었습니다',
+                body: `${finalName}님, ${c.env.WIKI_NAME || '위키'}에 오신 것을 환영합니다.`,
+                url: '/',
+                tag: `signup:${requestId}`,
+            });
+        })());
     }
 
     writeAdminLog(c, 'signup_approve', `가입 신청 승인: ${request.name} (${request.email})`, currentUser.id);
@@ -568,6 +588,17 @@ adminRoutes.put('/signup-requests/:id/reject', async (c) => {
         actorName: currentUser.name,
     }));
 
+    // 옵트인된 구독으로 거절 푸시를 보내고 구독 정리
+    c.executionCtx.waitUntil((async () => {
+        await pushToSignupRequest(c.env, requestId, {
+            title: '가입 신청 결과',
+            body: '가입 신청이 거절되었습니다. 다시 신청하실 수 있습니다.',
+            url: '/login',
+            tag: `signup:${requestId}`,
+        });
+        await deleteSignupSubscriptions(c.env, requestId);
+    })());
+
     writeAdminLog(c, 'signup_reject', `가입 신청 거절: ${request.name} (${request.email})`, currentUser.id);
     return c.json({ success: true });
 });
@@ -601,6 +632,17 @@ adminRoutes.put('/signup-requests/:id/block', async (c) => {
     await db.prepare(
         "DELETE FROM notifications WHERE type = 'signup_request' AND ref_id = ?"
     ).bind(requestId).run();
+
+    // 옵트인된 구독으로 차단 푸시를 보내고 구독 정리
+    c.executionCtx.waitUntil((async () => {
+        await pushToSignupRequest(c.env, requestId, {
+            title: '가입 신청 결과',
+            body: '가입이 차단되어 더 이상 신청하실 수 없습니다.',
+            url: '/login',
+            tag: `signup:${requestId}`,
+        });
+        await deleteSignupSubscriptions(c.env, requestId);
+    })());
 
     writeAdminLog(c, 'signup_block', `가입 신청 차단: ${request.name} (${request.email})`, currentUser.id);
     return c.json({ success: true });

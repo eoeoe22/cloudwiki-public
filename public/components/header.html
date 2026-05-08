@@ -39,8 +39,11 @@
 
             <!-- 알림 드롭다운 패널 -->
             <div class="notification-panel d-none" id="notificationPanel">
-                <div class="notification-panel-header">
+                <div class="notification-panel-header d-flex justify-content-between align-items-center">
                     <strong><i class="mdi mdi-inbox"></i> 알림</strong>
+                    <button id="pushToggleBtn" class="btn btn-sm btn-link p-0 d-none" type="button" title="브라우저 푸시 알림">
+                        <i class="mdi mdi-bell-off-outline"></i> <span id="pushToggleLabel">푸시 받기</span>
+                    </button>
                 </div>
                 <div class="notification-panel-body" id="notificationPanelBody">
                     <div class="text-center text-muted py-4">불러오는 중...</div>

@@ -12,6 +12,7 @@ import type { RBAC } from '../../utils/role';
 import type { AuthProvidersResponse } from '../../shared/api/auth';
 import { dispatchDiscord } from '../../utils/webhook/discord';
 import { signupPending } from '../../utils/webhook/events/signup';
+import { pushToUser } from '../../utils/push';
 
 const auth = new Hono<Env>();
 
@@ -252,16 +253,26 @@ auth.post('/api/auth/signup-request', async (c) => {
     }
 
     // 알림 발송
+    const notifContent = `${name.trim()}님이 가입을 신청했습니다.`;
+    const adminLink = '/admin#signup-requests';
     for (const userId of notifyUserIds) {
         await db.prepare(
             'INSERT INTO notifications (user_id, type, content, link, ref_id) VALUES (?, ?, ?, ?, ?)'
         ).bind(
             userId,
             'signup_request',
-            `${name.trim()}님이 가입을 신청했습니다.`,
-            '/admin#signup-requests',
+            notifContent,
+            adminLink,
             requestId
         ).run();
+        c.executionCtx.waitUntil(
+            pushToUser(c.env, userId, {
+                title: '새 가입 신청',
+                body: notifContent,
+                url: adminLink,
+                tag: `signup_request:${requestId}`,
+            }),
+        );
     }
 
     // 토큰 삭제
@@ -276,7 +287,21 @@ auth.post('/api/auth/signup-request', async (c) => {
         env: c.env,
     }));
 
-    return c.json({ success: true, message: '가입 신청이 접수되었습니다.' });
+    // 가입 신청자가 결과 푸시를 옵트인할 때 사용할 단발성 토큰을 KV 에 발급한다.
+    // 인증되지 않은 /api/push/subscribe-signup 엔드포인트가 이 토큰으로 신청 소유권을 검증한다.
+    const pushToken = crypto.randomUUID();
+    await c.env.KV.put(
+        `signup_push_token:${pushToken}`,
+        String(requestId),
+        { expirationTtl: 300 }, // 5분
+    );
+
+    return c.json({
+        success: true,
+        message: '가입 신청이 접수되었습니다.',
+        request_id: Number(requestId),
+        push_token: pushToken,
+    });
 });
 
 /**

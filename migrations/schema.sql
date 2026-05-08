@@ -317,3 +317,77 @@ CREATE TABLE IF NOT EXISTS blog_posts (
 CREATE INDEX IF NOT EXISTS idx_blog_posts_created ON blog_posts(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_blog_posts_deleted ON blog_posts(deleted_at);
 
+
+-- Web Push 구독 테이블
+-- user_id 가 있는 행: 가입 완료 유저용 (일반 알림 푸시 fan-out 대상)
+-- user_id 가 NULL 이고 signup_request_id 가 있는 행: 가입 신청 단계 옵트인 푸시
+--   (승인 시 user_id 로 승격되고 signup_request_id 는 NULL 로 초기화)
+-- endpoint 는 push service 가 발급하는 고유 URL — UNIQUE.
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id           INTEGER,
+  signup_request_id INTEGER,
+  endpoint          TEXT NOT NULL UNIQUE,
+  p256dh            TEXT NOT NULL,
+  auth              TEXT NOT NULL,
+  ua                TEXT,
+  created_at        INTEGER DEFAULT (unixepoch()),
+  FOREIGN KEY (user_id) REFERENCES users(id),
+  FOREIGN KEY (signup_request_id) REFERENCES signup_requests(id)
+);
+CREATE INDEX IF NOT EXISTS idx_push_user ON push_subscriptions(user_id);
+CREATE INDEX IF NOT EXISTS idx_push_signup ON push_subscriptions(signup_request_id);
+
+-- ──────────────────────────────────────────────────────────────────
+-- OAuth 2.1 (관리자 MCP 서버 인증용)
+-- ──────────────────────────────────────────────────────────────────
+-- DCR(RFC 7591)로 동적으로 등록되거나, 관리자가 수동 발급한 OAuth 클라이언트.
+-- public client (Claude Desktop 등 PKCE 사용) 의 경우 client_secret_hash 가 NULL.
+CREATE TABLE IF NOT EXISTS oauth_clients (
+  id                              INTEGER PRIMARY KEY AUTOINCREMENT,
+  client_id                       TEXT NOT NULL UNIQUE,
+  client_secret_hash              TEXT,                                  -- SHA-256 hex; public client는 NULL
+  client_name                     TEXT,
+  redirect_uris                   TEXT NOT NULL,                         -- JSON 배열
+  grant_types                     TEXT NOT NULL DEFAULT '["authorization_code","refresh_token"]',
+  token_endpoint_auth_method      TEXT NOT NULL DEFAULT 'none',          -- 'none' | 'client_secret_post' | 'client_secret_basic'
+  registration_access_token_hash  TEXT,                                  -- DCR 발급 시 클라이언트 메타 조회용
+  created_at                      INTEGER DEFAULT (unixepoch()),
+  created_by_user_id              INTEGER                                 -- DCR (anonymous) 인 경우 NULL
+);
+CREATE INDEX IF NOT EXISTS idx_oauth_clients_created ON oauth_clients(created_at DESC);
+
+-- 일회용 인가 코드. PKCE code_challenge 와 함께 저장하고 토큰 교환 시 검증.
+CREATE TABLE IF NOT EXISTS oauth_codes (
+  code_hash             TEXT PRIMARY KEY,                                 -- SHA-256 hex
+  client_id             TEXT NOT NULL,
+  user_id               INTEGER NOT NULL,
+  redirect_uri          TEXT NOT NULL,
+  code_challenge        TEXT NOT NULL,
+  code_challenge_method TEXT NOT NULL DEFAULT 'S256',
+  scope                 TEXT,
+  expires_at            INTEGER NOT NULL,
+  used_at               INTEGER,                                          -- 1회용 — 두 번째 교환 시도 시 토큰 패밀리 폐기
+  created_at            INTEGER DEFAULT (unixepoch()),
+  FOREIGN KEY (user_id) REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS idx_oauth_codes_expires ON oauth_codes(expires_at);
+
+-- 액세스 토큰 + 리프레시 토큰. 두 토큰 모두 SHA-256 으로 해시 저장.
+-- refresh rotation: refresh_token 사용 시 새 access+refresh 발급하고 기존 row 는 revoked_at 설정.
+CREATE TABLE IF NOT EXISTS oauth_tokens (
+  id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+  access_token_hash   TEXT NOT NULL UNIQUE,
+  refresh_token_hash  TEXT UNIQUE,
+  client_id           TEXT NOT NULL,
+  user_id             INTEGER NOT NULL,
+  scope               TEXT,
+  access_expires_at   INTEGER NOT NULL,
+  refresh_expires_at  INTEGER,
+  revoked_at          INTEGER,
+  created_at          INTEGER DEFAULT (unixepoch()),
+  last_used_at        INTEGER,
+  FOREIGN KEY (user_id) REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS idx_oauth_tokens_user ON oauth_tokens(user_id);
+CREATE INDEX IF NOT EXISTS idx_oauth_tokens_refresh ON oauth_tokens(refresh_token_hash);

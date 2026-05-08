@@ -1822,9 +1822,28 @@ html[data-theme="dark"] .wiki-callout-note    { --callout-bg-tint: rgba(161, 161
   --bs-accordion-active-bg: var(--wiki-card-bg);
   --bs-accordion-active-color: var(--wiki-text);
   --bs-accordion-btn-color: var(--wiki-text);
+  --bs-accordion-btn-focus-border-color: var(--wiki-primary);
+  --bs-accordion-btn-focus-box-shadow: 0 0 0 0.15rem color-mix(in srgb, var(--wiki-primary) 25%, transparent);
   margin: 0.75rem 0;
+  border-radius: 6px;
+  /* overflow:hidden 은 본문 내부 popover/툴팁/드롭다운을 잘라내므로 사용하지 않는다.
+     모서리 라운딩은 BS 가 첫/마지막 .accordion-item 에서 자체 처리. */
 }
-.wiki-accordion .accordion-button { font-size: 0.95rem; font-weight: 600; }
+/* :::accordion 항목 헤더는 본문 헤딩이 아니므로 TOC/번호/접기 데코레이션 대상에서 제외 */
+.wiki-accordion .accordion-header {
+  margin: 0;
+  font-size: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+}
+.wiki-accordion .accordion-button {
+  font-size: 0.95rem;
+  font-weight: 600;
+  padding: 0.6rem 0.9rem;
+}
+.wiki-accordion .accordion-button:not(.collapsed) {
+  background: color-mix(in srgb, var(--wiki-primary) 8%, var(--wiki-card-bg));
+}
 .wiki-accordion .accordion-body > :first-child { margin-top: 0; }
 .wiki-accordion .accordion-body > :last-child  { margin-bottom: 0; }
 

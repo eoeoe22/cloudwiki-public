@@ -5,6 +5,7 @@ import { safeJSON } from '../utils/json';
 import { ROLE_CASE_SQL, enrichRoles, enrichRole, RBAC } from '../utils/role';
 import { dispatchDiscord } from '../utils/webhook/discord';
 import { ticketCreate, ticketStatus } from '../utils/webhook/events/ticket';
+import { pushToUser } from '../utils/push';
 
 const ticketRoutes = new Hono<Env>();
 
@@ -163,6 +164,17 @@ ticketRoutes.post('/tickets', requireAuth, requirePermission('ticket:create'), a
 
         if (batchStmts.length > 0) {
             await db.batch(batchStmts);
+            for (const a of admins) {
+                if (a.id === user.id) continue;
+                c.executionCtx.waitUntil(
+                    pushToUser(c.env, a.id, {
+                        title: `새 티켓 #${ticketId}`,
+                        body: notifContent,
+                        url: link,
+                        tag: `ticket:${ticketId}`,
+                    }),
+                );
+            }
         }
     } catch (e) {
         console.error('Failed to create ticket notifications:', e);
@@ -318,6 +330,16 @@ ticketRoutes.post('/tickets/:id/comments', requireAuth, requirePermission('comme
 
         if (batchStmts.length > 0) {
             await db.batch(batchStmts);
+            for (const recipientId of allRecipients) {
+                c.executionCtx.waitUntil(
+                    pushToUser(c.env, recipientId, {
+                        title: `티켓 #${ticketId}`,
+                        body: notifContent,
+                        url: link,
+                        tag: `ticket:${ticketId}`,
+                    }),
+                );
+            }
         }
     } catch (e) {
         console.error('Failed to create ticket comment notifications:', e);

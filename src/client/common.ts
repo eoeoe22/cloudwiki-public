@@ -18,6 +18,8 @@
  *   inline <script> 와의 호환성을 위해 본 모듈도 자체 정의 + window 노출 유지.
  */
 
+import * as PushClient from './push';
+
 // ── 테마 초기화 (body 내 fallback, head의 인라인 스크립트가 먼저 실행됨) ──
 // data-theme: 위키 자체 다크모드 변수 (--wiki-card-bg 등)
 // data-bs-theme: Bootstrap 5.3 컴포넌트(.nav-tabs / .accordion / .alert 등) 다크모드.
@@ -617,6 +619,7 @@ function toggleNotificationPanel() {
     if (_notifPanelOpen) {
         panel.classList.remove('d-none');
         loadNotifications(false);
+        refreshPushToggle(); // 패널 열릴 때마다 상태 동기화
         // 외부 클릭 시 닫기
         setTimeout(() => {
             document.addEventListener('click', _closeNotifOnOutsideClick);
@@ -825,6 +828,53 @@ async function deleteNotification(id) {
         if (typeof Swal !== 'undefined') {
             Swal.fire('오류', '알림 삭제에 실패했습니다.', 'error');
         }
+    }
+}
+
+// ── Web Push 토글 (in-app 알림 패널 헤더) ──
+// 동적 import 로 push.ts 를 로드하므로 비지원 브라우저에서도 무해.
+// 토글 상태는 매번 패널 열릴 때 refreshPushToggle 로 갱신된다.
+async function refreshPushToggle() {
+    const btn = document.getElementById('pushToggleBtn');
+    const labelEl = document.getElementById('pushToggleLabel');
+    if (!btn || !labelEl || !currentUser) return;
+    try {
+        const mod = PushClient;
+        const status = await mod.checkPushAvailability();
+        if (status.kind !== 'ready') {
+            btn.classList.add('d-none');
+            return;
+        }
+        btn.classList.remove('d-none');
+        const subscribed = await mod.isCurrentlySubscribed();
+        const icon = btn.querySelector('i');
+        if (subscribed) {
+            labelEl.textContent = '푸시 끄기';
+            if (icon) icon.className = 'mdi mdi-bell-ring-outline';
+        } else {
+            labelEl.textContent = '푸시 받기';
+            if (icon) icon.className = 'mdi mdi-bell-off-outline';
+        }
+        btn.onclick = async (e) => {
+            e.stopPropagation();
+            btn.disabled = true;
+            try {
+                if (subscribed) {
+                    await mod.unsubscribe();
+                } else {
+                    const res = await mod.subscribeForUser();
+                    if (!res.success && res.reason === 'denied' && typeof Swal !== 'undefined') {
+                        Swal.fire('알림 권한 차단됨', '브라우저 설정에서 알림 권한을 허용해주세요.', 'warning');
+                    }
+                }
+            } finally {
+                btn.disabled = false;
+                refreshPushToggle();
+            }
+        };
+    } catch (e) {
+        // 푸시 모듈 로드 실패 — 토글 숨김 처리
+        btn.classList.add('d-none');
     }
 }
 

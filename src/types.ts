@@ -57,6 +57,12 @@ export type Env = {
         DISCORD_COMMUNITY_EVENTS?: string;
         // === 절대 URL 보정용 (avatar_url, 임베드 링크) ===
         WIKI_PUBLIC_BASE_URL?: string;
+        // === Web Push (VAPID) ===
+        // 공개키는 클라이언트에 노출되므로 [vars] 또는 평문 변수.
+        // 비밀키와 subject(mailto: 또는 https://) 는 wrangler secret 으로 등록.
+        VAPID_PUBLIC_KEY?: string;
+        VAPID_PRIVATE_KEY?: string;
+        VAPID_SUBJECT?: string;
     };
     Variables: {
         user: User | null;
