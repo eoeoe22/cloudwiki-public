@@ -671,6 +671,107 @@ auth.delete('/api/me/sessions', requireAuthAllowBanned, async (c) => {
 });
 
 /**
+ * GET /api/me/mcp-sessions
+ * 현재 로그인 유저에게 발급된 MCP(OAuth 2.1) 토큰 목록.
+ * - active: revoked_at IS NULL AND COALESCE(refresh_expires_at, access_expires_at) > now
+ * - 그 외(expired/revoked) 는 최근 30일 이내만 회색 표시용으로 반환.
+ * 토큰 평문/해시는 절대 노출하지 않으며, 식별자는 oauth_tokens.id 만 사용한다.
+ */
+auth.get('/api/me/mcp-sessions', requireAuthAllowBanned, async (c) => {
+    const user = c.get('user')!;
+    const db = c.env.DB;
+    const now = Math.floor(Date.now() / 1000);
+    const since = now - 60 * 60 * 24 * 30;
+
+    const { results } = await db.prepare(
+        `SELECT t.id, t.client_id, t.scope, t.access_expires_at, t.refresh_expires_at,
+                t.revoked_at, t.created_at, t.last_used_at,
+                c.client_name
+         FROM oauth_tokens t
+         LEFT JOIN oauth_clients c ON c.client_id = t.client_id
+         WHERE t.user_id = ?
+           AND COALESCE(t.revoked_at, t.refresh_expires_at, t.access_expires_at) >= ?
+         ORDER BY (t.revoked_at IS NULL) DESC,
+                  COALESCE(t.last_used_at, t.created_at, 0) DESC`
+    ).bind(user.id, since).all<{
+        id: number;
+        client_id: string;
+        scope: string | null;
+        access_expires_at: number;
+        refresh_expires_at: number | null;
+        revoked_at: number | null;
+        created_at: number | null;
+        last_used_at: number | null;
+        client_name: string | null;
+    }>();
+
+    const sessions = (results || []).map(t => {
+        let status: 'active' | 'expired' | 'revoked';
+        if (t.revoked_at) status = 'revoked';
+        else if ((t.refresh_expires_at ?? t.access_expires_at) < now) status = 'expired';
+        else status = 'active';
+        return {
+            id: t.id,
+            client_id: t.client_id,
+            client_name: t.client_name,
+            scope: t.scope,
+            status,
+            created_at: t.created_at,
+            last_used_at: t.last_used_at,
+            access_expires_at: t.access_expires_at,
+            refresh_expires_at: t.refresh_expires_at,
+            revoked_at: t.revoked_at,
+        };
+    });
+
+    return c.json({ sessions });
+});
+
+/**
+ * DELETE /api/me/mcp-sessions/:id
+ * 본인 소유의 특정 MCP 토큰 단건 폐기.
+ */
+auth.delete('/api/me/mcp-sessions/:id', requireAuthAllowBanned, async (c) => {
+    const user = c.get('user')!;
+    const db = c.env.DB;
+    const tokenId = Number(c.req.param('id'));
+    if (!Number.isFinite(tokenId) || !Number.isInteger(tokenId) || tokenId <= 0) {
+        return c.json({ error: '잘못된 토큰 ID 입니다.' }, 400);
+    }
+
+    const result = await db.prepare(
+        `UPDATE oauth_tokens SET revoked_at = unixepoch()
+         WHERE id = ? AND user_id = ? AND revoked_at IS NULL`
+    ).bind(tokenId, user.id).run();
+
+    if (!result.meta.changes) {
+        return c.json({ error: '세션을 찾을 수 없거나 이미 종료되었습니다.' }, 404);
+    }
+    return c.json({ success: true });
+});
+
+/**
+ * DELETE /api/me/mcp-sessions
+ * 본인의 모든 활성 MCP 토큰 일괄 폐기.
+ */
+auth.delete('/api/me/mcp-sessions', requireAuthAllowBanned, async (c) => {
+    const user = c.get('user')!;
+    const db = c.env.DB;
+
+    // 일괄 폐기는 "활성" 토큰만 대상으로 한다 — 만료-but-unrevoked 행까지 건드리면
+    // 응답 count 가 UI 가 표시한 활성 세션 수와 어긋난다 (만료 토큰은 어차피 인증 단계에서
+    // 차단되므로 폐기 마킹의 실익도 없음).
+    const result = await db.prepare(
+        `UPDATE oauth_tokens SET revoked_at = unixepoch()
+         WHERE user_id = ?
+           AND revoked_at IS NULL
+           AND COALESCE(refresh_expires_at, access_expires_at) > unixepoch()`
+    ).bind(user.id).run();
+
+    return c.json({ success: true, count: result.meta.changes ?? 0 });
+});
+
+/**
  * DELETE /api/me/account
  * 회원탈퇴: role을 'deleted'로, 표시명을 '탈퇴한 사용자'로 변경하고 세션 삭제
  * provider + uid는 유지하여 재가입 차단

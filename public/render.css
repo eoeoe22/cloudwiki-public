@@ -1421,6 +1421,26 @@ body.raw-mode .wiki-content-raw {
   margin-bottom: 0;
 }
 
+/* 그리드 내부의 표는 항상 정상 table 레이아웃으로 그리드 트랙 폭을 가득 채운다.
+   기본 .wiki-content table 의 모바일 규칙(display:block; overflow-x:auto; white-space:nowrap)
+   은 셀이 콘텐츠 폭으로 줄어들면서 flex 트랙 우측에 빈 공간(=빈 칸처럼 보이는 영역)을 남기므로,
+   그리드 내부에서는 사용하지 않는다. 대신 셀 콘텐츠를 적극적으로 줄바꿈해
+   좁은 뷰포트에서도 트랙을 벗어나지 않도록 한다(가로 스크롤 불가능한 display:table 제약 보완). */
+.wiki-content .wiki-grid > table {
+  display: table;
+  width: 100%;
+  max-width: 100%;
+  white-space: normal;
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.wiki-content .wiki-grid > table th,
+.wiki-content .wiki-grid > table td {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 .wiki-row {
   display: flex;
   flex-wrap: nowrap;

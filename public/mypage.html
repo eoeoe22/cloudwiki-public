@@ -390,6 +390,23 @@
                     </div>
                 </div>
 
+                <!-- MCP 세션 관리 -->
+                <div class="profile-section" id="mcpSessionsSection" style="display:none;">
+                    <div class="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2">
+                        <h4 class="mb-0"><i class="mdi mdi-api"></i> MCP 서버 세션 관리</h4>
+                        <button class="btn btn-sm btn-outline-danger" id="revokeAllMcpSessionsBtn" onclick="revokeAllMcpSessions()">
+                            <i class="mdi mdi-logout-variant"></i> 모두 종료
+                        </button>
+                    </div>
+                    <small class="text-muted d-block mb-3">
+                        외부 MCP 클라이언트(Claude Desktop, Claude Code 등) 가 이 계정으로 발급받은 OAuth 액세스 토큰입니다.
+                        본인이 연결한 적 없는 세션이 있다면 즉시 종료해주세요. 종료된 세션은 30일간 기록으로 표시됩니다.
+                    </small>
+                    <div id="mcpSessionsList">
+                        <div class="text-center text-muted py-3">불러오는 중...</div>
+                    </div>
+                </div>
+
                 <!-- 문의하기 / 회원탈퇴 -->
                 <div class="text-center mb-4 d-flex justify-content-center gap-2">
                     <a href="/tickets" class="btn btn-wiki-outline">
@@ -426,6 +443,7 @@
             loadContributions();
             loadMessages();
             loadSessions();
+            loadMcpSessions();
             checkNameChangeStatus();
             showPictureUpdateResult();
         });
@@ -902,6 +920,144 @@
                     timer: 1500,
                 });
                 loadSessions();
+            } catch (err) {
+                Swal.fire('오류', err.message, 'error');
+            }
+        }
+
+        function formatMcpTime(epochSec) {
+            if (!epochSec) return '알 수 없음';
+            return new Date(epochSec * 1000).toLocaleString('ko-KR');
+        }
+
+        function formatMcpRelative(epochSec) {
+            if (!epochSec) return '없음';
+            const diff = Math.floor(Date.now() / 1000) - epochSec;
+            if (diff < 60) return '방금 전';
+            if (diff < 3600) return `${Math.floor(diff / 60)}분 전`;
+            if (diff < 86400) return `${Math.floor(diff / 3600)}시간 전`;
+            if (diff < 86400 * 30) return `${Math.floor(diff / 86400)}일 전`;
+            return new Date(epochSec * 1000).toLocaleDateString('ko-KR');
+        }
+
+        async function loadMcpSessions() {
+            const section = document.getElementById('mcpSessionsSection');
+            const listEl = document.getElementById('mcpSessionsList');
+            try {
+                const res = await fetch('/api/me/mcp-sessions');
+                if (!res.ok) throw new Error();
+                const data = await res.json();
+                const sessions = data.sessions || [];
+
+                section.style.display = '';
+
+                if (sessions.length === 0) {
+                    listEl.innerHTML = '<div class="text-center text-muted py-3">발급된 MCP 토큰이 없습니다.</div>';
+                    document.getElementById('revokeAllMcpSessionsBtn').disabled = true;
+                    return;
+                }
+
+                const hasActive = sessions.some(s => s.status === 'active');
+                document.getElementById('revokeAllMcpSessionsBtn').disabled = !hasActive;
+
+                listEl.innerHTML = sessions.map(s => {
+                    const isActive = s.status === 'active';
+                    const statusBadge = s.status === 'active'
+                        ? '<span class="badge bg-success">활성</span>'
+                        : s.status === 'revoked'
+                            ? '<span class="badge bg-secondary">종료됨</span>'
+                            : '<span class="badge bg-warning text-dark">만료</span>';
+                    const clientLabel = s.client_name
+                        ? escapeHtml(s.client_name)
+                        : '<span class="text-muted">(이름 미등록 클라이언트)</span>';
+                    const clientIdShort = escapeHtml((s.client_id || '').slice(0, 12)) + '…';
+                    const scopeLabel = escapeHtml(s.scope || 'mcp');
+                    const lastUsed = s.last_used_at ? formatMcpRelative(s.last_used_at) : '미사용';
+                    const created = formatMcpTime(s.created_at);
+                    const refreshExp = s.refresh_expires_at ? formatMcpTime(s.refresh_expires_at) : '없음';
+                    const revokedAt = s.revoked_at ? formatMcpTime(s.revoked_at) : null;
+
+                    const action = isActive
+                        ? `<button class="btn btn-sm btn-outline-danger" onclick="revokeMcpSession(${s.id})"><i class="mdi mdi-close-circle"></i> 종료</button>`
+                        : '';
+
+                    const revokedLine = revokedAt
+                        ? `<span><i class="mdi mdi-cancel"></i> 종료: ${escapeHtml(revokedAt)}</span>`
+                        : `<span><i class="mdi mdi-timer-sand"></i> 만료: ${escapeHtml(refreshExp)}</span>`;
+
+                    return `
+                        <div class="session-item ${isActive ? '' : 'opacity-75'}">
+                            <div class="session-meta">
+                                <div class="session-ua">
+                                    <i class="mdi mdi-application-brackets-outline"></i> ${clientLabel} ${statusBadge}
+                                </div>
+                                <div class="session-ua-raw text-muted">
+                                    client_id: <code>${clientIdShort}</code> · scope: <code>${scopeLabel}</code>
+                                </div>
+                                <div class="session-times">
+                                    <span><i class="mdi mdi-clock-outline"></i> 발급: ${escapeHtml(created)}</span>
+                                    <span><i class="mdi mdi-history"></i> 마지막 사용: ${escapeHtml(lastUsed)}</span>
+                                    ${revokedLine}
+                                </div>
+                            </div>
+                            <div class="flex-shrink-0">${action}</div>
+                        </div>
+                    `;
+                }).join('');
+            } catch (e) {
+                section.style.display = '';
+                listEl.innerHTML = '<div class="text-center text-danger py-3">MCP 세션 목록을 불러오지 못했습니다.</div>';
+            }
+        }
+
+        async function revokeMcpSession(id) {
+            const result = await Swal.fire({
+                title: 'MCP 세션 종료',
+                text: '이 MCP 토큰을 즉시 무효화합니다. 해당 클라이언트는 재인증해야 다시 접근할 수 있습니다. 계속하시겠습니까?',
+                icon: 'warning',
+                showCancelButton: true,
+                confirmButtonColor: '#cf222e',
+                confirmButtonText: '종료',
+                cancelButtonText: '취소',
+            });
+            if (!result.isConfirmed) return;
+
+            try {
+                const res = await fetch(`/api/me/mcp-sessions/${encodeURIComponent(id)}`, { method: 'DELETE' });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) throw new Error(data.error || 'MCP 세션 종료에 실패했습니다.');
+
+                Swal.fire({ icon: 'success', title: 'MCP 세션이 종료되었습니다.', showConfirmButton: false, timer: 1200 });
+                loadMcpSessions();
+            } catch (err) {
+                Swal.fire('오류', err.message, 'error');
+            }
+        }
+
+        async function revokeAllMcpSessions() {
+            const result = await Swal.fire({
+                title: '모든 MCP 세션 종료',
+                text: '본 계정으로 발급된 모든 활성 MCP 토큰을 일괄 무효화합니다. 외부 MCP 클라이언트는 재인증해야 합니다. 계속하시겠습니까?',
+                icon: 'warning',
+                showCancelButton: true,
+                confirmButtonColor: '#cf222e',
+                confirmButtonText: '모두 종료',
+                cancelButtonText: '취소',
+            });
+            if (!result.isConfirmed) return;
+
+            try {
+                const res = await fetch('/api/me/mcp-sessions', { method: 'DELETE' });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) throw new Error(data.error || 'MCP 세션 종료에 실패했습니다.');
+
+                Swal.fire({
+                    icon: 'success',
+                    title: `${data.count || 0}개의 MCP 세션이 종료되었습니다.`,
+                    showConfirmButton: false,
+                    timer: 1500,
+                });
+                loadMcpSessions();
             } catch (err) {
                 Swal.fire('오류', err.message, 'error');
             }
