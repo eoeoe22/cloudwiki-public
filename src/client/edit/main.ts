@@ -3218,6 +3218,12 @@ async function openSplitToSubdocModal(): Promise<void> {
     const newSectionText = `${headingLine}\n\n${leaveText}\n`;
     editor.setMarkdown(newSectionText);
 
+    // 자동 편집 요약이 "분리" prefix 를 합성하도록 분리 정보를 기록한다.
+    // editor.setMarkdown 의 change 이벤트로 refreshAutoSummary 가 곧 호출되지만,
+    // 디바운스 지연 없이 즉시 갱신되도록 명시 호출도 한다.
+    window.splitSubdocInfo = { originalHeading: headingText, newTitle };
+    if (typeof window.refreshAutoSummary === 'function') window.refreshAutoSummary();
+
     Swal.close();
     await Swal.fire({
         icon: 'success',

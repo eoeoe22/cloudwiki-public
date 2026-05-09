@@ -1359,6 +1359,12 @@ div:where(.swal2-container) .swal2-html-container {
   border: 1px solid var(--wiki-border);
 }
 
+.revision-summary {
+  white-space: nowrap;
+  overflow: visible;
+  text-overflow: clip;
+}
+
 .revision-item.is-current {
   background: color-mix(in srgb, var(--wiki-warning) 15%, var(--wiki-card-bg));
   border-color: var(--wiki-warning);

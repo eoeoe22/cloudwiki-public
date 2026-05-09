@@ -315,6 +315,13 @@ declare global {
          * 초안이 재프롬프트되지 않도록 한다.
          */
         promotedFromDraftKey?: string | null;
+        /**
+         * 섹션 편집 모드에서 "하위 문서로 분리" 가 성공한 직후 기록되는 정보.
+         * summary.ts 가 자동 편집 요약 prefix 를 "분리" 형태로 덮어쓰는 데 사용한다.
+         * - originalHeading: 분리 시점의 섹션 헤딩 텍스트
+         * - newTitle: 새로 생성된 하위 문서 슬러그
+         */
+        splitSubdocInfo?: { originalHeading: string; newTitle: string } | null;
     }
 }
 

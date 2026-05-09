@@ -1011,8 +1011,11 @@ adminRoutes.post('/media/gc', async (c) => {
 
 /**
  * GET /media/:id/backlinks
- * 특정 이미지가 사용된 문서 목록(역링크) 조회
+ * 특정 이미지가 사용된 문서/블로그 포스트 목록(역링크) 조회
  * page_links 테이블(link_type='image') 기반 조회 + LIKE fallback
+ * 응답 backlinks 항목 형식:
+ *   - 위키 문서: { type: 'page', id, slug }
+ *   - 블로그 포스트: { type: 'blog', id, title }
  */
 adminRoutes.get('/media/:id/backlinks', async (c) => {
     const db = c.env.DB;
@@ -1026,32 +1029,54 @@ adminRoutes.get('/media/:id/backlinks', async (c) => {
         return c.json({ error: '이미지를 찾을 수 없습니다.' }, 404);
     }
 
-    // 1차: page_links 테이블에서 인덱스 기반 조회
-    const indexedResult = await db.prepare(`
-        SELECT DISTINCT p.id, p.slug
-        FROM page_links pl
-        JOIN pages p ON pl.source_page_id = p.id
-        WHERE pl.link_type = 'image'
-          AND pl.blog = 0
-          AND pl.target_slug = ?
-          AND p.deleted_at IS NULL
-    `).bind(mediaItem.r2_key).all();
+    // 1차: page_links 테이블에서 인덱스 기반 조회 (위키 + 블로그)
+    const [indexedPages, indexedBlogs] = await Promise.all([
+        db.prepare(`
+            SELECT DISTINCT p.id, p.slug
+            FROM page_links pl
+            JOIN pages p ON pl.source_page_id = p.id
+            WHERE pl.link_type = 'image'
+              AND pl.blog = 0
+              AND pl.target_slug = ?
+              AND p.deleted_at IS NULL
+        `).bind(mediaItem.r2_key).all(),
+        db.prepare(`
+            SELECT DISTINCT b.id, b.title
+            FROM page_links pl
+            JOIN blog_posts b ON pl.source_page_id = b.id
+            WHERE pl.link_type = 'image'
+              AND pl.blog = 1
+              AND pl.target_slug = ?
+              AND b.deleted_at IS NULL
+        `).bind(mediaItem.r2_key).all(),
+    ]);
 
-    // 2차: LIKE fallback (아직 page_links에 인덱싱되지 않은 오래된 문서 대응)
-    const indexedIds = new Set((indexedResult.results || []).map((r: any) => r.id));
-    const likeResult = await db.prepare(`
-        SELECT id, slug
-        FROM pages
-        WHERE content LIKE ? AND deleted_at IS NULL
-    `).bind(`%${mediaItem.r2_key}%`).all();
+    // 2차: LIKE fallback (아직 page_links에 인덱싱되지 않은 오래된 문서/포스트 대응)
+    const indexedPageIds = new Set((indexedPages.results || []).map((r: any) => r.id));
+    const indexedBlogIds = new Set((indexedBlogs.results || []).map((r: any) => r.id));
+    const [likePages, likeBlogs] = await Promise.all([
+        db.prepare(`
+            SELECT id, slug
+            FROM pages
+            WHERE content LIKE ? AND deleted_at IS NULL
+        `).bind(`%${mediaItem.r2_key}%`).all(),
+        db.prepare(`
+            SELECT id, title
+            FROM blog_posts
+            WHERE content LIKE ? AND deleted_at IS NULL
+        `).bind(`%${mediaItem.r2_key}%`).all(),
+    ]);
 
-    // 두 결과 병합 (중복 제거)
-    const merged = [...(indexedResult.results || [])];
-    for (const row of (likeResult.results || []) as any[]) {
-        if (!indexedIds.has(row.id)) {
-            merged.push(row);
-        }
-    }
+    const merged = [
+        ...(indexedPages.results || []).map((r: any) => ({ type: 'page', ...r })),
+        ...((likePages.results || []) as any[])
+            .filter(r => !indexedPageIds.has(r.id))
+            .map(r => ({ type: 'page', ...r })),
+        ...(indexedBlogs.results || []).map((r: any) => ({ type: 'blog', ...r })),
+        ...((likeBlogs.results || []) as any[])
+            .filter(r => !indexedBlogIds.has(r.id))
+            .map(r => ({ type: 'blog', ...r })),
+    ];
 
     return c.json({
         media: mediaItem,

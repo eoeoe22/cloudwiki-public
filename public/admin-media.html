@@ -665,14 +665,24 @@
                 let htmlContent = '';
                 if (data.backlinks && data.backlinks.length > 0) {
                     htmlContent = '<ul class="list-group text-start mt-3" style="max-height: 300px; overflow-y: auto;">';
-                    data.backlinks.forEach(page => {
-                        htmlContent += `
+                    data.backlinks.forEach(item => {
+                        if (item.type === 'blog') {
+                            htmlContent += `
                                 <li class="list-group-item d-flex justify-content-between align-items-center">
-                                    <a href="/w/${encodeURIComponent(page.slug)}" target="_blank" class="text-decoration-none">
-                                        ${escapeHtml(page.slug)}
+                                    <a href="/blog/${encodeURIComponent(item.id)}" target="_blank" class="text-decoration-none">
+                                        ${escapeHtml(item.title || `#${item.id}`)}
+                                    </a>
+                                    <span class="badge bg-info rounded-pill">블로그</span>
+                                </li>`;
+                        } else {
+                            htmlContent += `
+                                <li class="list-group-item d-flex justify-content-between align-items-center">
+                                    <a href="/w/${encodeURIComponent(item.slug)}" target="_blank" class="text-decoration-none">
+                                        ${escapeHtml(item.slug)}
                                     </a>
                                     <span class="badge bg-secondary rounded-pill">문서</span>
                                 </li>`;
+                        }
                     });
                     htmlContent += '</ul>';
                 } else {

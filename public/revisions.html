@@ -61,7 +61,7 @@
           <h2 class="text-break"><i class="bi bi-clock-history"></i> 편집 이력: <span id="revPageTitle"></span></h2>
           <div class="table-responsive"
             style="width: 100%; max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch;">
-            <div class="revision-list" id="revisionsList" style="min-width: 800px;"></div>
+            <div class="revision-list" id="revisionsList" style="min-width: 800px; width: max-content;"></div>
           </div>
           <nav id="revisionsPagination" class="mt-3 d-none" aria-label="편집 이력 페이지네이션">
             <ul class="pagination justify-content-center flex-wrap" id="revisionsPaginationList"></ul>
@@ -218,11 +218,11 @@
           const date = new Date(rev.created_at * 1000).toLocaleString('ko-KR');
           return `
             <div class="revision-item${isLatest ? ' is-current' : ''} d-flex align-items-center justify-content-between border-bottom py-2">
-              <div class="d-flex align-items-center gap-3 flex-grow-1 overflow-hidden">
+              <div class="d-flex align-items-center gap-3 flex-grow-1">
                 <span class="revision-date text-muted small" style="min-width: 160px;">${date}</span>
                 ${rev.author_id ? `<a href="${rev.author_role === 'deleted' ? '/404' : '/profile/' + rev.author_id}" class="revision-author badge bg-light text-dark border text-decoration-none">${escapeHtml(rev.author_name || '알 수 없음')}${renderUserRoleIcon(rev.author_role)}</a>` : `<span class="revision-author badge bg-light text-dark border">${escapeHtml(rev.author_name || '알 수 없음')}${renderUserRoleIcon(rev.author_role)}</span>`}
                 ${isLatest ? '<span class="badge text-bg-warning" style="font-size: 0.7em; flex-shrink: 0;">현재 버전</span>' : ''}
-                <span class="revision-summary text-truncate">${renderRevisionSummary(rev.summary)}</span>
+                <span class="revision-summary">${renderRevisionSummary(rev.summary)}</span>
               </div>
               <div class="d-flex gap-2 ms-2" style="white-space: nowrap;">
                 <button class="btn btn-rev-action btn-rev-view" data-slug="${escapeHtml(slug)}" data-id="${rev.id}" data-page-version="${rev.page_version ?? ''}" onclick="viewRevision(this.dataset.slug, +this.dataset.id, this.dataset.pageVersion)">

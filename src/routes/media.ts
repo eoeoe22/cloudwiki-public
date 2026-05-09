@@ -291,9 +291,12 @@ media.get('/api/media/doc/:filename', async (c) => {
 
 /**
  * GET /api/media/doc/:filename/backlinks
- * 이미지 문서를 사용(참조)하는 문서 목록 조회.
+ * 이미지 문서를 사용(참조)하는 문서/블로그 포스트 목록 조회.
  * page_links 테이블(link_type='image', target_slug=r2_key) 기반.
  * 비공개/삭제 문서는 관리자만 열람.
+ * 응답 항목 형식:
+ *   - 위키 문서: { type: 'page', slug, updated_at, is_locked, is_deleted }
+ *   - 블로그 포스트: { type: 'blog', id, title, updated_at, is_deleted }
  */
 media.get('/api/media/doc/:filename/backlinks', async (c) => {
     if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) {
@@ -311,7 +314,7 @@ media.get('/api/media/doc/:filename/backlinks', async (c) => {
         return c.json({ error: '이미지를 찾을 수 없습니다.' }, 404);
     }
 
-    let query = `
+    let pageQuery = `
         SELECT DISTINCT p.slug, p.updated_at, p.is_locked,
             CASE WHEN p.deleted_at IS NOT NULL THEN 1 ELSE 0 END AS is_deleted
         FROM page_links pl
@@ -321,12 +324,34 @@ media.get('/api/media/doc/:filename/backlinks', async (c) => {
           AND pl.target_slug = ?
     `;
     if (!isAdmin) {
-        query += ' AND p.deleted_at IS NULL';
+        pageQuery += ' AND p.deleted_at IS NULL';
     }
-    query += ' ORDER BY p.updated_at DESC LIMIT 100';
+    pageQuery += ' ORDER BY p.updated_at DESC LIMIT 100';
 
-    const result = await db.prepare(query).bind(mediaRow.r2_key).all();
-    return c.json(safeJSON({ backlinks: result.results }));
+    let blogQuery = `
+        SELECT DISTINCT b.id, b.title, b.updated_at,
+            CASE WHEN b.deleted_at IS NOT NULL THEN 1 ELSE 0 END AS is_deleted
+        FROM page_links pl
+        JOIN blog_posts b ON pl.source_page_id = b.id
+        WHERE pl.link_type = 'image'
+          AND pl.blog = 1
+          AND pl.target_slug = ?
+    `;
+    if (!isAdmin) {
+        blogQuery += ' AND b.deleted_at IS NULL';
+    }
+    blogQuery += ' ORDER BY b.updated_at DESC LIMIT 100';
+
+    const [pageResult, blogResult] = await Promise.all([
+        db.prepare(pageQuery).bind(mediaRow.r2_key).all(),
+        db.prepare(blogQuery).bind(mediaRow.r2_key).all(),
+    ]);
+
+    const backlinks = [
+        ...(pageResult.results || []).map((r: any) => ({ type: 'page', ...r })),
+        ...(blogResult.results || []).map((r: any) => ({ type: 'blog', ...r })),
+    ];
+    return c.json(safeJSON({ backlinks }));
 });
 
 /**

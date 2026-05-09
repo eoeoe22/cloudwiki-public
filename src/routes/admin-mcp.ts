@@ -28,6 +28,7 @@ import {
     type McpToolDef,
     type ToolResult,
 } from '../utils/mcpDispatch';
+import { computeLineDiffStats } from '../utils/diff';
 import {
     SLUG_FORBIDDEN_CHARS,
     computePageMetrics,
@@ -134,7 +135,7 @@ export const ADMIN_EDIT_TOOL_DEFS: McpToolDef[] = [
     },
     {
         name: 'commit_edit',
-        description: 'draft 에 누적된 편집을 1개 리비전으로 커밋합니다. base_revision_id 가 그 사이 변경되었으면(=다른 사용자가 페이지를 수정) 거부합니다 — 그 경우 discard_edit 후 read_document 로 최신 상태를 다시 읽고 편집을 재구성해야 합니다. 신규 페이지 draft 인데 commit 시점에 이미 같은 슬러그가 존재하면 같은 사유로 거부합니다. summary 는 새 리비전의 편집 요약입니다 (선택, 최대 255자). 저장 시 자동으로 [MCP] 접두가 붙어 사람 편집과 구분됩니다.',
+        description: 'draft 에 누적된 편집을 1개 리비전으로 커밋합니다. base_revision_id 가 그 사이 변경되었으면(=다른 사용자가 페이지를 수정) 거부합니다 — 그 경우 discard_edit 후 read_document 로 최신 상태를 다시 읽고 편집을 재구성해야 합니다. 신규 페이지 draft 인데 commit 시점에 이미 같은 슬러그가 존재하면 같은 사유로 거부합니다. summary 는 새 리비전의 편집 요약입니다 (선택, 최대 255자). 저장 시 자동으로 `[MCP] [+N줄 -M줄] ` 접두가 붙어 사람 편집과 구분되며 변경 규모를 한눈에 보여줍니다 (예: `[MCP] [+5줄 -2줄] 오타 수정`).\n\n응답에도 이전 본문 대비 라인 단위 변경량(`lines_added` / `lines_removed`)이 포함됩니다 — git diff --stat 의 +N/-M 와 동일한 의미입니다 (CRLF 정규화 후 LCS 기반으로 산출).',
         inputSchema: {
             type: 'object',
             properties: {
@@ -234,6 +235,36 @@ function validateMcpSummaryLength(summary: string | null | undefined): string | 
         return `Error: summary 는 [MCP] 접두 포함 최대 ${MCP_SUMMARY_MAX_LENGTH}자입니다 (현재 ${finalLength}자).`;
     }
     return null;
+}
+
+// commit_edit 의 리비전 summary 앞에 자동 부여되는 diff 마커.
+// "[+N줄 -M줄]" 형식이며 [MCP] 접두 뒤, 사용자 summary 앞에 위치한다.
+// 예) `[MCP] [+5줄 -2줄] 오타 수정`
+function formatDiffMarker(stats: { added: number; removed: number }): string {
+    return `[+${stats.added}줄 -${stats.removed}줄]`;
+}
+
+// 사용자 summary 와 diff 마커를 결합한 최종 summary 본문(=[MCP] 접두 부여 전) 을 만든다.
+// 결합 후 [MCP] 접두까지 포함한 길이가 255자를 넘으면 사용자 summary 를 말줄임표(…)로 잘라
+// 한도를 맞춘다 — 마커는 항상 보존된다.
+function buildCommitSummary(userSummary: string | null, stats: { added: number; removed: number }): string {
+    const marker = formatDiffMarker(stats);
+    const trimmedUser = (userSummary ?? '').trim();
+    const combined = trimmedUser ? `${marker} ${trimmedUser}` : marker;
+    if (withMcpPrefix(combined).length <= MCP_SUMMARY_MAX_LENGTH) return combined;
+
+    // 한도 초과 — 사용자 summary 만 잘라낸다.
+    // 최종 형태는 "[MCP] {marker} {truncatedUser}…" 이므로 다음 4가지 고정 비용을 모두 예산에 포함해야 한다.
+    // (withMcpPrefix 가 .trim() 하므로 marker 뒤 공백 1 자가 누락되지 않도록 명시적으로 계산.)
+    const fixedOverhead =
+        MCP_SUMMARY_PREFIX.length /* "[MCP]" */
+        + 1 /* "[MCP]" 와 marker 사이 공백 */
+        + marker.length
+        + 1 /* marker 와 user 사이 공백 */
+        + 1 /* 말줄임표 '…' */;
+    const room = MCP_SUMMARY_MAX_LENGTH - fixedOverhead;
+    if (room <= 0) return marker;
+    return `${marker} ${trimmedUser.slice(0, room)}…`;
 }
 
 function unixToIso(unix: number | null | undefined): string | null {
@@ -913,9 +944,39 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
                 ? (rbac.can(user.role, 'wiki:lock') ? draft.requested_lock : page.is_locked)
                 : page.is_locked;
 
+            // commit 직후 diff 통계(+추가/-삭제 라인)를 응답에 포함하기 위해 이전 본문을 로드한다.
+            // R2 전용 네임스페이스 페이지는 pages.content 가 빈 문자열로 저장되므로, 마지막 리비전을 R2 에서 읽어온다.
+            // CRLF→LF 정규화 후 비교해 줄바꿈 형식 차이로 인한 가짜 변경을 제거한다.
+            // ⚠️ 이전 본문 로드(D1/R2)가 실패하더라도 본 commit 자체는 막지 않는다 — 새 본문은 이미 검증되어
+            // 저장 가능한 상태이며, diff 통계는 부수 정보일 뿐이다. 실패 시 마커/응답 필드만 생략한다.
+            const enabledExtForDiff = (c.env.ENABLED_EXTENSIONS || '').split(',').map((s: string) => s.trim()).filter(Boolean);
+            let diffStats: { added: number; removed: number } | null = null;
+            try {
+                let prevContent = page.content || '';
+                if (isR2OnlyNamespace(slug, enabledExtForDiff) && prevContent === '' && page.last_revision_id) {
+                    const lastRev = await db.prepare('SELECT content, r2_key FROM revisions WHERE id = ?')
+                        .bind(page.last_revision_id)
+                        .first<{ content: string; r2_key: string | null }>();
+                    if (lastRev) {
+                        prevContent = await getRevisionContent(c.env.MEDIA, lastRev, new URL(c.req.url).origin);
+                    }
+                }
+                diffStats = computeLineDiffStats(
+                    prevContent.replace(/\r\n?/g, '\n'),
+                    draft.content.replace(/\r\n?/g, '\n')
+                );
+            } catch (e) {
+                console.error('admin-mcp commit_edit diff stats failed (commit will proceed without marker):', e);
+                diffStats = null;
+            }
+            // 리비전 summary 앞에 자동으로 "[+N줄 -M줄]" 마커를 끼워넣는다.
+            // applyExistingPageUpdate 가 추가로 [MCP] 접두를 붙이므로 최종 형태는
+            // "[MCP] [+N줄 -M줄] {user_summary}" 가 된다. diffStats 로딩 실패 시 마커 없이 사용자 summary 만 전달한다.
+            const summaryWithDiff: string | null = diffStats ? buildCommitSummary(summary, diffStats) : summary;
+
             try {
                 const result = await applyExistingPageUpdate(c, user, page, draft.content, {
-                    summary,
+                    summary: summaryWithDiff,
                     category: draft.category,
                     redirectTo: draft.redirect_to,
                     finalIsLocked,
@@ -930,6 +991,9 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
                     revision_id: result.revision_id,
                     rows: result.rows,
                     characters: result.characters,
+                    // diff 통계 로딩에 실패한 경우 필드를 생략한다 — 0 으로 표시하면
+                    // 변경이 없었다는 잘못된 신호를 줄 수 있기 때문.
+                    ...(diffStats ? { lines_added: diffStats.added, lines_removed: diffStats.removed } : {}),
                     is_locked: finalIsLocked === 1,
                     draft_id: draft.id,
                 }, null, 2));
@@ -970,9 +1034,15 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
             const finalIsLocked = (draft.requested_lock !== null && rbac.can(user.role, 'wiki:lock'))
                 ? draft.requested_lock : 0;
 
+            // 신규 페이지는 이전 본문이 없으므로 모든 라인이 추가로 카운트된다.
+            // 빈 본문 입력에서는 computeLineDiffStats 가 DP 를 거치지 않고 즉시 반환하지만,
+            // 시그니처상 null 가능성이 있으므로 동일하게 fallback 처리한다.
+            const createDiffStats = computeLineDiffStats('', draft.content.replace(/\r\n?/g, '\n'));
+            const createSummaryWithDiff = createDiffStats ? buildCommitSummary(summary, createDiffStats) : summary;
+
             try {
                 const result = await applyNewPageInsert(c, user, slug, draft.content, {
-                    summary,
+                    summary: createSummaryWithDiff,
                     category: draft.category,
                     redirectTo: draft.redirect_to,
                     finalIsLocked,
@@ -986,6 +1056,7 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
                     revision_id: result.revision_id,
                     rows: result.rows,
                     characters: result.characters,
+                    ...(createDiffStats ? { lines_added: createDiffStats.added, lines_removed: createDiffStats.removed } : {}),
                     is_locked: finalIsLocked === 1,
                     created: true,
                     draft_id: draft.id,

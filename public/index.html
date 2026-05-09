@@ -1226,6 +1226,18 @@
         if (data.backlinks && data.backlinks.length > 0) {
           list.innerHTML = data.backlinks.map(bl => {
             const date = bl.updated_at ? new Date(bl.updated_at * 1000).toLocaleString('ko-KR') : '';
+            if (bl.type === 'blog') {
+              const blogTitle = bl.title || `#${bl.id}`;
+              return `
+                <a href="/blog/${encodeURIComponent(bl.id)}" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center">
+                    <div>
+                        <span class="badge bg-info me-2">블로그</span>
+                        <span class="fw-bold">${escapeHtml(blogTitle)}</span>
+                    </div>
+                    <small class="text-muted">${date}</small>
+                </a>
+              `;
+            }
             const lockIcon = bl.is_locked ? ' <i class="bi bi-lock-fill text-danger" title="관리자 전용"></i>' : '';
             return `
               <a href="/w/${encodeURIComponent(bl.slug)}" onclick="navigateTo(this.href); return false;" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center">

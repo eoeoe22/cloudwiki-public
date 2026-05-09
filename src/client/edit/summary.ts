@@ -8,6 +8,9 @@
  *   - 섹션 편집 모드: "'<섹션 헤딩 텍스트>' 편집"
  *                    헤딩 텍스트 자체가 바뀌면 "'OLD' → 'NEW' 섹션 이름 변경"
  *                    섹션 내부 하위 헤딩 추가/삭제도 합성
+ *                    "하위 문서로 분리" 가 수행된 직후에는
+ *                    "'<헤딩>' 섹션을 '<신규 슬러그>' 하위 문서로 분리" 로 덮어쓴다
+ *                    (window.splitSubdocInfo 신호 — main.ts 가 set).
  *   - 신규 문서:      "문서 생성"
  *   - 기존 문서:      카테고리 추가/삭제, 넘겨주기 설정/해제, 관리자 전용(잠금) 변경,
  *                    본문 헤딩 추가/삭제/이름 변경,
@@ -278,6 +281,31 @@ function buildAutoEditSummary(): string {
         const baseHeading = sectionRange.headingText;
         const baseLevel = sectionRange.level || 0;
         const currHeadings = editorAvailable ? extractHeadingsForSummary(currentContent) : [];
+
+        // "하위 문서로 분리" 가 직전에 수행된 섹션이면 일반 편집 prefix 대신
+        // 분리 메시지를 쓴다. 사용자가 분리 후 헤딩을 수정해도(드문 케이스)
+        // 분리 행위 자체가 더 정보가 크므로 split prefix 를 우선한다.
+        const splitInfo = window.splitSubdocInfo;
+        if (splitInfo && splitInfo.originalHeading === baseHeading.trim()) {
+            // 헤딩이 사라진 경우(첫 헤딩이 본문 최상단에 없거나 currHeadings 가
+            // 비어있음) currHeadings 의 첫 항목은 하위 헤딩이 승격된 결과이거나
+            // 아예 없을 수 있다. 비-split 브랜치와 동일하게 firstHeadingAtTop
+            // 으로 판정해 currSub 산출 시 슬라이스 여부를 가른다.
+            const topHeading = editorAvailable
+                ? firstHeadingAtTop(currentContent, currHeadings)
+                : null;
+            const headingRemoved = editorAvailable && !topHeading;
+            const origSub = getOriginalHeadingsForSummary().slice(1);
+            const currSub = headingRemoved ? currHeadings : currHeadings.slice(1);
+            const subParts = buildHeadingDiffParts(origSub, currSub, { labelPrefix: '하위 섹션' });
+            let prefix = `'${baseHeading}' 섹션을 '${splitInfo.newTitle}' 하위 문서로 분리`;
+            if (headingRemoved) prefix += ", 섹션 헤딩 삭제";
+            if (subParts.length) prefix += ', ' + subParts.join(', ');
+            const sectionStats = editorAvailable
+                ? formatLineDiffStats(window.originalContent || '', currentContent)
+                : '';
+            return appendLineStats(prefix, sectionStats);
+        }
 
         // 섹션 본문은 "<heading line>\n..." 로 시작해야 한다. _extractMarkdownSectionRanges
         // 가 ATX(`#~####`) 와 setext(=== / ---) 를 모두 동일한 헤딩 엔트리로 반환하므로,
