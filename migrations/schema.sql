@@ -122,6 +122,14 @@ CREATE TABLE IF NOT EXISTS admin_categories (
     created_at INTEGER DEFAULT (unixepoch())
 );
 
+-- 관리자 전용 네임스페이스 (prefix 기반)
+-- prefix 로 시작하는 슬러그를 가진 문서는 관리자(admin:access)만 생성/편집/이동/되돌리기 가능
+CREATE TABLE IF NOT EXISTS admin_namespaces (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    prefix     TEXT NOT NULL UNIQUE,
+    created_at INTEGER DEFAULT (unixepoch())
+);
+
 -- 설정 테이블
 CREATE TABLE IF NOT EXISTS settings (
   id                      INTEGER PRIMARY KEY CHECK (id = 1),
@@ -235,6 +243,35 @@ CREATE TABLE IF NOT EXISTS admin_log (
   FOREIGN KEY (user) REFERENCES users(id)
 );
 CREATE INDEX IF NOT EXISTS idx_admin_log_user_created ON admin_log(user, created_at DESC);
+
+-- admin-mcp 의 stateful 편집을 위한 draft 테이블
+-- 에이전트가 patch_page / edit_section / create_or_update_page 를 호출하면
+-- 즉시 새 리비전을 만들지 않고 여기에 누적 저장한다. commit_edit 호출 시
+-- base_revision_id 가 현재 페이지의 last_revision_id 와 같으면 한 번에 리비전 1개를
+-- 생성하고, 다르면 충돌로 거부한다 (다른 사용자가 그 사이 페이지를 수정).
+-- 기존 페이지 편집: base_revision_id = 그 시점 last_revision_id, base_version = 그 시점 version.
+-- 신규 페이지 편집: base_revision_id = NULL, base_version = 0 (commit 시 페이지가 이미 있으면 충돌).
+-- action: 'create' 면 새 페이지 생성, 'update' 면 기존 페이지 갱신.
+-- requested_lock: NULL = 페이지 기존 상태 유지, 0/1 = 명시적 변경.
+-- TTL: 매일 자정 cron 이 updated_at < now-43200 (12시간) 인 draft 를 일괄 삭제.
+CREATE TABLE IF NOT EXISTS mcp_drafts (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id           INTEGER NOT NULL,
+  slug              TEXT NOT NULL,
+  action            TEXT NOT NULL,
+  base_revision_id  INTEGER,
+  base_version      INTEGER NOT NULL DEFAULT 0,
+  content           TEXT NOT NULL DEFAULT '',
+  category          TEXT,
+  redirect_to       TEXT,
+  requested_lock    INTEGER,
+  created_at        INTEGER DEFAULT (unixepoch()),
+  updated_at        INTEGER DEFAULT (unixepoch()),
+  FOREIGN KEY (user_id) REFERENCES users(id),
+  UNIQUE (user_id, slug)
+);
+CREATE INDEX IF NOT EXISTS idx_mcp_drafts_user ON mcp_drafts(user_id);
+CREATE INDEX IF NOT EXISTS idx_mcp_drafts_updated ON mcp_drafts(updated_at);
 
 -- 문서 간 링크 테이블 (역링크 인덱싱용)
 -- 문서 수정 시 content에서 [[링크]]를 파싱하여 이 테이블에 저장

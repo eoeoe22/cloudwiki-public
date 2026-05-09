@@ -319,7 +319,12 @@
                 role="alert">
                 <i class="mdi mdi-text-box-edit-outline" style="font-size: 1.2rem;"></i>
                 <span>현재 <strong id="sectionEditHeading"></strong> 섹션만 편집 중입니다. 이 섹션의 내용만 저장됩니다.</span>
-                <a id="sectionEditFullLink" href="#" class="ms-auto small"><i class="mdi mdi-page-next-outline"></i> 문서
+                <button type="button" id="sectionSplitToSubdocBtn"
+                    class="btn btn-sm btn-outline-primary ms-auto"
+                    onclick="openSplitToSubdocModal()">
+                    <i class="mdi mdi-call-split"></i> 하위 문서로 분리
+                </button>
+                <a id="sectionEditFullLink" href="#" class="small"><i class="mdi mdi-page-next-outline"></i> 문서
                     전체 편집으로 전환</a>
             </div>
 

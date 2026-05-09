@@ -1,11 +1,11 @@
 // MCP 도구 정의 + 디스패처 공용 모듈.
 //
-// 기존의 공개 읽기 전용 MCP (/api/mcp) 와 인증된 관리자 MCP (/api/admin-mcp) 가
-// 동일한 읽기 도구 구현을 공유한다. 도구 디스패치는 JSON-RPC 외피(jsonrpc/id) 를
-// 포함하지 않고 result content 만 반환한다 — 호출자가 envelope 을 씌운다.
+// 통합 MCP 엔드포인트(/api/mcp) 가 인증된 사용자(일반/관리자) 모두에게 노출하는 읽기
+// 도구를 정의한다. 도구 디스패치는 JSON-RPC 외피(jsonrpc/id) 를 포함하지 않고
+// result content 만 반환한다 — 호출자가 envelope 을 씌운다.
 //
-// 추가/유지 도구는 MCP_TOOL_DEFS_ALL 에 정의하고, 읽기 전용 부분집합은 별도 export 로
-// 컬링하여 어드민 MCP 가 batch / 블로그 도구를 제외할 수 있게 한다.
+// 일반 사용자 노출 도구는 MCP_TOOL_DEFS_ALL 에 정의하고, 관리자 전용 도구는
+// src/routes/admin-mcp.ts 에서 ADMIN_TOOL_DEFS 로 별도 정의되어 호출 시점에 합류된다.
 import type { Context } from 'hono';
 import type { Env } from '../types';
 import { renderForAI, extractTOC, extractSection, findSectionsForQuery, expandTemplates } from './aiParser';
@@ -98,8 +98,8 @@ export const MCP_TOOL_DEFS_ALL: McpToolDef[] = [
     },
     {
         name: 'get_toc',
-        description: '위키 문서의 목차(section)만 불러옵니다. 목차는 계층적 번호(예: "1.", "1.1", "1.1.1")가 붙은 형식으로 반환됩니다. 첫 헤딩 이전에 본문 텍스트가 있는 경우 "0. 도입부" 항목이 맨 앞에 추가되며, read_section 에 "0" 을 지정하면 그 도입부만 읽을 수 있습니다. 긴 문서를 전부 읽기보다 get_toc 도구로 목차를 추출한 뒤 read_section 도구에 번호를 지정해 부분적으로 읽는 것을 권장합니다.',
-        inputSchema: { type: 'object', properties: { title: { type: 'string', description: '문서 슬러그(=제목)' } }, required: ['title'] }
+        description: '위키 문서의 목차(section)만 불러옵니다. 목차는 계층적 번호(예: "1.", "1.1", "1.1.1")가 붙은 형식으로 반환됩니다. 첫 헤딩 이전에 본문 텍스트가 있는 경우 "0. 도입부" 항목이 맨 앞에 추가되며, read_section 에 "0" 을 지정하면 그 도입부만 읽을 수 있습니다. 긴 문서를 전부 읽기보다 get_toc 도구로 목차를 추출한 뒤 read_section 도구에 번호를 지정해 부분적으로 읽는 것을 권장합니다. raw=true 로 설정하면 {{틀}} 트랜스클루전을 펼치지 않은 원본 기준의 목차 번호가 반환됩니다 — 어드민 MCP 의 edit_section 으로 편집하려면 반드시 raw=true 의 번호를 사용해야 합니다.',
+        inputSchema: { type: 'object', properties: { title: { type: 'string', description: '문서 슬러그(=제목)' }, raw: { type: 'boolean', description: 'true 시 트랜스클루전을 펼치지 않고 원본 헤딩만으로 목차 번호 산출 (편집용)' } }, required: ['title'] }
     },
     {
         name: 'read_document',
@@ -108,8 +108,8 @@ export const MCP_TOOL_DEFS_ALL: McpToolDef[] = [
     },
     {
         name: 'read_section',
-        description: '위키 문서에서 특정 목차의 내용만 읽어옵니다. 목차는 get_toc 가 반환하는 계층적 번호(예: "1", "1.1", "1.1.1")로 지정합니다. raw=true로 설정 시 위키 꾸미기 문법 변환을 건너뛰고 반환합니다. 단, get_toc 의 번호 체계와 맞추기 위해 틀 트랜스클루전({{...}})은 항상 확장된 상태로 반환됩니다.',
-        inputSchema: { type: 'object', properties: { title: { type: 'string', description: '문서 슬러그(=제목)' }, section_number: { type: 'string', description: 'get_toc가 반환한 목차 번호 (예: "1", "1.1", "1.1.1"). "0" 은 첫 헤딩 이전 도입부.' }, raw: { type: 'boolean' } }, required: ['title', 'section_number'] }
+        description: '위키 문서에서 특정 목차의 내용만 읽어옵니다. 목차는 get_toc 가 반환하는 계층적 번호(예: "1", "1.1", "1.1.1")로 지정합니다. raw=true 면 트랜스클루전을 펼치지 않은 원본 기준의 번호로 추출하고 위키 꾸미기 문법 변환도 건너뜁니다 — get_toc(raw=true) / edit_section 과 동일한 번호 체계입니다. raw=false (기본) 면 트랜스클루전을 펼친 뒤 추출하고 AI 용 렌더링을 적용합니다 — get_toc(raw=false) 와 동일.',
+        inputSchema: { type: 'object', properties: { title: { type: 'string', description: '문서 슬러그(=제목)' }, section_number: { type: 'string', description: 'get_toc 가 반환한 목차 번호 (예: "1", "1.1", "1.1.1"). "0" 은 첫 헤딩 이전 도입부. raw 옵션은 get_toc 호출 시와 동일하게 맞추세요.' }, raw: { type: 'boolean', description: 'true 시 트랜스클루전 미확장 + 원본 그대로 반환 (편집 직전 단계용)' } }, required: ['title', 'section_number'] }
     },
     {
         name: 'get_tree',
@@ -154,8 +154,15 @@ export const MCP_TOOL_DEFS_ALL: McpToolDef[] = [
         inputSchema: { type: 'object', properties: { category: { type: 'string', description: '조회할 카테고리 이름' }, raw: { type: 'boolean' } }, required: ['category'] }
     },
     {
-        name: 'get_document_categoty',
+        name: 'get_document_category',
         description: '해당 문서가 속한 카테고리 목록을 반환합니다.',
+        inputSchema: { type: 'object', properties: { title: { type: 'string', description: '조회할 문서 슬러그(=제목)' } }, required: ['title'] }
+    },
+    {
+        // Deprecated alias kept for backward compatibility (rename of get_document_categoty).
+        // Will be removed in a future major version. Use get_document_category instead.
+        name: 'get_document_categoty',
+        description: '[Deprecated] get_document_category 의 구버전 이름입니다. 새 코드에서는 get_document_category 를 사용하세요.',
         inputSchema: { type: 'object', properties: { title: { type: 'string', description: '조회할 문서 슬러그(=제목)' } }, required: ['title'] }
     },
     {
@@ -165,8 +172,18 @@ export const MCP_TOOL_DEFS_ALL: McpToolDef[] = [
     },
     {
         name: 'get_recent_changes',
-        description: '위키 전체에서 최근 수정된 문서 목록을 반환합니다.',
-        inputSchema: { type: 'object', properties: { limit: { type: 'number', description: '최대 반환 개수 (기본 10, 최대 50)' } }, required: [] }
+        description: '위키 전체에서 최근 수정된 문서 목록을 반환합니다. 응답에는 슬러그, 작성자 이름, 편집 요약, 마지막 리비전 id (revision_id, read_revision/revert_page 와 연계) 가 포함됩니다. 필터 파라미터를 조합해 범위를 좁힐 수 있습니다.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                limit: { type: 'number', description: '최대 반환 개수 (기본 10, 최대 100)' },
+                since: { type: 'string', description: '이 시점 이후 변경분만 (ISO 8601, 예: "2024-01-01" 또는 "2024-01-01T00:00:00Z")' },
+                author: { type: 'string', description: '특정 사용자(name 정확 일치)의 마지막 편집만' },
+                category: { type: 'string', description: '특정 카테고리에 속한 문서의 변경만' },
+                namespace: { type: 'string', description: '특정 네임스페이스(슬러그 접두사) 필터. 예: "틀:" 또는 "분류:". "/" 로 끝나면 하위 트리 매칭.' }
+            },
+            required: []
+        }
     },
     {
         name: 'list_discussions',
@@ -231,20 +248,6 @@ export const MCP_TOOL_DEFS_ALL: McpToolDef[] = [
         }
     }
 ];
-
-// 어드민 MCP 가 노출하는 읽기 도구 (batch / 블로그 도구 제외)
-const ADMIN_READ_EXCLUDE = new Set([
-    'read_document_batch',
-    'get_toc_batch',
-    'list_blog_posts',
-    'read_blog_post',
-    'get_blog_toc',
-    'read_blog_section',
-]);
-
-export const MCP_TOOL_DEFS_ADMIN_READ: McpToolDef[] = MCP_TOOL_DEFS_ALL.filter(
-    t => !ADMIN_READ_EXCLUDE.has(t.name)
-);
 
 export function buildInformationIntro(c: Context<Env>, toolDefs: McpToolDef[] = MCP_TOOL_DEFS_ALL): string {
     const wikiName = c.env.WIKI_NAME;
@@ -353,8 +356,11 @@ export async function dispatchReadTool(
         }
 
         if (toolName === 'get_toc') {
-            const expanded = await expandTemplates(actualContent, db, 0, slug);
-            const tocText = (extractTOC(expanded) || '')
+            // raw=true: 트랜스클루전을 펼치지 않은 원본 기준 — edit_section 의 번호와 일치.
+            const sourceForToc = args.raw === true
+                ? actualContent
+                : await expandTemplates(actualContent, db, 0, slug);
+            const tocText = (extractTOC(sourceForToc) || '')
                 .split('\n')
                 .map(line => line.replace(/\{[^}]*\}/g, '').replace(/[ \t]+/g, ' ').trimEnd())
                 .join('\n');
@@ -365,8 +371,14 @@ export async function dispatchReadTool(
             return { content: [{ type: 'text', text: text || '문서 내용이 존재하지 않습니다.' }] };
         }
         // read_section
-        const expanded = await expandTemplates(actualContent, db, 0, slug);
-        const sectionContent = extractSection(expanded, args.section_number || '');
+        // raw=true: 트랜스클루전을 펼치지 않은 원본 기준의 섹션 번호를 사용해 추출. get_toc(raw=true)
+        // 및 edit_section 의 번호 체계와 일치한다. 템플릿이 헤딩을 추가하는 페이지에서 raw=false 와
+        // 같은 번호로 다른 섹션을 가리키지 않도록 한다.
+        // raw=false: 기존 동작 — 트랜스클루전을 펼친 뒤 추출, AI 용 렌더링까지 적용.
+        const sourceForSection = args.raw === true
+            ? actualContent
+            : await expandTemplates(actualContent, db, 0, slug);
+        const sectionContent = extractSection(sourceForSection, args.section_number || '');
         const text = args.raw === true ? sectionContent : await renderForAI(sectionContent, db, 0, slug);
         return { content: [{ type: 'text', text: text || '해당 목차를 찾을 수 없습니다.' }] };
     }
@@ -491,7 +503,7 @@ export async function dispatchReadTool(
         return { content: [{ type: 'text', text: JSON.stringify(output, null, 2) }] };
     }
 
-    if (toolName === 'get_document_categoty') {
+    if (toolName === 'get_document_category' || toolName === 'get_document_categoty') {
         const slug = normalizeSlug(args.title || '');
         const cats = await db.prepare('SELECT pc.category FROM page_categories pc JOIN pages p ON pc.page_id = p.id WHERE p.slug = ? AND p.deleted_at IS NULL ORDER BY pc.category ASC')
             .bind(slug).all<{ category: string }>();
@@ -524,21 +536,51 @@ export async function dispatchReadTool(
     }
 
     if (toolName === 'get_recent_changes') {
-        const limit = Math.min(50, Math.max(1, Number(args.limit) || 10));
-        const { results } = await db.prepare(`
-            SELECT p.slug, p.updated_at, u.name as author_name, r.summary
+        const limit = Math.min(100, Math.max(1, Number(args.limit) || 10));
+        const wheres: string[] = ['p.deleted_at IS NULL'];
+        const binds: any[] = [];
+
+        if (args.since && typeof args.since === 'string') {
+            // ISO 8601 date or datetime → unix epoch seconds. 잘못된 입력은 명시적 오류.
+            const parsed = Date.parse(args.since);
+            if (Number.isNaN(parsed)) {
+                return { content: [{ type: 'text', text: `Error: since 가 유효한 ISO 8601 날짜가 아닙니다: ${args.since}` }], isError: true };
+            }
+            wheres.push('p.updated_at >= ?');
+            binds.push(Math.floor(parsed / 1000));
+        }
+        if (args.author && typeof args.author === 'string') {
+            wheres.push('u.name = ?');
+            binds.push(args.author);
+        }
+        if (args.namespace && typeof args.namespace === 'string') {
+            // LIKE 패턴 안전화 — % 와 _ 를 이스케이프.
+            const ns = args.namespace.replace(/[\\%_]/g, '\\$&');
+            wheres.push("p.slug LIKE ? ESCAPE '\\'");
+            binds.push(`${ns}%`);
+        }
+        if (args.category && typeof args.category === 'string') {
+            wheres.push('p.id IN (SELECT page_id FROM page_categories WHERE category = ?)');
+            binds.push(args.category);
+        }
+
+        const sql = `
+            SELECT p.slug, p.updated_at, p.last_revision_id, u.name as author_name, r.summary
             FROM pages p
             LEFT JOIN revisions r ON p.last_revision_id = r.id
             LEFT JOIN users u ON r.author_id = u.id
-            WHERE p.deleted_at IS NULL
+            WHERE ${wheres.join(' AND ')}
             ORDER BY p.updated_at DESC LIMIT ?
-        `).bind(limit).all<{ slug: string; updated_at: number | null; author_name: string | null; summary: string | null }>();
+        `;
+        binds.push(limit);
+        const { results } = await db.prepare(sql).bind(...binds).all<{ slug: string; updated_at: number | null; last_revision_id: number | null; author_name: string | null; summary: string | null }>();
         const nowSec = Math.floor(Date.now() / 1000);
         const formatted = results.map(r => ({
             slug: r.slug,
             time_ago: formatRelativeTime(r.updated_at, nowSec),
             author_name: r.author_name,
             summary: r.summary,
+            revision_id: r.last_revision_id,
         }));
         return { content: [{ type: 'text', text: JSON.stringify(formatted, null, 2) }] };
     }

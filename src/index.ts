@@ -19,7 +19,6 @@ import notificationRoutes from './routes/notification';
 import pushRoutes from './routes/push';
 import ticketRoutes from './routes/ticket';
 import mcpRoutes from './routes/mcp';
-import adminMcpRoutes from './routes/admin-mcp';
 import oauthRoutes from './routes/oauth';
 import analyticsRoutes from './routes/analytics';
 import blogRoutes from './routes/blog';
@@ -41,7 +40,6 @@ app.use('*', secureHeaders());
 app.use('*', (c, next) => {
     const path = c.req.path;
     if (path === '/api/mcp' || path.startsWith('/api/mcp/')) return next();
-    if (path === '/api/admin-mcp' || path.startsWith('/api/admin-mcp/')) return next();
     if (path === '/oauth/token' || path === '/oauth/register' || path === '/oauth/revoke') return next();
     return csrf()(c, next);
 });
@@ -61,7 +59,6 @@ app.route('/api', notificationRoutes);
 app.route('/api', pushRoutes);
 app.route('/api', ticketRoutes);
 app.route('/api/mcp', mcpRoutes);
-app.route('/api/admin-mcp', adminMcpRoutes);
 app.route('/', oauthRoutes); // /.well-known/* + /oauth/*
 app.route('/api/admin/analytics', analyticsRoutes);
 app.route('/api', blogRoutes);
@@ -1031,6 +1028,14 @@ export default {
                 SET banned_until = NULL, role = 'user'
                 WHERE banned_until IS NOT NULL AND banned_until <= ?
             `).bind(now).run()
+        );
+        // admin-mcp draft TTL: 마지막 활동 이후 12시간(43200초) 지난 draft 일괄 삭제.
+        // 크론 주기(매일 자정) 때문에 실제 만료 시점은 12~36시간 사이가 될 수 있으나,
+        // 사용자가 수긍한 정책이므로 별도 처리 없음.
+        ctx.waitUntil(
+            env.DB.prepare(
+                'DELETE FROM mcp_drafts WHERE updated_at < ?'
+            ).bind(now - 43200).run()
         );
     }
 };

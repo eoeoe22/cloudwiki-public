@@ -745,6 +745,85 @@ export function extractSection(content: string, sectionNumber: string): string {
 }
 
 /**
+ * 원본 마크다운에서 지정한 섹션을 새 본문으로 교체한 결과를 반환합니다.
+ * 섹션 번호는 트랜스클루전을 펼치지 않은 원본 헤딩 기준이므로,
+ * 호출자는 같은 raw 본문에서 산출한 번호를 넘겨야 합니다 (get_toc raw=true 와 일치).
+ *
+ * 동작:
+ *   - 번호 "0" (도입부): 첫 헤딩 이전까지의 라인을 newSectionContent 로 치환.
+ *   - 일반 번호: 해당 헤딩부터 같은 레벨 이상의 헤딩이 다시 나오기 전까지를 치환.
+ *   - 펜스 코드블럭(```) 내부의 # 는 헤딩으로 간주하지 않음.
+ *   - 섹션을 찾지 못하면 null 반환 — 호출자가 명시적 오류를 내릴 수 있도록.
+ */
+export function replaceSection(
+    content: string,
+    sectionNumber: string,
+    newSectionContent: string
+): string | null {
+    const lines = content.split('\n');
+    const target = sectionNumber.trim().replace(/\.+$/, '');
+
+    // "0" 도입부: 첫 헤딩 이전까지를 치환. 첫 헤딩이 없으면 전체 문서가 도입부.
+    if (target === '0') {
+        let inFence = false;
+        let firstHeadingIdx = -1;
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            if (line.trim().startsWith('```')) { inFence = !inFence; continue; }
+            if (!inFence && /^#{1,6}\s+/.test(line)) {
+                firstHeadingIdx = i;
+                break;
+            }
+        }
+        const tail = firstHeadingIdx < 0 ? '' : lines.slice(firstHeadingIdx).join('\n');
+        const head = newSectionContent.replace(/\r\n?/g, '\n');
+        if (!tail) return head;
+        // 빈 도입부로 치환하는 경우(intro 제거): tail 만 반환해 불필요한 선행 빈 줄/리비전을
+        // 만들지 않는다.
+        if (head === '') return tail;
+        // 도입부와 첫 헤딩 사이에는 빈 줄을 한 번 보장.
+        const sep = head.endsWith('\n') ? '' : '\n';
+        return head + sep + tail;
+    }
+
+    const counters = [0, 0, 0, 0, 0, 0];
+    let inCodeBlock = false;
+    let startIdx = -1;
+    let endIdx = lines.length;
+    let sectionLevel = 0;
+
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        if (line.trim().startsWith('```')) inCodeBlock = !inCodeBlock;
+        if (inCodeBlock) continue;
+        const match = line.match(/^(#{1,6})\s+(.*)$/);
+        if (!match) continue;
+
+        const level = match[1].length;
+        advanceCounters(counters, level);
+        const currentNumber = counters.slice(0, level).map(n => String(n)).join('.');
+
+        if (startIdx < 0) {
+            if (currentNumber === target) {
+                startIdx = i;
+                sectionLevel = level;
+            }
+        } else if (level <= sectionLevel) {
+            endIdx = i;
+            break;
+        }
+    }
+
+    if (startIdx < 0) return null;
+
+    const before = lines.slice(0, startIdx);
+    const after = lines.slice(endIdx);
+    const replacement = newSectionContent.replace(/\r\n?/g, '\n').split('\n');
+
+    return [...before, ...replacement, ...after].join('\n');
+}
+
+/**
  * 검색어가 등장하는 모든 섹션(헤딩 텍스트)을 문서 원본에서 등장 순서대로 반환합니다.
  * 한 섹션 아래에서 키워드가 여러 번 등장해도 그 헤딩은 한 번만 포함됩니다.
  * 펜스 코드블럭(```) 내부의 # 기호는 헤딩으로 간주하지 않지만, 그 안의 라인이

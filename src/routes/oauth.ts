@@ -6,9 +6,10 @@
 // 본 서버는 위키의 wiki_session 쿠키를 인가 단계의 사용자 인증 수단으로 재사용하므로,
 // 외부 IdP 통합 없이도 OAuth 표준 흐름을 그대로 만족시킨다.
 //
-// 발급된 토큰은 /api/admin-mcp 에서만 사용된다(scope=admin-mcp).
+// 발급된 토큰은 통합 MCP 엔드포인트 /api/mcp 에서만 사용된다(scope=mcp).
+// 토큰 자체는 일반 사용자/관리자를 구분하지 않으며, /api/mcp 가 호출 시점에 역할로 도구
+// 목록과 호출 가능 여부를 분기한다.
 import { Hono, Context } from 'hono';
-import { getCookie } from 'hono/cookie';
 import type { Env } from '../types';
 import { RBAC } from '../utils/role';
 import { escapeHtml } from '../utils/html';
@@ -18,7 +19,8 @@ import {
     verifyPkce,
     timingSafeEqual,
     isValidRedirectUri,
-    OAUTH_SCOPE_ADMIN_MCP,
+    OAUTH_SCOPE_MCP,
+    OAUTH_ACCEPTED_SCOPES,
     ACCESS_TOKEN_TTL_SEC,
     REFRESH_TOKEN_TTL_SEC,
     AUTH_CODE_TTL_SEC,
@@ -41,24 +43,29 @@ function badRequest(c: Context<Env>, error: string, description?: string, status
 oauth.get('/.well-known/oauth-protected-resource', (c) => {
     const origin = originOf(c);
     return c.json({
-        resource: `${origin}/api/admin-mcp`,
+        resource: `${origin}/api/mcp`,
         authorization_servers: [origin],
-        scopes_supported: [OAUTH_SCOPE_ADMIN_MCP],
+        scopes_supported: [OAUTH_SCOPE_MCP],
         bearer_methods_supported: ['header'],
         resource_documentation: `${origin}/`,
     });
 });
 
 // 일부 클라이언트는 리소스 경로를 붙여 조회한다 (RFC 9728 §3.1).
-oauth.get('/.well-known/oauth-protected-resource/api/admin-mcp', (c) => {
+oauth.get('/.well-known/oauth-protected-resource/api/mcp', (c) => {
     const origin = originOf(c);
     return c.json({
-        resource: `${origin}/api/admin-mcp`,
+        resource: `${origin}/api/mcp`,
         authorization_servers: [origin],
-        scopes_supported: [OAUTH_SCOPE_ADMIN_MCP],
+        scopes_supported: [OAUTH_SCOPE_MCP],
         bearer_methods_supported: ['header'],
     });
 });
+
+// 구 /api/admin-mcp 엔드포인트는 통합 폐기. 해당 경로용 oauth-protected-resource 메타는
+// RFC 9728 의 resource = metadata-URL 정합성을 만족시킬 방법이 없으므로 별도 핸들러를 두지
+// 않는다. 기존 클라이언트는 /.well-known/oauth-protected-resource (또는 /api/mcp 부착형)
+// 으로 재디스커버리해 /api/mcp 에 다시 연결해야 한다.
 
 oauth.get('/.well-known/oauth-authorization-server', (c) => {
     const origin = originOf(c);
@@ -67,7 +74,7 @@ oauth.get('/.well-known/oauth-authorization-server', (c) => {
         authorization_endpoint: `${origin}/oauth/authorize`,
         token_endpoint: `${origin}/oauth/token`,
         registration_endpoint: `${origin}/oauth/register`,
-        scopes_supported: [OAUTH_SCOPE_ADMIN_MCP],
+        scopes_supported: [OAUTH_SCOPE_MCP],
         response_types_supported: ['code'],
         response_modes_supported: ['query'],
         grant_types_supported: ['authorization_code', 'refresh_token'],
@@ -220,9 +227,18 @@ oauth.get('/oauth/authorize', async (c) => {
         return badRequest(c, 'invalid_request', 'redirect_uri does not match registered values');
     }
 
-    const requestedScope = (q.scope || OAUTH_SCOPE_ADMIN_MCP).trim();
-    if (!requestedScope.split(/\s+/).includes(OAUTH_SCOPE_ADMIN_MCP)) {
-        return c.redirect(buildAuthErrorRedirect(q.redirect_uri, 'invalid_scope', `Scope must include ${OAUTH_SCOPE_ADMIN_MCP}`, q.state));
+    // 통합 MCP 엔드포인트는 mcp / admin-mcp 두 스코프 라벨 모두 받는다 — 어느 쪽이든 토큰
+    // 자체에는 권한 차이가 없고, /api/mcp 가 호출 시점에 사용자 역할로 도구 가시성을 분기한다.
+    const requestedScope = (q.scope || OAUTH_SCOPE_MCP).trim();
+    const requestedScopeTokens = requestedScope.split(/\s+/).filter(Boolean);
+    const hasAcceptedScope = requestedScopeTokens.some(s => OAUTH_ACCEPTED_SCOPES.has(s));
+    if (!hasAcceptedScope) {
+        return c.redirect(buildAuthErrorRedirect(
+            q.redirect_uri,
+            'invalid_scope',
+            `Scope must include ${OAUTH_SCOPE_MCP}`,
+            q.state,
+        ));
     }
 
     const user = c.get('user');
@@ -231,14 +247,18 @@ oauth.get('/oauth/authorize', async (c) => {
         const returnTo = '/oauth/authorize?' + new URL(c.req.url).search.replace(/^\?/, '');
         return c.redirect(`/login?return_to=${encodeURIComponent(returnTo)}`);
     }
+    // 차단된 사용자는 어떤 도구도 사용할 수 없으므로 동의 단계에서 컷.
+    // 일반 사용자(user 역할 등) 는 읽기 도구만 노출되며, 관리자는 추가로 편집/관리 도구가 노출된다.
     const rbac = c.get('rbac') as RBAC;
-    if (!rbac.can(user.role, 'admin:access')) {
+    const isAdmin = rbac.can(user.role, 'admin:access');
+    if (!rbac.can(user.role, 'wiki:read') && !isAdmin) {
         return c.html(consentDeniedHtml(user.name, c.env.WIKI_NAME), 403);
     }
 
     return c.html(consentHtml({
         wikiName: c.env.WIKI_NAME || 'CloudWiki',
         userName: user.name,
+        userIsAdmin: isAdmin,
         clientId: q.client_id,
         redirectUri: q.redirect_uri,
         codeChallenge: q.code_challenge,
@@ -255,7 +275,7 @@ oauth.post('/oauth/authorize', async (c) => {
     const redirectUri = String(form.get('redirect_uri') || '');
     const codeChallenge = String(form.get('code_challenge') || '');
     const codeChallengeMethod = String(form.get('code_challenge_method') || 'S256');
-    const scope = String(form.get('scope') || OAUTH_SCOPE_ADMIN_MCP);
+    const scope = String(form.get('scope') || OAUTH_SCOPE_MCP);
     const state = form.get('state') ? String(form.get('state')) : undefined;
 
     if (!clientId || !redirectUri || !codeChallenge) {
@@ -276,8 +296,11 @@ oauth.post('/oauth/authorize', async (c) => {
     const user = c.get('user');
     if (!user) return badRequest(c, 'access_denied', 'Not authenticated', 401);
     const rbac = c.get('rbac') as RBAC;
-    if (!rbac.can(user.role, 'admin:access')) {
-        return c.redirect(buildAuthErrorRedirect(redirectUri, 'access_denied', 'Admin permission required', state));
+    // 차단/추방된 역할이 동의를 우회하지 못하도록 한 번 더 가드. 일반 사용자도 wiki:read 권한이
+    // 없는 역할이면 거부 (RBAC 가 wiki:read 를 떼어 둔 환경 대비).
+    const isAdmin = rbac.can(user.role, 'admin:access');
+    if (!rbac.can(user.role, 'wiki:read') && !isAdmin) {
+        return c.redirect(buildAuthErrorRedirect(redirectUri, 'access_denied', 'Insufficient permission', state));
     }
 
     const code = generateOpaqueToken(32);
@@ -443,7 +466,7 @@ oauth.post('/oauth/token', async (c) => {
             return badRequest(c, 'invalid_grant', 'Authorization code already used');
         }
 
-        const tokens = await issueTokenPair(c, client.client_id, row.user_id, row.scope || OAUTH_SCOPE_ADMIN_MCP);
+        const tokens = await issueTokenPair(c, client.client_id, row.user_id, row.scope || OAUTH_SCOPE_MCP);
         return c.json(tokens, 200, { 'Cache-Control': 'no-store' });
     }
 
@@ -474,21 +497,22 @@ oauth.post('/oauth/token', async (c) => {
             return badRequest(c, 'invalid_grant', 'Refresh token expired');
         }
 
-        // 사용자가 admin 권한을 잃었는지 매번 확인
+        // 차단/삭제된 사용자만 거부 — 일반 사용자도 통합 MCP 의 읽기 도구를 사용할 수 있으므로
+        // admin 권한 상실 자체로는 토큰을 폐기하지 않는다 (도구 가시성은 /api/mcp 가 호출 시점에
+        // 역할 기반으로 다시 분기). banned/deleted 만 토큰 패밀리 폐기.
         const userRow = await c.env.DB
             .prepare('SELECT id, role, banned_until FROM users WHERE id = ?')
             .bind(row.user_id)
             .first<{ id: number; role: string; banned_until: number | null }>();
         if (!userRow) return badRequest(c, 'invalid_grant', 'User not found');
-        const effectiveRole = (userRow.banned_until && userRow.banned_until > now) ? 'banned' : userRow.role;
-        const rbac = c.get('rbac') as RBAC;
-        if (!rbac.can(effectiveRole, 'admin:access')) {
-            // 권한이 사라졌으면 모든 토큰 폐기
+        const isBanned = userRow.role === 'banned' || (userRow.banned_until && userRow.banned_until > now);
+        const isDeleted = userRow.role === 'deleted';
+        if (isBanned || isDeleted) {
             await c.env.DB
                 .prepare('UPDATE oauth_tokens SET revoked_at = unixepoch() WHERE user_id = ? AND revoked_at IS NULL')
                 .bind(row.user_id)
                 .run();
-            return badRequest(c, 'invalid_grant', 'User no longer has admin access', 403);
+            return badRequest(c, 'invalid_grant', 'User account is restricted', 403);
         }
 
         // 회전: 정확히 한 요청만 활성 토큰을 폐기하도록 조건부 UPDATE 로 잠금.
@@ -506,7 +530,7 @@ oauth.post('/oauth/token', async (c) => {
             return badRequest(c, 'invalid_grant', 'Refresh token already rotated');
         }
 
-        const tokens = await issueTokenPair(c, client.client_id, row.user_id, row.scope || OAUTH_SCOPE_ADMIN_MCP);
+        const tokens = await issueTokenPair(c, client.client_id, row.user_id, row.scope || OAUTH_SCOPE_MCP);
         return c.json(tokens, 200, { 'Cache-Control': 'no-store' });
     }
 
@@ -534,7 +558,8 @@ oauth.post('/oauth/revoke', async (c) => {
 // ────────────────────────────────────────────────────────────────
 
 function consentHtml(p: {
-    wikiName: string; userName: string; clientId: string; redirectUri: string;
+    wikiName: string; userName: string; userIsAdmin: boolean;
+    clientId: string; redirectUri: string;
     codeChallenge: string; codeChallengeMethod: string; scope: string; state: string;
 }): string {
     const safeWiki = escapeHtml(p.wikiName);
@@ -545,17 +570,23 @@ function consentHtml(p: {
     const safeMethod = escapeHtml(p.codeChallengeMethod);
     const safeScope = escapeHtml(p.scope);
     const safeState = escapeHtml(p.state);
-    return `<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>관리자 MCP 접근 승인 — ${safeWiki}</title>
+    const accessSummary = p.userIsAdmin
+        ? '문서 읽기/검색에 더해, <strong>관리자 권한</strong>으로 위키 문서의 편집·이동·삭제·복원·되돌리기까지 자동 수행할 수 있습니다.'
+        : '위키 문서의 읽기·검색·목차 조회 등 읽기 전용 도구만 사용할 수 있습니다.';
+    const warningHtml = p.userIsAdmin
+        ? '<p class="warning">승인하면 이 클라이언트는 당신의 관리자 권한으로 위키 문서를 자동 편집/삭제할 수 있습니다. 신뢰하는 클라이언트만 승인하세요.</p>'
+        : '';
+    return `<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>MCP 접근 승인 — ${safeWiki}</title>
 <style>body{font-family:'Segoe UI',system-ui,sans-serif;background:#f5f5f5;color:#1a1a1a;margin:0;padding:2rem;display:flex;justify-content:center;align-items:flex-start;min-height:100vh}.card{background:#fff;border-radius:12px;box-shadow:0 4px 24px rgba(0,0,0,0.10);padding:2rem;max-width:480px;width:100%}h1{font-size:1.4rem;margin:0 0 1rem}p{line-height:1.6;color:#444}.meta{background:#f0f7ff;border:1px solid #c2daf7;border-radius:8px;padding:0.9rem 1.2rem;font-size:0.85rem;color:#1d4ed8;margin:1.2rem 0}.meta dt{font-weight:600;margin-top:0.4rem}.meta dd{margin:0 0 0 0;word-break:break-all;font-family:ui-monospace,Consolas,monospace}.warning{background:#fff4e5;border:1px solid #ffb866;border-radius:8px;padding:0.9rem 1.2rem;font-size:0.85rem;color:#a04500;margin:1.2rem 0}.actions{display:flex;gap:0.8rem;margin-top:1.6rem}button{flex:1;padding:0.8rem;border:none;border-radius:8px;font-size:1rem;font-weight:600;cursor:pointer}.approve{background:#2563eb;color:#fff}.deny{background:#e5e7eb;color:#374151}</style>
 </head><body><div class="card">
-<h1>관리자 MCP 접근 승인</h1>
-<p><strong>${safeUser}</strong> 님, 외부 클라이언트가 <strong>${safeWiki}</strong> 의 관리자 MCP 도구(문서 읽기/편집/삭제 포함)에 접근하려고 합니다.</p>
+<h1>MCP 접근 승인</h1>
+<p><strong>${safeUser}</strong> 님, 외부 클라이언트가 <strong>${safeWiki}</strong> 의 MCP 서버에 접근하려고 합니다. ${accessSummary}</p>
 <dl class="meta">
   <dt>클라이언트 ID</dt><dd>${safeClient}</dd>
   <dt>리다이렉트 URI</dt><dd>${safeRedirect}</dd>
   <dt>요청 권한</dt><dd>${safeScope}</dd>
 </dl>
-<p class="warning">승인하면 이 클라이언트는 당신의 권한으로 위키 문서를 자동 편집/삭제할 수 있습니다. 신뢰하는 클라이언트만 승인하세요.</p>
+${warningHtml}
 <form method="POST" action="/oauth/authorize" class="actions">
   <input type="hidden" name="client_id" value="${safeClient}">
   <input type="hidden" name="redirect_uri" value="${safeRedirect}">
@@ -574,7 +605,7 @@ function consentDeniedHtml(userName: string, wikiName: string | undefined): stri
     const safeWiki = escapeHtml(wikiName || 'CloudWiki');
     return `<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8"><title>권한 없음 — ${safeWiki}</title>
 <style>body{font-family:'Segoe UI',system-ui,sans-serif;background:#f5f5f5;color:#1a1a1a;margin:0;padding:2rem;display:flex;justify-content:center;align-items:flex-start;min-height:100vh}.card{background:#fff;border-radius:12px;box-shadow:0 4px 24px rgba(0,0,0,0.10);padding:2rem;max-width:480px;width:100%}h1{font-size:1.4rem;margin:0 0 1rem;color:#b91c1c}p{line-height:1.6;color:#444}</style>
-</head><body><div class="card"><h1>관리자 권한이 없습니다</h1><p><strong>${safeUser}</strong> 님은 관리자 MCP 서버에 접근할 권한이 없습니다. 관리자 계정으로 로그인한 뒤 다시 시도해주세요.</p></div></body></html>`;
+</head><body><div class="card"><h1>접근 권한이 없습니다</h1><p><strong>${safeUser}</strong> 님은 MCP 서버에 접근할 권한이 없습니다. 권한이 있는 계정으로 로그인한 뒤 다시 시도해주세요.</p></div></body></html>`;
 }
 
 export default oauth;

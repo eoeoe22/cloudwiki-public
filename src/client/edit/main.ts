@@ -40,6 +40,8 @@ declare global {
         cancelEdit?: () => void | Promise<void>;
         /** edit.html / blog-edit.html 의 인라인 onclick="reloadTurnstile()" */
         reloadTurnstile?: () => void;
+        /** edit.html 섹션 편집 배너의 인라인 onclick="openSplitToSubdocModal()" */
+        openSplitToSubdocModal?: () => Promise<void>;
     }
 }
 
@@ -76,6 +78,7 @@ window.reloadTurnstile = reloadTurnstile;
 window.savePage = savePage;
 window.cancelEdit = cancelEdit;
 window.scrollToBottom = scrollToBottom;
+window.openSplitToSubdocModal = openSplitToSubdocModal;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 모듈 로컬 에디터 상태 — 동시에 window.* 로 mirror 한다.
@@ -3039,6 +3042,188 @@ function hasMeaningfulChanges() {
     if (origLocked !== currLocked) return true;
 
     return false;
+}
+
+// ── 섹션을 하위 문서로 분리 ──
+// 섹션 편집 모드 배너의 "하위 문서로 분리" 버튼이 호출한다.
+// 사용자에게 (1) 새 하위 문서 제목, (2) 기존 자리에 남길 내용 두 입력을 받아
+//   1) 새 하위 문서를 PUT /api/w/:slug 로 생성하고 (본문 = 현재 섹션의 헤딩 아래 본문)
+//   2) 에디터의 섹션 텍스트를 [헤딩 + 빈 줄 + 남길 내용] 으로 교체한다.
+// 사용자는 이후 일반 저장 버튼으로 부모 문서 변경을 확정한다.
+//
+// 주의: 두 단계는 원자적이지 않다. 1) 성공 후 2) 실패하더라도 하위 문서는 이미
+// 생성되어 있으므로 데이터 손실은 없다(중복일 뿐).
+async function openSplitToSubdocModal(): Promise<void> {
+    const Swal = window.Swal;
+    if (!Swal) return;
+    if (!sectionMode || !sectionRange || !slug || !editor) {
+        await Swal.fire('오류', '섹션 편집 모드에서만 사용할 수 있습니다.', 'warning');
+        return;
+    }
+
+    const headingText = (sectionRange.headingText || '').trim();
+    const parentSlug = slug;
+    const defaultTitle = headingText ? `${parentSlug}/${headingText}` : `${parentSlug}/`;
+    const computeDefaultLeave = (t: string) => `[[${t.trim()}]] 문서를 참고하세요.`;
+
+    const result = await Swal.fire<{ title: string; leave: string }>({
+        title: '<i class="mdi mdi-call-split me-2"></i>하위 문서로 분리',
+        html: `
+            <div class="text-start">
+                <div class="mb-3">
+                    <label for="splitSubdocTitle" class="form-label fw-bold">생성할 하위 문서 제목</label>
+                    <input type="text" id="splitSubdocTitle" class="form-control"
+                        value="${escapeHtml(defaultTitle)}" maxlength="100" autocomplete="off">
+                    <div class="form-text small text-muted">생성될 하위 문서의 슬러그(=제목)입니다. 이미 존재하는 문서 제목은 사용할 수 없습니다.</div>
+                </div>
+                <div class="mb-2">
+                    <label for="splitLeaveBehind" class="form-label fw-bold">남길 내용</label>
+                    <textarea id="splitLeaveBehind" class="form-control" rows="3" maxlength="2000" style="resize: vertical;">${escapeHtml(computeDefaultLeave(defaultTitle))}</textarea>
+                    <div class="form-text small text-muted">기존 섹션의 헤딩 아래에 남을 내용입니다. 직접 수정하기 전까지는 위 제목 변경에 따라 자동 갱신됩니다.</div>
+                </div>
+            </div>
+        `,
+        width: 600,
+        showCancelButton: true,
+        confirmButtonText: '<i class="mdi mdi-call-split"></i> 분리',
+        cancelButtonText: '취소',
+        focusConfirm: false,
+        didOpen: () => {
+            const titleEl = document.getElementById('splitSubdocTitle') as HTMLInputElement | null;
+            const leaveEl = document.getElementById('splitLeaveBehind') as HTMLTextAreaElement | null;
+            if (!titleEl || !leaveEl) return;
+            let leaveTouched = false;
+            leaveEl.addEventListener('input', () => { leaveTouched = true; });
+            titleEl.addEventListener('input', () => {
+                if (!leaveTouched) {
+                    leaveEl.value = computeDefaultLeave(titleEl.value || '');
+                }
+            });
+            titleEl.focus();
+            titleEl.select();
+        },
+        preConfirm: () => {
+            const titleEl = document.getElementById('splitSubdocTitle') as HTMLInputElement | null;
+            const leaveEl = document.getElementById('splitLeaveBehind') as HTMLTextAreaElement | null;
+            const t = (titleEl?.value || '').trim();
+            const l = (leaveEl?.value ?? '');
+            if (!t) {
+                Swal.showValidationMessage('하위 문서 제목을 입력해주세요.');
+                return false;
+            }
+            if (t === parentSlug) {
+                Swal.showValidationMessage('하위 문서 제목이 현재 문서와 같을 수 없습니다.');
+                return false;
+            }
+            // 서버 SLUG_FORBIDDEN_CHARS 와 동일하게 클라에서도 1차 차단.
+            if (/[\[\]{}()#%|<>^\x00-\x1F\x7F]/.test(t)) {
+                Swal.showValidationMessage('제목에 사용할 수 없는 특수문자가 포함되어 있습니다.');
+                return false;
+            }
+            if (t.startsWith('이미지:')) {
+                Swal.showValidationMessage('"이미지:"는 이미지 문서 전용 네임스페이스이므로 사용할 수 없습니다.');
+                return false;
+            }
+            return { title: t, leave: l };
+        },
+    });
+
+    if (!result.isConfirmed || !result.value) return;
+
+    const newTitle = result.value.title;
+    const leaveText = (result.value.leave || '').trim();
+
+    // Turnstile 검증 — 하위 문서 PUT 호출에 토큰 1회 사용.
+    if (window.appConfig && window.appConfig.turnstileSiteKey && !turnstileToken) {
+        await Swal.fire('오류', 'Turnstile 검증을 완료한 뒤 다시 시도해주세요.', 'warning');
+        return;
+    }
+
+    // 현재 에디터(=섹션) 내용에서 헤딩 라인과 본문을 분리.
+    const sectionText = editor.getMarkdown();
+    const firstNl = sectionText.indexOf('\n');
+    const headingLine = firstNl >= 0 ? sectionText.slice(0, firstNl) : sectionText;
+    const sectionBody = firstNl >= 0 ? sectionText.slice(firstNl + 1) : '';
+
+    Swal.fire({
+        title: '하위 문서 생성 중...',
+        allowOutsideClick: false,
+        didOpen: () => Swal.showLoading(),
+    });
+
+    try {
+        // 사전 존재 검사 — PUT 은 기존 문서를 수정하므로 모르게 본문이 덮어써질 위험을 막는다.
+        // race-condition 은 expected_version=0 으로 추가 차단한다.
+        try {
+            const checkRes = await fetch(`/api/w/${encodeURIComponent(newTitle)}?redirect=no&nocache=true`);
+            if (checkRes.ok) {
+                Swal.close();
+                await Swal.fire('오류', `"${newTitle}" 문서가 이미 존재합니다. 다른 제목을 사용해주세요.`, 'warning');
+                return;
+            }
+        } catch (e) { /* 네트워크 오류는 PUT 단계에서 처리 */ }
+
+        const requestBody: Record<string, unknown> = {
+            content: sectionBody,
+            summary: headingText
+                ? `'${parentSlug}' 문서 '${headingText}' 섹션에서 분리`
+                : `'${parentSlug}' 문서에서 분리`,
+            // 신규 생성 강제 — 기존 문서가 있으면 409 로 거부됨.
+            expected_version: 0,
+        };
+        if (window.appConfig && window.appConfig.turnstileSiteKey) {
+            requestBody.turnstileToken = turnstileToken;
+        }
+
+        const res = await fetch(`/api/w/${encodeURIComponent(newTitle)}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(requestBody),
+        });
+
+        // Turnstile 토큰을 소비했으니 결과와 무관하게 새 토큰을 받아둔다.
+        if (window.appConfig && window.appConfig.turnstileSiteKey) {
+            refreshTurnstile();
+        }
+
+        if (!res.ok) {
+            let errMsg = '하위 문서 생성에 실패했습니다.';
+            try {
+                const data = await res.json() as { error?: string };
+                if (data && data.error) errMsg = data.error;
+            } catch (e) { /* keep default */ }
+            if (res.status === 409) {
+                errMsg = `"${newTitle}" 문서가 이미 존재합니다. 다른 제목을 사용해주세요.`;
+            }
+            Swal.close();
+            await Swal.fire('오류', errMsg, 'error');
+            return;
+        }
+        // 신규 생성이면 서버가 201 을 반환한다. 200(idempotent update) 은 서버가
+        // expected_version=0 차단을 적용하면 발생할 수 없지만, 방어적으로 한 번 더 검증해
+        // 다른 사용자의 기존 문서를 무심코 건드리지 않도록 한다.
+        if (res.status !== 201) {
+            Swal.close();
+            await Swal.fire('오류', `"${newTitle}" 문서가 이미 존재합니다. 다른 제목을 사용해주세요.`, 'warning');
+            return;
+        }
+    } catch (e) {
+        Swal.close();
+        await Swal.fire('오류', '하위 문서 생성 중 네트워크 오류가 발생했습니다.', 'error');
+        return;
+    }
+
+    // 에디터 본문(=섹션) 을 [헤딩 + 빈 줄 + 남길 내용] 으로 교체.
+    // 끝의 개행은 mergeSectionIntoFull 의 라인 분리 로직과 충돌하지 않도록 단일 LF 로 마무리.
+    const newSectionText = `${headingLine}\n\n${leaveText}\n`;
+    editor.setMarkdown(newSectionText);
+
+    Swal.close();
+    await Swal.fire({
+        icon: 'success',
+        title: '하위 문서가 생성되었습니다',
+        html: `<a href="/w/${encodeURIComponent(newTitle)}" target="_blank" rel="noopener">${escapeHtml(newTitle)}</a> 문서를 새로 만들었습니다.<br>변경된 섹션 본문을 검토한 뒤 <strong>저장</strong> 버튼을 눌러 반영해주세요.`,
+    });
 }
 
 // ── 저장 ──

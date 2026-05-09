@@ -1,27 +1,38 @@
 import { Hono, Context } from 'hono';
 import { cors } from 'hono/cors';
-import type { Env } from '../types';
+import type { Env, User } from '../types';
+import { RBAC } from '../utils/role';
+import { isSuperAdmin } from '../utils/auth';
 import { renderForAI, extractTOC, extractSection, expandTemplates } from '../utils/aiParser';
 import { normalizeSlug, isR2OnlyNamespace, isMcpReadableSlug } from '../utils/slug';
 import { getRevisionContent } from '../utils/r2';
+import { sha256Hex, OAUTH_ACCEPTED_SCOPES, OAUTH_SCOPE_ADMIN_MCP } from '../utils/oauth';
 import {
     MCP_TOOL_DEFS_ALL,
     buildInformationIntro,
     dispatchReadTool,
     formatRelativeTime,
 } from '../utils/mcpDispatch';
+import {
+    ADMIN_TOOL_DEFS,
+    buildAdminInformationSuffix,
+    dispatchAdminReadTool,
+    dispatchAdminEditTool,
+} from './admin-mcp';
 
 const mcpRoutes = new Hono<Env>();
 
 // formatRelativeTime / bytesToBase64 / MCP_TOOL_DEFS / buildInformationIntro 는
-// src/utils/mcpDispatch.ts 로 이동하여 어드민 MCP 와 공유된다. 본 파일은 batch/블로그
-// 도구처럼 공개 MCP 전용 도구만 핸들링한다.
+// src/utils/mcpDispatch.ts 로 이동했다. 본 파일은 통합 MCP 엔드포인트(/api/mcp) 의
+// JSON-RPC 라우팅을 담당하며, OAuth Bearer 토큰으로 인증된 사용자에게 역할 기반으로
+// 도구를 노출한다 — 일반 사용자에게는 읽기 도구, 관리자에게는 추가로 관리자 전용
+// 읽기/편집 도구까지 제공한다 (admin-mcp.ts 모듈에서 합류).
 
 // CORS 미들웨어 적용
 mcpRoutes.use('*', cors({
     origin: '*',
     allowMethods: ['GET', 'POST', 'OPTIONS'],
-    allowHeaders: ['Content-Type', 'Authorization', 'X-Hono-CSRF'],
+    allowHeaders: ['Content-Type', 'Authorization', 'X-Hono-CSRF', 'MCP-Protocol-Version'],
     maxAge: 86400,
 }));
 
@@ -42,6 +53,112 @@ mcpRoutes.use('*', async (c, next) => {
 
     await next();
 });
+
+// ────────────────────────────────────────────────────────────────
+// Bearer 토큰 인증 — OAuth 2.1 액세스 토큰을 받아 user 객체를 반환한다.
+// /api/admin-mcp 의 인증 로직과 같지만, admin:access 강제 검증은 하지 않는다.
+// 도구 가시성/호출 가부는 호출 시점의 RBAC.can() 으로 분기한다.
+// ────────────────────────────────────────────────────────────────
+
+interface McpAuthContext {
+    user: User;
+    tokenId: number;
+    scope: string;
+}
+
+function unauthorized(c: Context<Env>, description: string): Response {
+    const origin = new URL(c.req.url).origin;
+    const resourceMetadata = `${origin}/.well-known/oauth-protected-resource`;
+    c.header(
+        'WWW-Authenticate',
+        `Bearer realm="mcp", error="invalid_token", error_description="${description}", resource_metadata="${resourceMetadata}"`,
+    );
+    return c.json({ error: 'invalid_token', error_description: description }, 401);
+}
+
+async function authenticateBearer(c: Context<Env>): Promise<McpAuthContext | Response> {
+    const authHeader = c.req.header('Authorization') || '';
+    if (!authHeader.toLowerCase().startsWith('bearer ')) {
+        return unauthorized(c, 'Bearer token required');
+    }
+    const token = authHeader.slice(7).trim();
+    if (!token) return unauthorized(c, 'Empty bearer token');
+
+    const tokenHash = await sha256Hex(token);
+    const row = await c.env.DB
+        .prepare(
+            `SELECT t.id, t.user_id, t.scope, t.access_expires_at, t.revoked_at,
+                    u.id AS uid, u.provider, u.uid AS provider_uid, u.email, u.name, u.picture, u.role, u.banned_until, u.last_namechange, u.created_at
+             FROM oauth_tokens t
+             JOIN users u ON t.user_id = u.id
+             WHERE t.access_token_hash = ?`
+        )
+        .bind(tokenHash)
+        .first<{
+            id: number; user_id: number; scope: string | null; access_expires_at: number; revoked_at: number | null;
+            uid: number; provider: string; provider_uid: string; email: string; name: string; picture: string | null;
+            role: string; banned_until: number | null; last_namechange: number | null; created_at: number;
+        }>();
+
+    if (!row) return unauthorized(c, 'Token not found');
+    const now = Math.floor(Date.now() / 1000);
+    if (row.revoked_at) return unauthorized(c, 'Token revoked');
+    if (row.access_expires_at < now) return unauthorized(c, 'Token expired');
+
+    // 통합 엔드포인트는 mcp / admin-mcp 라벨 모두 받는다 (둘 다 OAUTH_ACCEPTED_SCOPES 에 포함).
+    // scope 컬럼이 NULL 인 레거시 admin-mcp 토큰을 그대로 통과시키기 위해, 기록된 값이 없으면
+    // 구버전 기본 라벨(admin-mcp) 로 간주한다 (oauth.ts 의 issueTokenPair 도 같은 폴백을 사용).
+    // 권한 분기는 사용자 역할로만 한다.
+    const scope = row.scope || OAUTH_SCOPE_ADMIN_MCP;
+    const scopeTokens = scope.split(/\s+/).filter(Boolean);
+    if (!scopeTokens.some(s => OAUTH_ACCEPTED_SCOPES.has(s))) {
+        return unauthorized(c, 'Token scope does not permit MCP access');
+    }
+
+    // 권한 재검증: super_admin 보정 + ban 처리
+    let effectiveRole = row.role;
+    if (isSuperAdmin(row.email, c.env)) {
+        effectiveRole = 'super_admin';
+    } else if (row.banned_until && row.banned_until > now) {
+        effectiveRole = 'banned';
+    } else if (row.role === 'banned') {
+        effectiveRole = 'user';
+    }
+
+    // banned/deleted 는 어떤 도구도 사용할 수 없으므로 토큰 단계에서 컷.
+    if (effectiveRole === 'banned' || effectiveRole === 'deleted') {
+        return unauthorized(c, 'User account is restricted');
+    }
+    // 토큰 발급 후 권한이 강등되어 wiki:read 도 admin:access 도 없는 역할로 떨어졌다면
+    // 통합 MCP 의 어떤 도구도 호출할 자격이 없다 (oauth /authorize 의 동의 시점 가드와 동일 정책).
+    // RBAC.can() 으로 매 요청 재검증해 OAuth 토큰만으로 RBAC 변경을 우회하지 못하도록 한다.
+    const rbac = c.get('rbac') as RBAC;
+    if (!rbac.can(effectiveRole, 'wiki:read') && !rbac.can(effectiveRole, 'admin:access')) {
+        return unauthorized(c, 'Insufficient permission for MCP access');
+    }
+
+    const user: User = {
+        id: row.uid,
+        provider: row.provider,
+        uid: row.provider_uid,
+        email: row.email,
+        name: row.name,
+        picture: row.picture,
+        role: effectiveRole as User['role'],
+        banned_until: row.banned_until,
+        last_namechange: row.last_namechange,
+        created_at: row.created_at,
+    };
+    c.set('user', user);
+
+    // 토큰 사용 시각 갱신 (best-effort)
+    c.executionCtx.waitUntil(
+        c.env.DB.prepare('UPDATE oauth_tokens SET last_used_at = unixepoch() WHERE id = ?')
+            .bind(row.id).run().catch(() => {})
+    );
+
+    return { user, tokenId: row.id, scope };
+}
 
 // GET /api/mcp - 기본 정보 (브라우저 접속 시 안내 페이지)
 async function handleMcpGet(c: Context<Env>): Promise<Response> {
@@ -132,15 +249,20 @@ async function handleMcpGet(c: Context<Env>): Promise<Response> {
 }
 
 mcpRoutes.get('/', (c) => handleMcpGet(c));
-// 과거 /api/mcp/full 엔드포인트 호환을 위해 동일 핸들러로 연결한다 (lite/full 분리 폐지).
-mcpRoutes.get('/full', (c) => handleMcpGet(c));
 
 // 공통 JSON-RPC 처리 함수
-async function handleJsonRpc(c: Context<Env>, body: any) {
+async function handleJsonRpc(c: Context<Env>, body: any, user: User) {
     const { jsonrpc, method, params, id } = body;
     if (jsonrpc !== '2.0') return { jsonrpc: '2.0', error: { code: -32600, message: 'Invalid Request' }, id: id || null };
 
     const db = c.env.DB;
+    const rbac = c.get('rbac') as RBAC;
+    const isAdmin = rbac.can(user.role, 'admin:access');
+    // 역할에 따라 노출할 도구 목록을 결정. 관리자만 ADMIN_TOOL_DEFS (관리자 전용 읽기 + 편집)
+    // 까지 노출되며, 일반 사용자는 MCP_TOOL_DEFS_ALL (읽기 도구) 만 본다.
+    const visibleToolDefs = isAdmin
+        ? [...MCP_TOOL_DEFS_ALL, ...ADMIN_TOOL_DEFS]
+        : MCP_TOOL_DEFS_ALL;
 
     // 1. 핸드셰이크: initialize
     if (method === 'initialize') {
@@ -168,9 +290,10 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
 
     // 3. 도구 목록 반환
     if (method === 'tools/list') {
-        const intro = buildInformationIntro(c);
-        const toolNames = MCP_TOOL_DEFS_ALL.map(t => t.name).join(', ');
-        const informationDescription = `${intro}\n\n사용 가능한 MCP 도구: ${toolNames}. 각 도구의 세부 설명은 information 도구를 호출하여 확인할 수 있습니다.`;
+        const intro = buildInformationIntro(c, MCP_TOOL_DEFS_ALL);
+        const adminSuffix = isAdmin ? buildAdminInformationSuffix(user.name) : '';
+        const toolNames = visibleToolDefs.map(t => t.name).join(', ');
+        const informationDescription = `${intro}${adminSuffix}\n\n사용 가능한 MCP 도구: ${toolNames}. 각 도구의 세부 설명은 information 도구를 호출하여 확인할 수 있습니다.`;
         return {
             jsonrpc: '2.0', id,
             result: {
@@ -180,7 +303,7 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
                         description: informationDescription,
                         inputSchema: { type: 'object', properties: {}, required: [] }
                     },
-                    ...MCP_TOOL_DEFS_ALL
+                    ...visibleToolDefs,
                 ]
             }
         };
@@ -190,8 +313,27 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
         const toolName = params?.name;
         const args = params?.arguments || {};
         try {
+            // 관리자 전용 도구를 일반 사용자가 호출하면 가시 도구 목록에 없으므로 여기서 차단.
+            // tools/list 출력과 일관된 결과를 위해 일반 사용자는 admin 디스패처 자체를 건너뛴다.
+            const isAdminTool = ADMIN_TOOL_DEFS.some(t => t.name === toolName);
+            if (isAdminTool && !isAdmin) {
+                return {
+                    jsonrpc: '2.0',
+                    error: { code: -32601, message: `Tool not found: ${toolName}` },
+                    id,
+                };
+            }
+
             const shared = await dispatchReadTool(c, toolName, args, MCP_TOOL_DEFS_ALL);
             if (shared) return { jsonrpc: '2.0', id, result: shared };
+
+            if (isAdmin) {
+                const adminReadResult = await dispatchAdminReadTool(c, user, toolName, args);
+                if (adminReadResult) return { jsonrpc: '2.0', id, result: adminReadResult };
+
+                const adminEditResult = await dispatchAdminEditTool(c, user, toolName, args);
+                if (adminEditResult) return { jsonrpc: '2.0', id, result: adminEditResult };
+            }
 
             if (toolName === 'read_document_batch' || toolName === 'get_toc_batch') {
                 const isTocMode = toolName === 'get_toc_batch';
@@ -650,18 +792,20 @@ async function handleJsonRpc(c: Context<Env>, body: any) {
     return { jsonrpc: '2.0', error: { code: -32601, message: 'Method not found' }, id };
 }
 
-// POST /api/mcp - HTTP 방식 JSON-RPC 엔드포인트 (모든 도구 노출)
+// POST /api/mcp - HTTP 방식 JSON-RPC 엔드포인트.
+// OAuth 2.1 Bearer 토큰 인증 필수 — 일반 사용자도 읽기 도구를 사용하려면 로그인 후
+// /oauth/authorize 흐름으로 토큰을 발급받아야 한다.
 mcpRoutes.post('/', async (c) => {
+    const auth = await authenticateBearer(c);
+    if (auth instanceof Response) return auth;
     const body = await c.req.json();
-    const response = await handleJsonRpc(c, body);
+    const response = await handleJsonRpc(c, body, auth.user);
+    if (response === null) return c.body(null, 204);
     return c.json(response);
 });
 
-// 과거 /api/mcp/full 엔드포인트와의 호환을 위해 동일 핸들러로 연결한다 (lite/full 분리 폐지).
-mcpRoutes.post('/full', async (c) => {
-    const body = await c.req.json();
-    const response = await handleJsonRpc(c, body);
-    return c.json(response);
-});
+// 과거 /api/mcp/full 엔드포인트(lite/full 분리 시기 잔재) 는 통합 폐기. 통합 metadata 의
+// resource 가 /api/mcp 로만 매칭되므로 /full 별칭을 두면 RFC 9728 정합성이 깨진다 — 클라이언트는
+// /api/mcp 로 재설정해야 한다.
 
 export default mcpRoutes;

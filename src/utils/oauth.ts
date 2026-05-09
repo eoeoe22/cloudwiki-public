@@ -62,7 +62,14 @@ export function isValidRedirectUri(uri: string): boolean {
     }
 }
 
+// 통합 MCP 엔드포인트(/api/mcp) 의 단일 스코프. 일반 사용자도 OAuth 로 인증해 읽기 도구를
+// 호출할 수 있으며, 도구 목록은 토큰 사용자의 역할(admin:access 여부) 에 따라 서버 측에서
+// 분기된다. 별도의 admin 전용 스코프를 두지 않는다 — 권한 상승은 RBAC 가 일임한다.
+export const OAUTH_SCOPE_MCP = 'mcp';
+// 구버전 호환: admin-mcp 스코프로 발급된 기존 토큰 / 클라이언트 등록도 그대로 받아준다.
+// 스코프 문자열은 단순 라벨로 취급하고, 실제 도구 호출 시점에 역할로 권한을 검증한다.
 export const OAUTH_SCOPE_ADMIN_MCP = 'admin-mcp';
+export const OAUTH_ACCEPTED_SCOPES = new Set<string>([OAUTH_SCOPE_MCP, OAUTH_SCOPE_ADMIN_MCP]);
 export const ACCESS_TOKEN_TTL_SEC = 60 * 60;             // 1h
 export const REFRESH_TOKEN_TTL_SEC = 60 * 60 * 24 * 30;  // 30d
 export const AUTH_CODE_TTL_SEC = 60;                      // 60s

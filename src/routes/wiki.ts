@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import type { Env, Page, Revision } from '../types';
 import { requireAuth, requireAdmin, requirePermission } from '../middleware/session';
 import { normalizeSlug, isR2OnlyNamespace } from '../utils/slug';
+import { matchAdminNamespace } from '../utils/adminNamespace';
 import { safeJSON } from '../utils/json';
 import { ROLE_CASE_SQL, enrichRoles, RBAC } from '../utils/role';
 import { fetchMediaTags } from '../utils/mediaTags';
@@ -1101,6 +1102,14 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
         return c.json({ error: '"이미지:"는 이미지 문서 전용 네임스페이스이므로 일반 문서 슬러그로 사용할 수 없습니다.' }, 403);
     }
 
+    // 관리자 전용 네임스페이스(prefix) 검증
+    if (!isAdmin) {
+        const adminPrefix = await matchAdminNamespace(db, slug);
+        if (adminPrefix) {
+            return c.json({ error: `"${adminPrefix}" 로 시작하는 문서는 관리자만 편집할 수 있습니다.` }, 403);
+        }
+    }
+
     // 관리자 전용 카테고리 검증 (쉼표 구분 지원)
     if (body.category && !isAdmin) {
         const cats = body.category.split(',').map(c => c.trim()).filter(c => c);
@@ -1148,6 +1157,16 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
     let finalIsLocked = 0;
 
     if (existing) {
+        // expected_version === 0 은 "신규 생성 전용" 시멘틱이다. 기존 문서가 존재하면
+        // 본문 일치 여부와 무관하게 충돌로 처리해, 섹션 분리 등 race-condition 차단이
+        // 필요한 호출자가 결정론적으로 거부 응답을 받도록 한다.
+        if (body.expected_version === 0) {
+            return c.json(
+                { error: '같은 슬러그의 문서가 이미 존재합니다.', current_version: existing.version },
+                409
+            );
+        }
+
         // 기존 문서가 잠겨있을 경우
         if (existing.is_locked === 1 && !rbac.can(user.role, 'wiki:lock')) {
             return c.json({ error: '이 문서는 관리자만 편집할 수 있습니다.' }, 403);
@@ -1895,6 +1914,16 @@ wiki.post('/w/:slug/revert', requireAuth, async (c) => {
 
     if (!page) {
         return c.json({ error: '문서를 찾을 수 없습니다.' }, 404);
+    }
+
+    const isAdmin = rbac.can(user.role, 'admin:access');
+
+    // 관리자 전용 네임스페이스 검증
+    if (!isAdmin) {
+        const adminPrefix = await matchAdminNamespace(db, slug);
+        if (adminPrefix) {
+            return c.json({ error: `"${adminPrefix}" 로 시작하는 문서는 관리자만 되돌릴 수 있습니다.` }, 403);
+        }
     }
 
     if (page.is_locked === 1 && !rbac.can(user.role, 'wiki:lock')) {

@@ -940,7 +940,7 @@ div:where(.swal2-container) .swal2-html-container {
   flex-wrap: wrap;
 }
 
-/* ── Document Actions Button Group ── */
+/* ── Document Actions Button Group (Flat Design) ── */
 #articleMainActions .btn,
 #shareDropdown,
 #docToolsDropdown {
@@ -950,11 +950,11 @@ div:where(.swal2-container) .swal2-html-container {
   font-weight: 600;
   font-size: 0.85rem;
   padding: 0.5rem 0.9rem;
-  box-shadow: var(--wiki-shadow-sm);
+  box-shadow: none !important;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }
 
 #articleMainActions .btn:hover,
@@ -965,14 +965,27 @@ div:where(.swal2-container) .swal2-html-container {
   border-color: var(--wiki-primary) !important;
   z-index: 2;
   /* Ensure border is visible in group */
-  transform: translateY(-1px);
-  box-shadow: var(--wiki-shadow);
+  box-shadow: none !important;
 }
 
-#articleMainActions .btn:active,
-#shareDropdown:active,
-#docToolsDropdown:active {
-  transform: translateY(0);
+/* 마우스 포커스 / 드롭다운 열림(.show) 에서는 Bootstrap 기본 포커스 그림자만 차단 */
+#articleMainActions .btn:focus,
+#articleMainActions .btn.show,
+#shareDropdown:focus,
+#shareDropdown.show,
+#docToolsDropdown:focus,
+#docToolsDropdown.show {
+  box-shadow: none !important;
+  outline: none;
+}
+
+/* 키보드 포커스 (Tab) 에서는 접근성을 위해 outline 으로 명확한 포커스 링 표시 */
+#articleMainActions .btn:focus-visible,
+#shareDropdown:focus-visible,
+#docToolsDropdown:focus-visible {
+  box-shadow: none !important;
+  outline: 2px solid var(--wiki-primary);
+  outline-offset: 2px;
 }
 
 #articleMainActions .btn i,
