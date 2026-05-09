@@ -1037,5 +1037,15 @@ export default {
                 'DELETE FROM mcp_drafts WHERE updated_at < ?'
             ).bind(now - 43200).run()
         );
+        // OAuth 토큰 보관 정책: 사용 종료(revoked) 또는 리프레시 만료 후 7일이 지나면 삭제.
+        // COALESCE(revoked_at, refresh_expires_at, access_expires_at) 가 토큰의 "수명 종료
+        // 시각"을 의미하며, 그 시각이 7일(604800초) 이상 지난 행은 인증 단계에서 어차피
+        // 거절되므로 보관 가치가 없음. 마이페이지의 노출 윈도우와 동일하게 맞춘다.
+        ctx.waitUntil(
+            env.DB.prepare(
+                `DELETE FROM oauth_tokens
+                 WHERE COALESCE(revoked_at, refresh_expires_at, access_expires_at) < ?`
+            ).bind(now - 604800).run()
+        );
     }
 };

@@ -681,7 +681,8 @@ auth.get('/api/me/mcp-sessions', requireAuthAllowBanned, async (c) => {
     const user = c.get('user')!;
     const db = c.env.DB;
     const now = Math.floor(Date.now() / 1000);
-    const since = now - 60 * 60 * 24 * 30;
+    // 자정 크론이 종료/만료 후 7일이 지난 토큰을 일괄 삭제하므로 노출 윈도우도 7일로 맞춘다.
+    const since = now - 60 * 60 * 24 * 7;
 
     const { results } = await db.prepare(
         `SELECT t.id, t.client_id, t.scope, t.access_expires_at, t.refresh_expires_at,

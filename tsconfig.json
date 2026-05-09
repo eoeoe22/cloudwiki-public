@@ -1,10 +1,10 @@
 {
     "compilerOptions": {
-        "target": "ES2022",
-        "module": "ES2022",
+        "target": "ES2024",
+        "module": "ESNext",
         "moduleResolution": "bundler",
         "lib": [
-            "ES2022"
+            "ES2024"
         ],
         "types": [
             "@cloudflare/workers-types"
@@ -23,6 +23,7 @@
         "src/**/*.ts"
     ],
     "exclude": [
-        "node_modules"
+        "node_modules",
+        "src/client/**/*"
     ]
 }

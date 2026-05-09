@@ -1942,6 +1942,8 @@ div:where(.swal2-container) .swal2-html-container {
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
   z-index: 9999;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 @media (max-width: 576px) {
@@ -1963,6 +1965,8 @@ div:where(.swal2-container) .swal2-html-container {
 
 .notification-panel-body {
   overflow-y: auto;
+  flex: 1 1 auto;
+  min-height: 0;
   max-height: 420px;
 }
 
@@ -2044,6 +2048,13 @@ div:where(.swal2-container) .swal2-html-container {
   text-align: center;
   color: var(--wiki-text-muted);
   font-size: 0.85rem;
+}
+
+.notification-panel-footer {
+  padding: 10px 12px;
+  border-top: 1px solid var(--wiki-border);
+  background: var(--wiki-card-bg);
+  flex: 0 0 auto;
 }
 
 /* ── 푸터 ── */

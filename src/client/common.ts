@@ -835,25 +835,31 @@ async function deleteNotification(id) {
 // 동적 import 로 push.ts 를 로드하므로 비지원 브라우저에서도 무해.
 // 토글 상태는 매번 패널 열릴 때 refreshPushToggle 로 갱신된다.
 async function refreshPushToggle() {
-    const btn = document.getElementById('pushToggleBtn');
+    const footer = document.getElementById('notificationPanelFooter');
+    const btn = document.getElementById('pushToggleBtn') as HTMLButtonElement | null;
     const labelEl = document.getElementById('pushToggleLabel');
-    if (!btn || !labelEl || !currentUser) return;
+    if (!footer || !btn || !labelEl || !currentUser) return;
     try {
         const mod = PushClient;
         const status = await mod.checkPushAvailability();
         if (status.kind !== 'ready') {
-            btn.classList.add('d-none');
+            footer.classList.add('d-none');
             return;
         }
+        footer.classList.remove('d-none');
         btn.classList.remove('d-none');
         const subscribed = await mod.isCurrentlySubscribed();
         const icon = btn.querySelector('i');
         if (subscribed) {
-            labelEl.textContent = '푸시 끄기';
+            labelEl.textContent = '푸시 알림 구독 취소';
             if (icon) icon.className = 'mdi mdi-bell-ring-outline';
+            btn.classList.remove('btn-outline-secondary');
+            btn.classList.add('btn-outline-danger');
         } else {
-            labelEl.textContent = '푸시 받기';
+            labelEl.textContent = '푸시 알림 받기';
             if (icon) icon.className = 'mdi mdi-bell-off-outline';
+            btn.classList.remove('btn-outline-danger');
+            btn.classList.add('btn-outline-secondary');
         }
         btn.onclick = async (e) => {
             e.stopPropagation();
@@ -874,7 +880,7 @@ async function refreshPushToggle() {
         };
     } catch (e) {
         // 푸시 모듈 로드 실패 — 토글 숨김 처리
-        btn.classList.add('d-none');
+        footer.classList.add('d-none');
     }
 }
 
