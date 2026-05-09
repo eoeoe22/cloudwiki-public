@@ -4,9 +4,12 @@
 // 동작 흐름:
 //  1. 브라우저 지원 + VAPID 활성 여부 확인
 //  2. Notification.requestPermission()
-//  3. navigator.serviceWorker.register('/sw.js')
+//  3. navigator.serviceWorker.register('/sw.js', { type: 'module' })
 //  4. PushManager.subscribe({ userVisibleOnly:true, applicationServerKey })
 //  5. 서버에 /api/push/subscribe (또는 -signup) POST
+//
+// SW 는 vite 가 format:'es' 로 빌드하므로 register 시 반드시 type:'module' 을 명시한다.
+// 미명시 시 classic 로더가 ESM 문법(import / export)을 거부할 수 있다.
 
 type PublicKeyResponse = { enabled: boolean; public_key: string | null };
 
@@ -64,7 +67,21 @@ export async function checkPushAvailability(): Promise<PushBootstrap> {
 async function getOrCreateRegistration(): Promise<ServiceWorkerRegistration> {
     const existing = await navigator.serviceWorker.getRegistration('/');
     if (existing) return existing;
-    return navigator.serviceWorker.register('/sw.js', { scope: '/' });
+    // sw.ts 는 vite 가 ESM(format:'es') 으로 빌드하므로 우선 module 타입으로 등록한다.
+    // 기존에 classic 으로 등록된 워커가 있더라도 register 호출이 update 트리거가 되어
+    // 다음 fetch 부터 module 로 재로드된다.
+    // 단, module SW 를 지원하지 않는 브라우저(예: 일부 구버전 Firefox)에서는 TypeError 가
+    // 발생하므로 classic 등록으로 fallback. 현재 sw.ts 는 외부 import 가 없어 classic
+    // 로더와도 호환된다 — 향후 import 를 추가하는 시점에는 module 지원 브라우저만
+    // 푸시 옵트인이 가능해진다는 점을 함께 고려해야 한다.
+    try {
+        return await navigator.serviceWorker.register('/sw.js', { scope: '/', type: 'module' });
+    } catch (e) {
+        if (e instanceof TypeError) {
+            return navigator.serviceWorker.register('/sw.js', { scope: '/' });
+        }
+        throw e;
+    }
 }
 
 async function ensurePermission(): Promise<boolean> {
