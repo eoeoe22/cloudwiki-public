@@ -125,6 +125,35 @@ oauth.post('/oauth/register', async (c) => {
         }
     }
 
+    // response_types: RFC 7591 §2 — code grant 만 지원하므로 ["code"] 만 허용. 미지정 시 기본값.
+    // ChatGPT 등 일부 클라이언트는 ["code"] 를 명시적으로 보내고 응답에서 그대로 에코되길 기대한다.
+    // 비문자열 항목을 silently 떨어뜨리지 않고(예: [1] → []) 명시적 invalid_client_metadata 로 거절.
+    let responseTypes: string[] = ['code'];
+    if (body?.response_types !== undefined) {
+        if (!Array.isArray(body.response_types) || body.response_types.length === 0) {
+            return badRequest(c, 'invalid_client_metadata', 'response_types must be a non-empty array');
+        }
+        for (const r of body.response_types) {
+            if (typeof r !== 'string') {
+                return badRequest(c, 'invalid_client_metadata', 'response_types entries must be strings');
+            }
+            if (r !== 'code') {
+                return badRequest(c, 'invalid_client_metadata', `Unsupported response_type: ${r}`);
+            }
+        }
+        responseTypes = body.response_types as string[];
+    }
+
+    // scope: 클라이언트가 요청한 스코프를 검증/에코한다. 통합 MCP 엔드포인트는 mcp / admin-mcp
+    // 두 라벨만 받는다 (둘 중 하나라도 포함되면 허용). 스코프 누락 시 기본 mcp.
+    const requestedScope = typeof body?.scope === 'string' && body.scope.trim()
+        ? body.scope.trim()
+        : OAUTH_SCOPE_MCP;
+    const scopeTokens = requestedScope.split(/\s+/).filter(Boolean);
+    if (!scopeTokens.some((s: string) => OAUTH_ACCEPTED_SCOPES.has(s))) {
+        return badRequest(c, 'invalid_client_metadata', `Scope must include ${OAUTH_SCOPE_MCP}`);
+    }
+
     const clientId = generateOpaqueToken(24);
     const isPublic = requestedAuthMethod === 'none';
     const clientSecret = isPublic ? null : generateOpaqueToken(32);
@@ -154,16 +183,27 @@ oauth.post('/oauth/register', async (c) => {
         .run();
 
     const origin = originOf(c);
+    // RFC 7591 §3.2.1: client_id_issued_at(권장) / client_secret_expires_at(client_secret 동봉 시 MUST,
+    // 0=영구) / response_types / scope 를 모두 에코해 준수성을 만족한다. ChatGPT 의 connector
+    // 클라이언트는 응답 검증이 엄격해서 누락 시 등록을 폐기하고 사용자에게 403 으로 표시하는
+    // 사례가 보고되었다. Claude 는 더 관대해 누락에도 통과되었다.
+    const issuedAt = Math.floor(Date.now() / 1000);
     const response: Record<string, unknown> = {
         client_id: clientId,
+        client_id_issued_at: issuedAt,
         redirect_uris: redirectUris,
         grant_types: grantTypes,
+        response_types: responseTypes,
         token_endpoint_auth_method: requestedAuthMethod,
+        scope: requestedScope,
         registration_client_uri: `${origin}/oauth/register/${clientId}`,
         registration_access_token: registrationAccessToken,
     };
     if (clientName) response.client_name = clientName;
-    if (clientSecret) response.client_secret = clientSecret;
+    if (clientSecret) {
+        response.client_secret = clientSecret;
+        response.client_secret_expires_at = 0; // 0 = 만료 없음 (RFC 7591 §3.2.1)
+    }
 
     return c.json(response, 201);
 });
