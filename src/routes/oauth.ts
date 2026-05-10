@@ -127,21 +127,13 @@ oauth.post('/oauth/register', async (c) => {
 
     // response_types: RFC 7591 §2 — code grant 만 지원하므로 ["code"] 만 허용. 미지정 시 기본값.
     // ChatGPT 등 일부 클라이언트는 ["code"] 를 명시적으로 보내고 응답에서 그대로 에코되길 기대한다.
-    // 비문자열 항목을 silently 떨어뜨리지 않고(예: [1] → []) 명시적 invalid_client_metadata 로 거절.
-    let responseTypes: string[] = ['code'];
-    if (body?.response_types !== undefined) {
-        if (!Array.isArray(body.response_types) || body.response_types.length === 0) {
-            return badRequest(c, 'invalid_client_metadata', 'response_types must be a non-empty array');
+    const responseTypes: string[] = Array.isArray(body?.response_types) && body.response_types.length
+        ? body.response_types.filter((r: unknown) => typeof r === 'string')
+        : ['code'];
+    for (const r of responseTypes) {
+        if (r !== 'code') {
+            return badRequest(c, 'invalid_client_metadata', `Unsupported response_type: ${r}`);
         }
-        for (const r of body.response_types) {
-            if (typeof r !== 'string') {
-                return badRequest(c, 'invalid_client_metadata', 'response_types entries must be strings');
-            }
-            if (r !== 'code') {
-                return badRequest(c, 'invalid_client_metadata', `Unsupported response_type: ${r}`);
-            }
-        }
-        responseTypes = body.response_types as string[];
     }
 
     // scope: 클라이언트가 요청한 스코프를 검증/에코한다. 통합 MCP 엔드포인트는 mcp / admin-mcp
