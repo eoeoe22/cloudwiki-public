@@ -2389,6 +2389,12 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
 
     try {
         const resolvedContent = await resolveTransclusions(content || '', slug);
+        // resolveTransclusions 가 모듈 로컬 _wikiExtensionData 를 채우는 즉시 스냅샷.
+        // 이후 await(fetchCategoryList 등) 사이 다른 renderWikiContent 호출이
+        // _wikiExtensionData 를 덮어써도, 이번 호출의 DOM data-ext-idx 는 이 스냅샷을
+        // 참조하므로 충돌하지 않는다. (에디터 실시간 프리뷰의 디바운스가 깨지는 등
+        // 동시 렌더가 일어나는 경로에서 인덱스 불일치 회귀를 방지.)
+        const renderExtensionData = _wikiExtensionData.slice();
 
         const codeBlocksForFold = [];
         let foldInput = resolvedContent.replace(/^(`{3,})[^\n]*\n[\s\S]*?\n\1[ \t]*$|`[^`\n]+`/gm, (m) => {
@@ -2513,7 +2519,16 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
         let html = (typeof DOMPurify !== 'undefined') ? DOMPurify.sanitize(rawHtml, { ADD_TAGS: ['i', 'span', 'details', 'summary', 'div', 'canvas'], ADD_ATTR: ['class', 'style', 'data-bg', 'data-color', 'data-size', 'data-unix', 'data-ext-name', 'data-ext-idx', 'colspan', 'rowspan', 'title'] }) : escapeHtml(rawHtml);
 
         if (options.showCategory && slug) {
-            const decodedSlug = decodeURIComponent(slug);
+            // index.html 의 route() 가 decodeURIComponent 실패 시 원본 slug 를 그대로
+            // 넘기므로 (`100%news` 같은 잘못된 인코딩 케이스), 여기서 다시 디코드를
+            // 시도할 때 URIError 가 throw 되어 outer try/catch 로 빠지면 본문 자체가
+            // 비어 보이는 회귀가 난다. 안전하게 폴백.
+            let decodedSlug;
+            try {
+                decodedSlug = decodeURIComponent(slug);
+            } catch (_) {
+                decodedSlug = slug;
+            }
             if (decodedSlug.startsWith('카테고리:')) {
                 const categoryName = decodedSlug.replace(/^카테고리:/, '');
                 const listHtml = await fetchCategoryList(categoryName);
@@ -2533,7 +2548,14 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
 
         // 테이블 색상 적용
         containerEl.querySelectorAll('td, th').forEach(cell => {
-            let walker = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT, null, false);
+            // 코드 블록 / 인라인 코드 내부의 토큰은 무시한다 (사용자가 의도적으로 텍스트로 노출한 것).
+            const walker = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT, {
+                acceptNode(node) {
+                    return node.parentElement && node.parentElement.closest('code, pre')
+                        ? NodeFilter.FILTER_REJECT
+                        : NodeFilter.FILTER_ACCEPT;
+                }
+            }, false);
             let firstTextNode = walker.nextNode();
             if (firstTextNode) {
                 let val = firstTextNode.nodeValue;
@@ -3169,8 +3191,8 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
         // {timer:} 요소 실시간 업데이트
         _initTimers(containerEl, containerId);
 
-        // 익스텐션 렌더링 (Chart.js 등)
-        _processExtensions(containerEl);
+        // 익스텐션 렌더링 (Chart.js 등). resolveTransclusions 직후 캡처한 스냅샷을 전달.
+        _processExtensions(containerEl, renderExtensionData);
 
     } catch (err) {
         console.error('renderWikiContent error:', err);
@@ -3558,28 +3580,58 @@ function _updateDocumentStatsCounter(text) {
 /** 익스텐션 모듈별 렌더러 맵 (각 익스텐션 파일이 로드 시 자동 등록) */
 if (!window._extensionRenderers) window._extensionRenderers = {};
 
-/** 컨테이너 내 모든 익스텐션 요소를 찾아 렌더러 실행 */
-function _processExtensions(containerEl) {
+/** 컨테이너 내 모든 익스텐션 요소를 찾아 렌더러 실행.
+ *  extensionData 가 명시되면 그 스냅샷을 사용 (동시 렌더 race 방지).
+ *  미지정 시 모듈 로컬 _wikiExtensionData 폴백 — 외부 직접 호출 후방 호환용.
+ *
+ *  익스텐션 스크립트는 common.ts 의 loadConfig() 가 `<script async>` 로 head 에
+ *  삽입하므로 첫 렌더 시점에 아직 등록 전일 수 있다. 등록 전 컴포넌트는 placeholder
+ *  로 두고 200ms × 최대 N 회 폴링하여 도착 즉시 렌더한다 (열람 페이지의
+ *  익스텐션 본문 렌더가 사용하는 패턴과 동일). 모든 컴포넌트가 해소되거나
+ *  재시도 한도를 넘어서면 미등록 메시지로 마감. */
+function _processExtensions(containerEl, extensionData) {
     const extElements = containerEl.querySelectorAll('.wiki-ext[data-ext-name]');
     if (extElements.length === 0) return;
 
-    extElements.forEach(el => {
-        const extName = el.getAttribute('data-ext-name');
-        const extIdx = parseInt(el.getAttribute('data-ext-idx'), 10);
-        const extData = (typeof _wikiExtensionData !== 'undefined') ? _wikiExtensionData[extIdx] : null;
+    const data = Array.isArray(extensionData) ? extensionData : _wikiExtensionData;
+    const MAX_RETRIES = 15;       // 200ms × 15 = 3s 대기 한도 (인라인 ext doc 렌더와 동일)
+    const RETRY_INTERVAL_MS = 200;
 
-        if (!extData) {
-            el.innerHTML = '<div class="alert alert-warning">⚠️ 익스텐션 데이터를 찾을 수 없습니다.</div>';
-            return;
-        }
+    const tryRender = (retries) => {
+        const pending = [];
+        extElements.forEach(el => {
+            // 이미 렌더된 요소는 건너뜀 (재시도 시 중복 작업 방지)
+            if (!el.isConnected || el.dataset.extRendered === '1') return;
 
-        const renderer = window._extensionRenderers[extName];
-        if (renderer) {
-            renderer(el, extData);
-        } else {
-            el.innerHTML = `<div class="alert alert-warning">⚠️ 알 수 없는 익스텐션: ${escapeHtml(extName)}</div>`;
+            const extName = el.getAttribute('data-ext-name');
+            const extIdx = parseInt(el.getAttribute('data-ext-idx'), 10);
+            const extData = data ? data[extIdx] : null;
+
+            if (!extData) {
+                el.innerHTML = '<div class="alert alert-warning">⚠️ 익스텐션 데이터를 찾을 수 없습니다.</div>';
+                el.dataset.extRendered = '1';
+                return;
+            }
+
+            const renderer = window._extensionRenderers && window._extensionRenderers[extName];
+            if (renderer) {
+                renderer(el, extData);
+                el.dataset.extRendered = '1';
+            } else if (retries > 0) {
+                // 등록 대기 — 재시도 큐에 둔다
+                pending.push(el);
+            } else {
+                el.innerHTML = `<div class="alert alert-warning">⚠️ 알 수 없는 익스텐션: ${escapeHtml(extName)}</div>`;
+                el.dataset.extRendered = '1';
+            }
+        });
+
+        if (pending.length > 0 && retries > 0) {
+            setTimeout(() => tryRender(retries - 1), RETRY_INTERVAL_MS);
         }
-    });
+    };
+
+    tryRender(MAX_RETRIES);
 }
 
 

@@ -1,17 +1,22 @@
-// 관리자 전용 MCP 도구 정의 + 디스패처.
+// 추가 MCP 도구 정의 + 디스패처 (일반 유저 편집 도구 + 관리자 전용 도구).
 //
 // 통합 MCP 엔드포인트 (/api/mcp) 가 호출 시점에 사용자 역할을 보고 이 모듈의 도구를
-// 일반 사용자 도구 위에 추가로 노출한다. 별도 라우트(/api/admin-mcp) 를 직접 등록하지 않으며,
+// 공용 읽기 도구 위에 추가로 노출한다. 별도 라우트(/api/admin-mcp) 를 직접 등록하지 않으며,
 // 본 파일은 도구 정의와 디스패처만 export 한다.
 //
-// 노출 도구:
-//   - 읽기: 어드민 전용 읽기 (list_deleted_pages, read_revision, list_drafts, read_draft)
-//   - 편집(draft 모델): create_or_update_page, patch_page, edit_section
-//          → commit_edit / discard_edit 로 마무리. 도중 단계는 새 리비전을 만들지 않고
-//          mcp_drafts 테이블에 사용자별로 누적된다 (같은 슬러그에 대해 1개).
-//          commit_edit 가 base_revision_id 와 현재 last_revision_id 를 비교해 충돌 감지.
-//          draft 는 마지막 활동 이후 12시간이 지나면 자정 크론이 일괄 삭제.
-//   - 편집(즉시 적용): delete_page, restore_page, move_page, revert_page
+// 노출 계층:
+//   - guest (인증 없음 또는 권한 없는 토큰): MCP_TOOL_DEFS_ALL (mcpDispatch.ts) 만.
+//   - 일반 유저 (`wiki:edit`): + USER_TOOL_DEFS
+//        - 읽기: list_drafts, read_draft, read_revision
+//        - 편집(draft 모델): create_or_update_page, patch_page, edit_section
+//             → commit_edit / discard_edit 로 마무리. 도중 단계는 새 리비전을 만들지 않고
+//             mcp_drafts 테이블에 사용자별로 누적된다 (같은 슬러그에 대해 1개).
+//             commit_edit 가 base_revision_id 와 현재 last_revision_id 를 비교해 충돌 감지.
+//             draft 는 마지막 활동 이후 12시간이 지나면 자정 크론이 일괄 삭제.
+//        - 편집(즉시 적용): revert_page
+//   - 관리자 (`admin:access`): + ADMIN_ONLY_TOOL_DEFS
+//        - 읽기: list_deleted_pages
+//        - 편집(즉시 적용): delete_page, restore_page, move_page
 //
 // 편집 도구는 wiki.ts 의 PUT /w/:slug, DELETE /w/:slug, POST /w/:slug/restore,
 // POST /w/:slug/move 와 동일한 동작을 수행한다 — 동일한 헬퍼(buildLinkAndCategoryStatements,
@@ -40,22 +45,11 @@ import {
 } from './wiki';
 
 // ────────────────────────────────────────────────────────────────
-// 어드민 전용 읽기 도구 (일반 사용자 MCP 에는 노출하지 않음)
+// 일반 유저(`wiki:edit`) 도 호출 가능한 읽기 도구.
+// (draft 흐름·과거 리비전 조회는 편집과 짝을 이루므로 wiki:edit 권한자에게 노출.)
 // ────────────────────────────────────────────────────────────────
 
-export const ADMIN_READ_ONLY_TOOL_DEFS: McpToolDef[] = [
-    {
-        name: 'list_deleted_pages',
-        description: '소프트 삭제된 문서 목록을 최신 삭제순으로 반환합니다. restore_page 와 함께 사용하세요. 응답에는 슬러그, 삭제 시각(deleted_at, ISO 8601), 마지막 편집자(last_editor), 마지막 편집 요약(last_summary) 이 포함됩니다.',
-        inputSchema: {
-            type: 'object',
-            properties: {
-                limit: { type: 'number', description: '반환할 최대 개수 (기본 20, 최대 100)' },
-                since: { type: 'string', description: '이 시점 이후에 삭제된 문서만 (ISO 8601)' }
-            },
-            required: []
-        }
-    },
+export const USER_READ_TOOL_DEFS: McpToolDef[] = [
     {
         name: 'read_revision',
         description: '특정 리비전의 본문을 읽어옵니다. revision_id 는 get_recent_changes 응답에 포함된 정수 id 이며, title 은 그 리비전이 속한 문서 슬러그입니다. raw=true 로 설정하면 위키 문법 변환을 건너뜁니다 (기본은 위키 문법 그대로 반환). 응답에는 본문, 작성자, 생성 시각이 포함됩니다.',
@@ -87,10 +81,30 @@ export const ADMIN_READ_ONLY_TOOL_DEFS: McpToolDef[] = [
 ];
 
 // ────────────────────────────────────────────────────────────────
-// 어드민 편집 도구 정의
+// 관리자(`admin:access`) 전용 읽기 도구.
 // ────────────────────────────────────────────────────────────────
 
-export const ADMIN_EDIT_TOOL_DEFS: McpToolDef[] = [
+export const ADMIN_ONLY_READ_TOOL_DEFS: McpToolDef[] = [
+    {
+        name: 'list_deleted_pages',
+        description: '소프트 삭제된 문서 목록을 최신 삭제순으로 반환합니다. restore_page 와 함께 사용하세요. 응답에는 슬러그, 삭제 시각(deleted_at, ISO 8601), 마지막 편집자(last_editor), 마지막 편집 요약(last_summary) 이 포함됩니다.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                limit: { type: 'number', description: '반환할 최대 개수 (기본 20, 최대 100)' },
+                since: { type: 'string', description: '이 시점 이후에 삭제된 문서만 (ISO 8601)' }
+            },
+            required: []
+        }
+    }
+];
+
+// ────────────────────────────────────────────────────────────────
+// 일반 유저(`wiki:edit`) 도 호출 가능한 편집 도구 정의.
+// (revert_page 는 본질적으로 새 리비전을 만드는 편집이므로 user 계층에 둔다.)
+// ────────────────────────────────────────────────────────────────
+
+export const USER_EDIT_TOOL_DEFS: McpToolDef[] = [
     {
         name: 'create_or_update_page',
         description: '위키 문서 전체 본문을 새로 만들거나 통째로 교체할 draft 를 생성합니다. ⚠️ 즉시 저장하지 않고 draft 에 누적되며, 완료 후 commit_edit(draft_id, summary) 를 호출해야 새 리비전이 생성됩니다. 이미 본인의 draft 가 같은 슬러그로 있으면 그 draft 의 본문이 이 호출의 content 로 교체됩니다. create_only=true 면 페이지가 이미 존재할 때 오류를 반환합니다 (실수 덮어쓰기 방지).\n\n응답에 draft_id 가 포함되며, 이 id 로 read_draft / commit_edit / discard_edit 를 호출합니다. draft 는 마지막 활동 이후 12시간이 지나면 자동 삭제됩니다.',
@@ -157,6 +171,26 @@ export const ADMIN_EDIT_TOOL_DEFS: McpToolDef[] = [
         }
     },
     {
+        name: 'revert_page',
+        description: '문서를 특정 과거 리비전으로 되돌립니다 (즉시 적용 — draft 모델 미사용). revision_id 는 read_revision 또는 get_recent_changes 응답에서 얻은 정수 id 입니다. 되돌리기는 새 리비전을 만들어 원래 본문 그대로 다시 저장하는 방식이며, 과거 리비전 자체를 삭제하지 않습니다.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                title: { type: 'string', description: '되돌릴 대상 문서 슬러그' },
+                revision_id: { type: 'number', description: '되돌릴 기준 리비전 id (정수)' },
+                summary: { type: 'string', description: '편집 요약 (선택, 기본 "reverted to revision #N", 저장 시 [MCP] 접두 자동 부여)' }
+            },
+            required: ['title', 'revision_id']
+        }
+    }
+];
+
+// ────────────────────────────────────────────────────────────────
+// 관리자(`admin:access`) 전용 편집 도구 정의 (즉시 적용 — draft 모델 미사용).
+// ────────────────────────────────────────────────────────────────
+
+export const ADMIN_ONLY_EDIT_TOOL_DEFS: McpToolDef[] = [
+    {
         name: 'delete_page',
         description: '위키 문서를 삭제합니다 (즉시 적용 — draft 모델 미사용). 기본은 소프트 삭제(deleted_at 설정)로, restore_page 로 복원 가능합니다. hard=true 일 때만 D1/R2 에서 영구 삭제하며, 이 경우 최고 관리자(super_admin) 권한이 필요합니다.',
         inputSchema: {
@@ -177,19 +211,6 @@ export const ADMIN_EDIT_TOOL_DEFS: McpToolDef[] = [
                 title: { type: 'string', description: '복원할 문서 슬러그' }
             },
             required: ['title']
-        }
-    },
-    {
-        name: 'revert_page',
-        description: '문서를 특정 과거 리비전으로 되돌립니다 (즉시 적용 — draft 모델 미사용). revision_id 는 read_revision 또는 get_recent_changes 응답에서 얻은 정수 id 입니다. 되돌리기는 새 리비전을 만들어 원래 본문 그대로 다시 저장하는 방식이며, 과거 리비전 자체를 삭제하지 않습니다.',
-        inputSchema: {
-            type: 'object',
-            properties: {
-                title: { type: 'string', description: '되돌릴 대상 문서 슬러그' },
-                revision_id: { type: 'number', description: '되돌릴 기준 리비전 id (정수)' },
-                summary: { type: 'string', description: '편집 요약 (선택, 기본 "reverted to revision #N", 저장 시 [MCP] 접두 자동 부여)' }
-            },
-            required: ['title', 'revision_id']
         }
     },
     {
@@ -272,12 +293,17 @@ function unixToIso(unix: number | null | undefined): string | null {
     return new Date(unix * 1000).toISOString();
 }
 
-// 어드민 전용 읽기 도구 디스패처. 공개 MCP 에는 노출되지 않으므로 mcpDispatch.ts 가 아닌
-// 여기에 둔다. user 가 필요한 도구(list_drafts, read_draft) 는 별도 시그니처를 받는다.
+// 추가 읽기 도구 디스패처 — guest 에게는 노출하지 않으며, 일반 유저(`wiki:edit`) /
+// 관리자(`admin:access`) 에게 단계적으로 노출된다. 진입 시 visible-tools 검사로 차단되지만
+// 디스패처 자체에서도 권한을 다시 확인해 방어선을 둔다.
 export async function dispatchAdminReadTool(c: Context<Env>, user: User, toolName: string, args: any): Promise<ToolResult | null> {
     const db = c.env.DB;
+    const rbac = c.get('rbac') as RBAC;
 
     if (toolName === 'list_drafts') {
+        if (!rbac.can(user.role, 'wiki:edit')) {
+            return asTextResult('Error: wiki:edit 권한이 필요합니다.', true);
+        }
         const { results } = await db.prepare(`
             SELECT id, slug, action, base_revision_id, base_version,
                    length(content) AS content_length, updated_at
@@ -299,6 +325,9 @@ export async function dispatchAdminReadTool(c: Context<Env>, user: User, toolNam
     }
 
     if (toolName === 'read_draft') {
+        if (!rbac.can(user.role, 'wiki:edit')) {
+            return asTextResult('Error: wiki:edit 권한이 필요합니다.', true);
+        }
         const slug = String(args.title || '').trim();
         if (!slug) return asTextResult('Error: title 이 필요합니다.', true);
         const draft = await db.prepare(`
@@ -326,6 +355,9 @@ export async function dispatchAdminReadTool(c: Context<Env>, user: User, toolNam
     }
 
     if (toolName === 'list_deleted_pages') {
+        if (!rbac.can(user.role, 'admin:access')) {
+            return asTextResult('Error: admin:access 권한이 필요합니다.', true);
+        }
         const limit = Math.min(100, Math.max(1, Number(args.limit) || 20));
         const wheres: string[] = ['p.deleted_at IS NOT NULL'];
         const binds: any[] = [];
@@ -362,6 +394,9 @@ export async function dispatchAdminReadTool(c: Context<Env>, user: User, toolNam
     }
 
     if (toolName === 'read_revision') {
+        if (!rbac.can(user.role, 'wiki:edit')) {
+            return asTextResult('Error: wiki:edit 권한이 필요합니다.', true);
+        }
         const slug = normalizeSlug(args.title || '');
         const revisionId = Number(args.revision_id);
         if (!slug) return asTextResult('Error: title 이 필요합니다.', true);
@@ -1371,24 +1406,37 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
     return null;
 }
 
-// 관리자에게 노출되는 전체 도구 목록 (어드민 전용 읽기 + 편집).
-// /api/mcp 가 일반 MCP_TOOL_DEFS_ALL 위에 이 배열을 합쳐 admin 사용자에게 보여준다.
-export const ADMIN_TOOL_DEFS: McpToolDef[] = [
-    ...ADMIN_READ_ONLY_TOOL_DEFS,
-    ...ADMIN_EDIT_TOOL_DEFS,
+// 일반 유저(`wiki:edit`) 에게 추가로 노출되는 도구 묶음 (읽기 + draft 편집 + revert).
+export const USER_TOOL_DEFS: McpToolDef[] = [
+    ...USER_READ_TOOL_DEFS,
+    ...USER_EDIT_TOOL_DEFS,
 ];
 
-// /api/mcp 의 information 도구가 admin 사용자에게 추가로 덧붙여 보여줄 가이드 문구.
-// 통합 information 본문 끝에 합쳐 사용한다.
-export function buildAdminInformationSuffix(userName: string): string {
-    const adminReadIntro = `\n\n## 관리자 전용 읽기 도구\n${ADMIN_READ_ONLY_TOOL_DEFS.map(t => `- ${t.name}`).join('\n')}`;
-    const editIntro = `\n\n## 관리자 편집 도구 (현재 인증된 관리자: ${userName})\n\n` +
+// 관리자(`admin:access`) 에게만 추가 노출되는 도구 묶음.
+export const ADMIN_ONLY_TOOL_DEFS: McpToolDef[] = [
+    ...ADMIN_ONLY_READ_TOOL_DEFS,
+    ...ADMIN_ONLY_EDIT_TOOL_DEFS,
+];
+
+// /api/mcp 의 information 도구가 일반 유저(`wiki:edit`) 에게 추가로 덧붙여 보여줄 가이드.
+// 관리자에게도 동일하게 노출된다.
+export function buildUserEditInformationSuffix(userName: string): string {
+    const readIntro = `\n\n## 편집 보조 읽기 도구 (현재 인증된 사용자: ${userName})\n${USER_READ_TOOL_DEFS.map(t => `- ${t.name}`).join('\n')}`;
+    const editIntro = `\n\n## 편집 도구\n\n` +
         `**stateful draft 모델**: create_or_update_page / patch_page / edit_section 은 즉시 저장하지 않고 \`mcp_drafts\` 에 누적합니다 ` +
         `(같은 슬러그에 대해 사용자별 1개). 응답으로 \`draft_id\` 를 받고, 편집이 끝나면 commit_edit(draft_id, summary) 를 호출해 ` +
         `1개 리비전으로 저장합니다. 시작 시점 이후 다른 사용자가 페이지를 수정했으면 commit_edit 가 충돌로 거부합니다 ` +
         `(이 경우 discard_edit 후 read_document 로 최신 상태를 다시 읽고 편집을 재구성). draft 는 마지막 활동 이후 12시간이 지나면 자동 삭제됩니다.\n\n` +
-        `**즉시 적용** (draft 모델 미사용): delete_page, restore_page, move_page, revert_page.\n\n` +
-        ADMIN_EDIT_TOOL_DEFS.map(t => `- ${t.name}`).join('\n') +
-        `\n\n모든 commit / 즉시 적용 동작은 admin_log 에 [admin-mcp] 접두로 기록됩니다 (draft 단계는 기록 없음).`;
-    return `${adminReadIntro}${editIntro}`;
+        `**즉시 적용** (draft 모델 미사용): revert_page.\n\n` +
+        USER_EDIT_TOOL_DEFS.map(t => `- ${t.name}`).join('\n') +
+        `\n\n모든 commit / 즉시 적용 동작은 admin_log 에 기록되며 리비전 summary 에 [MCP] 접두가 붙습니다 (draft 단계는 기록 없음).`;
+    return `${readIntro}${editIntro}`;
+}
+
+// /api/mcp 의 information 도구가 관리자에게만 추가로 덧붙여 보여줄 가이드.
+export function buildAdminOnlyInformationSuffix(userName: string): string {
+    const readIntro = `\n\n## 관리자 전용 읽기 도구 (현재 인증된 관리자: ${userName})\n${ADMIN_ONLY_READ_TOOL_DEFS.map(t => `- ${t.name}`).join('\n')}`;
+    const editIntro = `\n\n## 관리자 전용 편집 도구 (즉시 적용)\n` +
+        ADMIN_ONLY_EDIT_TOOL_DEFS.map(t => `- ${t.name}`).join('\n');
+    return `${readIntro}${editIntro}`;
 }

@@ -23,7 +23,7 @@ import oauthRoutes from './routes/oauth';
 import analyticsRoutes from './routes/analytics';
 import blogRoutes from './routes/blog';
 import { trackPageView, trackError, queryAnalytics } from './utils/analytics';
-import { isR2OnlyNamespace } from './utils/slug';
+import { isR2OnlyNamespace, normalizeSlug } from './utils/slug';
 import { getRevisionContent } from './utils/r2';
 import { renderForAI } from './utils/aiParser';
 
@@ -47,6 +47,82 @@ app.use('*', (c, next) => {
 // RBAC 초기화 및 세션 미들웨어 (모든 요청에서 유저 정보를 주입)
 app.use('*', rbacMiddleware);
 app.use('*', sessionMiddleware);
+
+// ── closed 위키에서 banned 유저의 접근 제한 ──
+// WIKI_VISIBILITY=closed 인 환경의 banned 사용자는 다음 세 슬러그(=wrangler.toml 환경변수)
+// 와 인증·정적 자산 경로만 허용한다 — 차단된 사용자가 위키 본 콘텐츠를 우회 열람하지 못하도록.
+//   - WIKI_HOME_PAGE (프론트페이지), TERMS_OF_SERVICE, PRIVACY_POLICY
+// 그 외 SSR 페이지는 '/' 로 리다이렉트, API 는 403 으로 차단한다.
+function bannedAllowedSlugSet(env: Env['Bindings']): Set<string> {
+    const slugs: string[] = [];
+    if (env.WIKI_HOME_PAGE) slugs.push(env.WIKI_HOME_PAGE);
+    if (env.TERMS_OF_SERVICE) slugs.push(env.TERMS_OF_SERVICE);
+    if (env.PRIVACY_POLICY) slugs.push(env.PRIVACY_POLICY);
+    return new Set(slugs.map(s => normalizeSlug(s)).filter(s => s.length > 0));
+}
+
+function decodeSlugFromPath(path: string, prefixLen: number): string {
+    const raw = path.substring(prefixLen);
+    try { return normalizeSlug(decodeURIComponent(raw)); }
+    catch { return normalizeSlug(raw); }
+}
+
+function isBannedAllowedRequest(c: Context<Env>): boolean {
+    const path = c.req.path;
+    const method = c.req.method;
+    // 1) 정적 자산 / 서비스워커 / robots / sitemap / favicon / 컴포넌트 / 아이콘
+    if (
+        path.startsWith('/dist/') || path.startsWith('/css/') || path.startsWith('/components/') ||
+        path === '/sw.js' || path === '/robots.txt' || path === '/sitemap.xml' ||
+        path === '/icons.json' || path === '/favicon.ico' || path === '/favicon.jpg' ||
+        path === '/favicon.png' || path === '/favicon.svg'
+    ) return true;
+    // 2) OAuth / discovery — banned 유저가 굳이 호출할 필요는 없지만 차단할 이유도 없다.
+    if (path.startsWith('/.well-known/') || path.startsWith('/oauth/')) return true;
+    // 2-1) 미디어 객체(R2) GET — 허용 페이지에 삽입된 이미지가 깨지지 않도록.
+    if (path.startsWith('/media/') && method === 'GET') return true;
+    // 3) 인증 chrome 에 필요한 엔드포인트 — 헤더의 사용자 식별 + 로그아웃 + 사이트 설정.
+    //    /api/me 는 routes/auth/index.ts, /auth/logout 도 같은 라우터 (/api 아님), /api/config 는
+    //    routes/wiki.ts (/api 마운트), /api/auth/providers 는 routes/auth/index.ts.
+    if (
+        path === '/api/me' || path === '/auth/logout' ||
+        path === '/api/auth/providers' || path === '/api/config'
+    ) return true;
+    // 4) 루트 / 로그인 페이지 / 에러 페이지
+    if (path === '/' || path === '/login' || path === '/error') return true;
+
+    // 5) 허용 슬러그의 SSR 위키 페이지 (/w/{slug})
+    //    revisions / discussions 서브 라우트는 본문 외 메타 정보를 노출하므로 제외.
+    const allowed = bannedAllowedSlugSet(c.env);
+    if (allowed.size === 0) return false;
+    if (path.startsWith('/w/')) {
+        if (path.includes('/revisions') || path.includes('/discussions')) return false;
+        const slug = decodeSlugFromPath(path, 3);
+        return allowed.has(slug);
+    }
+    // 6) 허용 슬러그의 wiki API GET 만 허용 (편집 차단)
+    //    wiki 라우트는 /w/:slug 로 선언되어 /api 에 마운트되므로 실제 경로는 /api/w/{slug}.
+    if (path.startsWith('/api/w/') && method === 'GET') {
+        const slug = decodeSlugFromPath(path, '/api/w/'.length);
+        return allowed.has(slug);
+    }
+    return false;
+}
+
+app.use('*', async (c, next) => {
+    const user = c.get('user');
+    // 본 가드는 banned 역할 자체를 식별해야 하므로 user.role 문자열 비교가 불가피하다 (banned
+    // 권한은 빈 배열이라 RBAC.can() 으로 표현할 수 없다). sessionMiddleware 가 이미
+    // banned_until 만료 시 'user' 로 보정한 뒤이다.
+    if (!user || user.role !== 'banned') return next();
+    if (c.env.WIKI_VISIBILITY !== 'closed') return next();
+    if (isBannedAllowedRequest(c)) return next();
+
+    if (c.req.path.startsWith('/api/')) {
+        return c.json({ error: '차단된 계정은 이 리소스에 접근할 수 없습니다.' }, 403);
+    }
+    return c.redirect('/');
+});
 
 // ── 라우트 등록 ──
 app.route('/', authRoutes);

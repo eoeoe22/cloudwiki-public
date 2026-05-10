@@ -69,6 +69,10 @@ export class RBAC {
     static getDefaultPermissions(): RolePermissions {
         return {
             roles: {
+                guest: {
+                    permissions: ['wiki:read'],
+                    inherits: []
+                },
                 user: {
                     permissions: ['wiki:read', 'wiki:edit', 'comment:create', 'ticket:create', 'media:upload'],
                     inherits: []

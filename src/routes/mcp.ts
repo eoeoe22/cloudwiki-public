@@ -14,8 +14,10 @@ import {
     formatRelativeTime,
 } from '../utils/mcpDispatch';
 import {
-    ADMIN_TOOL_DEFS,
-    buildAdminInformationSuffix,
+    USER_TOOL_DEFS,
+    ADMIN_ONLY_TOOL_DEFS,
+    buildUserEditInformationSuffix,
+    buildAdminOnlyInformationSuffix,
     dispatchAdminReadTool,
     dispatchAdminEditTool,
 } from './admin-mcp';
@@ -24,9 +26,14 @@ const mcpRoutes = new Hono<Env>();
 
 // formatRelativeTime / bytesToBase64 / MCP_TOOL_DEFS / buildInformationIntro 는
 // src/utils/mcpDispatch.ts 로 이동했다. 본 파일은 통합 MCP 엔드포인트(/api/mcp) 의
-// JSON-RPC 라우팅을 담당하며, OAuth Bearer 토큰으로 인증된 사용자에게 역할 기반으로
-// 도구를 노출한다 — 일반 사용자에게는 읽기 도구, 관리자에게는 추가로 관리자 전용
-// 읽기/편집 도구까지 제공한다 (admin-mcp.ts 모듈에서 합류).
+// JSON-RPC 라우팅을 담당하며, 다음 3계층으로 도구를 노출한다 (admin-mcp.ts 에서 합류):
+//   1) guest (Authorization 헤더 없음 또는 토큰은 유효하지만 권한이 박탈된 사용자)
+//      → MCP_TOOL_DEFS_ALL 의 읽기 도구만.
+//   2) 일반 유저(`wiki:edit`) → 1) + USER_TOOL_DEFS (draft 편집 + revert + 보조 읽기).
+//   3) 관리자(`admin:access`) → 1) + 2) + ADMIN_ONLY_TOOL_DEFS (삭제/복원/이동 + 삭제 목록).
+//
+// WIKI_VISIBILITY=closed 환경에서는 guest 진입을 401 로 막아 OAuth 흐름 트리거.
+// 토큰이 invalid/expired/revoked 면 (역시 401) 클라이언트 재인증 유도.
 
 // CORS 미들웨어 적용
 mcpRoutes.use('*', cors({
@@ -55,15 +62,17 @@ mcpRoutes.use('*', async (c, next) => {
 });
 
 // ────────────────────────────────────────────────────────────────
-// Bearer 토큰 인증 — OAuth 2.1 액세스 토큰을 받아 user 객체를 반환한다.
-// /api/admin-mcp 의 인증 로직과 같지만, admin:access 강제 검증은 하지 않는다.
-// 도구 가시성/호출 가부는 호출 시점의 RBAC.can() 으로 분기한다.
+// Bearer 토큰 인증 (선택적) — OAuth 2.1 액세스 토큰을 받아 user 객체를 반환한다.
+//   - 헤더 없음 → guest 모드 (user=null) 로 통과.
+//   - 토큰이 잘못됨 / 만료 / 폐기 / scope 부적합 → 401 + WWW-Authenticate (재인증 유도).
+//   - 토큰은 유효하지만 사용자 권한이 모두 박탈됨(banned 등) → guest 로 강등.
+// 도구 가시성은 mcp.ts 의 handleJsonRpc 에서 RBAC.can() 으로 분기한다.
 // ────────────────────────────────────────────────────────────────
 
 interface McpAuthContext {
-    user: User;
-    tokenId: number;
-    scope: string;
+    user: User | null;
+    tokenId: number | null;
+    scope: string | null;
 }
 
 function unauthorized(c: Context<Env>, description: string): Response {
@@ -76,8 +85,12 @@ function unauthorized(c: Context<Env>, description: string): Response {
     return c.json({ error: 'invalid_token', error_description: description }, 401);
 }
 
-async function authenticateBearer(c: Context<Env>): Promise<McpAuthContext | Response> {
+const GUEST_AUTH: McpAuthContext = { user: null, tokenId: null, scope: null };
+
+async function tryAuthenticateBearer(c: Context<Env>): Promise<McpAuthContext | Response> {
     const authHeader = c.req.header('Authorization') || '';
+    // 헤더가 아예 없으면 guest 모드 — OAuth 흐름을 시작하지 않은 호출자에게 읽기 도구를 허용.
+    if (!authHeader) return GUEST_AUTH;
     if (!authHeader.toLowerCase().startsWith('bearer ')) {
         return unauthorized(c, 'Bearer token required');
     }
@@ -125,16 +138,22 @@ async function authenticateBearer(c: Context<Env>): Promise<McpAuthContext | Res
         effectiveRole = 'user';
     }
 
-    // banned/deleted 는 어떤 도구도 사용할 수 없으므로 토큰 단계에서 컷.
-    if (effectiveRole === 'banned' || effectiveRole === 'deleted') {
-        return unauthorized(c, 'User account is restricted');
-    }
-    // 토큰 발급 후 권한이 강등되어 wiki:read 도 admin:access 도 없는 역할로 떨어졌다면
-    // 통합 MCP 의 어떤 도구도 호출할 자격이 없다 (oauth /authorize 의 동의 시점 가드와 동일 정책).
+    // 토큰 사용 시각 갱신 (best-effort) — guest 강등 여부와 무관하게 토큰 자체는 유효했다.
+    c.executionCtx.waitUntil(
+        c.env.DB.prepare('UPDATE oauth_tokens SET last_used_at = unixepoch() WHERE id = ?')
+            .bind(row.id).run().catch(() => {})
+    );
+
+    // 토큰 발급 후 권한이 강등되어 wiki:read 도 admin:access 도 없는 역할로 떨어졌거나
+    // banned/deleted 인 경우 — guest 모드로 강등해 읽기 도구만 허용한다.
     // RBAC.can() 으로 매 요청 재검증해 OAuth 토큰만으로 RBAC 변경을 우회하지 못하도록 한다.
     const rbac = c.get('rbac') as RBAC;
-    if (!rbac.can(effectiveRole, 'wiki:read') && !rbac.can(effectiveRole, 'admin:access')) {
-        return unauthorized(c, 'Insufficient permission for MCP access');
+    if (
+        effectiveRole === 'banned' ||
+        effectiveRole === 'deleted' ||
+        (!rbac.can(effectiveRole, 'wiki:read') && !rbac.can(effectiveRole, 'admin:access'))
+    ) {
+        return GUEST_AUTH;
     }
 
     const user: User = {
@@ -150,12 +169,6 @@ async function authenticateBearer(c: Context<Env>): Promise<McpAuthContext | Res
         created_at: row.created_at,
     };
     c.set('user', user);
-
-    // 토큰 사용 시각 갱신 (best-effort)
-    c.executionCtx.waitUntil(
-        c.env.DB.prepare('UPDATE oauth_tokens SET last_used_at = unixepoch() WHERE id = ?')
-            .bind(row.id).run().catch(() => {})
-    );
 
     return { user, tokenId: row.id, scope };
 }
@@ -251,18 +264,25 @@ async function handleMcpGet(c: Context<Env>): Promise<Response> {
 mcpRoutes.get('/', (c) => handleMcpGet(c));
 
 // 공통 JSON-RPC 처리 함수
-async function handleJsonRpc(c: Context<Env>, body: any, user: User) {
+async function handleJsonRpc(c: Context<Env>, body: any, user: User | null) {
     const { jsonrpc, method, params, id } = body;
     if (jsonrpc !== '2.0') return { jsonrpc: '2.0', error: { code: -32600, message: 'Invalid Request' }, id: id || null };
 
     const db = c.env.DB;
     const rbac = c.get('rbac') as RBAC;
-    const isAdmin = rbac.can(user.role, 'admin:access');
-    // 역할에 따라 노출할 도구 목록을 결정. 관리자만 ADMIN_TOOL_DEFS (관리자 전용 읽기 + 편집)
-    // 까지 노출되며, 일반 사용자는 MCP_TOOL_DEFS_ALL (읽기 도구) 만 본다.
-    const visibleToolDefs = isAdmin
-        ? [...MCP_TOOL_DEFS_ALL, ...ADMIN_TOOL_DEFS]
-        : MCP_TOOL_DEFS_ALL;
+    // 비인증 호출자는 'guest' 역할로 취급. RBAC.getDefaultPermissions() 의 guest 항목이
+    // wiki:read 만 가지므로 자연스럽게 읽기 도구만 노출된다.
+    const role = user ? user.role : 'guest';
+    const canEdit = rbac.can(role, 'wiki:edit');
+    const isAdmin = rbac.can(role, 'admin:access');
+    // 단계적으로 노출 도구를 합성한다 — guest 는 read 도구만, wiki:edit 는 + USER_TOOL_DEFS,
+    // admin:access 는 + ADMIN_ONLY_TOOL_DEFS.
+    const visibleToolDefs = [
+        ...MCP_TOOL_DEFS_ALL,
+        ...(canEdit ? USER_TOOL_DEFS : []),
+        ...(isAdmin ? ADMIN_ONLY_TOOL_DEFS : []),
+    ];
+    const visibleToolNames = new Set(visibleToolDefs.map(t => t.name));
 
     // 1. 핸드셰이크: initialize
     if (method === 'initialize') {
@@ -291,9 +311,11 @@ async function handleJsonRpc(c: Context<Env>, body: any, user: User) {
     // 3. 도구 목록 반환
     if (method === 'tools/list') {
         const intro = buildInformationIntro(c, MCP_TOOL_DEFS_ALL);
-        const adminSuffix = isAdmin ? buildAdminInformationSuffix(user.name) : '';
+        const userName = user?.name || '';
+        const userSuffix = canEdit ? buildUserEditInformationSuffix(userName) : '';
+        const adminSuffix = isAdmin ? buildAdminOnlyInformationSuffix(userName) : '';
         const toolNames = visibleToolDefs.map(t => t.name).join(', ');
-        const informationDescription = `${intro}${adminSuffix}\n\n사용 가능한 MCP 도구: ${toolNames}. 각 도구의 세부 설명은 information 도구를 호출하여 확인할 수 있습니다.`;
+        const informationDescription = `${intro}${userSuffix}${adminSuffix}\n\n사용 가능한 MCP 도구: ${toolNames}. 각 도구의 세부 설명은 information 도구를 호출하여 확인할 수 있습니다.`;
         return {
             jsonrpc: '2.0', id,
             result: {
@@ -313,10 +335,9 @@ async function handleJsonRpc(c: Context<Env>, body: any, user: User) {
         const toolName = params?.name;
         const args = params?.arguments || {};
         try {
-            // 관리자 전용 도구를 일반 사용자가 호출하면 가시 도구 목록에 없으므로 여기서 차단.
-            // tools/list 출력과 일관된 결과를 위해 일반 사용자는 admin 디스패처 자체를 건너뛴다.
-            const isAdminTool = ADMIN_TOOL_DEFS.some(t => t.name === toolName);
-            if (isAdminTool && !isAdmin) {
+            // 가시 도구 목록에 없는 호출은 모두 Tool not found 로 일관 차단한다.
+            // (information 은 visibleToolDefs 와 별개로 모든 호출자에게 허용된 메타 도구.)
+            if (toolName !== 'information' && !visibleToolNames.has(toolName)) {
                 return {
                     jsonrpc: '2.0',
                     error: { code: -32601, message: `Tool not found: ${toolName}` },
@@ -327,7 +348,9 @@ async function handleJsonRpc(c: Context<Env>, body: any, user: User) {
             const shared = await dispatchReadTool(c, toolName, args, MCP_TOOL_DEFS_ALL);
             if (shared) return { jsonrpc: '2.0', id, result: shared };
 
-            if (isAdmin) {
+            // user 디스패처는 USER_TOOL_DEFS / ADMIN_ONLY_TOOL_DEFS 내부 도구를 처리한다.
+            // visibleToolNames 검사로 이미 권한 없는 호출은 차단된 상태이므로 user!=null 이 보장된다.
+            if (user && (canEdit || isAdmin)) {
                 const adminReadResult = await dispatchAdminReadTool(c, user, toolName, args);
                 if (adminReadResult) return { jsonrpc: '2.0', id, result: adminReadResult };
 
@@ -792,12 +815,18 @@ async function handleJsonRpc(c: Context<Env>, body: any, user: User) {
     return { jsonrpc: '2.0', error: { code: -32601, message: 'Method not found' }, id };
 }
 
-// POST /api/mcp - HTTP 방식 JSON-RPC 엔드포인트.
-// OAuth 2.1 Bearer 토큰 인증 필수 — 일반 사용자도 읽기 도구를 사용하려면 로그인 후
-// /oauth/authorize 흐름으로 토큰을 발급받아야 한다.
+// POST /api/mcp - HTTP 방식 JSON-RPC 엔드포인트 (하이브리드 인증).
+//   - 인증 없음 → guest 모드 (읽기 도구만). 단, WIKI_VISIBILITY=closed 면 401 로 인증 강제.
+//   - 권한 없는 토큰(banned 등) → guest 모드로 강등.
+//   - 정상 토큰 → 사용자 역할에 따라 USER_TOOL_DEFS / ADMIN_ONLY_TOOL_DEFS 추가 노출.
 mcpRoutes.post('/', async (c) => {
-    const auth = await authenticateBearer(c);
+    const auth = await tryAuthenticateBearer(c);
     if (auth instanceof Response) return auth;
+
+    if (!auth.user && c.env.WIKI_VISIBILITY === 'closed') {
+        return unauthorized(c, 'Authentication required for closed wiki');
+    }
+
     const body = await c.req.json();
     const response = await handleJsonRpc(c, body, auth.user);
     if (response === null) return c.body(null, 204);

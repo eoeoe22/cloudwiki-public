@@ -2933,6 +2933,177 @@ html[data-theme="dark"] .cm-editor span.cm-inline-code::selection {
     font-size: 1.05rem;
 }
 
+/* ── 구조 컴포넌트(탭/아코디언/진행상황) 삽입 모달 ── */
+.structure-insert-form .form-label {
+    font-size: 0.85rem;
+    color: var(--wiki-text-muted);
+    margin-bottom: 4px;
+}
+
+.structure-insert-type-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.structure-insert-type-tab {
+    flex: 1 1 0;
+    min-width: 100px;
+    padding: 8px 10px;
+    border: 1px solid var(--wiki-border);
+    border-radius: 6px;
+    background: var(--wiki-bg);
+    color: var(--wiki-text);
+    font-size: 0.9rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    cursor: pointer;
+    transition: box-shadow 0.12s, background-color 0.12s;
+}
+
+.structure-insert-type-tab:hover {
+    box-shadow: 0 0 0 2px rgba(var(--wiki-primary-rgb, 59, 130, 246), 0.25);
+}
+
+.structure-insert-type-tab.active {
+    box-shadow: 0 0 0 2px var(--wiki-primary, #3b82f6);
+    background: rgba(var(--wiki-primary-rgb, 59, 130, 246), 0.08);
+}
+
+.structure-insert-type-tab i {
+    font-size: 1.05rem;
+}
+
+.structure-insert-items {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+
+.structure-insert-row {
+    border: 1px solid var(--wiki-border);
+    border-radius: 6px;
+    padding: 10px;
+    background: var(--wiki-card-bg, var(--wiki-bg));
+}
+
+.structure-insert-row-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+
+.structure-insert-row-num {
+    flex: 0 0 auto;
+    min-width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: rgba(var(--wiki-primary-rgb, 59, 130, 246), 0.15);
+    color: var(--wiki-primary, #3b82f6);
+    font-size: 0.78rem;
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.structure-insert-row-title {
+    flex: 1 1 auto;
+}
+
+.structure-insert-row-remove {
+    flex: 0 0 auto;
+    border: 1px solid var(--wiki-border);
+    border-radius: 4px;
+    background: var(--wiki-bg);
+    color: var(--wiki-text-muted);
+    width: 28px;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: color 0.12s, border-color 0.12s;
+}
+
+.structure-insert-row-remove:hover {
+    color: var(--wiki-danger, #dc3545);
+    border-color: var(--wiki-danger, #dc3545);
+}
+
+.structure-insert-row-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 6px;
+}
+
+.structure-insert-row-flag {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.85rem;
+    color: var(--wiki-text);
+    cursor: pointer;
+    user-select: none;
+}
+
+.structure-insert-status-chips {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.structure-insert-status-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    border: 1px solid var(--wiki-border);
+    border-radius: 4px;
+    padding: 3px 8px;
+    font-size: 0.8rem;
+    cursor: pointer;
+    background: var(--wiki-bg);
+    color: var(--wiki-text);
+    transition: box-shadow 0.12s, background-color 0.12s;
+}
+
+.structure-insert-status-chip:hover {
+    box-shadow: 0 0 0 2px rgba(var(--wiki-primary-rgb, 59, 130, 246), 0.2);
+}
+
+.structure-insert-status-chip.active {
+    box-shadow: 0 0 0 2px var(--wiki-primary, #3b82f6);
+    background: rgba(var(--wiki-primary-rgb, 59, 130, 246), 0.08);
+}
+
+.structure-insert-add-row {
+    width: 100%;
+    border: 1px dashed var(--wiki-border);
+    border-radius: 6px;
+    padding: 8px 10px;
+    background: transparent;
+    color: var(--wiki-text-muted);
+    font-size: 0.9rem;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    transition: color 0.12s, border-color 0.12s, background-color 0.12s;
+}
+
+.structure-insert-add-row:hover {
+    color: var(--wiki-primary, #3b82f6);
+    border-color: var(--wiki-primary, #3b82f6);
+    background: rgba(var(--wiki-primary-rgb, 59, 130, 246), 0.05);
+}
+
 /* ── 배지 삽입 모달 ── */
 .badge-insert-form .form-label {
     font-size: 0.85rem;

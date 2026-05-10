@@ -52,6 +52,7 @@ declare global {
         openPaletteColorModal?: () => void;
         openBadgeInsertModal?: () => void;
         openComponentInsertModal?: () => void;
+        openStructureBlockInsertModal?: () => void;
         openGoogleMapsEmbedModal?: () => void;
         openTemplateModal?: () => Promise<void>;
     }
@@ -2760,6 +2761,480 @@ async function openTemplateModal(): Promise<void> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// 구조 컴포넌트(탭/아코디언/진행상황) 삽입 모달
+// ─────────────────────────────────────────────────────────────────────────────
+
+type StructureType = 'tabs' | 'accordion' | 'progress';
+type ProgressMode = 'steps' | 'bar';
+type StepStatus = 'todo' | 'current' | 'done';
+type StepsLayout = 'vertical' | 'horizontal';
+
+interface StructureItem {
+    title: string;
+    body: string;
+    open: boolean;
+    status: StepStatus;
+}
+
+function _makeEmptyStructureItem(): StructureItem {
+    return { title: '', body: '', open: false, status: 'todo' };
+}
+
+function openStructureBlockInsertModal(): void {
+    const Swal = window.Swal;
+    if (!Swal) return;
+    const palettes = window.getAllPalettesForEditor?.() ?? [];
+
+    const TYPE_META: Record<StructureType, { label: string; icon: string }> = {
+        tabs:      { label: '탭',         icon: 'mdi mdi-tab' },
+        accordion: { label: '아코디언',   icon: 'mdi mdi-format-list-group' },
+        progress:  { label: '진행상황',   icon: 'mdi mdi-progress-check' },
+    };
+
+    const STATUS_META: Record<StepStatus, { label: string; icon: string }> = {
+        todo:    { label: '대기', icon: 'bi bi-circle' },
+        current: { label: '진행', icon: 'bi bi-circle-fill' },
+        done:    { label: '완료', icon: 'bi bi-check-circle-fill' },
+    };
+
+    const state = {
+        type: 'tabs' as StructureType,
+        progressMode: 'steps' as ProgressMode,
+        accordionMultiple: false,
+        stepsLayout: 'vertical' as StepsLayout,
+        items: [_makeEmptyStructureItem(), _makeEmptyStructureItem()] as StructureItem[],
+        // 진행 바({progress:X}) 전용 상태
+        barValue: '50',
+        barLabel: '',
+        barPalette: '',
+    };
+
+    function typeTabsHtml(): string {
+        return (Object.keys(TYPE_META) as StructureType[]).map(key => {
+            const m = TYPE_META[key];
+            const active = state.type === key ? ' active' : '';
+            return `<button type="button" class="structure-insert-type-tab${active}" data-type="${key}">
+                        <i class="${m.icon}"></i>
+                        <span>${m.label}</span>
+                    </button>`;
+        }).join('');
+    }
+
+    function progressModeHtml(): string {
+        const stepsActive = state.progressMode === 'steps' ? ' active' : '';
+        const barActive   = state.progressMode === 'bar' ? ' active' : '';
+        return `
+            <div class="btn-group w-100" role="group" id="structureInsertProgressMode">
+                <button type="button" class="btn btn-outline-primary${stepsActive}" data-mode="steps">
+                    <i class="mdi mdi-stairs"></i> 단계별 진행
+                </button>
+                <button type="button" class="btn btn-outline-primary${barActive}" data-mode="bar">
+                    <i class="mdi mdi-progress-helper"></i> 진행 바
+                </button>
+            </div>`;
+    }
+
+    function paletteSwatchHtml(containerId: string, hiddenId: string, current: string): string {
+        let html = `<div id="${containerId}" class="card-insert-palette-swatches">`;
+        html += `<button type="button" class="card-insert-palette-swatch${!current ? ' active' : ''}" data-palette="" title="선택 안 함">
+                    <span class="card-insert-palette-swatch-none">없음</span>
+                </button>`;
+        for (const p of palettes) {
+            const bg = window._isSafeCssColor?.(p.variant.bg || '') ? p.variant.bg! : 'transparent';
+            const color = window._isSafeCssColor?.(p.variant.color || '') ? p.variant.color! : 'inherit';
+            const active = current === p.name ? ' active' : '';
+            html += `<button type="button" class="card-insert-palette-swatch${active}" data-palette="${escapeHtml(p.name)}" title="${escapeHtml(p.name)}" style="background:${bg};color:${color};">${escapeHtml(p.name)}</button>`;
+        }
+        html += `</div><input type="hidden" id="${hiddenId}" value="${escapeHtml(current)}">`;
+        return html;
+    }
+
+    function statusChipsHtml(idx: number, current: StepStatus): string {
+        return (Object.keys(STATUS_META) as StepStatus[]).map(s => {
+            const m = STATUS_META[s];
+            const active = s === current ? ' active' : '';
+            return `<button type="button" class="structure-insert-status-chip${active}"
+                        data-row="${idx}" data-status="${s}">
+                        <i class="${m.icon}"></i>
+                        <span>${m.label}</span>
+                    </button>`;
+        }).join('');
+    }
+
+    function itemRowHtml(idx: number, item: StructureItem): string {
+        const isAccordion = state.type === 'accordion';
+        const isSteps = state.type === 'progress' && state.progressMode === 'steps';
+        const titleLabel = isSteps ? `${idx + 1}단계 제목` : `항목 ${idx + 1} 제목`;
+        const titlePlaceholder = state.type === 'tabs'
+            ? `예: 탭 ${idx + 1}`
+            : isSteps
+                ? `예: ${idx + 1}단계`
+                : `예: 항목 ${idx + 1}`;
+
+        const accordionOpen = isAccordion
+            ? `<label class="structure-insert-row-flag">
+                    <input type="checkbox" data-row="${idx}" class="structure-insert-row-open" ${item.open ? 'checked' : ''}>
+                    <span>기본 펼침</span>
+                </label>`
+            : '';
+
+        const stepsStatus = isSteps
+            ? `<div class="structure-insert-status-chips" data-row="${idx}">${statusChipsHtml(idx, item.status)}</div>`
+            : '';
+
+        return `
+            <div class="structure-insert-row" data-row="${idx}">
+                <div class="structure-insert-row-head">
+                    <span class="structure-insert-row-num">${idx + 1}</span>
+                    <input type="text" class="form-control form-control-sm structure-insert-row-title"
+                        data-row="${idx}"
+                        placeholder="${titlePlaceholder}"
+                        value="${escapeHtml(item.title)}"
+                        aria-label="${titleLabel}"
+                        style="background:var(--wiki-bg);color:var(--wiki-text);border-color:var(--wiki-border);">
+                    <button type="button" class="structure-insert-row-remove" data-row="${idx}" title="이 항목 삭제" aria-label="이 항목 삭제">
+                        <i class="mdi mdi-close"></i>
+                    </button>
+                </div>
+                ${accordionOpen || stepsStatus
+                    ? `<div class="structure-insert-row-meta">${accordionOpen}${stepsStatus}</div>`
+                    : ''}
+                <textarea class="form-control structure-insert-row-body"
+                    data-row="${idx}"
+                    rows="3"
+                    placeholder="비워두면 '내용'이 자리표시자로 들어갑니다."
+                    style="font-size:0.86rem;font-family:inherit;resize:vertical;background:var(--wiki-bg);color:var(--wiki-text);border-color:var(--wiki-border);">${escapeHtml(item.body)}</textarea>
+            </div>`;
+    }
+
+    function topOptionsHtml(): string {
+        if (state.type === 'accordion') {
+            return `
+                <div class="mb-3">
+                    <label class="structure-insert-row-flag">
+                        <input type="checkbox" id="structureInsertAccordionMultiple" ${state.accordionMultiple ? 'checked' : ''}>
+                        <span>동시 다중 펼침 허용</span>
+                    </label>
+                </div>`;
+        }
+        if (state.type === 'progress' && state.progressMode === 'steps') {
+            return `
+                <div class="mb-3">
+                    <label class="form-label">레이아웃</label>
+                    <div class="btn-group w-100" role="group" id="structureInsertStepsLayout">
+                        <button type="button" class="btn btn-outline-primary${state.stepsLayout === 'vertical' ? ' active' : ''}" data-layout="vertical">세로</button>
+                        <button type="button" class="btn btn-outline-primary${state.stepsLayout === 'horizontal' ? ' active' : ''}" data-layout="horizontal">가로</button>
+                    </div>
+                </div>`;
+        }
+        return '';
+    }
+
+    function progressBarFormHtml(): string {
+        return `
+            <div class="mb-3">
+                <label class="form-label" for="structureInsertBarValue">값</label>
+                <input type="text" id="structureInsertBarValue" class="form-control"
+                    placeholder="예: 50  /  3/10  /  75%"
+                    value="${escapeHtml(state.barValue)}" autocomplete="off"
+                    style="background:var(--wiki-bg);color:var(--wiki-text);border-color:var(--wiki-border);">
+                <div class="form-text" style="font-size:0.78rem;">0–100 사이의 숫자, 또는 a/b 형태(b ≥ a) 분수.</div>
+            </div>
+            <div class="mb-3">
+                <label class="form-label" for="structureInsertBarLabel">라벨 (선택)</label>
+                <input type="text" id="structureInsertBarLabel" class="form-control"
+                    placeholder="예: 다운로드"
+                    value="${escapeHtml(state.barLabel)}" autocomplete="off"
+                    style="background:var(--wiki-bg);color:var(--wiki-text);border-color:var(--wiki-border);">
+            </div>
+            <div class="mb-2">
+                <label class="form-label">팔레트 (선택)</label>
+                ${paletteSwatchHtml('structureInsertBarPaletteSwatches', 'structureInsertBarPalette', state.barPalette)}
+            </div>`;
+    }
+
+    function itemsListHtml(): string {
+        const rows = state.items.map((it, i) => itemRowHtml(i, it)).join('');
+        return `
+            <div class="structure-insert-items" id="structureInsertItems">${rows}</div>
+            <button type="button" class="structure-insert-add-row" id="structureInsertAddRow">
+                <i class="mdi mdi-plus"></i> 항목 추가
+            </button>`;
+    }
+
+    function bodyHtml(): string {
+        const isProgressBar = state.type === 'progress' && state.progressMode === 'bar';
+        return `
+            <div class="text-start structure-insert-form">
+                <div class="mb-3">
+                    <label class="form-label">컴포넌트 종류</label>
+                    <div class="structure-insert-type-tabs" id="structureInsertTypeTabs">${typeTabsHtml()}</div>
+                </div>
+                ${state.type === 'progress' ? `<div class="mb-3" id="structureInsertProgressModeWrap">${progressModeHtml()}</div>` : ''}
+                ${topOptionsHtml()}
+                ${isProgressBar ? progressBarFormHtml() : itemsListHtml()}
+            </div>`;
+    }
+
+    function snapshotInputs(): void {
+        if (state.type === 'progress' && state.progressMode === 'bar') {
+            const v = (document.getElementById('structureInsertBarValue') as HTMLInputElement | null)?.value;
+            const l = (document.getElementById('structureInsertBarLabel') as HTMLInputElement | null)?.value;
+            const p = (document.getElementById('structureInsertBarPalette') as HTMLInputElement | null)?.value;
+            if (v != null) state.barValue = v;
+            if (l != null) state.barLabel = l;
+            if (p != null) state.barPalette = p;
+            return;
+        }
+        const titleInputs = document.querySelectorAll<HTMLInputElement>('.structure-insert-row-title');
+        const bodyInputs = document.querySelectorAll<HTMLTextAreaElement>('.structure-insert-row-body');
+        titleInputs.forEach(el => {
+            const i = parseInt(el.dataset.row || '-1', 10);
+            if (i >= 0 && state.items[i]) state.items[i].title = el.value;
+        });
+        bodyInputs.forEach(el => {
+            const i = parseInt(el.dataset.row || '-1', 10);
+            if (i >= 0 && state.items[i]) state.items[i].body = el.value;
+        });
+        if (state.type === 'accordion') {
+            document.querySelectorAll<HTMLInputElement>('.structure-insert-row-open').forEach(el => {
+                const i = parseInt(el.dataset.row || '-1', 10);
+                if (i >= 0 && state.items[i]) state.items[i].open = el.checked;
+            });
+            const m = document.getElementById('structureInsertAccordionMultiple') as HTMLInputElement | null;
+            if (m) state.accordionMultiple = m.checked;
+        }
+        if (state.type === 'progress' && state.progressMode === 'steps') {
+            // status 는 chip 클릭 핸들러에서 즉시 state 에 반영됨
+        }
+    }
+
+    function repaintBody(): void {
+        const container = document.querySelector<HTMLElement>('.swal2-html-container');
+        if (!container) return;
+        container.innerHTML = bodyHtml();
+        wireBody();
+    }
+
+    function wirePalette(containerId: string, hiddenId: string, onChange: (val: string) => void): void {
+        const container = document.getElementById(containerId);
+        const hidden = document.getElementById(hiddenId) as HTMLInputElement | null;
+        if (!container || !hidden) return;
+        container.querySelectorAll<HTMLElement>('.card-insert-palette-swatch').forEach(sw => {
+            sw.addEventListener('click', (e) => {
+                e.preventDefault();
+                const val = sw.dataset.palette || '';
+                hidden.value = val;
+                onChange(val);
+                container.querySelectorAll<HTMLElement>('.card-insert-palette-swatch').forEach(s => {
+                    s.classList.toggle('active', (s.dataset.palette || '') === val);
+                });
+            });
+        });
+    }
+
+    function wireBody(): void {
+        // 타입 토글
+        document.querySelectorAll<HTMLElement>('#structureInsertTypeTabs .structure-insert-type-tab').forEach(tab => {
+            tab.addEventListener('click', (e) => {
+                e.preventDefault();
+                const t = tab.dataset.type as StructureType | undefined;
+                if (!t || t === state.type) return;
+                snapshotInputs();
+                state.type = t;
+                repaintBody();
+            });
+        });
+
+        // 진행상황 모드 토글
+        document.querySelectorAll<HTMLElement>('#structureInsertProgressMode button[data-mode]').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.preventDefault();
+                const mode = btn.dataset.mode as ProgressMode | undefined;
+                if (!mode || mode === state.progressMode) return;
+                snapshotInputs();
+                state.progressMode = mode;
+                repaintBody();
+            });
+        });
+
+        // steps 레이아웃 토글
+        document.querySelectorAll<HTMLElement>('#structureInsertStepsLayout button[data-layout]').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.preventDefault();
+                const v = btn.dataset.layout as StepsLayout | undefined;
+                if (!v) return;
+                state.stepsLayout = v;
+                document.querySelectorAll<HTMLElement>('#structureInsertStepsLayout button[data-layout]').forEach(b => {
+                    b.classList.toggle('active', b.dataset.layout === v);
+                });
+            });
+        });
+
+        // 항목 삭제 / 상태 chip / open 체크박스 — items 리스트 위임
+        const itemsRoot = document.getElementById('structureInsertItems');
+        if (itemsRoot) {
+            itemsRoot.addEventListener('click', (e) => {
+                const target = e.target as HTMLElement | null;
+                if (!target) return;
+                const removeBtn = target.closest<HTMLElement>('.structure-insert-row-remove');
+                if (removeBtn) {
+                    e.preventDefault();
+                    const i = parseInt(removeBtn.dataset.row || '-1', 10);
+                    if (i < 0 || state.items.length <= 1) return;
+                    snapshotInputs();
+                    state.items.splice(i, 1);
+                    repaintBody();
+                    return;
+                }
+                const chip = target.closest<HTMLElement>('.structure-insert-status-chip');
+                if (chip) {
+                    e.preventDefault();
+                    const i = parseInt(chip.dataset.row || '-1', 10);
+                    const s = chip.dataset.status as StepStatus | undefined;
+                    if (i < 0 || !s || !state.items[i]) return;
+                    state.items[i].status = s;
+                    const group = chip.parentElement;
+                    if (group) {
+                        group.querySelectorAll<HTMLElement>('.structure-insert-status-chip').forEach(c => {
+                            c.classList.toggle('active', c.dataset.status === s);
+                        });
+                    }
+                    return;
+                }
+            });
+        }
+
+        // 항목 추가
+        const addBtn = document.getElementById('structureInsertAddRow');
+        if (addBtn) {
+            addBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                snapshotInputs();
+                state.items.push(_makeEmptyStructureItem());
+                repaintBody();
+            });
+        }
+
+        // 진행 바 팔레트
+        if (state.type === 'progress' && state.progressMode === 'bar') {
+            wirePalette('structureInsertBarPaletteSwatches', 'structureInsertBarPalette', (v) => { state.barPalette = v; });
+        }
+    }
+
+    Swal.fire({
+        title: '<i class="mdi mdi-view-dashboard-outline me-2"></i>구조 컴포넌트 삽입',
+        width: 640,
+        html: bodyHtml(),
+        showCancelButton: true,
+        confirmButtonText: '삽입',
+        cancelButtonText: '취소',
+        didOpen: () => {
+            wireBody();
+        },
+        preConfirm: (): string | false => {
+            snapshotInputs();
+            return buildStructureBlockOutput(state);
+        }
+    }).then(result => {
+        if (!result.isConfirmed || !result.value) return;
+        window.editor?.insertText?.(result.value as string);
+        window._cmView?.focus();
+    });
+}
+
+function _structureItemHasInvalidBody(body: string): boolean {
+    return body.split('\n').some(l => /^\s*:::/.test(l));
+}
+
+function buildStructureBlockOutput(state: {
+    type: StructureType;
+    progressMode: ProgressMode;
+    accordionMultiple: boolean;
+    stepsLayout: StepsLayout;
+    items: StructureItem[];
+    barValue: string;
+    barLabel: string;
+    barPalette: string;
+}): string | false {
+    const Swal = window.Swal;
+
+    if (state.type === 'progress' && state.progressMode === 'bar') {
+        const raw = (state.barValue || '').trim();
+        const fracMatch = raw.match(/^(\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)$/);
+        const numMatch = raw.replace(/%$/, '').match(/^\d+(?:\.\d+)?$/);
+        let valid = false;
+        let valueToken = '';
+        if (fracMatch) {
+            const a = parseFloat(fracMatch[1]);
+            const b = parseFloat(fracMatch[2]);
+            if (b > 0 && a >= 0 && a <= b) {
+                valid = true;
+                valueToken = `${fracMatch[1]}/${fracMatch[2]}`;
+            }
+        } else if (numMatch) {
+            const n = parseFloat(numMatch[0]);
+            if (n >= 0 && n <= 100) {
+                valid = true;
+                valueToken = `${n}`;
+            }
+        }
+        if (!valid) {
+            Swal?.showValidationMessage?.('값은 0–100 숫자 또는 a/b(b ≥ a) 분수여야 합니다.');
+            return false;
+        }
+        // {progress:...} 의 정규식이 `}` / `<` / 개행으로 토큰을 끊으므로 라벨에서 제거.
+        // `|` 는 값과 라벨을 구분하는 separator 라 함께 제거한다.
+        const label = (state.barLabel || '').replace(/[\r\n|}<]+/g, ' ').trim();
+        const inner = label ? `${valueToken}|${label}` : valueToken;
+        const palettePrefix = state.barPalette ? `{palette:${state.barPalette}}` : '';
+        return `\n${palettePrefix}{progress:${inner}}\n`;
+    }
+
+    const items = state.items;
+    if (items.length === 0) {
+        Swal?.showValidationMessage?.('최소 1개 이상의 항목이 필요합니다.');
+        return false;
+    }
+    for (const it of items) {
+        if (_structureItemHasInvalidBody(it.body)) {
+            Swal?.showValidationMessage?.("항목 본문에 ':::'로 시작하는 줄은 블록을 닫아버려 사용할 수 없습니다.");
+            return false;
+        }
+    }
+
+    if (state.type === 'tabs') {
+        const inner = items.map((it, i) => {
+            const title = (it.title || '').replace(/[\r\n]+/g, ' ').trim() || `탭 ${i + 1}`;
+            const body = (it.body || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/^\n+|\n+$/g, '') || '내용';
+            return `:::tab ${title}\n${body}\n:::`;
+        }).join('\n');
+        return `\n:::tabs\n${inner}\n:::\n`;
+    }
+
+    if (state.type === 'accordion') {
+        const head = state.accordionMultiple ? `:::accordion {multiple}` : `:::accordion`;
+        const inner = items.map((it, i) => {
+            const titleRaw = (it.title || '').replace(/[\r\n]+/g, ' ').trim() || `항목 ${i + 1}`;
+            const flag = it.open ? ' {open}' : '';
+            const body = (it.body || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/^\n+|\n+$/g, '') || '내용';
+            return `:::item ${titleRaw}${flag}\n${body}\n:::`;
+        }).join('\n');
+        return `\n${head}\n${inner}\n:::\n`;
+    }
+
+    // type === 'progress' && progressMode === 'steps'
+    const head = state.stepsLayout === 'horizontal' ? `:::steps {layout:horizontal}` : `:::steps`;
+    const inner = items.map((it, i) => {
+        const titleRaw = (it.title || '').replace(/[\r\n]+/g, ' ').trim() || `${i + 1}단계`;
+        const statusToken = ` {status:${it.status}}`;
+        const body = (it.body || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/^\n+|\n+$/g, '') || '내용';
+        return `:::step ${titleRaw}${statusToken}\n${body}\n:::`;
+    }).join('\n');
+    return `\n${head}\n${inner}\n:::\n`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Window 브리지 — edit.js (raw) / autocomplete.ts 에서 호출
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -2780,6 +3255,7 @@ window.openCardInsertModal     = openCardInsertModal;
 window.openPaletteColorModal   = openPaletteColorModal;
 window.openBadgeInsertModal    = openBadgeInsertModal;
 window.openComponentInsertModal = openComponentInsertModal;
+window.openStructureBlockInsertModal = openStructureBlockInsertModal;
 window.openGoogleMapsEmbedModal = openGoogleMapsEmbedModal;
 window.openTemplateModal       = openTemplateModal;
 

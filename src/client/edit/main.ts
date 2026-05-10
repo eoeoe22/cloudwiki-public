@@ -1453,6 +1453,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
         toolbar.appendChild(createToolbarSep());
         toolbar.appendChild(createToolbarBtn('<i class="bi bi-card-heading"></i>', '카드 블록', () => window.openCardInsertModal()));
+        toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-view-dashboard-outline"></i>', '탭 / 아코디언 / 진행상황', () => window.openStructureBlockInsertModal()));
         toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-palette-outline"></i>', '색상 삽입', () => window.openPaletteColorModal()));
         toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-label-outline"></i>', '배지', () => window.openBadgeInsertModal()));
         toolbar.appendChild(createToolbarSep());
