@@ -227,10 +227,10 @@
   --vscode-selection: #add6ff;
 }
 
-/* 시스템 다크 모드 자동 적용 */
+/* 시스템 다크 모드 자동 적용 (사이트에서 라이트 모드를 강제하지 않은 경우에만) */
 @media (prefers-color-scheme: dark) {
-  .wiki-content pre[class*="language-"],
-  .wiki-content pre[class*="language-"] code[class*="language-"] {
+  html:not([data-theme="light"]) .wiki-content pre[class*="language-"],
+  html:not([data-theme="light"]) .wiki-content pre[class*="language-"] code[class*="language-"] {
     /* VS Code Dark+ */
     --vscode-bg: #000000;
     --vscode-fg: #d4d4d4;
@@ -915,9 +915,12 @@ html[data-theme="dark"] .wiki-content pre[class*="language-"] code[class*="langu
 }
 
 @media (prefers-color-scheme: dark) {
-  .toc-floating-body a.toc-active {
+  html:not([data-theme="light"]) .toc-floating-body a.toc-active {
     background: rgba(56, 189, 248, 0.18);
   }
+}
+html[data-theme="dark"] .toc-floating-body a.toc-active {
+  background: rgba(56, 189, 248, 0.18);
 }
 
 /* 아코디언 목차 스크롤 스파이 강조 */

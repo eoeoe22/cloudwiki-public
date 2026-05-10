@@ -791,7 +791,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     const merged = (typeof window.getMergedWikiPalettes === 'function') ? window.getMergedWikiPalettes() : {};
                     const entry = merged[name];
                     if (entry) {
-                        const isDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+                        const isDark = isDarkMode;
                         variant = isDark ? (entry.dark || entry.light) : (entry.light || entry.dark);
                     }
                 } catch (_) { /* noop */ }

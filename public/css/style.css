@@ -607,9 +607,12 @@ div:where(.swal2-container) .swal2-html-container {
 }
 
 @media (prefers-color-scheme: dark) {
-  .user-dropdown-toggle {
+  html:not([data-theme="light"]) .user-dropdown-toggle {
     border-color: rgba(48, 54, 61, 0.4) !important;
   }
+}
+html[data-theme="dark"] .user-dropdown-toggle {
+  border-color: rgba(48, 54, 61, 0.4) !important;
 }
 
 /* ── 검색바 스타일 ── */
@@ -1090,9 +1093,12 @@ div:where(.swal2-container) .swal2-html-container {
 }
 
 @media (prefers-color-scheme: dark) {
-  .btn-close {
+  html:not([data-theme="light"]) .btn-close {
     filter: invert(1) grayscale(100%) brightness(200%);
   }
+}
+html[data-theme="dark"] .btn-close {
+  filter: invert(1) grayscale(100%) brightness(200%);
 }
 
 /* ── Forms ── */

@@ -1476,8 +1476,11 @@ function getMergedWikiPalettes() {
 }
 
 
-/** 현재 다크모드 여부 */
+/** 현재 다크모드 여부 (사이트 테마 토글 우선, 미설정 시 OS 설정) */
 function _isWikiDarkMode() {
+    const themeAttr = document.documentElement.getAttribute('data-theme');
+    if (themeAttr === 'dark') return true;
+    if (themeAttr === 'light') return false;
     return !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
 }
 
