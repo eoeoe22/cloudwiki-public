@@ -2,10 +2,16 @@ name = "cloudwiki" # 변경가능
 main = "src/index.ts"
 compatibility_date = "2026-03-01"
 
+# Vite 클라이언트 빌드를 deploy 전에 자동 실행한다
+# - 입력: src/client/*.ts
+# - 출력: public/dist/*.js (Cloudflare Workers Assets로 서빙됨)
+[build]
+command = "npm run build"
+
 [assets]
 directory = "public"
 binding = "ASSETS"
-run_worker_first = ["/", "/w/*", "/wiki/*", "/mypage", "/edit", "/profile/*", "/search", "/admin", "/admin-media", "/tickets", "/tickets/*", "/setup-profile", "/error", "/sitemap.xml", "/robots.txt", "/login", "/recent-changes", "/auth/discord", "/auth/discord/callback", "/auth/refresh-picture"]
+run_worker_first = ["/", "/w/*", "/wiki/*", "/mypage", "/edit", "/profile/*", "/search", "/admin", "/admin-media", "/tickets", "/tickets/*", "/setup-profile", "/error", "/sitemap.xml", "/robots.txt", "/login", "/recent-changes", "/auth/discord", "/auth/discord/callback", "/auth/refresh-picture", "/blog", "/blog/*", "/blog-edit", "/sw.js"]
 
 
 [[d1_databases]]
@@ -69,7 +75,7 @@ ENABLE_CONCURRENT_EDIT_DETECTION = "true" # 문서 동시편집 감지 (KV)
 WIKI_VISIBILITY = "open" # 문서 열람 권한: "open" (비로그인 사용자도 열람 가능), "closed" (로그인 필요)
 EMAIL_RESTRICTION = "" # 이메일 도메인 가입 제한 설정: "" 또는 "none" (제한 없음), "whitelist" (허용 도메인만), "blacklist" (차단 도메인 제외)
 EMAIL_LIST = "example.com, example.example.com" # 콤마로 구분된 도메인 목록 (EMAIL_RESTRICTION이 whitelist 또는 blacklist일 때 사용)
-ENABLED_EXTENSIONS = "" # 확장  기능 활성화, 쉼표로 구분. 예 : "freq,extension1,extension2"
+ENABLED_EXTENSIONS = "" # 확장 기능 활성화, 쉼표로 구분. 예 : "freq,extension1,extension2"
 
 # 로그인 페이지에서 노출할 메시지 및 약관
 LOGIN_MESSAGE = ""
@@ -79,7 +85,6 @@ TERMS_OF_SERVICE = "위키/이용약관"
 WIKI_SYNTAX = "위키/위키 문법 가이드" # 문법 가이드 문서 제목 입력, 에디터 페이지와 MCP 도구에서 문법 도움말은 해당 문서로 안내됨.
 
 # 구글 애널리스틱스, 애드센스등 외부 스크립트 삽입용
-
 CUSTOM_HEADER = """
 
 """
@@ -106,12 +111,23 @@ ROLE_PERMISSIONS_JSON = """
 # 하드코딩 프리셋(primary/secondary/success/info/warning/danger/muted)은 설정 없이 사용 가능.
 # 이름 충돌 시 커스텀이 하드코딩보다 우선합니다.
 PALETTES = """
-{"cloudflare":{"bg":"#FF8000","color":"#000000"},"anthropic":{"bg":"#F0EEE6","color":"#C15F3C"},"typescript":{"bg":"#0080FF","color":"#FFFFFF"},"reverse":{"light":{"bg":"#000000","color":"#000000"},"dark":{"bg":"#FFFFFF","color":"#FFFFFF"}}}
+{"cloudflare":{"bg":"#FF8000","color":"#000000"},"claude":{"bg":"#F0EEE6","color":"#C15F3C"},"anthropic":{"bg":"#F0EEE6","color":"#000000"},"typescript":{"bg":"#0080FF","color":"#FFFFFF"},"reverse":{"light":{"bg":"#000000","color":"#000000"},"dark":{"bg":"#FFFFFF","color":"#FFFFFF"}}}
 """
+
+# === Discord Webhook ===
 # DISCORD_COMMUNITY_WEBHOOK_URL, DISCORD_ADMIN_WEBHOOK_URL 은 Workers 대시보드에서 시크릿으로 설정
+# URL 이 비어있으면 해당 채널은 자동 비활성. EVENTS 가 비어있으면 모든 이벤트 차단(긴급 음소거).
 DISCORD_ADMIN_EVENTS = "signup_pending,signup_rejected,ticket_create,ticket_status,user_ban,user_role_change,super_admin_action"
 DISCORD_COMMUNITY_EVENTS = "user_joined,discussion_create,announcement_publish"
 WIKI_PUBLIC_BASE_URL = "https://도메인"
+
+# === Web Push (VAPID) ===
+# VAPID 공개키 (P-256 uncompressed point, base64url 65바이트). 클라이언트에 노출됨.
+# 비밀키 는 wrangler secret 으로 등록:
+#   wrangler secret put VAPID_PRIVATE_KEY
+# 빈 값이면 Web Push 기능이 자동 비활성화됩니다.
+VAPID_PUBLIC_KEY = ""
+VAPID_SUBJECT = "" # 예: mailto:admin@example.com
 
 
 [triggers]
