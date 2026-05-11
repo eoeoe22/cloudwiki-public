@@ -564,11 +564,11 @@ async function checkDraft(): Promise<void> {
                     if (wrapper) (wrapper as HTMLElement).style.display = '';
                 }
             });
-            const adminLockWrapper = document.getElementById('adminLockContainer') as HTMLElement | null;
-            if (adminLockWrapper) {
+            const adminFlagsWrapper = document.getElementById('adminFlagsContainer') as HTMLElement | null;
+            if (adminFlagsWrapper) {
                 const cu = window.currentUser;
                 const isAdminUser = !!(cu && (cu.role === 'admin' || cu.role === 'super_admin'));
-                adminLockWrapper.style.display = isAdminUser ? 'block' : 'none';
+                adminFlagsWrapper.style.display = isAdminUser ? 'flex' : 'none';
             }
 
             // window 상태를 full-edit mode 로 전환. main.ts 는 await 직후

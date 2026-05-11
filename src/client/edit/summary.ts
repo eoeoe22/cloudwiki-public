@@ -373,6 +373,10 @@ function buildAutoEditSummary(): string {
     const lockEl = document.getElementById('isLockedCheck') as HTMLInputElement | null;
     const currLocked = lockEl && lockEl.checked ? 1 : 0;
 
+    const origPrivate = originalPageMeta.is_private ? 1 : 0;
+    const privEl = document.getElementById('isPrivateCheck') as HTMLInputElement | null;
+    const currPrivate = privEl && privEl.checked ? 1 : 0;
+
     const parts: string[] = [];
     if (added.length) parts.push(`분류 ${added.map(c => `'${c}'`).join(', ')} 추가`);
     if (removed.length) parts.push(`분류 ${removed.map(c => `'${c}'`).join(', ')} 삭제`);
@@ -381,6 +385,9 @@ function buildAutoEditSummary(): string {
     }
     if (origLocked !== currLocked) {
         parts.push(currLocked ? '관리자 전용 설정' : '관리자 전용 해제');
+    }
+    if (origPrivate !== currPrivate) {
+        parts.push(currPrivate ? '비공개 설정' : '비공개 해제');
     }
 
     if (editorAvailable) {

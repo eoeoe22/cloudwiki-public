@@ -77,6 +77,7 @@ search.get('/search', async (c) => {
     const db = c.env.DB;
     const rbac = c.get('rbac') as RBAC;
     const isAdmin = user && rbac.can(user.role, 'admin:access');
+    const canSeePrivate = rbac.can(user?.role ?? 'guest', 'wiki:private');
     const searchStartTime = Date.now();
 
     // 서버 사이드 페이지네이션: 페이지당 PAGE_SIZE 건, LIMIT/OFFSET 으로 DB 부하 최소화.
@@ -175,7 +176,8 @@ search.get('/search', async (c) => {
     // CTA 가 노출될 수 있으므로 mode 분기 이전에 한 번만 계산해 모든 응답에 포함시킨다.
     // pages.slug 의 UNIQUE 인덱스를 활용하기 위해 case-sensitive 동등 비교를 사용한다.
     // case-insensitive 대조는 클라이언트가 결과 페이지 슬러그를 toLowerCase() 로 보조 검사한다.
-    const exactMatchVisibility = isAdmin ? '' : ' AND deleted_at IS NULL';
+    const privateFilter = canSeePrivate ? '' : ' AND is_private = 0';
+    const exactMatchVisibility = (isAdmin ? '' : ' AND deleted_at IS NULL') + privateFilter;
     const exactMatchRow = await db
         .prepare(`SELECT 1 FROM pages WHERE slug = ?${exactMatchVisibility} LIMIT 1`)
         .bind(trimmedQuery)
@@ -184,7 +186,7 @@ search.get('/search', async (c) => {
 
     // 카테고리 검색 모드
     if (mode === 'category') {
-        const visibility = isAdmin ? '' : ' AND deleted_at IS NULL';
+        const visibility = (isAdmin ? '' : ' AND deleted_at IS NULL') + privateFilter;
 
         const totalRow = await db
             .prepare(`SELECT COUNT(*) as total FROM pages WHERE category = ?${visibility}`)
@@ -211,7 +213,7 @@ search.get('/search', async (c) => {
     // 어긋난다. trigram 은 codepoint 단위로 토크나이즈하므로 [...]로 codepoint 수를 센다.
     const queryCodepointLength = [...trimmedQuery].length;
     if (queryCodepointLength < 3) {
-        const visibility = isAdmin ? '' : ' AND deleted_at IS NULL';
+        const visibility = (isAdmin ? '' : ' AND deleted_at IS NULL') + privateFilter;
         // LIKE 메타문자(%, _, \)를 escape 해 사용자가 입력한 문자열 그대로만 매치한다.
         const likeEscaped = trimmedQuery.replace(/[\\%_]/g, '\\$&');
         const likePattern = `%${likeEscaped}%`;
@@ -248,7 +250,7 @@ search.get('/search', async (c) => {
     // FTS5 Trigram 검색 (3글자 이상)
     // 보안을 위해 <mark> 대신 임시 문자열을 사용하고 나중에 치환
     try {
-        const visibility = isAdmin ? '' : ' AND p.deleted_at IS NULL';
+        const visibility = (isAdmin ? '' : ' AND p.deleted_at IS NULL') + (canSeePrivate ? '' : ' AND p.is_private = 0');
 
         // Trigram 토크나이저에서는 따옴표로 감싸면 정확한 substring 매칭
         const safeMatchQuery = '"' + trimmedQuery.replace(/"/g, '""') + '"';
@@ -308,7 +310,7 @@ search.get('/search', async (c) => {
     } catch (ftsError) {
         // FTS5 쿼리 실패 시 LIKE fallback
         console.error('FTS5 search failed, falling back to LIKE:', ftsError);
-        const visibility = isAdmin ? '' : ' AND deleted_at IS NULL';
+        const visibility = (isAdmin ? '' : ' AND deleted_at IS NULL') + privateFilter;
         // LIKE 메타문자(%, _, \)를 escape 해 사용자가 입력한 문자열 그대로만 매치한다.
         const likeEscaped = trimmedQuery.replace(/[\\%_]/g, '\\$&');
         const likePattern = `%${likeEscaped}%`;
@@ -356,6 +358,7 @@ search.get('/search/suggest', async (c) => {
     const user = c.get('user');
     const rbac = c.get('rbac') as RBAC;
     const isAdmin = user && rbac.can(user.role, 'admin:access');
+    const canSeePrivate = rbac.can(user?.role ?? 'guest', 'wiki:private');
     const trimmed = query.trim();
     const likePattern = `%${trimmed}%`;
     const startPattern = `${trimmed}%`;
@@ -376,6 +379,9 @@ search.get('/search/suggest', async (c) => {
     `;
     if (!isAdmin) {
         pageSql += ' AND deleted_at IS NULL';
+    }
+    if (!canSeePrivate) {
+        pageSql += ' AND is_private = 0';
     }
     pageSql += ' ORDER BY CASE WHEN slug LIKE ? THEN 0 ELSE 1 END, length(slug) LIMIT 7';
 

@@ -673,6 +673,13 @@ ${contentBlock}
         .bind(slug)
         .first<Page>();
 
+    const canSeePrivate = rbac.can(user?.role ?? 'guest', 'wiki:private');
+
+    // 비공개 문서는 권한이 없으면 존재 자체를 숨김 (404 처리 → 아래 if (!page) 로 위임)
+    if (page && page.is_private === 1 && !canSeePrivate) {
+        page = null;
+    }
+
     if (page && page.deleted_at && !isAdmin) {
         if (isCrawler) {
             const title = `삭제된 문서 - ${wikiName}`;
@@ -704,6 +711,12 @@ ${contentBlock}
         return goneResponse;
     }
 
+    // 원본(리다이렉트 이전) 슬러그의 비공개 여부 기록.
+    // 비공개 슬러그가 public 으로 리다이렉트되어 page 가 public 으로 교체되면 shouldCache 검사에서
+    // is_private = 0 으로 보이지만, 캐시 키(URL = 원본 슬러그) 에 200 응답이 저장돼
+    // 권한 없는 후속 요청이 캐시 히트로 200 을 받아 "비공개 슬러그가 존재함" 이 누출된다.
+    const sourceWasPrivate = !!(page && page.is_private === 1);
+
     let redirectedFrom: string | null = null;
 
     // 문서 내 리다이렉트 설정 확인 (soft redirect)
@@ -714,6 +727,10 @@ ${contentBlock}
             .first<Page>();
 
         if (targetPage && targetPage.deleted_at && !isAdmin) {
+            targetPage = null;
+        }
+
+        if (targetPage && targetPage.is_private === 1 && !canSeePrivate) {
             targetPage = null;
         }
 
@@ -730,7 +747,10 @@ ${contentBlock}
     };
 
     // 캐싱 가능 여부 (공개 문서가 정상 존재하는 경우만)
-    let shouldCache = canUseCache;
+    // 비공개 페이지는 권한 보유자(wiki:private)에게만 노출되므로 공유 캐시에 저장하면 안 된다.
+    // (canUseCache 는 isAdmin 만 배제하므로, wiki:private 만 가진 커스텀 역할의 응답이 캐시되는 누출 경로를 차단)
+    // sourceWasPrivate 도 함께 배제 — 비공개 슬러그가 public 으로 리다이렉트된 경우에도 캐시 키(원본 슬러그)에 저장 금지.
+    let shouldCache = canUseCache && !sourceWasPrivate && !(page && page.is_private === 1);
 
     if (!page) {
         // 크롤러: 문서 없음을 404로 응답
@@ -829,6 +849,12 @@ ${contentBlock}
         if (crawlEnabled) cachedResponse.headers.set('Vary', 'User-Agent');
         c.executionCtx.waitUntil(cache.put(ssrCacheKey, cachedResponse.clone()));
         return cachedResponse;
+    }
+
+    // 비공개 페이지는 권한 있는 사용자에게만 노출되므로, 공유/브라우저 캐시에 저장되지 않도록 강제한다.
+    // sourceWasPrivate 도 함께 — 비공개 슬러그가 public 으로 리다이렉트된 응답도 캐시 누출 차단.
+    if (sourceWasPrivate || (page && page.is_private === 1)) {
+        response.headers.set('Cache-Control', 'private, no-store');
     }
 
     if (crawlEnabled) response.headers.set('Vary', 'User-Agent');
@@ -976,7 +1002,7 @@ app.get('/sitemap.xml', async (c) => {
 
     const [{ results: pages }, { results: blogPosts }] = await Promise.all([
         db
-            .prepare('SELECT slug, updated_at FROM pages WHERE deleted_at IS NULL AND redirect_to IS NULL')
+            .prepare('SELECT slug, updated_at FROM pages WHERE deleted_at IS NULL AND redirect_to IS NULL AND is_private = 0')
             .all<{ slug: string; updated_at: number }>(),
         db
             .prepare('SELECT id, updated_at FROM blog_posts WHERE deleted_at IS NULL ORDER BY created_at DESC')

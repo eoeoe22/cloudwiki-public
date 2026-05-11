@@ -1792,23 +1792,31 @@ document.addEventListener('mousedown', (e) => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // 부착은 idempotent — 즉시 시도 / 'wiki-editor-ready' 이벤트 / 명시적
-// ensureAutocompleteAttached 호출 어느 경로로 호출되어도
+// ensureAutocompleteAttached 호출 / 폴링 안전망 어느 경로로 호출되어도
 // editorEventHandlers.change 에 중복 push 되지 않도록 _autocompleteAttached 로
 // 가드한다.
 //
-// 정상 경로 — edit-main.ts 가 editor shim 초기화 직후 'wiki-editor-ready' 이벤트를
-// 디스패치하고 ensureAutocompleteAttached 도 호출한다. 둘 중 어느 하나만 동작해도
-// 결정적으로 부착된다. 과거에는 setTimeout 100ms 폴링(50회/5초 상한)을 안전망으로
-// 두었으나 (a) 슬로우 네트워크에서 CM6 CDN 로드가 5초를 넘으면 폴링이 만료되고
-// (b) 매 100ms 마다 깨어나며 배터리/CPU 를 낭비했다. 이벤트 기반으로 바꾸면
-// 폴링 없이도 main.ts 의 디스패치가 곧 부착을 보장한다.
+// 정상 경로 — edit-main.ts 가 editor shim 초기화 직후 'wiki-editor-ready' 이벤트
+// 디스패치 + ensureAutocompleteAttached 명시 호출을 모두 수행하므로 첫 시도에 부착된다.
+// 두 트리거가 모두 같은 함수를 호출하고 같은 window.editor 시점을 공유하므로
+// 사실상 단일 진입점과 같다. 그 단일 진입점이 어떤 이유(예: dispatch 직전 throw,
+// 모듈 평가 순서 이슈, 미래의 리팩터링으로 인한 트리거 누락 등)로 누락되면
+// 자동완성은 페이지 새로고침 전까지 영구히 부착되지 않는다. 그래서 30회×100ms
+// (≈3초) 의 bounded 폴링을 마지막 안전망으로 둔다 — 정상 경로에서는 첫 시도에
+// 부착되어 폴링은 사실상 한 번도 가동되지 않으며, 트리거 누락 시에만 3초 내에
+// 자동 복구된다. 폴링 경로로 부착된 경우 console.warn 으로 관측 가능하게 남긴다.
 let _autocompleteAttached = false;
+let _attachAttempts = 0;
+const MAX_ATTACH_ATTEMPTS = 30;
 
-function attachAutocomplete(): void {
+function attachAutocomplete(viaFallback = false): void {
     if (_autocompleteAttached) return;
     const editor = window.editor;
     if (!editor) return;
     _autocompleteAttached = true;
+    if (viaFallback) {
+        console.warn('[edit] 자동완성이 폴링 안전망으로 부착됨 — 정상 트리거가 누락되었을 가능성. _attachAttempts=' + _attachAttempts);
+    }
 
     editor.on?.('change', () => {
         requestAnimationFrame(() => {
@@ -1908,12 +1916,23 @@ attachAutocomplete();
 // `window.dispatchEvent(new Event('wiki-editor-ready'))` 를 호출하여 부착을 트리거한다.
 // 이벤트가 두 번 디스패치되어도 attachAutocomplete 내부의 _autocompleteAttached
 // 가드 덕에 안전.
-window.addEventListener('wiki-editor-ready', attachAutocomplete);
+window.addEventListener('wiki-editor-ready', () => attachAutocomplete());
 
 // 명시적 호출 진입점: edit-main.ts 가 에디터 shim 초기화 직후 호출.
 // 이벤트 디스패치와 별개로 백업 경로로 유지해 둔다.
 // 가드는 attachAutocomplete 내부에서 수행하므로 여기서는 단순 위임.
-window.ensureAutocompleteAttached = attachAutocomplete;
+window.ensureAutocompleteAttached = () => attachAutocomplete();
+
+// 폴링 안전망 — 위 정상 트리거(이벤트 + 명시 호출)가 어떤 이유로든 누락되거나
+// 호출 시점에 window.editor 가 아직 비어 있어 부착되지 못한 케이스를 자동 복구.
+// 정상 경로에서는 첫 dispatch 시점에 부착되므로 polling 루프는 즉시 종료된다.
+function _attachPollFallback(): void {
+    if (_autocompleteAttached) return;
+    if (_attachAttempts++ >= MAX_ATTACH_ATTEMPTS) return;
+    attachAutocomplete(true);
+    if (!_autocompleteAttached) setTimeout(_attachPollFallback, 100);
+}
+setTimeout(_attachPollFallback, 100);
 
 // 에디터 영역 드래그앤드롭 비활성화
 (function disableEditorDragDrop(): void {

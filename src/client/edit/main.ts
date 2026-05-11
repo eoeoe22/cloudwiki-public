@@ -22,6 +22,7 @@
  */
 import './types';
 import { escapeHtml } from '../utils/html';
+import { normalizeSlug } from '../utils/slug';
 import type { CMEditor, CMSelection, PageMeta, SectionRange } from './types';
 
 declare global {
@@ -341,8 +342,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     // slug 파싱
+    // 서버는 PUT 시 슬러그의 앞뒤 슬래시/공백을 제거(normalizeSlug)한 키로 문서를 저장한다.
+    // 클라이언트가 원본 슬러그를 그대로 들고 있으면 저장 후 redirect URL 이 실제 저장 키와
+    // 어긋나 404 가 발생하므로, 여기서도 동일한 정책으로 정규화한다.
     const params = new URLSearchParams(window.location.search);
-    slug = params.get('slug');
+    const rawSlug = params.get('slug');
+    slug = rawSlug !== null ? normalizeSlug(rawSlug) : null;
 
     // 블로그 모드: ?id= 파라미터 처리 (섹션 모드 없음, slug 불필요)
     if (BLOG_MODE) {
@@ -2685,9 +2690,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         editor.changePreviewStyle(targetStyle);
     });
 
-    // 관리자면 Lock ui 노출
+    // 관리자면 Lock + Private 플래그 ui 노출 (한 줄에 동일 스타일로 배치)
     if (window.currentUser.role === 'admin' || window.currentUser.role === 'super_admin') {
-        document.getElementById('adminLockContainer').style.display = 'block';
+        const flagsEl = document.getElementById('adminFlagsContainer');
+        if (flagsEl) flagsEl.style.display = 'flex';
     }
 
     // 관리자 전용 카테고리 목록 불러오기
@@ -2783,7 +2789,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                 slug: page.slug,
                 category: page.category || '',
                 redirect_to: page.redirect_to || '',
-                is_locked: page.is_locked ? 1 : 0
+                is_locked: page.is_locked ? 1 : 0,
+                is_private: page.is_private ? 1 : 0
             };
 
             if (page.category) {
@@ -2797,6 +2804,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
             if (page.redirect_to) document.getElementById('redirectInput').value = page.redirect_to;
             if (page.is_locked) document.getElementById('isLockedCheck').checked = true;
+            if (page.is_private) {
+                const privCheck = document.getElementById('isPrivateCheck');
+                if (privCheck) privCheck.checked = true;
+            }
 
             let initialContent = page.content || '';
             if (!isExtensionData) {
@@ -2846,8 +2857,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                             if (wrapper) wrapper.style.display = 'none';
                         }
                     });
-                    const adminLockWrapper = document.getElementById('adminLockContainer');
-                    if (adminLockWrapper) adminLockWrapper.style.display = 'none';
+                    const adminFlagsWrapper = document.getElementById('adminFlagsContainer');
+                    if (adminFlagsWrapper) adminFlagsWrapper.style.display = 'none';
                 } else {
                     // 섹션을 찾지 못하면 전체 편집으로 자동 fallback
                     sectionMode = false;
@@ -3029,7 +3040,7 @@ function hasMeaningfulChanges() {
     if (currentContent !== originalContent) return true;
 
     // 신규 문서(originalPageMeta === null)는 빈 메타데이터를 기준선으로 사용한다.
-    const baseMeta = originalPageMeta || { category: '', redirect_to: '', is_locked: 0 };
+    const baseMeta = originalPageMeta || { category: '', redirect_to: '', is_locked: 0, is_private: 0 };
 
     const origCats = baseMeta.category
         ? baseMeta.category.split(',').map(c => c.trim()).filter(Boolean).sort()
@@ -3050,6 +3061,11 @@ function hasMeaningfulChanges() {
     const lockEl = document.getElementById('isLockedCheck');
     const currLocked = lockEl && lockEl.checked ? 1 : 0;
     if (origLocked !== currLocked) return true;
+
+    const origPrivate = baseMeta.is_private ? 1 : 0;
+    const privEl = document.getElementById('isPrivateCheck');
+    const currPrivate = privEl && privEl.checked ? 1 : 0;
+    if (origPrivate !== currPrivate) return true;
 
     return false;
 }
@@ -3115,26 +3131,34 @@ async function openSplitToSubdocModal(): Promise<void> {
         preConfirm: () => {
             const titleEl = document.getElementById('splitSubdocTitle') as HTMLInputElement | null;
             const leaveEl = document.getElementById('splitLeaveBehind') as HTMLTextAreaElement | null;
-            const t = (titleEl?.value || '').trim();
-            const l = (leaveEl?.value ?? '');
-            if (!t) {
+            const rawTitle = (titleEl?.value || '').trim();
+            let l = (leaveEl?.value ?? '');
+            // 앞뒤 슬래시/공백은 서버에서 자동 제거되므로 클라이언트도 동일하게 정규화한 값을 사용.
+            const normalized = normalizeSlug(rawTitle);
+            if (!normalized) {
                 Swal.showValidationMessage('하위 문서 제목을 입력해주세요.');
                 return false;
             }
-            if (t === parentSlug) {
+            if (normalized === parentSlug) {
                 Swal.showValidationMessage('하위 문서 제목이 현재 문서와 같을 수 없습니다.');
                 return false;
             }
             // 서버 SLUG_FORBIDDEN_CHARS 와 동일하게 클라에서도 1차 차단.
-            if (/[\[\]{}()#%|<>^\x00-\x1F\x7F]/.test(t)) {
+            if (/[\[\]{}()#%|<>^\x00-\x1F\x7F]/.test(normalized)) {
                 Swal.showValidationMessage('제목에 사용할 수 없는 특수문자가 포함되어 있습니다.');
                 return false;
             }
-            if (t.startsWith('이미지:')) {
+            if (normalized.startsWith('이미지:')) {
                 Swal.showValidationMessage('"이미지:"는 이미지 문서 전용 네임스페이스이므로 사용할 수 없습니다.');
                 return false;
             }
-            return { title: t, leave: l };
+            // 남길 내용이 현재 입력 제목으로 자동 생성된 기본 문구 그대로면 정규화된 슬러그
+            // 기준으로 다시 생성해, 본문에 `[[/Child/]]` 같은 unnormalized 위키링크가
+            // 남는 회귀를 막는다. 사용자가 직접 수정한 경우(leaveTouched)는 그대로 둔다.
+            if (l === computeDefaultLeave(rawTitle)) {
+                l = computeDefaultLeave(normalized);
+            }
+            return { title: normalized, leave: l };
         },
     });
 
@@ -3259,6 +3283,10 @@ async function savePage() {
     const is_locked = sectionMode && originalPageMeta
         ? (originalPageMeta.is_locked ? 1 : 0)
         : (document.getElementById('isLockedCheck').checked ? 1 : 0);
+    const privateCheckEl = document.getElementById('isPrivateCheck');
+    const is_private = sectionMode && originalPageMeta
+        ? (originalPageMeta.is_private ? 1 : 0)
+        : (privateCheckEl && privateCheckEl.checked ? 1 : 0);
 
     // 섹션 모드: 에디터 내용(= 섹션 텍스트)을 원본에 재주입한 전체 본문을 전송
     let content;
@@ -3333,6 +3361,7 @@ async function savePage() {
             category: category || undefined,
             redirect_to: redirect_to || undefined,
             is_locked,
+            is_private,
             summary: summary || undefined,
             turnstileToken,
         };
@@ -3464,14 +3493,14 @@ async function savePage() {
                         if (wrapper) wrapper.style.display = '';
                     }
                 });
-                // 섹션 모드 진입 시 adminLockContainer 도 숨겼으므로(관리자 잠금 컨트롤) 반드시 복원.
-                // 누락 시 관리자가 전체 편집 모드로 전환된 뒤에도 잠금 상태를 변경/확인할 수 없음.
+                // 섹션 모드 진입 시 adminFlagsContainer 도 숨겼으므로(관리자 잠금/비공개 컨트롤) 반드시 복원.
+                // 누락 시 관리자가 전체 편집 모드로 전환된 뒤에도 플래그를 변경/확인할 수 없음.
                 // 단, 관리자 전용 UI 이므로 원래 가시성 조건(role 검사)을 다시 적용한다 —
                 // 일반 사용자에게는 보여선 안 됨.
-                const adminLockWrapper = document.getElementById('adminLockContainer');
-                if (adminLockWrapper) {
-                    const isAdminUser = window.currentUser && (window.currentUser.role === 'admin' || window.currentUser.role === 'super_admin');
-                    adminLockWrapper.style.display = isAdminUser ? 'block' : 'none';
+                const adminFlagsWrapper = document.getElementById('adminFlagsContainer');
+                const isAdminUser = window.currentUser && (window.currentUser.role === 'admin' || window.currentUser.role === 'super_admin');
+                if (adminFlagsWrapper) {
+                    adminFlagsWrapper.style.display = isAdminUser ? 'flex' : 'none';
                 }
 
                 // 메타데이터 입력 필드를 서버 최신값으로 갱신 — 재시도 시 스테일 값 송신 방지
@@ -3479,18 +3508,21 @@ async function savePage() {
                 const categoryEl = document.getElementById('categoryInput');
                 const redirectEl = document.getElementById('redirectInput');
                 const lockedEl = document.getElementById('isLockedCheck');
+                const privateElFallback = document.getElementById('isPrivateCheck');
                 if (titleEl) titleEl.value = freshPageForFallback.slug || slug;
                 const freshCategory = freshPageForFallback.category || '';
                 if (categoryEl) categoryEl.value = freshCategory;
                 categoryTags = freshCategory ? freshCategory.split(',').map(c => c.trim()).filter(c => c) : [];
                 if (redirectEl) redirectEl.value = freshPageForFallback.redirect_to || '';
                 if (lockedEl) lockedEl.checked = !!freshPageForFallback.is_locked;
+                if (privateElFallback) privateElFallback.checked = !!freshPageForFallback.is_private;
                 // originalPageMeta 도 일관성 유지 (sectionMode 는 false 가 되었지만 방어적으로 갱신)
                 originalPageMeta = {
                     slug: freshPageForFallback.slug,
                     category: freshPageForFallback.category || '',
                     redirect_to: freshPageForFallback.redirect_to || '',
-                    is_locked: freshPageForFallback.is_locked ? 1 : 0
+                    is_locked: freshPageForFallback.is_locked ? 1 : 0,
+                    is_private: freshPageForFallback.is_private ? 1 : 0
                 };
                 // pageVersion 을 최신값으로 갱신
                 pageVersion = data.current_version;

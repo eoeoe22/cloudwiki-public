@@ -275,6 +275,8 @@ async function handleJsonRpc(c: Context<Env>, body: any, user: User | null) {
     const role = user ? user.role : 'guest';
     const canEdit = rbac.can(role, 'wiki:edit');
     const isAdmin = rbac.can(role, 'admin:access');
+    const canSeePrivate = rbac.can(role, 'wiki:private');
+    const privateFilter = canSeePrivate ? '' : ' AND is_private = 0';
     // 단계적으로 노출 도구를 합성한다 — guest 는 read 도구만, wiki:edit 는 + USER_TOOL_DEFS,
     // admin:access 는 + ADMIN_ONLY_TOOL_DEFS.
     const visibleToolDefs = [
@@ -414,7 +416,7 @@ async function handleJsonRpc(c: Context<Env>, body: any, user: User | null) {
                     // total 은 트리 표시용 캡(500)과 무관하게 COUNT(*) 로 정확히 구해야 한다.
                     // 그렇지 않으면 500을 초과한 시점부터 has_next_page 가 거짓이 되어
                     // 클라이언트가 페이지네이션으로 나머지 문서에 접근할 수 없다.
-                    const totalRow = await db.prepare('SELECT COUNT(*) AS cnt FROM pages WHERE deleted_at IS NULL AND slug > ? AND slug < ?').bind(prefixLower, prefixUpper).first<{ cnt: number }>();
+                    const totalRow = await db.prepare(`SELECT COUNT(*) AS cnt FROM pages WHERE deleted_at IS NULL${privateFilter} AND slug > ? AND slug < ?`).bind(prefixLower, prefixUpper).first<{ cnt: number }>();
                     totalCount = totalRow?.cnt ?? 0;
                     if (totalCount === 0) {
                         return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: `'${parentSlug}' 의 하위 문서가 없습니다.` }] } };
@@ -422,7 +424,7 @@ async function handleJsonRpc(c: Context<Env>, body: any, user: User | null) {
 
                     // 실제 읽을 페이지는 SQL LIMIT/OFFSET 으로 직접 잘라서 가져온다.
                     // 트리 표시용 후보(allCandidateSlugs)와 별개로 처리해야 어떤 페이지 번호든 안정적으로 도달 가능하다.
-                    const pageRows = await db.prepare('SELECT slug FROM pages WHERE deleted_at IS NULL AND slug > ? AND slug < ? ORDER BY slug ASC LIMIT ? OFFSET ?').bind(prefixLower, prefixUpper, BATCH_LIMIT, offset).all<{ slug: string }>();
+                    const pageRows = await db.prepare(`SELECT slug FROM pages WHERE deleted_at IS NULL${privateFilter} AND slug > ? AND slug < ? ORDER BY slug ASC LIMIT ? OFFSET ?`).bind(prefixLower, prefixUpper, BATCH_LIMIT, offset).all<{ slug: string }>();
                     targetSlugs = pageRows.results.map(r => r.slug);
                     if (targetSlugs.length === 0) {
                         const totalPages = Math.ceil(totalCount / BATCH_LIMIT);
@@ -431,7 +433,7 @@ async function handleJsonRpc(c: Context<Env>, body: any, user: User | null) {
 
                     // 트리 표시는 응답 크기 보호를 위해 500개로 제한한다.
                     // 500을 초과해도 페이지네이션은 total/COUNT(*) 기준으로 동작하므로 도달 가능성을 잃지 않는다.
-                    const treeRows = await db.prepare('SELECT slug, rows, characters FROM pages WHERE deleted_at IS NULL AND slug > ? AND slug < ? ORDER BY slug ASC LIMIT ?').bind(prefixLower, prefixUpper, TREE_DISPLAY_CAP).all<{ slug: string; rows: number | null; characters: number | null }>();
+                    const treeRows = await db.prepare(`SELECT slug, rows, characters FROM pages WHERE deleted_at IS NULL${privateFilter} AND slug > ? AND slug < ? ORDER BY slug ASC LIMIT ?`).bind(prefixLower, prefixUpper, TREE_DISPLAY_CAP).all<{ slug: string; rows: number | null; characters: number | null }>();
                     allCandidateSlugs = treeRows.results.map(r => r.slug);
                     for (const r of treeRows.results) {
                         statsMap.set(r.slug, { rows: r.rows, characters: r.characters });
@@ -451,7 +453,7 @@ async function handleJsonRpc(c: Context<Env>, body: any, user: User | null) {
                     if (!isMcpReadableSlug(slug)) {
                         return { title: slug, error: 'raw 데이터는 읽을 수 없습니다.' };
                     }
-                    const pageRow = await db.prepare('SELECT slug, content, last_revision_id, rows, characters FROM pages WHERE slug = ? AND deleted_at IS NULL').bind(slug).first<{ slug: string, content: string, last_revision_id: number | null, rows: number | null, characters: number | null }>();
+                    const pageRow = await db.prepare(`SELECT slug, content, last_revision_id, rows, characters FROM pages WHERE slug = ? AND deleted_at IS NULL${privateFilter}`).bind(slug).first<{ slug: string, content: string, last_revision_id: number | null, rows: number | null, characters: number | null }>();
                     if (!pageRow) {
                         return { title: slug, error: '문서를 찾을 수 없거나 비공개/삭제 상태입니다.' };
                     }
@@ -503,7 +505,7 @@ async function handleJsonRpc(c: Context<Env>, body: any, user: User | null) {
                         if (!isMcpReadableSlug(parentSlug)) {
                             errorBySlug.set(parentSlug, 'raw 데이터는 읽을 수 없습니다.');
                         } else {
-                            const parentRow = await db.prepare('SELECT slug, content, last_revision_id, rows, characters FROM pages WHERE slug = ? AND deleted_at IS NULL').bind(parentSlug).first<{ slug: string, content: string, last_revision_id: number | null, rows: number | null, characters: number | null }>();
+                            const parentRow = await db.prepare(`SELECT slug, content, last_revision_id, rows, characters FROM pages WHERE slug = ? AND deleted_at IS NULL${privateFilter}`).bind(parentSlug).first<{ slug: string, content: string, last_revision_id: number | null, rows: number | null, characters: number | null }>();
                             if (parentRow) {
                                 statsMap.set(parentRow.slug, { rows: parentRow.rows, characters: parentRow.characters });
                                 let actualContent = parentRow.content;

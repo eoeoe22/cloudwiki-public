@@ -73,6 +73,7 @@ export interface PageMeta {
     category?: string | null;
     redirect_to?: string | null;
     is_locked?: number | boolean | null;
+    is_private?: number | boolean | null;
 }
 
 /** localStorage 에 저장되는 초안 페이로드 */

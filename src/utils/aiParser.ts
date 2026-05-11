@@ -526,8 +526,9 @@ async function expandTemplateCallsIn(
     // D1은 단일 prepare에서 가변 길이 IN 절 바인딩이 제한적이므로 이 방식을 사용
     const slugList = Array.from(slugMap.keys());
     const templateContents = new Map<string, string>();
+    // 비공개 페이지는 트랜스클루전 경유로도 노출되지 않도록 항상 차단한다.
     const batchStatements = slugList.map(slug =>
-        db.prepare('SELECT slug, content FROM pages WHERE slug = ? AND deleted_at IS NULL').bind(slug)
+        db.prepare('SELECT slug, content FROM pages WHERE slug = ? AND deleted_at IS NULL AND is_private = 0').bind(slug)
     );
     try {
         const batchResults = await db.batch<{ slug: string; content: string }>(batchStatements);

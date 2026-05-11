@@ -42,6 +42,7 @@ export interface Page {
     category: string | null;
     redirect_to: string | null;
     is_locked: number;
+    is_private: number;
     last_revision_id: number | null;
     version: number;
     created_at: number;

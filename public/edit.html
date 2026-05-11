@@ -345,11 +345,17 @@
                     </div>
                     <input type="hidden" id="categoryInput">
                 </div>
-                <div class="col-md-6 d-flex align-items-end" id="adminLockContainer" style="display: none !important;">
-                    <div class="form-check mb-2">
+                <div class="col-md-6 d-flex align-items-end gap-3" id="adminFlagsContainer" style="display: none !important;">
+                    <div class="form-check mb-2" id="adminLockContainer">
                         <input class="form-check-input" type="checkbox" id="isLockedCheck">
                         <label class="form-check-label text-danger fw-bold" for="isLockedCheck">
                             <i class="mdi mdi-lock"></i> 편집 잠금 (관리자 전용 문서로 설정)
+                        </label>
+                    </div>
+                    <div class="form-check mb-2" id="adminPrivateContainer">
+                        <input class="form-check-input" type="checkbox" id="isPrivateCheck">
+                        <label class="form-check-label text-danger fw-bold" for="isPrivateCheck">
+                            <i class="mdi mdi-eye-off"></i> 비공개 (관리자만 열람)
                         </label>
                     </div>
                 </div>

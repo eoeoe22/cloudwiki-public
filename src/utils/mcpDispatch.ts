@@ -11,6 +11,7 @@ import type { Env } from '../types';
 import { renderForAI, extractTOC, extractSection, findSectionsForQuery, expandTemplates } from './aiParser';
 import { normalizeSlug, isR2OnlyNamespace, isMcpReadableSlug } from './slug';
 import { getRevisionContent } from './r2';
+import type { RBAC } from './role';
 
 // ────────────────────────────────────────────────────────────────
 // 공용 헬퍼
@@ -271,6 +272,12 @@ export async function dispatchReadTool(
     toolDefs: McpToolDef[] = MCP_TOOL_DEFS_ALL
 ): Promise<ToolResult | null> {
     const db = c.env.DB;
+    const rbac = c.get('rbac') as RBAC | undefined;
+    const user = c.get('user') as { role: string } | undefined;
+    const role = user ? user.role : 'guest';
+    const canSeePrivate = rbac ? rbac.can(role, 'wiki:private') : false;
+    const privateFilter = canSeePrivate ? '' : ' AND is_private = 0';
+    const pPrivateFilter = canSeePrivate ? '' : ' AND p.is_private = 0';
 
     if (toolName === 'information') {
         const intro = buildInformationIntro(c, toolDefs);
@@ -280,7 +287,7 @@ export async function dispatchReadTool(
     }
 
     if (toolName === 'search_title') {
-        const results = await db.prepare('SELECT slug, rows, characters FROM pages WHERE slug LIKE ? AND deleted_at IS NULL LIMIT 15')
+        const results = await db.prepare(`SELECT slug, rows, characters FROM pages WHERE slug LIKE ? AND deleted_at IS NULL${privateFilter} LIMIT 15`)
             .bind(`%${args.query}%`).all();
         return { content: [{ type: 'text', text: JSON.stringify(results.results, null, 2) }] };
     }
@@ -293,7 +300,7 @@ export async function dispatchReadTool(
         if ([...rawQuery].length < 3) {
             const likeEscaped = rawQuery.replace(/[\\%_]/g, '\\$&');
             const likePattern = `%${likeEscaped}%`;
-            const fbSql = `SELECT p.slug, p.content, p.last_revision_id, p.rows, p.characters FROM pages p WHERE (p.slug LIKE ? ESCAPE '\\' OR p.content LIKE ? ESCAPE '\\') AND p.deleted_at IS NULL ORDER BY (CASE WHEN p.slug LIKE ? ESCAPE '\\' THEN 0 ELSE 1 END), p.updated_at DESC LIMIT 10`;
+            const fbSql = `SELECT p.slug, p.content, p.last_revision_id, p.rows, p.characters FROM pages p WHERE (p.slug LIKE ? ESCAPE '\\' OR p.content LIKE ? ESCAPE '\\') AND p.deleted_at IS NULL${pPrivateFilter} ORDER BY (CASE WHEN p.slug LIKE ? ESCAPE '\\' THEN 0 ELSE 1 END), p.updated_at DESC LIMIT 10`;
             const fbRes = await db.prepare(fbSql).bind(likePattern, likePattern, likePattern).all<{ slug: string; content: string; last_revision_id: number | null; rows: number | null; characters: number | null }>();
             rows = fbRes.results;
         } else {
@@ -302,7 +309,7 @@ export async function dispatchReadTool(
                 const ftsSql = `SELECT slug, content, last_revision_id, rows, characters
                                 FROM pages
                                 WHERE id IN (SELECT rowid FROM pages_fts WHERE pages_fts MATCH ?)
-                                  AND deleted_at IS NULL
+                                  AND deleted_at IS NULL${privateFilter}
                                 LIMIT 10`;
                 const ftsRes = await db.prepare(ftsSql).bind(safeMatchQuery).all<{ slug: string; content: string; last_revision_id: number | null; rows: number | null; characters: number | null }>();
                 rows = ftsRes.results;
@@ -311,7 +318,7 @@ export async function dispatchReadTool(
                 if (!/fts5.*(syntax|parse)/i.test(msg)) throw ftsErr;
                 const likeEscaped = rawQuery.replace(/[\\%_]/g, '\\$&');
                 const likePattern = `%${likeEscaped}%`;
-                const fbSql = `SELECT p.slug, p.content, p.last_revision_id, p.rows, p.characters FROM pages p WHERE (p.slug LIKE ? ESCAPE '\\' OR p.content LIKE ? ESCAPE '\\') AND p.deleted_at IS NULL ORDER BY (CASE WHEN p.slug LIKE ? ESCAPE '\\' THEN 0 ELSE 1 END), p.updated_at DESC LIMIT 10`;
+                const fbSql = `SELECT p.slug, p.content, p.last_revision_id, p.rows, p.characters FROM pages p WHERE (p.slug LIKE ? ESCAPE '\\' OR p.content LIKE ? ESCAPE '\\') AND p.deleted_at IS NULL${pPrivateFilter} ORDER BY (CASE WHEN p.slug LIKE ? ESCAPE '\\' THEN 0 ELSE 1 END), p.updated_at DESC LIMIT 10`;
                 const fbRes = await db.prepare(fbSql).bind(likePattern, likePattern, likePattern).all<{ slug: string; content: string; last_revision_id: number | null; rows: number | null; characters: number | null }>();
                 rows = fbRes.results;
             }
@@ -342,7 +349,7 @@ export async function dispatchReadTool(
         if (!isMcpReadableSlug(slug)) {
             return { content: [{ type: 'text', text: 'raw 데이터는 읽을 수 없습니다.' }], isError: true };
         }
-        const page = await db.prepare('SELECT slug, content, last_revision_id FROM pages WHERE slug = ? AND deleted_at IS NULL').bind(slug).first<{ slug: string, content: string, last_revision_id: number | null }>();
+        const page = await db.prepare(`SELECT slug, content, last_revision_id FROM pages WHERE slug = ? AND deleted_at IS NULL${privateFilter}`).bind(slug).first<{ slug: string, content: string, last_revision_id: number | null }>();
         if (!page) return { content: [{ type: 'text', text: 'Error: 문서를 찾을 수 없거나 비공개/삭제 상태입니다.' }], isError: true };
 
         let actualContent = page.content;
@@ -392,8 +399,8 @@ export async function dispatchReadTool(
         const prefixUpper = rootSlug + '0';
 
         const [subdocs, rootPage] = await Promise.all([
-            db.prepare('SELECT slug, rows, characters FROM pages WHERE deleted_at IS NULL AND slug > ? AND slug < ? ORDER BY slug ASC LIMIT 200').bind(prefixLower, prefixUpper).all<{ slug: string; rows: number | null; characters: number | null }>(),
-            db.prepare('SELECT slug, rows, characters FROM pages WHERE slug = ? AND deleted_at IS NULL').bind(rootSlug).first<{ slug: string; rows: number | null; characters: number | null }>()
+            db.prepare(`SELECT slug, rows, characters FROM pages WHERE deleted_at IS NULL${privateFilter} AND slug > ? AND slug < ? ORDER BY slug ASC LIMIT 200`).bind(prefixLower, prefixUpper).all<{ slug: string; rows: number | null; characters: number | null }>(),
+            db.prepare(`SELECT slug, rows, characters FROM pages WHERE slug = ? AND deleted_at IS NULL${privateFilter}`).bind(rootSlug).first<{ slug: string; rows: number | null; characters: number | null }>()
         ]);
 
         const formatStats = (r: number | null, ch: number | null) => ` (${r ?? 0}줄, ${ch ?? 0}자)`;
@@ -473,11 +480,11 @@ export async function dispatchReadTool(
     }
 
     if (toolName === 'get_category_info') {
-        const docs = await db.prepare('SELECT p.slug, p.rows, p.characters FROM page_categories pc JOIN pages p ON pc.page_id = p.id WHERE pc.category = ? AND p.deleted_at IS NULL ORDER BY p.slug ASC LIMIT 50')
+        const docs = await db.prepare(`SELECT p.slug, p.rows, p.characters FROM page_categories pc JOIN pages p ON pc.page_id = p.id WHERE pc.category = ? AND p.deleted_at IS NULL${pPrivateFilter} ORDER BY p.slug ASC LIMIT 50`)
             .bind(args.category).all<{ slug: string; rows: number | null; characters: number | null }>();
 
         const catSlug = normalizeSlug(`카테고리:${args.category}`);
-        const catPage = await db.prepare('SELECT slug, content, last_revision_id FROM pages WHERE slug = ? AND deleted_at IS NULL').bind(catSlug).first<{ slug: string, content: string, last_revision_id: number | null }>();
+        const catPage = await db.prepare(`SELECT slug, content, last_revision_id FROM pages WHERE slug = ? AND deleted_at IS NULL${privateFilter}`).bind(catSlug).first<{ slug: string, content: string, last_revision_id: number | null }>();
 
         let renderedCatContent = '카테고리 문서가 존재하지 않습니다.';
         if (catPage) {
@@ -505,7 +512,7 @@ export async function dispatchReadTool(
 
     if (toolName === 'get_document_category' || toolName === 'get_document_categoty') {
         const slug = normalizeSlug(args.title || '');
-        const cats = await db.prepare('SELECT pc.category FROM page_categories pc JOIN pages p ON pc.page_id = p.id WHERE p.slug = ? AND p.deleted_at IS NULL ORDER BY pc.category ASC')
+        const cats = await db.prepare(`SELECT pc.category FROM page_categories pc JOIN pages p ON pc.page_id = p.id WHERE p.slug = ? AND p.deleted_at IS NULL${pPrivateFilter} ORDER BY pc.category ASC`)
             .bind(slug).all<{ category: string }>();
         return { content: [{ type: 'text', text: JSON.stringify(cats.results.map(r => r.category), null, 2) }] };
     }
@@ -528,7 +535,7 @@ export async function dispatchReadTool(
             WHERE p.slug != ?
               AND pl.blog = 0
               AND pl.target_slug IN (${placeholders})
-              AND p.deleted_at IS NULL
+              AND p.deleted_at IS NULL${pPrivateFilter}
             ORDER BY p.updated_at DESC LIMIT 100
         `;
         const backlinks = await db.prepare(query).bind(slug, ...targetSlugs).all<{ slug: string; rows: number | null; characters: number | null }>();
@@ -538,6 +545,7 @@ export async function dispatchReadTool(
     if (toolName === 'get_recent_changes') {
         const limit = Math.min(100, Math.max(1, Number(args.limit) || 10));
         const wheres: string[] = ['p.deleted_at IS NULL'];
+        if (!canSeePrivate) wheres.push('p.is_private = 0');
         const binds: any[] = [];
 
         if (args.since && typeof args.since === 'string') {
@@ -587,7 +595,7 @@ export async function dispatchReadTool(
 
     if (toolName === 'list_discussions') {
         const slug = normalizeSlug(args.title || '');
-        const page = await db.prepare('SELECT id FROM pages WHERE slug = ? AND deleted_at IS NULL').bind(slug).first<{ id: number }>();
+        const page = await db.prepare(`SELECT id FROM pages WHERE slug = ? AND deleted_at IS NULL${privateFilter}`).bind(slug).first<{ id: number }>();
         if (!page) return { content: [{ type: 'text', text: 'Error: 문서를 찾을 수 없거나 비공개/삭제 상태입니다.' }], isError: true };
         const { results } = await db.prepare(`
             SELECT d.id, d.title, d.status, d.created_at, d.updated_at,
@@ -613,7 +621,7 @@ export async function dispatchReadTool(
             FROM discussions d
             LEFT JOIN users u ON d.author_id = u.id
             JOIN pages p ON d.page_id = p.id
-            WHERE d.id = ? AND d.deleted_at IS NULL AND p.deleted_at IS NULL
+            WHERE d.id = ? AND d.deleted_at IS NULL AND p.deleted_at IS NULL${pPrivateFilter}
         `).bind(dId).first();
         if (!discussion) return { content: [{ type: 'text', text: 'Error: 토론을 찾을 수 없거나 비공개/삭제 상태입니다.' }], isError: true };
         const { results: comments } = await db.prepare(`

@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS pages (
   deleted_at        INTEGER,
   category          TEXT,
   is_locked         INTEGER DEFAULT 0,
+  is_private        INTEGER DEFAULT 0,
   redirect_to       TEXT,
   rows              INTEGER,
   characters        INTEGER
@@ -327,15 +328,31 @@ CREATE TABLE IF NOT EXISTS discussion_mutes (
 CREATE INDEX IF NOT EXISTS idx_discussion_mutes_discussion ON discussion_mutes(discussion_id);
 
 -- 문서 주시 테이블
+-- scope='this'    : 해당 문서만 구독
+-- scope='subtree' : 해당 문서 + 하위 문서( slug LIKE '{watched}/%' )까지 구독
 CREATE TABLE IF NOT EXISTS page_watches (
     user_id   INTEGER NOT NULL,
     page_id   INTEGER NOT NULL,
+    scope     TEXT NOT NULL DEFAULT 'this',
     created_at INTEGER DEFAULT (unixepoch()),
     PRIMARY KEY (user_id, page_id),
     FOREIGN KEY (user_id) REFERENCES users(id),
     FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_page_watches_page ON page_watches(page_id);
+CREATE INDEX IF NOT EXISTS idx_page_watches_user ON page_watches(user_id);
+
+-- 카테고리 주시 테이블
+-- 해당 카테고리에 속한 모든 문서의 편집 알림을 받는다.
+-- page_categories 테이블과 JOIN 하여 알림 fan-out 대상을 결정한다.
+CREATE TABLE IF NOT EXISTS category_watches (
+    user_id    INTEGER NOT NULL,
+    category   TEXT NOT NULL,
+    created_at INTEGER DEFAULT (unixepoch()),
+    PRIMARY KEY (user_id, category),
+    FOREIGN KEY (user_id) REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS idx_category_watches_category ON category_watches(category);
 
 -- 블로그 포스트 테이블
 -- 위키 문서와 독립된 블로그 기능. 리비전 없음, 관리자만 작성 가능.

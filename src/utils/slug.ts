@@ -1,10 +1,13 @@
 /**
  * Slug를 정규화합니다.
- * 앞뒤 공백만 제거하고 원래 대소문자를 유지합니다.
+ * 앞뒤 공백을 제거하고, 결과의 맨 앞/뒤에 붙은 '/' 슬래시를 모두 제거합니다.
+ * (슬래시는 하위 문서 구분자로만 의미가 있으므로 시작/끝 위치에서는 무효 문자로 취급)
+ * 원래 대소문자는 유지합니다.
  * 예: "Foo Bar" -> "Foo Bar"
+ *     "/Foo/Bar/" -> "Foo/Bar"
  */
 export function normalizeSlug(text: string): string {
-    return text.trim();
+    return text.trim().replace(/^\/+/, '').replace(/\/+$/, '');
 }
 
 /**

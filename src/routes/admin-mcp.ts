@@ -225,6 +225,20 @@ export const ADMIN_ONLY_EDIT_TOOL_DEFS: McpToolDef[] = [
             },
             required: ['title', 'new_title']
         }
+    },
+    {
+        name: 'set_page_status',
+        description: '문서 본문은 건드리지 않고 상태 필드(편집 잠금 / 비공개 / 카테고리)만 변경합니다 (즉시 적용 — draft 모델 미사용, 새 리비전 생성 없음). 본문을 읽거나 수정할 필요 없이 메타데이터만 갱신할 때 사용합니다.\n\n- is_locked: 관리자 전용 편집 잠금. wiki:lock 권한이 필요합니다 (기본 admin 역할 보유).\n- is_private: 관리자 전용 열람(비공개). wiki:private 권한이 필요합니다 (기본 admin 역할 보유).\n- category: 쉼표로 구분된 카테고리 (한글/영숫자/공백/쉼표만 허용). 빈 문자열을 보내면 모든 카테고리가 제거됩니다. 생략하면 변경하지 않습니다.\n\n셋 중 하나 이상은 반드시 지정해야 하며, 지정한 필드만 갱신됩니다. 변경은 admin_log 에 기록되지만 리비전 이력에는 남지 않습니다 (편집 요약/저자 등록 없음).',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                title: { type: 'string', description: '대상 문서 슬러그' },
+                is_locked: { type: 'boolean', description: '관리자 전용 편집 잠금 여부 (선택, wiki:lock 권한 필요)' },
+                is_private: { type: 'boolean', description: '관리자 전용 열람(비공개) 여부 (선택, wiki:private 권한 필요)' },
+                category: { type: 'string', description: '쉼표로 구분된 카테고리 (선택, 빈 문자열이면 카테고리 모두 제거)' }
+            },
+            required: ['title']
+        }
     }
 ];
 
@@ -1405,6 +1419,121 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
             updated_backlink_slugs: updatedSlugs,
             skipped_locked_backlinks: skippedLockedSlugs,
         }, null, 2));
+    }
+
+    if (toolName === 'set_page_status') {
+        const slug = String(args.title || '').trim();
+        if (!slug) return asTextResult('Error: title 이 필요합니다.', true);
+
+        const wantsLock = typeof args.is_locked === 'boolean';
+        const wantsPrivate = typeof args.is_private === 'boolean';
+        const wantsCategory = typeof args.category === 'string';
+        if (!wantsLock && !wantsPrivate && !wantsCategory) {
+            return asTextResult('Error: is_locked / is_private / category 중 하나 이상을 지정해야 합니다.', true);
+        }
+
+        if (wantsLock && !rbac.can(user.role, 'wiki:lock')) {
+            return asTextResult('Error: is_locked 변경은 wiki:lock 권한이 필요합니다.', true);
+        }
+        if (wantsPrivate && !rbac.can(user.role, 'wiki:private')) {
+            return asTextResult('Error: is_private 변경은 wiki:private 권한이 필요합니다.', true);
+        }
+
+        // 이미지 네임스페이스는 별도 미디어 문서이므로 admin-mcp 메타 변경에서도 제외한다.
+        if (slug.startsWith('이미지:')) {
+            return asTextResult('Error: "이미지:" 네임스페이스는 admin-mcp 로 상태를 변경할 수 없습니다.', true);
+        }
+
+        const trimmedCategory = wantsCategory ? (args.category as string).trim() : null;
+        const newCategory = wantsCategory ? (trimmedCategory ? trimmedCategory : null) : undefined;
+        if (wantsCategory && newCategory && !/^[가-힣a-zA-Z0-9\s,]+$/.test(newCategory)) {
+            return asTextResult('Error: category 에는 특수문자를 사용할 수 없습니다.', true);
+        }
+
+        const page = await db
+            .prepare('SELECT id, is_locked, is_private, category FROM pages WHERE slug = ? AND deleted_at IS NULL')
+            .bind(slug)
+            .first<{ id: number; is_locked: number; is_private: number; category: string | null }>();
+        if (!page) return asTextResult('Error: 문서를 찾을 수 없거나 삭제된 상태입니다.', true);
+
+        // 이미 잠긴 문서는 wiki:lock 권한자만 다른 메타데이터(category/is_private) 도 변경할 수 있다.
+        // move_page / revert_page 와 동일하게, 잠금을 우회한 간접 메타 수정도 차단한다.
+        if (page.is_locked === 1 && !rbac.can(user.role, 'wiki:lock')) {
+            return asTextResult('Error: 잠긴 문서의 상태는 wiki:lock 권한이 있어야 변경할 수 있습니다.', true);
+        }
+
+        const finalIsLocked = wantsLock ? (args.is_locked ? 1 : 0) : page.is_locked;
+        const finalIsPrivate = wantsPrivate ? (args.is_private ? 1 : 0) : page.is_private;
+        const finalCategory = wantsCategory ? newCategory! /* string|null */ : page.category;
+        const categoryChanged = wantsCategory && (finalCategory ?? null) !== (page.category ?? null);
+
+        const lockChanged = wantsLock && finalIsLocked !== page.is_locked;
+        const privateChanged = wantsPrivate && finalIsPrivate !== page.is_private;
+        if (!lockChanged && !privateChanged && !categoryChanged) {
+            // 요청된 필드만 반향(echo) 한다. 요청하지 않은 컬럼은 동시 변경 가능성이 있어
+            // 스냅샷 값을 그대로 알리지 않는다.
+            const echo: Record<string, unknown> = { slug, changed: false, note: '요청된 상태가 이미 현재 값과 동일합니다.' };
+            if (wantsLock) echo.is_locked = finalIsLocked === 1;
+            if (wantsPrivate) echo.is_private = finalIsPrivate === 1;
+            if (wantsCategory) echo.category = finalCategory;
+            return asTextResult(JSON.stringify(echo, null, 2));
+        }
+
+        // 명시적으로 변경 요청된 컬럼만 UPDATE 한다. 호출자가 지정하지 않은 필드는
+        // 동시 다른 요청이 갱신했을 수 있으므로 스냅샷 값을 다시 쓰면 lost update 가 된다.
+        const setClauses: string[] = [];
+        const setBindings: unknown[] = [];
+        if (lockChanged) { setClauses.push('is_locked = ?'); setBindings.push(finalIsLocked); }
+        if (privateChanged) { setClauses.push('is_private = ?'); setBindings.push(finalIsPrivate); }
+        if (categoryChanged) { setClauses.push('category = ?'); setBindings.push(finalCategory); }
+        setClauses.push('updated_at = unixepoch()');
+        setBindings.push(page.id);
+
+        // pages.category 와 page_categories 인덱스를 한 batch 로 묶어 트랜잭션으로 적용한다.
+        // 분리해서 쓰면 두 번째 쓰기가 실패할 때 메타데이터와 카테고리 인덱스가 불일치하게 된다.
+        // 본문은 손대지 않으므로 page_links 는 재구성하지 않는다 (링크 추출은 본문에서만 이루어짐).
+        const txStmts: D1PreparedStatement[] = [
+            db.prepare(`UPDATE pages SET ${setClauses.join(', ')} WHERE id = ?`).bind(...setBindings),
+        ];
+        if (categoryChanged) {
+            txStmts.push(db.prepare('DELETE FROM page_categories WHERE page_id = ?').bind(page.id));
+            if (finalCategory) {
+                const cats = finalCategory.split(',').map(s => s.trim()).filter(Boolean);
+                for (const cat of cats) {
+                    txStmts.push(
+                        db.prepare('INSERT OR IGNORE INTO page_categories (page_id, category) VALUES (?, ?)')
+                            .bind(page.id, cat)
+                    );
+                }
+            }
+        }
+        await db.batch(txStmts);
+
+        const changes: string[] = [];
+        if (lockChanged) changes.push(`is_locked: ${page.is_locked === 1} → ${finalIsLocked === 1}`);
+        if (privateChanged) changes.push(`is_private: ${page.is_private === 1} → ${finalIsPrivate === 1}`);
+        if (categoryChanged) changes.push(`category: ${page.category ?? '(없음)'} → ${finalCategory ?? '(없음)'}`);
+
+        c.executionCtx.waitUntil(
+            db.prepare('INSERT INTO admin_log (type, log, user) VALUES (?, ?, ?)')
+                .bind('page_status', `[admin-mcp] 문서 상태 변경: ${slug} (${changes.join(', ')})`, user.id)
+                .run().catch((e: any) => console.error('admin-mcp set_page_status admin_log write failed:', e))
+        );
+
+        // is_private 변경 시 공유 캐시를 비롯해 백링크 캐시까지 무효화해야 비공개 응답이 새어나가지 않는다.
+        c.executionCtx.waitUntil(Promise.allSettled([
+            invalidatePageCache(c, slug),
+            refreshRecentChangesCache(c),
+            invalidateBacklinkCaches(c, slug, db),
+        ]));
+
+        // 응답에는 실제로 갱신된 필드만 노출한다. 갱신하지 않은 필드는 동시 다른 요청에
+        // 의해 바뀌었을 수 있으므로 스냅샷 값을 보고하면 호출자에게 잘못된 인상을 준다.
+        const result: Record<string, unknown> = { slug, changed: true, changes };
+        if (lockChanged) result.is_locked = finalIsLocked === 1;
+        if (privateChanged) result.is_private = finalIsPrivate === 1;
+        if (categoryChanged) result.category = finalCategory;
+        return asTextResult(JSON.stringify(result, null, 2));
     }
 
     return null;

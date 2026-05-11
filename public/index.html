@@ -797,11 +797,25 @@
         if (currentUser) {
           moreActionsHtml += `
           <li>
-            <button class="dropdown-item" id="watchToggleBtn" data-slug="${escapeHtml(actionSlug)}" onclick="toggleWatch(this.dataset.slug); return false;">
+            <button class="dropdown-item" id="watchToggleBtn" data-slug="${escapeHtml(actionSlug)}" onclick="openWatchMenu(this.dataset.slug); return false;">
               <i class="bi bi-eye"></i> <span id="watchToggleText">주시하기</span>
             </button>
           </li>
           `;
+
+          // 카테고리 문서('카테고리:xxx') 인 경우 — 해당 카테고리에 속한 모든 문서의 편집을
+          // 구독할 수 있는 별도 항목을 노출한다.
+          const _decodedActionSlug = decodeURIComponent(actionSlug);
+          if (_decodedActionSlug.startsWith('카테고리:')) {
+            const _catName = _decodedActionSlug.slice('카테고리:'.length);
+            moreActionsHtml += `
+            <li>
+              <button class="dropdown-item" id="catWatchBtn" data-category="${escapeHtml(_catName)}" onclick="toggleCategoryWatch(this.dataset.category); return false;">
+                <i class="bi bi-folder"></i> <span id="catWatchText">카테고리 주시</span>
+              </button>
+            </li>
+            `;
+          }
 
           if (canEdit) {
             if (page.deleted_at && isAdmin) {
@@ -834,6 +848,12 @@
         // 주시 상태 확인 (로그인 시)
         if (currentUser && document.getElementById('watchToggleBtn')) {
           loadWatchStatus(actionSlug);
+        }
+        if (currentUser && document.getElementById('catWatchBtn')) {
+          const _decodedSlug = decodeURIComponent(actionSlug);
+          if (_decodedSlug.startsWith('카테고리:')) {
+            loadCategoryWatchStatus(_decodedSlug.slice('카테고리:'.length));
+          }
         }
 
         // Raw 보기용 원본 컨텐츠 갱신 — showArticle 진입 시 이미 _exitRawMode() 로 상태를 초기화했으므로
@@ -948,29 +968,36 @@
           // 배너 로딩 실패는 조용히 무시
         }
 
-        // 상위 문서 네비게이션 (하위 문서인 경우)
+        // 문서 구조 네비게이션 (최상위 문서 포함, 하위 문서 생성 버튼 노출)
         const parentDocsEl = document.getElementById('parentDocsNav');
-        if (actionSlug.includes('/')) {
-          const parts = actionSlug.split('/');
-          const parentLinks = [];
-          for (let i = 0; i < parts.length - 1; i++) {
-            const parentSlug = parts.slice(0, i + 1).join('/');
-            parentLinks.push(`<a href="/w/${encodeURIComponent(parentSlug)}" class="text-decoration-none wiki-spa-link">${escapeHtml(parts[i])}</a>`);
-          }
-          parentDocsEl.innerHTML = `<span class="text-muted me-1">상위 문서:</span>${parentLinks.join(' <span class="text-muted mx-1">/</span> ')}`;
-          parentDocsEl.querySelectorAll('.wiki-spa-link').forEach(link => {
-            link.addEventListener('click', function (event) {
-              event.preventDefault();
-              navigateTo(this.getAttribute('href'));
-            });
-          });
-          parentDocsEl.classList.remove('d-none');
-          document.getElementById('parentDocsNavDivider').classList.remove('d-none');
-        } else {
-          parentDocsEl.classList.add('d-none');
-          parentDocsEl.innerHTML = '';
-          document.getElementById('parentDocsNavDivider').classList.add('d-none');
+        const parts = actionSlug.split('/');
+        const segments = [];
+        for (let i = 0; i < parts.length - 1; i++) {
+          const parentSlug = parts.slice(0, i + 1).join('/');
+          segments.push(`<a href="/w/${encodeURIComponent(parentSlug)}" class="text-decoration-none wiki-spa-link">${escapeHtml(parts[i])}</a>`);
         }
+        segments.push(`<span class="parent-docs-current fw-semibold">${escapeHtml(parts[parts.length - 1])}</span>`);
+
+        const canCreateSubdoc = !!(currentUser && currentUser.permissions && currentUser.permissions['wiki:edit']) && !actionSlug.includes(':');
+        const subdocButtonHtml = canCreateSubdoc
+          ? ` <span class="text-muted mx-1">/</span> <button type="button" class="btn btn-link btn-sm p-0 align-baseline parent-docs-create" data-slug="${escapeHtml(actionSlug)}" title="하위 문서 생성" aria-label="하위 문서 생성"><i class="bi bi-pencil-square"></i></button>`
+          : '';
+
+        parentDocsEl.innerHTML = `<span class="text-muted me-1">문서 구조:</span>${segments.join(' <span class="text-muted mx-1">/</span> ')}${subdocButtonHtml}`;
+        parentDocsEl.querySelectorAll('.wiki-spa-link').forEach(link => {
+          link.addEventListener('click', function (event) {
+            event.preventDefault();
+            navigateTo(this.getAttribute('href'));
+          });
+        });
+        const createSubdocBtn = parentDocsEl.querySelector('.parent-docs-create');
+        if (createSubdocBtn) {
+          createSubdocBtn.addEventListener('click', function () {
+            createSubdoc(this.dataset.slug);
+          });
+        }
+        parentDocsEl.classList.remove('d-none');
+        document.getElementById('parentDocsNavDivider').classList.remove('d-none');
 
         hideAllPages();
         document.getElementById('articlePage').classList.remove('d-none');
@@ -987,6 +1014,37 @@
         Swal.fire('오류', '문서를 불러오는 데 실패했습니다.', 'error');
         hideAllPages();
       }
+    }
+
+    // ── 하위 문서 생성 (문서 구조 네비게이션의 펜 버튼) ──
+    async function createSubdoc(parentSlug) {
+      if (!currentUser) {
+        Swal.fire('알림', '로그인 후 하위 문서를 만들 수 있습니다.', 'info');
+        return;
+      }
+      if (!(currentUser.permissions && currentUser.permissions['wiki:edit'])) {
+        Swal.fire('권한 없음', '하위 문서를 만들 권한이 없습니다.', 'error');
+        return;
+      }
+      const { value: subTitle } = await Swal.fire({
+        title: '하위 문서 생성',
+        input: 'text',
+        inputLabel: `"${parentSlug}" 아래에 만들 하위 문서 이름`,
+        inputPlaceholder: '하위 문서 이름',
+        showCancelButton: true,
+        confirmButtonText: '생성',
+        cancelButtonText: '취소',
+        inputValidator: (value) => {
+          const trimmed = value ? value.trim() : '';
+          if (!trimmed) return '이름을 입력해주세요.';
+          if (trimmed.includes('/')) return '슬래시(/)는 포함할 수 없습니다.';
+          if (trimmed.includes(':')) return '콜론(:)은 포함할 수 없습니다.';
+        }
+      });
+      const trimmed = subTitle ? subTitle.trim() : '';
+      if (!trimmed) return;
+      const newSlug = `${parentSlug}/${trimmed}`;
+      window.location.href = `/edit.html?slug=${encodeURIComponent(newSlug)}`;
     }
 
     // ── 이미지 문서 (미디어 기반) ──
@@ -1188,13 +1246,20 @@
       document.getElementById('articleTitle').textContent = decodedSlug;
       document.getElementById('articleMeta').innerHTML = '<span class="text-muted">아직 작성되지 않은 카테고리 문서입니다.</span>';
 
+      const watchBtn = currentUser
+        ? `<button class="btn btn-outline-secondary" id="catWatchBtn" data-category="${escapeHtml(categoryName)}" onclick="toggleCategoryWatch(this.dataset.category); return false;">
+            <i class="bi bi-eye"></i> <span id="catWatchText">카테고리 주시</span>
+          </button>`
+        : '';
       const actions = `
         <button class="btn btn-outline-secondary" onclick="window.location.href='/edit.html?slug=${encodeURIComponent(slug).replace(/'/g, "%27")}'">
           <i class="bi bi-pencil-square"></i> 카테고리 설명 생성
         </button>
+        ${watchBtn}
       `;
       document.getElementById('articleMainActions').innerHTML = actions;
       document.getElementById('articleMoreActions').innerHTML = '';
+      if (currentUser) loadCategoryWatchStatus(categoryName);
       document.getElementById('articleContent').innerHTML = listHtml;
       document.getElementById('tocContainer').classList.add('d-none');
       document.getElementById('docStatsCounter')?.classList.add('d-none');
@@ -1391,7 +1456,9 @@
         confirmButtonText: '이동',
         cancelButtonText: '취소',
         inputValidator: (value) => {
-          const trimmed = value ? value.trim() : '';
+          // 서버와 동일하게 앞뒤 공백/슬래시를 제거한 값을 기준으로 검증해
+          // 정규화 후 의도와 다른 결과(자기 자신으로 이동, 네임스페이스 변경 등)를 차단한다.
+          const trimmed = value ? value.trim().replace(/^\/+/, '').replace(/\/+$/, '') : '';
           if (!trimmed) return '새 이름을 입력해주세요.';
           if (trimmed === slug) return '현재 이름과 동일합니다.';
           const currentNs = slug.includes(':') ? slug.split(':')[0] : '';
@@ -1400,7 +1467,9 @@
         }
       });
 
-      const trimmedSlug = newSlug ? newSlug.trim() : '';
+      // 서버 src/utils/slug.ts 의 normalizeSlug 와 동일한 정책으로 정규화.
+      // 앞뒤 공백 + 앞뒤 슬래시('/') 를 제거해 서버 저장 키와 이동 후 redirect URL 을 일치시킨다.
+      const trimmedSlug = newSlug ? newSlug.trim().replace(/^\/+/, '').replace(/\/+$/, '') : '';
       if (trimmedSlug) {
         // 이동/역링크 일괄 갱신이 끝날 때까지 화면 상호작용을 차단하는 로딩 다이얼로그
         Swal.fire({
@@ -1744,22 +1813,33 @@
     // loadRecentChanges, getRelativeTime → common.js로 이동
 
     // ── 문서 주시 ──
+    // 현재 문서의 주시 상태(scope 포함)를 메모리에 캐싱해 드롭다운 라벨 표시 시 재요청을 줄인다.
+    // 빠른 네비게이션 시 이전 문서의 상태를 새 문서에 적용하지 않도록 slug 를 함께 보관한다.
+    let _currentWatchState = { slug: null, watching: false, scope: null };
+
     async function loadWatchStatus(slug) {
+      // 새 문서 로드 직후엔 항상 미주시 상태로 즉시 리셋해 stale UI 를 차단한다.
+      _currentWatchState = { slug, watching: false, scope: null };
+      updateWatchUI(_currentWatchState);
       try {
         const res = await fetch(`/api/w/${encodeURIComponent(slug)}/watch`);
         if (!res.ok) return;
         const data = await res.json();
-        updateWatchUI(data.watching);
+        // 응답이 도착하기 전에 다른 문서로 이동했다면 적용하지 않는다 (race 방지).
+        if (_currentWatchState.slug !== slug) return;
+        _currentWatchState = { slug, watching: !!data.watching, scope: data.scope || null };
+        updateWatchUI(_currentWatchState);
       } catch (e) { /* 무시 */ }
     }
 
-    function updateWatchUI(watching) {
+    function updateWatchUI(state) {
       const btn = document.getElementById('watchToggleBtn');
       const text = document.getElementById('watchToggleText');
       if (!btn || !text) return;
       const icon = btn.querySelector('i');
-      if (watching) {
-        text.textContent = '주시 해제';
+      if (state && state.watching) {
+        const scopeLabel = state.scope === 'subtree' ? '주시 중 (하위 문서 포함)' : '주시 중';
+        text.textContent = scopeLabel;
         if (icon) { icon.className = 'bi bi-eye-fill'; }
       } else {
         text.textContent = '주시하기';
@@ -1767,17 +1847,166 @@
       }
     }
 
-    async function toggleWatch(slug) {
+    // 주시 옵션 선택 모달
+    async function openWatchMenu(slug) {
+      // 캐시된 상태가 이 슬러그 기준이 아니면 무조건 재조회한다.
+      // (빠른 네비게이션 직후 캐시는 이전 문서의 상태일 수 있음)
+      if (_currentWatchState.slug !== slug) {
+        await loadWatchStatus(slug);
+      }
+      const cur = (_currentWatchState.slug === slug)
+        ? _currentWatchState
+        : { slug, watching: false, scope: null };
+      const watching = !!cur.watching;
+      const scope = cur.scope || null;
+
+      const html = `
+        <div class="text-start">
+          <div class="form-check mb-2">
+            <input class="form-check-input" type="radio" name="watchScope" id="watchScopeThis" value="this"
+              ${(!watching || scope === 'this') ? 'checked' : ''}>
+            <label class="form-check-label" for="watchScopeThis">
+              <i class="bi bi-file-earmark-text"></i> 이 문서만 주시
+              <div class="small text-muted">이 문서가 편집될 때만 알림을 받습니다.</div>
+            </label>
+          </div>
+          <div class="form-check mb-2">
+            <input class="form-check-input" type="radio" name="watchScope" id="watchScopeSubtree" value="subtree"
+              ${scope === 'subtree' ? 'checked' : ''}>
+            <label class="form-check-label" for="watchScopeSubtree">
+              <i class="bi bi-diagram-3"></i> 하위 문서까지 주시
+              <div class="small text-muted">이 문서와 모든 하위 문서(<code>${escapeHtml(slug)}/...</code>)의 편집 알림을 받습니다.</div>
+            </label>
+          </div>
+        </div>
+      `;
+
+      const result = await Swal.fire({
+        title: '문서 주시 설정',
+        html,
+        showCancelButton: true,
+        showDenyButton: watching,
+        confirmButtonText: watching ? '변경 저장' : '주시 시작',
+        denyButtonText: '주시 해제',
+        cancelButtonText: '닫기',
+        focusConfirm: false,
+        preConfirm: () => {
+          const checked = document.querySelector('input[name="watchScope"]:checked');
+          return checked ? checked.value : 'this';
+        },
+      });
+
+      if (result.isConfirmed) {
+        await setWatch(slug, result.value || 'this');
+      } else if (result.isDenied) {
+        await unwatch(slug);
+      }
+    }
+
+    async function setWatch(slug, scope) {
       try {
-        const res = await fetch(`/api/w/${encodeURIComponent(slug)}/watch`, { method: 'POST' });
+        const res = await fetch(`/api/w/${encodeURIComponent(slug)}/watch`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ scope, action: 'set' }),
+        });
         if (!res.ok) {
           const data = await res.json();
           throw new Error(data.error || '주시 설정 실패');
         }
         const data = await res.json();
-        updateWatchUI(data.watching);
+        // 응답 처리 도중 다른 문서로 이동했다면 UI 갱신을 생략한다.
+        if (_currentWatchState.slug === slug) {
+          _currentWatchState = { slug, watching: !!data.watching, scope: data.scope || null };
+          updateWatchUI(_currentWatchState);
+        }
         const Toast = Swal.mixin({ toast: true, position: 'top-end', showConfirmButton: false, timer: 1500 });
-        Toast.fire({ icon: 'success', title: data.watching ? '문서를 주시합니다.' : '주시를 해제했습니다.' });
+        Toast.fire({
+          icon: 'success',
+          title: scope === 'subtree' ? '하위 문서까지 주시합니다.' : '문서를 주시합니다.',
+        });
+      } catch (err) {
+        Swal.fire('오류', err.message, 'error');
+      }
+    }
+
+    async function unwatch(slug) {
+      // 캐시된 상태가 다른 문서의 것이면 새로 받아서 확정한다.
+      // (stale scope 로 toggle 을 보내면 서버가 새 주시 row 를 INSERT 하므로 사고 방지)
+      if (_currentWatchState.slug !== slug) {
+        await loadWatchStatus(slug);
+      }
+      if (_currentWatchState.slug !== slug || !_currentWatchState.watching) {
+        // 실제로 주시 중이 아니면 아무것도 하지 않는다.
+        return;
+      }
+      const scope = _currentWatchState.scope || 'this';
+      try {
+        const res = await fetch(`/api/w/${encodeURIComponent(slug)}/watch`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ scope, action: 'toggle' }),
+        });
+        if (!res.ok) {
+          const data = await res.json();
+          throw new Error(data.error || '주시 해제 실패');
+        }
+        const data = await res.json();
+        if (_currentWatchState.slug === slug) {
+          _currentWatchState = { slug, watching: !!data.watching, scope: data.scope || null };
+          updateWatchUI(_currentWatchState);
+        }
+        const Toast = Swal.mixin({ toast: true, position: 'top-end', showConfirmButton: false, timer: 1500 });
+        Toast.fire({ icon: 'success', title: '주시를 해제했습니다.' });
+      } catch (err) {
+        Swal.fire('오류', err.message, 'error');
+      }
+    }
+
+    // ── 카테고리 주시 ──
+    // 빠른 네비게이션 race 방지를 위해 응답 도착 시점에 #catWatchBtn 의
+    // data-category 가 응답 대상과 같은지 확인한 뒤에만 UI 를 갱신한다.
+    async function loadCategoryWatchStatus(category) {
+      // 새 카테고리 진입 시 즉시 미주시로 리셋해 stale UI 차단
+      updateCategoryWatchUIFor(category, false);
+      try {
+        const res = await fetch(`/api/w/category/${encodeURIComponent(category)}/watch`);
+        if (!res.ok) return;
+        const data = await res.json();
+        updateCategoryWatchUIFor(category, !!data.watching);
+      } catch (e) { /* 무시 */ }
+    }
+
+    // 현재 표시 중인 카테고리가 인자와 일치할 때만 UI 를 갱신한다.
+    function updateCategoryWatchUIFor(category, watching) {
+      const btn = document.getElementById('catWatchBtn');
+      const text = document.getElementById('catWatchText');
+      if (!btn || !text) return;
+      if (btn.dataset.category !== category) return;
+      const icon = btn.querySelector('i');
+      if (watching) {
+        text.textContent = '카테고리 주시 해제';
+        if (icon) icon.className = 'bi bi-folder-fill';
+      } else {
+        text.textContent = '카테고리 주시';
+        if (icon) icon.className = 'bi bi-folder';
+      }
+    }
+
+    async function toggleCategoryWatch(category) {
+      try {
+        const res = await fetch(`/api/w/category/${encodeURIComponent(category)}/watch`, { method: 'POST' });
+        if (!res.ok) {
+          const data = await res.json();
+          throw new Error(data.error || '카테고리 주시 실패');
+        }
+        const data = await res.json();
+        updateCategoryWatchUIFor(category, !!data.watching);
+        const Toast = Swal.mixin({ toast: true, position: 'top-end', showConfirmButton: false, timer: 1500 });
+        Toast.fire({
+          icon: 'success',
+          title: data.watching ? '카테고리를 주시합니다.' : '카테고리 주시를 해제했습니다.',
+        });
       } catch (err) {
         Swal.fire('오류', err.message, 'error');
       }

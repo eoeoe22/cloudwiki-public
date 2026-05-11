@@ -694,6 +694,54 @@ html[data-theme="dark"] .wiki-content pre[class*="language-"] code[class*="langu
   padding-bottom: 2px;
 }
 
+/* ── Rich (rendered) Diff View — GitHub 의 md rich diff 와 유사 ── */
+.diff-mode-toggle {
+  display: inline-flex;
+  margin-bottom: 0.75rem;
+}
+
+.rich-diff-container {
+  text-align: left;
+  max-height: 70vh;
+  overflow-y: auto;
+  border: 1px solid var(--wiki-border);
+  border-radius: 8px;
+  background: var(--wiki-bg);
+  padding: 0.75rem 1rem;
+}
+
+.rich-diff-block {
+  padding: 0.35rem 0.75rem;
+  border-left: 4px solid transparent;
+  border-radius: 4px;
+  margin: 0.25rem 0;
+}
+
+.rich-diff-block > *:first-child {
+  margin-top: 0;
+}
+
+.rich-diff-block > *:last-child {
+  margin-bottom: 0;
+}
+
+.rich-diff-block.rich-diff-add {
+  background: var(--wiki-diff-add-bg);
+  border-left-color: var(--wiki-success, #198754);
+}
+
+.rich-diff-block.rich-diff-del {
+  background: var(--wiki-diff-del-bg);
+  border-left-color: var(--wiki-danger, #dc3545);
+  /* 줄긋기는 표/이미지 등에 어색하므로 사용하지 않고 배경/테두리로만 표시 */
+  opacity: 0.92;
+}
+
+.rich-diff-block.rich-diff-same {
+  border-left-color: var(--wiki-border);
+  opacity: 0.85;
+}
+
 /* ── Parent Docs Navigation (breadcrumb) ── */
 .parent-docs-nav {
   font-size: 0.9rem;
@@ -702,6 +750,18 @@ html[data-theme="dark"] .wiki-content pre[class*="language-"] code[class*="langu
 
 .parent-docs-nav a {
   color: var(--wiki-primary);
+}
+
+.parent-docs-nav .parent-docs-create {
+  color: var(--wiki-primary);
+  text-decoration: none;
+  vertical-align: baseline;
+  line-height: 1;
+}
+
+.parent-docs-nav .parent-docs-create:hover {
+  color: var(--wiki-primary);
+  opacity: 0.75;
 }
 
 /* ── Backlinks Section ── */
