@@ -231,7 +231,7 @@
     .cm-mobile-tabs {
         display: flex;
         flex-shrink: 0;
-        background: var(--wiki-bg-alt, #f8f9fa);
+        background: var(--wiki-card-bg);
         border-bottom: 1px solid var(--wiki-border);
     }
 

@@ -1791,14 +1791,23 @@ document.addEventListener('mousedown', (e) => {
 // 에디터 변경 감지 및 트리거
 // ─────────────────────────────────────────────────────────────────────────────
 
-// 부착은 idempotent — setTimeout 폴링과 명시적 ensureAutocompleteAttached 호출
-// 양쪽에서 호출되어도 editorEventHandlers.change 에 중복 push 되지 않도록 가드한다.
+// 부착은 idempotent — 즉시 시도 / 'wiki-editor-ready' 이벤트 / 명시적
+// ensureAutocompleteAttached 호출 어느 경로로 호출되어도
+// editorEventHandlers.change 에 중복 push 되지 않도록 _autocompleteAttached 로
+// 가드한다.
+//
+// 정상 경로 — edit-main.ts 가 editor shim 초기화 직후 'wiki-editor-ready' 이벤트를
+// 디스패치하고 ensureAutocompleteAttached 도 호출한다. 둘 중 어느 하나만 동작해도
+// 결정적으로 부착된다. 과거에는 setTimeout 100ms 폴링(50회/5초 상한)을 안전망으로
+// 두었으나 (a) 슬로우 네트워크에서 CM6 CDN 로드가 5초를 넘으면 폴링이 만료되고
+// (b) 매 100ms 마다 깨어나며 배터리/CPU 를 낭비했다. 이벤트 기반으로 바꾸면
+// 폴링 없이도 main.ts 의 디스패치가 곧 부착을 보장한다.
 let _autocompleteAttached = false;
 
 function attachAutocomplete(): void {
     if (_autocompleteAttached) return;
     const editor = window.editor;
-    if (!editor) { setTimeout(attachAutocomplete, 100); return; }
+    if (!editor) return;
     _autocompleteAttached = true;
 
     editor.on?.('change', () => {
@@ -1890,10 +1899,19 @@ function attachAutocomplete(): void {
     });
 }
 
-setTimeout(attachAutocomplete, 500);
+// 모듈 평가 시점에 즉시 1회 시도. 보통 이 시점에는 window.editor 가 아직 세팅되지
+// 않아 no-op 으로 끝난다. 단, edit-main.ts 가 동기 경로로 매우 빠르게 에디터 shim 을
+// 만든 드문 경우(또는 미래의 리팩터링)에 한 번에 부착할 수 있도록 시도해 둔다.
+attachAutocomplete();
 
-// 명시적 호출 진입점: edit-main.ts 가 에디터 shim 초기화 직후 호출해
-// setTimeout 폴링과 무관하게 즉시 부착할 수 있도록 노출한다.
+// 이벤트 기반 부착 — edit-main.ts 가 editor shim 을 만든 직후
+// `window.dispatchEvent(new Event('wiki-editor-ready'))` 를 호출하여 부착을 트리거한다.
+// 이벤트가 두 번 디스패치되어도 attachAutocomplete 내부의 _autocompleteAttached
+// 가드 덕에 안전.
+window.addEventListener('wiki-editor-ready', attachAutocomplete);
+
+// 명시적 호출 진입점: edit-main.ts 가 에디터 shim 초기화 직후 호출.
+// 이벤트 디스패치와 별개로 백업 경로로 유지해 둔다.
 // 가드는 attachAutocomplete 내부에서 수행하므로 여기서는 단순 위임.
 window.ensureAutocompleteAttached = attachAutocomplete;
 

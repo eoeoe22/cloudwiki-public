@@ -597,7 +597,11 @@ async function applyNewPageInsert(
 // 새로 발급된 draft 응답에 포함하는 라이프사이클 가이드.
 // 같은 draft 가 이어서 갱신될 때는 더 짧은 안내(DRAFT_UPDATE_NOTE)만 보낸다.
 const DRAFT_FIRST_ISSUE_NOTE =
-    'draft 가 발급되었습니다. 사용법:\n' +
+    'draft 가 발급되었습니다.\n\n' +
+    '⚠️ 헤딩 작성 규칙: 위키는 헤딩(##, ###, ...)에 자동으로 계층 번호("1.", "1.1." 등)를 부여합니다. ' +
+    '헤딩 텍스트에 번호를 직접 적지 마세요. 예: `## 1. 개요` ❌ → `## 개요` ✅. ' +
+    '직접 적으면 렌더링 시 "1. 1. 개요" 처럼 번호가 중복 표시됩니다. 목차 내 다른 섹션을 참조할 때는 [[문서#s-1.2]] 형식의 섹션 앵커를 사용하세요.\n\n' +
+    '사용법:\n' +
     '  1) 이어서 같은 title 로 patch_page / edit_section / create_or_update_page 를 호출하면 이 draft 에 누적됩니다 (사용자×슬러그당 1개).\n' +
     '  2) read_draft(title) 로 진행 중 본문 확인.\n' +
     '  3) 편집이 끝나면 commit_edit(draft_id, summary) 로 1개 리비전을 만들어 저장하세요.\n' +
@@ -1427,6 +1431,9 @@ export function buildUserEditInformationSuffix(userName: string): string {
         `(같은 슬러그에 대해 사용자별 1개). 응답으로 \`draft_id\` 를 받고, 편집이 끝나면 commit_edit(draft_id, summary) 를 호출해 ` +
         `1개 리비전으로 저장합니다. 시작 시점 이후 다른 사용자가 페이지를 수정했으면 commit_edit 가 충돌로 거부합니다 ` +
         `(이 경우 discard_edit 후 read_document 로 최신 상태를 다시 읽고 편집을 재구성). draft 는 마지막 활동 이후 12시간이 지나면 자동 삭제됩니다.\n\n` +
+        `**⚠️ 헤딩 작성 규칙**: 위키는 헤딩(##, ###, ...)에 자동으로 계층 번호("1.", "1.1." 등)를 부여합니다. ` +
+        `헤딩 텍스트에 번호를 직접 적지 마세요 (예: \`## 1. 개요\` ❌ → \`## 개요\` ✅). 직접 적으면 렌더링 시 "1. 1. 개요" 처럼 중복 번호가 표시됩니다. ` +
+        `목차 내 다른 섹션을 참조할 때는 \`[[문서#s-1.2]]\` 형식의 섹션 앵커를 사용하세요.\n\n` +
         `**즉시 적용** (draft 모델 미사용): revert_page.\n\n` +
         USER_EDIT_TOOL_DEFS.map(t => `- ${t.name}`).join('\n') +
         `\n\n모든 commit / 즉시 적용 동작은 admin_log 에 기록되며 리비전 summary 에 [MCP] 접두가 붙습니다 (draft 단계는 기록 없음).`;

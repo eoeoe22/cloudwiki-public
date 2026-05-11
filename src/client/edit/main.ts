@@ -438,6 +438,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         };
 
         syncStateToWindow();
+        // 익스텐션 데이터 shim 의 on() 은 no-op 이라 자동완성이 실제로 동작하진
+        // 않지만, autocomplete.ts 의 부착 가드가 idempotent 이므로 결정적으로
+        // 한 번 부착해 둔다 (이벤트 + 명시 호출 양쪽).
+        window.dispatchEvent(new Event('wiki-editor-ready'));
+        if (typeof window.ensureAutocompleteAttached === 'function') {
+            window.ensureAutocompleteAttached();
+        }
         // 변경 사항 미리보기, 스크롤 동기화, 자동 프리뷰 등 건너뜀
     } else {
         // ── CodeMirror 6 에디터 초기화 ──
@@ -1310,11 +1317,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         };
 
         syncStateToWindow();
-        // 에디터 shim 이 준비됐으니 자동완성 부착을 즉시 트리거.
-        // autocomplete.ts 의 setTimeout(attachAutocomplete, 500) 폴링과 무관하게
-        // 부착이 일어나도록 명시 호출 — 부착 자체는 _autocompleteAttached 가드로
-        // idempotent. 블로그 에디터처럼 편집 흐름이 일찍 끝나는 경로에서 폴링
-        // 타이밍에 의존하지 않고 에디터가 켜진 직후 결정적으로 부착된다.
+        // 에디터 shim 이 준비됐으니 자동완성 부착을 결정적으로 트리거한다.
+        // autocomplete.ts 가 'wiki-editor-ready' 이벤트와 ensureAutocompleteAttached
+        // 양쪽을 가드 idempotent 하게 처리하므로 어느 한 경로만 도달해도 부착된다.
+        // 폴링 안전망을 제거한 뒤로는 이 트리거가 누락되면 자동완성이 부착되지
+        // 않으므로, 두 경로를 모두 호출해 한쪽이 어떤 이유(미래의 리팩터링,
+        // window 프로퍼티 충돌 등)로 무시되더라도 다른 한쪽이 동작하도록 한다.
+        window.dispatchEvent(new Event('wiki-editor-ready'));
         if (typeof window.ensureAutocompleteAttached === 'function') {
             window.ensureAutocompleteAttached();
         }
