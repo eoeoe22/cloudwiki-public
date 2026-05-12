@@ -1,0 +1,135 @@
+/* ── Diff View ── */
+.diff-container {
+  text-align: left;
+  max-height: 500px;
+  overflow-y: auto;
+  border: 1px solid var(--wiki-border);
+  border-radius: 8px;
+  background: var(--wiki-bg);
+}
+
+.diff-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.diff-table tr.diff-add {
+  background: var(--wiki-diff-add-bg);
+  color: var(--wiki-diff-add-text);
+}
+
+.diff-table tr.diff-del {
+  background: var(--wiki-diff-del-bg);
+  color: var(--wiki-diff-del-text);
+}
+
+.diff-table tr.diff-same {
+  background: transparent;
+  color: var(--wiki-text-muted);
+}
+
+.diff-table td {
+  padding: 1px 8px;
+  border: none;
+  vertical-align: top;
+}
+
+.diff-table td.diff-prefix {
+  width: 20px;
+  text-align: center;
+  user-select: none;
+  color: var(--wiki-text-muted);
+  font-weight: 700;
+  opacity: 0.7;
+}
+
+.diff-table tr.diff-add td.diff-prefix {
+  color: var(--wiki-success);
+  opacity: 1;
+}
+
+.diff-table tr.diff-del td.diff-prefix {
+  color: var(--wiki-danger);
+  opacity: 1;
+}
+
+.diff-table td.diff-line {
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.diff-empty {
+  padding: 2rem;
+  text-align: center;
+  color: var(--wiki-text-muted);
+  font-style: italic;
+}
+
+.diff-table tr.diff-skip {
+  background: transparent;
+}
+
+.diff-table tr.diff-skip td.diff-prefix {
+  color: var(--wiki-text-muted);
+  opacity: 0.6;
+  font-weight: 400;
+}
+
+.diff-table td.diff-skip-label {
+  color: var(--wiki-text-muted);
+  font-style: italic;
+  font-size: 0.78rem;
+  padding-top: 2px;
+  padding-bottom: 2px;
+}
+
+/* ── Rich (rendered) Diff View — GitHub 의 md rich diff 와 유사 ── */
+.diff-mode-toggle {
+  display: inline-flex;
+  margin-bottom: 0.75rem;
+}
+
+.rich-diff-container {
+  text-align: left;
+  max-height: 70vh;
+  overflow-y: auto;
+  border: 1px solid var(--wiki-border);
+  border-radius: 8px;
+  background: var(--wiki-bg);
+  padding: 0.75rem 1rem;
+}
+
+.rich-diff-block {
+  padding: 0.35rem 0.75rem;
+  border-left: 4px solid transparent;
+  border-radius: 4px;
+  margin: 0.25rem 0;
+}
+
+.rich-diff-block > *:first-child {
+  margin-top: 0;
+}
+
+.rich-diff-block > *:last-child {
+  margin-bottom: 0;
+}
+
+.rich-diff-block.rich-diff-add {
+  background: var(--wiki-diff-add-bg);
+  border-left-color: var(--wiki-success, #198754);
+}
+
+.rich-diff-block.rich-diff-del {
+  background: var(--wiki-diff-del-bg);
+  border-left-color: var(--wiki-danger, #dc3545);
+  /* 줄긋기는 표/이미지 등에 어색하므로 사용하지 않고 배경/테두리로만 표시 */
+  opacity: 0.92;
+}
+
+.rich-diff-block.rich-diff-same {
+  border-left-color: var(--wiki-border);
+  opacity: 0.85;
+}

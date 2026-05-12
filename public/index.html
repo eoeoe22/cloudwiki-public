@@ -28,6 +28,7 @@
   <!-- 테마 FOUC 방지: CSS 로드 후 즉시 테마 적용 -->
   <script>try{var t=localStorage.getItem('themeMode');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
   <link rel="stylesheet" href="/render.css">
+  <link rel="stylesheet" href="/css/wiki-nav.css">
 </head>
 
 <body style="-webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;">
@@ -131,7 +132,10 @@
           </div>
 
           <!-- 상위 문서 (하위 문서인 경우) -->
-          <div id="parentDocsNav" class="d-none parent-docs-nav mb-0"></div>
+          <div id="parentDocsNavWrapper" class="parent-docs-nav-wrapper">
+            <div id="parentDocsNav" class="d-none parent-docs-nav mb-0"></div>
+            <div id="parentDocsSiblings" class="d-none parent-docs-siblings"></div>
+          </div>
           <hr id="parentDocsNavDivider" class="d-none mt-2 mb-3">
 
           <!-- 목차 아코디언 -->
@@ -970,13 +974,22 @@
 
         // 문서 구조 네비게이션 (최상위 문서 포함, 하위 문서 생성 버튼 노출)
         const parentDocsEl = document.getElementById('parentDocsNav');
+        closeParentDocsSiblings();
         const parts = actionSlug.split('/');
         const segments = [];
-        for (let i = 0; i < parts.length - 1; i++) {
-          const parentSlug = parts.slice(0, i + 1).join('/');
-          segments.push(`<a href="/w/${encodeURIComponent(parentSlug)}" class="text-decoration-none wiki-spa-link">${escapeHtml(parts[i])}</a>`);
+        for (let i = 0; i < parts.length; i++) {
+          const isCurrent = (i === parts.length - 1);
+          const segSlug = parts.slice(0, i + 1).join('/');
+          const parentSlug = i === 0 ? '' : parts.slice(0, i).join('/');
+          const labelHtml = isCurrent
+            ? `<span class="parent-docs-current fw-semibold">${escapeHtml(parts[i])}</span>`
+            : `<a href="/w/${encodeURIComponent(segSlug)}" class="text-decoration-none wiki-spa-link">${escapeHtml(parts[i])}</a>`;
+          // 최상위(i=0)는 화살표 없음. 그 외(중간/현재)에는 chevron 토글 부착
+          const chevronHtml = i === 0
+            ? ''
+            : ` <button type="button" class="btn btn-link btn-sm p-0 align-baseline parent-docs-chevron" data-parent="${escapeHtml(parentSlug)}" data-current="${escapeHtml(parts[i])}" data-level="${i}" title="동일 단계 문서 보기" aria-label="동일 단계 문서 보기" aria-expanded="false"><i class="bi bi-chevron-down"></i></button>`;
+          segments.push(`<span class="parent-docs-segment">${labelHtml}${chevronHtml}</span>`);
         }
-        segments.push(`<span class="parent-docs-current fw-semibold">${escapeHtml(parts[parts.length - 1])}</span>`);
 
         const canCreateSubdoc = !!(currentUser && currentUser.permissions && currentUser.permissions['wiki:edit']) && !actionSlug.includes(':');
         const subdocButtonHtml = canCreateSubdoc
@@ -996,6 +1009,11 @@
             createSubdoc(this.dataset.slug);
           });
         }
+        parentDocsEl.querySelectorAll('.parent-docs-chevron').forEach(btn => {
+          btn.addEventListener('click', function () {
+            toggleParentDocsSiblings(this);
+          });
+        });
         parentDocsEl.classList.remove('d-none');
         document.getElementById('parentDocsNavDivider').classList.remove('d-none');
 
@@ -1045,6 +1063,140 @@
       if (!trimmed) return;
       const newSlug = `${parentSlug}/${trimmed}`;
       window.location.href = `/edit.html?slug=${encodeURIComponent(newSlug)}`;
+    }
+
+    // ── 문서 구조 chevron 토글: 동일 단계 문서 드롭다운 ──
+    // 패널은 breadcrumb 와 wrapper 안에서 형제 노드로 둔다 (wrapper 가
+    // position: relative). breadcrumb 의 innerHTML 가 재구성될 때 패널이
+    // 함께 지워지지 않도록 별도 노드로 유지한다. wrapper 가 스크롤/리플로우
+    // 될 때 함께 움직이므로 별도의 scroll 추적 로직은 필요 없다.
+    let __parentDocsSiblingsReqSeq = 0;
+    let __parentDocsSiblingsActiveBtn = null;
+    function positionParentDocsSiblings(btn) {
+      const panelEl = document.getElementById('parentDocsSiblings');
+      const wrapperEl = document.getElementById('parentDocsNavWrapper');
+      if (!panelEl || !wrapperEl) return;
+      // 드롭다운의 좌측은 chevron 이 아니라 해당 breadcrumb 노드(세그먼트)
+      // 시작점과 정렬한다.
+      const anchorEl = btn.closest('.parent-docs-segment') || btn;
+      const wrapperRect = wrapperEl.getBoundingClientRect();
+      const btnRect = btn.getBoundingClientRect();
+      const anchorRect = anchorEl.getBoundingClientRect();
+
+      panelEl.style.position = 'absolute';
+      // 세로 위치는 chevron 바로 아래로 유지
+      panelEl.style.top = `${Math.round(btnRect.bottom - wrapperRect.top + 4)}px`;
+
+      // 화면 우측을 벗어나지 않도록 좌측 좌표를 viewport 기준으로 제한
+      const desiredLeft = anchorRect.left - wrapperRect.left;
+      const panelW = panelEl.offsetWidth || 192;
+      const viewportW = document.documentElement.clientWidth;
+      const maxLeftViewport = viewportW - panelW - 8; // viewport 우측 8px 여백
+      const maxLeftRelative = Math.max(0, maxLeftViewport - wrapperRect.left);
+      panelEl.style.left = `${Math.round(Math.min(desiredLeft, maxLeftRelative))}px`;
+    }
+    function closeParentDocsSiblings() {
+      const panelEl = document.getElementById('parentDocsSiblings');
+      const parentDocsEl = document.getElementById('parentDocsNav');
+      if (parentDocsEl) {
+        parentDocsEl.querySelectorAll('.parent-docs-chevron').forEach(b => {
+          b.classList.remove('active');
+          b.setAttribute('aria-expanded', 'false');
+        });
+      }
+      if (panelEl) {
+        panelEl.classList.add('d-none');
+        panelEl.innerHTML = '';
+      }
+      __parentDocsSiblingsActiveBtn = null;
+      __parentDocsSiblingsReqSeq++; // 진행 중 응답 무효화
+      document.removeEventListener('click', onParentDocsSiblingsOutsideClick, true);
+      document.removeEventListener('keydown', onParentDocsSiblingsKeydown, true);
+      window.removeEventListener('resize', onParentDocsSiblingsViewportChange);
+    }
+    function onParentDocsSiblingsOutsideClick(ev) {
+      const panelEl = document.getElementById('parentDocsSiblings');
+      if (panelEl && panelEl.contains(ev.target)) return;
+      if (__parentDocsSiblingsActiveBtn && __parentDocsSiblingsActiveBtn.contains(ev.target)) return;
+      closeParentDocsSiblings();
+    }
+    function onParentDocsSiblingsKeydown(ev) {
+      if (ev.key === 'Escape') {
+        // closeParentDocsSiblings() 호출 시 활성 버튼 참조가 사라지므로
+        // 포커스를 되돌릴 트리거를 먼저 캡쳐해둔다.
+        const triggerBtn = __parentDocsSiblingsActiveBtn;
+        closeParentDocsSiblings();
+        if (triggerBtn) triggerBtn.focus();
+      }
+    }
+    function onParentDocsSiblingsViewportChange() {
+      // 리사이즈 등으로 breadcrumb 가 리플로우되면 chevron 위치도 바뀌므로 재배치
+      if (__parentDocsSiblingsActiveBtn) positionParentDocsSiblings(__parentDocsSiblingsActiveBtn);
+    }
+
+    async function toggleParentDocsSiblings(btn) {
+      const panelEl = document.getElementById('parentDocsSiblings');
+      if (!panelEl) return;
+      const parentSlug = btn.dataset.parent || '';
+      const currentName = btn.dataset.current || '';
+      const wasActive = btn.classList.contains('active');
+
+      // 일단 닫기 (다른 chevron 도 함께 비활성화)
+      closeParentDocsSiblings();
+
+      if (wasActive) return; // 같은 chevron 재클릭 → 닫기만
+
+      const reqId = ++__parentDocsSiblingsReqSeq;
+      __parentDocsSiblingsActiveBtn = btn;
+      btn.classList.add('active');
+      btn.setAttribute('aria-expanded', 'true');
+
+      panelEl.classList.remove('d-none');
+      panelEl.setAttribute('role', 'menu');
+      panelEl.innerHTML = `<span class="parent-docs-siblings-status"><span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>불러오는 중...</span>`;
+      positionParentDocsSiblings(btn);
+
+      document.addEventListener('click', onParentDocsSiblingsOutsideClick, true);
+      document.addEventListener('keydown', onParentDocsSiblingsKeydown, true);
+      window.addEventListener('resize', onParentDocsSiblingsViewportChange);
+
+      try {
+        const res = await fetch(`/api/w/${encodeURIComponent(parentSlug)}/subdocs?immediate=1`);
+        if (reqId !== __parentDocsSiblingsReqSeq) return;
+        if (!res.ok) throw new Error('failed');
+        const data = await res.json();
+        if (reqId !== __parentDocsSiblingsReqSeq) return;
+        const docs = (data.subdocs || []).filter(d => {
+          const rel = d.slug.substring(parentSlug.length + 1);
+          return rel !== currentName;
+        });
+
+        if (docs.length === 0) {
+          panelEl.innerHTML = `<span class="parent-docs-siblings-status fst-italic">동일 단계 문서가 없습니다</span>`;
+          positionParentDocsSiblings(btn);
+          return;
+        }
+
+        const items = docs.map(d => {
+          const rel = d.slug.substring(parentSlug.length + 1);
+          return `<a href="/w/${encodeURIComponent(d.slug)}" role="menuitem" class="parent-docs-sibling-item wiki-spa-link" title="${escapeHtml(d.slug)}">${escapeHtml(rel)}</a>`;
+        }).join('');
+        panelEl.innerHTML = items;
+        panelEl.querySelectorAll('.wiki-spa-link').forEach(link => {
+          link.addEventListener('click', function (event) {
+            event.preventDefault();
+            const href = this.getAttribute('href');
+            closeParentDocsSiblings();
+            navigateTo(href);
+          });
+        });
+        positionParentDocsSiblings(btn);
+      } catch (err) {
+        if (reqId !== __parentDocsSiblingsReqSeq) return;
+        console.error(err);
+        panelEl.innerHTML = `<span class="parent-docs-siblings-status">불러오기 실패</span>`;
+        positionParentDocsSiblings(btn);
+      }
     }
 
     // ── 이미지 문서 (미디어 기반) ──
@@ -1104,6 +1256,7 @@
       const tocFab = document.getElementById('tocFabBtn');
       if (tocFab) tocFab.classList.add('d-none');
       document.getElementById('parentDocsNav').classList.add('d-none');
+      closeParentDocsSiblings();
       document.getElementById('parentDocsNavDivider').classList.add('d-none');
       // 역링크 섹션: 일반 문서와 달리 이미지 문서는 열람 즉시 자동 로드
       document.querySelector('#backlinksSection h5').innerHTML = '<i class="bi bi-link-45deg"></i> 이 이미지를 사용하는 문서';
@@ -1265,6 +1418,7 @@
       document.getElementById('docStatsCounter')?.classList.add('d-none');
       document.getElementById('backlinksSection').classList.add('d-none');
       document.getElementById('parentDocsNav').classList.add('d-none');
+      closeParentDocsSiblings();
       document.getElementById('parentDocsNavDivider').classList.add('d-none');
 
       hideAllPages();

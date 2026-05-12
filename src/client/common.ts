@@ -446,7 +446,24 @@ async function loadConfig() {
             });
 
             // 익스텐션 동적 로드 (JS/CSS)
+            //
+            // 익스텐션 패키지 구조:
+            //   /ext/<name>/<name>.js        ─ 모든 페이지 (렌더러 등록)
+            //   /ext/<name>/<name>.css       ─ 모든 페이지 (렌더 스타일)
+            //   /ext/<name>/<name>-editor.js ─ 에디터 페이지(/edit, /blog-edit) 만, 옵션 파일.
+            //                                  window._extensionEditors[<name>] 에 도구막대
+            //                                  mount 함수 / disableTextCounter 등의 옵션을 등록.
+            //                                  존재하지 않으면 onerror 로 조용히 무시.
+            //
+            // 에디터 훅 스크립트는 edit/main.ts 가 동기 lookup 으로 사용하므로 로드 완료까지
+            // await 한다. 비-에디터 페이지에서는 이 await 가 없어 페이지 로드가 느려지지 않는다.
             if (appConfig.enabledExtensions && Array.isArray(appConfig.enabledExtensions)) {
+                const path = window.location.pathname;
+                const isEditPage =
+                    path === '/edit' || path.startsWith('/edit/') ||
+                    path === '/blog-edit' || path.startsWith('/blog-edit/');
+
+                const editorScriptPromises = [];
                 appConfig.enabledExtensions.forEach(ext => {
                     const extName = ext.trim();
                     if (!extName) return;
@@ -470,7 +487,31 @@ async function loadConfig() {
                         link.href = `/ext/${extName}/${extName}.css`;
                         document.head.appendChild(link);
                     }
+
+                    // 에디터 페이지 전용 훅 (옵션 — 파일 없으면 silently 무시)
+                    if (isEditPage) {
+                        const editorJsId = `ext-editor-js-${extName}`;
+                        if (!document.getElementById(editorJsId)) {
+                            const script = document.createElement('script');
+                            script.id = editorJsId;
+                            script.src = `/ext/${extName}/${extName}-editor.js`;
+                            script.async = true;
+                            const p = new Promise(resolve => {
+                                script.onload = () => resolve();
+                                // 404 등은 해당 익스텐션이 에디터 훅을 제공하지 않는다는 뜻 — 정상 흐름.
+                                script.onerror = () => resolve();
+                            });
+                            editorScriptPromises.push(p);
+                            document.head.appendChild(script);
+                        }
+                    }
                 });
+
+                // 에디터 페이지에서만 훅 스크립트 로드 완료까지 기다린다.
+                // edit/main.ts 의 await loadConfig() 이후 동기 lookup 으로 사용되기 때문.
+                if (editorScriptPromises.length > 0) {
+                    await Promise.all(editorScriptPromises);
+                }
             }
         }
     } catch (e) {

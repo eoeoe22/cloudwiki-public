@@ -402,6 +402,19 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     if (isExtensionData) {
         // 익스텐션 데이터: raw textarea 사용 (대용량 데이터 지원)
+        //
+        // 익스텐션 에디터 훅 (window._extensionEditors[<name>]):
+        //   common.ts 의 loadConfig() 가 에디터 페이지에서 /ext/<name>/<name>-editor.js 를
+        //   로드한 뒤 await 했으므로, 이 시점에 동기 lookup 으로 안전하게 사용할 수 있다.
+        //   훅이 존재하지 않으면 (해당 익스텐션이 에디터 도구를 제공하지 않음) 기본 동작을 유지.
+        //
+        //   훅 옵션:
+        //     - disableTextCounter: 키스트로크별 문자/줄 카운터를 끈다. REW 데이터처럼
+        //       MB 단위 텍스트에서 split/regex 가 모바일에서 버벅이는 문제를 회피.
+        //     - mount(toolbarEl, api): 도구막대 컨테이너에 익스텐션 전용 버튼을 추가.
+        const extHook = (window._extensionEditors && window._extensionEditors[extPrefix]) || null;
+        const disableTextCounter = !!(extHook && extHook.disableTextCounter);
+
         const editorContainer = document.getElementById('editor');
         editorContainer.innerHTML = `
             <div class="wiki-ext-raw-editor">
@@ -409,20 +422,30 @@ document.addEventListener('DOMContentLoaded', async () => {
                     <i class="bi bi-database"></i> ${escapeHtml(extPrefix)} 익스텐션 데이터
                     <span class="wiki-ext-raw-editor-hint">마크다운 렌더링이 비활성화된 원시 데이터 편집 모드입니다</span>
                 </div>
+                <div id="extEditorToolbar" class="wiki-ext-editor-toolbar"></div>
                 <textarea id="rawExtTextarea" class="wiki-ext-raw-textarea" spellcheck="false"></textarea>
             </div>
         `;
 
         const rawTextarea = document.getElementById('rawExtTextarea');
+        const toolbarEl = document.getElementById('extEditorToolbar');
 
-        function updateRawCounts() {
-            window.updateEditorTextCounter(rawTextarea.value);
+        // 카운터: disableTextCounter 가 설정된 익스텐션은 카운터 UI 자체를 숨기고
+        // 갱신 호출도 모두 no-op 으로 둔다. MB 단위 데이터 환경에서 setMarkdown 직후
+        // 동기 split/regex 가 메인 스레드를 점유하는 문제를 회피한다.
+        let updateRawCounts;
+        if (disableTextCounter) {
+            const counterEl = document.getElementById('editorTextCounter');
+            if (counterEl) counterEl.style.display = 'none';
+            updateRawCounts = () => { /* no-op */ };
+        } else {
+            updateRawCounts = () => { window.updateEditorTextCounter(rawTextarea.value); };
+            // 키스트로크마다 전체 regex/split 스캔이 돌지 않도록 input에는 디바운스 버전 사용
+            rawTextarea.addEventListener('input', () => {
+                window.updateEditorTextCounterFromTextDebounced(rawTextarea.value);
+            });
+            updateRawCounts();
         }
-        // 키스트로크마다 전체 regex/split 스캔이 돌지 않도록 input에는 디바운스 버전 사용
-        rawTextarea.addEventListener('input', () => {
-            window.updateEditorTextCounterFromTextDebounced(rawTextarea.value);
-        });
-        updateRawCounts();
 
         // editor 심(shim) 객체: 기존 코드(save, cancel, diff, autosave 등)가
         // editor.getMarkdown() / editor.setMarkdown()을 통해 동작하도록 호환 유지
@@ -441,6 +464,24 @@ document.addEventListener('DOMContentLoaded', async () => {
             changePreviewStyle: () => { },
             // 프리뷰, diff 등에서 참조하는 메서드 추가 방지
         };
+
+        // 익스텐션 에디터 훅의 mount — 도구막대 컨테이너에 익스텐션 전용 UI 를 부착.
+        // api 는 getValue/setValue 만 노출. setValue 는 editor.setMarkdown 과 동일하게
+        // updateRawCounts 를 호출하므로, disableTextCounter 가 false 인 미래의 훅도
+        // 카운터가 stale 해지지 않는다. disableTextCounter=true 인 경우 updateRawCounts
+        // 가 no-op 이라 비용이 없다.
+        if (extHook && typeof extHook.mount === 'function' && toolbarEl) {
+            try {
+                extHook.mount(toolbarEl, {
+                    getValue: () => rawTextarea.value,
+                    setValue: (s) => { rawTextarea.value = s; updateRawCounts(); },
+                    slug,
+                    extName: extPrefix,
+                });
+            } catch (e) {
+                console.error('[edit/main] 익스텐션 에디터 훅 mount 실패:', e);
+            }
+        }
 
         syncStateToWindow();
         // 익스텐션 데이터 shim 의 on() 은 no-op 이라 자동완성이 실제로 동작하진

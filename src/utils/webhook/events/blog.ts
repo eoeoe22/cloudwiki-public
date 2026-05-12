@@ -27,7 +27,7 @@ export function announcementPublish(args: {
         type: 'announcement_publish',
         embed: {
             color: COLOR_ANNOUNCE,
-            title: `📢 ${truncate(escapeMd(announceTitle), 80)}`,
+            title: `📢 공지사항 : ${truncate(escapeMd(announceTitle), 80)}`,
             url,
             description,
             thumbnail: thumbnailUrl ? { url: thumbnailUrl } : undefined,

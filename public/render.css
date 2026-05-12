@@ -606,180 +606,8 @@ html[data-theme="dark"] .wiki-content pre[class*="language-"] code[class*="langu
   opacity: 1;
 }
 
-/* ── Diff View ── */
-.diff-container {
-  text-align: left;
-  max-height: 500px;
-  overflow-y: auto;
-  border: 1px solid var(--wiki-border);
-  border-radius: 8px;
-  background: var(--wiki-bg);
-}
-
-.diff-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
-  font-size: 0.82rem;
-  line-height: 1.5;
-}
-
-.diff-table tr.diff-add {
-  background: var(--wiki-diff-add-bg);
-  color: var(--wiki-diff-add-text);
-}
-
-.diff-table tr.diff-del {
-  background: var(--wiki-diff-del-bg);
-  color: var(--wiki-diff-del-text);
-}
-
-.diff-table tr.diff-same {
-  background: transparent;
-  color: var(--wiki-text-muted);
-}
-
-.diff-table td {
-  padding: 1px 8px;
-  border: none;
-  vertical-align: top;
-}
-
-.diff-table td.diff-prefix {
-  width: 20px;
-  text-align: center;
-  user-select: none;
-  color: var(--wiki-text-muted);
-  font-weight: 700;
-  opacity: 0.7;
-}
-
-.diff-table tr.diff-add td.diff-prefix {
-  color: var(--wiki-success);
-  opacity: 1;
-}
-
-.diff-table tr.diff-del td.diff-prefix {
-  color: var(--wiki-danger);
-  opacity: 1;
-}
-
-.diff-table td.diff-line {
-  white-space: pre-wrap;
-  word-break: break-all;
-}
-
-.diff-empty {
-  padding: 2rem;
-  text-align: center;
-  color: var(--wiki-text-muted);
-  font-style: italic;
-}
-
-.diff-table tr.diff-skip {
-  background: transparent;
-}
-
-.diff-table tr.diff-skip td.diff-prefix {
-  color: var(--wiki-text-muted);
-  opacity: 0.6;
-  font-weight: 400;
-}
-
-.diff-table td.diff-skip-label {
-  color: var(--wiki-text-muted);
-  font-style: italic;
-  font-size: 0.78rem;
-  padding-top: 2px;
-  padding-bottom: 2px;
-}
-
-/* ── Rich (rendered) Diff View — GitHub 의 md rich diff 와 유사 ── */
-.diff-mode-toggle {
-  display: inline-flex;
-  margin-bottom: 0.75rem;
-}
-
-.rich-diff-container {
-  text-align: left;
-  max-height: 70vh;
-  overflow-y: auto;
-  border: 1px solid var(--wiki-border);
-  border-radius: 8px;
-  background: var(--wiki-bg);
-  padding: 0.75rem 1rem;
-}
-
-.rich-diff-block {
-  padding: 0.35rem 0.75rem;
-  border-left: 4px solid transparent;
-  border-radius: 4px;
-  margin: 0.25rem 0;
-}
-
-.rich-diff-block > *:first-child {
-  margin-top: 0;
-}
-
-.rich-diff-block > *:last-child {
-  margin-bottom: 0;
-}
-
-.rich-diff-block.rich-diff-add {
-  background: var(--wiki-diff-add-bg);
-  border-left-color: var(--wiki-success, #198754);
-}
-
-.rich-diff-block.rich-diff-del {
-  background: var(--wiki-diff-del-bg);
-  border-left-color: var(--wiki-danger, #dc3545);
-  /* 줄긋기는 표/이미지 등에 어색하므로 사용하지 않고 배경/테두리로만 표시 */
-  opacity: 0.92;
-}
-
-.rich-diff-block.rich-diff-same {
-  border-left-color: var(--wiki-border);
-  opacity: 0.85;
-}
-
-/* ── Parent Docs Navigation (breadcrumb) ── */
-.parent-docs-nav {
-  font-size: 0.9rem;
-  color: var(--wiki-text-muted);
-}
-
-.parent-docs-nav a {
-  color: var(--wiki-primary);
-}
-
-.parent-docs-nav .parent-docs-create {
-  color: var(--wiki-primary);
-  text-decoration: none;
-  vertical-align: baseline;
-  line-height: 1;
-}
-
-.parent-docs-nav .parent-docs-create:hover {
-  color: var(--wiki-primary);
-  opacity: 0.75;
-}
-
-/* ── Backlinks Section ── */
-.backlinks-section {
-  margin-top: 2rem;
-  padding-top: 1rem;
-}
-
-.backlinks-section h5 {
-  font-size: 1.1rem;
-  font-weight: 700;
-  color: var(--wiki-text-muted);
-  margin-bottom: 0.75rem;
-}
-
-.backlinks-section h5 i {
-  color: var(--wiki-primary);
-}
+/* Diff view (.diff-*, .rich-diff-*) 는 public/css/diff.css 로 분리. */
+/* Parent docs breadcrumb (.parent-docs-*) 와 backlinks section 은 public/css/wiki-nav.css 로 분리. */
 
 /* Category list heading inside article (for inline category lists) */
 .category-list h4 {
@@ -1298,6 +1126,56 @@ html[data-theme="dark"] .toc-floating-body a.toc-active {
   box-shadow: inset 0 0 0 2px rgba(88, 166, 255, 0.2);
 }
 
+/*
+ * 익스텐션 에디터 도구막대.
+ * /ext/<name>/<name>-editor.js 가 mount(toolbarEl, api) 콜백에서 버튼을 추가한다.
+ * 훅이 없으면 컨테이너는 빈 채로 렌더되며 .empty 선택자가 0-높이 처리한다.
+ */
+.wiki-ext-editor-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.45rem 0.75rem;
+  background: var(--wiki-card-bg);
+  border-bottom: 1px solid var(--wiki-border);
+}
+
+.wiki-ext-editor-toolbar:empty {
+  display: none;
+}
+
+.wiki-ext-toolbar-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.7rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--wiki-text);
+  background: var(--wiki-bg);
+  border: 1px solid var(--wiki-border);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.wiki-ext-toolbar-btn:hover {
+  border-color: var(--wiki-border-focus);
+  background: var(--wiki-card-bg);
+  box-shadow: var(--wiki-shadow-sm);
+}
+
+.wiki-ext-toolbar-btn:active {
+  transform: translateY(1px);
+}
+
+.wiki-ext-toolbar-btn[disabled] {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 /* ── Reading Mode ── */
 .reading-mode-toggle {
   margin-left: auto;
@@ -1383,6 +1261,7 @@ body.reading-mode .reading-mode-toggle {
 
 body.raw-mode #wikiAccordion,
 body.raw-mode #parentDocsNav,
+body.raw-mode #parentDocsSiblings,
 body.raw-mode #parentDocsNavDivider,
 body.raw-mode .wiki-content,
 body.raw-mode .backlinks-section {

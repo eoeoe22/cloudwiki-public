@@ -36,7 +36,7 @@ import {
 import { computeLineDiffStats } from '../utils/diff';
 import {
     SLUG_FORBIDDEN_CHARS,
-    computePageMetrics,
+    computePageMetricsTracked,
     buildLinkAndCategoryStatements,
     rewriteContentForRename,
     invalidatePageCache,
@@ -521,7 +521,7 @@ async function applyExistingPageUpdate(
     const db = c.env.DB;
     const enabledExt = (c.env.ENABLED_EXTENSIONS || '').split(',').map((s: string) => s.trim()).filter(Boolean);
     const isR2Only = isR2OnlyNamespace(opts.slug, enabledExt);
-    const metrics = computePageMetrics(content);
+    const metrics = computePageMetricsTracked(content, isR2Only);
     const newVersion = page.version + 1;
 
     const r2Key = await uploadRevisionToR2(c.env.MEDIA, page.id, newVersion, content);
@@ -587,7 +587,7 @@ async function applyExistingPageUpdate(
             .run().catch((e: any) => console.error('admin-mcp admin_log write failed:', e))
     );
 
-    return { revision_id: revisionId, new_version: newVersion, rows: metrics.rows, characters: metrics.characters };
+    return { revision_id: revisionId, new_version: newVersion, rows: metrics.rows ?? 0, characters: metrics.characters ?? 0 };
 }
 
 // 신규 페이지를 INSERT 하고 첫 리비전을 생성하는 공용 헬퍼.
@@ -610,7 +610,7 @@ async function applyNewPageInsert(
     const db = c.env.DB;
     const enabledExt = (c.env.ENABLED_EXTENSIONS || '').split(',').map((s: string) => s.trim()).filter(Boolean);
     const isR2Only = isR2OnlyNamespace(slug, enabledExt);
-    const metrics = computePageMetrics(content);
+    const metrics = computePageMetricsTracked(content, isR2Only);
     const contentToStore = isR2Only ? '' : content;
 
     const pageResult = await db
@@ -653,7 +653,7 @@ async function applyNewPageInsert(
             .run().catch((e: any) => console.error('admin-mcp admin_log write failed:', e))
     );
 
-    return { page_id: pageId, revision_id: revisionId, rows: metrics.rows, characters: metrics.characters };
+    return { page_id: pageId, revision_id: revisionId, rows: metrics.rows ?? 0, characters: metrics.characters ?? 0 };
 }
 
 // 새로 발급된 draft 응답에 포함하는 라이프사이클 가이드.
@@ -1386,7 +1386,7 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
             newRevisionId = revResult.meta.last_row_id;
             const newIsR2Only = isR2OnlyNamespace(newSlug, enabledExt);
             const contentToStore = newIsR2Only ? '' : rewritten;
-            const metrics = computePageMetrics(rewritten);
+            const metrics = computePageMetricsTracked(rewritten, newIsR2Only);
             await db
                 .prepare('UPDATE pages SET slug = ?, content = ?, last_revision_id = ?, version = ?, rows = ?, characters = ?, updated_at = unixepoch() WHERE id = ?')
                 .bind(newSlug, contentToStore, newRevisionId, newVersion, metrics.rows, metrics.characters, page.id)
@@ -1432,7 +1432,7 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
                     .prepare('INSERT INTO revisions (page_id, page_version, content, r2_key, summary, author_id) VALUES (?, ?, ?, ?, ?, ?)')
                     .bind(bl.id, blNewVer, '', blR2Key, withMcpPrefix(`[move-backlink] ${oldSlug} → ${newSlug}`), user.id)
                     .run();
-                const blMetrics = computePageMetrics(blRewritten);
+                const blMetrics = computePageMetricsTracked(blRewritten, blIsR2);
                 const blContentToStore = blIsR2 ? '' : blRewritten;
                 await db
                     .prepare('UPDATE pages SET content = ?, last_revision_id = ?, version = ?, rows = ?, characters = ?, updated_at = unixepoch() WHERE id = ?')

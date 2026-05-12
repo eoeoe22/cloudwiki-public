@@ -165,6 +165,20 @@ export function computePageMetrics(content: string): { rows: number; characters:
 }
 
 /**
+ * R2-only 네임스페이스 문서는 본문이 외부 익스텐션 페이로드(예: REW 주파수 응답)이며
+ * 사용자 가독 텍스트가 아니므로 줄 수/글자 수 통계가 의미가 없다. 이 경우
+ * { rows: null, characters: null } 을 반환해 pages.rows / pages.characters 컬럼을
+ * NULL 로 저장하도록 한다. 일반 문서는 그대로 computePageMetrics 결과를 돌려준다.
+ */
+export function computePageMetricsTracked(
+    content: string,
+    isR2Only: boolean
+): { rows: number | null; characters: number | null } {
+    if (isR2Only) return { rows: null, characters: null };
+    return computePageMetrics(content);
+}
+
+/**
  * 문서 content에서 링크를 파싱하여 { target_slug, link_type } 배열을 반환
  */
 function extractLinks(content: string): { target_slug: string; link_type: string }[] {
@@ -605,7 +619,7 @@ async function rewriteBacklinksForRename(
 
         // 3) pages UPDATE (낙관적 잠금)
         const contentToStore = isR2Only ? '' : rewritten;
-        const metrics = computePageMetrics(rewritten);
+        const metrics = computePageMetricsTracked(rewritten, isR2Only);
         let pagesUpdated = 0;
         try {
             const upd = await db
@@ -1424,7 +1438,7 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
 
         // 3. 페이지 업데이트 (pages.content는 R2-only가 아닐 때만 최신 본문 유지)
         const contentToStore = isR2Only ? '' : body.content;
-        const metrics = computePageMetrics(body.content);
+        const metrics = computePageMetricsTracked(body.content, isR2Only);
         await db
             .prepare(
                 `UPDATE pages
@@ -1509,7 +1523,7 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
         const isR2Only = isR2OnlyNamespace(slug, enabledExtensionsCreate);
         const contentToStore = isR2Only ? '' : body.content;
 
-        const metrics = computePageMetrics(body.content);
+        const metrics = computePageMetricsTracked(body.content, isR2Only);
         const pageResult = await db
             .prepare(
                 'INSERT INTO pages (slug, content, category, is_locked, is_private, redirect_to, rows, characters) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
@@ -1769,14 +1783,34 @@ wiki.get('/w/:slug/revisions/:id/diff', async (c) => {
 /**
  * GET /w/:slug/subdocs
  * 하위 문서 목록 (제목이 '{slug}/'로 시작하는 문서들)
+ * - ?immediate=1 → 바로 아래 단계 자식만 (slug/A 만, slug/A/B 제외)
  */
 wiki.get('/w/:slug/subdocs', async (c) => {
     const slug = c.req.param('slug');
+    const immediate = c.req.query('immediate') === '1';
     const db = c.env.DB;
     const user = c.get('user');
     const rbac = c.get('rbac') as RBAC;
     const canSeePrivate = rbac.can(user?.role ?? 'guest', 'wiki:private');
     const privateFilter = canSeePrivate ? '' : ' AND is_private = 0';
+
+    if (immediate) {
+        // LIKE 와일드카드(%, _, \) 가 슬러그에 포함되어 있을 때 임의 매칭되지 않도록 이스케이프
+        const escaped = slug.replace(/[\\%_]/g, (ch) => '\\' + ch);
+        const query = `
+            SELECT slug, updated_at
+            FROM pages
+            WHERE deleted_at IS NULL${privateFilter}
+              AND slug LIKE ? ESCAPE '\\'
+              AND slug NOT LIKE ? ESCAPE '\\'
+            ORDER BY slug ASC LIMIT 200
+        `;
+        const { results } = await db
+            .prepare(query)
+            .bind(escaped + '/%', escaped + '/%/%')
+            .all();
+        return c.json(safeJSON({ subdocs: results }));
+    }
 
     const query = `
         SELECT slug, updated_at
@@ -2205,8 +2239,9 @@ wiki.post('/w/:slug/revert', requireAuth, async (c) => {
     }
 
     const enabledExtensionsRevert = (c.env.ENABLED_EXTENSIONS || '').split(',').map((s: string) => s.trim()).filter(Boolean);
-    const contentToStore = isR2OnlyNamespace(slug, enabledExtensionsRevert) ? '' : revertContent;
-    const revertMetrics = computePageMetrics(revertContent);
+    const isR2OnlyRevert = isR2OnlyNamespace(slug, enabledExtensionsRevert);
+    const contentToStore = isR2OnlyRevert ? '' : revertContent;
+    const revertMetrics = computePageMetricsTracked(revertContent, isR2OnlyRevert);
     await db.prepare('UPDATE pages SET content = ?, last_revision_id = ?, version = ?, rows = ?, characters = ?, updated_at = unixepoch() WHERE id = ?')
         .bind(contentToStore, newRevId, newVersion, revertMetrics.rows, revertMetrics.characters, page.id)
         .run();
