@@ -43,6 +43,7 @@ import {
     refreshRecentChangesCache,
     invalidateBacklinkCaches,
 } from './wiki';
+import { extractFirstThumbnail, rebuildBlogImageLinks } from './blog';
 
 // ────────────────────────────────────────────────────────────────
 // 일반 유저(`wiki:edit`) 도 호출 가능한 읽기 도구.
@@ -224,6 +225,53 @@ export const ADMIN_ONLY_EDIT_TOOL_DEFS: McpToolDef[] = [
                 update_backlinks: { type: 'boolean', description: '역링크 문서 본문도 함께 재작성할지 (선택, 기본 true — 이동 시 백링크 자동 갱신. 끄려면 false 명시)' }
             },
             required: ['title', 'new_title']
+        }
+    },
+    {
+        name: 'create_blog_post',
+        description: '블로그(/blog) 포스트를 새로 작성합니다 (즉시 적용 — draft 모델 미사용). 응답에 새 포스트 id 가 포함됩니다. 본문에서 첫 이미지가 자동으로 썸네일로 추출되며, 이미지 역링크(page_links) 도 자동 갱신됩니다.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                title: { type: 'string', description: '포스트 제목 (1-500자)' },
+                content: { type: 'string', description: '포스트 본문 (마크다운/위키 문법)' }
+            },
+            required: ['title', 'content']
+        }
+    },
+    {
+        name: 'update_blog_post',
+        description: '블로그 포스트의 제목 / 본문을 수정합니다 (즉시 적용 — draft 모델 미사용). title 과 content 모두 선택적이며, 적어도 하나는 지정해야 합니다. content 를 지정하면 본문이 통째로 교체되고 썸네일·이미지 역링크가 재계산됩니다. 소프트 삭제된 포스트는 수정할 수 없습니다 (먼저 restore_blog_post 로 복원하세요).',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                id: { type: 'number', description: '수정할 블로그 포스트 id (정수)' },
+                title: { type: 'string', description: '새 제목 (선택, 1-500자)' },
+                content: { type: 'string', description: '새 본문 (선택, 지정 시 통째로 교체)' }
+            },
+            required: ['id']
+        }
+    },
+    {
+        name: 'delete_blog_post',
+        description: '블로그 포스트를 소프트 삭제합니다 (즉시 적용 — draft 모델 미사용). 영구 삭제는 지원하지 않으며, restore_blog_post 로 복원할 수 있습니다. 삭제된 포스트가 사이트 공지로 발행되어 있던 경우 공지도 자동으로 취소됩니다. 본 포스트가 참조하던 이미지 역링크(page_links) 도 정리됩니다.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                id: { type: 'number', description: '삭제할 블로그 포스트 id (정수)' }
+            },
+            required: ['id']
+        }
+    },
+    {
+        name: 'restore_blog_post',
+        description: '소프트 삭제된 블로그 포스트를 복원합니다 (즉시 적용 — draft 모델 미사용). 복원 후 이미지 역링크(page_links) 가 본문을 기준으로 재구성됩니다.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                id: { type: 'number', description: '복원할 블로그 포스트 id (정수)' }
+            },
+            required: ['id']
         }
     },
     {
@@ -1419,6 +1467,185 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
             updated_backlink_slugs: updatedSlugs,
             skipped_locked_backlinks: skippedLockedSlugs,
         }, null, 2));
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    // 블로그 CRUD (admin 전용, 즉시 적용 — draft 모델 미사용).
+    // routes/blog.ts 의 POST/PUT/DELETE /api/blog 엔드포인트와 동일한 동작을 수행한다.
+    // ────────────────────────────────────────────────────────────────
+
+    if (toolName === 'create_blog_post' || toolName === 'update_blog_post'
+        || toolName === 'delete_blog_post' || toolName === 'restore_blog_post') {
+        if (!rbac.can(user.role, 'admin:access')) {
+            return asTextResult('Error: admin:access 권한이 필요합니다.', true);
+        }
+    }
+
+    if (toolName === 'create_blog_post') {
+        if (typeof args.title !== 'string') return asTextResult('Error: title 은 문자열이어야 합니다.', true);
+        if (typeof args.content !== 'string') return asTextResult('Error: content 는 문자열이어야 합니다.', true);
+        const title = args.title.trim();
+        if (!title) return asTextResult('Error: 제목을 입력해주세요.', true);
+        if (title.length > 500) return asTextResult('Error: 제목은 500자 이내여야 합니다.', true);
+
+        // routes/blog.ts 와 동일하게 CRLF → LF 정규화. 줄 수/글자 수도 동일 기준으로 계산.
+        const content = (args.content as string).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+        const rows = content ? content.split('\n').length : 0;
+        const characters = content ? content.length : 0;
+        const thumbnail = extractFirstThumbnail(content);
+
+        const result = await db
+            .prepare('INSERT INTO blog_posts (title, content, rows, characters, thumbnail) VALUES (?, ?, ?, ?, ?)')
+            .bind(title, content, rows, characters, thumbnail)
+            .run();
+        const newId = Number(result.meta?.last_row_id || 0);
+        if (!newId) return asTextResult('Error: 저장 실패', true);
+
+        c.executionCtx.waitUntil(rebuildBlogImageLinks(db, newId, content));
+        c.executionCtx.waitUntil(
+            db.prepare('INSERT INTO admin_log (type, log, user) VALUES (?, ?, ?)')
+                .bind('blog_create', `[admin-mcp] 블로그 작성: ${title}`, user.id)
+                .run().catch((e: any) => console.error('admin-mcp blog_create admin_log write failed:', e))
+        );
+
+        return asTextResult(JSON.stringify({
+            id: newId,
+            title,
+            rows,
+            characters,
+            thumbnail,
+            created: true,
+        }, null, 2));
+    }
+
+    if (toolName === 'update_blog_post') {
+        const id = Number(args.id);
+        if (!Number.isFinite(id) || !Number.isInteger(id) || id <= 0) {
+            return asTextResult('Error: id 는 양의 정수여야 합니다.', true);
+        }
+        const wantsTitle = args.title !== undefined;
+        const wantsContent = args.content !== undefined;
+        if (!wantsTitle && !wantsContent) {
+            return asTextResult('Error: title 또는 content 중 하나 이상을 지정해야 합니다.', true);
+        }
+        if (wantsTitle && typeof args.title !== 'string') {
+            return asTextResult('Error: title 은 문자열이어야 합니다.', true);
+        }
+        if (wantsContent && typeof args.content !== 'string') {
+            return asTextResult('Error: content 는 문자열이어야 합니다.', true);
+        }
+
+        const existing = await db
+            .prepare('SELECT id, title FROM blog_posts WHERE id = ? AND deleted_at IS NULL')
+            .bind(id)
+            .first<{ id: number; title: string }>();
+        if (!existing) return asTextResult('Error: 블로그 포스트를 찾을 수 없거나 삭제된 상태입니다.', true);
+
+        const newTitle = wantsTitle ? (args.title as string).trim() : existing.title;
+        if (!newTitle) return asTextResult('Error: 제목을 입력해주세요.', true);
+        if (newTitle.length > 500) return asTextResult('Error: 제목은 500자 이내여야 합니다.', true);
+
+        if (wantsContent) {
+            const content = (args.content as string).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+            const rows = content ? content.split('\n').length : 0;
+            const characters = content ? content.length : 0;
+            const thumbnail = extractFirstThumbnail(content);
+
+            await db.prepare(
+                'UPDATE blog_posts SET title = ?, content = ?, rows = ?, characters = ?, thumbnail = ?, updated_at = unixepoch() WHERE id = ?'
+            ).bind(newTitle, content, rows, characters, thumbnail, id).run();
+            c.executionCtx.waitUntil(rebuildBlogImageLinks(db, id, content));
+
+            c.executionCtx.waitUntil(
+                db.prepare('INSERT INTO admin_log (type, log, user) VALUES (?, ?, ?)')
+                    .bind('blog_update', `[admin-mcp] 블로그 수정: ${newTitle}`, user.id)
+                    .run().catch((e: any) => console.error('admin-mcp blog_update admin_log write failed:', e))
+            );
+
+            return asTextResult(JSON.stringify({
+                id, title: newTitle, rows, characters, thumbnail,
+                content_updated: true,
+            }, null, 2));
+        }
+
+        // title 만 변경.
+        await db.prepare(
+            'UPDATE blog_posts SET title = ?, updated_at = unixepoch() WHERE id = ?'
+        ).bind(newTitle, id).run();
+        c.executionCtx.waitUntil(
+            db.prepare('INSERT INTO admin_log (type, log, user) VALUES (?, ?, ?)')
+                .bind('blog_update', `[admin-mcp] 블로그 수정: ${newTitle}`, user.id)
+                .run().catch((e: any) => console.error('admin-mcp blog_update admin_log write failed:', e))
+        );
+        return asTextResult(JSON.stringify({
+            id, title: newTitle, content_updated: false,
+        }, null, 2));
+    }
+
+    if (toolName === 'delete_blog_post') {
+        const id = Number(args.id);
+        if (!Number.isFinite(id) || !Number.isInteger(id) || id <= 0) {
+            return asTextResult('Error: id 는 양의 정수여야 합니다.', true);
+        }
+        const existing = await db
+            .prepare('SELECT id, title, deleted_at FROM blog_posts WHERE id = ?')
+            .bind(id)
+            .first<{ id: number; title: string; deleted_at: number | null }>();
+        if (!existing) return asTextResult('Error: 블로그 포스트를 찾을 수 없습니다.', true);
+        if (existing.deleted_at) return asTextResult('Error: 이미 삭제된 포스트입니다.', true);
+
+        await db.prepare('UPDATE blog_posts SET deleted_at = unixepoch() WHERE id = ?').bind(id).run();
+
+        // 역링크 정리 — routes/blog.ts 의 DELETE /api/blog/:id 와 동일.
+        c.executionCtx.waitUntil(
+            db.prepare('DELETE FROM page_links WHERE source_page_id = ? AND blog = 1')
+                .bind(id).run()
+                .catch((e: any) => console.error('admin-mcp blog page_links cleanup failed:', e))
+        );
+
+        c.executionCtx.waitUntil(
+            db.prepare('INSERT INTO admin_log (type, log, user) VALUES (?, ?, ?)')
+                .bind('blog_delete', `[admin-mcp] 블로그 삭제: ${existing.title}`, user.id)
+                .run().catch((e: any) => console.error('admin-mcp blog_delete admin_log write failed:', e))
+        );
+
+        // 공지로 발행되어 있던 포스트가 삭제되면 공지도 자동 해제. routes/blog.ts 와 동일.
+        c.executionCtx.waitUntil(
+            db.prepare(
+                `UPDATE settings
+                 SET announce_post = NULL, announce_title = '', announced_time = unixepoch()
+                 WHERE id = 1 AND announce_post = ?`
+            ).bind(id).run()
+                .catch((e: any) => console.error('admin-mcp blog announcement clear failed:', e))
+        );
+
+        return asTextResult(JSON.stringify({ id, title: existing.title, deleted: true }, null, 2));
+    }
+
+    if (toolName === 'restore_blog_post') {
+        const id = Number(args.id);
+        if (!Number.isFinite(id) || !Number.isInteger(id) || id <= 0) {
+            return asTextResult('Error: id 는 양의 정수여야 합니다.', true);
+        }
+        const existing = await db
+            .prepare('SELECT id, title, content, deleted_at FROM blog_posts WHERE id = ?')
+            .bind(id)
+            .first<{ id: number; title: string; content: string; deleted_at: number | null }>();
+        if (!existing) return asTextResult('Error: 블로그 포스트를 찾을 수 없습니다.', true);
+        if (!existing.deleted_at) return asTextResult('Error: 삭제 상태가 아닌 포스트입니다.', true);
+
+        await db.prepare('UPDATE blog_posts SET deleted_at = NULL, updated_at = unixepoch() WHERE id = ?').bind(id).run();
+
+        // delete_blog_post 가 page_links 를 비웠으므로 본문 기준으로 다시 채워둔다.
+        c.executionCtx.waitUntil(rebuildBlogImageLinks(db, id, existing.content || ''));
+
+        c.executionCtx.waitUntil(
+            db.prepare('INSERT INTO admin_log (type, log, user) VALUES (?, ?, ?)')
+                .bind('blog_restore', `[admin-mcp] 블로그 복원: ${existing.title}`, user.id)
+                .run().catch((e: any) => console.error('admin-mcp blog_restore admin_log write failed:', e))
+        );
+
+        return asTextResult(JSON.stringify({ id, title: existing.title, restored: true }, null, 2));
     }
 
     if (toolName === 'set_page_status') {

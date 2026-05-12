@@ -560,13 +560,15 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         // ── 마크다운 문법 하이라이트 스타일 ──
         const markdownLightStyle = HighlightStyle.define([
-            // 헤딩 (레벨별 구분)
-            { tag: t.heading1, color: "#0550ae", fontWeight: "700", fontSize: "2em" },
-            { tag: t.heading2, color: "#0550ae", fontWeight: "700", fontSize: "1.75em" },
-            { tag: t.heading3, color: "#0a3069", fontWeight: "700", fontSize: "1.5em" },
-            { tag: t.heading4, color: "#0a3069", fontWeight: "600", fontSize: "1.25em" },
-            { tag: t.heading5, color: "#0a3069", fontWeight: "600", fontSize: "1.1em" },
-            { tag: t.heading6, color: "#0a3069", fontWeight: "600", fontSize: "1em" },
+            // 헤딩 (레벨별 구분) — 폰트 크기는 cm-md-h* 라인 클래스(public/css/edit.css)에서
+            // 줄 단위로 적용. 인라인 fontSize 를 함께 두면 라인 클래스의 em 위에 다시
+            // 곱해져 과대 확대되므로 여기서는 색/굵기만 지정한다.
+            { tag: t.heading1, color: "#0550ae", fontWeight: "700" },
+            { tag: t.heading2, color: "#0550ae", fontWeight: "700" },
+            { tag: t.heading3, color: "#0a3069", fontWeight: "700" },
+            { tag: t.heading4, color: "#0a3069", fontWeight: "600" },
+            { tag: t.heading5, color: "#0a3069", fontWeight: "600" },
+            { tag: t.heading6, color: "#0a3069", fontWeight: "600" },
             // 인라인 서식
             { tag: t.strong, fontWeight: "700" },
             { tag: t.emphasis, fontStyle: "italic" },
@@ -601,12 +603,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         ]);
 
         const markdownDarkStyle = HighlightStyle.define([
-            { tag: t.heading1, color: "#79c0ff", fontWeight: "700", fontSize: "2em" },
-            { tag: t.heading2, color: "#79c0ff", fontWeight: "700", fontSize: "1.75em" },
-            { tag: t.heading3, color: "#79c0ff", fontWeight: "700", fontSize: "1.5em" },
-            { tag: t.heading4, color: "#58a6ff", fontWeight: "600", fontSize: "1.25em" },
-            { tag: t.heading5, color: "#58a6ff", fontWeight: "600", fontSize: "1.1em" },
-            { tag: t.heading6, color: "#58a6ff", fontWeight: "600", fontSize: "1em" },
+            { tag: t.heading1, color: "#79c0ff", fontWeight: "700" },
+            { tag: t.heading2, color: "#79c0ff", fontWeight: "700" },
+            { tag: t.heading3, color: "#79c0ff", fontWeight: "700" },
+            { tag: t.heading4, color: "#58a6ff", fontWeight: "600" },
+            { tag: t.heading5, color: "#58a6ff", fontWeight: "600" },
+            { tag: t.heading6, color: "#58a6ff", fontWeight: "600" },
             { tag: t.strong, fontWeight: "700" },
             { tag: t.emphasis, fontStyle: "italic" },
             { tag: t.strikethrough, textDecoration: "line-through", color: "#8b949e" },
@@ -911,10 +913,15 @@ document.addEventListener('DOMContentLoaded', async () => {
                 let doc = view.state.doc;
                 let maxLine = doc.lines;
                 let inFold = false;
-                let inCode = false;
+                // CommonMark 코드 펜스 추적: null = 코드 밖, "`" 또는 "~" = 해당 문자로 열린 펜스 안.
+                // 닫는 펜스는 (1) 같은 문자, (2) 여는 펜스보다 길이가 같거나 길고,
+                // (3) 뒤에 공백만 와야 한다. 따라서 fenceLen 도 함께 보존한다.
+                let fenceChar = null;
+                let fenceLen = 0;
                 let colonBlockDepth = 0;
                 const colonOpenRe = /^:::[a-zA-Z][a-zA-Z0-9_-]*(?:[ \t]+.*)?[ \t]*$/;
                 const colonCloseRe = /^:::[ \t]*$/;
+                const fenceRe = /^ {0,3}(`{3,}|~{3,})(.*)$/;
 
                 for (let i = 1; i <= maxLine; i++) {
                     let line = doc.line(i);
@@ -922,19 +929,47 @@ document.addEventListener('DOMContentLoaded', async () => {
                     let classes = [];
 
                     if (text.includes("[+")) inFold = true;
-                    const isColonOpen = !inCode && colonOpenRe.test(text);
-                    const isColonClose = !inCode && !isColonOpen && colonCloseRe.test(text);
+                    const isColonOpen = fenceChar === null && colonOpenRe.test(text);
+                    const isColonClose = fenceChar === null && !isColonOpen && colonCloseRe.test(text);
                     if (isColonOpen) colonBlockDepth++;
                     if (inFold || colonBlockDepth > 0) classes.push("cm-fold-block");
                     if (text.includes("[-]")) inFold = false;
                     if (isColonClose && colonBlockDepth > 0) colonBlockDepth--;
 
-                    let isCodeFence = text.trim().startsWith("```");
-                    if (isCodeFence) {
-                        inCode = !inCode;
+                    const fenceMatch = fenceRe.exec(text);
+                    let isCodeFence = false;
+                    if (fenceMatch) {
+                        const seq = fenceMatch[1];
+                        const tail = fenceMatch[2];
+                        const ch = seq[0];
+                        if (fenceChar === null) {
+                            // 펜스 여는 줄. CommonMark 규정상 백틱 펜스의 info string 에는
+                            // 백틱이 올 수 없으므로 그 경우는 펜스로 보지 않는다.
+                            if (!(ch === '`' && tail.indexOf('`') !== -1)) {
+                                fenceChar = ch;
+                                fenceLen = seq.length;
+                                isCodeFence = true;
+                            }
+                        } else if (fenceChar === ch && seq.length >= fenceLen && /^[ \t]*$/.test(tail)) {
+                            // 닫는 펜스: 같은 문자 + 같거나 더 긴 길이 + 뒤에 공백뿐
+                            fenceChar = null;
+                            fenceLen = 0;
+                            isCodeFence = true;
+                        }
+                        // 그 외(같은 문자라도 길이 부족 / 뒤에 텍스트 있음, 다른 종류 펜스 토큰)는
+                        // 코드 본문으로 취급되어 아래 fenceChar 체크로 cm-code-block 클래스가 붙는다.
+                    }
+                    if (isCodeFence || fenceChar !== null) {
                         classes.push("cm-code-block");
-                    } else if (inCode) {
-                        classes.push("cm-code-block");
+                    }
+
+                    // ATX 헤딩: 줄 시작 0–3칸 들여쓰기 허용, # 1–6개, 그 뒤 공백/EOL.
+                    // 코드 펜스 안이면 무시 (``` / ~~~ 양쪽 모두 해당).
+                    if (fenceChar === null && !isCodeFence) {
+                        const headingMatch = /^ {0,3}(#{1,6})(?:\s|$)/.exec(text);
+                        if (headingMatch) {
+                            classes.push("cm-md-h" + headingMatch[1].length);
+                        }
                     }
 
                     if (classes.length > 0) {

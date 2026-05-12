@@ -384,7 +384,7 @@ function buildAutoEditSummary(): string {
         parts.push(currRedirect ? `넘겨주기 '${currRedirect}' 설정` : '넘겨주기 해제');
     }
     if (origLocked !== currLocked) {
-        parts.push(currLocked ? '관리자 전용 설정' : '관리자 전용 해제');
+        parts.push(currLocked ? '편집 잠금 설정' : '편집 잠금 해제');
     }
     if (origPrivate !== currPrivate) {
         parts.push(currPrivate ? '비공개 설정' : '비공개 해제');

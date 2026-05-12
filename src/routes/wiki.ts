@@ -973,7 +973,8 @@ wiki.get('/w/recent-revisions', async (c) => {
  * 모든 문서 목록 (정렬 + 페이지네이션)
  * Query: offset (기본 0), limit (기본 20, 최대 50),
  *        sort (slug_asc, slug_desc, created_asc, created_desc,
- *              updated_asc, updated_desc, category_asc, category_desc)
+ *              updated_asc, updated_desc, category_asc, category_desc,
+ *              chars_desc, chars_asc)
  */
 wiki.get('/w/all-pages', async (c) => {
     if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) {
@@ -996,13 +997,15 @@ wiki.get('/w/all-pages', async (c) => {
         updated_desc: 'p.updated_at DESC',
         category_asc: 'p.category COLLATE NOCASE ASC, p.slug COLLATE NOCASE ASC',
         category_desc: 'p.category COLLATE NOCASE DESC, p.slug COLLATE NOCASE ASC',
+        chars_desc: 'COALESCE(p.characters, 0) DESC, p.slug COLLATE NOCASE ASC',
+        chars_asc: 'COALESCE(p.characters, 0) ASC, p.slug COLLATE NOCASE ASC',
     };
     const orderBy = sortMap[sort] || sortMap['slug_asc'];
 
     const whereClause = 'p.deleted_at IS NULL' + (canSeePrivate ? '' : ' AND p.is_private = 0');
 
     const countQuery = `SELECT COUNT(*) as total FROM pages p WHERE ${whereClause}`;
-    const listQuery = `SELECT p.slug, p.category, p.created_at, p.updated_at FROM pages p WHERE ${whereClause} ORDER BY ${orderBy} LIMIT ? OFFSET ?`;
+    const listQuery = `SELECT p.slug, p.category, p.created_at, p.updated_at, p.characters FROM pages p WHERE ${whereClause} ORDER BY ${orderBy} LIMIT ? OFFSET ?`;
 
     const [countResult, listResult] = await db.batch([
         db.prepare(countQuery),

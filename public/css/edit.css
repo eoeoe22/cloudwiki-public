@@ -2524,6 +2524,32 @@ html[data-theme="dark"] .img-editor-canvas-wrap {
     font-size: 15.5px;
 }
 
+/* ── 마크다운 # 헤딩 줄 단위 크기 스케일 ──
+ * lineStylePlugin 이 ATX 헤딩 줄에 cm-md-h1 … cm-md-h6 를 부여한다.
+ * 줄 단위로 font-size 를 키워야 # 마커와 본문이 함께 자연스럽게 커지고,
+ * CodeMirror 의 라인 높이 측정이 그대로 작동해 스크롤 동기화 좌표가 깨지지 않는다.
+ * (highlight style 의 fontSize 와 동시 적용되면 곱 연산이 되어 과확대되므로
+ *  main.ts 의 헤딩 태그 항목에서는 fontSize 를 제거함.) */
+#cm-editor .cm-content .cm-line.cm-md-h1 { font-size: 1.7em;  line-height: 1.25; font-weight: 700; }
+#cm-editor .cm-content .cm-line.cm-md-h2 { font-size: 1.5em;  line-height: 1.25; font-weight: 700; }
+#cm-editor .cm-content .cm-line.cm-md-h3 { font-size: 1.32em; line-height: 1.3;  font-weight: 700; }
+#cm-editor .cm-content .cm-line.cm-md-h4 { font-size: 1.18em; line-height: 1.35; font-weight: 600; }
+#cm-editor .cm-content .cm-line.cm-md-h5 { font-size: 1.08em; line-height: 1.4;  font-weight: 600; }
+#cm-editor .cm-content .cm-line.cm-md-h6 { font-size: 1em;    line-height: 1.4;  font-weight: 600; }
+
+/* 코드블록/접기블록과 동시에 매치되는 줄에서는 헤딩 확대를 적용하지 않는다.
+ * (예: ``` 펜스 안의 # 문자열은 헤딩이 아니라 코드) */
+#cm-editor .cm-content .cm-line.cm-code-block.cm-md-h1,
+#cm-editor .cm-content .cm-line.cm-code-block.cm-md-h2,
+#cm-editor .cm-content .cm-line.cm-code-block.cm-md-h3,
+#cm-editor .cm-content .cm-line.cm-code-block.cm-md-h4,
+#cm-editor .cm-content .cm-line.cm-code-block.cm-md-h5,
+#cm-editor .cm-content .cm-line.cm-code-block.cm-md-h6 {
+    font-size: 1em;
+    line-height: inherit;
+    font-weight: inherit;
+}
+
 /* Hide mobile hamburger menu since sidebar is completely hidden on the edit page */
 .navbar-toggler[data-bs-target="#mobileSidebar"] {
     display: none !important;

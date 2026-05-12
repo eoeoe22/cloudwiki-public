@@ -1517,7 +1517,6 @@ body.raw-mode .wiki-content-raw {
 
 .wiki-row > * {
   flex: 0 0 auto;
-  min-width: 0;
 }
 
 /* 행 내부의 표는 기본 반응형 동작을 유지하면서 자연 너비로 나란히 배치 */
@@ -1528,9 +1527,8 @@ body.raw-mode .wiki-content-raw {
   margin-bottom: 0;
 }
 
-/* 행 내부의 카드는 고정 너비로 나란히 배치, 여백 중복 제거 */
+/* 행 내부의 카드는 자연 너비로 나란히 배치하되 수직 여백 중복만 제거 */
 .wiki-row > .wiki-card {
-  flex: 0 0 280px;
   margin-bottom: 0;
 }
 

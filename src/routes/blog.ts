@@ -24,7 +24,7 @@ function stripCodeBlocks(content: string): string {
  * 미디어 사용 여부 판정(admin.ts:702 의 unused media 체크 등)이 이 행에 의존하므로
  * 누락 시 사용 중인 블로그 이미지가 미사용으로 분류되어 삭제될 수 있다.
  */
-function extractBlogImageLinks(content: string): string[] {
+export function extractBlogImageLinks(content: string): string[] {
     const cleaned = stripCodeBlocks(content);
     const seen = new Set<string>();
     const imageRegex = /images\/[^\s\[\]()<>"'\\?#|^]+?\.\w+/g;
@@ -38,14 +38,14 @@ function extractBlogImageLinks(content: string): string[] {
  * 본문에서 첫 번째 이미지(jpg/png/gif/webp)를 찾아 썸네일 URL 로 반환.
  * 동영상(mp4/webm/ogg) 등은 제외한다. 이미지가 없으면 null.
  */
-function extractFirstThumbnail(content: string): string | null {
+export function extractFirstThumbnail(content: string): string | null {
     const cleaned = stripCodeBlocks(content);
     const m = cleaned.match(/images\/[^\s\[\]()<>"'\\?#|^]+?\.(?:jpe?g|png|gif|webp)/i);
     return m ? `/media/${m[0]}` : null;
 }
 
 /** 블로그 포스트 저장 후 page_links 테이블의 이미지 역링크를 갱신 */
-async function rebuildBlogImageLinks(db: D1Database, blogPostId: number, content: string): Promise<void> {
+export async function rebuildBlogImageLinks(db: D1Database, blogPostId: number, content: string): Promise<void> {
     const stmts: D1PreparedStatement[] = [
         db.prepare('DELETE FROM page_links WHERE source_page_id = ? AND blog = 1').bind(blogPostId),
     ];

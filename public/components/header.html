@@ -46,6 +46,15 @@
                     <div class="text-center text-muted py-4">불러오는 중...</div>
                 </div>
                 <div class="notification-panel-footer d-none" id="notificationPanelFooter">
+                    <div class="push-toggle-status d-flex align-items-center justify-content-between mb-2" id="pushToggleStatus">
+                        <span class="push-toggle-status-label">
+                            <i class="mdi mdi-bell-outline me-1"></i>브라우저 푸시 알림
+                        </span>
+                        <span class="push-status-pill push-status-off" id="pushStatusPill">
+                            <i class="mdi mdi-circle-medium" id="pushStatusDot"></i>
+                            <span id="pushStatusText">꺼짐</span>
+                        </span>
+                    </div>
                     <button id="pushToggleBtn" class="btn btn-sm btn-outline-secondary w-100" type="button" title="브라우저 푸시 알림">
                         <i class="mdi mdi-bell-off-outline"></i> <span id="pushToggleLabel">푸시 알림 받기</span>
                     </button>

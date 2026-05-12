@@ -2069,6 +2069,48 @@ html[data-theme="dark"] .btn-close {
   flex: 0 0 auto;
 }
 
+.push-toggle-status-label {
+  font-size: 0.85rem;
+  color: var(--wiki-text-muted);
+  display: inline-flex;
+  align-items: center;
+}
+
+.push-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 8px 2px 4px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  border: 1px solid transparent;
+  line-height: 1.2;
+}
+
+.push-status-pill .mdi {
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.push-status-on {
+  background: rgba(25, 135, 84, 0.12);
+  color: #198754;
+  border-color: rgba(25, 135, 84, 0.35);
+}
+
+.push-status-off {
+  background: rgba(108, 117, 125, 0.12);
+  color: var(--wiki-text-muted);
+  border-color: rgba(108, 117, 125, 0.3);
+}
+
+html[data-theme="dark"] .push-status-on {
+  background: rgba(40, 167, 90, 0.18);
+  color: #4ade80;
+  border-color: rgba(40, 167, 90, 0.45);
+}
+
 /* ── 푸터 ── */
 .wiki-footer {
   border-top: 1px solid var(--wiki-border);

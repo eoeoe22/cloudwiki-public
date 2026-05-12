@@ -797,7 +797,11 @@ ${contentBlock}
         // 크롤러: 본문(마크다운)이 보이는 미니멀 HTML로 응답
         // renderForAI 결과는 그대로 마크다운이므로 escape 후 <pre>에 넣어 전달한다.
         if (isCrawler) {
-            trackPageView(c, page.slug, Date.now() - startTime);
+            // 관리자 열람 전용 비공개 문서는 Analytics Engine 통계에서 완전히 제외
+            // (sourceWasPrivate: 비공개 슬러그가 public 으로 redirect 된 진입 경로도 함께 차단)
+            if (page.is_private !== 1 && !sourceWasPrivate) {
+                trackPageView(c, page.slug, Date.now() - startTime);
+            }
             const title = `${page.slug} - ${wikiName}`;
             const aiText = page.content ? await renderForAI(page.content, db, 0, page.slug) : '';
             const redirectedNote = redirectedFrom
@@ -837,7 +841,9 @@ ${contentBlock}
     const response = await renderHtml(c, '/', ssrData);
 
     // Analytics: 문서 조회 추적 (존재하는 문서만)
-    if (!ssrData._ssrNotFound) {
+    // 관리자 열람 전용 비공개 문서는 Analytics Engine 통계에서 완전히 제외
+    // (sourceWasPrivate: 비공개 슬러그가 public 으로 redirect 된 진입 경로도 함께 차단)
+    if (!ssrData._ssrNotFound && ssrData.is_private !== 1 && !sourceWasPrivate) {
         trackPageView(c, ssrData.slug || slug, Date.now() - startTime);
     }
 

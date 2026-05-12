@@ -834,6 +834,36 @@ async function deleteNotification(id) {
 // ── Web Push 토글 (in-app 알림 패널 헤더) ──
 // 동적 import 로 push.ts 를 로드하므로 비지원 브라우저에서도 무해.
 // 토글 상태는 매번 패널 열릴 때 refreshPushToggle 로 갱신된다.
+function showPushToast(icon: 'success' | 'info' | 'warning' | 'error', title: string) {
+    if (typeof Swal === 'undefined' || !Swal || typeof Swal.fire !== 'function') return;
+    Swal.fire({
+        icon,
+        title,
+        toast: true,
+        position: 'top-end',
+        timer: 2200,
+        showConfirmButton: false,
+    });
+}
+
+function applyPushStatusPill(subscribed: boolean) {
+    const pill = document.getElementById('pushStatusPill');
+    const dot = document.getElementById('pushStatusDot');
+    const text = document.getElementById('pushStatusText');
+    if (!pill || !text) return;
+    if (subscribed) {
+        pill.classList.remove('push-status-off');
+        pill.classList.add('push-status-on');
+        text.textContent = '받는 중';
+        if (dot) dot.className = 'mdi mdi-bell-ring';
+    } else {
+        pill.classList.remove('push-status-on');
+        pill.classList.add('push-status-off');
+        text.textContent = '꺼짐';
+        if (dot) dot.className = 'mdi mdi-bell-off';
+    }
+}
+
 async function refreshPushToggle() {
     const footer = document.getElementById('notificationPanelFooter');
     const btn = document.getElementById('pushToggleBtn') as HTMLButtonElement | null;
@@ -849,28 +879,42 @@ async function refreshPushToggle() {
         footer.classList.remove('d-none');
         btn.classList.remove('d-none');
         const subscribed = await mod.isCurrentlySubscribed();
+        applyPushStatusPill(subscribed);
         const icon = btn.querySelector('i');
         if (subscribed) {
             labelEl.textContent = '푸시 알림 구독 취소';
-            if (icon) icon.className = 'mdi mdi-bell-ring-outline';
-            btn.classList.remove('btn-outline-secondary');
+            if (icon) icon.className = 'mdi mdi-bell-off-outline';
+            btn.classList.remove('btn-outline-secondary', 'btn-success');
             btn.classList.add('btn-outline-danger');
         } else {
             labelEl.textContent = '푸시 알림 받기';
-            if (icon) icon.className = 'mdi mdi-bell-off-outline';
-            btn.classList.remove('btn-outline-danger');
-            btn.classList.add('btn-outline-secondary');
+            if (icon) icon.className = 'mdi mdi-bell-ring-outline';
+            btn.classList.remove('btn-outline-danger', 'btn-outline-secondary');
+            btn.classList.add('btn-success');
         }
         btn.onclick = async (e) => {
             e.stopPropagation();
             btn.disabled = true;
             try {
                 if (subscribed) {
-                    await mod.unsubscribe();
+                    const res = await mod.unsubscribe();
+                    if (res.success) {
+                        showPushToast('info', '푸시 알림 구독을 해제했습니다');
+                    } else {
+                        showPushToast('error', '푸시 알림 구독 해제 실패');
+                    }
                 } else {
                     const res = await mod.subscribeForUser();
-                    if (!res.success && res.reason === 'denied' && typeof Swal !== 'undefined') {
-                        Swal.fire('알림 권한 차단됨', '브라우저 설정에서 알림 권한을 허용해주세요.', 'warning');
+                    if (res.success) {
+                        showPushToast('success', '푸시 알림을 구독했습니다');
+                    } else if (res.reason === 'denied') {
+                        if (typeof Swal !== 'undefined') {
+                            Swal.fire('알림 권한 차단됨', '브라우저 설정에서 알림 권한을 허용해주세요.', 'warning');
+                        }
+                    } else if (res.reason === 'unsupported' || res.reason === 'disabled') {
+                        showPushToast('warning', '이 브라우저는 푸시 알림을 지원하지 않습니다');
+                    } else {
+                        showPushToast('error', '푸시 알림 구독에 실패했습니다');
                     }
                 }
             } finally {

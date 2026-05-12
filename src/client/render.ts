@@ -2222,20 +2222,6 @@ function _computeTimerText(unixSec) {
     return parts.join(' ') + (diff >= 0 ? ' 남음' : ' 지남');
 }
 
-// containerId → ResizeObserver (그리드 균형 조정 중복 방지)
-const _gridObserverMap = {};
-
-/**
- * .wiki-grid 내부 카드가 줄바꿈될 때 위아래 개수가 대칭이 되도록 열 수를 조정.
- * 예) 4개 카드가 3+1로 깨지지 않고 2+2로 배치되도록.
- * 한 줄에 모두 들어가는 경우에는 기본 flex 레이아웃을 유지.
- */
-function _balanceWikiGrids(containerEl, containerId) {
-    // CSS flex-grow(1 1 200px)를 통해 왼쪽부터 순차적으로 채우고
-    // 전체 너비를 활용하는 방식으로 변경되었으므로 JS 균형 조절 로직을 비활성화합니다.
-    return;
-}
-
 // containerId → intervalId (타이머 중복 방지)
 const _timerIntervalMap = {};
 
@@ -3191,9 +3177,6 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
             slug: options.enableSectionEdit ? (options.sectionEditSlug || slug) : null,
             rawContent: content
         });
-
-        // :::grid 레이아웃 균형 조정 (줄바꿈시 위아래 카드 개수 대칭)
-        _balanceWikiGrids(containerEl, containerId);
 
         // {timer:} 요소 실시간 업데이트
         _initTimers(containerEl, containerId);
