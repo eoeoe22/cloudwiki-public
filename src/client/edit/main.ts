@@ -666,7 +666,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         const buildDarkBgExt = () => isDarkMode ? EditorView.theme({
             "&": { height: "100%", fontSize: "14px", backgroundColor: "#000000" },
             ".cm-scroller": { overflow: "auto" },
-            ".cm-content": { paddingBottom: "25vh" },
+            ".cm-content": { paddingBottom: "25vh", caretColor: "#ffffff" },
+            ".cm-cursor, .cm-dropCursor": { borderLeftColor: "#ffffff", borderLeftWidth: "2px" },
             ".cm-gutters": { backgroundColor: "#000000", borderRight: "1px solid #333" },
             ".cm-activeLineGutter": { backgroundColor: "#2d2d2d" }
         }) : [];
@@ -3748,3 +3749,5 @@ async function saveBlogPost() {
 // 상단(BLOG_MODE 선언 바로 다음) 에서 수행한다 — 함수 선언은 hoisting 되므로 안전하며,
 // 외부 CDN(Turnstile) 이 우리 모듈보다 먼저 fire 하더라도 즉시 콜백을 발견할 수 있다.
 // CodeMirrorView 는 CM6 동적 import 후 본문 내부에서 노출한다.
+
+console.log('[edit/main] module loaded');

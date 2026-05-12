@@ -386,7 +386,17 @@ window.slug ??= null;
 window.pageVersion ??= null;
 window.DRAFT_KEY ??= '';
 window.originalContent ??= '';
-window.editor ??= null;
+// edit.html / blog-edit.html 에는 <div id="editor"> 가 있어, own 프로퍼티가
+// 세팅되기 전 `window.editor` 는 "named access on the Window object" 정책에
+// 따라 HTMLDivElement 를 반환한다. 이 div 는 truthy 이므로 `??=` 가 발동하지
+// 않아 window.editor 가 div 로 계속 노출되는데, 다른 모듈이 truthy 만으로
+// "에디터 shim 준비 완료" 로 오인하는 결정적 버그가 발생한다 (autocomplete
+// 에서 _autocompleteAttached 가 잘못 true 로 굳던 문제). 진짜 shim 이 아닌
+// 경우(=`.on` 메서드가 없는 경우) own 프로퍼티 null 로 정규화해 named access
+// 를 영구히 가린다.
+if (!window.editor || typeof (window.editor as { on?: unknown }).on !== 'function') {
+    window.editor = null;
+}
 window.conflictEditor ??= null;
 window.serverViewMode ??= 'raw';
 window.serverViewer ??= null;
@@ -803,3 +813,5 @@ window.readDraftFromLocal = readDraftFromLocal;
 window.checkDraft = checkDraft;
 window.checkSectionDrafts = checkSectionDrafts;
 window.purgeLegacyAutosaveKeys = purgeLegacyAutosaveKeys;
+
+console.log('[edit/utils] module loaded');

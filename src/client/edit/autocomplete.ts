@@ -1809,17 +1809,61 @@ let _autocompleteAttached = false;
 let _attachAttempts = 0;
 const MAX_ATTACH_ATTEMPTS = 30;
 
+// *Ac.div 들은 모듈 top-level 에서 document.getElementById 로 한 번 캐시한다.
+// 그러나 일부 환경(서버 HTMLRewriter 스트리밍 / 특정 브라우저 큐잉 동작 등)에서
+// type="module" 의 deferred 보장이 깨지고 div 가 아직 DOM 에 없을 때 모듈 본문이
+// 평가되어 9개 *Ac.div 가 전부 null 로 굳어지는 케이스가 실제로 재현된다.
+// (재현 검증: 콘솔에서 `await import('/dist/edit-autocomplete.js?' + Date.now())`
+//  로 모듈을 다시 평가해 fresh closure 를 만들면 즉시 정상 작동.)
+//
+// attachAutocomplete 시점에는 editor 가 준비된 상태이고 DOM 도 안정된 상태이므로
+// 이 헬퍼를 attach 직전에 호출해 null 캐시를 보강한다. div 가 이미 non-null 이면
+// `?? getElementById(...)` 가 단락 평가로 추가 lookup 을 건너뛰므로 happy path 의
+// 비용은 없다.
+function _resolveAutocompleteDivs(): void {
+    imgSizeAc.div   = imgSizeAc.div   ?? document.getElementById('imgsize-autocomplete');
+    codeAc.div      = codeAc.div      ?? document.getElementById('code-autocomplete');
+    blockAc.div     = blockAc.div     ?? document.getElementById('block-autocomplete');
+    iconAc.div      = iconAc.div      ?? document.getElementById('icon-autocomplete');
+    colorAc.div     = colorAc.div     ?? document.getElementById('color-autocomplete');
+    timestampAc.div = timestampAc.div ?? document.getElementById('timestamp-autocomplete');
+    paletteAc.div   = paletteAc.div   ?? document.getElementById('palette-autocomplete');
+    categoryAc.div  = categoryAc.div  ?? document.getElementById('category-autocomplete');
+    wikiAc.div      = wikiAc.div      ?? document.getElementById('wiki-autocomplete');
+}
+
 function attachAutocomplete(viaFallback = false): void {
     if (_autocompleteAttached) return;
     const editor = window.editor;
-    if (!editor) return;
+    // window.editor 가 truthy 라도 진짜 에디터 shim 인지 검증해야 한다.
+    // edit.html / blog-edit.html 에는 <div id="editor"> 가 존재하므로,
+    // 브라우저의 "named access on the Window object" 정책에 따라 own
+    // 프로퍼티가 아직 세팅되지 않은 시점의 `window.editor` 는 그 HTMLDivElement
+    // 를 자동 반환한다. div 에는 .on 메서드가 없어 `editor.on?.('change', cb)`
+    // 가 옵셔널 체이닝으로 조용히 no-op 되는데, 그 사이 _autocompleteAttached
+    // 만 true 로 굳어 이후 정상 트리거(wiki-editor-ready / ensureAutocompleteAttached
+    // / 폴링) 가 전부 "이미 부착됨" 으로 skip 되어 자동완성이 영구 비활성화된다.
+    // (재현: 페이지 로드 후 콘솔에서 `await import('/dist/edit-autocomplete.js?'
+    //  + Date.now())` 로 재평가하면 그 시점에는 main.ts 가 진짜 shim 을 own
+    //  프로퍼티로 덮어쓴 뒤라 정상 부착됨.)
+    // 따라서 .on 이 함수인 경우에만 진짜 shim 으로 간주한다.
+    if (!editor || typeof editor.on !== 'function') return;
     _autocompleteAttached = true;
     if (viaFallback) {
         console.warn('[edit] 자동완성이 폴링 안전망으로 부착됨 — 정상 트리거가 누락되었을 가능성. _attachAttempts=' + _attachAttempts);
     }
+    _resolveAutocompleteDivs();
 
-    editor.on?.('change', () => {
+    editor.on('change', () => {
         requestAnimationFrame(() => {
+            // 매 키스트로크마다 *Ac.div 의 null 캐시를 보강한다. attach 시점에
+            // 한 번만 _resolveAutocompleteDivs() 를 호출하면, 그 시점에 일부
+            // div 가 DOM 에 없었거나 (스트리밍/큐잉) 미래에 어떤 DOM 조작으로
+            // 분리되었을 때 영구히 null 로 굳어진다. RAF 콜백 안에서 사용자가
+            // 실제로 에디터에 타이핑한 시점에는 DOM 이 안정되어 있으므로
+            // ?? 단락 평가로 누락된 div 만 다시 lookup 한다. happy path 비용은
+            // 9 번의 prop read 로 무시할 수 있는 수준이다.
+            _resolveAutocompleteDivs();
             const selection = editor.getSelection?.();
             if (!selection) { hideAutocompletesExcept(null); return; }
 
@@ -1971,3 +2015,5 @@ window.renderCategoryTags       = renderCategoryTags;
 
 // edit.js 가 .replaceRange 를 직접 기록하는 상태 객체
 window.paletteAc = paletteAc;
+
+console.log('[edit/autocomplete] module loaded');

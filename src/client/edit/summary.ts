@@ -489,6 +489,8 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 });
 
+console.log('[edit/summary] module loaded');
+
 // import / export 가 하나도 없으면 TypeScript 가 이 파일을 ambient script 로 취급해
 // `declare global` 증강이 거부된다. 빈 export 로 모듈 컨텍스트를 명시한다.
 export {};

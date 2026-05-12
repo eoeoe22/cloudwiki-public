@@ -3259,5 +3259,7 @@ window.openStructureBlockInsertModal = openStructureBlockInsertModal;
 window.openGoogleMapsEmbedModal = openGoogleMapsEmbedModal;
 window.openTemplateModal       = openTemplateModal;
 
+console.log('[edit/modals] module loaded');
+
 // 사용 흐름상 export 하지 않아도 무방한 타입 — CMSelection import 가 lint 미사용으로 트리쉐이킹 되지 않게 사용 표시.
 export type { CMSelection };

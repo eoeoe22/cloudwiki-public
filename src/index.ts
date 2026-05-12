@@ -1139,6 +1139,12 @@ export default {
                 'DELETE FROM mcp_drafts WHERE updated_at < ?'
             ).bind(now - 43200).run()
         );
+        // OAuth 인가 코드: TTL 60초이므로 1시간(3600초) 이상 지난 코드는 모두 만료 상태.
+        ctx.waitUntil(
+            env.DB.prepare(
+                'DELETE FROM oauth_codes WHERE expires_at < ?'
+            ).bind(now - 3600).run()
+        );
         // OAuth 토큰 보관 정책: 사용 종료(revoked) 또는 리프레시 만료 후 7일이 지나면 삭제.
         // COALESCE(revoked_at, refresh_expires_at, access_expires_at) 가 토큰의 "수명 종료
         // 시각"을 의미하며, 그 시각이 7일(604800초) 이상 지난 행은 인증 단계에서 어차피

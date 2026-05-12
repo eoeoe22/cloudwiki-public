@@ -671,97 +671,122 @@ auth.delete('/api/me/sessions', requireAuthAllowBanned, async (c) => {
 });
 
 /**
- * GET /api/me/mcp-sessions
- * 현재 로그인 유저에게 발급된 MCP(OAuth 2.1) 토큰 목록.
- * - active: revoked_at IS NULL AND COALESCE(refresh_expires_at, access_expires_at) > now
- * - 그 외(expired/revoked) 는 최근 30일 이내만 회색 표시용으로 반환.
- * 토큰 평문/해시는 절대 노출하지 않으며, 식별자는 oauth_tokens.id 만 사용한다.
+ * GET /api/me/mcp-clients
+ * 현재 로그인 유저가 OAuth 동의를 통해 연결한 MCP 클라이언트 목록.
+ * oauth_tokens 를 client_id 별로 집계하여 "어떤 클라이언트가 내 계정에 접근 권한을
+ * 갖고 있는가" 를 보여준다. 개별 토큰(refresh rotation 시마다 새 row 가 생성됨) 단위의
+ * 노출은 사용자 입장에서 의미가 없기 때문에 클라이언트 단위로만 노출한다.
+ * - status='active': 현재 비폐기 + 미만료 토큰이 1개 이상 존재
+ * - status='inactive': 최근 7일 이내 폐기/만료된 토큰만 존재 (정자정 크론이 7일 후 삭제)
+ * 토큰 평문/해시는 절대 노출하지 않는다.
  */
-auth.get('/api/me/mcp-sessions', requireAuthAllowBanned, async (c) => {
+auth.get('/api/me/mcp-clients', requireAuthAllowBanned, async (c) => {
     const user = c.get('user')!;
     const db = c.env.DB;
     const now = Math.floor(Date.now() / 1000);
-    // 자정 크론이 종료/만료 후 7일이 지난 토큰을 일괄 삭제하므로 노출 윈도우도 7일로 맞춘다.
     const since = now - 60 * 60 * 24 * 7;
 
     const { results } = await db.prepare(
-        `SELECT t.id, t.client_id, t.scope, t.access_expires_at, t.refresh_expires_at,
-                t.revoked_at, t.created_at, t.last_used_at,
-                c.client_name
+        `SELECT t.client_id,
+                MAX(c.client_name) AS client_name,
+                MAX(t.last_used_at) AS last_used_at,
+                MAX(t.revoked_at) AS last_revoked_at,
+                GROUP_CONCAT(t.scope, ' ') AS scopes,
+                GROUP_CONCAT(CASE
+                        WHEN t.revoked_at IS NULL
+                         AND COALESCE(t.refresh_expires_at, t.access_expires_at) > ?
+                        THEN t.scope
+                    END, ' ') AS active_scopes,
+                SUM(CASE
+                        WHEN t.revoked_at IS NULL
+                         AND COALESCE(t.refresh_expires_at, t.access_expires_at) > ?
+                        THEN 1 ELSE 0
+                    END) AS active_tokens
          FROM oauth_tokens t
          LEFT JOIN oauth_clients c ON c.client_id = t.client_id
          WHERE t.user_id = ?
            AND COALESCE(t.revoked_at, t.refresh_expires_at, t.access_expires_at) >= ?
-         ORDER BY (t.revoked_at IS NULL) DESC,
-                  COALESCE(t.last_used_at, t.created_at, 0) DESC`
-    ).bind(user.id, since).all<{
-        id: number;
+         GROUP BY t.client_id
+         ORDER BY (SUM(CASE
+                          WHEN t.revoked_at IS NULL
+                           AND COALESCE(t.refresh_expires_at, t.access_expires_at) > ?
+                          THEN 1 ELSE 0
+                      END) > 0) DESC,
+                  COALESCE(MAX(t.last_used_at), MAX(t.created_at), 0) DESC`
+    ).bind(now, now, user.id, since, now).all<{
         client_id: string;
-        scope: string | null;
-        access_expires_at: number;
-        refresh_expires_at: number | null;
-        revoked_at: number | null;
-        created_at: number | null;
-        last_used_at: number | null;
         client_name: string | null;
+        last_used_at: number | null;
+        last_revoked_at: number | null;
+        scopes: string | null;
+        active_scopes: string | null;
+        active_tokens: number;
     }>();
 
-    const sessions = (results || []).map(t => {
-        let status: 'active' | 'expired' | 'revoked';
-        if (t.revoked_at) status = 'revoked';
-        else if ((t.refresh_expires_at ?? t.access_expires_at) < now) status = 'expired';
-        else status = 'active';
+    const splitScopes = (raw: string | null): string[] => {
+        if (!raw) return [];
+        // OAuth scope-token 은 공백만 금지(RFC 6749 §3.3) — 따라서 row 간 결합은
+        // GROUP_CONCAT(scope, ' ') 로 공백 구분, 토큰 분리는 공백 split 만 사용한다.
+        // 콤마 등 다른 문자는 scope-token 내부 값으로 유효하므로 split 대상이 아님.
+        const set = new Set<string>();
+        for (const s of raw.split(/\s+/)) {
+            if (s) set.add(s);
+        }
+        return [...set].sort();
+    };
+
+    const clients = (results || []).map(r => {
+        const isActive = r.active_tokens > 0;
+        // 활성 토큰이 있으면 현재 부여된 권한(active_scopes), 없으면 최근 7일 내 토큰의 scope 합집합.
+        const scopes = isActive ? splitScopes(r.active_scopes) : splitScopes(r.scopes);
         return {
-            id: t.id,
-            client_id: t.client_id,
-            client_name: t.client_name,
-            scope: t.scope,
-            status,
-            created_at: t.created_at,
-            last_used_at: t.last_used_at,
-            access_expires_at: t.access_expires_at,
-            refresh_expires_at: t.refresh_expires_at,
-            revoked_at: t.revoked_at,
+            client_id: r.client_id,
+            client_name: r.client_name,
+            scopes,
+            status: isActive ? 'active' as const : 'inactive' as const,
+            active_tokens: r.active_tokens,
+            last_used_at: r.last_used_at,
+            last_revoked_at: isActive ? null : r.last_revoked_at,
         };
     });
 
-    return c.json({ sessions });
+    return c.json({ clients });
 });
 
 /**
- * DELETE /api/me/mcp-sessions/:id
- * 본인 소유의 특정 MCP 토큰 단건 폐기.
+ * DELETE /api/me/mcp-clients/:client_id
+ * 본인 계정과 연결된 특정 MCP 클라이언트의 모든 활성 토큰을 일괄 폐기.
+ * oauth_clients 행 자체는 다른 유저도 같은 client_id 를 사용할 수 있으므로 건드리지 않는다.
  */
-auth.delete('/api/me/mcp-sessions/:id', requireAuthAllowBanned, async (c) => {
+auth.delete('/api/me/mcp-clients/:client_id', requireAuthAllowBanned, async (c) => {
     const user = c.get('user')!;
     const db = c.env.DB;
-    const tokenId = Number(c.req.param('id'));
-    if (!Number.isFinite(tokenId) || !Number.isInteger(tokenId) || tokenId <= 0) {
-        return c.json({ error: '잘못된 토큰 ID 입니다.' }, 400);
+    const clientId = c.req.param('client_id');
+    if (!clientId) {
+        return c.json({ error: '잘못된 client_id 입니다.' }, 400);
     }
 
     const result = await db.prepare(
         `UPDATE oauth_tokens SET revoked_at = unixepoch()
-         WHERE id = ? AND user_id = ? AND revoked_at IS NULL`
-    ).bind(tokenId, user.id).run();
+         WHERE user_id = ? AND client_id = ?
+           AND revoked_at IS NULL
+           AND COALESCE(refresh_expires_at, access_expires_at) > unixepoch()`
+    ).bind(user.id, clientId).run();
 
     if (!result.meta.changes) {
-        return c.json({ error: '세션을 찾을 수 없거나 이미 종료되었습니다.' }, 404);
+        return c.json({ error: '연결된 활성 토큰이 없습니다.' }, 404);
     }
-    return c.json({ success: true });
+    return c.json({ success: true, count: result.meta.changes });
 });
 
 /**
- * DELETE /api/me/mcp-sessions
- * 본인의 모든 활성 MCP 토큰 일괄 폐기.
+ * DELETE /api/me/mcp-clients
+ * 본인의 모든 활성 MCP 토큰 일괄 폐기 (모든 클라이언트 연결 해제).
  */
-auth.delete('/api/me/mcp-sessions', requireAuthAllowBanned, async (c) => {
+auth.delete('/api/me/mcp-clients', requireAuthAllowBanned, async (c) => {
     const user = c.get('user')!;
     const db = c.env.DB;
 
-    // 일괄 폐기는 "활성" 토큰만 대상으로 한다 — 만료-but-unrevoked 행까지 건드리면
-    // 응답 count 가 UI 가 표시한 활성 세션 수와 어긋난다 (만료 토큰은 어차피 인증 단계에서
-    // 차단되므로 폐기 마킹의 실익도 없음).
     const result = await db.prepare(
         `UPDATE oauth_tokens SET revoked_at = unixepoch()
          WHERE user_id = ?

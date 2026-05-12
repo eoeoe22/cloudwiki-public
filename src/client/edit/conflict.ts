@@ -1093,3 +1093,5 @@ window.setDiffMode = setDiffMode;
 window.renderDiffView = renderDiffView;
 window.toggleServerView = toggleServerView;
 window.toggleServerPreview = toggleServerPreview;
+
+console.log('[edit/conflict] module loaded');

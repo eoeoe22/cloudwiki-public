@@ -814,3 +814,5 @@ const ImageEditor = (() => {
 
 window.openExistingImageSearch = openExistingImageSearch;
 window.handleImageUpload = handleImageUpload;
+
+console.log('[edit/image] module loaded');

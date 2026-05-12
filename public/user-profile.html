@@ -152,23 +152,8 @@
             font-weight: 500;
         }
 
-        .load-more-btn {
-            display: block;
-            width: 100%;
+        .contributions-pagination {
             margin-top: 1rem;
-            padding: 0.6rem;
-            border: 2px dashed var(--wiki-border);
-            background: transparent;
-            color: var(--wiki-primary);
-            font-weight: 600;
-            border-radius: 10px;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-
-        .load-more-btn:hover {
-            background: rgba(37, 99, 235, 0.05);
-            border-color: var(--wiki-primary);
         }
     </style>
 </head>
@@ -202,9 +187,7 @@
                     <div id="contributionsList">
                         <div class="text-center text-muted py-3">불러오는 중...</div>
                     </div>
-                    <button class="load-more-btn d-none" id="loadMoreBtn" onclick="loadMoreContributions()">
-                        <i class="bi bi-arrow-down-circle"></i> 더보기
-                    </button>
+                    <nav class="contributions-pagination" id="contributionsPagination" aria-label="편집 내역 페이지"></nav>
                 </div>
             </div>
         </div>
@@ -223,7 +206,9 @@
     <script type="module" src="/dist/common.js"></script>
     <script>
         let profileUser = null;
-        let currentOffset = 0;
+        let contributionsPage = 1;
+        let contributionsTotal = 0;
+        let contributionsRequestSeq = 0;
         const PAGE_SIZE = 20;
 
         // URL에서 유저 ID 추출
@@ -320,20 +305,34 @@
             document.title = `${profileUser.name} - 사용자 프로필 - ${appConfig.wikiName}`;
         }
 
-        async function loadContributions() {
+        async function loadContributions(page = 1) {
             const userId = getUserIdFromUrl();
+            const listEl = document.getElementById('contributionsList');
+            const paginationEl = document.getElementById('contributionsPagination');
+            const isFirstLoad = contributionsTotal === 0 && page === 1;
+            if (!isFirstLoad) {
+                listEl.innerHTML = '<div class="text-center text-muted py-3"><div class="spinner-border spinner-border-sm"></div> 불러오는 중...</div>';
+            }
+
+            const seq = ++contributionsRequestSeq;
+            const offset = (page - 1) * PAGE_SIZE;
             try {
-                const res = await fetch(`/api/users/${userId}/contributions?offset=0&limit=${PAGE_SIZE}`);
+                const res = await fetch(`/api/users/${userId}/contributions?offset=${offset}&limit=${PAGE_SIZE}`);
+                if (seq !== contributionsRequestSeq) return;
                 if (!res.ok) throw new Error();
                 const data = await res.json();
+                if (seq !== contributionsRequestSeq) return;
                 const contributions = data.contributions || [];
+                const total = data.total || 0;
+
+                contributionsTotal = total;
 
                 // 통계 표시
                 const statsSection = document.getElementById('statsSection');
                 statsSection.style.display = '';
                 document.getElementById('statCards').innerHTML = `
                     <div class="stat-card">
-                        <div class="stat-value">${data.total || 0}</div>
+                        <div class="stat-value">${contributionsTotal}</div>
                         <div class="stat-label">총 편집 횟수</div>
                     </div>
                 `;
@@ -341,57 +340,82 @@
                 // 기여 목록
                 const section = document.getElementById('contributionsSection');
                 section.style.display = '';
-                const listEl = document.getElementById('contributionsList');
 
-                if (contributions.length === 0) {
+                if (total === 0) {
+                    contributionsPage = 1;
                     listEl.innerHTML = '<div class="text-center text-muted py-3">편집 내역이 없습니다.</div>';
+                    paginationEl.innerHTML = '';
                     return;
                 }
 
-                listEl.innerHTML = contributions.map(renderContribution).join('');
-                currentOffset = contributions.length;
-
-                // 더보기 버튼
-                if (data.has_more) {
-                    document.getElementById('loadMoreBtn').classList.remove('d-none');
-                } else {
-                    document.getElementById('loadMoreBtn').classList.add('d-none');
+                // 요청한 페이지가 범위를 벗어났으면 마지막 페이지로 보정해 재요청
+                const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+                if (contributions.length === 0 && page > totalPages) {
+                    loadContributions(totalPages);
+                    return;
                 }
 
+                contributionsPage = page;
+                listEl.innerHTML = contributions.map(renderContribution).join('');
+                renderContributionsPagination();
+
             } catch (e) {
-                document.getElementById('contributionsList').innerHTML =
-                    '<div class="text-center text-muted py-3">불러오기 실패</div>';
+                if (seq !== contributionsRequestSeq) return;
+                listEl.innerHTML = '<div class="text-center text-muted py-3">불러오기 실패</div>';
+                paginationEl.innerHTML = '';
             }
         }
 
-        async function loadMoreContributions() {
-            const userId = getUserIdFromUrl();
-            const btn = document.getElementById('loadMoreBtn');
-            btn.disabled = true;
-            btn.innerHTML = '<div class="spinner-border spinner-border-sm"></div> 불러오는 중...';
+        function goToContributionsPage(page) {
+            const totalPages = Math.max(1, Math.ceil(contributionsTotal / PAGE_SIZE));
+            const target = Math.min(Math.max(1, page), totalPages);
+            if (target === contributionsPage) return;
+            loadContributions(target);
+            document.getElementById('contributionsSection').scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
 
-            try {
-                const res = await fetch(`/api/users/${userId}/contributions?offset=${currentOffset}&limit=${PAGE_SIZE}`);
-                if (!res.ok) throw new Error();
-                const data = await res.json();
-                const contributions = data.contributions || [];
-
-                const listEl = document.getElementById('contributionsList');
-                listEl.innerHTML += contributions.map(renderContribution).join('');
-                currentOffset += contributions.length;
-
-                if (data.has_more) {
-                    btn.classList.remove('d-none');
-                } else {
-                    btn.classList.add('d-none');
-                }
-
-            } catch (e) {
-                Swal.fire('오류', '추가 데이터를 불러오는 데 실패했습니다.', 'error');
-            } finally {
-                btn.disabled = false;
-                btn.innerHTML = '<i class="bi bi-arrow-down-circle"></i> 더보기';
+        function getContributionsPageNumbers(current, total) {
+            const pages = [];
+            if (total <= 7) {
+                for (let i = 1; i <= total; i++) pages.push(i);
+                return pages;
             }
+            pages.push(1);
+            if (current > 3) pages.push('...');
+            const start = Math.max(2, current - 1);
+            const end = Math.min(total - 1, current + 1);
+            for (let i = start; i <= end; i++) pages.push(i);
+            if (current < total - 2) pages.push('...');
+            pages.push(total);
+            return pages;
+        }
+
+        function renderContributionsPagination() {
+            const container = document.getElementById('contributionsPagination');
+            const totalPages = Math.max(1, Math.ceil(contributionsTotal / PAGE_SIZE));
+            if (totalPages <= 1) {
+                container.innerHTML = '';
+                return;
+            }
+            const pages = getContributionsPageNumbers(contributionsPage, totalPages);
+            const isFirst = contributionsPage === 1;
+            const isLast = contributionsPage === totalPages;
+
+            let html = '<ul class="pagination pagination-sm justify-content-center mb-0 flex-wrap">';
+            html += `<li class="page-item ${isFirst ? 'disabled' : ''}"><button type="button" class="page-link" onclick="goToContributionsPage(1)" ${isFirst ? 'disabled' : ''} aria-label="처음"><i class="mdi mdi-chevron-double-left"></i></button></li>`;
+            html += `<li class="page-item ${isFirst ? 'disabled' : ''}"><button type="button" class="page-link" onclick="goToContributionsPage(${contributionsPage - 1})" ${isFirst ? 'disabled' : ''} aria-label="이전"><i class="mdi mdi-chevron-left"></i></button></li>`;
+            for (const p of pages) {
+                if (p === '...') {
+                    html += '<li class="page-item disabled"><span class="page-link">…</span></li>';
+                } else {
+                    const active = p === contributionsPage ? 'active' : '';
+                    html += `<li class="page-item ${active}"><button type="button" class="page-link" onclick="goToContributionsPage(${p})">${p}</button></li>`;
+                }
+            }
+            html += `<li class="page-item ${isLast ? 'disabled' : ''}"><button type="button" class="page-link" onclick="goToContributionsPage(${contributionsPage + 1})" ${isLast ? 'disabled' : ''} aria-label="다음"><i class="mdi mdi-chevron-right"></i></button></li>`;
+            html += `<li class="page-item ${isLast ? 'disabled' : ''}"><button type="button" class="page-link" onclick="goToContributionsPage(${totalPages})" ${isLast ? 'disabled' : ''} aria-label="마지막"><i class="mdi mdi-chevron-double-right"></i></button></li>`;
+            html += '</ul>';
+            container.innerHTML = html;
         }
 
         function renderContribution(c) {

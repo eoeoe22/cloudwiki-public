@@ -390,19 +390,19 @@
                     </div>
                 </div>
 
-                <!-- MCP 세션 관리 -->
-                <div class="profile-section" id="mcpSessionsSection" style="display:none;">
+                <!-- MCP 클라이언트 관리 -->
+                <div class="profile-section" id="mcpClientsSection" style="display:none;">
                     <div class="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2">
-                        <h4 class="mb-0"><i class="mdi mdi-api"></i> MCP 서버 세션 관리</h4>
-                        <button class="btn btn-sm btn-outline-danger" id="revokeAllMcpSessionsBtn" onclick="revokeAllMcpSessions()">
-                            <i class="mdi mdi-logout-variant"></i> 모두 종료
+                        <h4 class="mb-0"><i class="mdi mdi-api"></i> MCP 서버 등록된 클라이언트</h4>
+                        <button class="btn btn-sm btn-outline-danger" id="revokeAllMcpClientsBtn" onclick="revokeAllMcpClients()">
+                            <i class="mdi mdi-logout-variant"></i> 모든 연결 해제
                         </button>
                     </div>
                     <small class="text-muted d-block mb-3">
-                        외부 MCP 클라이언트(Claude Desktop, Claude Code 등) 가 이 계정으로 발급받은 OAuth 액세스 토큰입니다.
-                        본인이 연결한 적 없는 세션이 있다면 즉시 종료해주세요. 종료된 세션은 7일간 기록으로 표시된 뒤 자동 삭제됩니다.
+                        외부 MCP 클라이언트(Claude Desktop, Claude Code 등) 가 이 계정에 접근 권한을 가진 등록된 클라이언트 목록입니다.
+                        본인이 연결한 적 없는 클라이언트가 있다면 즉시 연결을 해제해주세요. 해제된 클라이언트는 7일간 기록으로 표시된 뒤 자동 삭제됩니다.
                     </small>
-                    <div id="mcpSessionsList">
+                    <div id="mcpClientsList">
                         <div class="text-center text-muted py-3">불러오는 중...</div>
                     </div>
                 </div>
@@ -443,7 +443,7 @@
             loadContributions();
             loadMessages();
             loadSessions();
-            loadMcpSessions();
+            loadMcpClients();
             checkNameChangeStatus();
             showPictureUpdateResult();
         });
@@ -940,50 +940,49 @@
             return new Date(epochSec * 1000).toLocaleDateString('ko-KR');
         }
 
-        async function loadMcpSessions() {
-            const section = document.getElementById('mcpSessionsSection');
-            const listEl = document.getElementById('mcpSessionsList');
+        async function loadMcpClients() {
+            const section = document.getElementById('mcpClientsSection');
+            const listEl = document.getElementById('mcpClientsList');
             try {
-                const res = await fetch('/api/me/mcp-sessions');
+                const res = await fetch('/api/me/mcp-clients');
                 if (!res.ok) throw new Error();
                 const data = await res.json();
-                const sessions = data.sessions || [];
+                const clients = data.clients || [];
 
                 section.style.display = '';
 
-                if (sessions.length === 0) {
-                    listEl.innerHTML = '<div class="text-center text-muted py-3">발급된 MCP 토큰이 없습니다.</div>';
-                    document.getElementById('revokeAllMcpSessionsBtn').disabled = true;
+                if (clients.length === 0) {
+                    listEl.innerHTML = '<div class="text-center text-muted py-3">연결된 MCP 클라이언트가 없습니다.</div>';
+                    document.getElementById('revokeAllMcpClientsBtn').disabled = true;
                     return;
                 }
 
-                const hasActive = sessions.some(s => s.status === 'active');
-                document.getElementById('revokeAllMcpSessionsBtn').disabled = !hasActive;
+                const hasActive = clients.some(c => c.status === 'active');
+                document.getElementById('revokeAllMcpClientsBtn').disabled = !hasActive;
 
-                listEl.innerHTML = sessions.map(s => {
-                    const isActive = s.status === 'active';
-                    const statusBadge = s.status === 'active'
-                        ? '<span class="badge bg-success">활성</span>'
-                        : s.status === 'revoked'
-                            ? '<span class="badge bg-secondary">종료됨</span>'
-                            : '<span class="badge bg-warning text-dark">만료</span>';
-                    const clientLabel = s.client_name
-                        ? escapeHtml(s.client_name)
+                listEl.innerHTML = clients.map(client => {
+                    const isActive = client.status === 'active';
+                    const statusBadge = isActive
+                        ? '<span class="badge bg-success">연결됨</span>'
+                        : '<span class="badge bg-secondary">해제됨</span>';
+                    const clientLabel = client.client_name
+                        ? escapeHtml(client.client_name)
                         : '<span class="text-muted">(이름 미등록 클라이언트)</span>';
-                    const clientIdShort = escapeHtml((s.client_id || '').slice(0, 12)) + '…';
-                    const scopeLabel = escapeHtml(s.scope || 'mcp');
-                    const lastUsed = s.last_used_at ? formatMcpRelative(s.last_used_at) : '미사용';
-                    const created = formatMcpTime(s.created_at);
-                    const refreshExp = s.refresh_expires_at ? formatMcpTime(s.refresh_expires_at) : '없음';
-                    const revokedAt = s.revoked_at ? formatMcpTime(s.revoked_at) : null;
+                    const clientIdShort = escapeHtml((client.client_id || '').slice(0, 12)) + '…';
+                    const scopeList = Array.isArray(client.scopes) && client.scopes.length
+                        ? client.scopes
+                        : ['mcp'];
+                    const scopeLabel = scopeList.map(s => escapeHtml(s)).join(', ');
+                    const lastUsed = client.last_used_at ? formatMcpRelative(client.last_used_at) : '미사용';
+                    const revokedAt = client.last_revoked_at ? formatMcpTime(client.last_revoked_at) : null;
 
                     const action = isActive
-                        ? `<button class="btn btn-sm btn-outline-danger" onclick="revokeMcpSession(${s.id})"><i class="mdi mdi-close-circle"></i> 종료</button>`
+                        ? `<button class="btn btn-sm btn-outline-danger" data-revoke-client-id="${escapeHtml(client.client_id)}"><i class="mdi mdi-close-circle"></i> 연결 해제</button>`
                         : '';
 
-                    const revokedLine = revokedAt
-                        ? `<span><i class="mdi mdi-cancel"></i> 종료: ${escapeHtml(revokedAt)}</span>`
-                        : `<span><i class="mdi mdi-timer-sand"></i> 만료: ${escapeHtml(refreshExp)}</span>`;
+                    const lastLine = revokedAt
+                        ? `<span><i class="mdi mdi-cancel"></i> 해제: ${escapeHtml(revokedAt)}</span>`
+                        : '';
 
                     return `
                         <div class="session-item ${isActive ? '' : 'opacity-75'}">
@@ -995,69 +994,75 @@
                                     client_id: <code>${clientIdShort}</code> · scope: <code>${scopeLabel}</code>
                                 </div>
                                 <div class="session-times">
-                                    <span><i class="mdi mdi-clock-outline"></i> 발급: ${escapeHtml(created)}</span>
                                     <span><i class="mdi mdi-history"></i> 마지막 사용: ${escapeHtml(lastUsed)}</span>
-                                    ${revokedLine}
+                                    ${lastLine}
                                 </div>
                             </div>
                             <div class="flex-shrink-0">${action}</div>
                         </div>
                     `;
                 }).join('');
+
+                listEl.querySelectorAll('button[data-revoke-client-id]').forEach(btn => {
+                    btn.addEventListener('click', () => {
+                        revokeMcpClient(btn.getAttribute('data-revoke-client-id') || '');
+                    });
+                });
             } catch (e) {
                 section.style.display = '';
-                listEl.innerHTML = '<div class="text-center text-danger py-3">MCP 세션 목록을 불러오지 못했습니다.</div>';
+                listEl.innerHTML = '<div class="text-center text-danger py-3">MCP 클라이언트 목록을 불러오지 못했습니다.</div>';
             }
         }
 
-        async function revokeMcpSession(id) {
+        async function revokeMcpClient(clientId) {
+            if (!clientId) return;
             const result = await Swal.fire({
-                title: 'MCP 세션 종료',
-                text: '이 MCP 토큰을 즉시 무효화합니다. 해당 클라이언트는 재인증해야 다시 접근할 수 있습니다. 계속하시겠습니까?',
+                title: 'MCP 클라이언트 연결 해제',
+                text: '이 클라이언트가 보유한 모든 토큰을 즉시 무효화합니다. 해당 클라이언트는 재인증해야 다시 접근할 수 있습니다. 계속하시겠습니까?',
                 icon: 'warning',
                 showCancelButton: true,
                 confirmButtonColor: '#cf222e',
-                confirmButtonText: '종료',
+                confirmButtonText: '연결 해제',
                 cancelButtonText: '취소',
             });
             if (!result.isConfirmed) return;
 
             try {
-                const res = await fetch(`/api/me/mcp-sessions/${encodeURIComponent(id)}`, { method: 'DELETE' });
+                const res = await fetch(`/api/me/mcp-clients/${encodeURIComponent(clientId)}`, { method: 'DELETE' });
                 const data = await res.json().catch(() => ({}));
-                if (!res.ok) throw new Error(data.error || 'MCP 세션 종료에 실패했습니다.');
+                if (!res.ok) throw new Error(data.error || 'MCP 클라이언트 연결 해제에 실패했습니다.');
 
-                Swal.fire({ icon: 'success', title: 'MCP 세션이 종료되었습니다.', showConfirmButton: false, timer: 1200 });
-                loadMcpSessions();
+                Swal.fire({ icon: 'success', title: '연결이 해제되었습니다.', showConfirmButton: false, timer: 1200 });
+                loadMcpClients();
             } catch (err) {
                 Swal.fire('오류', err.message, 'error');
             }
         }
 
-        async function revokeAllMcpSessions() {
+        async function revokeAllMcpClients() {
             const result = await Swal.fire({
-                title: '모든 MCP 세션 종료',
-                text: '본 계정으로 발급된 모든 활성 MCP 토큰을 일괄 무효화합니다. 외부 MCP 클라이언트는 재인증해야 합니다. 계속하시겠습니까?',
+                title: '모든 MCP 클라이언트 연결 해제',
+                text: '본 계정에 연결된 모든 활성 MCP 클라이언트의 토큰을 일괄 무효화합니다. 외부 MCP 클라이언트는 재인증해야 합니다. 계속하시겠습니까?',
                 icon: 'warning',
                 showCancelButton: true,
                 confirmButtonColor: '#cf222e',
-                confirmButtonText: '모두 종료',
+                confirmButtonText: '모두 해제',
                 cancelButtonText: '취소',
             });
             if (!result.isConfirmed) return;
 
             try {
-                const res = await fetch('/api/me/mcp-sessions', { method: 'DELETE' });
+                const res = await fetch('/api/me/mcp-clients', { method: 'DELETE' });
                 const data = await res.json().catch(() => ({}));
-                if (!res.ok) throw new Error(data.error || 'MCP 세션 종료에 실패했습니다.');
+                if (!res.ok) throw new Error(data.error || 'MCP 클라이언트 연결 해제에 실패했습니다.');
 
                 Swal.fire({
                     icon: 'success',
-                    title: `${data.count || 0}개의 MCP 세션이 종료되었습니다.`,
+                    title: `${data.count || 0}개의 토큰이 무효화되었습니다.`,
                     showConfirmButton: false,
                     timer: 1500,
                 });
-                loadMcpSessions();
+                loadMcpClients();
             } catch (err) {
                 Swal.fire('오류', err.message, 'error');
             }

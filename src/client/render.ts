@@ -2811,11 +2811,15 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
                             iframe.setAttribute('src', embedUrl);
                             iframe.setAttribute('width', '100%');
                             // 트랙/에피소드는 짧게(152px), 나머지는 길게(352px) 설정
-                            iframe.setAttribute('height', (type === 'track' || type === 'episode') ? '152' : '352');
+                            const embedHeight = (type === 'track' || type === 'episode') ? 152 : 352;
+                            iframe.setAttribute('height', String(embedHeight));
                             iframe.setAttribute('frameborder', '0');
                             iframe.setAttribute('allow', 'autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture');
                             iframe.setAttribute('loading', 'lazy');
                             iframe.style.borderRadius = '12px';
+                            // .wiki-content iframe { height: auto } 가 HTML height 속성을 덮어쓰므로
+                            // 인라인 스타일로 고정해 하단 공백을 방지한다.
+                            iframe.style.height = `${embedHeight}px`;
 
                             container.appendChild(iframe);
                             parent.replaceWith(container);
