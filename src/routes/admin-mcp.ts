@@ -44,6 +44,7 @@ import {
     invalidateBacklinkCaches,
 } from './wiki';
 import { extractFirstThumbnail, rebuildBlogImageLinks } from './blog';
+import { removeAnnouncementByPostId } from '../utils/announcements';
 
 // ────────────────────────────────────────────────────────────────
 // 일반 유저(`wiki:edit`) 도 호출 가능한 읽기 도구.
@@ -1609,13 +1610,9 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
                 .run().catch((e: any) => console.error('admin-mcp blog_delete admin_log write failed:', e))
         );
 
-        // 공지로 발행되어 있던 포스트가 삭제되면 공지도 자동 해제. routes/blog.ts 와 동일.
+        // 공지로 발행되어 있던 포스트가 삭제되면 해당 공지도 자동 제거. routes/blog.ts 와 동일.
         c.executionCtx.waitUntil(
-            db.prepare(
-                `UPDATE settings
-                 SET announce_post = NULL, announce_title = '', announced_time = unixepoch()
-                 WHERE id = 1 AND announce_post = ?`
-            ).bind(id).run()
+            removeAnnouncementByPostId(db, id)
                 .catch((e: any) => console.error('admin-mcp blog announcement clear failed:', e))
         );
 

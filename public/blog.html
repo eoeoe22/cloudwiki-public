@@ -181,6 +181,40 @@
   <!-- ── 푸터 Placeholder ── -->
   <div id="app-footer-placeholder"></div>
 
+  <!-- 아이콘 피커 모달 (공지 발행 시 아이콘 선택) -->
+  <div class="modal fade" id="iconPickerModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">
+            <i id="iconPickerTypeIcon" class="mdi mdi-material-design me-2"></i>
+            <span id="iconPickerTitle">아이콘 선택</span>
+          </h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="d-flex gap-2 mb-2">
+            <button type="button" id="iconPickerTabMdi" class="btn btn-sm btn-outline-primary active">MDI</button>
+            <button type="button" id="iconPickerTabBi" class="btn btn-sm btn-outline-primary">Bootstrap</button>
+            <button type="button" id="iconPickerNoneBtn" class="btn btn-sm btn-outline-secondary ms-auto">
+              <i class="bi bi-x me-1"></i>아이콘 없음
+            </button>
+          </div>
+          <input type="text" id="iconSearchInput" class="form-control mb-3" placeholder="아이콘 이름 검색...">
+          <div id="iconLoadingSpinner" class="text-center py-4" style="display:none;">
+            <span class="spinner-border text-primary" role="status"></span>
+            <p class="mt-2 text-muted small">아이콘 목록 로딩 중...</p>
+          </div>
+          <div id="iconPickerGrid" class="icon-grid-modal"></div>
+          <div id="iconPickerEmpty" class="text-center text-muted py-3" style="display:none;">
+            <i class="mdi mdi-magnify-close" style="font-size:2rem;"></i>
+            <p class="mt-1">검색 결과가 없습니다.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Scripts -->
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11.26.24"></script>
@@ -188,6 +222,7 @@
   <script src="https://cdn.jsdelivr.net/npm/dompurify@3.4.2/dist/purify.min.js"></script>
   <script type="module" src="/dist/common.js"></script>
   <script type="module" src="/dist/render.js"></script>
+  <script type="module" src="/dist/icon-picker.js"></script>
   <script>
     const BLOG_LIST_LIMIT = 20;
     let blogCurrentOffset = 0;
@@ -300,8 +335,8 @@
 
     // ── 공지 발행/취소 ──
     function syncAnnounceButtons(postId) {
-      const isCurrent = !!(window.appConfig?.announcement?.enabled
-        && Number(window.appConfig.announcement.postId) === Number(postId));
+      const list = Array.isArray(window.appConfig?.announcements) ? window.appConfig.announcements : [];
+      const isCurrent = list.some(a => Number(a.postId) === Number(postId));
       const a = document.getElementById('blogPostAnnounceBtn');
       const u = document.getElementById('blogPostUnannounceBtn');
       if (!a || !u) return;
@@ -309,33 +344,70 @@
       u.classList.toggle('d-none', !isCurrent);
     }
 
+    // 공지 발행 다이얼로그 — 제목 + 아이콘 선택 지원
+    let announceIconClass = null;
+
     async function announceBlogPost() {
       if (!currentBlogPostId) return;
-      // 배너에 노출될 제목을 직접 입력받는다 (블로그 포스트 제목과 별개)
       const defaultTitle = document.getElementById('blogPostTitle')?.textContent?.trim() || '';
+      announceIconClass = null;
+
+      const renderIconLabel = (cls) => {
+        if (!cls) return '<i class="mdi mdi-bullhorn"></i> 기본';
+        return `<i class="${cls}"></i> ${cls.replace(/^(mdi mdi-|bi bi-)/, '')}`;
+      };
+
       const result = await Swal.fire({
         title: '공지로 발행',
-        text: '배너에 노출될 제목을 입력하세요.',
-        input: 'text',
-        inputValue: defaultTitle,
-        inputAttributes: { maxlength: 200 },
+        html: `
+          <div class="text-start">
+            <label class="form-label small mb-1">배너 제목</label>
+            <input id="announceTitleInput" type="text" class="form-control mb-3" maxlength="200" value="${escHtml(defaultTitle)}">
+            <label class="form-label small mb-1">아이콘</label>
+            <div class="d-flex gap-2 align-items-center">
+              <button type="button" id="announceIconBtn" class="btn btn-outline-secondary btn-sm flex-grow-1">
+                <span id="announceIconLabel">${renderIconLabel(null)}</span>
+              </button>
+              <button type="button" id="announceIconClearBtn" class="btn btn-outline-secondary btn-sm" title="기본 아이콘으로 초기화">
+                <i class="bi bi-x"></i>
+              </button>
+            </div>
+          </div>
+        `,
         showCancelButton: true,
         confirmButtonText: '발행',
         cancelButtonText: '취소',
-        inputValidator: (v) => {
-          const trimmed = (v || '').trim();
-          if (!trimmed) return '제목을 입력하세요.';
-          if (trimmed.length > 200) return '200자 이하로 입력하세요.';
-          return null;
+        didOpen: () => {
+          const iconBtn = document.getElementById('announceIconBtn');
+          const iconLabel = document.getElementById('announceIconLabel');
+          const iconClearBtn = document.getElementById('announceIconClearBtn');
+          if (iconBtn) iconBtn.addEventListener('click', async () => {
+            if (typeof window.pickWikiIcon !== 'function') return;
+            const picked = await window.pickWikiIcon();
+            announceIconClass = picked;
+            if (iconLabel) iconLabel.innerHTML = renderIconLabel(picked);
+          });
+          if (iconClearBtn) iconClearBtn.addEventListener('click', () => {
+            announceIconClass = null;
+            if (iconLabel) iconLabel.innerHTML = renderIconLabel(null);
+          });
+        },
+        preConfirm: () => {
+          const titleEl = document.getElementById('announceTitleInput');
+          const t = (titleEl?.value || '').trim();
+          if (!t) { Swal.showValidationMessage('제목을 입력하세요.'); return false; }
+          if (t.length > 200) { Swal.showValidationMessage('200자 이하로 입력하세요.'); return false; }
+          return { title: t, icon: announceIconClass };
         },
       });
       if (!result.isConfirmed) return;
-      const title = (result.value || '').trim();
+
+      const { title, icon } = result.value || {};
       try {
         const res = await fetch(`/api/blog/${currentBlogPostId}/announce`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ title }),
+          body: JSON.stringify({ title, icon: icon || null }),
         });
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
@@ -351,7 +423,11 @@
 
     async function unannounceBlogPost() {
       try {
-        const res = await fetch('/api/blog/announcement/cancel', { method: 'POST' });
+        const res = await fetch('/api/blog/announcement/cancel', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ postId: currentBlogPostId }),
+        });
         if (!res.ok) throw new Error('취소 실패');
         Swal.fire({ icon: 'success', title: '공지 취소됨', timer: 1000, showConfirmButton: false });
         await loadConfig();

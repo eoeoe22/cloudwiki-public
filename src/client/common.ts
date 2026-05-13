@@ -350,55 +350,124 @@ async function goRandomPage() {
     }
 }
 
-// ── 설정 로드 + 브랜딩 적용 ──
-// ── 공지 배너 렌더 ──
-// "다시 보지 않기" 는 마지막으로 무시한 announced_time 을 localStorage 에 저장하고,
-// 다음 페이지 로드에서 현재 announced_time 이 그보다 크면 다시 노출하는 방식.
+// ── 공지 배너 렌더 (다중 지원) ──
+// 각 배너의 "다시 보지 않기" 체크박스는 해당 공지의 announcedTime 을
+// localStorage 키 `announcement:skipUntil:<id>` 에 저장한다. 다음 페이지 로드에서
+// 현재 announcedTime 이 그보다 크면 다시 노출.
+// 철회되어 사라진 공지의 skipUntil 키는 누수 방지를 위해 매 로드마다 정리한다.
 // X 닫기 버튼은 현재 세션에서만 숨기며 저장하지 않는다.
-const ANNOUNCEMENT_SKIP_KEY = 'announcement:skipUntil';
+const ANNOUNCEMENT_SKIP_PREFIX = 'announcement:skipUntil:';
+const ANNOUNCEMENT_LEGACY_KEY = 'announcement:skipUntil'; // 단일 공지 시절 잔여 키
+
+function purgeStaleAnnouncementSkipKeys(activeIds) {
+    try {
+        // 단일 공지 시절 잔여 키는 무조건 제거.
+        try { localStorage.removeItem(ANNOUNCEMENT_LEGACY_KEY); } catch (e) { /* ignore */ }
+        const toRemove = [];
+        for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (!key || !key.startsWith(ANNOUNCEMENT_SKIP_PREFIX)) continue;
+            const idStr = key.slice(ANNOUNCEMENT_SKIP_PREFIX.length);
+            const id = Number(idStr);
+            if (!Number.isFinite(id) || !activeIds.has(id)) toRemove.push(key);
+        }
+        toRemove.forEach(k => { try { localStorage.removeItem(k); } catch (e) { /* ignore */ } });
+    } catch (e) { /* ignore */ }
+}
+
+function renderSingleBanner(ann) {
+    const id = Number(ann.id);
+    const announcedTime = Number(ann.announcedTime) || 0;
+
+    let skipUntil = 0;
+    try {
+        const raw = localStorage.getItem(ANNOUNCEMENT_SKIP_PREFIX + id);
+        skipUntil = Number(raw) || 0;
+    } catch (e) { /* ignore */ }
+    if (announcedTime > 0 && announcedTime <= skipUntil) return null;
+
+    const banner = document.createElement('div');
+    banner.className = 'announcement-banner';
+    banner.setAttribute('role', 'status');
+    banner.setAttribute('aria-live', 'polite');
+    banner.dataset.announcementId = String(id);
+
+    const inner = document.createElement('div');
+    inner.className = 'announcement-banner-inner';
+
+    const iconEl = document.createElement('i');
+    iconEl.className = 'announcement-banner-icon ' + (ann.icon || 'mdi mdi-bullhorn');
+    iconEl.setAttribute('aria-hidden', 'true');
+    inner.appendChild(iconEl);
+
+    const url = typeof ann.url === 'string' && ann.url && isSafeUrl(ann.url) ? ann.url : null;
+    if (url) {
+        const a = document.createElement('a');
+        a.className = 'announcement-banner-text';
+        a.href = url;
+        a.textContent = ann.title || '새 공지';
+        inner.appendChild(a);
+    } else {
+        const span = document.createElement('span');
+        span.className = 'announcement-banner-text';
+        span.textContent = ann.title || '새 공지';
+        inner.appendChild(span);
+    }
+
+    const skipLabel = document.createElement('label');
+    skipLabel.className = 'announcement-banner-skip';
+    const skipBox = document.createElement('input');
+    skipBox.type = 'checkbox';
+    skipBox.className = 'form-check-input me-1';
+    const skipText = document.createElement('span');
+    skipText.textContent = '다시 보지 않기';
+    skipLabel.appendChild(skipBox);
+    skipLabel.appendChild(skipText);
+    skipBox.onchange = () => {
+        if (skipBox.checked) {
+            try {
+                localStorage.setItem(ANNOUNCEMENT_SKIP_PREFIX + id, String(announcedTime));
+            } catch (e) { /* ignore */ }
+            banner.classList.add('d-none');
+        }
+    };
+    inner.appendChild(skipLabel);
+
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.className = 'announcement-banner-close btn-close';
+    closeBtn.setAttribute('aria-label', '닫기');
+    closeBtn.onclick = () => banner.classList.add('d-none');
+    inner.appendChild(closeBtn);
+
+    banner.appendChild(inner);
+    return banner;
+}
+
 function applyAnnouncementBanner() {
     try {
-        const root = document.getElementById('announcement-banner');
-        if (!root) return;
-        const a = appConfig && appConfig.announcement;
-        if (!a || !a.enabled || !a.postId) {
-            root.classList.add('d-none');
+        const container = document.getElementById('announcement-banners');
+        if (!container) return;
+        const list = Array.isArray(appConfig && appConfig.announcements)
+            ? appConfig.announcements
+            : [];
+        const activeIds = new Set(list.map(a => Number(a.id)).filter(Number.isFinite));
+        purgeStaleAnnouncementSkipKeys(activeIds);
+
+        container.innerHTML = '';
+        if (list.length === 0) {
+            container.classList.add('d-none');
             return;
         }
-        const announcedTime = Number(a.announcedTime) || 0;
-        // localStorage 접근은 프라이빗 모드/스토리지 제한 환경에서 throw 할 수 있다.
-        // 페이지 초기화(ensureLayoutComponents/checkAuth)를 막지 않도록 모두 격리.
-        let skipUntil = 0;
-        try {
-            const raw = localStorage.getItem(ANNOUNCEMENT_SKIP_KEY);
-            skipUntil = Number(raw) || 0;
-        } catch (e) { /* ignore */ }
-        if (announcedTime > 0 && announcedTime <= skipUntil) {
-            root.classList.add('d-none');
-            return;
+        list.forEach(ann => {
+            const node = renderSingleBanner(ann);
+            if (node) container.appendChild(node);
+        });
+        if (container.children.length === 0) {
+            container.classList.add('d-none');
+        } else {
+            container.classList.remove('d-none');
         }
-        const link = document.getElementById('announcementBannerLink');
-        if (link) {
-            link.href = a.url || ('/blog/' + a.postId);
-            link.textContent = a.title || '새 공지';
-        }
-        const skipCheckbox = document.getElementById('announcementBannerSkip');
-        if (skipCheckbox) {
-            skipCheckbox.checked = false;
-            skipCheckbox.onchange = () => {
-                if (skipCheckbox.checked) {
-                    try { localStorage.setItem(ANNOUNCEMENT_SKIP_KEY, String(announcedTime)); } catch (e) { /* ignore */ }
-                    root.classList.add('d-none');
-                }
-            };
-        }
-        const closeBtn = document.getElementById('announcementBannerClose');
-        if (closeBtn) {
-            closeBtn.onclick = () => {
-                root.classList.add('d-none');
-            };
-        }
-        root.classList.remove('d-none');
     } catch (e) {
         console.error('applyAnnouncementBanner failed:', e);
     }

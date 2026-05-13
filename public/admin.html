@@ -589,12 +589,127 @@
             </div>
             <div class="card-body">
               <p class="text-muted small mb-3">
-                블로그 포스트 페이지(<code>/blog/&lt;id&gt;</code>)에서
-                "공지로 발행" 버튼을 눌러 공지를 발행합니다. 여기서는 현재 공지를
-                확인하고 취소할 수 있습니다.
+                여러 개의 공지를 발행하면 헤더에 위에서 아래 순서로 쌓입니다.
+                블로그 포스트 페이지의 "공지로 발행" 버튼은 그대로 사용 가능하며,
+                여기서 추가하는 공지는 외부 링크 또는 링크 없는 텍스트 배너로 발행됩니다.
               </p>
-              <div id="currentAnnouncementBox" class="d-flex align-items-center flex-wrap gap-2">
-                <span class="text-muted">불러오는 중...</span>
+              <!-- 신규 공지 발행 폼 -->
+              <div class="border rounded p-3 mb-3">
+                <h6 class="mb-2">새 공지 발행</h6>
+                <div class="row g-2">
+                  <div class="col-12 col-md-5">
+                    <label class="form-label small mb-1">제목</label>
+                    <input type="text" id="annNewTitle" class="form-control form-control-sm" maxlength="200" placeholder="공지 제목">
+                  </div>
+                  <div class="col-12 col-md-5">
+                    <label class="form-label small mb-1">링크 URL (선택)</label>
+                    <input type="text" id="annNewUrl" class="form-control form-control-sm" placeholder="https://... 또는 /blog/123 / 비우면 텍스트 전용">
+                  </div>
+                  <div class="col-12 col-md-2">
+                    <label class="form-label small mb-1">아이콘</label>
+                    <div class="d-flex gap-1 align-items-center">
+                      <button type="button" id="annNewIconBtn" class="btn btn-sm btn-outline-secondary flex-grow-1">
+                        <i id="annNewIconPreview" class="mdi mdi-bullhorn"></i>
+                        <span class="ms-1" id="annNewIconLabel">기본</span>
+                      </button>
+                      <button type="button" id="annNewIconClearBtn" class="btn btn-sm btn-outline-secondary" title="아이콘 초기화">
+                        <i class="bi bi-x"></i>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <div class="mt-2 text-end">
+                  <button type="button" id="annNewSubmit" class="btn btn-sm btn-primary">
+                    <i class="mdi mdi-bullhorn me-1"></i>공지 발행
+                  </button>
+                </div>
+              </div>
+              <!-- 현재 공지 목록 -->
+              <div class="table-responsive">
+                <table class="table table-sm align-middle mb-0" id="announcementsTable">
+                  <thead>
+                    <tr>
+                      <th style="width:60px;">아이콘</th>
+                      <th>제목</th>
+                      <th style="width:200px;">링크</th>
+                      <th style="width:180px;">발행 시각</th>
+                      <th style="width:160px;" class="text-end">관리</th>
+                    </tr>
+                  </thead>
+                  <tbody id="announcementsTbody">
+                    <tr><td colspan="5" class="text-center text-muted">불러오는 중...</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <!-- 아이콘 피커 모달 (admin / icon-picker 모듈이 사용) -->
+          <div class="modal fade" id="iconPickerModal" tabindex="-1" aria-hidden="true">
+            <div class="modal-dialog modal-xl modal-dialog-scrollable">
+              <div class="modal-content">
+                <div class="modal-header">
+                  <h5 class="modal-title">
+                    <i id="iconPickerTypeIcon" class="mdi mdi-material-design me-2"></i>
+                    <span id="iconPickerTitle">아이콘 선택</span>
+                  </h5>
+                  <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                  <div class="d-flex gap-2 mb-2">
+                    <button type="button" id="iconPickerTabMdi" class="btn btn-sm btn-outline-primary active">MDI</button>
+                    <button type="button" id="iconPickerTabBi" class="btn btn-sm btn-outline-primary">Bootstrap</button>
+                    <button type="button" id="iconPickerNoneBtn" class="btn btn-sm btn-outline-secondary ms-auto">
+                      <i class="bi bi-x me-1"></i>아이콘 없음
+                    </button>
+                  </div>
+                  <input type="text" id="iconSearchInput" class="form-control mb-3" placeholder="아이콘 이름 검색...">
+                  <div id="iconLoadingSpinner" class="text-center py-4" style="display:none;">
+                    <span class="spinner-border text-primary" role="status"></span>
+                    <p class="mt-2 text-muted small">아이콘 목록 로딩 중...</p>
+                  </div>
+                  <div id="iconPickerGrid" class="icon-grid-modal"></div>
+                  <div id="iconPickerEmpty" class="text-center text-muted py-3" style="display:none;">
+                    <i class="mdi mdi-magnify-close" style="font-size:2rem;"></i>
+                    <p class="mt-1">검색 결과가 없습니다.</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 공지 수정 모달 -->
+          <div class="modal fade" id="announcementEditModal" tabindex="-1" aria-hidden="true">
+            <div class="modal-dialog">
+              <div class="modal-content">
+                <div class="modal-header">
+                  <h5 class="modal-title"><i class="mdi mdi-pencil me-2"></i>공지 수정</h5>
+                  <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                  <p class="text-muted small mb-3">제목과 아이콘만 변경할 수 있습니다. 발행 시각은 갱신되지 않으며 Discord 알림도 발송되지 않습니다.</p>
+                  <input type="hidden" id="annEditId">
+                  <div class="mb-3">
+                    <label class="form-label">제목</label>
+                    <input type="text" id="annEditTitle" class="form-control" maxlength="200">
+                  </div>
+                  <div class="mb-3">
+                    <label class="form-label">아이콘</label>
+                    <div class="d-flex gap-2 align-items-center">
+                      <button type="button" id="annEditIconBtn" class="btn btn-outline-secondary">
+                        <i id="annEditIconPreview" class="mdi mdi-bullhorn"></i>
+                        <span class="ms-1" id="annEditIconLabel">기본</span>
+                      </button>
+                      <button type="button" id="annEditIconClearBtn" class="btn btn-outline-secondary" title="아이콘 초기화">
+                        <i class="bi bi-x"></i>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <div class="modal-footer">
+                  <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">취소</button>
+                  <button type="button" id="annEditSubmit" class="btn btn-primary">저장</button>
+                </div>
               </div>
             </div>
           </div>
@@ -1045,6 +1160,7 @@
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11.26.24"></script>
 
     <script type="module" src="/dist/common.js"></script>
+    <script type="module" src="/dist/icon-picker.js"></script>
     <script>
       // ── 탭 전환 로직 ──
       function showTab(tabId) {
@@ -1310,62 +1426,221 @@
               .join("");
           }
 
-          // 현재 공지 표시
-          renderCurrentAnnouncement(s.announcement);
+          // 공지 목록 로드는 별도 호출
+          loadAnnouncements();
         } catch (e) {
           console.error("Settings load failed", e);
         }
       }
 
-      function renderCurrentAnnouncement(ann) {
-        const box = document.getElementById("currentAnnouncementBox");
-        if (!box) return;
-        if (ann && ann.postId) {
-          const deletedTag = ann.deleted
-            ? ' <span class="badge bg-danger ms-1">삭제됨</span>'
-            : "";
-          const announcedAt = ann.announcedTime
-            ? new Date(ann.announcedTime * 1000).toLocaleString("ko-KR")
-            : "";
-          const announcedAtHtml = announcedAt
-            ? `<div class="text-muted small mt-1">발행 시각: ${escapeHtml(announcedAt)}</div>`
-            : "";
-          const postTitleHtml = ann.postTitle
-            ? `<div class="text-muted small">연결 포스트: ${escapeHtml(ann.postTitle)}</div>`
-            : "";
-          box.innerHTML =
-            `<div class="flex-grow-1">` +
-              `<a href="/blog/${ann.postId}" class="fw-bold text-decoration-none" target="_blank" rel="noopener">` +
-                escapeHtml(ann.title || "(제목 없음)") +
-              `</a>${deletedTag}` +
-              postTitleHtml +
-              announcedAtHtml +
-            `</div>` +
-            `<button class="btn btn-sm btn-outline-danger ms-auto" onclick="cancelAnnouncement()">` +
-            `<i class="mdi mdi-close-circle me-1"></i>공지 취소</button>`;
-        } else {
-          box.innerHTML =
-            '<span class="text-muted">현재 공지로 발행된 포스트가 없습니다.</span>';
+      // ── 사이트 공지 관리 ──
+      let annNewIconClass = null;   // 신규 발행 폼의 선택된 아이콘 class (null = 기본)
+      let annEditIconClass = null;  // 수정 모달의 선택된 아이콘 class
+      let announcementsCache = [];  // 마지막으로 로드한 공지 배열 (수정 모달이 참조)
+
+      function setIconPreview(previewId, labelId, iconClass) {
+        const preview = document.getElementById(previewId);
+        const label = document.getElementById(labelId);
+        if (preview) preview.className = iconClass || "mdi mdi-bullhorn";
+        if (label) label.textContent = iconClass ? iconClass.replace(/^(mdi mdi-|bi bi-)/, "") : "기본";
+      }
+
+      async function loadAnnouncements() {
+        const tbody = document.getElementById("announcementsTbody");
+        if (!tbody) return;
+        try {
+          const res = await fetch("/api/admin/announcements");
+          if (!res.ok) throw new Error("목록 조회 실패");
+          const data = await res.json();
+          renderAnnouncementsTable(data.announcements || []);
+        } catch (e) {
+          tbody.innerHTML = `<tr><td colspan="5" class="text-center text-danger">불러오기 실패: ${escapeHtml(e.message)}</td></tr>`;
         }
       }
 
-      async function cancelAnnouncement() {
+      function renderAnnouncementsTable(list) {
+        announcementsCache = list;
+        const tbody = document.getElementById("announcementsTbody");
+        if (!tbody) return;
+        if (!list.length) {
+          tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted">발행된 공지가 없습니다.</td></tr>';
+          return;
+        }
+        tbody.innerHTML = list.map((a, i) => {
+          const iconCls = a.icon || "mdi mdi-bullhorn";
+          const linkHtml = a.url
+            ? `<a href="${escapeHtml(a.url)}" target="_blank" rel="noopener" class="text-decoration-none">${escapeHtml(a.url)}</a>`
+            : '<span class="text-muted">(텍스트 전용)</span>';
+          const postHtml = a.postId
+            ? `<div class="small text-muted">blog#${a.postId}${a.postDeleted ? ' <span class="badge bg-danger ms-1">삭제됨</span>' : ""}${a.postTitle ? " — " + escapeHtml(a.postTitle) : ""}</div>`
+            : "";
+          const time = a.announcedTime ? new Date(a.announcedTime * 1000).toLocaleString("ko-KR") : "";
+          const isFirst = i === 0;
+          const isLast = i === list.length - 1;
+          return (
+            `<tr data-id="${a.id}">` +
+              `<td class="text-center"><i class="${escapeHtml(iconCls)}" style="font-size:1.2rem;"></i></td>` +
+              `<td><div class="fw-semibold">${escapeHtml(a.title || "(제목 없음)")}</div>${postHtml}</td>` +
+              `<td class="small text-break">${linkHtml}</td>` +
+              `<td class="small">${escapeHtml(time)}</td>` +
+              `<td class="text-end">` +
+                `<div class="btn-group btn-group-sm" role="group">` +
+                  `<button class="btn btn-outline-secondary" ${isFirst ? "disabled" : ""} onclick="moveAnnouncement(${a.id}, 'up')" title="위로"><i class="bi bi-arrow-up"></i></button>` +
+                  `<button class="btn btn-outline-secondary" ${isLast ? "disabled" : ""} onclick="moveAnnouncement(${a.id}, 'down')" title="아래로"><i class="bi bi-arrow-down"></i></button>` +
+                  `<button class="btn btn-outline-primary" onclick="openAnnouncementEdit(${a.id})" title="수정"><i class="bi bi-pencil"></i></button>` +
+                  `<button class="btn btn-outline-danger" onclick="deleteAnnouncement(${a.id})" title="철회"><i class="bi bi-trash"></i></button>` +
+                `</div>` +
+              `</td>` +
+            `</tr>`
+          );
+        }).join("");
+      }
+
+      async function pickIconViaModal() {
+        if (typeof window.pickWikiIcon !== "function") {
+          Swal.fire("오류", "아이콘 피커가 로드되지 않았습니다.", "error");
+          return null;
+        }
+        return await window.pickWikiIcon();
+      }
+
+      async function createAnnouncement() {
+        const title = document.getElementById("annNewTitle").value.trim();
+        const url = document.getElementById("annNewUrl").value.trim();
+        if (!title) {
+          Swal.fire("입력 필요", "제목을 입력하세요.", "warning");
+          return;
+        }
+        const body = { title, icon: annNewIconClass || null };
+        if (url) body.url = url;
         try {
-          const res = await fetch("/api/blog/announcement/cancel", {
+          const res = await fetch("/api/admin/announcements", {
             method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
           });
-          if (!res.ok) throw new Error("취소 실패");
-          Swal.fire({
-            icon: "success",
-            title: "공지가 취소되었습니다.",
-            timer: 1000,
-            showConfirmButton: false,
-          });
-          loadWikiSettings();
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data.error || "발행 실패");
+          Swal.fire({ icon: "success", title: "공지가 발행되었습니다.", timer: 1000, showConfirmButton: false });
+          document.getElementById("annNewTitle").value = "";
+          document.getElementById("annNewUrl").value = "";
+          annNewIconClass = null;
+          setIconPreview("annNewIconPreview", "annNewIconLabel", null);
+          await loadAnnouncements();
+          // 헤더 배너 즉시 반영
+          await loadConfig();
         } catch (e) {
-          Swal.fire("오류", e.message || "취소 실패", "error");
+          Swal.fire("오류", e.message || "발행 실패", "error");
         }
       }
+
+      async function deleteAnnouncement(id) {
+        const ok = await Swal.fire({
+          title: "공지를 철회하시겠습니까?",
+          icon: "warning",
+          showCancelButton: true,
+          confirmButtonText: "철회",
+          cancelButtonText: "취소",
+          confirmButtonColor: "#d33",
+        });
+        if (!ok.isConfirmed) return;
+        try {
+          const res = await fetch(`/api/admin/announcements/${id}`, { method: "DELETE" });
+          if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            throw new Error(data.error || "철회 실패");
+          }
+          await loadAnnouncements();
+          await loadConfig();
+        } catch (e) {
+          Swal.fire("오류", e.message || "철회 실패", "error");
+        }
+      }
+
+      async function moveAnnouncement(id, direction) {
+        try {
+          const res = await fetch(`/api/admin/announcements/${id}/move`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ direction }),
+          });
+          if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            throw new Error(data.error || "이동 실패");
+          }
+          await loadAnnouncements();
+          await loadConfig();
+        } catch (e) {
+          Swal.fire("오류", e.message || "이동 실패", "error");
+        }
+      }
+
+      function openAnnouncementEdit(id) {
+        const ann = announcementsCache.find(a => Number(a.id) === Number(id));
+        if (!ann) return;
+        document.getElementById("annEditId").value = ann.id;
+        document.getElementById("annEditTitle").value = ann.title || "";
+        annEditIconClass = ann.icon || null;
+        setIconPreview("annEditIconPreview", "annEditIconLabel", annEditIconClass);
+        const modal = bootstrap.Modal.getOrCreateInstance(document.getElementById("announcementEditModal"));
+        modal.show();
+      }
+
+      async function submitAnnouncementEdit() {
+        const id = Number(document.getElementById("annEditId").value);
+        const title = document.getElementById("annEditTitle").value.trim();
+        if (!title) {
+          Swal.fire("입력 필요", "제목을 입력하세요.", "warning");
+          return;
+        }
+        try {
+          const res = await fetch(`/api/admin/announcements/${id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ title, icon: annEditIconClass || null }),
+          });
+          if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            throw new Error(data.error || "수정 실패");
+          }
+          bootstrap.Modal.getOrCreateInstance(document.getElementById("announcementEditModal")).hide();
+          await loadAnnouncements();
+          await loadConfig();
+        } catch (e) {
+          Swal.fire("오류", e.message || "수정 실패", "error");
+        }
+      }
+
+      // 폼 / 모달 이벤트 바인딩 (DOM 준비 후 단 한 번)
+      document.addEventListener("DOMContentLoaded", () => {
+        const submitBtn = document.getElementById("annNewSubmit");
+        if (submitBtn) submitBtn.addEventListener("click", createAnnouncement);
+        const iconBtn = document.getElementById("annNewIconBtn");
+        if (iconBtn) iconBtn.addEventListener("click", async () => {
+          const picked = await pickIconViaModal();
+          // null = '아이콘 없음' 또는 취소 → 기본 아이콘으로 두려면 그대로 null.
+          annNewIconClass = picked;
+          setIconPreview("annNewIconPreview", "annNewIconLabel", picked);
+        });
+        const iconClearBtn = document.getElementById("annNewIconClearBtn");
+        if (iconClearBtn) iconClearBtn.addEventListener("click", () => {
+          annNewIconClass = null;
+          setIconPreview("annNewIconPreview", "annNewIconLabel", null);
+        });
+        const editSubmit = document.getElementById("annEditSubmit");
+        if (editSubmit) editSubmit.addEventListener("click", submitAnnouncementEdit);
+        const editIconBtn = document.getElementById("annEditIconBtn");
+        if (editIconBtn) editIconBtn.addEventListener("click", async () => {
+          const picked = await pickIconViaModal();
+          annEditIconClass = picked;
+          setIconPreview("annEditIconPreview", "annEditIconLabel", picked);
+        });
+        const editIconClearBtn = document.getElementById("annEditIconClearBtn");
+        if (editIconClearBtn) editIconClearBtn.addEventListener("click", () => {
+          annEditIconClass = null;
+          setIconPreview("annEditIconPreview", "annEditIconLabel", null);
+        });
+      });
 
       async function copyMcpUrl(inputId) {
         const input = document.getElementById(inputId || "mcpServerUrlInput");

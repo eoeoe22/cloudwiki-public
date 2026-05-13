@@ -1,15 +1,6 @@
-<!-- ── 사이트 전역 공지 배너 ── -->
-<div id="announcement-banner" class="announcement-banner d-none" role="status" aria-live="polite">
-    <div class="announcement-banner-inner">
-        <i class="mdi mdi-bullhorn announcement-banner-icon" aria-hidden="true"></i>
-        <a id="announcementBannerLink" href="#" class="announcement-banner-text"></a>
-        <label class="announcement-banner-skip">
-            <input type="checkbox" id="announcementBannerSkip" class="form-check-input me-1">
-            <span>다시 보지 않기</span>
-        </label>
-        <button type="button" class="announcement-banner-close btn-close" id="announcementBannerClose" aria-label="닫기"></button>
-    </div>
-</div>
+<!-- ── 사이트 전역 공지 배너 (다중) ── -->
+<!-- src/client/common.ts 가 appConfig.announcements 배열을 읽어 자식 노드를 동적 생성한다. -->
+<div id="announcement-banners" class="announcement-banners d-none"></div>
 
 <!-- ── 네비게이션 바 ── -->
 <nav class="navbar navbar-expand-lg navbar-light">

@@ -158,6 +158,14 @@ export interface AppConfig {
     enableConcurrentEditDetection?: boolean;
     selectedIconsOnly?: boolean;
     palettes?: Record<string, PaletteDefinition>;
+    announcements?: Array<{
+        id: number;
+        title: string;
+        announcedTime: number;
+        url: string | null;
+        icon: string | null;
+        postId: number | null;
+    }>;
     [key: string]: unknown;
 }
 

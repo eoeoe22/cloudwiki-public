@@ -685,36 +685,29 @@ async function rewriteBacklinksForRename(
 }
 
 import { uploadRevisionToR2, getRevisionContent } from '../utils/r2';
+import { loadActiveAnnouncements } from '../utils/announcements';
+import type { AnnouncementDTO } from '../shared/api/announcement';
 /**
  * GET /config
  * 동적 설정 (위키 이름 등) 반환
  */
 wiki.get('/config', async (c) => {
-    // 공지 정보 조회 (soft-delete 된 포스트는 LEFT JOIN 으로 자동 제외)
-    let announcement: { enabled: false }
-        | { enabled: true; postId: number; title: string; url: string; announcedTime: number }
-        = { enabled: false };
+    // 공지 정보 조회 — 삭제된 블로그 포스트와 연동된 항목은 자동 제외.
+    let announcements: AnnouncementDTO[] = [];
     if (!(c.env.WIKI_VISIBILITY === 'closed' && !c.get('user'))) {
         try {
-            const row = await c.env.DB.prepare(
-                `SELECT s.announce_title AS title, s.announced_time AS time, b.id AS post_id
-                 FROM settings s
-                 LEFT JOIN blog_posts b
-                   ON b.id = s.announce_post AND b.deleted_at IS NULL
-                 WHERE s.id = 1`
-            ).first<{ title: string | null; time: number | null; post_id: number | null }>();
-            if (row && row.post_id) {
-                announcement = {
-                    enabled: true,
-                    postId: row.post_id,
-                    title: row.title || '',
-                    url: `/blog/${row.post_id}`,
-                    announcedTime: row.time || 0,
-                };
-            }
+            const active = await loadActiveAnnouncements(c.env.DB);
+            announcements = active.map(a => ({
+                id: a.id,
+                title: a.title,
+                announcedTime: a.announcedTime,
+                url: a.url ?? (a.postId !== null ? `/blog/${a.postId}` : null),
+                icon: a.icon,
+                postId: a.postId,
+            }));
         } catch (e) {
             // 마이그레이션 미적용 등으로 컬럼이 없을 때도 /config 자체는 동작해야 함
-            console.error('announcement lookup failed:', e);
+            console.error('announcements lookup failed:', e);
         }
     }
 
@@ -728,7 +721,7 @@ wiki.get('/config', async (c) => {
         enabledExtensions: (c.env.ENABLED_EXTENSIONS || '').split(',').map((s: string) => s.trim()).filter(Boolean),
         palettes: parseCustomPalettes(c.env.PALETTES),
         mediaPublicUrl: c.env.MEDIA_PUBLIC_URL || '',
-        announcement,
+        announcements,
     });
 });
 

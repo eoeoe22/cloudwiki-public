@@ -9,6 +9,20 @@ import { signupRejected, userJoined } from '../utils/webhook/events/signup';
 import { userBan, userRoleChange } from '../utils/webhook/events/user';
 import { superAdminAction } from '../utils/webhook/events/superAdmin';
 import { pushToUser, pushToSignupRequest, promoteSignupSubscriptions, deleteSignupSubscriptions } from '../utils/push';
+import {
+    loadAnnouncements,
+    mutateAnnouncements,
+    AnnouncementMutationError,
+    type Announcement,
+} from '../utils/announcements';
+import { announcementPublish } from '../utils/webhook/events/blog';
+import type {
+    AnnouncementAdminDTO,
+    AnnouncementCreateRequest,
+    AnnouncementUpdateRequest,
+    AnnouncementReorderRequest,
+    AnnouncementMoveRequest,
+} from '../shared/api/announcement';
 
 const adminRoutes = new Hono<Env>();
 
@@ -308,42 +322,324 @@ adminRoutes.get('/settings', async (c) => {
     const mcpMode = c.env.MCP_MODE || 'disabled';
 
     if (!row) {
-        return c.json({ namechange_ratelimit: 0, allow_direct_message: 0, signup_policy: 'open', mcp_mode: mcpMode, announcement: null });
+        return c.json({ namechange_ratelimit: 0, allow_direct_message: 0, signup_policy: 'open', mcp_mode: mcpMode });
     }
 
     row.mcp_mode = mcpMode;
 
-    // 현재 공지 정보 (soft-delete 여부 포함)
+    return c.json(row);
+});
+
+// ── 사이트 전역 공지 관리 ──
+
+const ICON_CLASS_RE = /^(mdi mdi-[a-z0-9-]+|bi bi-[a-z0-9-]+)$/;
+
+/** 공지에 허용되는 URL 인지 검사. http(s) 절대 URL 또는 site-relative `/...` 만 통과. */
+function isSafeAnnouncementUrl(url: string): boolean {
+    const trimmed = url.trim();
+    if (!trimmed) return false;
+    if (trimmed.startsWith('/') && !trimmed.startsWith('//')) return true;
     try {
-        const ann = await db.prepare(
-            `SELECT s.announce_title AS title,
-                    s.announced_time AS announcedTime,
-                    b.id AS postId,
-                    b.title AS postTitle,
-                    b.deleted_at AS deletedAt
-             FROM settings s LEFT JOIN blog_posts b ON b.id = s.announce_post
-             WHERE s.id = 1`
-        ).first<{
-            title: string | null;
-            announcedTime: number | null;
-            postId: number | null;
-            postTitle: string | null;
-            deletedAt: number | null;
-        }>();
-        row.announcement = ann && ann.postId
-            ? {
-                postId: ann.postId,
-                title: ann.title || '',
-                postTitle: ann.postTitle,
-                announcedTime: ann.announcedTime || 0,
-                deleted: !!ann.deletedAt,
-            }
-            : null;
-    } catch (e) {
-        row.announcement = null;
+        const parsed = new URL(trimmed);
+        return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+    } catch {
+        return false;
+    }
+}
+
+function validateIcon(icon: unknown): string | null | undefined {
+    if (icon === undefined) return undefined; // 변경 안 함
+    if (icon === null || icon === '') return null;
+    if (typeof icon !== 'string') return undefined;
+    return ICON_CLASS_RE.test(icon) ? icon : undefined;
+}
+
+/** 관리자 응답 — postId 메타 첨부. */
+async function buildAdminAnnouncementList(
+    db: D1Database,
+    list: Announcement[],
+): Promise<AnnouncementAdminDTO[]> {
+    const postIds = list
+        .map(a => a.postId)
+        .filter((x): x is number => typeof x === 'number');
+    const meta = new Map<number, { title: string | null; deletedAt: number | null }>();
+    if (postIds.length > 0) {
+        const placeholders = postIds.map(() => '?').join(',');
+        const res = await db
+            .prepare(`SELECT id, title, deleted_at FROM blog_posts WHERE id IN (${placeholders})`)
+            .bind(...postIds)
+            .all<{ id: number; title: string; deleted_at: number | null }>();
+        for (const r of res.results || []) {
+            meta.set(r.id, { title: r.title, deletedAt: r.deleted_at });
+        }
+    }
+    return list.map(a => {
+        const m = a.postId !== null ? meta.get(a.postId) : undefined;
+        return {
+            id: a.id,
+            title: a.title,
+            announcedTime: a.announcedTime,
+            url: a.url ?? (a.postId !== null ? `/blog/${a.postId}` : null),
+            icon: a.icon,
+            postId: a.postId,
+            postTitle: m?.title ?? null,
+            postDeleted: m ? !!m.deletedAt : false,
+        };
+    });
+}
+
+/**
+ * GET /announcements — 관리자용 공지 목록 (postId 메타 포함)
+ */
+adminRoutes.get('/announcements', async (c) => {
+    const list = await loadAnnouncements(c.env.DB);
+    const enriched = await buildAdminAnnouncementList(c.env.DB, list);
+    return c.json({ announcements: enriched });
+});
+
+/**
+ * POST /announcements — 신규 공지 발행 (관리자 콘솔 직접 발행)
+ * body: { title, url?, postId?, icon? }
+ *   - postId 가 있으면 블로그 포스트 연동. 동일 postId 가 이미 목록에 있으면 409.
+ *   - postId 가 있고 url 이 없으면 url 은 /blog/{postId} 로 합성하지 않고 null 저장 (배너 합성 시 처리).
+ *   - icon: "mdi mdi-..." 또는 "bi bi-..." 만 허용. 비우면 null (기본 아이콘).
+ */
+adminRoutes.post('/announcements', async (c) => {
+    const db = c.env.DB;
+    const body = await c.req.json<AnnouncementCreateRequest>().catch(() => ({} as AnnouncementCreateRequest));
+    const title = typeof body.title === 'string' ? body.title.trim() : '';
+    if (!title) return c.json({ error: '제목을 입력하세요.' }, 400);
+    if (title.length > 200) return c.json({ error: '제목은 200자 이하여야 합니다.' }, 400);
+
+    let url: string | null = null;
+    if (typeof body.url === 'string' && body.url.trim()) {
+        if (!isSafeAnnouncementUrl(body.url)) {
+            return c.json({ error: 'URL 은 http(s):// 또는 / 로 시작해야 합니다.' }, 400);
+        }
+        url = body.url.trim();
     }
 
-    return c.json(row);
+    let postId: number | null = null;
+    if (body.postId !== undefined && body.postId !== null) {
+        const n = Number(body.postId);
+        if (!Number.isInteger(n) || n <= 0) return c.json({ error: 'postId 가 올바르지 않습니다.' }, 400);
+        const row = await db
+            .prepare('SELECT id, deleted_at FROM blog_posts WHERE id = ?')
+            .bind(n)
+            .first<{ id: number; deleted_at: number | null }>();
+        if (!row || row.deleted_at) return c.json({ error: '존재하지 않는 블로그 포스트입니다.' }, 404);
+        postId = n;
+    }
+
+    const iconValue = validateIcon(body.icon);
+    if (iconValue === undefined && body.icon !== undefined && body.icon !== null && body.icon !== '') {
+        return c.json({ error: '아이콘 형식이 올바르지 않습니다.' }, 400);
+    }
+    const icon: string | null = iconValue ?? null;
+
+    let conflict = false;
+    let allocatedId = 0;
+    try {
+        await mutateAnnouncements(db, (ctx) => {
+            if (postId !== null && ctx.list.some(a => a.postId === postId)) {
+                conflict = true;
+                return null;
+            }
+            allocatedId = ctx.allocateId();
+            const now = Math.floor(Date.now() / 1000);
+            const newItem: Announcement = { id: allocatedId, title, announcedTime: now, url, postId, icon };
+            return [newItem, ...ctx.list];
+        });
+    } catch (e) {
+        if (e instanceof AnnouncementMutationError) return c.json({ error: e.message }, 503);
+        throw e;
+    }
+    if (conflict) {
+        return c.json({ error: '해당 블로그 포스트는 이미 공지로 발행되어 있습니다.' }, 409);
+    }
+
+    const id = allocatedId;
+    const currentUser = c.get('user')!;
+    writeAdminLog(c, 'announce', `공지 발행: #${id} "${title}"${postId !== null ? ` (blog#${postId})` : ''}`, currentUser.id);
+
+    // Discord community 채널 알림은 블로그 포스트 연동 공지에만 발송 (기존 동작 보존).
+    if (postId !== null) {
+        try {
+            const post = await db
+                .prepare('SELECT content, thumbnail FROM blog_posts WHERE id = ?')
+                .bind(postId)
+                .first<{ content: string; thumbnail: string | null }>();
+            if (post) {
+                dispatchDiscord(c.env, c.executionCtx, announcementPublish({
+                    postId,
+                    announceTitle: title,
+                    postContent: post.content,
+                    thumbnail: post.thumbnail,
+                    actorName: currentUser.name,
+                    env: c.env,
+                }));
+            }
+        } catch (e) {
+            console.error('announcement publish webhook failed:', e);
+        }
+    }
+
+    return c.json({ success: true, id });
+});
+
+/**
+ * PATCH /announcements/:id — 제목/아이콘만 수정.
+ * announcedTime 은 변경하지 않으며 Discord 알림도 발송하지 않는다.
+ */
+adminRoutes.patch('/announcements/:id', async (c) => {
+    const db = c.env.DB;
+    const id = Number(c.req.param('id'));
+    if (!Number.isInteger(id) || id <= 0) return c.json({ error: 'id 가 올바르지 않습니다.' }, 400);
+
+    const body = await c.req.json<AnnouncementUpdateRequest>().catch(() => ({} as AnnouncementUpdateRequest));
+
+    // 변경 입력 검증 (state 무관) 을 mutate 바깥에서 끝낸다.
+    let titleUpdate: string | undefined;
+    if (typeof body.title === 'string') {
+        const t = body.title.trim();
+        if (!t) return c.json({ error: '제목을 입력하세요.' }, 400);
+        if (t.length > 200) return c.json({ error: '제목은 200자 이하여야 합니다.' }, 400);
+        titleUpdate = t;
+    }
+    let iconUpdate: string | null | undefined; // undefined = 변경 안 함, null = 명시적으로 기본 아이콘
+    if (body.icon !== undefined) {
+        const v = validateIcon(body.icon);
+        if (v === undefined && body.icon !== null && body.icon !== '') {
+            return c.json({ error: '아이콘 형식이 올바르지 않습니다.' }, 400);
+        }
+        iconUpdate = v ?? null;
+    }
+
+    let notFound = false;
+    let finalTitle = '';
+    let didChange = false;
+    try {
+        await mutateAnnouncements(db, (ctx) => {
+            const idx = ctx.list.findIndex(a => a.id === id);
+            if (idx < 0) { notFound = true; return null; }
+            const target = ctx.list[idx];
+            let changed = false;
+            if (titleUpdate !== undefined && titleUpdate !== target.title) {
+                target.title = titleUpdate;
+                changed = true;
+            }
+            if (iconUpdate !== undefined && iconUpdate !== target.icon) {
+                target.icon = iconUpdate;
+                changed = true;
+            }
+            finalTitle = target.title;
+            didChange = changed;
+            if (!changed) return null; // no-op, skip write
+            return ctx.list;
+        });
+    } catch (e) {
+        if (e instanceof AnnouncementMutationError) return c.json({ error: e.message }, 503);
+        throw e;
+    }
+    if (notFound) return c.json({ error: '공지를 찾을 수 없습니다.' }, 404);
+    if (didChange) {
+        writeAdminLog(c, 'announce', `공지 수정: #${id} "${finalTitle}"`, c.get('user')!.id);
+    }
+    return c.json({ success: true });
+});
+
+/**
+ * DELETE /announcements/:id — 단일 철회.
+ */
+adminRoutes.delete('/announcements/:id', async (c) => {
+    const db = c.env.DB;
+    const id = Number(c.req.param('id'));
+    if (!Number.isInteger(id) || id <= 0) return c.json({ error: 'id 가 올바르지 않습니다.' }, 400);
+
+    let notFound = false;
+    let removedTitle = '';
+    try {
+        await mutateAnnouncements(db, (ctx) => {
+            const idx = ctx.list.findIndex(a => a.id === id);
+            if (idx < 0) { notFound = true; return null; }
+            removedTitle = ctx.list[idx].title;
+            ctx.list.splice(idx, 1);
+            return ctx.list;
+        });
+    } catch (e) {
+        if (e instanceof AnnouncementMutationError) return c.json({ error: e.message }, 503);
+        throw e;
+    }
+    if (notFound) return c.json({ error: '공지를 찾을 수 없습니다.' }, 404);
+    writeAdminLog(c, 'announce', `공지 철회: #${id} "${removedTitle}"`, c.get('user')!.id);
+    return c.json({ success: true });
+});
+
+/**
+ * POST /announcements/reorder — 전체 순서 재정렬.
+ * body: { order: number[] } — 현재 존재하는 모든 id 가 정확히 한 번씩 포함되어야 함.
+ */
+adminRoutes.post('/announcements/reorder', async (c) => {
+    const db = c.env.DB;
+    const body = await c.req.json<AnnouncementReorderRequest>().catch(() => ({} as AnnouncementReorderRequest));
+    if (!Array.isArray(body.order)) return c.json({ error: 'order 는 배열이어야 합니다.' }, 400);
+
+    const newOrderIds = body.order.map(n => Number(n));
+    if (new Set(newOrderIds).size !== newOrderIds.length) {
+        return c.json({ error: '중복된 ID 가 있습니다.' }, 400);
+    }
+
+    let mismatch = false;
+    try {
+        await mutateAnnouncements(db, (ctx) => {
+            const currentIds = new Set(ctx.list.map(a => a.id));
+            if (newOrderIds.length !== ctx.list.length || !newOrderIds.every(n => currentIds.has(n))) {
+                mismatch = true;
+                return null;
+            }
+            const byId = new Map(ctx.list.map(a => [a.id, a]));
+            return newOrderIds.map(n => byId.get(n)!);
+        });
+    } catch (e) {
+        if (e instanceof AnnouncementMutationError) return c.json({ error: e.message }, 503);
+        throw e;
+    }
+    if (mismatch) return c.json({ error: '현재 공지 ID 와 일치해야 합니다.' }, 400);
+    writeAdminLog(c, 'announce', '공지 순서 변경', c.get('user')!.id);
+    return c.json({ success: true });
+});
+
+/**
+ * POST /announcements/:id/move — 단일 항목을 위 또는 아래로 한 칸 이동.
+ */
+adminRoutes.post('/announcements/:id/move', async (c) => {
+    const db = c.env.DB;
+    const id = Number(c.req.param('id'));
+    if (!Number.isInteger(id) || id <= 0) return c.json({ error: 'id 가 올바르지 않습니다.' }, 400);
+    const body = await c.req.json<AnnouncementMoveRequest>().catch(() => ({} as AnnouncementMoveRequest));
+    if (body.direction !== 'up' && body.direction !== 'down') {
+        return c.json({ error: 'direction 은 up 또는 down 이어야 합니다.' }, 400);
+    }
+
+    let notFound = false;
+    let moved = false;
+    try {
+        await mutateAnnouncements(db, (ctx) => {
+            const idx = ctx.list.findIndex(a => a.id === id);
+            if (idx < 0) { notFound = true; return null; }
+            const swapWith = body.direction === 'up' ? idx - 1 : idx + 1;
+            if (swapWith < 0 || swapWith >= ctx.list.length) return null; // no-op
+            [ctx.list[idx], ctx.list[swapWith]] = [ctx.list[swapWith], ctx.list[idx]];
+            moved = true;
+            return ctx.list;
+        });
+    } catch (e) {
+        if (e instanceof AnnouncementMutationError) return c.json({ error: e.message }, 503);
+        throw e;
+    }
+    if (notFound) return c.json({ error: '공지를 찾을 수 없습니다.' }, 404);
+    if (moved) writeAdminLog(c, 'announce', `공지 이동: #${id} ${body.direction}`, c.get('user')!.id);
+    return c.json({ success: true });
 });
 
 /**

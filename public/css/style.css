@@ -2316,7 +2316,14 @@ html[data-theme="dark"] .push-status-on {
   color: var(--wiki-text-muted);
 }
 
-/* ── 사이트 전역 공지 배너 ── */
+/* ── 사이트 전역 공지 배너 (다중) ── */
+.announcement-banners {
+  display: flex;
+  flex-direction: column;
+}
+.announcement-banners > .announcement-banner + .announcement-banner {
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+}
 .announcement-banner {
   background: #fff8db;
   color: #5a4500;

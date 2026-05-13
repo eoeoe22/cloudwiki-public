@@ -6,6 +6,12 @@ import { RBAC } from '../utils/role';
 import { writeAdminLog } from './admin';
 import { dispatchDiscord } from '../utils/webhook/discord';
 import { announcementPublish } from '../utils/webhook/events/blog';
+import {
+    mutateAnnouncements,
+    removeAnnouncementByPostId,
+    AnnouncementMutationError,
+    type Announcement,
+} from '../utils/announcements';
 
 const blog = new Hono<Env>();
 
@@ -295,14 +301,9 @@ blog.delete('/blog/:id', requireAdmin, async (c) => {
             .catch((e: any) => console.error('Failed to write admin_log for blog_delete:', e))
     );
 
-    // 공지로 발행되어 있던 포스트가 삭제되면 공지도 자동 해제
+    // 공지로 발행되어 있던 포스트가 삭제되면 해당 공지도 자동 제거
     c.executionCtx.waitUntil(
-        db.prepare(
-            `UPDATE settings
-             SET announce_post = NULL, announce_title = '', announced_time = unixepoch()
-             WHERE id = 1 AND announce_post = ?`
-        ).bind(id)
-            .run()
+        removeAnnouncementByPostId(db, id)
             .catch((e: any) => console.error('Failed to clear announcement on delete:', e))
     );
 
@@ -311,36 +312,50 @@ blog.delete('/blog/:id', requireAdmin, async (c) => {
 
 /**
  * POST /api/blog/announcement/cancel
- * 현재 사이트 전역 공지 발행을 취소 (관리자 전용)
+ * Body: { postId?: number }
+ *  - postId 가 주어지면 해당 포스트와 연동된 공지 항목만 제거 (블로그 페이지 "공지 취소" 버튼).
+ *  - postId 가 없으면 블로그 포스트 연동 공지 전부 제거 (기존 단일 공지 시절 호환).
  *
  * NOTE: `:id` 파라미터 라우트(`/blog/:id`, `/blog/:id/announce`)와의 충돌을 피하기 위해
  *       정적 세그먼트 두 개로 구성된 경로를 사용한다.
  */
 blog.post('/blog/announcement/cancel', requireAdmin, async (c) => {
-    await c.env.DB.prepare(
-        `UPDATE settings
-         SET announce_post = NULL, announce_title = '', announced_time = unixepoch()
-         WHERE id = 1`
-    ).run();
-    writeAdminLog(c, 'announce', '공지 취소', c.get('user')!.id);
+    const body = await c.req.json<{ postId?: number }>().catch(() => ({} as { postId?: number }));
+    const db = c.env.DB;
+    const filterPostId = typeof body.postId === 'number' && Number.isInteger(body.postId)
+        ? body.postId
+        : null;
+    const logSuffix = filterPostId !== null ? ` (blog#${filterPostId})` : '';
+    try {
+        await mutateAnnouncements(db, (ctx) => {
+            const next: Announcement[] = filterPostId !== null
+                ? ctx.list.filter(a => a.postId !== filterPostId)
+                : ctx.list.filter(a => a.postId === null);
+            if (next.length === ctx.list.length) return null;
+            return next;
+        });
+    } catch (e) {
+        if (e instanceof AnnouncementMutationError) return c.json({ error: e.message }, 503);
+        throw e;
+    }
+    writeAdminLog(c, 'announce', `공지 취소${logSuffix}`, c.get('user')!.id);
     return c.json({ success: true });
 });
 
 /**
  * POST /api/blog/:id/announce
  * 해당 블로그 포스트를 사이트 전역 공지로 발행 (관리자 전용)
- * Body: { title: string }  — 배너에 노출되는 제목 (관리자 직접 입력)
- *
- * 단일 행 settings 에 기록하므로 이전 공지는 자동으로 대체되며,
- * announced_time 은 항상 현재 시각(초)으로 갱신되어 클라이언트의
- * "다시 보지 않기" 비교 기준이 된다.
+ * Body: { title: string, icon?: string|null }
+ *  - 동일 postId 가 이미 목록에 있으면 409 Conflict.
+ *  - 새 공지는 목록 맨 위에 prepend, 새 id 발급, announcedTime = 현재 시각.
+ *  - Discord community 채널에 알림 발송.
  */
 blog.post('/blog/:id/announce', requireAdmin, async (c) => {
     const idParam = c.req.param('id');
     if (!/^\d+$/.test(idParam)) return c.json({ error: 'Not Found' }, 404);
     const id = Number(idParam);
 
-    const body = await c.req.json<{ title?: unknown }>().catch(() => ({} as any));
+    const body = await c.req.json<{ title?: unknown; icon?: unknown }>().catch(() => ({} as any));
     if (typeof body.title !== 'string') {
         return c.json({ error: '제목은 문자열이어야 합니다.' }, 400);
     }
@@ -348,45 +363,55 @@ blog.post('/blog/:id/announce', requireAdmin, async (c) => {
     if (!title) return c.json({ error: '제목을 입력하세요.' }, 400);
     if (title.length > 200) return c.json({ error: '제목은 200자 이하여야 합니다.' }, 400);
 
+    let icon: string | null = null;
+    if (typeof body.icon === 'string' && body.icon.trim()) {
+        if (!/^(mdi mdi-[a-z0-9-]+|bi bi-[a-z0-9-]+)$/.test(body.icon)) {
+            return c.json({ error: '아이콘 형식이 올바르지 않습니다.' }, 400);
+        }
+        icon = body.icon;
+    }
+
     const post = await c.env.DB
         .prepare('SELECT id, title, content, thumbnail, deleted_at FROM blog_posts WHERE id = ?')
         .bind(id)
         .first<{ id: number; title: string; content: string; thumbnail: string | null; deleted_at: number | null }>();
     if (!post || post.deleted_at) return c.json({ error: 'Not Found' }, 404);
 
-    // 동일 게시물에 동일 제목으로 다시 발행하는 no-op 은 community 알림에서 제외하기 위해
-    // 현재 announce 상태를 미리 스냅샷.
-    const currentAnnounce = await c.env.DB
-        .prepare('SELECT announce_post, announce_title FROM settings WHERE id = 1')
-        .first<{ announce_post: number | null; announce_title: string | null }>();
+    const db = c.env.DB;
+    let conflict = false;
+    let annId = 0;
+    try {
+        await mutateAnnouncements(db, (ctx) => {
+            if (ctx.list.some(a => a.postId === id)) {
+                conflict = true;
+                return null;
+            }
+            annId = ctx.allocateId();
+            const now = Math.floor(Date.now() / 1000);
+            const newItem: Announcement = { id: annId, title, announcedTime: now, url: null, postId: id, icon };
+            return [newItem, ...ctx.list];
+        });
+    } catch (e) {
+        if (e instanceof AnnouncementMutationError) return c.json({ error: e.message }, 503);
+        throw e;
+    }
+    if (conflict) {
+        return c.json({ error: '해당 포스트는 이미 공지로 발행되어 있습니다.' }, 409);
+    }
 
-    await c.env.DB
-        .prepare(
-            `UPDATE settings
-             SET announce_post = ?, announce_title = ?, announced_time = unixepoch()
-             WHERE id = 1`
-        )
-        .bind(id, title)
-        .run();
     const currentUser = c.get('user')!;
     writeAdminLog(c, 'announce', `공지 발행: blog#${id} "${title}"`, currentUser.id);
 
-    // Discord community 채널에 공지 발행 알림.
-    // 동일 postId + 동일 title 인 단순 메타 갱신은 제외한다.
-    const isMetaOnlyRefresh = currentAnnounce?.announce_post === id
-        && (currentAnnounce?.announce_title || '') === title;
-    if (!isMetaOnlyRefresh) {
-        dispatchDiscord(c.env, c.executionCtx, announcementPublish({
-            postId: id,
-            announceTitle: title,
-            postContent: post.content,
-            thumbnail: post.thumbnail,
-            actorName: currentUser.name,
-            env: c.env,
-        }));
-    }
+    dispatchDiscord(c.env, c.executionCtx, announcementPublish({
+        postId: id,
+        announceTitle: title,
+        postContent: post.content,
+        thumbnail: post.thumbnail,
+        actorName: currentUser.name,
+        env: c.env,
+    }));
 
-    return c.json({ success: true, post_id: id, title });
+    return c.json({ success: true, post_id: id, title, id: annId });
 });
 
 export default blog;

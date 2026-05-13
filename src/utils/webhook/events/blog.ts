@@ -1,6 +1,6 @@
 // 공지사항 발행 Discord 이벤트 빌더 (community 채널).
-// settings.announce_post 가 NULL → id 또는 id1 → id2 (실제 발행/교체) 일 때만 호출되어야 한다.
-// announce_post 가 NULL 로 해제되거나 동일 게시물 메타만 갱신되는 경우는 호출부에서 필터링.
+// 새 블로그 포스트 연동 공지가 settings.announcements 에 추가될 때만 호출되어야 한다.
+// 단순 메타 수정 (PATCH /api/admin/announcements/:id) 이나 공지 철회는 호출부에서 필터링.
 
 import type { Env } from '../../../types';
 import type { WebhookEvent } from '../discord';
