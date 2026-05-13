@@ -644,40 +644,6 @@
             </div>
           </div>
 
-          <!-- 아이콘 피커 모달 (admin / icon-picker 모듈이 사용) -->
-          <div class="modal fade" id="iconPickerModal" tabindex="-1" aria-hidden="true">
-            <div class="modal-dialog modal-xl modal-dialog-scrollable">
-              <div class="modal-content">
-                <div class="modal-header">
-                  <h5 class="modal-title">
-                    <i id="iconPickerTypeIcon" class="mdi mdi-material-design me-2"></i>
-                    <span id="iconPickerTitle">아이콘 선택</span>
-                  </h5>
-                  <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                </div>
-                <div class="modal-body">
-                  <div class="d-flex gap-2 mb-2">
-                    <button type="button" id="iconPickerTabMdi" class="btn btn-sm btn-outline-primary active">MDI</button>
-                    <button type="button" id="iconPickerTabBi" class="btn btn-sm btn-outline-primary">Bootstrap</button>
-                    <button type="button" id="iconPickerNoneBtn" class="btn btn-sm btn-outline-secondary ms-auto">
-                      <i class="bi bi-x me-1"></i>아이콘 없음
-                    </button>
-                  </div>
-                  <input type="text" id="iconSearchInput" class="form-control mb-3" placeholder="아이콘 이름 검색...">
-                  <div id="iconLoadingSpinner" class="text-center py-4" style="display:none;">
-                    <span class="spinner-border text-primary" role="status"></span>
-                    <p class="mt-2 text-muted small">아이콘 목록 로딩 중...</p>
-                  </div>
-                  <div id="iconPickerGrid" class="icon-grid-modal"></div>
-                  <div id="iconPickerEmpty" class="text-center text-muted py-3" style="display:none;">
-                    <i class="mdi mdi-magnify-close" style="font-size:2rem;"></i>
-                    <p class="mt-1">검색 결과가 없습니다.</p>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
           <!-- 공지 수정 모달 -->
           <div class="modal fade" id="announcementEditModal" tabindex="-1" aria-hidden="true">
             <div class="modal-dialog">
@@ -1152,6 +1118,41 @@
       </aside>
     </div>
     <!-- admin-layout end -->
+
+    <!-- 아이콘 피커 모달 (iconPicker.ts 모듈이 사용) — body 레벨에 두어
+         Bootstrap 모달이 부모 컨테이너 stacking context 의 영향을 받지 않도록 함. -->
+    <div class="modal fade" id="iconPickerModal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title">
+              <i id="iconPickerTypeIcon" class="mdi mdi-material-design me-2"></i>
+              <span id="iconPickerTitle">아이콘 선택</span>
+            </h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+          </div>
+          <div class="modal-body">
+            <div class="d-flex gap-2 mb-2">
+              <button type="button" id="iconPickerTabMdi" class="btn btn-sm btn-outline-primary active">MDI</button>
+              <button type="button" id="iconPickerTabBi" class="btn btn-sm btn-outline-primary">Bootstrap</button>
+              <button type="button" id="iconPickerNoneBtn" class="btn btn-sm btn-outline-secondary ms-auto">
+                <i class="bi bi-x me-1"></i>아이콘 없음
+              </button>
+            </div>
+            <input type="text" id="iconSearchInput" class="form-control mb-3" placeholder="아이콘 이름 검색...">
+            <div id="iconLoadingSpinner" class="text-center py-4" style="display:none;">
+              <span class="spinner-border text-primary" role="status"></span>
+              <p class="mt-2 text-muted small">아이콘 목록 로딩 중...</p>
+            </div>
+            <div id="iconPickerGrid" class="icon-grid-modal"></div>
+            <div id="iconPickerEmpty" class="text-center text-muted py-3" style="display:none;">
+              <i class="mdi mdi-magnify-close" style="font-size:2rem;"></i>
+              <p class="mt-1">검색 결과가 없습니다.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <!-- ── 푸터 Placeholder ── -->
     <div id="app-footer-placeholder"></div>

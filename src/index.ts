@@ -675,9 +675,35 @@ ${contentBlock}
 
     const canSeePrivate = rbac.can(user?.role ?? 'guest', 'wiki:private');
 
-    // 비공개 문서는 권한이 없으면 존재 자체를 숨김 (404 처리 → 아래 if (!page) 로 위임)
+    // 비공개 문서: 권한이 없으면 본문/메타데이터를 노출하지 않고 "비공개 문서" 안내 화면을 SSR 한다.
+    // (삭제 분기보다 먼저 평가해 "비공개·삭제" 동시 상태에서 비공개 사실이 우선 노출되도록 함)
     if (page && page.is_private === 1 && !canSeePrivate) {
-        page = null;
+        if (isCrawler) {
+            const title = `비공개 문서 - ${wikiName}`;
+            const body = `<article>
+<h1>${escapeHtml(slug)}</h1>
+<p>이 문서는 비공개 상태입니다.</p>
+</article>`;
+            return buildCrawlerPage(c, {
+                title,
+                description: `${slug} 문서는 비공개 상태입니다.`,
+                bodyHtml: body,
+                canonicalUrl,
+                status: 403,
+                cacheControl: 'private, no-store',
+            });
+        }
+        const privateSsrData: Record<string, any> = {
+            _ssrSlug: slug,
+            _ssrNotFound: true,
+            _ssrPrivate: true,
+            _ssrTitle: `비공개 문서 - ${wikiName}`,
+        };
+        const response = await renderHtml(c, '/', privateSsrData);
+        const forbiddenResponse = new Response(response.body, { status: 403, headers: response.headers });
+        forbiddenResponse.headers.set('Cache-Control', 'private, no-store');
+        if (crawlEnabled) forbiddenResponse.headers.set('Vary', 'User-Agent');
+        return forbiddenResponse;
     }
 
     if (page && page.deleted_at && !isAdmin) {

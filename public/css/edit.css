@@ -1200,52 +1200,8 @@ html[data-theme="dark"] #concurrent-edit-banner {
     padding-left: 7px !important;
 }
 
-/* ── 아이콘 피커 모달 그리드 ── */
-.icon-grid-modal {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
-    gap: 6px;
-    max-height: 420px;
-    overflow-y: auto;
-    padding: 4px;
-}
-
-.icon-grid-modal-item {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    padding: 8px 4px;
-    cursor: pointer;
-    border-radius: 8px;
-    border: 1px solid var(--wiki-border);
-    transition: all 0.15s;
-    font-size: 0.68rem;
-    text-align: center;
-    overflow: hidden;
-    color: var(--wiki-text);
-    background: transparent;
-    line-height: 1.3;
-}
-
-.icon-grid-modal-item:hover {
-    background: var(--wiki-bg);
-    border-color: var(--wiki-primary);
-    color: var(--wiki-primary);
-}
-
-.icon-grid-modal-item i {
-    font-size: 1.4rem;
-    margin-bottom: 4px;
-    display: block;
-}
-
-.icon-grid-modal-item span {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    max-width: 74px;
-    display: block;
-}
+/* 아이콘 피커 모달 그리드 (.icon-grid-modal*) 는 style.css 로 이동 —
+ * admin.html / blog.html 의 standalone iconPicker 도 동일 스타일을 공유한다. */
 
 /* ── 아이콘 인라인 자동완성 드롭다운 ── */
 #icon-autocomplete {

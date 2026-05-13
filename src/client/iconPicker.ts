@@ -156,6 +156,12 @@ export function openIconPicker(): Promise<string | null> {
         // 모달 닫힘 (X / 백드롭 / Esc) 처리 — Bootstrap 의 hidden 이벤트 한 번만 listen.
         const onHidden = () => {
             modalEl.removeEventListener('hidden.bs.modal', onHidden);
+            // 부모 컨텍스트(다른 Bootstrap 모달 / SweetAlert2) 가 살아 있으면
+            // Bootstrap 이 body 의 .modal-open 클래스와 padding-right 를 제거해버려
+            // 스크롤이 풀려버린다. 부모 모달이 여전히 열려 있다면 .modal-open 을 복원.
+            if (document.querySelector('.modal.show')) {
+                document.body.classList.add('modal-open');
+            }
             if (pendingResolve === resolve) {
                 pendingResolve = null;
                 resolve(null);
@@ -165,6 +171,16 @@ export function openIconPicker(): Promise<string | null> {
 
         const modal = window.bootstrap?.Modal.getOrCreateInstance(modalEl);
         modal?.show();
+        // Bootstrap 은 backdrop 을 동적으로 body 에 append 한다. 우리 모달의 backdrop 만
+        // 식별해 z-index 를 SweetAlert2(~1060) 위로 올리기 위해 클래스를 부여한다.
+        // (CSS: .modal-backdrop.icon-picker-backdrop { z-index: 2069 })
+        const tagBackdrop = () => {
+            const backdrops = document.querySelectorAll('.modal-backdrop');
+            const last = backdrops[backdrops.length - 1] as HTMLElement | undefined;
+            if (last) last.classList.add('icon-picker-backdrop');
+        };
+        // show() 가 비동기로 backdrop 을 삽입하므로 한 프레임 뒤에 클래스 부여.
+        requestAnimationFrame(tagBackdrop);
         switchType('mdi');
         setTimeout(() => searchInput.focus(), 300);
     });

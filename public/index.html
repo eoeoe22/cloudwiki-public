@@ -81,7 +81,7 @@
           <!-- 문서 도구 -->
           <div class="d-flex justify-content-end mb-2 gap-2">
             <div class="btn-group" id="articleMainActions">
-              <!-- 자바스크립트로 채워짐: 편집, 이력, 토론, 역링크 -->
+              <!-- 자바스크립트로 채워짐: 편집, 이력, 토론 -->
             </div>
             <div class="dropdown">
               <button class="btn btn-secondary dropdown-toggle no-caret" type="button" id="shareDropdown"
@@ -195,6 +195,15 @@
         <div class="wiki-not-found">
           <h2><span class="mdi mdi-delete-empty text-danger"></span> 삭제된 문서입니다</h2>
           <p id="deletedSlug"></p>
+        </div>
+      </div>
+
+      <!-- 비공개 문서 -->
+      <div id="privatePage" class="d-none">
+        <div class="wiki-not-found">
+          <h2><span class="bi bi-eye-slash-fill text-danger"></span> 비공개 문서입니다</h2>
+          <p id="privateSlug"></p>
+          <p class="text-muted small">이 문서는 비공개로 설정되어 권한이 있는 사용자만 열람할 수 있습니다.</p>
         </div>
       </div>
 
@@ -375,6 +384,7 @@
       document.getElementById('articlePage').classList.add('d-none');
       document.getElementById('notFoundPage').classList.add('d-none');
       document.getElementById('deletedPage').classList.add('d-none');
+      document.getElementById('privatePage').classList.add('d-none');
       document.getElementById('categoryPage').classList.add('d-none');
     }
 
@@ -610,12 +620,16 @@
 
         // SSR 데이터가 있고, 현재 slug와 일치하면 API 호출 없이 사용
         if (ssrData && ssrData._ssrSlug === slug) {
-          if (ssrData._ssrForbidden) {
-            hideAllPages();
-            Swal.fire('접근 불가', '이 문서는 비공개 상태입니다.', 'error');
-            return;
-          }
           if (ssrData._ssrNotFound) {
+            if (ssrData._ssrPrivate) {
+              hideAllPages();
+              document.getElementById('privatePage').classList.remove('d-none');
+              document.getElementById('privateSlug').textContent = `"${decodeURIComponent(slug)}" 문서는 비공개 상태입니다.`;
+              document.title = `비공개 문서 - ${appConfig.wikiName}`;
+
+              if (typeof window.__sidebarLayoutUpdate === 'function') window.__sidebarLayoutUpdate();
+              return;
+            }
             if (ssrData._ssrDeleted) {
               hideAllPages();
               document.getElementById('deletedPage').classList.remove('d-none');
@@ -683,7 +697,11 @@
 
           if (res.status === 403) {
             hideAllPages();
-            Swal.fire('접근 불가', '이 문서는 비공개 상태입니다.', 'error');
+            document.getElementById('privatePage').classList.remove('d-none');
+            document.getElementById('privateSlug').textContent = `"${decodeURIComponent(slug)}" 문서는 비공개 상태입니다.`;
+            document.title = `비공개 문서 - ${appConfig.wikiName}`;
+
+            if (typeof window.__sidebarLayoutUpdate === 'function') window.__sidebarLayoutUpdate();
             return;
           }
 
@@ -730,6 +748,9 @@
         if (page.is_locked) {
           badgesHtml += `<span class="badge bg-danger ms-2"><i class="bi bi-lock-fill"></i> 편집 잠금</span>`;
         }
+        if (page.is_private) {
+          badgesHtml += `<span class="badge bg-danger ms-2"><i class="bi bi-eye-slash-fill"></i> 비공개 문서</span>`;
+        }
         if (page.deleted_at) {
           badgesHtml += `<span class="badge bg-danger ms-2"><i class="bi bi-trash"></i> 삭제됨</span>`;
         }
@@ -744,16 +765,22 @@
       </button>
     `;
 
-        // 조회수 비동기 로드
-        fetch('/api/analytics/page-views/' + encodeURIComponent(page.slug))
-          .then(r => r.json())
-          .then(data => {
-            if (data.total > 0) {
-              document.getElementById('pageViewNum').textContent = Number(data.total).toLocaleString();
-              document.getElementById('pageViewCount').style.display = '';
-            }
-          })
-          .catch(() => { });
+        // 조회수 비동기 로드 (비공개 문서는 조회수 표시 안 함)
+        // SPA 네비게이션으로 직전 공개 페이지의 인플라이트 응답이 비공개 페이지 위에서
+        // resolve 되어 조회수가 노출되지 않도록, 응답 시점에 currentPage 일치/비공개 여부를 재확인한다.
+        if (!page.is_private) {
+          const _requestedSlug = page.slug;
+          fetch('/api/analytics/page-views/' + encodeURIComponent(page.slug))
+            .then(r => r.json())
+            .then(data => {
+              if (!currentPage || currentPage.slug !== _requestedSlug || currentPage.is_private) return;
+              if (data.total > 0) {
+                document.getElementById('pageViewNum').textContent = Number(data.total).toLocaleString();
+                document.getElementById('pageViewCount').style.display = '';
+              }
+            })
+            .catch(() => { });
+        }
 
         // redirect를 통해 문서를 조회한 경우, 액션 버튼에 실제 문서의 slug를 사용
         const actionSlug = page.slug || slug;
@@ -766,7 +793,7 @@
         const isLocked = page.is_locked === 1;
         const canEdit = currentUser && (isAdmin || !isLocked);
 
-        // 메인 액션 (편집, 이력, 토론, 역링크)
+        // 메인 액션 (편집, 이력, 토론)
         const mainActionsHtml = `
           <a href="/edit.html?slug=${encodeURIComponent(actionSlug)}"
              class="btn btn-outline-secondary ${canEdit ? '' : 'disabled'}"
@@ -781,14 +808,14 @@
           <a href="/w/${encodeURIComponent(actionSlug)}?mode=discussions" class="btn btn-outline-secondary" aria-label="토론">
             <i class="bi bi-chat-dots" aria-hidden="true"></i><span class="d-none d-sm-inline"> 토론</span>
           </a>
-          <button class="btn btn-outline-secondary" onclick="scrollToBacklinks(); return false;" aria-label="역링크">
-            <i class="bi bi-link-45deg" aria-hidden="true"></i><span class="d-none d-sm-inline"> 역링크</span>
-          </button>
         `;
         document.getElementById('articleMainActions').innerHTML = mainActionsHtml;
 
         // 더보기 액션
         let moreActionsHtml = `
+          <li><button class="dropdown-item" type="button" onclick="scrollToBacklinks(); return false;">
+            <i class="bi bi-link-45deg"></i> 역링크
+          </button></li>
           <li><button class="dropdown-item" type="button" onclick="toggleRawMode(); return false;">
             <i class="bi bi-code-slash"></i> Raw 보기
           </button></li>

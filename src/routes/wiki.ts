@@ -1009,7 +1009,9 @@ wiki.get('/w/all-pages', async (c) => {
     };
     const orderBy = sortMap[sort] || sortMap['slug_asc'];
 
-    const whereClause = 'p.deleted_at IS NULL' + (canSeePrivate ? '' : ' AND p.is_private = 0');
+    const whereClause = 'p.deleted_at IS NULL'
+        + (canSeePrivate ? '' : ' AND p.is_private = 0')
+        + (sort === 'chars_asc' ? ' AND p.characters IS NOT NULL' : '');
 
     const countQuery = `SELECT COUNT(*) as total FROM pages p WHERE ${whereClause}`;
     const listQuery = `SELECT p.slug, p.category, p.created_at, p.updated_at, p.characters FROM pages p WHERE ${whereClause} ORDER BY ${orderBy} LIMIT ? OFFSET ?`;
@@ -1127,14 +1129,23 @@ wiki.get('/w/:slug', async (c) => {
     const isAdmin = user && rbac.can(user.role, 'admin:access');
     const canSeePrivate = rbac.can(user?.role ?? 'guest', 'wiki:private');
 
-    // 비공개 문서는 wiki:private 권한 보유자에게만 노출 (존재 자체를 숨기기 위해 404 응답).
-    // 삭제 분기보다 먼저 평가해 "삭제된 비공개 페이지" 의 존재/상태가 410+is_deleted 로 누출되지 않게 한다.
+    // 비공개 문서는 wiki:private 권한이 없는 사용자에게는 본문/메타데이터를 노출하지 않고
+    // "비공개 문서" 안내만 전달한다. 삭제 분기보다 먼저 평가해 비공개·삭제 동시 상태에서
+    // 비공개 사실이 우선 노출되도록 한다.
     if (page && page.is_private === 1 && !canSeePrivate) {
-        return c.json({ error: '문서를 찾을 수 없습니다.' }, 404);
+        return c.json(
+            { error: '비공개 문서입니다.', is_private: true },
+            403,
+            { 'Cache-Control': 'private, no-store' }
+        );
     }
 
     if (page && page.deleted_at && !isAdmin) {
-        return c.json({ error: '삭제된 문서입니다.', is_deleted: true }, 410);
+        return c.json(
+            { error: '삭제된 문서입니다.', is_deleted: true },
+            410,
+            { 'Cache-Control': 'no-store, must-revalidate' }
+        );
     }
 
     // 원본(리다이렉트 이전) 슬러그의 비공개 여부 기록.
@@ -1319,14 +1330,20 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
     }
 
     const existing = await db
-        .prepare('SELECT id, version, is_locked, is_private, redirect_to, content FROM pages WHERE slug = ? AND deleted_at IS NULL')
+        .prepare('SELECT id, version, is_locked, is_private, redirect_to, content, deleted_at FROM pages WHERE slug = ?')
         .bind(slug)
-        .first<{ id: number; version: number; is_locked: number; is_private: number; redirect_to: string | null; content: string }>();
+        .first<{ id: number; version: number; is_locked: number; is_private: number; redirect_to: string | null; content: string; deleted_at: number | null }>();
+
+    // 삭제된 문서는 권한자(admin:access)만 복원할 수 있고 일반 사용자의 편집은 불가.
+    // 일반 사용자가 동일 슬러그로 새 문서를 만들지 못하도록 명시적으로 차단한다.
+    if (existing && existing.deleted_at && !isAdmin) {
+        return c.json({ error: '삭제된 문서는 편집할 수 없습니다.', is_deleted: true }, 410);
+    }
 
     let finalIsLocked = 0;
     let finalIsPrivate = 0;
 
-    if (existing) {
+    if (existing && !existing.deleted_at) {
         // expected_version === 0 은 "신규 생성 전용" 시멘틱이다. 기존 문서가 존재하면
         // 본문 일치 여부와 무관하게 충돌로 처리해, 섹션 분리 등 race-condition 차단이
         // 필요한 호출자가 결정론적으로 거부 응답을 받도록 한다.
@@ -1344,7 +1361,7 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
 
         // 비공개 문서는 wiki:private 권한 없으면 편집 불가 (조회 단계에서도 막혀야 하지만 안전망)
         if (existing.is_private === 1 && !rbac.can(user.role, 'wiki:private')) {
-            return c.json({ error: '문서를 찾을 수 없습니다.' }, 404);
+            return c.json({ error: '비공개 문서는 편집할 수 없습니다.', is_private: true }, 403);
         }
 
         // 권한에 따른 잠금 상태 결정

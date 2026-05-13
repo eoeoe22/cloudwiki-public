@@ -2854,6 +2854,29 @@ document.addEventListener('DOMContentLoaded', async () => {
             return;
         }
 
+        // 비공개 문서: 권한 없는 사용자는 편집 불가
+        if (res.status === 403) {
+            const overlay = document.getElementById('initLoadingOverlay');
+            if (overlay) {
+                overlay.classList.add('hidden');
+                overlay.style.display = 'none';
+            }
+            let errMsg = '비공개 문서는 열람하거나 편집할 수 없습니다.';
+            try {
+                const data = await res.json();
+                if (data && data.error) errMsg = data.error;
+            } catch (_e) { /* noop */ }
+            window.Swal.fire({
+                icon: 'error',
+                title: '비공개 문서',
+                text: errMsg,
+                confirmButtonText: '홈으로'
+            }).then(() => {
+                window.location.href = '/';
+            });
+            return;
+        }
+
         if (res.ok) {
             const page = await res.json();
             document.getElementById('titleInput').value = page.slug;
