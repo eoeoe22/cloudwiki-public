@@ -113,11 +113,37 @@ async function askChoice(question, choices, { def } = {}) {
 }
 
 // ─────────────────────────────────────────────────────────────────────
+// npm install 헬퍼
+// ─────────────────────────────────────────────────────────────────────
+
+const WRANGLER_LOCAL = resolve(ROOT, 'node_modules/.bin/wrangler');
+
+function ensureNpmInstall() {
+  if (existsSync(WRANGLER_LOCAL)) return;
+  warn('node_modules 가 설치되어 있지 않습니다. npm install 을 실행합니다...');
+  const res = spawnSync('npm', ['install'], { cwd: ROOT, stdio: 'inherit' });
+  if (res.status !== 0) {
+    err('npm install 에 실패했습니다. 의존성을 설치한 후 다시 실행해주세요.');
+    process.exit(1);
+  }
+  ok('npm install 완료.');
+}
+
+// ─────────────────────────────────────────────────────────────────────
 // wrangler CLI 헬퍼
 // ─────────────────────────────────────────────────────────────────────
 
+// node_modules/.bin/wrangler 가 있으면 직접 호출(버전 일관성 보장),
+// 없으면 npx --yes 로 폴백(npm install 미실행 환경 대응)
+function buildWranglerInvocation(args) {
+  return existsSync(WRANGLER_LOCAL)
+    ? { cmd: WRANGLER_LOCAL, cmdArgs: args }
+    : { cmd: 'npx', cmdArgs: ['--yes', 'wrangler', ...args] };
+}
+
 function runWrangler(args) {
-  const res = spawnSync('npx', ['--yes', 'wrangler', ...args], {
+  const { cmd, cmdArgs } = buildWranglerInvocation(args);
+  const res = spawnSync(cmd, cmdArgs, {
     cwd: ROOT,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -130,7 +156,8 @@ function runWrangler(args) {
 }
 
 function isWranglerLoggedIn() {
-  const res = spawnSync('npx', ['--yes', 'wrangler', 'whoami'], {
+  const { cmd, cmdArgs } = buildWranglerInvocation(['whoami']);
+  const res = spawnSync(cmd, cmdArgs, {
     cwd: ROOT,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -149,7 +176,8 @@ function isContainerEnv() {
 }
 
 function runWranglerLogin() {
-  const res = spawnSync('npx', ['--yes', 'wrangler', 'login'], {
+  const { cmd, cmdArgs } = buildWranglerInvocation(['login']);
+  const res = spawnSync(cmd, cmdArgs, {
     cwd: ROOT,
     stdio: 'inherit',
   });
@@ -303,6 +331,7 @@ async function main() {
   let d1Name = '', d1Id = '', r2Name = '', kvId = '';
 
   if (autoCreate) {
+    ensureNpmInstall();
     info('Wrangler 로그인 상태를 확인합니다...');
     if (isWranglerLoggedIn()) {
       ok('Wrangler 로그인이 확인되었습니다.');
