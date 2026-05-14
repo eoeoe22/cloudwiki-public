@@ -13,6 +13,7 @@ import { stdin as input, stdout as output } from 'node:process';
 import { webcrypto } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
+import { existsSync } from 'node:fs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
@@ -126,6 +127,33 @@ function runWrangler(args) {
     stdout: res.stdout || '',
     stderr: res.stderr || '',
   };
+}
+
+function isWranglerLoggedIn() {
+  const res = spawnSync('npx', ['--yes', 'wrangler', 'whoami'], {
+    cwd: ROOT,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  if (res.status !== 0) return false;
+  const out = (res.stdout + res.stderr).toLowerCase();
+  return !out.includes('not authenticated') && !out.includes('not logged in');
+}
+
+function isContainerEnv() {
+  // Docker, Codespaces, Gitpod, devcontainer 등 원격/컨테이너 환경 감지
+  const envFlags = ['CODESPACES', 'GITPOD_WORKSPACE_ID', 'REMOTE_CONTAINERS', 'DEVCONTAINER'];
+  if (envFlags.some(k => process.env[k])) return true;
+  if (existsSync('/.dockerenv')) return true;
+  return false;
+}
+
+function runWranglerLogin() {
+  const res = spawnSync('npx', ['--yes', 'wrangler', 'login'], {
+    cwd: ROOT,
+    stdio: 'inherit',
+  });
+  return res.status === 0;
 }
 
 function extractD1Id(stdout) {
@@ -275,7 +303,37 @@ async function main() {
   let d1Name = '', d1Id = '', r2Name = '', kvId = '';
 
   if (autoCreate) {
-    info('Cloudflare 계정에 로그인되어 있지 않다면 먼저 `npx wrangler login` 을 실행해주세요.');
+    info('Wrangler 로그인 상태를 확인합니다...');
+    if (isWranglerLoggedIn()) {
+      ok('Wrangler 로그인이 확인되었습니다.');
+    } else {
+      warn('Wrangler 에 로그인되어 있지 않습니다.');
+      if (isContainerEnv()) {
+        warn('컨테이너/원격 환경이 감지되었습니다. `wrangler login` 은 localhost OAuth 콜백을 사용하므로');
+        warn('이 환경에서는 브라우저 리다이렉트가 차단되어 무한 대기 상태가 될 수 있습니다.');
+        info('대안: CLOUDFLARE_API_TOKEN 환경변수를 설정하면 wrangler 가 자동으로 인증합니다.');
+        info('  export CLOUDFLARE_API_TOKEN=<your-api-token>  # 발급: https://dash.cloudflare.com/profile/api-tokens');
+        info('환경변수를 설정한 후 스크립트를 다시 실행해주세요.');
+        rl.close();
+        process.exit(1);
+      }
+      const doLogin = await askYesNo('지금 wrangler login 을 실행할까요?', { def: 'y' });
+      if (doLogin) {
+        info('브라우저가 열립니다. Cloudflare 계정으로 로그인해주세요...');
+        const loginOk = runWranglerLogin();
+        if (loginOk) {
+          ok('로그인 완료.');
+        } else {
+          err('로그인에 실패했습니다. 수동으로 `npx wrangler login` 을 실행한 후 다시 시도해주세요.');
+          rl.close();
+          process.exit(1);
+        }
+      } else {
+        err('로그인 없이는 리소스를 자동 생성할 수 없습니다. 수동으로 리소스를 생성한 뒤 다시 실행해주세요.');
+        rl.close();
+        process.exit(1);
+      }
+    }
     d1Name = await ask('D1 데이터베이스 이름', { def: `${workerName}-db` });
     info(`D1 데이터베이스 "${d1Name}" 을 생성합니다...`);
     const d1Res = runWrangler(['d1', 'create', d1Name]);
