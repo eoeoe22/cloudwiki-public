@@ -950,6 +950,29 @@ async function deleteNotification(id) {
     }
 }
 
+async function deleteAllNotifications() {
+    if (typeof Swal === 'undefined') return;
+    const result = await Swal.fire({
+        title: '알림 전체 삭제',
+        text: '모든 알림을 삭제합니다. 이 작업은 되돌릴 수 없습니다.',
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#dc3545',
+        confirmButtonText: '전체 삭제',
+        cancelButtonText: '취소',
+    });
+    if (!result.isConfirmed) return;
+    try {
+        const res = await fetch('/api/notifications', { method: 'DELETE' });
+        if (!res.ok) throw new Error();
+        loadNotifications();
+        loadNotificationCount();
+    } catch (e) {
+        Swal.fire('오류', '알림 삭제에 실패했습니다.', 'error');
+    }
+}
+window.deleteAllNotifications = deleteAllNotifications;
+
 // ── Web Push 토글 (in-app 알림 패널 헤더) ──
 // 동적 import 로 push.ts 를 로드하므로 비지원 브라우저에서도 무해.
 // 토글 상태는 매번 패널 열릴 때 refreshPushToggle 로 갱신된다.

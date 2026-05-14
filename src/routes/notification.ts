@@ -76,6 +76,19 @@ notificationRoutes.delete('/notifications/by-link', requireAuthAllowBanned, asyn
 });
 
 /**
+ * DELETE /api/notifications
+ * 현재 유저의 모든 알림 일괄 삭제 (쪽지 알림 포함)
+ */
+notificationRoutes.delete('/notifications', requireAuthAllowBanned, async (c) => {
+    const user = c.get('user')!;
+    const db = c.env.DB;
+    const result = await db.prepare(
+        'DELETE FROM notifications WHERE user_id = ?'
+    ).bind(user.id).run();
+    return c.json({ success: true, deleted: result.meta.changes });
+});
+
+/**
  * DELETE /api/notifications/:id
  * 알림 삭제 — 알림 레코드만 삭제 (쪽지는 받은 쪽지함에서 별도로 삭제)
  */

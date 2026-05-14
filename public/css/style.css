@@ -1883,6 +1883,8 @@ html[data-theme="dark"] .btn-close {
   border-bottom: 1px solid var(--wiki-border);
   color: var(--wiki-text);
   font-size: 0.9rem;
+  display: flex;
+  align-items: center;
 }
 
 .notification-panel-body {
