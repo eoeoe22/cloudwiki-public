@@ -54,7 +54,7 @@ for (const [name, provider] of Object.entries(providerRegistry)) {
         if (result.state.intent === 'refresh_picture') {
             return handleRefreshPicture(c, result.profile, result.state);
         }
-        return handleOAuthLogin(c, result.profile);
+        return handleOAuthLogin(c, result.profile, result.state.redirectUrl);
     });
 }
 

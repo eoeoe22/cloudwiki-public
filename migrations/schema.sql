@@ -257,6 +257,9 @@ CREATE INDEX IF NOT EXISTS idx_admin_log_user_created ON admin_log(user, created
 -- action: 'create' 면 새 페이지 생성, 'update' 면 기존 페이지 갱신.
 -- requested_lock: NULL = 페이지 기존 상태 유지, 0/1 = 명시적 변경.
 -- TTL: 매일 자정 cron 이 updated_at < now-43200 (12시간) 인 draft 를 일괄 삭제.
+-- submitted_at / submitted_summary: commit_edit(submit_for_approval=true) 로 제출된 draft.
+-- submitted_at IS NULL → 작성 중 draft (12시간 TTL).
+-- submitted_at IS NOT NULL → OAuth 토큰 소유자의 승인 대기 (30일 TTL, 별도 크론 분기).
 CREATE TABLE IF NOT EXISTS mcp_drafts (
   id                INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id           INTEGER NOT NULL,
@@ -268,6 +271,8 @@ CREATE TABLE IF NOT EXISTS mcp_drafts (
   category          TEXT,
   redirect_to       TEXT,
   requested_lock    INTEGER,
+  submitted_at      INTEGER,
+  submitted_summary TEXT,
   created_at        INTEGER DEFAULT (unixepoch()),
   updated_at        INTEGER DEFAULT (unixepoch()),
   FOREIGN KEY (user_id) REFERENCES users(id),
@@ -275,6 +280,14 @@ CREATE TABLE IF NOT EXISTS mcp_drafts (
 );
 CREATE INDEX IF NOT EXISTS idx_mcp_drafts_user ON mcp_drafts(user_id);
 CREATE INDEX IF NOT EXISTS idx_mcp_drafts_updated ON mcp_drafts(updated_at);
+-- 제출된 draft 만 인덱싱 (mypage 의 본인 제출안 목록 / 카운트 / 배너 쿼리에서 사용).
+CREATE INDEX IF NOT EXISTS idx_mcp_drafts_submitted
+  ON mcp_drafts(user_id, submitted_at)
+  WHERE submitted_at IS NOT NULL;
+
+-- 기존 배포된 DB 를 위한 마이그레이션 (멱등).
+-- SQLite 는 IF NOT EXISTS 가 ADD COLUMN 에 없으므로 PRAGMA table_info 로 분기해야 하지만,
+-- D1 콘솔에서 한 번만 수동 실행한다는 전제로 schema.sql 에는 정의만 둔다.
 
 -- 문서 간 링크 테이블 (역링크 인덱싱용)
 -- 문서 수정 시 content에서 [[링크]]를 파싱하여 이 테이블에 저장

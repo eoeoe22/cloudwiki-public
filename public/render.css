@@ -52,7 +52,7 @@
   color: var(--wiki-text);
   word-break: break-all;
   overflow-wrap: break-word;
-  overflow-x: auto;
+  overflow-x: clip;
   max-width: 100%;
 }
 

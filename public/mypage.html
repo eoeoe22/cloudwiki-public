@@ -16,6 +16,10 @@
         href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Outfit:wght@500;600;700;800;900&family=Inter:wght@400;500;700;800&display=swap"
         rel="stylesheet">
     <link rel="stylesheet" href="/css/style.css">
+    <!-- MCP 편집 승인 모달의 rendered diff 가 위키 본문을 비교 렌더링하므로
+         revisions.html 과 같은 위키 렌더 스타일/diff 스타일을 함께 로드한다. -->
+    <link rel="stylesheet" href="/render.css">
+    <link rel="stylesheet" href="/css/diff.css">
   <!-- 테마 FOUC 방지: CSS 로드 후 즉시 테마 적용 -->
   <script>try{var t=localStorage.getItem('themeMode');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
     <style>
@@ -166,6 +170,85 @@
         .contribution-item .meta {
             font-size: 0.8rem;
             color: var(--wiki-text-muted);
+        }
+
+        .mcp-submission-item {
+            display: flex;
+            flex-direction: column;
+            gap: 0.4rem;
+            padding: 0.85rem 0.9rem;
+            border: 1px solid var(--wiki-border);
+            border-radius: 10px;
+            margin-bottom: 0.6rem;
+            background: var(--wiki-card-bg);
+        }
+        .mcp-submission-item .mcp-sub-head {
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            flex-wrap: wrap;
+        }
+        .mcp-submission-item .mcp-sub-slug {
+            font-weight: 700;
+            color: var(--wiki-primary);
+            text-decoration: none;
+            word-break: break-all;
+        }
+        .mcp-submission-item .mcp-sub-slug:hover { text-decoration: underline; }
+        .mcp-submission-item .mcp-sub-meta {
+            font-size: 0.8rem;
+            color: var(--wiki-text-muted);
+        }
+        .mcp-submission-item .mcp-sub-summary {
+            font-size: 0.92rem;
+            margin: 0.1rem 0;
+            color: var(--wiki-text);
+        }
+        .mcp-submission-item .mcp-sub-actions {
+            display: flex;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+        }
+        .mcp-submission-item.has-conflict {
+            border-left: 4px solid #dc3545;
+        }
+        .mcp-submission-banner {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.75rem;
+            padding: 0.7rem 1rem;
+            margin: 0.5rem 0 1rem;
+            border: 1px solid #ffc107;
+            background: rgba(255, 193, 7, 0.08);
+            border-radius: 10px;
+            font-size: 0.95rem;
+        }
+        .mcp-submission-banner a { font-weight: 700; }
+        .mcp-diff-pane {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.5rem;
+        }
+        .mcp-diff-pane > div {
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+        }
+        .mcp-diff-pane pre {
+            background: var(--wiki-toc-bg, #f7f7f7);
+            border: 1px solid var(--wiki-border);
+            border-radius: 8px;
+            padding: 0.6rem 0.8rem;
+            max-height: 360px;
+            overflow: auto;
+            white-space: pre-wrap;
+            word-break: break-word;
+            font-size: 0.85rem;
+            margin: 0;
+        }
+        @media (max-width: 640px) {
+            .mcp-diff-pane { grid-template-columns: 1fr; }
         }
 
         .edit-name-form {
@@ -354,6 +437,23 @@
                     <div class="stat-cards" id="statCards"></div>
                 </div>
 
+                <!-- MCP 편집 승인 대기 -->
+                <div class="profile-section" id="mcpSubmissionsSection" style="display:none;">
+                    <div class="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2">
+                        <h4 class="mb-0">
+                            <i class="mdi mdi-robot-outline"></i> MCP 편집 승인 대기
+                            <span class="badge bg-warning text-dark ms-1" id="mcpSubmissionsCount">0</span>
+                        </h4>
+                    </div>
+                    <small class="text-muted d-block mb-3">
+                        내가 연결한 MCP 에이전트가 <code>commit_edit(submit_for_approval=true)</code> 로 제출한 편집안 목록입니다.
+                        본인이 검토 후 승인해야 비로소 새 리비전이 생성됩니다. 거부 시 폐기됩니다.
+                    </small>
+                    <div id="mcpSubmissionsList">
+                        <div class="text-center text-muted py-3">불러오는 중...</div>
+                    </div>
+                </div>
+
                 <!-- 받은 쪽지함 -->
                 <div class="profile-section" id="messagesSection" style="display:none;">
                     <h4><i class="mdi mdi-email-receive"></i> 받은 쪽지함</h4>
@@ -429,8 +529,15 @@
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11.26.24"></script>
+    <!-- MCP 편집 승인 모달의 rendered diff 가 marked + DOMPurify 폴백 경로
+         (위키 렌더가 없을 때) 를 쓸 수 있도록 함께 로드. render.js 가 정상 로드되면
+         이 CDN 스크립트들은 자동 폴백 후보로만 사용된다. -->
+    <script src="https://cdn.jsdelivr.net/npm/marked@18.0.3/lib/marked.umd.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.4.2/dist/purify.min.js"></script>
 
     <script type="module" src="/dist/common.js"></script>
+    <script type="module" src="/dist/render.js"></script>
+    <script type="module" src="/dist/diff.js"></script>
     <script>
 
         document.addEventListener('DOMContentLoaded', async () => {
@@ -444,8 +551,25 @@
             loadMessages();
             loadSessions();
             loadMcpClients();
+            loadMcpSubmissions();
             checkNameChangeStatus();
             showPictureUpdateResult();
+
+            // URL hash #mcp-submissions 가 있으면 섹션이 렌더된 뒤 스크롤.
+            // 제출안이 없으면 섹션은 끝까지 hidden 으로 남으므로 무한 retry 가 되지 않게 횟수를 제한한다.
+            // 약 30 회 × 150ms = 4.5초 — loadMcpSubmissions 의 fetch 가 정상 종료될 시간으로 충분.
+            if (window.location.hash === '#mcp-submissions') {
+                let scrollRetries = 30;
+                const tryScroll = () => {
+                    const el = document.getElementById('mcpSubmissionsSection');
+                    if (el && el.style.display !== 'none') {
+                        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                        return;
+                    }
+                    if (--scrollRetries > 0) setTimeout(tryScroll, 150);
+                };
+                setTimeout(tryScroll, 200);
+            }
         });
 
         function showPictureUpdateResult() {
@@ -596,6 +720,248 @@
             } catch (e) {
                 document.getElementById('contributionsList').innerHTML =
                     '<div class="text-center text-muted py-3">불러오기 실패</div>';
+            }
+        }
+
+        // ─── MCP 편집 승인 대기 ──────────────────────────────────────────
+        async function loadMcpSubmissions() {
+            const listEl = document.getElementById('mcpSubmissionsList');
+            const section = document.getElementById('mcpSubmissionsSection');
+            const countBadge = document.getElementById('mcpSubmissionsCount');
+            try {
+                const res = await fetch('/api/mcp-submissions');
+                if (!res.ok) throw new Error();
+                const data = await res.json();
+                const submissions = data.submissions || [];
+
+                // 대기 중인 제출안이 없으면 섹션 자체를 노출하지 않는다 — mypage 가 불필요하게 길어지지 않도록.
+                if (submissions.length === 0) {
+                    section.style.display = 'none';
+                    return;
+                }
+                section.style.display = '';
+                countBadge.textContent = String(submissions.length);
+
+                listEl.innerHTML = '';
+                for (const s of submissions) {
+                    listEl.appendChild(buildMcpSubmissionItem(s));
+                }
+            } catch (e) {
+                section.style.display = '';
+                listEl.innerHTML = '<div class="text-center text-muted py-3">불러오기 실패</div>';
+            }
+        }
+
+        function buildMcpSubmissionItem(s) {
+            const wrap = document.createElement('div');
+            wrap.className = 'mcp-submission-item' + (s.has_conflict ? ' has-conflict' : '');
+
+            const head = document.createElement('div');
+            head.className = 'mcp-sub-head';
+            const slugLink = document.createElement('a');
+            slugLink.className = 'mcp-sub-slug';
+            slugLink.href = '/w/' + encodeURIComponent(s.slug);
+            slugLink.textContent = s.slug;
+            const actionBadge = document.createElement('span');
+            actionBadge.className = 'badge ' + (s.action === 'create' ? 'bg-success' : 'bg-info text-dark');
+            actionBadge.textContent = s.action === 'create' ? '신규' : '수정';
+            head.appendChild(slugLink);
+            head.appendChild(actionBadge);
+            if (s.has_conflict) {
+                const conflictBadge = document.createElement('span');
+                conflictBadge.className = 'badge bg-danger';
+                conflictBadge.textContent = s.conflict_reason === 'slug_taken' ? '슬러그 점거 충돌'
+                    : s.conflict_reason === 'slug_soft_deleted' ? '소프트 삭제된 동일 슬러그'
+                    : s.conflict_reason === 'page_missing' ? '문서 없음/삭제됨'
+                    : '동시 편집 충돌';
+                head.appendChild(conflictBadge);
+            }
+            wrap.appendChild(head);
+
+            if (s.submitted_summary) {
+                const summary = document.createElement('div');
+                summary.className = 'mcp-sub-summary';
+                summary.textContent = s.submitted_summary;
+                wrap.appendChild(summary);
+            }
+
+            const meta = document.createElement('div');
+            meta.className = 'mcp-sub-meta';
+            const ts = s.submitted_at ? new Date(s.submitted_at).toLocaleString('ko-KR') : '';
+            meta.textContent = `제출 ${ts} · 본문 ${s.content_length}자`;
+            wrap.appendChild(meta);
+
+            const actions = document.createElement('div');
+            actions.className = 'mcp-sub-actions';
+            const reviewBtn = document.createElement('button');
+            reviewBtn.className = 'btn btn-sm btn-wiki';
+            reviewBtn.innerHTML = '<i class="mdi mdi-eye-outline"></i> 검토';
+            reviewBtn.addEventListener('click', () => openMcpSubmissionReview(s.id));
+            actions.appendChild(reviewBtn);
+
+            // concurrent_modification 충돌 (update) 은 그대로 승인하면 다른 사용자의 변경을
+            // 덮어쓰게 되므로, 에디터의 3-way merge UI 로 가져가 사용자가 직접 병합할 수 있도록
+            // 별도 동선을 노출한다. page_missing / slug_taken / slug_soft_deleted 는 에디터에서
+            // 처리할 수 없으므로 노출하지 않는다.
+            if (s.has_conflict && s.action === 'update' && s.conflict_reason === 'concurrent_modification') {
+                const mergeBtn = document.createElement('button');
+                mergeBtn.className = 'btn btn-sm btn-warning';
+                mergeBtn.innerHTML = '<i class="mdi mdi-source-merge"></i> 에디터에서 충돌 해결';
+                mergeBtn.addEventListener('click', () => openMcpSubmissionInEditor(s.id, s.slug));
+                actions.appendChild(mergeBtn);
+            }
+
+            const rejectBtn = document.createElement('button');
+            rejectBtn.className = 'btn btn-sm btn-outline-danger';
+            rejectBtn.innerHTML = '<i class="mdi mdi-close"></i> 거부';
+            rejectBtn.addEventListener('click', () => rejectMcpSubmission(s.id, s.slug));
+            actions.appendChild(rejectBtn);
+
+            wrap.appendChild(actions);
+            return wrap;
+        }
+
+        async function openMcpSubmissionReview(id) {
+            let detail;
+            try {
+                const res = await fetch('/api/mcp-submissions/' + encodeURIComponent(id));
+                if (!res.ok) {
+                    const errBody = await res.json().catch(() => ({}));
+                    Swal.fire('오류', errBody.error || '제출안을 불러오지 못했습니다.', 'error');
+                    return;
+                }
+                detail = await res.json();
+            } catch {
+                Swal.fire('오류', '네트워크 오류', 'error');
+                return;
+            }
+
+            // 동시 편집 충돌(concurrent_modification, action=update) 은 에디터에서 3-way merge UI 로
+            // 직접 해결할 수 있다 — 그 외 충돌(슬러그 점거/소프트삭제/페이지 사라짐) 은 에디터에서 다룰 수 없다.
+            const canMergeInEditor = detail.has_conflict
+                && detail.action === 'update'
+                && detail.conflict_reason === 'concurrent_modification';
+            const conflictBanner = detail.has_conflict
+                ? `<div class="alert alert-danger py-2 mb-2 text-start"><i class="mdi mdi-alert"></i> ${
+                    detail.conflict_reason === 'slug_taken' ? '동일 슬러그의 다른 문서가 그 사이 생성되었습니다.'
+                    : detail.conflict_reason === 'slug_soft_deleted' ? '동일 슬러그의 소프트 삭제된 문서가 존재합니다. 먼저 복원하거나 영구 삭제하지 않으면 승인할 수 없습니다.'
+                    : detail.conflict_reason === 'page_missing' ? '문서가 삭제되었거나 존재하지 않습니다.'
+                    : '제출 이후 다른 사용자가 페이지를 수정했습니다. 그대로 승인하면 그 변경이 덮어쓰여집니다. <b>「에디터에서 충돌 해결」</b> 로 3-way merge UI 를 사용하세요.'
+                  }</div>`
+                : '';
+            const ts = detail.submitted_at ? new Date(detail.submitted_at).toLocaleString('ko-KR') : '';
+            const summaryDefault = detail.submitted_summary || '';
+
+            // 슬러그가 익스텐션 데이터 네임스페이스(예: freq:foo) 면 렌더링 비교가 무의미.
+            // revisions.html 의 showDiff 와 동일한 정책을 적용한다.
+            const enabledExts = (window.appConfig && window.appConfig.enabledExtensions) || [];
+            const isExtensionDataDiff = enabledExts.some((ext) => detail.slug.startsWith(ext + ':'));
+
+            const extraTopHtml = `
+                ${conflictBanner}
+                <div class="text-start small text-muted mb-2">
+                    <div><b>${escapeHtml(detail.slug)}</b> · ${detail.action === 'create' ? '신규' : '수정'} · 제출 ${escapeHtml(ts)}</div>
+                    <div>+${detail.lines_added}줄 / -${detail.lines_removed}줄</div>
+                </div>
+                <div class="mt-1 mb-2 text-start">
+                    <label class="form-label small mb-1">편집 요약 (저장 시 [MCP] 접두 자동 부여)</label>
+                    <input type="text" id="mcpApproveSummary" class="form-control form-control-sm" maxlength="200" value="${escapeHtml(summaryDefault)}">
+                </div>
+            `;
+
+            const result = await showDiffModal({
+                title: 'MCP 편집안 검토',
+                oldText: detail.current_content || '',
+                newText: detail.proposed_content || '',
+                slug: detail.slug,
+                forceRaw: isExtensionDataDiff,
+                width: '1100px',
+                extraTopHtml,
+                swalOptions: {
+                    showCancelButton: true,
+                    showDenyButton: true,
+                    // 동시 편집 충돌인 경우 그대로 승인하면 다른 사용자 변경을 덮어쓰므로,
+                    // 승인 버튼을 「에디터에서 해결」로 바꿔 3-way merge 화면으로 유도한다.
+                    confirmButtonText: canMergeInEditor
+                        ? '<i class="mdi mdi-source-merge"></i> 에디터에서 충돌 해결'
+                        : '<i class="mdi mdi-check"></i> 승인',
+                    denyButtonText: '<i class="mdi mdi-close"></i> 거부',
+                    cancelButtonText: '닫기',
+                    confirmButtonColor: canMergeInEditor ? '#ffc107' : '#28a745',
+                    denyButtonColor: '#dc3545',
+                    preConfirm: () => {
+                        const input = document.getElementById('mcpApproveSummary');
+                        return { summary: input ? input.value : '' };
+                    },
+                },
+            });
+
+            if (result.isConfirmed) {
+                if (canMergeInEditor) {
+                    openMcpSubmissionInEditor(id, detail.slug);
+                } else {
+                    await approveMcpSubmission(id, result.value && result.value.summary);
+                }
+            } else if (result.isDenied) {
+                await rejectMcpSubmission(id, detail.slug);
+            }
+        }
+
+        function openMcpSubmissionInEditor(id, slug) {
+            // edit.html 에서 ?mcp_submission= 을 보면 base/ours/theirs 를 세팅한 뒤
+            // 자동으로 충돌 모달을 띄운다 (src/client/edit/main.ts).
+            const url = '/edit?slug=' + encodeURIComponent(slug) + '&mcp_submission=' + encodeURIComponent(id);
+            window.location.href = url;
+        }
+
+        async function approveMcpSubmission(id, summary) {
+            try {
+                const res = await fetch('/api/mcp-submissions/' + encodeURIComponent(id) + '/approve', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ summary }),
+                });
+                const data = await res.json();
+                if (!res.ok) {
+                    const msg = data.error === 'conflict'
+                        ? '충돌이 발생해 승인할 수 없습니다. 페이지 상태를 확인하세요.'
+                        : (data.message || data.error || '승인 실패');
+                    Swal.fire('승인 실패', msg, 'error');
+                    return;
+                }
+                await Swal.fire({
+                    icon: 'success',
+                    title: '승인되었습니다.',
+                    text: `리비전 #${data.revision_id} 가 생성되었습니다. (+${data.lines_added ?? 0}줄 -${data.lines_removed ?? 0}줄)`,
+                    timer: 2000,
+                });
+                loadMcpSubmissions();
+            } catch {
+                Swal.fire('오류', '네트워크 오류', 'error');
+            }
+        }
+
+        async function rejectMcpSubmission(id, slug) {
+            const confirmRes = await Swal.fire({
+                icon: 'warning',
+                title: '제출안을 거부하시겠습니까?',
+                text: `"${slug}" 의 제출안을 폐기합니다. 되돌릴 수 없습니다.`,
+                showCancelButton: true,
+                confirmButtonText: '거부',
+                cancelButtonText: '취소',
+                confirmButtonColor: '#dc3545',
+            });
+            if (!confirmRes.isConfirmed) return;
+            try {
+                const res = await fetch('/api/mcp-submissions/' + encodeURIComponent(id) + '/reject', { method: 'POST' });
+                if (!res.ok) {
+                    const errBody = await res.json().catch(() => ({}));
+                    Swal.fire('거부 실패', errBody.error || '거부에 실패했습니다.', 'error');
+                    return;
+                }
+                loadMcpSubmissions();
+            } catch {
+                Swal.fire('오류', '네트워크 오류', 'error');
             }
         }
 

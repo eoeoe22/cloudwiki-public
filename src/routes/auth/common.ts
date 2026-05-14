@@ -11,7 +11,7 @@ import { userJoined } from '../../utils/webhook/events/signup';
  *  2. 없으면 이메일 중복 체크 → 신규 유저 생성 (또는 승인제 처리)
  *  3. 세션 생성 후 쿠키 발급
  */
-export async function handleOAuthLogin(c: Context<Env>, profile: OAuthProfile): Promise<Response> {
+export async function handleOAuthLogin(c: Context<Env>, profile: OAuthProfile, redirectUrl?: string): Promise<Response> {
     const db = c.env.DB;
 
     let isNewUser = false;
@@ -142,7 +142,10 @@ export async function handleOAuthLogin(c: Context<Env>, profile: OAuthProfile): 
         return c.redirect('/setup-profile');
     }
 
-    return c.redirect('/');
+    const safeRedirect = (redirectUrl && redirectUrl.startsWith('/') && !redirectUrl.startsWith('//') && !/[\x00-\x1f\x7f]/.test(redirectUrl))
+        ? redirectUrl
+        : '/';
+    return c.redirect(safeRedirect);
 }
 
 /**

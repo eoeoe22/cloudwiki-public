@@ -78,6 +78,9 @@
           <div id="redirectMessage"></div>
           <div class="wiki-article-meta" id="articleMeta"></div>
 
+          <!-- MCP 편집 승인 대기 배너 (로그인 유저 본인 제출안에 한해 노출) -->
+          <div id="mcpSubmissionBanner" style="display:none;"></div>
+
           <!-- 문서 도구 -->
           <div class="d-flex justify-content-end mb-2 gap-2">
             <div class="btn-group" id="articleMainActions">
@@ -764,6 +767,27 @@
         <i class="bi bi-book" aria-hidden="true"></i><span class="reading-mode-toggle-label d-none d-sm-inline"> 읽기 모드</span>
       </button>
     `;
+
+        // MCP 편집 승인 대기 배너 — 로그인 유저 본인이 이 문서에 제출한 MCP 편집안이
+        // 있을 때만 노출. (사용자×문서당 최대 1건 제약 — mcp_drafts UNIQUE(user_id, slug).)
+        // SPA 네비게이션 race 회피를 위해 응답 시점에 currentPage 슬러그를 재확인한다.
+        const _mcpBanner = document.getElementById('mcpSubmissionBanner');
+        if (_mcpBanner) _mcpBanner.style.display = 'none';
+        if (currentUser && _mcpBanner) {
+          const _bannerSlug = page.slug;
+          fetch('/api/mcp-submissions/count?slug=' + encodeURIComponent(_bannerSlug))
+            .then(r => r.ok ? r.json() : { count: 0 })
+            .then(data => {
+              if (!data || !data.count) return;
+              if (!currentPage || currentPage.slug !== _bannerSlug) return;
+              _mcpBanner.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:0.75rem;padding:0.65rem 1rem;margin:0.5rem 0 1rem;border:1px solid #ffc107;background:rgba(255,193,7,0.10);border-radius:10px;font-size:0.95rem;';
+              _mcpBanner.innerHTML = `
+                <span><i class="bi bi-plug"></i> MCP 서버로 제출된 편집안이 존재합니다.</span>
+                <a href="/mypage#mcp-submissions" class="btn btn-sm btn-warning"><i class="bi bi-eye"></i> 검토하기</a>
+              `;
+            })
+            .catch(() => { });
+        }
 
         // 조회수 비동기 로드 (비공개 문서는 조회수 표시 안 함)
         // SPA 네비게이션으로 직전 공개 페이지의 인플라이트 응답이 비공개 페이지 위에서

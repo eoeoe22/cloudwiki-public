@@ -642,6 +642,15 @@ async function ensureLayoutComponents() {
 
 // ── 인증 확인 + 네비바 UI 업데이트 ──
 async function checkAuth() {
+    // 로그인 버튼 href에 현재 경로를 redirect 파라미터로 추가
+    // /login 페이지 자체는 제외하여 무한 리다이렉트 방지
+    const currentPath = window.location.pathname + window.location.search;
+    if (!currentPath.startsWith('/login')) {
+        document.querySelectorAll('#navLogin').forEach(function(el) {
+            el.href = '/login?redirect=' + encodeURIComponent(currentPath);
+        });
+    }
+
     try {
         const res = await fetch('/api/me');
         if (res.ok) {

@@ -44,6 +44,7 @@ export default defineConfig({
                 'edit-main': resolve(__dirname, 'src/client/edit/main.ts'),
                 'render': resolve(__dirname, 'src/client/render.ts'),
                 'common': resolve(__dirname, 'src/client/common.ts'),
+                'diff': resolve(__dirname, 'src/client/diff.ts'),
                 'push': resolve(__dirname, 'src/client/push.ts'),
                 'sw': resolve(__dirname, 'src/client/sw.ts'),
                 'setup-profile': resolve(__dirname, 'src/client/pages/setup-profile.ts'),

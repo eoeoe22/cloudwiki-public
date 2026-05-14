@@ -38,18 +38,25 @@ const providerConfig: Record<string, ProviderConfig> = {
     },
 };
 
+function getSafeRedirectParam(): string | null {
+    const raw = new URLSearchParams(window.location.search).get('redirect');
+    return (raw && raw.startsWith('/') && !raw.startsWith('//') && !/[\x00-\x1f\x7f]/.test(raw)) ? raw : null;
+}
+
 async function renderProviders(): Promise<void> {
     try {
         const { providers } = await apiGet<AuthProvidersResponse>('/api/auth/providers');
         const container = document.getElementById('auth-providers-container');
         if (!container) return;
 
+        const safeRedirect = getSafeRedirectParam();
+
         for (const p of providers) {
             const cfg = providerConfig[p.name];
             if (!cfg) continue;
             const a = document.createElement('a');
             const label = p.label || cfg.label;
-            a.href = '/auth/' + p.name;
+            a.href = '/auth/' + p.name + (safeRedirect ? '?redirect=' + encodeURIComponent(safeRedirect) : '');
             a.className = 'btn-oauth';
             a.innerHTML = cfg.icon + '<span>' + label + '</span>';
             container.appendChild(a);

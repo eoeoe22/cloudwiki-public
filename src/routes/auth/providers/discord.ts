@@ -11,12 +11,18 @@ export const discordProvider: OAuthProvider = {
             return c.redirect('/?error=oauth_not_configured&provider=discord');
         }
 
+        const rawRedirect = c.req.query('redirect');
+        const safeRedirectUrl = (rawRedirect && rawRedirect.startsWith('/') && !rawRedirect.startsWith('//') && !/[\x00-\x1f\x7f]/.test(rawRedirect))
+            ? rawRedirect
+            : undefined;
+
         const state = crypto.randomUUID();
         const payload: OAuthStateData = {
             provider: 'discord',
             intent: stateData?.intent ?? 'login',
             userId: stateData?.userId,
             expectedUid: stateData?.expectedUid,
+            redirectUrl: stateData?.redirectUrl ?? safeRedirectUrl,
         };
         await c.env.KV.put(`oauth_state:${state}`, JSON.stringify(payload), { expirationTtl: 300 });
 

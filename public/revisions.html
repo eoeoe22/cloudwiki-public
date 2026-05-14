@@ -123,6 +123,7 @@
 
   <script type="module" src="/dist/common.js"></script>
   <script type="module" src="/dist/render.js"></script>
+  <script type="module" src="/dist/diff.js"></script>
   <script>
     // ── 전역 상태 ──
     let currentSlug = null;
@@ -227,6 +228,8 @@
         }
 
         const listEl = document.getElementById('revisionsList');
+        const enabledExts = (appConfig && appConfig.enabledExtensions) || [];
+        const isExtSlug = enabledExts.some(ext => slug.startsWith(ext + ':'));
         const itemsHtml = data.revisions.map((rev, idx) => {
           const isLatest = page === 1 && idx === 0;
           const date = new Date(rev.created_at * 1000).toLocaleString('ko-KR');
@@ -242,7 +245,7 @@
                 <button class="btn btn-rev-action btn-rev-view" data-slug="${escapeHtml(slug)}" data-id="${rev.id}" data-page-version="${rev.page_version ?? ''}" onclick="viewRevision(this.dataset.slug, +this.dataset.id, this.dataset.pageVersion)">
                   <i class="bi bi-file-text"></i> 보기
                 </button>
-                <button class="btn btn-rev-action btn-rev-diff" data-slug="${escapeHtml(slug)}" data-id="${rev.id}" onclick="showDiff(this.dataset.slug, +this.dataset.id)">
+                <button class="btn btn-rev-action btn-rev-diff" data-slug="${escapeHtml(slug)}" data-id="${rev.id}" data-require-confirm="${isExtSlug}" onclick="confirmAndShowDiff(this.dataset.slug, +this.dataset.id, this.dataset.requireConfirm === 'true')">
                   <i class="bi bi-file-diff"></i> 비교
                 </button>
                 <button class="btn btn-rev-action btn-rev-revert" data-slug="${escapeHtml(slug)}" data-id="${rev.id}" data-page-version="${rev.page_version ?? ''}" onclick="confirmRevert(this.dataset.slug, +this.dataset.id, this.dataset.pageVersion)" ${isPageDeleted ? 'disabled title="삭제된 문서는 되돌릴 수 없습니다. 먼저 복원하세요."' : ''}>
@@ -398,16 +401,26 @@
     }
 
     // ── 리비전 Diff 보기 ──
-    // diff 보기 모드: 'rendered'(렌더링 비교, 기본) | 'raw'(텍스트 줄 단위 비교)
-    function getDiffViewMode() {
-      try {
-        const v = localStorage.getItem('revisionDiffMode');
-        return v === 'raw' ? 'raw' : 'rendered';
-      } catch { return 'rendered'; }
+    // 익스텐션(R2-only) 슬러그는 본문이 대용량 데이터이므로 diff 실행 전 경고를 표시한다.
+    async function confirmAndShowDiff(slug, revId, requireConfirm) {
+      if (requireConfirm) {
+        const result = await Swal.fire({
+          icon: 'warning',
+          title: '대용량 데이터 비교',
+          text: '이 문서는 대용량 익스텐션 데이터입니다. diff 로딩 시 모바일 기기에서 성능 저하가 발생할 수 있습니다. 계속하시겠습니까?',
+          showCancelButton: true,
+          confirmButtonText: '비교 보기',
+          cancelButtonText: '취소',
+        });
+        if (!result.isConfirmed) return;
+      }
+      showDiff(slug, revId);
     }
-    function setDiffViewMode(mode) {
-      try { localStorage.setItem('revisionDiffMode', mode); } catch { /* ignore */ }
-    }
+
+    // diff 토글 / LCS / rich diff / raw diff 함수들은 src/client/diff.ts 로 옮겨
+    // ESM 모듈로 빌드된다 (public/dist/diff.js). 이 파일은 window 에 동일 이름들을
+    // 매달아 두므로 아래 showDiff 가 그대로 호출할 수 있다. mypage 의 MCP 편집 승인
+    // 모달도 같은 모듈을 재사용한다.
 
     async function showDiff(slug, revId) {
       try {
@@ -415,8 +428,6 @@
         if (!res.ok) throw new Error('Diff 불러오기 실패');
         const data = await res.json();
 
-        const oldText = data.old_content || '';
-        const newText = data.new_content || '';
         const oldLabel = data.old_revision_id
           ? (data.old_page_version != null ? `v${data.old_page_version}` : `#${data.old_revision_id}`)
           : '(없음)';
@@ -433,360 +444,17 @@
         const enabledExts = (appConfig && appConfig.enabledExtensions) || [];
         const isExtensionDataDiff = enabledExts.some((ext) => slug.startsWith(ext + ':'));
 
-        let mode = isExtensionDataDiff ? 'raw' : getDiffViewMode();
-        let renderedCache = null; // 위키 렌더 결과는 비용이 크므로 모드 토글 간 캐시
-        let renderToken = 0; // 비동기 렌더 도중 모드가 바뀐 경우 결과 폐기용
-        let renderChain = Promise.resolve(); // 토글 빠른 클릭 시 buildRichDiffHtml 동시 실행 방지
-
-        const toggleHtml = (m) => {
-          // 익스텐션 데이터 슬러그는 렌더링 비교가 무의미하므로 토글을 숨김
-          if (isExtensionDataDiff) return '';
-          return `
-          <div class="diff-mode-toggle btn-group btn-group-sm" role="group" aria-label="diff 모드">
-            <button type="button" class="btn ${m === 'rendered' ? 'btn-primary' : 'btn-outline-secondary'}" data-diff-mode="rendered">
-              <i class="bi bi-eye"></i> 렌더링 비교
-            </button>
-            <button type="button" class="btn ${m === 'raw' ? 'btn-primary' : 'btn-outline-secondary'}" data-diff-mode="raw">
-              <i class="bi bi-code"></i> Raw 비교
-            </button>
-          </div>`;
-        };
-
-        const loadingHtml = '<div class="text-center text-muted py-4"><div class="spinner-border spinner-border-sm me-2"></div>렌더링 중...</div>';
-
-        Swal.fire({
+        await showDiffModal({
           title: `리비전 비교: ${oldLabel} → ${newLabel}`,
-          html: `${toggleHtml(mode)}<div id="diffBodyContainer">${loadingHtml}</div>`,
-          width: '1100px',
-          showCloseButton: true,
-          confirmButtonText: '닫기',
-          didOpen: async (popup) => {
-            const renderInto = (target) => {
-              const token = ++renderToken;
-              const body = popup.querySelector('#diffBodyContainer');
-              if (!body) return;
-
-              // Raw 비교는 전체가 동기 + 캐시된 데이터만 사용한다. 진행 중인
-              // rich 빌드 대기열에 묶지 않고 즉시 표시해, 무거운 rendered 빌드
-              // 중에도 사용자가 Raw 폴백으로 빠르게 전환할 수 있게 한다.
-              // renderToken 증가 덕분에, 큐에서 깨어난 stale rendered 작업은
-              // body 를 다시 덮어쓰지 않는다.
-              if (target === 'raw') {
-                body.innerHTML = `<div class="diff-container">${computeLineDiff(oldText, newText)}</div>`;
-                return;
-              }
-              if (renderedCache !== null) {
-                body.innerHTML = renderedCache;
-                return;
-              }
-
-              // 캐시 미스인 rendered 빌드만 chain 에 직렬화 — buildRichDiffHtml
-              // 의 staging 노드가 같은 modal 안에서 한 번에 하나만 존재하도록.
-              body.innerHTML = loadingHtml;
-              renderChain = renderChain.catch(() => {}).then(async () => {
-                if (token !== renderToken) return; // 사용자가 그 사이 raw 로 전환
-                const built = await buildRichDiffHtml(oldText, newText, slug);
-                if (token !== renderToken) return; // 빌드 도중 또 바뀜
-                renderedCache = `<div class="rich-diff-container wiki-content">${built}</div>`;
-                const body2 = popup.querySelector('#diffBodyContainer');
-                if (body2) body2.innerHTML = renderedCache;
-              });
-            };
-
-            popup.querySelectorAll('.diff-mode-toggle [data-diff-mode]').forEach((btn) => {
-              btn.addEventListener('click', () => {
-                const next = btn.getAttribute('data-diff-mode');
-                if (!next || next === mode) return;
-                mode = next;
-                setDiffViewMode(mode);
-                popup.querySelectorAll('.diff-mode-toggle [data-diff-mode]').forEach((b) => {
-                  const isActive = b.getAttribute('data-diff-mode') === mode;
-                  b.classList.toggle('btn-primary', isActive);
-                  b.classList.toggle('btn-outline-secondary', !isActive);
-                });
-                renderInto(mode);
-              });
-            });
-
-            renderInto(mode);
-          }
+          oldText: data.old_content || '',
+          newText: data.new_content || '',
+          slug,
+          forceRaw: isExtensionDataDiff,
+          swalOptions: { confirmButtonText: '닫기' },
         });
       } catch (err) {
         Swal.fire('오류', err.message, 'error');
       }
-    }
-
-    // ── 라인 단위 LCS diff 연산 (raw/rendered 공통) ──
-    // 변경된 줄과 동일한 줄을 시간순으로 나열한 ops 배열을 반환한다.
-    function _lcsLineOps(oldText, newText) {
-      const oldLines = oldText.split('\n');
-      const newLines = newText.split('\n');
-      const m = oldLines.length, n = newLines.length;
-      const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
-      for (let i = 1; i <= m; i++) {
-        for (let j = 1; j <= n; j++) {
-          if (oldLines[i - 1] === newLines[j - 1]) {
-            dp[i][j] = dp[i - 1][j - 1] + 1;
-          } else {
-            dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
-          }
-        }
-      }
-      const ops = [];
-      let i = m, j = n;
-      while (i > 0 || j > 0) {
-        if (i > 0 && j > 0 && oldLines[i - 1] === newLines[j - 1]) {
-          ops.unshift({ type: 'same', text: oldLines[i - 1] });
-          i--; j--;
-        } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
-          ops.unshift({ type: 'add', text: newLines[j - 1] });
-          j--;
-        } else {
-          ops.unshift({ type: 'del', text: oldLines[i - 1] });
-          i--;
-        }
-      }
-      return ops;
-    }
-
-    // ── 렌더링(rich) diff: GitHub 의 마크다운 rich diff 와 유사하게,
-    // OLD/NEW 본문을 각각 한 번씩만 위키 렌더 파이프라인(renderWikiContent)에
-    // 통과시킨 뒤, 결과 DOM 의 최상위 블록(자식 요소)을 LCS 로 정렬해
-    // 추가/삭제/유지 블록을 색상 라인으로 나열한다. 트랜스클루전·푸트노트·
-    // 팔레트·색 토큰·타임스탬프 등 위키 자체 문법이 그대로 적용된다.
-    //
-    // 각 그룹마다 renderWikiContent 를 호출하지 않는 이유:
-    //   1) renderWikiContent 는 컨테이너 ID 별로 setInterval(타이머 익스텐션)
-    //      을 등록하므로, 일회성 ID 를 매번 새로 만들면 detached 노드를 가진
-    //      orphan interval 이 누적된다. 호출 종료 시 같은 ID 로 빈 본문을 다시
-    //      렌더해 _initTimers 가 직전 setInterval 을 clearInterval 하도록 한다.
-    //   2) resolveTransclusions 는 호출마다 신규 캐시를 만들어 같은 틀을
-    //      반복 fetch 한다. 호출 횟수를 그룹 수(N) 가 아닌 2 회로 줄인다.
-    let _rdiffSeq = 0;
-
-    function _normalizeBlockKey(el) {
-      // 비교용 키: 순서/카운터에 따라 변하는 동적 속성을 정규화한다.
-      // 정규화 대상:
-      //   - heading 섹션 앵커: id="s-1.2", 별도 anchor span
-      //   - footnote: render.ts 의 processFootnotes 가 호출별 uniqueId 를
-      //     섞어 id="fn-${i}-${uniqueId}" / "fn-ref-${i}-${uniqueId}" 를
-      //     생성하므로, OLD/NEW 가 같은 내용이라도 id 가 달라진다. 두 prefix
-      //     를 모두 정규화.
-      //   - TOC: id="toc-*"
-      //   - 위키 :::tabs / :::accordion (render.ts 의 _nextWikiBsId): 모듈 전역
-      //     카운터로 매 호출마다 wiki-tabs-N / wiki-acc-N 이 증가하므로 OLD/NEW
-      //     렌더에서 ID 가 달라 같은 내용이 false-positive 변경으로 잡힌다.
-      //     id / aria-controls / aria-labelledby / data-bs-target /
-      //     data-bs-parent / href 의 매칭 값을 모두 제거해 비교에서 무시.
-      const DYNAMIC_ID_RE = /^(s-[\d.]+|fn-|fnref-|toc-|wiki-tabs-|wiki-acc-)/;
-      const stripCrossRef = (n, attr) => {
-        const v = n.getAttribute(attr);
-        if (!v) return;
-        const id = v.replace(/^#/, '');
-        if (DYNAMIC_ID_RE.test(id)) n.removeAttribute(attr);
-      };
-
-      const clone = el.cloneNode(true);
-      clone.querySelectorAll('.wiki-section-anchor').forEach((n) => n.remove());
-
-      // querySelectorAll 은 root 를 포함하지 않으므로 root + descendants 양쪽
-      // 모두 순회해야 한다. (예: 최상위 블록이 <h2 id="s-1.2"> 인 경우)
-      const all = [clone, ...clone.querySelectorAll('*')];
-      for (const n of all) {
-        const id = n.getAttribute && n.getAttribute('id');
-        if (id && DYNAMIC_ID_RE.test(id)) n.removeAttribute('id');
-      }
-      clone.querySelectorAll('[aria-controls]').forEach((n) => stripCrossRef(n, 'aria-controls'));
-      if (clone.hasAttribute && clone.hasAttribute('aria-controls')) stripCrossRef(clone, 'aria-controls');
-      clone.querySelectorAll('[aria-labelledby]').forEach((n) => stripCrossRef(n, 'aria-labelledby'));
-      if (clone.hasAttribute && clone.hasAttribute('aria-labelledby')) stripCrossRef(clone, 'aria-labelledby');
-      clone.querySelectorAll('[data-bs-target]').forEach((n) => stripCrossRef(n, 'data-bs-target'));
-      if (clone.hasAttribute && clone.hasAttribute('data-bs-target')) stripCrossRef(clone, 'data-bs-target');
-      clone.querySelectorAll('[data-bs-parent]').forEach((n) => stripCrossRef(n, 'data-bs-parent'));
-      if (clone.hasAttribute && clone.hasAttribute('data-bs-parent')) stripCrossRef(clone, 'data-bs-parent');
-      // 푸트노트/탭/아코디언 anchor href 도 매칭 시 제거 (root 가 <a> 인 케이스 포함)
-      clone.querySelectorAll('a[href^="#"]').forEach((n) => stripCrossRef(n, 'href'));
-      if (clone.tagName === 'A' && (clone.getAttribute('href') || '').startsWith('#')) {
-        stripCrossRef(clone, 'href');
-      }
-
-      return clone.outerHTML;
-    }
-
-    function _lcsBlockOps(oldKeys, newKeys, oldHtmls, newHtmls) {
-      const m = oldKeys.length, n = newKeys.length;
-      const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
-      for (let i = 1; i <= m; i++) {
-        for (let j = 1; j <= n; j++) {
-          if (oldKeys[i - 1] === newKeys[j - 1]) dp[i][j] = dp[i - 1][j - 1] + 1;
-          else dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
-        }
-      }
-      const ops = [];
-      let i = m, j = n;
-      while (i > 0 || j > 0) {
-        if (i > 0 && j > 0 && oldKeys[i - 1] === newKeys[j - 1]) {
-          ops.unshift({ type: 'same', html: newHtmls[j - 1] });
-          i--; j--;
-        } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
-          ops.unshift({ type: 'add', html: newHtmls[j - 1] });
-          j--;
-        } else {
-          ops.unshift({ type: 'del', html: oldHtmls[i - 1] });
-          i--;
-        }
-      }
-      return ops;
-    }
-
-    async function buildRichDiffHtml(oldText, newText, slug) {
-      if ((oldText || '') === (newText || '')) {
-        return '<div class="diff-empty">변경된 내용이 없습니다.</div>';
-      }
-
-      const canRenderWiki = typeof window.renderWikiContent === 'function';
-      const canSanitize = !!(window.DOMPurify && typeof window.DOMPurify.sanitize === 'function');
-
-      // 호출별 unique ID — 모달 빠른 닫힘/재열림으로 두 buildRichDiffHtml 가
-      // 겹쳐도 동일 id 의 div 가 DOM 에 공존하지 않도록 한다 (getElementById
-      // 가 다른 호출의 staging 노드를 잘못 매칭하는 race 방지).
-      const seq = ++_rdiffSeq;
-      const oldId = `__rdiff_stage_old_${seq}__`;
-      const newId = `__rdiff_stage_new_${seq}__`;
-
-      const stage = document.createElement('div');
-      stage.setAttribute('aria-hidden', 'true');
-      stage.style.cssText = 'position:absolute;left:-99999px;top:0;width:0;height:0;overflow:hidden;';
-      document.body.appendChild(stage);
-
-      const oldDiv = document.createElement('div');
-      oldDiv.id = oldId;
-      oldDiv.className = 'wiki-content';
-      const newDiv = document.createElement('div');
-      newDiv.id = newId;
-      newDiv.className = 'wiki-content';
-      stage.appendChild(oldDiv);
-      stage.appendChild(newDiv);
-
-      try {
-        if (canRenderWiki) {
-          // 위키 렌더 파이프라인을 OLD/NEW 각 1회씩만 통과 — 트랜스클루전 캐시
-          // 중복과 그룹별 setInterval 누적 문제를 회피.
-          //
-          // 두 호출을 직렬화하는 이유: render.ts 의 _wikiExtensionData 는 모듈
-          // 전역으로, resolveTransclusions 가 호출 시점에 [] 로 리셋하고 진행
-          // 중 push 한다. Promise.all 로 동시에 돌리면 두 호출의 ext 데이터가
-          // 인터리브되어 placeholder-index 가 어긋나 익스텐션 출력이 깨질 수
-          // 있다 (스냅샷은 resolveTransclusions 완료 직후에만 안전).
-          if ((oldText || '').trim()) {
-            try { await window.renderWikiContent(oldText || '', slug, oldId); }
-            catch { /* noop */ }
-          }
-          if ((newText || '').trim()) {
-            try { await window.renderWikiContent(newText || '', slug, newId); }
-            catch { /* noop */ }
-          }
-
-          // 익스텐션 렌더는 _processExtensions 가 setTimeout 폴링으로 늦게
-          // 완료될 수 있다. 양쪽 컨테이너에 미완료 .wiki-ext 가 있으면 잠깐
-          // 대기 (cap 500ms) — 익스텐션이 없는 문서는 즉시 통과해 비용 없음.
-          const SETTLE_CAP_MS = 500;
-          const SETTLE_POLL_MS = 50;
-          const pendingExt = () =>
-            oldDiv.querySelectorAll('.wiki-ext:not([data-ext-rendered="1"])').length +
-            newDiv.querySelectorAll('.wiki-ext:not([data-ext-rendered="1"])').length;
-          const settleStart = Date.now();
-          while (pendingExt() > 0 && Date.now() - settleStart < SETTLE_CAP_MS) {
-            await new Promise((r) => setTimeout(r, SETTLE_POLL_MS));
-          }
-        } else if (canSanitize && window.marked && typeof window.marked.parse === 'function') {
-          try { oldDiv.innerHTML = window.DOMPurify.sanitize(window.marked.parse(oldText || '')); }
-          catch { oldDiv.innerHTML = `<pre>${escapeHtml(oldText || '')}</pre>`; }
-          try { newDiv.innerHTML = window.DOMPurify.sanitize(window.marked.parse(newText || '')); }
-          catch { newDiv.innerHTML = `<pre>${escapeHtml(newText || '')}</pre>`; }
-        } else {
-          // DOMPurify 미정의: raw marked 출력 주입 금지 → escape 한 평문 폴백
-          oldDiv.innerHTML = `<pre>${escapeHtml(oldText || '')}</pre>`;
-          newDiv.innerHTML = `<pre>${escapeHtml(newText || '')}</pre>`;
-        }
-
-        const oldEls = Array.from(oldDiv.children);
-        const newEls = Array.from(newDiv.children);
-        const oldHtmls = oldEls.map((el) => el.outerHTML);
-        const newHtmls = newEls.map((el) => el.outerHTML);
-        const oldKeys = oldEls.map((el) => _normalizeBlockKey(el));
-        const newKeys = newEls.map((el) => _normalizeBlockKey(el));
-
-        const ops = _lcsBlockOps(oldKeys, newKeys, oldHtmls, newHtmls);
-        if (ops.length === 0 || !ops.some((o) => o.type !== 'same')) {
-          return '<div class="diff-empty">변경된 내용이 없습니다.</div>';
-        }
-
-        const parts = [];
-        for (const op of ops) {
-          parts.push(`<div class="rich-diff-block rich-diff-${op.type}">${op.html}</div>`);
-        }
-        return parts.join('');
-      } finally {
-        // 타이머 정리: 동일 ID 로 빈 본문을 한 번 더 렌더하면 _initTimers 가
-        // 직전 setInterval 을 clearInterval 한다 (render.ts 의 _initTimers 참고).
-        // unique ID 라 다음 호출에서 자동 정리되지 않으므로 명시적으로 호출.
-        if (canRenderWiki) {
-          try { await window.renderWikiContent('', slug, oldId); } catch { /* noop */ }
-          try { await window.renderWikiContent('', slug, newId); } catch { /* noop */ }
-        }
-        stage.remove();
-      }
-    }
-
-    // ── Line-by-line Diff 알고리즘 (LCS 기반, 컨텍스트 축소) ──
-    function computeLineDiff(oldText, newText) {
-      const result = _lcsLineOps(oldText, newText);
-
-      if (result.length === 0) {
-        return '<div class="diff-empty">변경된 내용이 없습니다.</div>';
-      }
-
-      // 변경이 없으면 빈 diff
-      const hasChange = result.some(r => r.type !== 'same');
-      if (!hasChange) {
-        return '<div class="diff-empty">변경된 내용이 없습니다.</div>';
-      }
-
-      // 변경된 줄 주변 CONTEXT_LINES만 표시, 나머지는 생략
-      const CONTEXT = 3;
-      const visible = new Set();
-      result.forEach((r, idx) => {
-        if (r.type !== 'same') {
-          for (let k = Math.max(0, idx - CONTEXT); k <= Math.min(result.length - 1, idx + CONTEXT); k++) {
-            visible.add(k);
-          }
-        }
-      });
-
-      let rows = '';
-      let skipStart = -1;
-      for (let idx = 0; idx < result.length; idx++) {
-        if (visible.has(idx)) {
-          if (skipStart !== -1) {
-            const skipCount = idx - skipStart;
-            rows += `<tr class="diff-skip"><td class="diff-prefix">⋯</td><td class="diff-line diff-skip-label">${skipCount}줄 생략됨</td></tr>`;
-            skipStart = -1;
-          }
-          const r = result[idx];
-          const cls = r.type === 'add' ? 'diff-add' : r.type === 'del' ? 'diff-del' : 'diff-same';
-          const prefix = r.type === 'add' ? '+' : r.type === 'del' ? '-' : ' ';
-          rows += `<tr class="${cls}"><td class="diff-prefix">${prefix}</td><td class="diff-line">${escapeHtml(r.text || '')}</td></tr>`;
-        } else {
-          if (skipStart === -1) skipStart = idx;
-        }
-      }
-      if (skipStart !== -1) {
-        const skipCount = result.length - skipStart;
-        rows += `<tr class="diff-skip"><td class="diff-prefix">⋯</td><td class="diff-line diff-skip-label">${skipCount}줄 생략됨</td></tr>`;
-      }
-
-      return '<table class="diff-table">' + rows + '</table>';
     }
 
     // ── 되돌리기 확인 ──

@@ -167,10 +167,11 @@
     function serializeFreqData(meta, freq, spl, smoothingNote) {
         const lines = [];
 
-        // 기존 Smoothing 라인은 제거하고 새 값으로 교체. 나머지 원본 코멘트는 보존.
+        // Smoothing 코멘트를 최상단에 배치해 스무딩 처리 여부를 즉시 식별할 수 있게 한다.
+        // 기존 Smoothing 라인은 중복 방지를 위해 나머지 원본 코멘트에서 제거한다.
+        lines.push('* Smoothing: ' + smoothingNote);
         const filteredComments = (meta.comments || []).filter(c => !/^Smoothing:/i.test(c));
         for (const c of filteredComments) lines.push('* ' + c);
-        lines.push('* Smoothing: ' + smoothingNote);
 
         if (meta.format === 'csv') {
             lines.push('frequency,raw');
@@ -232,7 +233,7 @@
                 '</select>' +
                 '<label class="form-label fw-bold mt-3 mb-1" for="freqSmoothPointsInp">출력 포인트 수</label>' +
                 '<input type="number" id="freqSmoothPointsInp" class="form-control form-control-sm" min="50" max="4000" step="10" value="400">' +
-                '<small class="text-muted">로그 균등 분포로 생성됩니다. (50 ~ 4000)</small>' +
+                '<small class="text-muted">로그 균등 분포로 생성됩니다. (50 ~ 4000)<br>리비전을 통해 스무딩 이전으로 복원이 가능합니다.</small>' +
                 phaseWarning +
                 '</div>',
             showCancelButton: true,
@@ -263,6 +264,22 @@
             const oldBytes = currentValue.length;
             const newBytes = newText.length;
             api.setValue(newText);
+            // 편집 요약에 스무딩 정보 반영: 400ms 디바운스로 refreshAutoSummary 가 먼저
+            // 실행된 뒤 600ms 시점에 덮어쓴다. 다만 그 사이 사용자가 summaryInput 에
+            // 직접 타이핑하면 수동 입력 보존을 위해 덮어쓰지 않는다.
+            // (refreshAutoSummary 의 프로그램적 .value 대입은 input 이벤트를 발생시키지
+            //  않으므로 userTouched 플래그는 실제 키입력에만 반응한다.)
+            var summaryEl = document.getElementById('summaryInput');
+            var userTouchedSummary = false;
+            var onSummaryUserInput = function () { userTouchedSummary = true; };
+            if (summaryEl) summaryEl.addEventListener('input', onSummaryUserInput);
+            setTimeout(function () {
+                if (!summaryEl) return;
+                summaryEl.removeEventListener('input', onSummaryUserInput);
+                if (userTouchedSummary) return;
+                summaryEl.value = '데이터 스무딩 (1/' + oct + ' oct, ' + smoothed.freq.length + ' pts)';
+                summaryEl.dispatchEvent(new Event('input'));
+            }, 600);
             const reductionPct = oldBytes > 0 ? ((1 - newBytes / oldBytes) * 100) : 0;
             window.Swal.fire({
                 icon: 'success',
@@ -296,8 +313,8 @@
         const btn = document.createElement('button');
         btn.type = 'button';
         btn.className = 'wiki-ext-toolbar-btn';
-        btn.innerHTML = '<i class="bi bi-graph-down-arrow"></i> 데이터 스무딩 (용량 절감)';
-        btn.title = '1/N 옥타브 스무딩 + 로그 균등 분포 다운샘플링으로 데이터 크기를 줄입니다.';
+        btn.innerHTML = '<i class="bi bi-graph-down-arrow"></i> 데이터 스무딩';
+        btn.title = '1/N 옥타브 스무딩';
         btn.addEventListener('click', () => openSmoothingDialog(api));
 
         toolbarEl.appendChild(btn);

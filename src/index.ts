@@ -19,6 +19,7 @@ import notificationRoutes from './routes/notification';
 import pushRoutes from './routes/push';
 import ticketRoutes from './routes/ticket';
 import mcpRoutes from './routes/mcp';
+import mcpSubmissionsRoutes from './routes/mcp-submissions';
 import oauthRoutes from './routes/oauth';
 import analyticsRoutes from './routes/analytics';
 import blogRoutes from './routes/blog';
@@ -26,6 +27,7 @@ import { trackPageView, trackError, queryAnalytics } from './utils/analytics';
 import { isR2OnlyNamespace, normalizeSlug } from './utils/slug';
 import { getRevisionContent } from './utils/r2';
 import { renderForAI } from './utils/aiParser';
+import { ensureMcpDraftsMigration } from './utils/mcpDraftsMigration';
 
 const app = new Hono<Env>();
 
@@ -135,6 +137,7 @@ app.route('/api', notificationRoutes);
 app.route('/api', pushRoutes);
 app.route('/api', ticketRoutes);
 app.route('/api/mcp', mcpRoutes);
+app.route('/api', mcpSubmissionsRoutes);
 app.route('/', oauthRoutes); // /.well-known/* + /oauth/*
 app.route('/api/admin/analytics', analyticsRoutes);
 app.route('/api', blogRoutes);
@@ -1163,14 +1166,31 @@ export default {
                 WHERE banned_until IS NOT NULL AND banned_until <= ?
             `).bind(now).run()
         );
-        // admin-mcp draft TTL: 마지막 활동 이후 12시간(43200초) 지난 draft 일괄 삭제.
-        // 크론 주기(매일 자정) 때문에 실제 만료 시점은 12~36시간 사이가 될 수 있으나,
-        // 사용자가 수긍한 정책이므로 별도 처리 없음.
-        ctx.waitUntil(
-            env.DB.prepare(
-                'DELETE FROM mcp_drafts WHERE updated_at < ?'
-            ).bind(now - 43200).run()
-        );
+        // admin-mcp draft TTL:
+        //   - 작성 중 draft (submitted_at IS NULL): 마지막 활동 이후 12시간(43200초) 후 삭제.
+        //   - 승인 대기 제출안 (submitted_at IS NOT NULL): 제출 후 30일(2592000초) 후 삭제.
+        //     유저가 검토하지 않은 채 무한 누적되지 않도록 별도 TTL 을 둔다.
+        //     이 때 mcp_submission 알림도 함께 삭제해 유저의 미확인 알림이 dead link 로 남지 않게 한다.
+        // 크론 주기(매일 자정) 때문에 실제 만료 시점은 약간 늦어질 수 있다.
+        // submitted_at 컬럼이 누락된 레거시 환경을 위해 먼저 idempotent 마이그레이션 보장.
+        ctx.waitUntil((async () => {
+            await ensureMcpDraftsMigration(env.DB);
+            const draftTtl = now - 43200;
+            const submissionTtl = now - 2592000;
+            // 알림 → draft 순으로 삭제. 반대 순서면 draft 가 먼저 사라져 SELECT IN 이 매칭하지 못한다.
+            await env.DB.batch([
+                env.DB.prepare(
+                    "DELETE FROM notifications WHERE type = 'mcp_submission' AND ref_id IN " +
+                    "(SELECT id FROM mcp_drafts WHERE submitted_at IS NOT NULL AND submitted_at < ?)"
+                ).bind(submissionTtl),
+                env.DB.prepare(
+                    'DELETE FROM mcp_drafts WHERE submitted_at IS NULL AND updated_at < ?'
+                ).bind(draftTtl),
+                env.DB.prepare(
+                    'DELETE FROM mcp_drafts WHERE submitted_at IS NOT NULL AND submitted_at < ?'
+                ).bind(submissionTtl),
+            ]);
+        })());
         // OAuth 인가 코드: TTL 60초이므로 1시간(3600초) 이상 지난 코드는 모두 만료 상태.
         ctx.waitUntil(
             env.DB.prepare(

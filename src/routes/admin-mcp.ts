@@ -34,6 +34,7 @@ import {
     type ToolResult,
 } from '../utils/mcpDispatch';
 import { computeLineDiffStats } from '../utils/diff';
+import { ensureMcpDraftsMigration } from '../utils/mcpDraftsMigration';
 import {
     SLUG_FORBIDDEN_CHARS,
     computePageMetricsTracked,
@@ -151,12 +152,13 @@ export const USER_EDIT_TOOL_DEFS: McpToolDef[] = [
     },
     {
         name: 'commit_edit',
-        description: 'draft 에 누적된 편집을 1개 리비전으로 커밋합니다. base_revision_id 가 그 사이 변경되었으면(=다른 사용자가 페이지를 수정) 거부합니다 — 그 경우 discard_edit 후 read_document 로 최신 상태를 다시 읽고 편집을 재구성해야 합니다. 신규 페이지 draft 인데 commit 시점에 이미 같은 슬러그가 존재하면 같은 사유로 거부합니다. summary 는 새 리비전의 편집 요약입니다 (선택, 최대 255자). 저장 시 자동으로 `[MCP] [+N줄 -M줄] ` 접두가 붙어 사람 편집과 구분되며 변경 규모를 한눈에 보여줍니다 (예: `[MCP] [+5줄 -2줄] 오타 수정`).\n\n응답에도 이전 본문 대비 라인 단위 변경량(`lines_added` / `lines_removed`)이 포함됩니다 — git diff --stat 의 +N/-M 와 동일한 의미입니다 (CRLF 정규화 후 LCS 기반으로 산출).',
+        description: 'draft 에 누적된 편집을 1개 리비전으로 커밋합니다. base_revision_id 가 그 사이 변경되었으면(=다른 사용자가 페이지를 수정) 거부합니다 — 그 경우 discard_edit 후 read_document 로 최신 상태를 다시 읽고 편집을 재구성해야 합니다. 신규 페이지 draft 인데 commit 시점에 이미 같은 슬러그가 존재하면 같은 사유로 거부합니다. summary 는 새 리비전의 편집 요약입니다 (선택, 최대 255자). 저장 시 자동으로 `[MCP] [+N줄 -M줄] ` 접두가 붙어 사람 편집과 구분되며 변경 규모를 한눈에 보여줍니다 (예: `[MCP] [+5줄 -2줄] 오타 수정`).\n\n응답에도 이전 본문 대비 라인 단위 변경량(`lines_added` / `lines_removed`)이 포함됩니다 — git diff --stat 의 +N/-M 와 동일한 의미입니다 (CRLF 정규화 후 LCS 기반으로 산출).\n\n**기본 동작은 승인 대기 제출**입니다 (`submit_for_approval=true`). draft 는 즉시 리비전이 되지 않고 OAuth 토큰 소유자(=이 MCP 를 연결한 본인) 에게 승인 대기로 제출됩니다. 본인이 마이페이지 / 알림 / 문서 배너에서 검토 후 승인해야 비로소 리비전이 만들어집니다. 거부 시 draft 는 폐기됩니다.\n\n신뢰할 수 있는 단순 편집이라 사람의 검토 없이 바로 적용하고 싶다면 `submit_for_approval=false` 를 명시적으로 넘기세요 — 그 경우 즉시 리비전이 생성됩니다.',
         inputSchema: {
             type: 'object',
             properties: {
                 draft_id: { type: 'number', description: '커밋할 draft 의 id (편집 도구 응답에서 받은 값)' },
-                summary: { type: 'string', description: '편집 요약 (선택, 최대 255자, 저장 시 [MCP] 접두 자동 부여)' }
+                summary: { type: 'string', description: '편집 요약 (선택, 최대 255자, 저장 시 [MCP] 접두 자동 부여)' },
+                submit_for_approval: { type: 'boolean', description: '기본 true — OAuth 토큰 소유자에게 승인 대기로 제출. false 면 즉시 새 리비전을 만든다.' }
             },
             required: ['draft_id']
         }
@@ -303,9 +305,9 @@ function asTextResult(text: string, isError = false): ToolResult {
 // 편집 자체는 OAuth 로 인증된 사용자(에이전트가 연결된 계정) 의 작업으로 기록되며,
 // 이 접두만 추가해 사람이 직접 편집한 리비전과 구분할 수 있게 한다.
 // 사용자가 직접 [MCP] 로 시작하는 summary 를 넘기면 중복 접두를 만들지 않는다.
-const MCP_SUMMARY_PREFIX = '[MCP]';
-const MCP_SUMMARY_MAX_LENGTH = 255;
-function withMcpPrefix(summary: string | null | undefined): string {
+export const MCP_SUMMARY_PREFIX = '[MCP]';
+export const MCP_SUMMARY_MAX_LENGTH = 255;
+export function withMcpPrefix(summary: string | null | undefined): string {
     const trimmed = (summary ?? '').trim();
     if (!trimmed) return MCP_SUMMARY_PREFIX;
     if (trimmed.startsWith(MCP_SUMMARY_PREFIX)) return trimmed;
@@ -313,7 +315,7 @@ function withMcpPrefix(summary: string | null | undefined): string {
 }
 // 입력 summary 가 [MCP] 접두 부여 후에도 255자 한도(MCP_SUMMARY_MAX_LENGTH) 를 넘지 않는지 검증.
 // 도구 스키마/문서가 명시한 contract 가 무너지지 않도록 raw 입력이 아니라 저장될 최종 문자열을 기준으로 한다.
-function validateMcpSummaryLength(summary: string | null | undefined): string | null {
+export function validateMcpSummaryLength(summary: string | null | undefined): string | null {
     const finalLength = withMcpPrefix(summary).length;
     if (finalLength > MCP_SUMMARY_MAX_LENGTH) {
         return `Error: summary 는 [MCP] 접두 포함 최대 ${MCP_SUMMARY_MAX_LENGTH}자입니다 (현재 ${finalLength}자).`;
@@ -324,14 +326,14 @@ function validateMcpSummaryLength(summary: string | null | undefined): string | 
 // commit_edit 의 리비전 summary 앞에 자동 부여되는 diff 마커.
 // "[+N줄 -M줄]" 형식이며 [MCP] 접두 뒤, 사용자 summary 앞에 위치한다.
 // 예) `[MCP] [+5줄 -2줄] 오타 수정`
-function formatDiffMarker(stats: { added: number; removed: number }): string {
+export function formatDiffMarker(stats: { added: number; removed: number }): string {
     return `[+${stats.added}줄 -${stats.removed}줄]`;
 }
 
 // 사용자 summary 와 diff 마커를 결합한 최종 summary 본문(=[MCP] 접두 부여 전) 을 만든다.
 // 결합 후 [MCP] 접두까지 포함한 길이가 255자를 넘으면 사용자 summary 를 말줄임표(…)로 잘라
 // 한도를 맞춘다 — 마커는 항상 보존된다.
-function buildCommitSummary(userSummary: string | null, stats: { added: number; removed: number }): string {
+export function buildCommitSummary(userSummary: string | null, stats: { added: number; removed: number }): string {
     const marker = formatDiffMarker(stats);
     const trimmedUser = (userSummary ?? '').trim();
     const combined = trimmedUser ? `${marker} ${trimmedUser}` : marker;
@@ -362,6 +364,9 @@ function unixToIso(unix: number | null | undefined): string | null {
 export async function dispatchAdminReadTool(c: Context<Env>, user: User, toolName: string, args: any): Promise<ToolResult | null> {
     const db = c.env.DB;
     const rbac = c.get('rbac') as RBAC;
+    // mcp_drafts 의 새 컬럼(submitted_at / submitted_summary) 을 사용하기 전에 기존 D1 에서
+    // 컬럼이 빠져 있는 환경을 위해 idempotent 런타임 마이그레이션을 적용한다.
+    await ensureMcpDraftsMigration(db);
 
     if (toolName === 'list_drafts') {
         if (!rbac.can(user.role, 'wiki:edit')) {
@@ -369,20 +374,26 @@ export async function dispatchAdminReadTool(c: Context<Env>, user: User, toolNam
         }
         const { results } = await db.prepare(`
             SELECT id, slug, action, base_revision_id, base_version,
-                   length(content) AS content_length, updated_at
+                   length(content) AS content_length, updated_at, submitted_at, submitted_summary
             FROM mcp_drafts WHERE user_id = ? ORDER BY updated_at DESC LIMIT 100
         `).bind(user.id).all<{
             id: number; slug: string; action: string; base_revision_id: number | null;
             base_version: number; content_length: number; updated_at: number;
+            submitted_at: number | null; submitted_summary: string | null;
         }>();
         const formatted = results.map(r => ({
             draft_id: r.id,
             slug: r.slug,
             action: r.action,
+            // 'pending_approval' = commit_edit(submit_for_approval=true) 로 제출됨, 유저 검토 대기.
+            // 'draft' = AI 가 계속 편집 가능한 작성 중 상태 (기본).
+            status: r.submitted_at !== null ? 'pending_approval' : 'draft',
             base_revision_id: r.base_revision_id,
             base_version: r.base_version,
             content_length: r.content_length,
             updated_at: unixToIso(r.updated_at),
+            submitted_at: unixToIso(r.submitted_at),
+            submitted_summary: r.submitted_summary,
         }));
         return asTextResult(JSON.stringify(formatted, null, 2));
     }
@@ -395,24 +406,28 @@ export async function dispatchAdminReadTool(c: Context<Env>, user: User, toolNam
         if (!slug) return asTextResult('Error: title 이 필요합니다.', true);
         const draft = await db.prepare(`
             SELECT id, slug, action, base_revision_id, base_version, content,
-                   category, redirect_to, requested_lock, updated_at
+                   category, redirect_to, requested_lock, updated_at, submitted_at, submitted_summary
             FROM mcp_drafts WHERE user_id = ? AND slug = ?
         `).bind(user.id, slug).first<{
             id: number; slug: string; action: string; base_revision_id: number | null;
             base_version: number; content: string; category: string | null;
             redirect_to: string | null; requested_lock: number | null; updated_at: number;
+            submitted_at: number | null; submitted_summary: string | null;
         }>();
         if (!draft) return asTextResult('Error: 해당 슬러그의 draft 를 찾을 수 없습니다.', true);
         return asTextResult(JSON.stringify({
             draft_id: draft.id,
             slug: draft.slug,
             action: draft.action,
+            status: draft.submitted_at !== null ? 'pending_approval' : 'draft',
             base_revision_id: draft.base_revision_id,
             base_version: draft.base_version,
             category: draft.category,
             redirect_to: draft.redirect_to,
             requested_lock: draft.requested_lock,
             updated_at: unixToIso(draft.updated_at),
+            submitted_at: unixToIso(draft.submitted_at),
+            submitted_summary: draft.submitted_summary,
             content: draft.content,
         }, null, 2));
     }
@@ -504,7 +519,7 @@ export async function dispatchAdminReadTool(c: Context<Env>, user: User, toolNam
 // 기존 문서를 새 리비전으로 갱신하는 공용 헬퍼.
 // create_or_update_page 의 update 경로, patch_page, revert_page 가 공유한다.
 // 호출자는 페이지 존재/잠금/슬러그 검증을 이미 마쳤다고 가정한다.
-async function applyExistingPageUpdate(
+export async function applyExistingPageUpdate(
     c: Context<Env>,
     user: User,
     page: { id: number; version: number; is_locked: number; category: string | null },
@@ -594,7 +609,7 @@ async function applyExistingPageUpdate(
 // 신규 페이지를 INSERT 하고 첫 리비전을 생성하는 공용 헬퍼.
 // commit_edit (action='create') 가 사용한다. 호출자는 슬러그 충돌(soft-deleted 포함) 검사를
 // 이미 마쳤다고 가정한다.
-async function applyNewPageInsert(
+export async function applyNewPageInsert(
     c: Context<Env>,
     user: User,
     slug: string,
@@ -682,7 +697,7 @@ async function loadDraftOrSeedFromPage(
     user: User,
     slug: string
 ): Promise<{
-    type: 'draft' | 'seeded' | 'not_found';
+    type: 'draft' | 'seeded' | 'not_found' | 'submitted';
     draftId?: number;
     content: string;
     page?: { id: number; version: number; is_locked: number; last_revision_id: number | null; category: string | null; redirect_to: string | null };
@@ -691,10 +706,15 @@ async function loadDraftOrSeedFromPage(
     // action 무관하게 본인의 (slug) draft 가 있으면 그 위에서 편집을 누적한다.
     // create 액션 draft (= 아직 commit 되지 않은 신규 페이지) 도 patch_page / edit_section
     // 으로 점진적으로 다듬을 수 있어야 한다.
+    // submitted_at IS NOT NULL → 승인 대기 상태이므로 AI 가 더 이상 수정할 수 없다.
+    // 호출자가 별도로 거부 처리해야 한다 (호출 측에서 type='submitted' 처리).
     const draft = await db.prepare(
-        'SELECT id, content FROM mcp_drafts WHERE user_id = ? AND slug = ?'
-    ).bind(user.id, slug).first<{ id: number; content: string }>();
+        'SELECT id, content, submitted_at FROM mcp_drafts WHERE user_id = ? AND slug = ?'
+    ).bind(user.id, slug).first<{ id: number; content: string; submitted_at: number | null }>();
     if (draft) {
+        if (draft.submitted_at !== null) {
+            return { type: 'submitted', draftId: draft.id, content: draft.content };
+        }
         return { type: 'draft', draftId: draft.id, content: draft.content };
     }
 
@@ -720,9 +740,55 @@ async function loadDraftOrSeedFromPage(
     };
 }
 
+// commit_edit(submit_for_approval=true) 가 호출된 draft 를 "승인 대기" 로 마크하고
+// OAuth 토큰 소유자(=draft.user_id) 에게 알림을 발송한다.
+// 알림 link 는 /mypage#mcp-submissions 로, ref_id 는 draft.id 로 둔다 — 승인/거부 시 같은
+// ref_id 로 알림을 정리할 수 있도록 정렬한다. submitted_summary 에는 AI 가 제안한 요약을 저장하고,
+// 승인 시점에 유저가 그대로 채택하거나 본인이 다시 작성할 수 있다.
+//
+// 동시성: UPDATE 를 `WHERE submitted_at IS NULL` 조건으로 묶어 두 개의 commit_edit 호출이
+// 같은 draft 에 대해 호출 직전 체크를 동시에 통과하더라도 둘 중 하나만 실제 전환되도록 한다.
+// UPDATE 가 changes=0 이면 다른 요청이 먼저 전환을 끝낸 것이므로 알림 INSERT 도 하지 않는다.
+// 그 경우 호출자는 'already submitted' 응답을 반환하도록 null 을 받게 된다.
+async function markDraftSubmittedAndNotify(
+    c: Context<Env>,
+    draftId: number,
+    slug: string,
+    aiSummary: string | null,
+): Promise<{ iso: string } | null> {
+    const db = c.env.DB;
+    const submittedAtSec = Math.floor(Date.now() / 1000);
+    const updateRes = await db
+        .prepare(
+            'UPDATE mcp_drafts SET submitted_at = ?, submitted_summary = ?, updated_at = ? WHERE id = ? AND submitted_at IS NULL'
+        )
+        .bind(submittedAtSec, aiSummary, submittedAtSec, draftId)
+        .run();
+    if (!updateRes.meta.changes) {
+        // 동시 호출이 이미 전환을 끝냄 — 알림 중복 INSERT 방지.
+        return null;
+    }
+    await db
+        .prepare(
+            "INSERT INTO notifications (user_id, type, content, link, ref_id) " +
+            "SELECT user_id, ?, ?, ?, ? FROM mcp_drafts WHERE id = ?"
+        )
+        .bind(
+            'mcp_submission',
+            `MCP 서버로 제출된 "${slug}" 문서 편집안이 존재합니다.`,
+            '/mypage#mcp-submissions',
+            draftId,
+            draftId,
+        )
+        .run();
+    return { iso: new Date(submittedAtSec * 1000).toISOString() };
+}
+
 export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolName: string, args: any): Promise<ToolResult | null> {
     const db = c.env.DB;
     const rbac = c.get('rbac') as RBAC;
+    // 같은 이유 — 모든 편집 도구가 mcp_drafts 의 새 컬럼을 직간접적으로 사용하므로 진입 시 보장.
+    await ensureMcpDraftsMigration(db);
 
     if (toolName === 'create_or_update_page') {
         // 위임 admin 역할이 wiki:edit 없이 admin:access 만 가진 케이스에서도
@@ -786,9 +852,13 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
         // base_revision_id / base_version 은 보존 — 처음 begin 한 시점의 페이지 상태로 충돌
         // 검증을 해야 의미 있다. 이 호출이 page 가 그 사이 바뀌었는지를 다시 캡처하면
         // 충돌 감지가 무력화된다.
+        // 단 submitted_at IS NOT NULL → 이미 승인 대기로 제출된 상태이므로 본문 교체 불가.
         const existingDraft = await db.prepare(
-            'SELECT id, action, base_revision_id, base_version FROM mcp_drafts WHERE user_id = ? AND slug = ?'
-        ).bind(user.id, slug).first<{ id: number; action: string; base_revision_id: number | null; base_version: number }>();
+            'SELECT id, action, base_revision_id, base_version, submitted_at FROM mcp_drafts WHERE user_id = ? AND slug = ?'
+        ).bind(user.id, slug).first<{ id: number; action: string; base_revision_id: number | null; base_version: number; submitted_at: number | null }>();
+        if (existingDraft && existingDraft.submitted_at !== null) {
+            return asTextResult('Error: 이 draft 는 이미 승인 대기로 제출된 상태입니다. 사용자가 mypage 에서 승인/거부할 때까지 수정할 수 없습니다. 폐기하려면 discard_edit 를 사용하세요.', true);
+        }
 
         let draftId: number;
         if (existingDraft) {
@@ -840,6 +910,9 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
         const loaded = await loadDraftOrSeedFromPage(c, user, slug);
         if (loaded.type === 'not_found') {
             return asTextResult('Error: 문서를 찾을 수 없거나 삭제된 상태입니다. 새 페이지는 create_or_update_page 로 시작하세요.', true);
+        }
+        if (loaded.type === 'submitted') {
+            return asTextResult('Error: 이 draft 는 이미 승인 대기로 제출된 상태입니다. 사용자가 mypage 에서 승인/거부할 때까지 수정할 수 없습니다. 폐기하려면 discard_edit 를 사용하세요.', true);
         }
         if (loaded.type === 'seeded' && loaded.page!.is_locked === 1 && !rbac.can(user.role, 'wiki:lock')) {
             return asTextResult('Error: 잠긴 문서는 wiki:lock 권한이 있어야 편집할 수 있습니다.', true);
@@ -936,6 +1009,9 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
         if (loaded.type === 'not_found') {
             return asTextResult('Error: 문서를 찾을 수 없거나 삭제된 상태입니다. 새 페이지는 create_or_update_page 로 시작하세요.', true);
         }
+        if (loaded.type === 'submitted') {
+            return asTextResult('Error: 이 draft 는 이미 승인 대기로 제출된 상태입니다. 사용자가 mypage 에서 승인/거부할 때까지 수정할 수 없습니다. 폐기하려면 discard_edit 를 사용하세요.', true);
+        }
         if (loaded.type === 'seeded' && loaded.page!.is_locked === 1 && !rbac.can(user.role, 'wiki:lock')) {
             return asTextResult('Error: 잠긴 문서는 wiki:lock 권한이 있어야 편집할 수 있습니다.', true);
         }
@@ -1001,18 +1077,31 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
         if (summaryLengthError) {
             return asTextResult(summaryLengthError, true);
         }
+        // 기본 동작은 승인 대기 제출 (사람 검토 없이 본문이 바로 바뀌는 위험을 줄이기 위함).
+        // 호출자가 명시적으로 submit_for_approval: false 를 넘긴 경우에만 즉시 커밋한다.
+        // 값이 undefined / null / 누락이면 기본 true.
+        const submitForApproval = args.submit_for_approval !== false;
 
         const draft = await db.prepare(
             `SELECT id, user_id, slug, action, base_revision_id, base_version,
-                    content, category, redirect_to, requested_lock
+                    content, category, redirect_to, requested_lock, submitted_at
              FROM mcp_drafts WHERE id = ?`
         ).bind(draftId).first<{
             id: number; user_id: number; slug: string; action: string;
             base_revision_id: number | null; base_version: number; content: string;
             category: string | null; redirect_to: string | null; requested_lock: number | null;
+            submitted_at: number | null;
         }>();
         if (!draft) return asTextResult('Error: draft 를 찾을 수 없습니다 (이미 commit/discard 됐거나 12시간 TTL 만료).', true);
         if (draft.user_id !== user.id) return asTextResult('Error: 다른 사용자의 draft 는 commit 할 수 없습니다.', true);
+        // 이미 승인 대기로 제출된 draft 는 사람이 검토 중이므로 AI 가 재제출/재커밋 불가.
+        // 다시 편집하려면 사람이 거부(reject) 하거나 AI 가 discard_edit 후 새로 시작.
+        if (draft.submitted_at !== null) {
+            return asTextResult(
+                'Error: 이 draft 는 이미 승인 대기로 제출된 상태입니다. 사용자가 mypage 에서 승인/거부할 때까지 변경할 수 없습니다. 폐기하려면 discard_edit 를 사용하세요.',
+                true
+            );
+        }
 
         const slug = draft.slug;
 
@@ -1075,6 +1164,29 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
             // applyExistingPageUpdate 가 추가로 [MCP] 접두를 붙이므로 최종 형태는
             // "[MCP] [+N줄 -M줄] {user_summary}" 가 된다. diffStats 로딩 실패 시 마커 없이 사용자 summary 만 전달한다.
             const summaryWithDiff: string | null = diffStats ? buildCommitSummary(summary, diffStats) : summary;
+
+            if (submitForApproval) {
+                // 즉시 리비전을 만들지 않고 본인(OAuth 토큰 소유자) 의 승인 대기로 제출한다.
+                // 잠금/충돌 검증은 이미 통과한 상태이므로 같은 정책으로 mypage 에서 다시 확인된다.
+                const submittedAtRow = await markDraftSubmittedAndNotify(c, draft.id, slug, summary);
+                if (!submittedAtRow) {
+                    return asTextResult(
+                        'Error: 이 draft 는 이미 승인 대기로 제출된 상태입니다 (동시 호출 race).',
+                        true
+                    );
+                }
+                return asTextResult(JSON.stringify({
+                    slug,
+                    submitted: true,
+                    submitted_at: submittedAtRow.iso,
+                    draft_id: draft.id,
+                    action: 'update',
+                    base_revision_id: draft.base_revision_id,
+                    base_version: draft.base_version,
+                    ...(diffStats ? { lines_added: diffStats.added, lines_removed: diffStats.removed } : {}),
+                    notice: '승인 대기로 제출되었습니다. /mypage#mcp-submissions 에서 검토 후 승인하면 비로소 리비전이 생성됩니다.',
+                }, null, 2));
+            }
 
             try {
                 const result = await applyExistingPageUpdate(c, user, page, draft.content, {
@@ -1142,6 +1254,25 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
             const createDiffStats = computeLineDiffStats('', draft.content.replace(/\r\n?/g, '\n'));
             const createSummaryWithDiff = createDiffStats ? buildCommitSummary(summary, createDiffStats) : summary;
 
+            if (submitForApproval) {
+                const submittedAtRow = await markDraftSubmittedAndNotify(c, draft.id, slug, summary);
+                if (!submittedAtRow) {
+                    return asTextResult(
+                        'Error: 이 draft 는 이미 승인 대기로 제출된 상태입니다 (동시 호출 race).',
+                        true
+                    );
+                }
+                return asTextResult(JSON.stringify({
+                    slug,
+                    submitted: true,
+                    submitted_at: submittedAtRow.iso,
+                    draft_id: draft.id,
+                    action: 'create',
+                    ...(createDiffStats ? { lines_added: createDiffStats.added, lines_removed: createDiffStats.removed } : {}),
+                    notice: '승인 대기로 제출되었습니다. /mypage#mcp-submissions 에서 검토 후 승인하면 비로소 새 페이지가 생성됩니다.',
+                }, null, 2));
+            }
+
             try {
                 const result = await applyNewPageInsert(c, user, slug, draft.content, {
                     summary: createSummaryWithDiff,
@@ -1176,12 +1307,21 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
         if (!Number.isFinite(draftId) || draftId <= 0) {
             return asTextResult('Error: draft_id 는 양의 정수여야 합니다.', true);
         }
-        const draft = await db.prepare('SELECT id, user_id, slug FROM mcp_drafts WHERE id = ?')
-            .bind(draftId).first<{ id: number; user_id: number; slug: string }>();
+        const draft = await db.prepare('SELECT id, user_id, slug, submitted_at FROM mcp_drafts WHERE id = ?')
+            .bind(draftId).first<{ id: number; user_id: number; slug: string; submitted_at: number | null }>();
         if (!draft) return asTextResult('Error: draft 를 찾을 수 없습니다 (이미 commit/discard 됐거나 TTL 만료).', true);
         if (draft.user_id !== user.id) return asTextResult('Error: 다른 사용자의 draft 는 discard 할 수 없습니다.', true);
-        await db.prepare('DELETE FROM mcp_drafts WHERE id = ?').bind(draftId).run();
-        return asTextResult(JSON.stringify({ draft_id: draftId, slug: draft.slug, discarded: true }, null, 2));
+        // 승인 대기 상태였다면 알림도 같이 정리한다 — mypage 목록에서 사라지므로 알림만 남으면 dead link 가 된다.
+        await db.batch([
+            db.prepare("DELETE FROM notifications WHERE type = 'mcp_submission' AND ref_id = ?").bind(draftId),
+            db.prepare('DELETE FROM mcp_drafts WHERE id = ?').bind(draftId),
+        ]);
+        return asTextResult(JSON.stringify({
+            draft_id: draftId,
+            slug: draft.slug,
+            discarded: true,
+            was_submitted: draft.submitted_at !== null,
+        }, null, 2));
     }
 
     if (toolName === 'revert_page') {
@@ -1787,9 +1927,13 @@ export function buildUserEditInformationSuffix(userName: string): string {
         `**⚠️ 헤딩 작성 규칙**: 위키는 헤딩(##, ###, ...)에 자동으로 계층 번호("1.", "1.1." 등)를 부여합니다. ` +
         `헤딩 텍스트에 번호를 직접 적지 마세요 (예: \`## 1. 개요\` ❌ → \`## 개요\` ✅). 직접 적으면 렌더링 시 "1. 1. 개요" 처럼 중복 번호가 표시됩니다. ` +
         `목차 내 다른 섹션을 참조할 때는 \`[[문서#s-1.2]]\` 형식의 섹션 앵커를 사용하세요.\n\n` +
+        `**승인 대기가 기본**: commit_edit 의 \`submit_for_approval\` 기본값은 \`true\` 입니다 — draft 는 즉시 리비전이 되지 않고 OAuth 토큰 소유자(=이 MCP 를 연결한 본인) 에게 승인 대기로 제출됩니다. ` +
+        `본인이 마이페이지 / 알림 / 문서 배너에서 검토 후 승인해야 비로소 리비전이 만들어집니다. 거부 시 draft 는 폐기됩니다. ` +
+        `신뢰할 수 있는 단순 편집이라 즉시 적용을 원하면 \`submit_for_approval=false\` 를 명시적으로 넘기세요. ` +
+        `승인 대기 상태 draft 는 list_drafts / read_draft 의 \`status\` 필드가 \`pending_approval\` 로 표시되며, AI 측에서는 더 이상 수정할 수 없습니다 (discard_edit 로 폐기만 가능).\n\n` +
         `**즉시 적용** (draft 모델 미사용): revert_page.\n\n` +
         USER_EDIT_TOOL_DEFS.map(t => `- ${t.name}`).join('\n') +
-        `\n\n모든 commit / 즉시 적용 동작은 admin_log 에 기록되며 리비전 summary 에 [MCP] 접두가 붙습니다 (draft 단계는 기록 없음).`;
+        `\n\n모든 commit / 즉시 적용 / 승인된 제출 동작은 admin_log 에 기록되며 리비전 summary 에 [MCP] 접두가 붙습니다 (draft 단계는 기록 없음).`;
     return `${readIntro}${editIntro}`;
 }
 

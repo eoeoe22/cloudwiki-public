@@ -45,6 +45,8 @@ export interface OAuthStateData {
     userId?: number;
     /** refresh_picture 의도일 때 기대되는 공급자 측 uid */
     expectedUid?: string;
+    /** 로그인 완료 후 이동할 상대경로 URL (/ 시작, // 미시작인 경우만 유효) */
+    redirectUrl?: string;
 }
 
 /**

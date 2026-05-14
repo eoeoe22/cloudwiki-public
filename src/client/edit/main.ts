@@ -50,6 +50,12 @@ declare global {
 const BLOG_MODE = !!(window.BLOG_MODE);
 let blogPostId: string | null = null; // 기존 포스트 수정 시 ID (?id= 파라미터)
 
+// ── MCP 편집안 충돌 해결 모드 ──
+// /edit?slug=...&mcp_submission=<id> 로 진입하면 (mypage 의 "에디터에서 충돌 해결" 동선)
+// 정상 페이지 로드 대신 /api/mcp-submissions/<id> 의 base/proposed/current 본문을
+// 받아 3-way merge UI 를 자동으로 띄운다. 저장이 성공하면 /resolve 로 draft 를 정리한다.
+let mcpSubmissionId: number | null = null;
+
 // ── Turnstile 상태 ──
 let turnstileToken: string | null = null;
 let turnstileWidgetId: string | null = null;
@@ -365,6 +371,25 @@ document.addEventListener('DOMContentLoaded', async () => {
             sectionMode = true;
             sectionIndex = parsed;
             sectionHeadingParam = params.get('h') || '';
+        }
+    }
+
+    // MCP 편집안 충돌 해결 모드: ?mcp_submission=<id>.
+    // URL 파라미터 단계에서는 후보값(pendingMcpSubmissionId) 만 채워두고, 이후 정상 페이지 로드 +
+    // 제출안 preload 가 모두 성공한 뒤에야 `mcpSubmissionId` (저장 후 /resolve cleanup 게이트)로
+    // 승격한다. 페이지가 410/403 으로 막혔거나 (mypage 가 stale 상태였던 경우), /api/w/:slug 가
+    // 404 로 신규 페이지 분기로 빠지거나, /api/mcp-submissions/:id 가 4xx/5xx 인 경우 cleanup 이
+    // 무관한 draft 를 silent 삭제하지 못하게 한다.
+    // 섹션 편집과는 동시에 동작하지 않는다 (제안 본문은 항상 문서 전체) — 무시하고 전체 편집으로 강제.
+    let pendingMcpSubmissionId: number | null = null;
+    const mcpSubParam = params.get('mcp_submission');
+    if (mcpSubParam !== null && /^\d+$/.test(mcpSubParam)) {
+        const parsed = parseInt(mcpSubParam, 10);
+        if (parsed > 0) {
+            pendingMcpSubmissionId = parsed;
+            sectionMode = false;
+            sectionIndex = -1;
+            sectionHeadingParam = '';
         }
     }
 
@@ -721,29 +746,53 @@ document.addEventListener('DOMContentLoaded', async () => {
             update(update) { this.decorations = matcher.updateDeco(update, this.decorations); }
         }, { decorations: v => v.decorations });
 
+        // 인라인 코드(백틱) 내부 위치인지 확인하는 헬퍼
+        const isInInlineCode = (state, pos) => {
+            const line = state.doc.lineAt(pos);
+            const relPos = pos - line.from;
+            const re = /`[^`]+`/g;
+            let m;
+            while ((m = re.exec(line.text)) !== null) {
+                if (relPos >= m.index && relPos < m.index + m[0].length) return true;
+            }
+            return false;
+        };
+
         const wikiLinkMatcher = new MatchDecorator({
             regexp: /\[\[([^\]]*)\]\]/g,
-            decoration: Decoration.mark({ class: "cm-wiki-link" })
+            decoration: (match, view, pos) => {
+                if (isInInlineCode(view.state, pos)) return null;
+                return Decoration.mark({ class: "cm-wiki-link" });
+            }
         });
         const wikiLinkPlugin = makePlugin(wikiLinkMatcher);
 
         const templateMatcher = new MatchDecorator({
             // {{{...}}} 파라미터 참조는 제외 (lookbehind + lookahead 사용)
             regexp: /(?<!\{)\{\{(?!\{)([^}]*)\}\}/g,
-            decoration: Decoration.mark({ class: "cm-wiki-template" })
+            decoration: (match, view, pos) => {
+                if (isInInlineCode(view.state, pos)) return null;
+                return Decoration.mark({ class: "cm-wiki-template" });
+            }
         });
         const templatePlugin = makePlugin(templateMatcher);
 
         // 틀 파라미터 참조 {{{이름}}} / {{{1}}} / {{{이름|기본값}}}
         const templateParamMatcher = new MatchDecorator({
             regexp: /\{\{\{([^{}|]+)(?:\|[^{}]*)?\}\}\}/g,
-            decoration: Decoration.mark({ class: "cm-wiki-template-param" })
+            decoration: (match, view, pos) => {
+                if (isInInlineCode(view.state, pos)) return null;
+                return Decoration.mark({ class: "cm-wiki-template-param" });
+            }
         });
         const templateParamPlugin = makePlugin(templateParamMatcher);
 
         const alignMatcher = new MatchDecorator({
             regexp: /\{[<p^>><]+\}/g,
-            decoration: Decoration.mark({ class: "cm-align-marker" })
+            decoration: (match, view, pos) => {
+                if (isInInlineCode(view.state, pos)) return null;
+                return Decoration.mark({ class: "cm-align-marker" });
+            }
         });
         const alignPlugin = makePlugin(alignMatcher);
 
@@ -779,21 +828,17 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         const iconMarkerMatcher = new MatchDecorator({
             regexp: /\{(bi|mdi|icon):[^}]+\}/g,
-            decoration: Decoration.mark({ class: "cm-icon-marker" })
+            decoration: (match, view, pos) => {
+                if (isInInlineCode(view.state, pos)) return null;
+                return Decoration.mark({ class: "cm-icon-marker" });
+            }
         });
         const iconMarkerPlugin = makePlugin(iconMarkerMatcher);
 
         const iconWidgetMatcher = new MatchDecorator({
             regexp: /\{(bi|mdi|icon):([^}\s]+)\}/g,
             decorate: (add, from, to, match, view) => {
-                // 인라인 코드(`...`) 내부에서는 아이콘 위젯 표시하지 않음
-                const line = view.state.doc.lineAt(from);
-                const relPos = from - line.from;
-                const codeRegex = /`[^`]+`/g;
-                let m;
-                while ((m = codeRegex.exec(line.text)) !== null) {
-                    if (relPos >= m.index && relPos < m.index + m[0].length) return;
-                }
+                if (isInInlineCode(view.state, from)) return;
                 const type = match[1];
                 const name = (match[2] || '').trim();
                 // 안전한 아이콘 이름 패턴만 허용 (영문/숫자/하이픈/언더스코어)
@@ -810,16 +855,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const colorBadgeMatcher = new MatchDecorator({
             regexp: /\{(color|bg):\s*([^}]+)\}/g,
             decoration: (match, view, pos) => {
-                // 인라인 코드(`...`) 내부에서는 컬러 배지 표시하지 않음
-                const line = view.state.doc.lineAt(pos);
-                const relPos = pos - line.from;
-                const codeRegex = /`[^`]+`/g;
-                let m;
-                while ((m = codeRegex.exec(line.text)) !== null) {
-                    if (relPos >= m.index && relPos < m.index + m[0].length) {
-                        return null;
-                    }
-                }
+                if (isInInlineCode(view.state, pos)) return null;
                 return Decoration.mark({
                     class: "cm-color-badge",
                     attributes: { style: `--badge-color: ${match[2]};` }
@@ -831,16 +867,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const paletteBadgeMatcher = new MatchDecorator({
             regexp: /\{palette:\s*([^}]+)\}/g,
             decoration: (match, view, pos) => {
-                // 인라인 코드(`...`) 내부에서는 팔레트 배지 표시하지 않음
-                const line = view.state.doc.lineAt(pos);
-                const relPos = pos - line.from;
-                const codeRegex = /`[^`]+`/g;
-                let m;
-                while ((m = codeRegex.exec(line.text)) !== null) {
-                    if (relPos >= m.index && relPos < m.index + m[0].length) {
-                        return null;
-                    }
-                }
+                if (isInInlineCode(view.state, pos)) return null;
                 const name = (match[1] || '').trim();
                 let variant = null;
                 try {
@@ -869,16 +896,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const paramTokenMatcher = new MatchDecorator({
             regexp: /(?<!\{)\{(?:hr|(?:badge|tag|button|stat|size):[^}]+)\}(?!\})/g,
             decoration: (match, view, pos) => {
-                // 인라인 코드(`...`) 내부에서는 표시하지 않음
-                const line = view.state.doc.lineAt(pos);
-                const relPos = pos - line.from;
-                const codeRegex = /`[^`]+`/g;
-                let m;
-                while ((m = codeRegex.exec(line.text)) !== null) {
-                    if (relPos >= m.index && relPos < m.index + m[0].length) {
-                        return null;
-                    }
-                }
+                if (isInInlineCode(view.state, pos)) return null;
                 return Decoration.mark({ class: "cm-param-token" });
             }
         });
@@ -886,13 +904,19 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         const highlightMatcher = new MatchDecorator({
             regexp: /==([^=]+)==/g,
-            decoration: Decoration.mark({ class: "cm-highlight" })
+            decoration: (match, view, pos) => {
+                if (isInInlineCode(view.state, pos)) return null;
+                return Decoration.mark({ class: "cm-highlight" });
+            }
         });
         const highlightPlugin = makePlugin(highlightMatcher);
 
         const timeMatcher = new MatchDecorator({
             regexp: /\{(time|timer|age|dday|calendar):[^}]+\}/g,
-            decoration: Decoration.mark({ class: "cm-time-marker" })
+            decoration: (match, view, pos) => {
+                if (isInInlineCode(view.state, pos)) return null;
+                return Decoration.mark({ class: "cm-time-marker" });
+            }
         });
         const timePlugin = makePlugin(timeMatcher);
 
@@ -969,12 +993,14 @@ document.addEventListener('DOMContentLoaded', async () => {
                     let text = line.text;
                     let classes = [];
 
-                    if (text.includes("[+")) inFold = true;
+                    // 인라인 코드 내부의 문법은 폴드/접기 감지에서 제외
+                    const textForFold = text.replace(/`[^`]+`/g, s => ' '.repeat(s.length));
+                    if (textForFold.includes("[+")) inFold = true;
                     const isColonOpen = fenceChar === null && colonOpenRe.test(text);
                     const isColonClose = fenceChar === null && !isColonOpen && colonCloseRe.test(text);
                     if (isColonOpen) colonBlockDepth++;
                     if (inFold || colonBlockDepth > 0) classes.push("cm-fold-block");
-                    if (text.includes("[-]")) inFold = false;
+                    if (textForFold.includes("[-]")) inFold = false;
                     if (isColonClose && colonBlockDepth > 0) colonBlockDepth--;
 
                     const fenceMatch = fenceRe.exec(text);
@@ -2986,9 +3012,52 @@ document.addEventListener('DOMContentLoaded', async () => {
             document.getElementById('editPageTitle').innerHTML =
                 useSectionMode
                     ? `<i class="mdi mdi-pencil-box-multiple"></i> 섹션 편집: ${escapeHtml(page.slug)}`
-                    : `<i class="mdi mdi-pencil-box-multiple"></i> 편집: ${escapeHtml(page.slug)}`;
+                    : pendingMcpSubmissionId
+                        ? `<i class="mdi mdi-source-merge"></i> MCP 편집안 충돌 해결: ${escapeHtml(page.slug)}`
+                        : `<i class="mdi mdi-pencil-box-multiple"></i> 편집: ${escapeHtml(page.slug)}`;
             document.title = `편집: ${page.slug} - ${window.appConfig.wikiName}`;
             document.getElementById('diffPreviewSection').style.display = 'block'; // 편집일 때만 노출
+
+            // MCP 편집안 충돌 해결 모드: 페이지의 정상 본문 로드를 마쳤지만,
+            // base/ours/theirs 를 제출안 데이터로 덮어쓴 뒤 충돌 모달을 띄운다.
+            // (정상 로드를 끝까지 거치는 이유: 카테고리 입력/잠금/리다이렉트/UI 초기화 등
+            //  편집기 부트스트랩이 page 데이터에 의존하기 때문. 본문 / pageVersion 만 교체.)
+            // checkDraft / refreshAutoSummary 의 일반 흐름은 건너뛴다 — 본문은 이미 제출안으로
+            // 세팅되며 로컬 초안 복구 프롬프트가 충돌 모달과 겹치면 안 된다.
+            if (pendingMcpSubmissionId) {
+                let mergeStarted = false;
+                try {
+                    // loaded === true 인 경우에만 3-way merge UI 가 켜졌고 사용자가 실제로 병합을
+                    // 진행할 수 있는 상태. false 는 거부 분기(슬러그 불일치 등) 로 redirect 안내만
+                    // 띄운 상태이므로 cleanup 게이트를 켜면 안 된다 (navigation 이 끝나기 전 저장이
+                    // 트리거되면 무관한 draft 가 silently 삭제될 위험).
+                    const loaded = await loadMcpSubmissionForConflict(pendingMcpSubmissionId);
+                    if (loaded) {
+                        mcpSubmissionId = pendingMcpSubmissionId;
+                        mergeStarted = true;
+                    }
+                } catch (e: any) {
+                    // 제출안 preload 실패: 정상 편집 세션으로 진행하되 cleanup 게이트는 끈 채로 둔다
+                    // (mcpSubmissionId 가 set 되지 않은 상태이므로 저장 후 /resolve 호출 없음).
+                    // 그렇지 않으면 사용자가 일반 편집을 마치고 저장했을 때 cleanup 경로가 무관한
+                    // draft 를 silently 삭제할 위험이 있다.
+                    window.Swal.fire('오류', e?.message || 'MCP 편집안을 불러오지 못했습니다.', 'error');
+                }
+                // merge UI 가 켜지지 않은 경우 (preload 실패 등) 정상 편집 세션으로 fallback. 이때
+                // checkDraft() 가 한번도 실행되지 않으면 같은 슬러그의 로컬 초안은 사용자에게
+                // 노출되지 않고 다음 저장 시 silent 삭제된다 — 일반 분기와 동일한 draft 복구 흐름을
+                // 돌려 사용자가 미저장 초안을 인지/복구할 기회를 보장한다.
+                if (!mergeStarted) {
+                    window.checkDraft().then(() => {
+                        syncStateFromWindow();
+                        if (!sectionMode && typeof window.checkSectionDrafts === 'function') {
+                            window.checkSectionDrafts();
+                        }
+                    });
+                }
+                syncStateToWindow();
+                window.refreshAutoSummary();
+            } else {
             // 전체 편집 모드일 때만 같은 슬러그의 섹션 초안 잔여분을 추가로 안내한다.
             // (섹션 모드에서는 window.checkDraft 가 자체 초안을 처리한다.)
             window.checkDraft().then(() => {
@@ -3012,6 +3081,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             syncStateToWindow();
             // 기존 문서: 카테고리/잠금 변경 시 자동 요약이 입력되도록 초기 상태 동기화
             window.refreshAutoSummary();
+            } // ── mcpSubmissionId else 블록 종료 ──
         } else {
             // 새 문서: 슬러그가 곧 제목이므로 readonly 필드를 슬러그로 채운다
             syncStateToWindow();
@@ -3041,8 +3111,22 @@ document.addEventListener('DOMContentLoaded', async () => {
     // 변경 사항 미리보기 이벤트 연동
     const diffDetails = document.getElementById('diffPreviewDetails');
     if (diffDetails) {
-        diffDetails.addEventListener('toggle', (e) => {
+        diffDetails.addEventListener('toggle', async (e) => {
             if (diffDetails.open) {
+                if (isExtensionData) {
+                    const result = await window.Swal.fire({
+                        icon: 'warning',
+                        title: '대용량 데이터 비교',
+                        text: '이 문서는 대용량 익스텐션 데이터입니다. diff 로딩 시 모바일 기기에서 성능 저하가 발생할 수 있습니다. 계속하시겠습니까?',
+                        showCancelButton: true,
+                        confirmButtonText: '비교 보기',
+                        cancelButtonText: '취소',
+                    });
+                    if (!result.isConfirmed) {
+                        diffDetails.open = false;
+                        return;
+                    }
+                }
                 renderLocalDiff();
             }
         });
@@ -3129,6 +3213,155 @@ document.addEventListener('DOMContentLoaded', async () => {
 // 본문이 바뀌지 않았어도 카테고리/리다이렉트/관리자 잠금이 변경되었다면 저장을 허용한다.
 // 신규 문서(originalPageMeta 미설정)에서는 기본값(빈 카테고리/리다이렉트, 잠금 해제) 대비
 // 메타데이터 입력 여부로 판단 — 본문 없이 리다이렉트만 설정해 새 문서를 만드는 용례 지원.
+// ── MCP 편집안 충돌 해결: 제출안을 에디터에 적재한 뒤 3-way merge 모달 띄우기 ──
+//
+// 호출 시점: 정상 페이지 로드(/api/w/:slug)가 끝난 직후 DOMContentLoaded 핸들러 안.
+// 사전조건: editor 가 마운트되어 setMarkdown 가능 상태, originalContent / pageVersion 가
+//          이 모듈 / window 양쪽에 미러링되어 있음.
+//
+// 수행:
+//   1) /api/mcp-submissions/:id 에서 base_content / proposed_content / current_content + 메타 fetch.
+//   2) action !== 'update' 또는 page_missing / slug_taken 류 충돌은 에디터에서 다룰 수 없음 — 안내 후
+//      mypage 로 돌려보낸다 (에디터에 우회로가 없는 케이스).
+//   3) originalContent = base_content, pageVersion = base_version 으로 베이스 세팅 (충돌 모달이
+//      window.originalContent 를 base 로 사용함).
+//   4) editor.setMarkdown(proposed_content) 로 "내 수정본(ours)" 채움. 카테고리/리다이렉트도 제출안
+//      메타로 덮어쓴다 (있는 경우만 — null 이면 페이지 현재값 유지).
+//   5) window.showConflictModal({ current_version, content: current_content }) — base/ours/theirs
+//      3-way merge 가 켜진다. pageVersion 은 모달이 current_version 으로 갱신해 이후 저장이 정상 통과.
+//
+// 반환값: 3-way merge 모달이 실제로 켜졌으면 true, 거부 분기(슬러그 불일치/액션 불일치/처리 불가
+// 충돌)로 안내 후 mypage 로 redirect 한 경우 false. 호출자는 true 인 경우에만 cleanup 게이트
+// (mcpSubmissionId)를 켠다 — false 인 분기에서 set 하면 navigation 이 비동기라 그 사이 사용자가
+// 저장을 트리거할 경우 무관한 draft 가 /resolve 로 silently 삭제될 수 있다.
+async function loadMcpSubmissionForConflict(submissionId: number): Promise<boolean> {
+    const res = await fetch(`/api/mcp-submissions/${submissionId}`);
+    if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.error || `제출안 조회 실패 (HTTP ${res.status})`);
+    }
+    const detail = await res.json();
+
+    // 슬러그 정합성 검증: URL 의 slug 와 제출안의 slug 가 일치해야 한다.
+    // 사용자가 URL 을 임의 조작해 slug=A&mcp_submission=<B의 id> 로 진입하면
+    // A 페이지 에디터에 B 제출안 본문이 적용된 채 저장 시 A 가 B 의 본문으로 덮어쓰일 위험이 있다.
+    // 양쪽 모두 서버에서 normalizeSlug 된 값이므로 정확 비교만으로 충분하다.
+    if (typeof detail.slug !== 'string' || detail.slug !== slug) {
+        await window.Swal.fire({
+            icon: 'error',
+            title: '제출안 슬러그 불일치',
+            text: `제출안의 문서(${detail.slug ?? '?'}) 가 현재 편집 중인 문서(${slug ?? '?'}) 와 다릅니다. 해당 문서로 이동해 다시 시도하세요.`,
+        });
+        window.location.href = '/mypage#mcp-submissions';
+        return false;
+    }
+
+    if (detail.action !== 'update') {
+        await window.Swal.fire({
+            icon: 'warning',
+            title: '에디터에서 처리할 수 없는 충돌',
+            text: '슬러그 충돌(신규 생성) 류 충돌은 에디터에서 해결할 수 없습니다. mypage 에서 거부하거나 다른 슬러그로 다시 시도하세요.',
+        });
+        window.location.href = '/mypage#mcp-submissions';
+        return false;
+    }
+    // 에디터 merge 동선은 concurrent_modification 충돌 전용. 그 외 (충돌 없음 / page_missing /
+    // slug_taken / slug_soft_deleted) 는 /approve 경로의 로깅·요약·정책을 우회할 수 있으므로 거부.
+    // 충돌이 없는 정상 제출안은 사용자가 mypage 에서 「검토 → 승인」 으로 처리해야 한다.
+    if (!detail.has_conflict || detail.conflict_reason !== 'concurrent_modification') {
+        await window.Swal.fire({
+            icon: 'warning',
+            title: '에디터 병합 동선이 아닙니다',
+            text: detail.has_conflict
+                ? (detail.conflict_reason === 'page_missing'
+                    ? '문서가 삭제되었습니다. 에디터에서 해결할 수 없습니다.'
+                    : '에디터에서 해결할 수 없는 충돌입니다.')
+                : '이 제출안에는 충돌이 없습니다. mypage 에서 정상 승인 동선으로 처리하세요.',
+        });
+        window.location.href = '/mypage#mcp-submissions';
+        return false;
+    }
+
+    // 카테고리/리다이렉트는 제출안 값을 적용 (있는 경우만; null 이면 페이지의 기존 값 유지).
+    if (typeof detail.category === 'string') {
+        const catInputEl = document.getElementById('categoryInput') as HTMLInputElement | null;
+        if (catInputEl) {
+            catInputEl.value = detail.category;
+            categoryTags = detail.category.split(',').map((c: string) => c.trim()).filter((c: string) => c);
+            syncStateToWindow();
+            if (typeof window.renderCategoryTags === 'function') window.renderCategoryTags();
+        }
+    }
+    if (typeof detail.redirect_to === 'string') {
+        const redirEl = document.getElementById('redirectInput') as HTMLInputElement | null;
+        if (redirEl) redirEl.value = detail.redirect_to;
+    }
+    // 잠금 변경 요청(requested_lock) 도 반영해 /resolve cleanup 후에도 의도한 잠금 상태가 유지되도록 한다.
+    // /api/mcp-submissions/:id/approve 와 동일한 정책: requested_lock 가 null 이면 현재 페이지 값 유지.
+    // 권한(wiki:lock) 검증은 서버측 PUT 핸들러가 책임지므로 클라이언트는 단순히 체크박스만 동기화한다.
+    if (detail.requested_lock !== null && detail.requested_lock !== undefined) {
+        const lockEl = document.getElementById('isLockedCheck') as HTMLInputElement | null;
+        if (lockEl) lockEl.checked = detail.requested_lock === 1 || detail.requested_lock === true;
+    }
+    // 요약 입력칸에 제출 시 AI 가 작성한 요약을 미리 채워준다.
+    // edit.html 의 편집 요약 입력 id 는 'summaryInput' (summary.ts 도 동일 id 를 갱신).
+    if (typeof detail.submitted_summary === 'string' && detail.submitted_summary) {
+        const sumEl = document.getElementById('summaryInput') as HTMLInputElement | null;
+        if (sumEl && !sumEl.value) sumEl.value = detail.submitted_summary;
+    }
+
+    // base = base_revision_id 시점의 본문. 충돌이 없으면 base==current 이지만, 그 경우 모달이
+    // 충돌 hunk 0개로 떠도 동작은 정상(사용자가 그대로 적용 가능).
+    const baseContent: string = typeof detail.base_content === 'string' ? detail.base_content : '';
+    const proposedContent: string = typeof detail.proposed_content === 'string' ? detail.proposed_content : '';
+    const currentContent: string = typeof detail.current_content === 'string' ? detail.current_content : '';
+
+    // 같은 슬러그에 사용자의 로컬 초안(checkDraft 가 보통 띄울 prompt 대상)이 남아 있으면,
+    // MCP merge 모드는 그것을 건너뛰고 에디터를 제출안 본문으로 덮어쓴다 — 저장 성공 시
+    // DRAFT_KEY 가 제거되어 그 로컬 초안이 silent 손실된다. 손실 방지를 위해 백업 키로
+    // 옮겨두고 사용자에게 안내한다 (사용자는 mypage 나 콘솔에서 키를 확인해 복구 가능).
+    if (DRAFT_KEY) {
+        try {
+            const existing = localStorage.getItem(DRAFT_KEY);
+            if (existing !== null) {
+                const backupKey = `${DRAFT_KEY}__pre_mcp_${submissionId}`;
+                localStorage.setItem(backupKey, existing);
+                localStorage.removeItem(DRAFT_KEY);
+                window.Swal?.fire({
+                    icon: 'info',
+                    title: '기존 로컬 초안을 백업했습니다',
+                    html: `같은 문서에 작성 중이던 로컬 초안이 있어 MCP 편집안 병합 진행 전에 보존했습니다.<br>저장 후에도 다음 키로 localStorage 에서 복구할 수 있습니다:<br><code>${escapeHtml(backupKey)}</code>`,
+                    toast: false,
+                    confirmButtonText: '확인',
+                });
+            }
+        } catch { /* localStorage 비활성 등은 무시 */ }
+    }
+
+    originalContent = baseContent;
+    if (editor) editor.setMarkdown(proposedContent);
+
+    // 충돌 모달은 window.pageVersion 을 current_version 으로 갱신하지만, 본 모듈은 모듈 로컬
+    // `pageVersion` 을 사용해 savePage 의 expected_version 을 송신한다. resolveConflict 직후
+    // 사용자가 저장하면 stale 한 base_version 이 보내져 다시 409 가 나므로, 충돌 모달 호출 전에
+    // 로컬값도 미리 갱신한다 — 일반 동시편집 충돌 경로(line ~3766) 와 동일한 패턴.
+    if (detail.current_version != null) {
+        pageVersion = detail.current_version;
+    } else {
+        pageVersion = detail.base_version ?? pageVersion;
+    }
+    syncStateToWindow();
+
+    // 충돌 모달 트리거 — window.pageVersion 은 모달이 한 번 더 current_version 으로 세팅한다.
+    if (typeof window.showConflictModal === 'function') {
+        window.showConflictModal({
+            current_version: detail.current_version,
+            content: currentContent,
+        });
+    }
+    return true;
+}
+
 function hasMeaningfulChanges() {
     const currentContent = editor ? editor.getMarkdown() : '';
 
@@ -3660,6 +3893,24 @@ async function savePage() {
         if (window.promotedFromDraftKey && window.promotedFromDraftKey !== DRAFT_KEY) {
             localStorage.removeItem(window.promotedFromDraftKey);
             window.promotedFromDraftKey = null;
+        }
+
+        // MCP 편집안 충돌 해결 모드로 저장이 완료됐다면 제출안(draft) 을 정리한다.
+        // /resolve 는 새 리비전을 만들지 않고 draft + 알림만 삭제한다 (리비전은 위 PUT 이 이미 생성).
+        // fetch 는 4xx/5xx 에서 throw 하지 않으므로 res.ok 를 명시적으로 확인하고, 실패 시 콘솔에
+        // 로그를 남긴 뒤 mcpSubmissionId 를 유지해 사용자가 mypage 에서 수동 삭제하도록 한다 —
+        // 무조건 null 로 비우면 정리 실패를 silent 하게 가린다.
+        if (mcpSubmissionId) {
+            try {
+                const resolveRes = await fetch(`/api/mcp-submissions/${mcpSubmissionId}/resolve`, { method: 'POST' });
+                if (resolveRes.ok) {
+                    mcpSubmissionId = null;
+                } else {
+                    console.warn('[edit/main] MCP 제출안 cleanup 실패 (HTTP ' + resolveRes.status + '). mypage 에서 수동 정리 필요.');
+                }
+            } catch (e) {
+                console.warn('[edit/main] MCP 제출안 cleanup 네트워크 오류:', e);
+            }
         }
 
         isSuccess = true;
