@@ -4,7 +4,7 @@ import { requireAuth, requireAuthAllowBanned } from '../middleware/session';
 import { safeJSON } from '../utils/json';
 import { isSuperAdmin } from '../utils/auth';
 import { RBAC } from '../utils/role';
-import { pushToUser } from '../utils/push';
+import { createNotification } from '../utils/notification';
 
 const notificationRoutes = new Hono<Env>();
 
@@ -187,24 +187,19 @@ notificationRoutes.post('/messages', requireAuth, async (c) => {
 
     const messageId = result.meta.last_row_id;
 
-    // 수신자에게 알림 생성
-    await db.prepare(
-        'INSERT INTO notifications (user_id, type, content, ref_id) VALUES (?, ?, ?, ?)'
-    ).bind(
-        receiver_id,
-        'message',
-        `${user.name}님이 쪽지를 보냈습니다.`,
-        messageId
-    ).run();
-
-    c.executionCtx.waitUntil(
-        pushToUser(c.env, receiver_id, {
+    // 수신자에게 알림 생성 (+ 푸시)
+    await createNotification(c.env, c.executionCtx, {
+        userId: receiver_id,
+        type: 'message',
+        content: `${user.name}님이 쪽지를 보냈습니다.`,
+        refId: Number(messageId),
+        push: {
             title: `${user.name}님의 쪽지`,
             body: content.trim().slice(0, 120),
             url: '/mypage#messages',
             tag: `message:${messageId}`,
-        }),
-    );
+        },
+    });
 
     return c.json(safeJSON({ id: messageId }), 201);
 });

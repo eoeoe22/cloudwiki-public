@@ -6,7 +6,7 @@ import { matchAdminNamespace } from '../utils/adminNamespace';
 import { safeJSON } from '../utils/json';
 import { ROLE_CASE_SQL, enrichRoles, RBAC } from '../utils/role';
 import { fetchMediaTags } from '../utils/mediaTags';
-import { pushToUser } from '../utils/push';
+import { createNotifications } from '../utils/notification';
 
 const wiki = new Hono<Env>();
 
@@ -1495,22 +1495,18 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
                         : rawSummary;
                     const summarySuffix = truncatedSummary ? ` (${truncatedSummary})` : '';
                     const notifContent = `${user.name}님이 "${slug}" 문서를 편집했습니다.${summarySuffix}`;
-                    const stmts = watchers.map(uid =>
-                        db.prepare('INSERT INTO notifications (user_id, type, content, link) VALUES (?, ?, ?, ?)')
-                            .bind(uid, 'page_watch', notifContent, watchLink)
-                    );
-                    await db.batch(stmts);
-                    // best-effort 푸시 (in-app 알림이 truth source)
-                    for (const uid of watchers) {
-                        c.executionCtx.waitUntil(
-                            pushToUser(c.env, uid, {
-                                title: `${slug}`,
-                                body: notifContent,
-                                url: watchLink,
-                                tag: `page_watch:${existing.id}`,
-                            }),
-                        );
-                    }
+                    await createNotifications(c.env, c.executionCtx, watchers.map(uid => ({
+                        userId: uid,
+                        type: 'page_watch',
+                        content: notifContent,
+                        link: watchLink,
+                        push: {
+                            title: `${slug}`,
+                            body: notifContent,
+                            url: watchLink,
+                            tag: `page_watch:${existing.id}`,
+                        },
+                    })));
                 })
                 .catch(e => console.error('Failed to notify watchers:', e))
         );

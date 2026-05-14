@@ -9,6 +9,7 @@ import { signupRejected, userJoined } from '../utils/webhook/events/signup';
 import { userBan, userRoleChange } from '../utils/webhook/events/user';
 import { superAdminAction } from '../utils/webhook/events/superAdmin';
 import { pushToUser, pushToSignupRequest, promoteSignupSubscriptions, deleteSignupSubscriptions } from '../utils/push';
+import { createNotification } from '../utils/notification';
 import {
     loadAnnouncements,
     mutateAnnouncements,
@@ -274,24 +275,21 @@ adminRoutes.put('/users/:id/ban', async (c) => {
             .catch(e => console.error('Failed to invalidate session cache:', e))
     );
 
-    // 차단 시 알림 생성
+    // 차단 시 알림 생성 (+ 푸시)
     if (days > 0) {
         try {
-            await db.prepare(
-                'INSERT INTO notifications (user_id, type, content) VALUES (?, ?, ?)'
-            ).bind(
-                Number(targetUserId),
-                'banned',
-                `관리자에 의해 ${days}일간 차단되었습니다.`
-            ).run();
-            c.executionCtx.waitUntil(
-                pushToUser(c.env, Number(targetUserId), {
+            const banContent = `관리자에 의해 ${days}일간 차단되었습니다.`;
+            await createNotification(c.env, c.executionCtx, {
+                userId: Number(targetUserId),
+                type: 'banned',
+                content: banContent,
+                push: {
                     title: '차단 안내',
-                    body: `관리자에 의해 ${days}일간 차단되었습니다.`,
+                    body: banContent,
                     url: '/',
                     tag: `ban:${targetUserId}`,
-                }),
-            );
+                },
+            });
         } catch (e) {
             console.error('Failed to create ban notification:', e);
         }

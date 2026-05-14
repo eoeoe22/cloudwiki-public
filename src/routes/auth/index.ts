@@ -12,7 +12,7 @@ import type { RBAC } from '../../utils/role';
 import type { AuthProvidersResponse } from '../../shared/api/auth';
 import { dispatchDiscord } from '../../utils/webhook/discord';
 import { signupPending } from '../../utils/webhook/events/signup';
-import { pushToUser } from '../../utils/push';
+import { createNotification } from '../../utils/notification';
 
 const auth = new Hono<Env>();
 
@@ -256,23 +256,19 @@ auth.post('/api/auth/signup-request', async (c) => {
     const notifContent = `${name.trim()}님이 가입을 신청했습니다.`;
     const adminLink = '/admin#signup-requests';
     for (const userId of notifyUserIds) {
-        await db.prepare(
-            'INSERT INTO notifications (user_id, type, content, link, ref_id) VALUES (?, ?, ?, ?, ?)'
-        ).bind(
+        await createNotification(c.env, c.executionCtx, {
             userId,
-            'signup_request',
-            notifContent,
-            adminLink,
-            requestId
-        ).run();
-        c.executionCtx.waitUntil(
-            pushToUser(c.env, userId, {
+            type: 'signup_request',
+            content: notifContent,
+            link: adminLink,
+            refId: Number(requestId),
+            push: {
                 title: '새 가입 신청',
                 body: notifContent,
                 url: adminLink,
                 tag: `signup_request:${requestId}`,
-            }),
-        );
+            },
+        });
     }
 
     // 토큰 삭제

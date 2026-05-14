@@ -5,7 +5,7 @@ import { safeJSON } from '../utils/json';
 import { ROLE_CASE_SQL, enrichRoles, enrichRole, RBAC } from '../utils/role';
 import { dispatchDiscord } from '../utils/webhook/discord';
 import { ticketCreate, ticketStatus } from '../utils/webhook/events/ticket';
-import { pushToUser } from '../utils/push';
+import { createNotifications } from '../utils/notification';
 
 const ticketRoutes = new Hono<Env>();
 
@@ -155,27 +155,20 @@ ticketRoutes.post('/tickets', requireAuth, requirePermission('ticket:create'), a
         const link = `/tickets/${ticketId}`;
         const notifContent = `새 티켓 문의 [#${ticketId}] ${typeLabels[type]}: '${title.trim()}'`;
 
-        const batchStmts = admins
+        await createNotifications(c.env, c.executionCtx, admins
             .filter(a => a.id !== user.id)
-            .map(a =>
-                db.prepare('INSERT INTO notifications (user_id, type, content, link) VALUES (?, ?, ?, ?)')
-                    .bind(a.id, 'ticket_created', notifContent, link)
-            );
-
-        if (batchStmts.length > 0) {
-            await db.batch(batchStmts);
-            for (const a of admins) {
-                if (a.id === user.id) continue;
-                c.executionCtx.waitUntil(
-                    pushToUser(c.env, a.id, {
-                        title: `새 티켓 #${ticketId}`,
-                        body: notifContent,
-                        url: link,
-                        tag: `ticket:${ticketId}`,
-                    }),
-                );
-            }
-        }
+            .map(a => ({
+                userId: a.id,
+                type: 'ticket_created',
+                content: notifContent,
+                link,
+                push: {
+                    title: `새 티켓 #${ticketId}`,
+                    body: notifContent,
+                    url: link,
+                    tag: `ticket:${ticketId}`,
+                },
+            })));
     } catch (e) {
         console.error('Failed to create ticket notifications:', e);
     }
@@ -323,24 +316,18 @@ ticketRoutes.post('/tickets/:id/comments', requireAuth, requirePermission('comme
         const link = `/tickets/${ticketId}`;
         const notifContent = `티켓 [#${ticketId}] '${ticket.title}'에 새 댓글이 달렸습니다.`;
 
-        const batchStmts = Array.from(allRecipients).map(recipientId =>
-            db.prepare('INSERT INTO notifications (user_id, type, content, link) VALUES (?, ?, ?, ?)')
-                .bind(recipientId, 'ticket_comment', notifContent, link)
-        );
-
-        if (batchStmts.length > 0) {
-            await db.batch(batchStmts);
-            for (const recipientId of allRecipients) {
-                c.executionCtx.waitUntil(
-                    pushToUser(c.env, recipientId, {
-                        title: `티켓 #${ticketId}`,
-                        body: notifContent,
-                        url: link,
-                        tag: `ticket:${ticketId}`,
-                    }),
-                );
-            }
-        }
+        await createNotifications(c.env, c.executionCtx, Array.from(allRecipients).map(recipientId => ({
+            userId: recipientId,
+            type: 'ticket_comment',
+            content: notifContent,
+            link,
+            push: {
+                title: `티켓 #${ticketId}`,
+                body: notifContent,
+                url: link,
+                tag: `ticket:${ticketId}`,
+            },
+        })));
     } catch (e) {
         console.error('Failed to create ticket comment notifications:', e);
     }

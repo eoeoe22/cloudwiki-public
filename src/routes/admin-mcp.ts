@@ -35,6 +35,7 @@ import {
 } from '../utils/mcpDispatch';
 import { computeLineDiffStats } from '../utils/diff';
 import { ensureMcpDraftsMigration } from '../utils/mcpDraftsMigration';
+import { createNotification } from '../utils/notification';
 import {
     SLUG_FORBIDDEN_CHARS,
     computePageMetricsTracked,
@@ -772,19 +773,27 @@ async function markDraftSubmittedAndNotify(
         // 동시 호출이 이미 전환을 끝냄 — 알림 중복 INSERT 방지.
         return null;
     }
-    await db
-        .prepare(
-            "INSERT INTO notifications (user_id, type, content, link, ref_id) " +
-            "SELECT user_id, ?, ?, ?, ? FROM mcp_drafts WHERE id = ?"
-        )
-        .bind(
-            'mcp_submission',
-            `MCP 서버로 제출된 "${slug}" 문서 편집안이 존재합니다.`,
-            '/mypage#mcp-submissions',
-            draftId,
-            draftId,
-        )
-        .run();
+    // draft 소유자(=OAuth 토큰 유저) 에게 in-app 알림 + 푸시.
+    const ownerRow = await db
+        .prepare('SELECT user_id FROM mcp_drafts WHERE id = ?')
+        .bind(draftId)
+        .first<{ user_id: number | null }>();
+    if (ownerRow?.user_id) {
+        const notifContent = `MCP 서버로 제출된 "${slug}" 문서 편집안이 존재합니다.`;
+        await createNotification(c.env, c.executionCtx, {
+            userId: ownerRow.user_id,
+            type: 'mcp_submission',
+            content: notifContent,
+            link: '/mypage#mcp-submissions',
+            refId: draftId,
+            push: {
+                title: 'MCP 편집안 제출',
+                body: notifContent,
+                url: '/mypage#mcp-submissions',
+                tag: `mcp_submission:${draftId}`,
+            },
+        });
+    }
     return { iso: new Date(submittedAtSec * 1000).toISOString() };
 }
 

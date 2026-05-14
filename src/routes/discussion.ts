@@ -6,7 +6,7 @@ import { ROLE_CASE_SQL, enrichRoles, enrichRole, RBAC } from '../utils/role';
 import { dispatchDiscord } from '../utils/webhook/discord';
 import { discussionCreate } from '../utils/webhook/events/discussion';
 import { isR2OnlyNamespace } from '../utils/slug';
-import { pushToUser } from '../utils/push';
+import { createNotifications } from '../utils/notification';
 
 const discussionRoutes = new Hono<Env>();
 
@@ -221,25 +221,18 @@ discussionRoutes.post('/discussions/thread/:id/comments', requireAuth, requirePe
             const link = `/w/${encodeURIComponent(discussionInfo.slug)}?mode=discussions&id=${discussionId}`;
             const notifContent = `'${discussionInfo.title}' 토론에 새 댓글이 달렸습니다.`;
 
-            const batchStmts = participants.map(p => 
-                db.prepare('INSERT INTO notifications (user_id, type, content, link) VALUES (?, ?, ?, ?)')
-                  .bind(p.author_id, 'discussion_comment', notifContent, link)
-            );
-
-            if (batchStmts.length > 0) {
-                await db.batch(batchStmts);
-                // best-effort 푸시
-                for (const p of participants) {
-                    c.executionCtx.waitUntil(
-                        pushToUser(c.env, p.author_id, {
-                            title: discussionInfo.title,
-                            body: notifContent,
-                            url: link,
-                            tag: `discussion:${discussionId}`,
-                        }),
-                    );
-                }
-            }
+            await createNotifications(c.env, c.executionCtx, participants.map(p => ({
+                userId: p.author_id,
+                type: 'discussion_comment',
+                content: notifContent,
+                link,
+                push: {
+                    title: discussionInfo.title,
+                    body: notifContent,
+                    url: link,
+                    tag: `discussion:${discussionId}`,
+                },
+            })));
         }
     } catch (e) {
         console.error('Failed to create discussion notifications:', e);
