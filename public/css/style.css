@@ -156,11 +156,19 @@ h6,
 }
 
 .card,
-.card-header,
+.card-header:not(.wiki-card-header),
 .card-footer {
   background-color: var(--wiki-card-bg) !important;
   color: var(--wiki-text) !important;
   border-color: var(--wiki-border) !important;
+}
+
+/* .wiki-card-header 는 사용자가 {bg:}/{color:}/{palette:} 토큰으로 inline style 을
+   지정할 수 있어야 하므로 !important 를 쓰지 않고 위키 테마 기본값만 fallback 으로 둔다. */
+.wiki-card-header {
+  background-color: var(--wiki-card-bg);
+  color: var(--wiki-text);
+  border-color: var(--wiki-border);
 }
 
 /* ── SweetAlert2 Overrides ── */

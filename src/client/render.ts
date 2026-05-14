@@ -1707,7 +1707,15 @@ function _renderBlockHtml(block, blockData) {
     if (bg && _isSafeCssColor(bg)) style += `background-color:${bg};`;
     if (color && _isSafeCssColor(color)) style += `color:${color};`;
     const styleAttr = style ? ` style="${style}"` : '';
-    const titleEsc = escapeHtml(cleanTitle);
+    let titleHtml: string;
+    if (cleanTitle && typeof marked !== 'undefined') {
+        const { text: protectedTitle, prot: titleWlProt } = protectWikiLinks(cleanTitle);
+        titleHtml = marked.parseInline(protectedTitle) as string;
+        titleHtml = restoreWikiLinks(titleHtml, titleWlProt);
+        titleHtml = _processInlineLayoutTokens(titleHtml);
+    } else {
+        titleHtml = escapeHtml(cleanTitle);
+    }
 
     switch (type) {
         case 'card': {
@@ -1723,7 +1731,7 @@ function _renderBlockHtml(block, blockData) {
             const bodyStyleAttr = bodyStyle ? ` style="${bodyStyle}"` : '';
 
             return `<div class="card wiki-card">` +
-                (titleEsc ? `<div class="card-header wiki-card-header"${headerStyleAttr}>${titleEsc}</div>` : '') +
+                (titleHtml ? `<div class="card-header wiki-card-header"${headerStyleAttr}>${titleHtml}</div>` : '') +
                 `<div class="card-body wiki-card-body"${bodyStyleAttr}>${innerHtml}</div>` +
                 `</div>`;
         }
@@ -1838,7 +1846,7 @@ function _renderBlockHtml(block, blockData) {
         case 'step':
             // 부모(tabs/accordion/steps) 밖에서 단독 사용된 경우: 일반 블록으로 폴백.
             return `<div class="wiki-block wiki-block-${escapeHtml(type)}"${styleAttr}>` +
-                (titleEsc ? `<div class="wiki-block-title">${titleEsc}</div>` : '') +
+                (titleHtml ? `<div class="wiki-block-title">${titleHtml}</div>` : '') +
                 innerHtml +
                 `</div>`;
         case 'embed': {
@@ -1846,9 +1854,9 @@ function _renderBlockHtml(block, blockData) {
                             : (color && _isSafeCssColor(color)) ? color
                             : '';
             const accentStyle = accentRaw ? ` style="border-left-color:${accentRaw};"` : '';
-            const titleHtml = titleEsc ? `<div class="wiki-embed-title">${titleEsc}</div>` : '';
+            const embedTitleHtml = titleHtml ? `<div class="wiki-embed-title">${titleHtml}</div>` : '';
             return `<div class="wiki-embed"${accentStyle}>` +
-                titleHtml +
+                embedTitleHtml +
                 `<div class="wiki-embed-body">${innerHtml}</div>` +
                 `</div>`;
         }
@@ -1867,7 +1875,7 @@ function _renderBlockHtml(block, blockData) {
                 danger:  { icon: 'mdi-alert-octagon-outline', title: '위험',   bsVariant: 'danger' },
                 note:    { icon: 'mdi-note-text-outline',     title: '노트',   bsVariant: 'secondary' }
             }[type];
-            const headerTitle = titleEsc || escapeHtml(calloutMeta.title);
+            const headerTitle = titleHtml || escapeHtml(calloutMeta.title);
             return `<div class="alert alert-${calloutMeta.bsVariant} wiki-callout wiki-callout-${type}" role="note">` +
                 `<div class="wiki-callout-header">` +
                     `<span class="mdi ${calloutMeta.icon} wiki-callout-icon" aria-hidden="true"></span>` +
