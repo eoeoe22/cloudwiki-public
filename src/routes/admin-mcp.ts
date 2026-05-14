@@ -530,8 +530,8 @@ export async function applyExistingPageUpdate(
         redirectTo?: string | null;   // undefined → 기존 유지, null/string → 덮어쓰기
         finalIsLocked: number;
         slug: string;
-        logType: string;              // admin_log type (예: page_update / page_patch / page_revert)
-        logMessage: string;
+        logType?: string;             // admin_log type (예: page_update / page_patch / page_revert) — 생략 시 로그 없음
+        logMessage?: string;
     }
 ): Promise<{ revision_id: number; new_version: number; rows: number; characters: number }> {
     const db = c.env.DB;
@@ -597,11 +597,13 @@ export async function applyExistingPageUpdate(
         refreshRecentChangesCache(c),
         invalidateBacklinkCaches(c, opts.slug, c.env.DB),
     ]));
-    c.executionCtx.waitUntil(
-        c.env.DB.prepare('INSERT INTO admin_log (type, log, user) VALUES (?, ?, ?)')
-            .bind(opts.logType, opts.logMessage, user.id)
-            .run().catch((e: any) => console.error('admin-mcp admin_log write failed:', e))
-    );
+    if (opts.logType && opts.logMessage) {
+        c.executionCtx.waitUntil(
+            c.env.DB.prepare('INSERT INTO admin_log (type, log, user) VALUES (?, ?, ?)')
+                .bind(opts.logType, opts.logMessage, user.id)
+                .run().catch((e: any) => console.error('admin-mcp admin_log write failed:', e))
+        );
+    }
 
     return { revision_id: revisionId, new_version: newVersion, rows: metrics.rows ?? 0, characters: metrics.characters ?? 0 };
 }
@@ -619,8 +621,8 @@ export async function applyNewPageInsert(
         category: string | null;
         redirectTo: string | null;
         finalIsLocked: number;
-        logType: string;
-        logMessage: string;
+        logType?: string;
+        logMessage?: string;
     }
 ): Promise<{ page_id: number; revision_id: number; rows: number; characters: number }> {
     const db = c.env.DB;
@@ -663,11 +665,13 @@ export async function applyNewPageInsert(
         refreshRecentChangesCache(c),
         invalidateBacklinkCaches(c, slug, db),
     ]));
-    c.executionCtx.waitUntil(
-        db.prepare('INSERT INTO admin_log (type, log, user) VALUES (?, ?, ?)')
-            .bind(opts.logType, opts.logMessage, user.id)
-            .run().catch((e: any) => console.error('admin-mcp admin_log write failed:', e))
-    );
+    if (opts.logType && opts.logMessage) {
+        c.executionCtx.waitUntil(
+            db.prepare('INSERT INTO admin_log (type, log, user) VALUES (?, ?, ?)')
+                .bind(opts.logType, opts.logMessage, user.id)
+                .run().catch((e: any) => console.error('admin-mcp admin_log write failed:', e))
+        );
+    }
 
     return { page_id: pageId, revision_id: revisionId, rows: metrics.rows ?? 0, characters: metrics.characters ?? 0 };
 }
@@ -1195,8 +1199,6 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
                     redirectTo: draft.redirect_to,
                     finalIsLocked,
                     slug,
-                    logType: 'page_commit',
-                    logMessage: `[admin-mcp] draft #${draft.id} commit: ${slug} (v${page.version + 1})`,
                 });
                 await db.prepare('DELETE FROM mcp_drafts WHERE id = ?').bind(draft.id).run();
                 return asTextResult(JSON.stringify({
@@ -1279,8 +1281,6 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
                     category: draft.category,
                     redirectTo: draft.redirect_to,
                     finalIsLocked,
-                    logType: 'page_create_commit',
-                    logMessage: `[admin-mcp] draft #${draft.id} commit (create): ${slug} (v1)`,
                 });
                 await db.prepare('DELETE FROM mcp_drafts WHERE id = ?').bind(draft.id).run();
                 return asTextResult(JSON.stringify({
@@ -1373,8 +1373,6 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
                 summary,
                 finalIsLocked: page.is_locked,
                 slug,
-                logType: 'page_revert',
-                logMessage: `[admin-mcp] 문서 되돌리기: ${slug} → 리비전 #${revisionId} (v${page.version + 1})`,
             });
             return asTextResult(JSON.stringify({
                 slug,
@@ -1933,7 +1931,7 @@ export function buildUserEditInformationSuffix(userName: string): string {
         `승인 대기 상태 draft 는 list_drafts / read_draft 의 \`status\` 필드가 \`pending_approval\` 로 표시되며, AI 측에서는 더 이상 수정할 수 없습니다 (discard_edit 로 폐기만 가능).\n\n` +
         `**즉시 적용** (draft 모델 미사용): revert_page.\n\n` +
         USER_EDIT_TOOL_DEFS.map(t => `- ${t.name}`).join('\n') +
-        `\n\n모든 commit / 즉시 적용 / 승인된 제출 동작은 admin_log 에 기록되며 리비전 summary 에 [MCP] 접두가 붙습니다 (draft 단계는 기록 없음).`;
+        `\n\n리비전 summary 에 [MCP] 접두가 붙습니다 (draft 단계는 기록 없음).`;
     return `${readIntro}${editIntro}`;
 }
 
