@@ -1166,23 +1166,27 @@ adminRoutes.get('/media', async (c) => {
 // ── 미디어 쓰레기 수집기 (Garbage Collector) ──
 
 /**
- * 이미지 사용 여부를 LIKE로 판정할 때 쓰는 SQL 조건과 바인딩.
+ * 이미지 사용 여부를 부분문자열 매칭으로 판정할 때 쓰는 SQL 조건과 바인딩.
  * - r2_key(`images/foo.png`): `![alt](/media/images/...)` 마크다운 임베드 등 직접 URL 참조
  * - `[[이미지:foo.png]]` 형태의 wiki-link 네비게이션 링크도 "사용 중"으로 간주한다.
  *   이 형태는 extractLinks()가 link_type='wikilink'로만 기록하므로 page_links 1차 검사에서
- *   누락되며, 본문에 r2_key 부분문자열도 없으므로 기존 LIKE 1개 패턴으로도 누락된다.
+ *   누락되며, 본문에 r2_key 부분문자열도 없으므로 기존 패턴 1개로도 누락된다.
  *   단순 네비게이션 링크라도 GC가 삭제하면 메타페이지(/w/이미지:foo.png)가 깨지므로 보호한다.
  *   `]]` / `|` / `#` 세 종결 형태를 모두 커버한다(공백 변형은 드물어 미포함).
+ *
+ * NOTE: LIKE 대신 instr() 를 쓰는 이유 — r2_key 등에 SQLite LIKE 와일드카드(`%`, `_`)가
+ * 포함되거나 패턴이 길어지면 SQLite 가 "LIKE or GLOB pattern too complex" 오류를 던질 수 있다.
+ * instr() 는 단순 substring 검색이라 와일드카드 해석이 없고 동일 의미를 안전하게 표현한다.
  */
 function buildImageUsageWhere(): string {
-    return `(content LIKE ? OR content LIKE ? OR content LIKE ? OR content LIKE ?)`;
+    return `(instr(content, ?) > 0 OR instr(content, ?) > 0 OR instr(content, ?) > 0 OR instr(content, ?) > 0)`;
 }
 function buildImageUsageBindings(media: { r2_key: string; filename: string }): string[] {
     return [
-        `%${media.r2_key}%`,
-        `%[[이미지:${media.filename}]]%`,
-        `%[[이미지:${media.filename}|%`,
-        `%[[이미지:${media.filename}#%`,
+        media.r2_key,
+        `[[이미지:${media.filename}]]`,
+        `[[이미지:${media.filename}|`,
+        `[[이미지:${media.filename}#`,
     ];
 }
 
@@ -1308,7 +1312,7 @@ adminRoutes.post('/media/gc', async (c) => {
 /**
  * GET /media/:id/backlinks
  * 특정 이미지가 사용된 문서/블로그 포스트 목록(역링크) 조회
- * page_links 테이블(link_type='image') 기반 조회 + LIKE fallback
+ * page_links 테이블(link_type='image') 기반 조회 + 본문 부분문자열 fallback
  * 응답 backlinks 항목 형식:
  *   - 위키 문서: { type: 'page', id, slug }
  *   - 블로그 포스트: { type: 'blog', id, title }
@@ -1347,29 +1351,31 @@ adminRoutes.get('/media/:id/backlinks', async (c) => {
         `).bind(mediaItem.r2_key).all(),
     ]);
 
-    // 2차: LIKE fallback (아직 page_links에 인덱싱되지 않은 오래된 문서/포스트 대응)
+    // 2차: 본문 부분문자열 fallback (아직 page_links에 인덱싱되지 않은 오래된 문서/포스트 대응)
+    // LIKE 대신 instr() 를 쓰는 이유 — r2_key 에 SQLite LIKE 와일드카드(`%`, `_`)가 포함되거나
+    // 패턴이 길어지면 SQLite 가 "LIKE or GLOB pattern too complex" 오류를 던질 수 있다.
     const indexedPageIds = new Set((indexedPages.results || []).map((r: any) => r.id));
     const indexedBlogIds = new Set((indexedBlogs.results || []).map((r: any) => r.id));
-    const [likePages, likeBlogs] = await Promise.all([
+    const [substrPages, substrBlogs] = await Promise.all([
         db.prepare(`
             SELECT id, slug
             FROM pages
-            WHERE content LIKE ? AND deleted_at IS NULL
-        `).bind(`%${mediaItem.r2_key}%`).all(),
+            WHERE instr(content, ?) > 0 AND deleted_at IS NULL
+        `).bind(mediaItem.r2_key).all(),
         db.prepare(`
             SELECT id, title
             FROM blog_posts
-            WHERE content LIKE ? AND deleted_at IS NULL
-        `).bind(`%${mediaItem.r2_key}%`).all(),
+            WHERE instr(content, ?) > 0 AND deleted_at IS NULL
+        `).bind(mediaItem.r2_key).all(),
     ]);
 
     const merged = [
         ...(indexedPages.results || []).map((r: any) => ({ type: 'page', ...r })),
-        ...((likePages.results || []) as any[])
+        ...((substrPages.results || []) as any[])
             .filter(r => !indexedPageIds.has(r.id))
             .map(r => ({ type: 'page', ...r })),
         ...(indexedBlogs.results || []).map((r: any) => ({ type: 'blog', ...r })),
-        ...((likeBlogs.results || []) as any[])
+        ...((substrBlogs.results || []) as any[])
             .filter(r => !indexedBlogIds.has(r.id))
             .map(r => ({ type: 'blog', ...r })),
     ];

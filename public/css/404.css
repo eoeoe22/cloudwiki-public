@@ -10,8 +10,8 @@ html {
 .writing {
     width: 320px;
     height: 200px;
-    background-color: #3f3f3f;
-    border: 1px solid #bbbbbb;
+    background-color: var(--wiki-card-bg);
+    border: 1px solid var(--wiki-border);
     border-radius: 6px 6px 4px 4px;
     position: relative;
 }
@@ -20,7 +20,7 @@ html {
     position: absolute;
     width: 100%;
     height: 12px;
-    background-color: #f1f1f1;
+    background-color: var(--wiki-bg-alt);
     border-top-left-radius: 4px;
     border-top-right-radius: 4px;
 }
@@ -34,15 +34,15 @@ html {
 }
 
 .writing .topbar div.green {
-    background-color: #60d060;
+    background-color: var(--wiki-success);
 }
 
 .writing .topbar div.red {
-    background-color: red;
+    background-color: var(--wiki-danger);
 }
 
 .writing .topbar div.yellow {
-    background-color: #e6c015;
+    background-color: var(--wiki-warning);
 }
 
 .writing .code {
@@ -56,7 +56,7 @@ html {
 }
 
 .writing .code ul li {
-    background-color: #9e9e9e;
+    background-color: var(--wiki-text-muted);
     width: 0;
     height: 7px;
     border-radius: 6px;
@@ -95,14 +95,16 @@ html {
     padding: 20px;
     text-align: center;
     box-sizing: border-box;
+    color: var(--wiki-text);
 }
 
 .error h1 {
-    font-family: 'Roboto', sans-serif;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     font-size: clamp(40px, 12vw, 125px);
     padding: 0;
     margin: 0;
-    font-weight: 700;
+    font-weight: 800;
+    letter-spacing: -0.02em;
     white-space: nowrap;
 }
 
@@ -239,41 +241,36 @@ html {
     }
 }
 
+/* 사이트 공통 버튼 톤(.btn-new-page 와 동일 계열) */
 .button {
-    background-color: #4CAF50;
-    /* Green */
+    background: linear-gradient(135deg, var(--wiki-primary), var(--wiki-accent));
     border: none;
-    color: white;
-    padding: 13px 40px;
+    color: #ffffff;
+    padding: 0.6rem 1.4rem;
     text-align: center;
     text-decoration: none;
     display: inline-block;
-    font-size: 16px;
+    font-size: 0.95rem;
+    font-weight: 700;
+    border-radius: 4px;
     margin: 10px 2px;
+    box-shadow: var(--wiki-shadow-sm);
+    transition: all 0.2s var(--wiki-ease);
     cursor: pointer;
 }
 
-.button5 {
-    background-color: #000000;
+.button:hover {
+    box-shadow: var(--wiki-shadow-md);
+    transform: translateY(-2px);
+    color: #ffffff;
+    filter: brightness(1.1);
 }
 
-/* ── Dark Mode Auto Adjustment (Unified with site theme) ── */
-@media (prefers-color-scheme: dark) {
-    .writing {
-        background-color: var(--wiki-card-bg, #000000);
-        border-color: var(--wiki-border, #30363d);
-    }
-    .writing .topbar {
-        background-color: var(--wiki-bg, #000000);
-        border-bottom: 1px solid var(--wiki-border, #30363d);
-    }
-    .writing .code ul li {
-        background-color: var(--wiki-text-muted, #8b949e);
-    }
-    .button {
-        color: var(--wiki-bg, #000000);
-    }
-    .button5 {
-        background-color: var(--wiki-text, #c9d1d9);
-    }
+.button:active {
+    transform: translateY(0);
+}
+
+/* .button5 는 과거 까만 배경 변형이었음. 현재는 .button 과 동일하게 처리(클래스 호환용). */
+.button5 {
+    /* no-op — 사이트 톤 그라데이션을 그대로 사용 */
 }

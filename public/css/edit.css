@@ -1,3 +1,33 @@
+/* ── 에디터 전용 토큰 (CodeMirror 신택스 하이라이팅 색) ── */
+/* style.css 의 :root color-scheme: light dark 설정으로 light-dark() 가 분기됨 */
+:root {
+  --cm-wiki-link: light-dark(#007bff, #58a6ff);
+  --cm-wiki-link-bg: light-dark(rgba(0, 123, 255, 0.08), rgba(88, 166, 255, 0.1));
+
+  --cm-wiki-template: light-dark(#28a745, #56d364);
+  --cm-wiki-template-bg: light-dark(rgba(40, 167, 69, 0.08), rgba(86, 211, 100, 0.1));
+
+  --cm-wiki-template-param: light-dark(#d98c0b, #f0b155);
+  --cm-wiki-template-param-bg: light-dark(rgba(217, 140, 11, 0.1), rgba(240, 177, 85, 0.12));
+
+  --cm-quote-marker: var(--cm-wiki-link);
+  --cm-time-marker: var(--cm-wiki-link);
+
+  --cm-list-marker: #87CEEB;
+  --cm-align-marker: #ff0000;
+
+  --cm-highlight-bg: light-dark(#ffff99, #bfa000);
+  --cm-highlight-fg: light-dark(#000000, #ffffff);
+
+  --cm-param-token: light-dark(#b45309, #fbbf24);
+
+  --cm-inline-code-bg: light-dark(#f6f8fa, #2d2d2d);
+  --cm-inline-code-fg: light-dark(#24292f, #e0e0e0);
+
+  --cm-code-block-bg: light-dark(#f6f8fa, #111111);
+  --cm-code-block-fg: light-dark(#24292f, #e0e0e0);
+}
+
 /* ── PC 버전 레이아웃 최적화: 에디터가 화면을 꽉 채우도록 ── */
 @media (min-width: 992px) {
     #main-editor-container {
@@ -240,7 +270,7 @@
         padding: 8px 12px;
         border: none;
         background: transparent;
-        color: var(--wiki-text-muted, #6c757d);
+        color: var(--wiki-text-muted);
         font-size: 0.9rem;
         font-weight: 500;
         cursor: pointer;
@@ -249,8 +279,8 @@
     }
 
     .cm-tab-btn.active {
-        color: var(--wiki-primary, #0d6efd);
-        border-bottom-color: var(--wiki-primary, #0d6efd);
+        color: var(--wiki-primary);
+        border-bottom-color: var(--wiki-primary);
         background: transparent;
         font-weight: 600;
     }
@@ -312,7 +342,7 @@ html[data-theme="dark"] #cm-editor .cm-editor {
     align-items: center;
     gap: 2px;
     padding: 4px 6px;
-    background: var(--wiki-bg-alt, #f8f9fa);
+    background: var(--wiki-bg-alt);
     border-bottom: 1px solid var(--wiki-border);
     min-height: 36px;
     flex-shrink: 0;
@@ -547,74 +577,38 @@ html[data-theme="dark"] .editor-settings-panel {
 }
 
 /* ── 위키 문법 에디터 내 하이라이팅 ── */
+.cm-toolbar {
+    background: var(--wiki-bg-alt);
+}
+
 .cm-wiki-link {
-    color: #007bff;
+    color: var(--cm-wiki-link);
     font-weight: bold;
-    background: rgba(0, 123, 255, 0.08);
+    background: var(--cm-wiki-link-bg);
     border-radius: 3px;
     padding: 0 2px;
 }
 
 .cm-wiki-template.cm-wiki-template {
-    --cm-wiki-template-color: #28a745;
-    --cm-wiki-template-background: rgba(40, 167, 69, 0.08);
-    color: var(--cm-wiki-template-color);
+    color: var(--cm-wiki-template);
     font-weight: bold;
-    background: var(--cm-wiki-template-background);
+    background: var(--cm-wiki-template-bg);
     border-radius: 3px;
     padding: 0 2px;
 }
 
 .cm-wiki-template-param.cm-wiki-template-param {
-    --cm-wiki-template-param-color: #d98c0b;
-    --cm-wiki-template-param-background: rgba(217, 140, 11, 0.1);
-    color: var(--cm-wiki-template-param-color);
+    color: var(--cm-wiki-template-param);
     font-weight: bold;
-    background: var(--cm-wiki-template-param-background);
+    background: var(--cm-wiki-template-param-bg);
     border-radius: 3px;
     padding: 0 2px;
 }
 
 .cm-bg-color {
-    border: 1px solid #ccc;
+    border: 1px solid var(--wiki-border);
     border-radius: 3px;
     padding: 0 2px;
-}
-
-@media (prefers-color-scheme: dark) {
-    html:not([data-theme="light"]) .cm-toolbar {
-        background: var(--wiki-bg-alt, #000000);
-    }
-
-    html:not([data-theme="light"]) .cm-wiki-link {
-        color: #58a6ff;
-        background: rgba(88, 166, 255, 0.1);
-    }
-
-    html:not([data-theme="light"]) .cm-wiki-template.cm-wiki-template {
-        --cm-wiki-template-color: #56d364;
-        --cm-wiki-template-background: rgba(86, 211, 100, 0.1);
-    }
-
-    html:not([data-theme="light"]) .cm-wiki-template-param.cm-wiki-template-param {
-        --cm-wiki-template-param-color: #f0b155;
-        --cm-wiki-template-param-background: rgba(240, 177, 85, 0.12);
-    }
-}
-html[data-theme="dark"] .cm-toolbar {
-    background: var(--wiki-bg-alt, #000000);
-}
-html[data-theme="dark"] .cm-wiki-link {
-    color: #58a6ff;
-    background: rgba(88, 166, 255, 0.1);
-}
-html[data-theme="dark"] .cm-wiki-template.cm-wiki-template {
-    --cm-wiki-template-color: #56d364;
-    --cm-wiki-template-background: rgba(86, 211, 100, 0.1);
-}
-html[data-theme="dark"] .cm-wiki-template-param.cm-wiki-template-param {
-    --cm-wiki-template-param-color: #f0b155;
-    --cm-wiki-template-param-background: rgba(240, 177, 85, 0.12);
 }
 
 /* ────────────── GitHub 스타일 편집 충돌 UI ────────────── */
@@ -643,7 +637,7 @@ html[data-theme="dark"] .cm-wiki-template-param.cm-wiki-template-param {
     line-height: 1.4;
 }
 .conflict-chip.server { color: var(--wiki-danger); border-color: var(--wiki-danger); }
-.conflict-chip.mine   { color: var(--wiki-primary, #3b82f6); border-color: var(--wiki-primary, #3b82f6); }
+.conflict-chip.mine   { color: var(--wiki-primary); border-color: var(--wiki-primary); }
 
 .conflict-toolbar { flex-wrap: wrap; align-items: center; }
 
@@ -1513,8 +1507,8 @@ html[data-theme="dark"] #concurrent-edit-banner {
 .img-upload-popup {
     position: absolute;
     z-index: 1100;
-    background: var(--wiki-card-bg, #fff);
-    border: 1px solid var(--wiki-border, #dee2e6);
+    background: var(--wiki-card-bg);
+    border: 1px solid var(--wiki-border);
     border-radius: 8px;
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
     padding: 16px;
@@ -1530,24 +1524,24 @@ html[data-theme="dark"] #concurrent-edit-banner {
 }
 
 .img-upload-dropzone {
-    border: 2px dashed var(--wiki-primary, #3b82f6);
+    border: 2px dashed var(--wiki-primary);
     border-radius: 8px;
     padding: 32px 16px;
     text-align: center;
     cursor: pointer;
     transition: background 0.2s, border-color 0.2s;
-    background: rgba(var(--wiki-primary-rgb, 59, 130, 246), 0.04);
+    background: rgba(var(--wiki-primary-rgb), 0.04);
 }
 
 .img-upload-dropzone:hover,
 .img-upload-dropzone.dragover {
-    background: rgba(var(--wiki-primary-rgb, 59, 130, 246), 0.10);
-    border-color: var(--wiki-link, #2563eb);
+    background: rgba(var(--wiki-primary-rgb), 0.10);
+    border-color: var(--wiki-link);
 }
 
 .img-upload-dropzone i {
     font-size: 2.2rem;
-    color: var(--wiki-primary, #3b82f6);
+    color: var(--wiki-primary);
     display: block;
     margin-bottom: 8px;
 }
@@ -1555,12 +1549,12 @@ html[data-theme="dark"] #concurrent-edit-banner {
 .img-upload-dropzone .drop-main-text {
     font-weight: 600;
     font-size: 0.95rem;
-    color: var(--wiki-text, #333);
+    color: var(--wiki-text);
 }
 
 .img-upload-dropzone .drop-sub-text {
     font-size: 0.82rem;
-    color: var(--wiki-muted, #888);
+    color: var(--wiki-text-muted);
     margin-top: 4px;
 }
 
@@ -1573,8 +1567,8 @@ html[data-theme="dark"] #concurrent-edit-banner {
     margin-top: 10px;
     padding: 8px 12px;
     background: transparent;
-    color: var(--wiki-text, #333);
-    border: 1px solid var(--wiki-border, #dee2e6);
+    color: var(--wiki-text);
+    border: 1px solid var(--wiki-border);
     border-radius: 6px;
     font-size: 0.88rem;
     cursor: pointer;
@@ -1582,9 +1576,9 @@ html[data-theme="dark"] #concurrent-edit-banner {
 }
 
 .img-upload-search-btn:hover {
-    background: rgba(var(--wiki-primary-rgb, 59, 130, 246), 0.08);
-    border-color: var(--wiki-primary, #3b82f6);
-    color: var(--wiki-primary, #3b82f6);
+    background: rgba(var(--wiki-primary-rgb), 0.08);
+    border-color: var(--wiki-primary);
+    color: var(--wiki-primary);
 }
 
 .img-upload-search-btn i {
@@ -1608,7 +1602,7 @@ html[data-theme="dark"] #concurrent-edit-banner {
 
 .existing-img-search-info {
     font-size: 0.82rem;
-    color: var(--wiki-muted, #888);
+    color: var(--wiki-text-muted);
     margin-bottom: 10px;
 }
 
@@ -1625,23 +1619,23 @@ html[data-theme="dark"] #concurrent-edit-banner {
     grid-column: 1 / -1;
     text-align: center;
     padding: 32px 0;
-    color: var(--wiki-muted, #888);
+    color: var(--wiki-text-muted);
     font-size: 0.9rem;
 }
 
 .existing-img-tile {
-    border: 1px solid var(--wiki-border, #dee2e6);
+    border: 1px solid var(--wiki-border);
     border-radius: 6px;
     overflow: hidden;
     cursor: pointer;
-    background: var(--wiki-card-bg, #fff);
+    background: var(--wiki-card-bg);
     transition: border-color 0.15s, transform 0.15s, box-shadow 0.15s;
     display: flex;
     flex-direction: column;
 }
 
 .existing-img-tile:hover {
-    border-color: var(--wiki-primary, #3b82f6);
+    border-color: var(--wiki-primary);
     transform: translateY(-1px);
     box-shadow: 0 4px 10px rgba(0, 0, 0, 0.08);
 }
@@ -1657,7 +1651,7 @@ html[data-theme="dark"] #concurrent-edit-banner {
 .existing-img-tile-name {
     padding: 4px 6px;
     font-size: 0.75rem;
-    color: var(--wiki-text, #333);
+    color: var(--wiki-text);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1676,9 +1670,9 @@ html[data-theme="dark"] #concurrent-edit-banner {
     font-size: 0.68rem;
     line-height: 1.1;
     padding: 2px 6px;
-    background-color: rgba(88, 166, 255, 0.1);
-    color: var(--wiki-primary, #58a6ff);
-    border: 1px solid rgba(88, 166, 255, 0.2);
+    background-color: color-mix(in srgb, var(--wiki-primary) 10%, transparent);
+    color: var(--wiki-primary);
+    border: 1px solid color-mix(in srgb, var(--wiki-primary) 20%, transparent);
     border-radius: 6px;
     white-space: nowrap;
     max-width: 100%;
@@ -1688,7 +1682,7 @@ html[data-theme="dark"] #concurrent-edit-banner {
 
 .existing-img-tile-tag-more {
     background-color: transparent;
-    color: var(--wiki-text-muted, #888);
+    color: var(--wiki-text-muted);
     border-color: transparent;
     padding-left: 0;
     padding-right: 0;
@@ -1708,13 +1702,13 @@ html[data-theme="dark"] #concurrent-edit-banner {
     max-width: 100%;
     max-height: 200px;
     border-radius: 6px;
-    border: 1px solid var(--wiki-border, #dee2e6);
+    border: 1px solid var(--wiki-border);
 }
 
 .existing-img-size-filename {
     margin-top: 6px;
     font-size: 0.82rem;
-    color: var(--wiki-muted, #888);
+    color: var(--wiki-text-muted);
     word-break: break-all;
 }
 
@@ -1732,22 +1726,22 @@ html[data-theme="dark"] #concurrent-edit-banner {
     align-items: center;
     gap: 8px;
     padding: 6px 10px;
-    border: 1px solid var(--wiki-border, #dee2e6);
+    border: 1px solid var(--wiki-border);
     border-radius: 6px;
     cursor: pointer;
     font-size: 0.9rem;
 }
 
 .existing-img-size-options label:hover {
-    background: rgba(var(--wiki-primary-rgb, 59, 130, 246), 0.06);
+    background: rgba(var(--wiki-primary-rgb), 0.06);
 }
 
 /* ── 표 삽입 그리드 팝오버 ── */
 .table-insert-popup {
     position: absolute;
     z-index: 1100;
-    background: var(--wiki-card-bg, #fff);
-    border: 1px solid var(--wiki-border, #dee2e6);
+    background: var(--wiki-card-bg);
+    border: 1px solid var(--wiki-border);
     border-radius: 8px;
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
     padding: 12px;
@@ -1762,7 +1756,7 @@ html[data-theme="dark"] #concurrent-edit-banner {
 .table-insert-label {
     text-align: center;
     font-size: 0.8rem;
-    color: var(--wiki-text-muted, #888);
+    color: var(--wiki-text-muted);
     margin-bottom: 6px;
     min-height: 1.1em;
 }
@@ -1778,16 +1772,16 @@ html[data-theme="dark"] #concurrent-edit-banner {
 .table-insert-cell {
     width: 20px;
     height: 20px;
-    border: 1px solid var(--wiki-border, #dee2e6);
-    background: var(--wiki-bg, #fff);
+    border: 1px solid var(--wiki-border);
+    background: var(--wiki-bg);
     cursor: pointer;
     border-radius: 2px;
     transition: background 0.08s ease, border-color 0.08s ease;
 }
 
 .table-insert-cell.highlighted {
-    background: var(--wiki-primary, #3b82f6);
-    border-color: var(--wiki-primary, #3b82f6);
+    background: var(--wiki-primary);
+    border-color: var(--wiki-primary);
 }
 
 .table-insert-csv-btn {
@@ -1808,9 +1802,9 @@ html[data-theme="dark"] #concurrent-edit-banner {
 }
 
 .table-insert-csv-btn:hover {
-    background: rgba(var(--wiki-primary-rgb, 59, 130, 246), 0.1);
-    border-color: var(--wiki-primary, #3b82f6);
-    color: var(--wiki-link, #2563eb);
+    background: rgba(var(--wiki-primary-rgb), 0.1);
+    border-color: var(--wiki-primary);
+    color: var(--wiki-link);
 }
 
 .table-insert-csv-btn i {
@@ -1847,7 +1841,7 @@ html[data-theme="dark"] #concurrent-edit-banner {
     border: 1px solid var(--wiki-border);
     border-radius: 6px;
     padding: 6px;
-    background: var(--wiki-bg-alt, var(--wiki-bg));
+    background: var(--wiki-bg-alt);
 }
 
 .adv-table-grid {
@@ -1880,20 +1874,20 @@ html[data-theme="dark"] #concurrent-edit-banner {
 }
 
 .adv-table-cell-btn:hover {
-    background: rgba(var(--wiki-primary-rgb, 59, 130, 246), 0.08);
-    border-color: var(--wiki-primary, #3b82f6);
+    background: rgba(var(--wiki-primary-rgb), 0.08);
+    border-color: var(--wiki-primary);
 }
 
 .adv-table-cell.is-header .adv-table-cell-btn {
     font-weight: 600;
-    background: var(--wiki-bg-alt, var(--wiki-bg));
+    background: var(--wiki-bg-alt);
 }
 
 .adv-table-cell.has-merge .adv-table-cell-btn {
-    background: rgba(var(--wiki-primary-rgb, 59, 130, 246), 0.15);
+    background: rgba(var(--wiki-primary-rgb), 0.15);
     border-style: solid;
-    border-color: var(--wiki-primary, #3b82f6);
-    color: var(--wiki-link, #2563eb);
+    border-color: var(--wiki-primary);
+    color: var(--wiki-link);
 }
 
 .adv-table-cell-btn i {
@@ -1936,12 +1930,12 @@ html[data-theme="dark"] #concurrent-edit-banner {
 }
 
 .adv-table-merge-option:hover {
-    background: rgba(var(--wiki-primary-rgb, 59, 130, 246), 0.1);
+    background: rgba(var(--wiki-primary-rgb), 0.1);
 }
 
 .adv-table-merge-option.active {
-    background: rgba(var(--wiki-primary-rgb, 59, 130, 246), 0.18);
-    color: var(--wiki-link, #2563eb);
+    background: rgba(var(--wiki-primary-rgb), 0.18);
+    color: var(--wiki-link);
 }
 
 .adv-table-merge-option i {
@@ -1951,7 +1945,7 @@ html[data-theme="dark"] #concurrent-edit-banner {
 .adv-table-merge-token {
     margin-left: auto;
     font-size: 0.78rem;
-    background: var(--wiki-bg-alt, transparent);
+    background: var(--wiki-bg-alt);
     padding: 1px 6px;
     border-radius: 3px;
     color: var(--wiki-text-muted);
@@ -1988,8 +1982,8 @@ html[data-theme="dark"] #concurrent-edit-banner {
 }
 
 .cm-cell-merge-btn:hover {
-    background: rgba(var(--wiki-primary-rgb, 59, 130, 246), 0.12);
-    color: var(--wiki-link, #2563eb);
+    background: rgba(var(--wiki-primary-rgb), 0.12);
+    color: var(--wiki-link);
 }
 
 /* ── 타임스탬프 삽입 모달 ── */
@@ -2027,15 +2021,15 @@ html[data-theme="dark"] #concurrent-edit-banner {
 }
 
 .timestamp-insert-type-tab:hover {
-    border-color: var(--wiki-primary, #3b82f6);
-    background: rgba(var(--wiki-primary-rgb, 59, 130, 246), 0.08);
+    border-color: var(--wiki-primary);
+    background: rgba(var(--wiki-primary-rgb), 0.08);
 }
 
 .timestamp-insert-type-tab.active {
-    border-color: var(--wiki-primary, #3b82f6);
-    background: rgba(var(--wiki-primary-rgb, 59, 130, 246), 0.15);
-    color: var(--wiki-link, #2563eb);
-    box-shadow: 0 0 0 2px rgba(var(--wiki-primary-rgb, 59, 130, 246), 0.2);
+    border-color: var(--wiki-primary);
+    background: rgba(var(--wiki-primary-rgb), 0.15);
+    color: var(--wiki-link);
+    box-shadow: 0 0 0 2px rgba(var(--wiki-primary-rgb), 0.2);
 }
 
 .timestamp-insert-field {
@@ -2144,7 +2138,7 @@ html[data-theme="dark"] .img-editor-canvas-wrap {
     width: 20px;
     height: 20px;
     background: #fff;
-    border: 2px solid var(--wiki-primary, #3b82f6);
+    border: 2px solid var(--wiki-primary);
     border-radius: 50%;
     pointer-events: auto;
     touch-action: none;
@@ -2381,7 +2375,7 @@ html[data-theme="dark"] .img-editor-canvas-wrap {
 }
 
 #timestamp-autocomplete .ts-cal-weekdays span:last-child {
-    color: var(--wiki-primary, #3b82f6);
+    color: var(--wiki-primary);
 }
 
 #timestamp-autocomplete .ts-cal-grid {
@@ -2512,46 +2506,24 @@ html[data-theme="dark"] .img-editor-canvas-wrap {
 }
 
 /* ── 위키 문법 에디터 내 하이라이팅 (CM6 Custom Styles) ── */
+/* color/background 는 위쪽 첫 번째 블록에서 var(--cm-*) 로 처리됨. 여기서는 font-weight 만 보강. */
 .cm-wiki-link,
 .cm-wiki-template {
-    color: #007bff !important;
     font-weight: bold;
 }
 
-@media (prefers-color-scheme: dark) {
-
-    html:not([data-theme="light"]) .cm-wiki-link,
-    html:not([data-theme="light"]) .cm-wiki-template {
-        color: #58a6ff !important;
-    }
-}
-html[data-theme="dark"] .cm-wiki-link,
-html[data-theme="dark"] .cm-wiki-template {
-    color: #58a6ff !important;
-}
-
 .cm-align-marker {
-    color: #ff0000 !important;
+    color: var(--cm-align-marker) !important;
     font-weight: bold;
 }
 
 .cm-quote-marker {
-    color: #007bff !important;
+    color: var(--cm-quote-marker) !important;
     font-weight: bold;
 }
 
-@media (prefers-color-scheme: dark) {
-    html:not([data-theme="light"]) .cm-quote-marker {
-        color: #58a6ff !important;
-    }
-}
-html[data-theme="dark"] .cm-quote-marker {
-    color: #58a6ff !important;
-}
-
 .cm-list-marker {
-    color: #87CEEB !important;
-    /* sky blue */
+    color: var(--cm-list-marker) !important;
     font-weight: bold;
 }
 
@@ -2595,7 +2567,7 @@ html[data-theme="dark"] .cm-quote-marker {
     display: inline-block;
     margin-left: 4px;
     vertical-align: baseline;
-    color: var(--wiki-text, inherit);
+    color: var(--wiki-text);
     pointer-events: none;
 }
 
@@ -2607,94 +2579,36 @@ html[data-theme="dark"] .cm-quote-marker {
 }
 
 .cm-highlight {
-    background-color: #ffff99 !important;
-    color: #000 !important;
-}
-
-@media (prefers-color-scheme: dark) {
-    html:not([data-theme="light"]) .cm-highlight {
-        background-color: #bfa000 !important;
-        color: #fff !important;
-    }
-}
-html[data-theme="dark"] .cm-highlight {
-    background-color: #bfa000 !important;
-    color: #fff !important;
+    background-color: var(--cm-highlight-bg) !important;
+    color: var(--cm-highlight-fg) !important;
 }
 
 .cm-time-marker {
-    color: #007bff !important;
-}
-
-@media (prefers-color-scheme: dark) {
-    html:not([data-theme="light"]) .cm-time-marker {
-        color: #58a6ff !important;
-    }
-}
-html[data-theme="dark"] .cm-time-marker {
-    color: #58a6ff !important;
+    color: var(--cm-time-marker) !important;
 }
 
 /* {badge:}, {tag:}, {button:}, {stat:}, {size:}, {hr} 등 파라미터 토큰 */
 .cm-param-token {
-    color: #b45309 !important;
+    color: var(--cm-param-token) !important;
     font-weight: 600;
 }
 
-@media (prefers-color-scheme: dark) {
-    html:not([data-theme="light"]) .cm-param-token {
-        color: #fbbf24 !important;
-    }
-}
-html[data-theme="dark"] .cm-param-token {
-    color: #fbbf24 !important;
-}
-
 .cm-inline-code {
-    background-color: #f6f8fa !important;
-    color: #24292f !important;
+    background-color: var(--cm-inline-code-bg) !important;
+    color: var(--cm-inline-code-fg) !important;
     border-radius: 4px;
     padding: 2px 4px;
     font-family: monospace;
 }
 
-@media (prefers-color-scheme: dark) {
-    html:not([data-theme="light"]) .cm-inline-code {
-        background-color: #2d2d2d !important;
-        color: #e0e0e0 !important;
-    }
-}
-html[data-theme="dark"] .cm-inline-code {
-    background-color: #2d2d2d !important;
-    color: #e0e0e0 !important;
-}
-
 .cm-code-block {
-    background-color: #f6f8fa !important;
+    background-color: var(--cm-code-block-bg) !important;
 }
 
 .cm-code-block,
 .cm-code-block * {
-    color: #24292f !important;
+    color: var(--cm-code-block-fg) !important;
     font-family: monospace;
-}
-
-@media (prefers-color-scheme: dark) {
-    html:not([data-theme="light"]) .cm-code-block {
-        background-color: #111111 !important;
-    }
-
-    html:not([data-theme="light"]) .cm-code-block,
-    html:not([data-theme="light"]) .cm-code-block * {
-        color: #e0e0e0 !important;
-    }
-}
-html[data-theme="dark"] .cm-code-block {
-    background-color: #111111 !important;
-}
-html[data-theme="dark"] .cm-code-block,
-html[data-theme="dark"] .cm-code-block * {
-    color: #e0e0e0 !important;
 }
 
 /* ── 백틱, 코드블럭 내부에서 위키 문법 렌더링 차단 (CSS Reset) ── */
@@ -2870,11 +2784,11 @@ html[data-theme="dark"] .cm-editor span.cm-inline-code::selection {
 }
 
 .card-insert-palette-swatch:hover {
-    box-shadow: 0 0 0 2px rgba(var(--wiki-primary-rgb, 59, 130, 246), 0.25);
+    box-shadow: 0 0 0 2px rgba(var(--wiki-primary-rgb), 0.25);
 }
 
 .card-insert-palette-swatch.active {
-    box-shadow: 0 0 0 2px var(--wiki-primary, #3b82f6);
+    box-shadow: 0 0 0 2px var(--wiki-primary);
 }
 
 .card-insert-palette-swatch-none {
@@ -2903,12 +2817,12 @@ html[data-theme="dark"] .cm-editor span.cm-inline-code::selection {
 }
 
 .card-insert-callout-chip:hover {
-    box-shadow: 0 0 0 2px rgba(var(--wiki-primary-rgb, 59, 130, 246), 0.25);
+    box-shadow: 0 0 0 2px rgba(var(--wiki-primary-rgb), 0.25);
 }
 
 .card-insert-callout-chip.active {
-    box-shadow: 0 0 0 2px var(--wiki-primary, #3b82f6);
-    background: rgba(var(--wiki-primary-rgb, 59, 130, 246), 0.08);
+    box-shadow: 0 0 0 2px var(--wiki-primary);
+    background: rgba(var(--wiki-primary-rgb), 0.08);
 }
 
 .card-insert-callout-chip i {
@@ -2946,12 +2860,12 @@ html[data-theme="dark"] .cm-editor span.cm-inline-code::selection {
 }
 
 .structure-insert-type-tab:hover {
-    box-shadow: 0 0 0 2px rgba(var(--wiki-primary-rgb, 59, 130, 246), 0.25);
+    box-shadow: 0 0 0 2px rgba(var(--wiki-primary-rgb), 0.25);
 }
 
 .structure-insert-type-tab.active {
-    box-shadow: 0 0 0 2px var(--wiki-primary, #3b82f6);
-    background: rgba(var(--wiki-primary-rgb, 59, 130, 246), 0.08);
+    box-shadow: 0 0 0 2px var(--wiki-primary);
+    background: rgba(var(--wiki-primary-rgb), 0.08);
 }
 
 .structure-insert-type-tab i {
@@ -2969,7 +2883,7 @@ html[data-theme="dark"] .cm-editor span.cm-inline-code::selection {
     border: 1px solid var(--wiki-border);
     border-radius: 6px;
     padding: 10px;
-    background: var(--wiki-card-bg, var(--wiki-bg));
+    background: var(--wiki-card-bg);
 }
 
 .structure-insert-row-head {
@@ -2984,8 +2898,8 @@ html[data-theme="dark"] .cm-editor span.cm-inline-code::selection {
     min-width: 22px;
     height: 22px;
     border-radius: 50%;
-    background: rgba(var(--wiki-primary-rgb, 59, 130, 246), 0.15);
-    color: var(--wiki-primary, #3b82f6);
+    background: rgba(var(--wiki-primary-rgb), 0.15);
+    color: var(--wiki-primary);
     font-size: 0.78rem;
     font-weight: 600;
     display: inline-flex;
@@ -3013,8 +2927,8 @@ html[data-theme="dark"] .cm-editor span.cm-inline-code::selection {
 }
 
 .structure-insert-row-remove:hover {
-    color: var(--wiki-danger, #dc3545);
-    border-color: var(--wiki-danger, #dc3545);
+    color: var(--wiki-danger);
+    border-color: var(--wiki-danger);
 }
 
 .structure-insert-row-meta {
@@ -3056,12 +2970,12 @@ html[data-theme="dark"] .cm-editor span.cm-inline-code::selection {
 }
 
 .structure-insert-status-chip:hover {
-    box-shadow: 0 0 0 2px rgba(var(--wiki-primary-rgb, 59, 130, 246), 0.2);
+    box-shadow: 0 0 0 2px rgba(var(--wiki-primary-rgb), 0.2);
 }
 
 .structure-insert-status-chip.active {
-    box-shadow: 0 0 0 2px var(--wiki-primary, #3b82f6);
-    background: rgba(var(--wiki-primary-rgb, 59, 130, 246), 0.08);
+    box-shadow: 0 0 0 2px var(--wiki-primary);
+    background: rgba(var(--wiki-primary-rgb), 0.08);
 }
 
 .structure-insert-add-row {
@@ -3081,9 +2995,9 @@ html[data-theme="dark"] .cm-editor span.cm-inline-code::selection {
 }
 
 .structure-insert-add-row:hover {
-    color: var(--wiki-primary, #3b82f6);
-    border-color: var(--wiki-primary, #3b82f6);
-    background: rgba(var(--wiki-primary-rgb, 59, 130, 246), 0.05);
+    color: var(--wiki-primary);
+    border-color: var(--wiki-primary);
+    background: rgba(var(--wiki-primary-rgb), 0.05);
 }
 
 /* ── 배지 삽입 모달 ── */
@@ -3121,15 +3035,15 @@ html[data-theme="dark"] .cm-editor span.cm-inline-code::selection {
 }
 
 .badge-insert-type-tab:hover {
-    border-color: var(--wiki-primary, #3b82f6);
-    background: rgba(var(--wiki-primary-rgb, 59, 130, 246), 0.08);
+    border-color: var(--wiki-primary);
+    background: rgba(var(--wiki-primary-rgb), 0.08);
 }
 
 .badge-insert-type-tab.active {
-    border-color: var(--wiki-primary, #3b82f6);
-    background: rgba(var(--wiki-primary-rgb, 59, 130, 246), 0.15);
-    color: var(--wiki-link, #2563eb);
-    box-shadow: 0 0 0 2px rgba(var(--wiki-primary-rgb, 59, 130, 246), 0.2);
+    border-color: var(--wiki-primary);
+    background: rgba(var(--wiki-primary-rgb), 0.15);
+    color: var(--wiki-link);
+    box-shadow: 0 0 0 2px rgba(var(--wiki-primary-rgb), 0.2);
 }
 
 .badge-insert-palette-swatches {
@@ -3153,11 +3067,11 @@ html[data-theme="dark"] .cm-editor span.cm-inline-code::selection {
 }
 
 .badge-insert-palette-swatch:hover {
-    box-shadow: 0 0 0 2px rgba(var(--wiki-primary-rgb, 59, 130, 246), 0.25);
+    box-shadow: 0 0 0 2px rgba(var(--wiki-primary-rgb), 0.25);
 }
 
 .badge-insert-palette-swatch.active {
-    box-shadow: 0 0 0 2px var(--wiki-primary, #3b82f6);
+    box-shadow: 0 0 0 2px var(--wiki-primary);
 }
 
 .badge-insert-palette-swatch-none {
@@ -3235,9 +3149,9 @@ html[data-theme="dark"] .cm-editor span.cm-inline-code::selection {
 }
 
 .badge-insert-icon-btn:hover {
-    border-color: var(--wiki-primary, #3b82f6);
-    color: var(--wiki-link, #2563eb);
-    background: rgba(var(--wiki-primary-rgb, 59, 130, 246), 0.08);
+    border-color: var(--wiki-primary);
+    color: var(--wiki-link);
+    background: rgba(var(--wiki-primary-rgb), 0.08);
 }
 
 .badge-insert-icon-btn-ghost {
@@ -3305,9 +3219,9 @@ html[data-theme="dark"] .cm-editor span.cm-inline-code::selection {
 }
 
 .badge-insert-back-btn:hover {
-    border-color: var(--wiki-primary, #3b82f6);
-    color: var(--wiki-link, #2563eb);
-    background: rgba(var(--wiki-primary-rgb, 59, 130, 246), 0.08);
+    border-color: var(--wiki-primary);
+    color: var(--wiki-link);
+    background: rgba(var(--wiki-primary-rgb), 0.08);
 }
 
 .badge-insert-icon-grid {
@@ -3355,8 +3269,8 @@ html[data-theme="dark"] .cm-find-panel {
 
 .cm-find-input:focus {
     outline: none;
-    border-color: var(--wiki-primary, #3b82f6);
-    box-shadow: 0 0 0 2px rgba(var(--wiki-primary-rgb, 59, 130, 246), 0.15);
+    border-color: var(--wiki-primary);
+    box-shadow: 0 0 0 2px rgba(var(--wiki-primary-rgb), 0.15);
 }
 
 .cm-find-status {
@@ -3432,12 +3346,12 @@ html[data-theme="dark"] .cm-find-panel {
 }
 
 .cm-find-toggle input:checked + span {
-    background: var(--wiki-primary, #3b82f6);
+    background: var(--wiki-primary);
     color: #fff;
 }
 
 .cm-find-toggle input:focus-visible + span {
-    box-shadow: 0 0 0 2px rgba(var(--wiki-primary-rgb, 59, 130, 246), 0.4);
+    box-shadow: 0 0 0 2px rgba(var(--wiki-primary-rgb), 0.4);
 }
 
 /* 매치 하이라이트 */
@@ -3472,8 +3386,8 @@ html[data-theme="dark"] .cm-search-match-active {
 .special-char-popup {
     position: absolute;
     z-index: 1100;
-    background: var(--wiki-card-bg, #fff);
-    border: 1px solid var(--wiki-border, #dee2e6);
+    background: var(--wiki-card-bg);
+    border: 1px solid var(--wiki-border);
     border-radius: 8px;
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
     width: 360px;
@@ -3490,7 +3404,7 @@ html[data-theme="dark"] .cm-search-match-active {
 .special-char-header {
     padding: 8px 12px;
     border-bottom: 1px solid var(--wiki-border);
-    background: var(--wiki-toc-bg, var(--wiki-bg-alt));
+    background: var(--wiki-toc-bg);
     font-size: 0.85rem;
     color: var(--wiki-text-muted);
     display: flex;
@@ -3510,7 +3424,7 @@ html[data-theme="dark"] .cm-search-match-active {
     font-family: "Times New Roman", serif;
     font-size: 1.05rem;
     font-weight: 700;
-    color: var(--wiki-primary, #3b82f6);
+    color: var(--wiki-primary);
 }
 
 .special-char-tabs {
@@ -3570,7 +3484,7 @@ html[data-theme="dark"] .cm-search-match-active {
 }
 
 .special-char-cell:hover {
-    background: var(--wiki-card-bg, #fff);
+    background: var(--wiki-card-bg);
     border-color: var(--wiki-primary);
     color: var(--wiki-primary);
 }

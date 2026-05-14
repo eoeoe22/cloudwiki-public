@@ -119,12 +119,12 @@
 
 .rich-diff-block.rich-diff-add {
   background: var(--wiki-diff-add-bg);
-  border-left-color: var(--wiki-success, #198754);
+  border-left-color: var(--wiki-success);
 }
 
 .rich-diff-block.rich-diff-del {
   background: var(--wiki-diff-del-bg);
-  border-left-color: var(--wiki-danger, #dc3545);
+  border-left-color: var(--wiki-danger);
   /* 줄긋기는 표/이미지 등에 어색하므로 사용하지 않고 배경/테두리로만 표시 */
   opacity: 0.92;
 }

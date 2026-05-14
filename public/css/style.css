@@ -1,151 +1,75 @@
 :root {
-  --wiki-bg: #F8F9FF;
-  --wiki-card-bg: #FFFFFF;
-  --wiki-text: #1f2937;
-  --wiki-text-muted: #6b7280;
+  color-scheme: light dark;
 
-  --wiki-border: #E2E8F0;
-  --wiki-border-focus: #0ea5e9;
-  --wiki-hr-color: #cbd5e1;
+  /* Palette — light-dark(light, dark) — color-scheme 으로 분기됨 */
+  --wiki-bg: light-dark(#F8F9FF, #000000);
+  --wiki-card-bg: light-dark(#FFFFFF, #111111);
+  --wiki-text: light-dark(#1f2937, #f4f4f5);
+  --wiki-text-muted: light-dark(#6b7280, #a1a1aa);
 
-  --wiki-primary: #006591;
-  --wiki-primary-hover: #004c6e;
+  --wiki-border: light-dark(#E2E8F0, #27272A);
+  --wiki-border-focus: light-dark(#0ea5e9, #38bdf8);
+  --wiki-hr-color: light-dark(#cbd5e1, #3f3f46);
+
+  --wiki-primary: light-dark(#006591, #38BDF8);
+  --wiki-primary-hover: light-dark(#004c6e, #7dd3fc);
   --wiki-accent: #8B5CF6;
   --wiki-success: #10B981;
   --wiki-warning: #F59E0B;
   --wiki-danger: #EF4444;
-
+  --wiki-link: var(--wiki-primary);
 
   /* Misc */
-  --wiki-code-bg: #f8fafc;
-  --wiki-toc-bg: rgba(255, 255, 255, 0.6);
+  --wiki-code-bg: light-dark(#f8fafc, #000000);
+  --wiki-toc-bg: light-dark(rgba(255, 255, 255, 0.6), rgba(255, 255, 255, 0.08));
+  --wiki-bg-alt: light-dark(#f1f5f9, #0a0a0a);
   --wiki-sidebar-width: 260px;
 
-  --wiki-btn-text: #ffffff;
+  --wiki-btn-text: light-dark(#ffffff, #000000);
 
   /* Diff Colors */
-  --wiki-diff-add-bg: #dcfce7;
-  --wiki-diff-add-text: #166534;
-  --wiki-diff-del-bg: #fee2e2;
-  --wiki-diff-del-text: #991b1b;
+  --wiki-diff-add-bg: light-dark(#dcfce7, rgba(16, 185, 129, 0.2));
+  --wiki-diff-add-text: light-dark(#166534, #a7f3d0);
+  --wiki-diff-del-bg: light-dark(#fee2e2, rgba(239, 68, 68, 0.2));
+  --wiki-diff-del-text: light-dark(#991b1b, #fecaca);
 
   /* Glassmorphism & Shadows */
-  --wiki-shadow-sm: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-  --wiki-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-  --wiki-shadow-md: 0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -4px rgba(0, 0, 0, 0.05);
-  --wiki-shadow-lg: 0 20px 25px -5px rgba(0, 0, 0, 0.05), 0 8px 10px -6px rgba(0, 0, 0, 0.05);
-  --wiki-glass-bg: rgba(255, 255, 255, 0.75);
-  --wiki-glass-border: rgba(255, 255, 255, 0.5);
+  --wiki-shadow-sm: light-dark(0 1px 2px 0 rgba(0, 0, 0, 0.06), 0 1px 2px 0 rgba(0, 0, 0, 0.5));
+  --wiki-shadow: light-dark(0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 4px 6px -1px rgba(0, 0, 0, 0.5));
+  --wiki-shadow-md: light-dark(0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 10px 15px -3px rgba(0, 0, 0, 0.5));
+  --wiki-shadow-lg: light-dark(0 20px 25px -5px rgba(0, 0, 0, 0.05), 0 20px 25px -5px rgba(0, 0, 0, 0.5));
+  --wiki-glass-bg: light-dark(rgba(255, 255, 255, 0.75), rgba(0, 0, 0, 0.75));
+  --wiki-glass-border: light-dark(rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0.05));
   --wiki-glass-blur: blur(16px);
 
-  color-scheme: light;
-}
+  /* Motion */
+  --wiki-ease: cubic-bezier(0.4, 0, 0.2, 1);
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    /* 🌑 Premium Dark Mode */
-    --wiki-bg: #000000;
-    --wiki-card-bg: #111111;
-    --wiki-text: #f4f4f5;
-    --wiki-text-muted: #a1a1aa;
+  /* Focus ring (사이트 전역 공통) */
+  --wiki-focus-ring-color: rgba(14, 165, 233, 0.15);
+  --wiki-focus-ring: 0 0 0 3px var(--wiki-focus-ring-color);
 
-    --wiki-border: #27272A;
-    --wiki-border-focus: #38bdf8;
-    --wiki-hr-color: #3f3f46;
+  /* RGB triplet for primary — rgba(var(--c-rgb), α) 패턴용 (light-dark 로는 트리플렛 분기 불가) */
+  --wiki-primary-rgb: 0, 101, 145;
 
-    --wiki-primary: #38BDF8;
-    --wiki-primary-hover: #7dd3fc;
-    --wiki-accent: #8B5CF6;
-    --wiki-success: #10B981;
-    --wiki-warning: #F59E0B;
-    --wiki-danger: #EF4444;
+  /* Code font stack (위키 본문 + 에디터 공통) */
+  --wiki-code-font: 'JetBrains Mono', 'Nanum Gothic Coding', 'D2Coding', 'Cascadia Code', 'Consolas', 'Menlo', 'DejaVu Sans Mono', monospace;
 
-    /* Misc */
-    --wiki-code-bg: #000000;
-    --wiki-toc-bg: rgba(255, 255, 255, 0.08);
-
-    --wiki-btn-text: #000000;
-
-    /* Diff Colors */
-    --wiki-diff-add-bg: rgba(16, 185, 129, 0.2);
-    --wiki-diff-add-text: #a7f3d0;
-    --wiki-diff-del-bg: rgba(239, 68, 68, 0.2);
-    --wiki-diff-del-text: #fecaca;
-
-    /* Glassmorphism & Shadows */
-    --wiki-shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.5);
-    --wiki-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5), 0 2px 4px -2px rgba(0, 0, 0, 0.5);
-    --wiki-shadow-md: 0 10px 15px -3px rgba(0, 0, 0, 0.5), 0 4px 6px -4px rgba(0, 0, 0, 0.5);
-    --wiki-shadow-lg: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.5);
-    --wiki-glass-bg: rgba(0, 0, 0, 0.75);
-    --wiki-glass-border: rgba(255, 255, 255, 0.05);
-    --wiki-glass-blur: blur(16px);
-
-    color-scheme: dark;
-  }
+  /* 컴포넌트 radius (.category-tag-container 등에서 참조) */
+  --wiki-radius: 4px;
 }
 
 /* ── 강제 라이트/다크 테마 ── */
-html[data-theme="light"] {
-  --wiki-bg: #F8F9FF;
-  --wiki-card-bg: #FFFFFF;
-  --wiki-text: #1f2937;
-  --wiki-text-muted: #6b7280;
-  --wiki-border: #E2E8F0;
-  --wiki-border-focus: #0ea5e9;
-  --wiki-hr-color: #cbd5e1;
-  --wiki-primary: #006591;
-  --wiki-primary-hover: #004c6e;
-  --wiki-accent: #8B5CF6;
-  --wiki-success: #10B981;
-  --wiki-warning: #F59E0B;
-  --wiki-danger: #EF4444;
-  --wiki-code-bg: #f8fafc;
-  --wiki-toc-bg: rgba(255, 255, 255, 0.6);
-  --wiki-btn-text: #ffffff;
-  --wiki-diff-add-bg: #dcfce7;
-  --wiki-diff-add-text: #166534;
-  --wiki-diff-del-bg: #fee2e2;
-  --wiki-diff-del-text: #991b1b;
-  --wiki-shadow-sm: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-  --wiki-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-  --wiki-shadow-md: 0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -4px rgba(0, 0, 0, 0.05);
-  --wiki-shadow-lg: 0 20px 25px -5px rgba(0, 0, 0, 0.05), 0 8px 10px -6px rgba(0, 0, 0, 0.05);
-  --wiki-glass-bg: rgba(255, 255, 255, 0.75);
-  --wiki-glass-border: rgba(255, 255, 255, 0.5);
-  --wiki-glass-blur: blur(16px);
-  color-scheme: light;
-}
+html[data-theme="light"] { color-scheme: light; }
+html[data-theme="dark"] { color-scheme: dark; }
 
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --wiki-primary-rgb: 56, 189, 248;
+  }
+}
 html[data-theme="dark"] {
-  --wiki-bg: #000000;
-  --wiki-card-bg: #111111;
-  --wiki-text: #f4f4f5;
-  --wiki-text-muted: #a1a1aa;
-  --wiki-border: #27272A;
-  --wiki-border-focus: #38bdf8;
-  --wiki-hr-color: #3f3f46;
-  --wiki-primary: #38BDF8;
-  --wiki-primary-hover: #7dd3fc;
-  --wiki-accent: #8B5CF6;
-  --wiki-success: #10B981;
-  --wiki-warning: #F59E0B;
-  --wiki-danger: #EF4444;
-  --wiki-code-bg: #000000;
-  --wiki-toc-bg: rgba(255, 255, 255, 0.08);
-  --wiki-btn-text: #000000;
-  --wiki-diff-add-bg: rgba(16, 185, 129, 0.2);
-  --wiki-diff-add-text: #a7f3d0;
-  --wiki-diff-del-bg: rgba(239, 68, 68, 0.2);
-  --wiki-diff-del-text: #fecaca;
-  --wiki-shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.5);
-  --wiki-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5), 0 2px 4px -2px rgba(0, 0, 0, 0.5);
-  --wiki-shadow-md: 0 10px 15px -3px rgba(0, 0, 0, 0.5), 0 4px 6px -4px rgba(0, 0, 0, 0.5);
-  --wiki-shadow-lg: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.5);
-  --wiki-glass-bg: rgba(0, 0, 0, 0.75);
-  --wiki-glass-border: rgba(255, 255, 255, 0.05);
-  --wiki-glass-blur: blur(16px);
-  color-scheme: dark;
+  --wiki-primary-rgb: 56, 189, 248;
 }
 
 * {
@@ -268,24 +192,12 @@ div:where(.swal2-container) textarea:where(.swal2-textarea) {
 div:where(.swal2-container) input:where(.swal2-input):focus,
 div:where(.swal2-container) textarea:where(.swal2-textarea):focus {
   border-color: var(--wiki-primary) !important;
-  box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.15) !important;
+  box-shadow: var(--wiki-focus-ring) !important;
 }
 
 div:where(.swal2-container) .swal2-title,
 div:where(.swal2-container) .swal2-html-container {
   color: var(--wiki-text) !important;
-}
-
-/* ── Legacy Neumorphism Classes (Converted to Flat UI) ── */
-/* 기존 HTML 수정 없이도 플랫하게 보이도록 속성 덮어쓰기 */
-.neu-raised,
-.neu-inset,
-.neu-pressed {
-  background: var(--wiki-card-bg);
-  box-shadow: none !important;
-  border: 1px solid var(--wiki-border);
-  border-radius: 8px;
-  /* 곡률을 20px -> 8px로 줄여서 정밀한 느낌 강조 */
 }
 
 /* ── Navbar ── */
@@ -339,7 +251,7 @@ div:where(.swal2-container) .swal2-html-container {
 .nav-link {
   color: var(--wiki-text-muted) !important;
   font-weight: 600;
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: all 0.2s var(--wiki-ease);
   padding: 0.5rem 1rem;
   border-radius: 8px;
 }
@@ -367,7 +279,7 @@ div:where(.swal2-container) .swal2-html-container {
   color: var(--wiki-text);
   padding: 0.5rem 1rem;
   box-shadow: none;
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: all 0.2s var(--wiki-ease);
 }
 
 .nav-search-form .form-control::placeholder {
@@ -377,7 +289,7 @@ div:where(.swal2-container) .swal2-html-container {
 .nav-search-form .form-control:focus {
   outline: none;
   border-color: var(--wiki-primary);
-  box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.15);
+  box-shadow: var(--wiki-focus-ring);
 }
 
 /* Search Mode Dropdown Button */
@@ -390,7 +302,7 @@ div:where(.swal2-container) .swal2-html-container {
   white-space: nowrap;
   border-radius: 0 5px 5px 0;
   padding: 0.5rem 0.6rem;
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: all 0.2s var(--wiki-ease);
 }
 
 .nav-search-form .search-mode-btn:hover,
@@ -402,7 +314,7 @@ div:where(.swal2-container) .swal2-html-container {
 
 .nav-search-form .search-mode-btn:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.15);
+  box-shadow: var(--wiki-focus-ring);
 }
 
 .nav-search-form .dropdown-menu {
@@ -443,7 +355,7 @@ div:where(.swal2-container) .swal2-html-container {
   font-weight: 700;
   font-size: 0.95rem;
   box-shadow: var(--wiki-shadow-sm);
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: all 0.2s var(--wiki-ease);
 }
 
 .btn-new-page:hover {
@@ -499,7 +411,7 @@ div:where(.swal2-container) .swal2-html-container {
 .offcanvas-lg .nav-link {
   color: var(--wiki-text) !important;
   border-radius: 8px;
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: all 0.2s var(--wiki-ease);
 }
 
 .offcanvas .nav-link:hover,
@@ -618,7 +530,7 @@ html[data-theme="dark"] .user-dropdown-toggle {
 /* ── 검색바 스타일 ── */
 .nav-search-form {
   position: relative;
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: all 0.2s var(--wiki-ease);
 }
 
 .nav-search-form .input-group {
@@ -1020,7 +932,7 @@ html[data-theme="dark"] .user-dropdown-toggle {
   font-weight: 600;
   font-size: 0.9rem;
   box-shadow: var(--wiki-shadow-sm);
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: all 0.2s var(--wiki-ease);
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -1046,7 +958,7 @@ html[data-theme="dark"] .user-dropdown-toggle {
   padding: 0.5rem 1rem;
   font-weight: 600;
   box-shadow: none;
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: all 0.2s var(--wiki-ease);
 }
 
 .btn-wiki-outline:hover {
@@ -1115,7 +1027,7 @@ html[data-theme="dark"] .btn-close {
   background: var(--wiki-bg);
   color: var(--wiki-text);
   border-color: var(--wiki-primary);
-  box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.15);
+  box-shadow: var(--wiki-focus-ring);
   /* 윤곽선 포커스 링 */
   outline: none;
 }
@@ -1130,7 +1042,7 @@ html[data-theme="dark"] .btn-close {
   background-color: var(--wiki-bg);
   color: var(--wiki-text);
   border-color: var(--wiki-primary);
-  box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.15);
+  box-shadow: var(--wiki-focus-ring);
   outline: none;
 }
 
@@ -1163,7 +1075,7 @@ html[data-theme="dark"] .btn-close {
   --bs-pagination-hover-border-color: var(--wiki-border);
   --bs-pagination-focus-bg: var(--wiki-bg);
   --bs-pagination-focus-color: var(--wiki-primary);
-  --bs-pagination-focus-box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.15);
+  --bs-pagination-focus-box-shadow: var(--wiki-focus-ring);
   --bs-pagination-active-bg: var(--wiki-primary);
   --bs-pagination-active-color: var(--wiki-btn-text);
   --bs-pagination-active-border-color: var(--wiki-primary);
@@ -1221,7 +1133,7 @@ html[data-theme="dark"] .btn-close {
 .edit-title-input:focus {
   outline: none;
   border-color: var(--wiki-primary);
-  box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.15);
+  box-shadow: var(--wiki-focus-ring);
 }
 
 .edit-summary-input {
@@ -1237,7 +1149,7 @@ html[data-theme="dark"] .btn-close {
 .edit-summary-input:focus {
   outline: none;
   border-color: var(--wiki-primary);
-  box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.15);
+  box-shadow: var(--wiki-focus-ring);
 }
 
 /* ── Profile Input Custom ── */
@@ -1338,7 +1250,7 @@ html[data-theme="dark"] .btn-close {
   font-weight: 600;
   padding: 0.5rem 1.1rem;
   margin-bottom: -1px;
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: all 0.2s var(--wiki-ease);
 }
 
 .nav-tabs .nav-link:hover,
@@ -1386,7 +1298,7 @@ html[data-theme="dark"] .btn-close {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: all 0.2s var(--wiki-ease);
   background-color: var(--wiki-card-bg);
   border: 1px solid var(--wiki-border);
   color: var(--wiki-text);
@@ -1473,7 +1385,7 @@ html[data-theme="dark"] .btn-close {
   border: 1px solid var(--wiki-border);
   color: var(--wiki-text);
   margin-bottom: 1rem;
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: all 0.2s var(--wiki-ease);
 }
 
 .recent-page-card:hover {
@@ -1485,12 +1397,11 @@ html[data-theme="dark"] .btn-close {
 /* ── Badges & Alerts ── */
 .badge {
   color: var(--wiki-primary) !important;
-  background-color: rgba(88, 166, 255, 0.1) !important;
+  background-color: color-mix(in srgb, var(--wiki-primary) 10%, transparent) !important;
   /* 투명도 있는 배경 트렌드 */
   box-shadow: none;
-  border: 1px solid rgba(88, 166, 255, 0.2) !important;
-  border-radius: 9999px;
-  /* 더 각진 느낌 */
+  border: 1px solid color-mix(in srgb, var(--wiki-primary) 20%, transparent) !important;
+  border-radius: 999px;
   padding: 0.3em 0.6em;
   font-weight: 600;
 }
@@ -1518,8 +1429,7 @@ html[data-theme="dark"] .btn-close {
 
 .alert-info {
   border-left: 4px solid var(--wiki-primary);
-  background-color: rgba(88, 166, 255, 0.05);
-  /* 투명한 블루 배경 */
+  background-color: color-mix(in srgb, var(--wiki-primary) 5%, transparent);
 }
 
 /* ── Mobile Optimization ── */
@@ -1717,7 +1627,7 @@ html[data-theme="dark"] .btn-close {
 
 /* Highlight animation when navigating to a footnote */
 .wiki-footnotes ol li:target {
-  background-color: rgba(88, 166, 255, 0.1);
+  background-color: color-mix(in srgb, var(--wiki-primary) 10%, transparent);
   border-radius: 8px;
   transition: background-color 0.3s ease;
 }
@@ -1878,7 +1788,7 @@ html[data-theme="dark"] .btn-close {
 /* Comment target highlight */
 .discussion-comment:target {
   border-color: var(--wiki-primary);
-  box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.15);
+  box-shadow: var(--wiki-focus-ring);
 }
 
 /* ── Bootstrap list-group Override (Dark Mode) ── */
@@ -2262,7 +2172,7 @@ html[data-theme="dark"] .push-status-on {
   gap: 6px;
   padding: 6px 12px;
   border: 1px solid var(--wiki-border);
-  border-radius: var(--wiki-radius, 4px);
+  border-radius: var(--wiki-radius);
   background-color: var(--wiki-bg);
   min-height: 42px;
   cursor: text;
@@ -2271,16 +2181,16 @@ html[data-theme="dark"] .push-status-on {
 
 .category-tag-container:focus-within {
   border-color: var(--wiki-primary);
-  box-shadow: 0 0 0 0.25rem rgba(88, 166, 255, 0.25);
+  box-shadow: var(--wiki-focus-ring);
   background-color: var(--wiki-card-bg);
 }
 
 .category-tag {
   display: inline-flex;
   align-items: center;
-  background-color: rgba(88, 166, 255, 0.1);
+  background-color: color-mix(in srgb, var(--wiki-primary) 10%, transparent);
   color: var(--wiki-primary);
-  border: 1px solid rgba(88, 166, 255, 0.2);
+  border: 1px solid color-mix(in srgb, var(--wiki-primary) 20%, transparent);
   border-radius: 8px;
   padding: 3px 10px;
   font-size: 0.85rem;

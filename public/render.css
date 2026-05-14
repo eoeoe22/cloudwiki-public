@@ -98,7 +98,7 @@
 .wiki-section-toggle-icon {
   margin-right: 0.5rem;
   font-size: 0.7em;
-  color: var(--wiki-muted, #aaa);
+  color: var(--wiki-text-muted);
   flex-shrink: 0;
 }
 
@@ -153,12 +153,8 @@
   vertical-align: middle;
 }
 
-/* 코드 전용 각진 모노스페이스 스택 (한국어 대응: Nanum Gothic Coding) */
-:root {
-  --wiki-code-font: 'JetBrains Mono', 'Nanum Gothic Coding', 'D2Coding', 'Cascadia Code', 'Consolas', 'Menlo', 'DejaVu Sans Mono', monospace;
-}
-
 /* 인라인 코드 블록 */
+/* (--wiki-code-font 은 style.css :root 에서 사이트 전역 토큰으로 정의됨) */
 .wiki-content code {
   background: var(--wiki-code-bg);
   padding: 0.2rem 0.4rem;
@@ -715,7 +711,7 @@ html[data-theme="dark"] .wiki-content pre[class*="language-"] code[class*="langu
   -webkit-backdrop-filter: var(--wiki-glass-blur);
   border: 1px solid var(--wiki-glass-border);
   border-radius: 8px;
-  box-shadow: var(--wiki-shadow-lg, 0 8px 32px rgba(0, 0, 0, 0.12));
+  box-shadow: var(--wiki-shadow-lg);
   z-index: 1049;
   opacity: 0;
   pointer-events: none;
@@ -743,7 +739,7 @@ html[data-theme="dark"] .wiki-content pre[class*="language-"] code[class*="langu
 .toc-floating-close {
   background: none;
   border: none;
-  color: var(--wiki-text-muted, #888);
+  color: var(--wiki-text-muted);
   cursor: pointer;
   padding: 0;
   font-size: 0.8rem;
@@ -791,14 +787,14 @@ html[data-theme="dark"] .wiki-content pre[class*="language-"] code[class*="langu
 
 .toc-floating-body a:hover {
   background: var(--wiki-glass-border);
-  color: var(--wiki-primary, #3b82f6);
+  color: var(--wiki-primary);
 }
 
 .toc-floating-body a.toc-active {
   background: rgba(0, 101, 145, 0.12);
-  color: var(--wiki-primary, #3b82f6);
+  color: var(--wiki-primary);
   font-weight: 600;
-  border-left: 3px solid var(--wiki-primary, #3b82f6);
+  border-left: 3px solid var(--wiki-primary);
   padding-left: calc(0.35rem - 3px);
 }
 
@@ -813,7 +809,7 @@ html[data-theme="dark"] .toc-floating-body a.toc-active {
 
 /* 아코디언 목차 스크롤 스파이 강조 */
 #tocNav a.toc-active {
-  color: var(--wiki-primary, #3b82f6);
+  color: var(--wiki-primary);
   font-weight: 600;
 }
 
@@ -1123,7 +1119,7 @@ html[data-theme="dark"] .toc-floating-body a.toc-active {
 }
 
 .wiki-ext-raw-textarea:focus {
-  box-shadow: inset 0 0 0 2px rgba(88, 166, 255, 0.2);
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--wiki-primary) 20%, transparent);
 }
 
 /*
@@ -1312,7 +1308,7 @@ body.raw-mode .wiki-content-raw {
 }
 
 .wiki-embed {
-  border-left: 4px solid var(--wiki-link, #5865F2);
+  border-left: 4px solid var(--wiki-link);
   background: var(--wiki-card-bg);
   border-radius: 4px;
   padding: 0.625rem 1rem;
@@ -1480,7 +1476,7 @@ a.wiki-button {
   font-weight: 500;
   line-height: 1.4;
   background: var(--wiki-primary);
-  color: var(--wiki-btn-text, #fff);
+  color: var(--wiki-btn-text);
   border: 1px solid var(--wiki-primary);
   text-decoration: none;
   cursor: pointer;
@@ -1494,7 +1490,7 @@ a.wiki-button:hover,
 a.wiki-button:focus {
   filter: brightness(1.08);
   text-decoration: none;
-  color: var(--wiki-btn-text, #fff);
+  color: var(--wiki-btn-text);
   box-shadow: var(--wiki-shadow-sm);
 }
 
@@ -1634,7 +1630,7 @@ html[data-theme="dark"] .wiki-callout-note    { --callout-bg-tint: rgba(161, 161
   display: inline-block;
   padding: 1px 7px;
   min-width: 1.6em;
-  font-family: var(--wiki-code-font, 'JetBrains Mono', 'Nanum Gothic Coding', 'Consolas', monospace);
+  font-family: var(--wiki-code-font);
   font-size: 0.82em;
   font-weight: 600;
   line-height: 1.4;
@@ -1720,7 +1716,7 @@ html[data-theme="dark"] .wiki-callout-note    { --callout-bg-tint: rgba(161, 161
   margin: 0.75rem 0;
 }
 .wiki-card.card > .wiki-card-header.card-header {
-  background: var(--wiki-card-header-bg, var(--wiki-card-bg));
+  background: var(--wiki-card-bg);
   border-bottom-color: var(--wiki-border);
   color: var(--wiki-text);
 }

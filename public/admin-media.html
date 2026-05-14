@@ -1,266 +1,186 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ko">
-
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title class="app-wiki-name">관리자 콘솔 - 이미지 관리 - CloudWiki</title>
-    <link rel="icon" id="wiki-favicon" href="/favicon.ico">
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.13.1/font/bootstrap-icons.min.css" rel="stylesheet">
-    <link href="https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css" rel="stylesheet">
-    <link href="https://cdn.jsdelivr.net/npm/sweetalert2@11.26.24/dist/sweetalert2.min.css" rel="stylesheet">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="icon" id="wiki-favicon" href="/favicon.ico" />
     <link
-        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Outfit:wght@500;600;700;800;900&family=Noto+Sans+KR:wght@300;400;500;600;700;800;900&display=swap"
-        rel="stylesheet">
-    <link rel="stylesheet" href="/css/style.css">
-  <!-- 테마 FOUC 방지: CSS 로드 후 즉시 테마 적용 -->
-  <script>try{var t=localStorage.getItem('themeMode');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
-    <style>
-        /* 모바일에서 햄버거 메뉴 숨김 */
-        .navbar-toggler[data-bs-target="#mobileSidebar"] {
-            display: none !important;
-        }
+      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
+      rel="stylesheet"
+    />
+    <link
+      href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.13.1/font/bootstrap-icons.min.css"
+      rel="stylesheet"
+    />
+    <link
+      href="https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css"
+      rel="stylesheet"
+    />
+    <link
+      href="https://cdn.jsdelivr.net/npm/sweetalert2@11.26.24/dist/sweetalert2.min.css"
+      rel="stylesheet"
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Outfit:wght@500;600;700;800;900&family=Noto+Sans+KR:wght@300;400;500;600;700;800;900&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/css/style.css" />
+    <link rel="stylesheet" href="/css/admin.css" />
+    <!-- 테마 FOUC 방지: CSS 로드 후 즉시 테마 적용 -->
+    <script>
+      try {
+        var t = localStorage.getItem("themeMode");
+        if (t === "light" || t === "dark")
+          document.documentElement.setAttribute("data-theme", t);
+      } catch (e) {}
+    </script>
+  </head>
 
-        .admin-container {
-            width: 100%;
-            min-width: 0;
-            max-width: 1000px;
-            margin: 40px auto;
-            padding: 0 20px;
-            box-sizing: border-box;
-            word-break: break-word;
-            overflow-wrap: break-word;
-        }
-
-        @media (max-width: 768px) {
-            .admin-container {
-                margin: 20px auto;
-                padding: 0 10px;
-                max-width: 100vw;
-            }
-
-            .admin-container h2,
-            .admin-container h3,
-            .admin-container h5,
-            .admin-container p,
-            .admin-container label,
-            .admin-container .form-check-label,
-            .admin-container .card-header,
-            .admin-container .card-body {
-                word-break: break-word;
-                overflow-wrap: break-word;
-            }
-
-            .admin-container .card {
-                max-width: 100%;
-                overflow: hidden;
-            }
-        }
-
-        .table-responsive {
-            overflow-x: auto;
-            -webkit-overflow-scrolling: touch;
-            width: 100%;
-        }
-
-        .wiki-layout {
-            min-width: 0;
-            max-width: 100vw;
-            overflow-x: hidden;
-        }
-
-        .wiki-container {
-            min-width: 0;
-        }
-
-        .card,
-        .card-body {
-            min-width: 0;
-        }
-
-        .media-item {
-            border: 1px solid var(--wiki-border);
-            border-radius: 10px;
-            padding: 12px;
-            margin-bottom: 10px;
-            display: flex;
-            align-items: center;
-            gap: 14px;
-            background: var(--wiki-card-bg, #fff);
-        }
-
-        .media-item img,
-        .media-item video {
-            width: 80px;
-            height: 80px;
-            object-fit: cover;
-            border-radius: 8px;
-            flex-shrink: 0;
-        }
-
-        .media-item-info {
-            flex: 1;
-            min-width: 0;
-        }
-
-        .media-item-info .filename {
-            font-weight: 600;
-            word-break: break-all;
-        }
-
-        .media-item-info .meta {
-            font-size: 0.85em;
-            color: var(--wiki-text-muted, #888);
-        }
-
-        .media-list-scroll {
-            overflow-x: auto;
-            -webkit-overflow-scrolling: touch;
-        }
-
-        .media-list-scroll .media-item {
-            min-width: 560px;
-        }
-
-        .media-item-tags {
-            margin-top: 4px;
-            display: flex;
-            flex-wrap: wrap;
-            gap: 4px;
-        }
-
-        .media-item-tag {
-            display: inline-flex;
-            align-items: center;
-            background-color: rgba(88, 166, 255, 0.1);
-            color: var(--wiki-primary);
-            border: 1px solid rgba(88, 166, 255, 0.2);
-            border-radius: 6px;
-            padding: 1px 8px;
-            font-size: 0.75rem;
-            font-weight: 500;
-            line-height: 1.4;
-        }
-
-        .media-tag-filter {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            flex-wrap: wrap;
-            margin-top: 10px;
-        }
-
-        .media-tag-filter > label {
-            font-size: 0.85rem;
-            color: var(--wiki-text-muted, #888);
-            margin: 0;
-            white-space: nowrap;
-        }
-
-        .media-tag-filter .category-tag-container {
-            flex: 1;
-            min-width: 240px;
-            min-height: 36px;
-            padding: 4px 10px;
-        }
-    </style>
-</head>
-
-<body>
-
+  <body>
     <!-- ── 네비게이션 바 Placeholder ── -->
     <div id="app-header-placeholder"></div>
 
     <div class="wiki-layout justify-content-center">
-        <div class="wiki-container">
-            <div class="admin-container">
-                <div class="mb-4">
-                    <a href="/admin" class="btn btn-outline-secondary btn-sm"><i class="mdi mdi-arrow-left"></i> 관리자 콘솔로
-                        돌아가기</a>
-                </div>
+      <div class="wiki-container">
+        <div class="admin-container">
+          <div class="mb-4">
+            <a href="/admin" class="btn btn-wiki-outline btn-sm"
+              ><i class="mdi mdi-arrow-left"></i> 관리자 콘솔로 돌아가기</a
+            >
+          </div>
 
-                <h2 class="mb-4"><i class="mdi mdi-image-multiple"></i> 이미지 관리</h2>
-                <p class="text-muted mb-3">업로드된 이미지를 검색하고 관리할 수 있습니다.</p>
+          <h2 class="mb-4">
+            <i class="mdi mdi-image-multiple"></i> 이미지 관리
+          </h2>
+          <p class="text-muted mb-3">
+            업로드된 이미지를 검색하고 관리할 수 있습니다.
+          </p>
 
-                <!-- 쓰레기 수집기 카드 -->
-                <div class="card shadow-sm border-0 mb-4">
-                    <div class="card-header py-3">
-                        <div class="d-flex justify-content-between align-items-center">
-                            <h5 class="mb-0"><i class="mdi mdi-delete-sweep"></i> 쓰레기 수집기</h5>
-                            <button class="btn btn-sm btn-outline-warning" onclick="runGarbageCollector()"
-                                id="gcRunBtn">
-                                <i class="mdi mdi-magnify-scan"></i> 미사용 이미지 검색
-                            </button>
-                        </div>
-                    </div>
-                    <div class="card-body" id="gcBody" style="display: none;">
-                        <div id="gcStatus" class="text-muted text-center py-3"></div>
-                        <div class="media-list-scroll">
-                            <div id="gcList"></div>
-                        </div>
-                        <div id="gcActions" class="text-center mt-3" style="display: none;">
-                            <div class="d-flex justify-content-between align-items-center">
-                                <div>
-                                    <button class="btn btn-sm btn-outline-secondary" onclick="gcSelectAll()">전체
-                                        선택</button>
-                                    <button class="btn btn-sm btn-outline-secondary" onclick="gcDeselectAll()">전체
-                                        해제</button>
-                                </div>
-                                <button class="btn btn-sm btn-danger" onclick="gcDeleteSelected()" id="gcDeleteBtn">
-                                    <i class="mdi mdi-delete-forever"></i> 선택 항목 삭제
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="card shadow-sm border-0 mb-4">
-                    <div class="card-header py-3">
-                        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
-                            <h5 class="mb-0">이미지 목록</h5>
-                            <div class="d-flex gap-2 flex-wrap">
-                                <select id="mediaSortSelect" class="form-select form-select-sm" style="width: auto;"
-                                    onchange="changeMediaSort()">
-                                    <option value="date_desc">업로드 최신순</option>
-                                    <option value="date_asc">업로드 오래된순</option>
-                                    <option value="name_asc">파일명 A-Z</option>
-                                    <option value="name_desc">파일명 Z-A</option>
-                                    <option value="size_desc">파일 크기 큰순</option>
-                                    <option value="size_asc">파일 크기 작은순</option>
-                                </select>
-                                <input type="text" id="mediaSearchInput" class="form-control form-control-sm"
-                                    placeholder="파일명 검색..." style="width: 250px;">
-                                <button class="btn btn-sm btn-primary" onclick="searchMedia()">검색</button>
-                            </div>
-                        </div>
-                        <div class="media-tag-filter">
-                            <label for="mediaTagInput"><i class="mdi mdi-tag-multiple-outline"></i> 태그 검색</label>
-                            <div class="category-tag-container" id="mediaTagContainer">
-                                <input type="text" id="mediaTagInput" class="category-tag-input"
-                                    placeholder="(엔터/쉼표로 추가, 모두 포함하는 이미지 표시)">
-                            </div>
-                        </div>
-                    </div>
-                    <div class="card-body">
-                        <div class="media-list-scroll">
-                            <div id="mediaList">
-                                <div class="text-center text-muted py-3">불러오는 중...</div>
-                            </div>
-                        </div>
-                        <nav id="mediaPagination" class="mt-3" aria-label="이미지 페이지네이션"></nav>
-                        <div id="mediaTotalInfo" class="text-muted small text-center mt-2"></div>
-                    </div>
-                </div>
-
+          <!-- 쓰레기 수집기 카드 -->
+          <div class="card shadow-sm border-0 mb-4">
+            <div class="card-header py-3">
+              <div class="d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">
+                  <i class="mdi mdi-delete-sweep"></i> 쓰레기 수집기
+                </h5>
+                <button
+                  class="btn btn-wiki btn-sm"
+                  onclick="runGarbageCollector()"
+                  id="gcRunBtn"
+                >
+                  <i class="mdi mdi-magnify-scan"></i> 미사용 이미지 검색
+                </button>
+              </div>
             </div>
-        </div>
+            <div class="card-body" id="gcBody" style="display: none">
+              <div id="gcStatus" class="text-muted text-center py-3"></div>
+              <div class="media-list-scroll">
+                <div id="gcList"></div>
+              </div>
+              <div
+                id="gcActions"
+                class="text-center mt-3"
+                style="display: none"
+              >
+                <div class="d-flex justify-content-between align-items-center">
+                  <div>
+                    <button
+                      class="btn btn-sm btn-outline-secondary"
+                      onclick="gcSelectAll()"
+                    >
+                      전체 선택
+                    </button>
+                    <button
+                      class="btn btn-sm btn-outline-secondary"
+                      onclick="gcDeselectAll()"
+                    >
+                      전체 해제
+                    </button>
+                  </div>
+                  <button
+                    class="btn btn-wiki-danger btn-sm"
+                    onclick="gcDeleteSelected()"
+                    id="gcDeleteBtn"
+                  >
+                    <i class="mdi mdi-delete-forever"></i> 선택 항목 삭제
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
 
-        <aside class="wiki-sidebar d-none" id="wikiSidebar">
-            <div id="app-sidebar-placeholder"></div>
-        </aside>
+          <div class="card shadow-sm border-0 mb-4">
+            <div class="card-header py-3">
+              <div
+                class="d-flex justify-content-between align-items-center flex-wrap gap-2"
+              >
+                <h5 class="mb-0">이미지 목록</h5>
+                <div class="d-flex gap-2 flex-wrap">
+                  <select
+                    id="mediaSortSelect"
+                    class="form-select form-select-sm"
+                    style="width: auto"
+                    onchange="changeMediaSort()"
+                  >
+                    <option value="date_desc">업로드 최신순</option>
+                    <option value="date_asc">업로드 오래된순</option>
+                    <option value="name_asc">파일명 A-Z</option>
+                    <option value="name_desc">파일명 Z-A</option>
+                    <option value="size_desc">파일 크기 큰순</option>
+                    <option value="size_asc">파일 크기 작은순</option>
+                  </select>
+                  <input
+                    type="text"
+                    id="mediaSearchInput"
+                    class="form-control form-control-sm"
+                    placeholder="파일명 검색..."
+                    style="width: 250px"
+                  />
+                  <button class="btn btn-wiki btn-sm" onclick="searchMedia()">
+                    검색
+                  </button>
+                </div>
+              </div>
+              <div class="media-tag-filter">
+                <label for="mediaTagInput"
+                  ><i class="mdi mdi-tag-multiple-outline"></i> 태그 검색</label
+                >
+                <div class="category-tag-container" id="mediaTagContainer">
+                  <input
+                    type="text"
+                    id="mediaTagInput"
+                    class="category-tag-input"
+                    placeholder="(엔터/쉼표로 추가, 모두 포함하는 이미지 표시)"
+                  />
+                </div>
+              </div>
+            </div>
+            <div class="card-body">
+              <div class="media-list-scroll">
+                <div id="mediaList">
+                  <div class="text-center text-muted py-3">불러오는 중...</div>
+                </div>
+              </div>
+              <nav
+                id="mediaPagination"
+                class="mt-3"
+                aria-label="이미지 페이지네이션"
+              ></nav>
+              <div
+                id="mediaTotalInfo"
+                class="text-muted small text-center mt-2"
+              ></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <aside class="wiki-sidebar d-none" id="wikiSidebar">
+        <div id="app-sidebar-placeholder"></div>
+      </aside>
     </div>
 
     <!-- ── 푸터 Placeholder ── -->
@@ -271,188 +191,212 @@
 
     <script type="module" src="/dist/common.js"></script>
     <script>
+      document.addEventListener("DOMContentLoaded", async () => {
+        await loadConfig();
+        try {
+          const res = await fetch("/api/me");
+          if (!res.ok) throw new Error();
+          currentUser = await res.json();
 
-        document.addEventListener('DOMContentLoaded', async () => {
-            await loadConfig();
-            try {
-                const res = await fetch('/api/me');
-                if (!res.ok) throw new Error();
-                currentUser = await res.json();
+          if (
+            currentUser.role !== "admin" &&
+            currentUser.role !== "super_admin"
+          ) {
+            Swal.fire(
+              "접근 제한",
+              "관리자만 접근할 수 있습니다.",
+              "error",
+            ).then(() => {
+              window.location.href = "/";
+            });
+            return;
+          }
 
-                if (currentUser.role !== 'admin' && currentUser.role !== 'super_admin') {
-                    Swal.fire('접근 제한', '관리자만 접근할 수 있습니다.', 'error').then(() => {
-                        window.location.href = '/';
-                    });
-                    return;
-                }
+          document
+            .querySelectorAll("#userAvatar")
+            .forEach((el) => (el.src = currentUser.picture || ""));
+          document
+            .querySelectorAll("#userName")
+            .forEach((el) => (el.textContent = currentUser.name));
 
-                document.querySelectorAll('#userAvatar').forEach(el => el.src = currentUser.picture || '');
-                document.querySelectorAll('#userName').forEach(el => el.textContent = currentUser.name);
+          mediaTagWidget = mountMediaTagInput({
+            container: document.getElementById("mediaTagContainer"),
+            input: document.getElementById("mediaTagInput"),
+            initial: [],
+          });
+          mediaTagWidget.setOnChange(() => {
+            mediaTagFilter = mediaTagWidget.getTags();
+            loadMedia(1);
+          });
 
-                mediaTagWidget = mountMediaTagInput({
-                    container: document.getElementById('mediaTagContainer'),
-                    input: document.getElementById('mediaTagInput'),
-                    initial: [],
-                });
-                mediaTagWidget.setOnChange(() => {
-                    mediaTagFilter = mediaTagWidget.getTags();
-                    loadMedia(1);
-                });
+          loadMedia();
+        } catch (e) {
+          window.location.href = "/login";
+        }
+      });
 
-                loadMedia();
-            } catch (e) {
-                window.location.href = '/login';
-            }
+      // ── 이미지(미디어) 관리 ──
+      var mediaPage = 1;
+      var mediaPageSize = 10;
+      var mediaSearch = "";
+      var mediaSort = "date_desc";
+      var mediaTotal = 0;
+      var mediaItems = [];
+      var mediaTagFilter = [];
+      var mediaTagWidget = null;
+
+      async function loadMedia(page = 1) {
+        try {
+          mediaPage = Math.max(1, page);
+          const offset = (mediaPage - 1) * mediaPageSize;
+
+          const params = new URLSearchParams({
+            limit: mediaPageSize,
+            offset: offset,
+            sort: mediaSort,
+          });
+          if (mediaSearch) params.append("search", mediaSearch);
+          if (mediaTagFilter && mediaTagFilter.length > 0) {
+            params.append("tags", mediaTagFilter.join(","));
+          }
+
+          document.getElementById("mediaList").innerHTML =
+            '<div class="text-center text-muted py-3">불러오는 중...</div>';
+
+          const res = await fetch(`/api/admin/media?${params.toString()}`);
+          if (!res.ok) throw new Error("이미지 목록 로딩 실패");
+          const data = await res.json();
+
+          mediaTotal = data.total;
+          mediaItems = data.media || [];
+
+          const totalPages = Math.max(1, Math.ceil(mediaTotal / mediaPageSize));
+          if (mediaPage > totalPages && mediaTotal > 0) {
+            return loadMedia(totalPages);
+          }
+
+          renderMedia();
+        } catch (err) {
+          document.getElementById("mediaList").innerHTML =
+            '<div class="text-center text-danger py-3">이미지 목록을 불러올 수 없습니다.</div>';
+          document.getElementById("mediaPagination").innerHTML = "";
+          document.getElementById("mediaTotalInfo").textContent = "";
+        }
+      }
+
+      function searchMedia() {
+        mediaSearch = document.getElementById("mediaSearchInput").value.trim();
+        loadMedia(1);
+      }
+
+      function changeMediaSort() {
+        mediaSort = document.getElementById("mediaSortSelect").value;
+        loadMedia(1);
+      }
+
+      document
+        .getElementById("mediaSearchInput")
+        .addEventListener("keypress", (e) => {
+          if (e.key === "Enter") searchMedia();
         });
 
-        // ── 이미지(미디어) 관리 ──
-        var mediaPage = 1;
-        var mediaPageSize = 10;
-        var mediaSearch = '';
-        var mediaSort = 'date_desc';
-        var mediaTotal = 0;
-        var mediaItems = [];
-        var mediaTagFilter = [];
-        var mediaTagWidget = null;
+      function goToMediaPage(page) {
+        const totalPages = Math.max(1, Math.ceil(mediaTotal / mediaPageSize));
+        const target = Math.min(Math.max(1, page), totalPages);
+        if (target === mediaPage) return;
+        loadMedia(target);
+        document
+          .getElementById("mediaList")
+          .scrollIntoView({ behavior: "smooth", block: "start" });
+      }
 
-        async function loadMedia(page = 1) {
-            try {
-                mediaPage = Math.max(1, page);
-                const offset = (mediaPage - 1) * mediaPageSize;
+      function getMediaPageNumbers(current, total) {
+        const pages = [];
+        if (total <= 7) {
+          for (let i = 1; i <= total; i++) pages.push(i);
+          return pages;
+        }
+        pages.push(1);
+        if (current > 3) pages.push("...");
+        const start = Math.max(2, current - 1);
+        const end = Math.min(total - 1, current + 1);
+        for (let i = start; i <= end; i++) pages.push(i);
+        if (current < total - 2) pages.push("...");
+        pages.push(total);
+        return pages;
+      }
 
-                const params = new URLSearchParams({
-                    limit: mediaPageSize,
-                    offset: offset,
-                    sort: mediaSort
-                });
-                if (mediaSearch) params.append('search', mediaSearch);
-                if (mediaTagFilter && mediaTagFilter.length > 0) {
-                    params.append('tags', mediaTagFilter.join(','));
-                }
+      function renderMediaPagination() {
+        const container = document.getElementById("mediaPagination");
+        if (mediaTotal === 0) {
+          container.innerHTML = "";
+          return;
+        }
+        const totalPages = Math.max(1, Math.ceil(mediaTotal / mediaPageSize));
+        const pages = getMediaPageNumbers(mediaPage, totalPages);
+        const isFirst = mediaPage === 1;
+        const isLast = mediaPage === totalPages;
 
-                document.getElementById('mediaList').innerHTML =
-                    '<div class="text-center text-muted py-3">불러오는 중...</div>';
+        let html =
+          '<ul class="pagination pagination-sm justify-content-center mb-0 flex-wrap">';
+        html += `<li class="page-item ${isFirst ? "disabled" : ""}"><button type="button" class="page-link" onclick="goToMediaPage(1)" ${isFirst ? "disabled" : ""} aria-label="처음"><i class="mdi mdi-chevron-double-left"></i></button></li>`;
+        html += `<li class="page-item ${isFirst ? "disabled" : ""}"><button type="button" class="page-link" onclick="goToMediaPage(${mediaPage - 1})" ${isFirst ? "disabled" : ""} aria-label="이전"><i class="mdi mdi-chevron-left"></i></button></li>`;
+        for (const p of pages) {
+          if (p === "...") {
+            html +=
+              '<li class="page-item disabled"><span class="page-link">…</span></li>';
+          } else {
+            const active = p === mediaPage ? "active" : "";
+            html += `<li class="page-item ${active}"><button type="button" class="page-link" onclick="goToMediaPage(${p})">${p}</button></li>`;
+          }
+        }
+        html += `<li class="page-item ${isLast ? "disabled" : ""}"><button type="button" class="page-link" onclick="goToMediaPage(${mediaPage + 1})" ${isLast ? "disabled" : ""} aria-label="다음"><i class="mdi mdi-chevron-right"></i></button></li>`;
+        html += `<li class="page-item ${isLast ? "disabled" : ""}"><button type="button" class="page-link" onclick="goToMediaPage(${totalPages})" ${isLast ? "disabled" : ""} aria-label="마지막"><i class="mdi mdi-chevron-double-right"></i></button></li>`;
+        html += "</ul>";
+        container.innerHTML = html;
+      }
 
-                const res = await fetch(`/api/admin/media?${params.toString()}`);
-                if (!res.ok) throw new Error('이미지 목록 로딩 실패');
-                const data = await res.json();
+      function renderMedia() {
+        const listEl = document.getElementById("mediaList");
+        const totalInfo = document.getElementById("mediaTotalInfo");
 
-                mediaTotal = data.total;
-                mediaItems = data.media || [];
-
-                const totalPages = Math.max(1, Math.ceil(mediaTotal / mediaPageSize));
-                if (mediaPage > totalPages && mediaTotal > 0) {
-                    return loadMedia(totalPages);
-                }
-
-                renderMedia();
-            } catch (err) {
-                document.getElementById('mediaList').innerHTML =
-                    '<div class="text-center text-danger py-3">이미지 목록을 불러올 수 없습니다.</div>';
-                document.getElementById('mediaPagination').innerHTML = '';
-                document.getElementById('mediaTotalInfo').textContent = '';
-            }
+        if (!mediaItems || mediaItems.length === 0) {
+          listEl.innerHTML =
+            '<div class="text-center text-muted py-3">이미지가 없습니다.</div>';
+          document.getElementById("mediaPagination").innerHTML = "";
+          totalInfo.textContent = "";
+          return;
         }
 
-        function searchMedia() {
-            mediaSearch = document.getElementById('mediaSearchInput').value.trim();
-            loadMedia(1);
-        }
+        listEl.innerHTML = mediaItems
+          .map((m) => {
+            const isVideo = m.mime_type && m.mime_type.startsWith("video/");
+            const publicUrl = m.r2_key ? `/media/${m.r2_key}` : "";
+            const preview = isVideo
+              ? `<video src="${publicUrl}" muted></video>`
+              : `<img src="${publicUrl}" alt="${escapeHtml(m.filename)}" loading="lazy">`;
 
-        function changeMediaSort() {
-            mediaSort = document.getElementById('mediaSortSelect').value;
-            loadMedia(1);
-        }
+            const sizeStr =
+              m.size < 1024
+                ? `${m.size} B`
+                : m.size < 1024 * 1024
+                  ? `${(m.size / 1024).toFixed(1)} KB`
+                  : `${(m.size / (1024 * 1024)).toFixed(1)} MB`;
 
-        document.getElementById('mediaSearchInput').addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') searchMedia();
-        });
+            const uploadDate = m.created_at
+              ? new Date(m.created_at * 1000).toLocaleString("ko-KR")
+              : "알 수 없음";
 
-        function goToMediaPage(page) {
-            const totalPages = Math.max(1, Math.ceil(mediaTotal / mediaPageSize));
-            const target = Math.min(Math.max(1, page), totalPages);
-            if (target === mediaPage) return;
-            loadMedia(target);
-            document.getElementById('mediaList').scrollIntoView({ behavior: 'smooth', block: 'start' });
-        }
+            const uploaderName = m.uploader_name
+              ? escapeHtml(m.uploader_name)
+              : "알 수 없음";
 
-        function getMediaPageNumbers(current, total) {
-            const pages = [];
-            if (total <= 7) {
-                for (let i = 1; i <= total; i++) pages.push(i);
-                return pages;
-            }
-            pages.push(1);
-            if (current > 3) pages.push('...');
-            const start = Math.max(2, current - 1);
-            const end = Math.min(total - 1, current + 1);
-            for (let i = start; i <= end; i++) pages.push(i);
-            if (current < total - 2) pages.push('...');
-            pages.push(total);
-            return pages;
-        }
+            const tagsHtml =
+              m.tags && m.tags.length > 0
+                ? `<div class="media-item-tags">${m.tags.map((t) => `<span class="media-item-tag">${escapeHtml(t)}</span>`).join("")}</div>`
+                : "";
 
-        function renderMediaPagination() {
-            const container = document.getElementById('mediaPagination');
-            if (mediaTotal === 0) {
-                container.innerHTML = '';
-                return;
-            }
-            const totalPages = Math.max(1, Math.ceil(mediaTotal / mediaPageSize));
-            const pages = getMediaPageNumbers(mediaPage, totalPages);
-            const isFirst = mediaPage === 1;
-            const isLast = mediaPage === totalPages;
-
-            let html = '<ul class="pagination pagination-sm justify-content-center mb-0 flex-wrap">';
-            html += `<li class="page-item ${isFirst ? 'disabled' : ''}"><button type="button" class="page-link" onclick="goToMediaPage(1)" ${isFirst ? 'disabled' : ''} aria-label="처음"><i class="mdi mdi-chevron-double-left"></i></button></li>`;
-            html += `<li class="page-item ${isFirst ? 'disabled' : ''}"><button type="button" class="page-link" onclick="goToMediaPage(${mediaPage - 1})" ${isFirst ? 'disabled' : ''} aria-label="이전"><i class="mdi mdi-chevron-left"></i></button></li>`;
-            for (const p of pages) {
-                if (p === '...') {
-                    html += '<li class="page-item disabled"><span class="page-link">…</span></li>';
-                } else {
-                    const active = p === mediaPage ? 'active' : '';
-                    html += `<li class="page-item ${active}"><button type="button" class="page-link" onclick="goToMediaPage(${p})">${p}</button></li>`;
-                }
-            }
-            html += `<li class="page-item ${isLast ? 'disabled' : ''}"><button type="button" class="page-link" onclick="goToMediaPage(${mediaPage + 1})" ${isLast ? 'disabled' : ''} aria-label="다음"><i class="mdi mdi-chevron-right"></i></button></li>`;
-            html += `<li class="page-item ${isLast ? 'disabled' : ''}"><button type="button" class="page-link" onclick="goToMediaPage(${totalPages})" ${isLast ? 'disabled' : ''} aria-label="마지막"><i class="mdi mdi-chevron-double-right"></i></button></li>`;
-            html += '</ul>';
-            container.innerHTML = html;
-        }
-
-        function renderMedia() {
-            const listEl = document.getElementById('mediaList');
-            const totalInfo = document.getElementById('mediaTotalInfo');
-
-            if (!mediaItems || mediaItems.length === 0) {
-                listEl.innerHTML = '<div class="text-center text-muted py-3">이미지가 없습니다.</div>';
-                document.getElementById('mediaPagination').innerHTML = '';
-                totalInfo.textContent = '';
-                return;
-            }
-
-            listEl.innerHTML = mediaItems.map(m => {
-                const isVideo = m.mime_type && m.mime_type.startsWith('video/');
-                const publicUrl = m.r2_key ? `/media/${m.r2_key}` : '';
-                const preview = isVideo
-                    ? `<video src="${publicUrl}" muted></video>`
-                    : `<img src="${publicUrl}" alt="${escapeHtml(m.filename)}" loading="lazy">`;
-
-                const sizeStr = m.size < 1024 ? `${m.size} B`
-                    : m.size < 1024 * 1024 ? `${(m.size / 1024).toFixed(1)} KB`
-                        : `${(m.size / (1024 * 1024)).toFixed(1)} MB`;
-
-                const uploadDate = m.created_at
-                    ? new Date(m.created_at * 1000).toLocaleString('ko-KR')
-                    : '알 수 없음';
-
-                const uploaderName = m.uploader_name ? escapeHtml(m.uploader_name) : '알 수 없음';
-
-                const tagsHtml = (m.tags && m.tags.length > 0)
-                    ? `<div class="media-item-tags">${m.tags.map(t => `<span class="media-item-tag">${escapeHtml(t)}</span>`).join('')}</div>`
-                    : '';
-
-                return `
+            return `
                     <div class="media-item" id="media-item-${m.id}">
                         ${preview}
                         <div class="media-item-info">
@@ -472,91 +416,107 @@
                         </div>
                     </div>
                 `;
-            }).join('');
+          })
+          .join("");
 
-            const totalPages = Math.max(1, Math.ceil(mediaTotal / mediaPageSize));
-            const rangeStart = (mediaPage - 1) * mediaPageSize + 1;
-            const rangeEnd = (mediaPage - 1) * mediaPageSize + mediaItems.length;
-            totalInfo.textContent = `총 ${mediaTotal}개 · ${rangeStart}-${rangeEnd}번 표시 · 페이지 ${mediaPage}/${totalPages}`;
+        const totalPages = Math.max(1, Math.ceil(mediaTotal / mediaPageSize));
+        const rangeStart = (mediaPage - 1) * mediaPageSize + 1;
+        const rangeEnd = (mediaPage - 1) * mediaPageSize + mediaItems.length;
+        totalInfo.textContent = `총 ${mediaTotal}개 · ${rangeStart}-${rangeEnd}번 표시 · 페이지 ${mediaPage}/${totalPages}`;
 
-            renderMediaPagination();
-        }
+        renderMediaPagination();
+      }
 
-        async function deleteMedia(id, filename) {
-            const result = await Swal.fire({
-                title: '이미지 삭제',
-                text: `"${filename}" 이미지를 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.`,
-                icon: 'warning',
-                showCancelButton: true,
-                confirmButtonText: '삭제',
-                cancelButtonText: '취소',
-                confirmButtonColor: '#d33'
+      async function deleteMedia(id, filename) {
+        const result = await Swal.fire({
+          title: "이미지 삭제",
+          text: `"${filename}" 이미지를 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.`,
+          icon: "warning",
+          showCancelButton: true,
+          confirmButtonText: "삭제",
+          cancelButtonText: "취소",
+          confirmButtonColor: "#d33",
+        });
+
+        if (result.isConfirmed) {
+          try {
+            const res = await fetch(`/api/admin/media/${id}`, {
+              method: "DELETE",
             });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || "삭제 실패");
 
-            if (result.isConfirmed) {
-                try {
-                    const res = await fetch(`/api/admin/media/${id}`, { method: 'DELETE' });
-                    const data = await res.json();
-                    if (!res.ok) throw new Error(data.error || '삭제 실패');
+            await loadMedia(mediaPage);
 
-                    await loadMedia(mediaPage);
-
-                    Swal.fire({ icon: 'success', title: '삭제됨', showConfirmButton: false, timer: 1000 });
-                } catch (err) {
-                    Swal.fire('오류', err.message, 'error');
-                }
-            }
+            Swal.fire({
+              icon: "success",
+              title: "삭제됨",
+              showConfirmButton: false,
+              timer: 1000,
+            });
+          } catch (err) {
+            Swal.fire("오류", err.message, "error");
+          }
         }
+      }
 
-        // ── 쓰레기 수집기 ──
-        var gcItems = [];
+      // ── 쓰레기 수집기 ──
+      var gcItems = [];
 
-        async function runGarbageCollector() {
-            const gcBody = document.getElementById('gcBody');
-            const gcStatus = document.getElementById('gcStatus');
-            const gcList = document.getElementById('gcList');
-            const gcActions = document.getElementById('gcActions');
-            const gcRunBtn = document.getElementById('gcRunBtn');
+      async function runGarbageCollector() {
+        const gcBody = document.getElementById("gcBody");
+        const gcStatus = document.getElementById("gcStatus");
+        const gcList = document.getElementById("gcList");
+        const gcActions = document.getElementById("gcActions");
+        const gcRunBtn = document.getElementById("gcRunBtn");
 
-            gcBody.style.display = 'block';
-            gcActions.style.display = 'none';
-            gcList.innerHTML = '';
-            gcStatus.innerHTML = '<div class="spinner-border spinner-border-sm text-warning" role="status"></div> 미사용 이미지를 검색하는 중... (시간이 걸릴 수 있습니다)';
-            gcRunBtn.disabled = true;
+        gcBody.style.display = "block";
+        gcActions.style.display = "none";
+        gcList.innerHTML = "";
+        gcStatus.innerHTML =
+          '<div class="spinner-border spinner-border-sm text-warning" role="status"></div> 미사용 이미지를 검색하는 중... (시간이 걸릴 수 있습니다)';
+        gcRunBtn.disabled = true;
 
-            try {
-                const res = await fetch('/api/admin/media/gc');
-                if (!res.ok) throw new Error('검색 실패');
-                const data = await res.json();
+        try {
+          const res = await fetch("/api/admin/media/gc");
+          if (!res.ok) throw new Error("검색 실패");
+          const data = await res.json();
 
-                gcItems = data.unused || [];
+          gcItems = data.unused || [];
 
-                if (gcItems.length === 0) {
-                    gcStatus.innerHTML = '<div class="alert alert-success mb-0"><i class="mdi mdi-check-circle"></i> 미사용 이미지가 없습니다. 모든 이미지가 문서에서 사용 중입니다.</div>';
-                    return;
-                }
+          if (gcItems.length === 0) {
+            gcStatus.innerHTML =
+              '<div class="alert alert-success mb-0"><i class="mdi mdi-check-circle"></i> 미사용 이미지가 없습니다. 모든 이미지가 문서에서 사용 중입니다.</div>';
+            return;
+          }
 
-                gcStatus.innerHTML = `<div class="alert alert-warning mb-0"><i class="mdi mdi-alert"></i> 전체 ${data.total_media}개 이미지 중 <strong>${data.unused_count}개</strong>가 어떤 문서에서도 사용되지 않고 있습니다.</div>`;
+          gcStatus.innerHTML = `<div class="alert alert-warning mb-0"><i class="mdi mdi-alert"></i> 전체 ${data.total_media}개 이미지 중 <strong>${data.unused_count}개</strong>가 어떤 문서에서도 사용되지 않고 있습니다.</div>`;
 
-                gcList.innerHTML = gcItems.map(m => {
-                    const isVideo = m.mime_type && m.mime_type.startsWith('video/');
-                    const publicUrl = m.r2_key ? `/media/${m.r2_key}` : '';
-                    const preview = isVideo
-                        ? `<video src="${publicUrl}" muted style="width:60px;height:60px;object-fit:cover;border-radius:6px;"></video>`
-                        : `<img src="${publicUrl}" alt="${escapeHtml(m.filename)}" loading="lazy" style="width:60px;height:60px;object-fit:cover;border-radius:6px;">`;
+          gcList.innerHTML = gcItems
+            .map((m) => {
+              const isVideo = m.mime_type && m.mime_type.startsWith("video/");
+              const publicUrl = m.r2_key ? `/media/${m.r2_key}` : "";
+              const preview = isVideo
+                ? `<video src="${publicUrl}" muted style="width:60px;height:60px;object-fit:cover;border-radius:6px;"></video>`
+                : `<img src="${publicUrl}" alt="${escapeHtml(m.filename)}" loading="lazy" style="width:60px;height:60px;object-fit:cover;border-radius:6px;">`;
 
-                    const sizeStr = m.size < 1024 ? `${m.size} B`
-                        : m.size < 1024 * 1024 ? `${(m.size / 1024).toFixed(1)} KB`
-                            : `${(m.size / (1024 * 1024)).toFixed(1)} MB`;
+              const sizeStr =
+                m.size < 1024
+                  ? `${m.size} B`
+                  : m.size < 1024 * 1024
+                    ? `${(m.size / 1024).toFixed(1)} KB`
+                    : `${(m.size / (1024 * 1024)).toFixed(1)} MB`;
 
-                    const uploadDate = m.created_at
-                        ? new Date(m.created_at * 1000).toLocaleString('ko-KR')
-                        : '알 수 없음';
+              const uploadDate = m.created_at
+                ? new Date(m.created_at * 1000).toLocaleString("ko-KR")
+                : "알 수 없음";
 
-                    const uploaderName = m.uploader_name ? escapeHtml(m.uploader_name) : '알 수 없음';
+              const uploaderName = m.uploader_name
+                ? escapeHtml(m.uploader_name)
+                : "알 수 없음";
 
-                    return `
-                            <div class="media-item" style="border-color: var(--bs-warning);">
+              return `
+                            <div class="media-item" style="border-color: var(--wiki-warning);">
                                 <input type="checkbox" class="form-check-input gc-check" data-id="${m.id}" checked style="flex-shrink:0;">
                                 ${preview}
                                 <div class="media-item-info">
@@ -567,141 +527,150 @@
                                     <i class="mdi mdi-link-variant"></i>
                                 </button>
                             </div>`;
-                }).join('');
+            })
+            .join("");
 
-                gcActions.style.display = 'block';
-            } catch (err) {
-                gcStatus.innerHTML = `<div class="alert alert-danger mb-0">오류: ${err.message}</div>`;
-            } finally {
-                gcRunBtn.disabled = false;
-            }
+          gcActions.style.display = "block";
+        } catch (err) {
+          gcStatus.innerHTML = `<div class="alert alert-danger mb-0">오류: ${err.message}</div>`;
+        } finally {
+          gcRunBtn.disabled = false;
+        }
+      }
+
+      function gcSelectAll() {
+        document
+          .querySelectorAll(".gc-check")
+          .forEach((cb) => (cb.checked = true));
+      }
+
+      function gcDeselectAll() {
+        document
+          .querySelectorAll(".gc-check")
+          .forEach((cb) => (cb.checked = false));
+      }
+
+      async function gcDeleteSelected() {
+        const selectedIds = Array.from(
+          document.querySelectorAll(".gc-check:checked"),
+        ).map((cb) => Number(cb.dataset.id));
+
+        if (selectedIds.length === 0) {
+          Swal.fire("알림", "삭제할 이미지를 선택해주세요.", "info");
+          return;
         }
 
-        function gcSelectAll() {
-            document.querySelectorAll('.gc-check').forEach(cb => cb.checked = true);
+        const result = await Swal.fire({
+          title: "미사용 이미지 삭제",
+          html: `선택된 <strong>${selectedIds.length}개</strong> 이미지를 영구 삭제하시겠습니까?<br><small class="text-muted">이 작업은 되돌릴 수 없습니다.</small>`,
+          icon: "warning",
+          showCancelButton: true,
+          confirmButtonText: "삭제",
+          cancelButtonText: "취소",
+          confirmButtonColor: "#d33",
+        });
+
+        if (!result.isConfirmed) return;
+
+        const gcDeleteBtn = document.getElementById("gcDeleteBtn");
+        gcDeleteBtn.disabled = true;
+        gcDeleteBtn.innerHTML =
+          '<span class="spinner-border spinner-border-sm"></span> 삭제 중...';
+
+        try {
+          const res = await fetch("/api/admin/media/gc", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ids: selectedIds }),
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || "삭제 실패");
+
+          let msg = `${data.deleted_count}개 이미지가 삭제되었습니다.`;
+          if (data.errors && data.errors.length > 0) {
+            msg += `\n\n경고:\n${data.errors.join("\n")}`;
+          }
+
+          Swal.fire({
+            icon: data.deleted_count > 0 ? "success" : "warning",
+            title: "쓰레기 수집 완료",
+            text: msg,
+            confirmButtonText: "확인",
+          });
+
+          // 메인 목록 현재 페이지 재로드
+          await loadMedia(mediaPage);
+
+          // GC 결과 다시 검색
+          runGarbageCollector();
+        } catch (err) {
+          Swal.fire("오류", err.message, "error");
+        } finally {
+          gcDeleteBtn.disabled = false;
+          gcDeleteBtn.innerHTML =
+            '<i class="mdi mdi-delete-forever"></i> 선택 항목 삭제';
         }
+      }
 
-        function gcDeselectAll() {
-            document.querySelectorAll('.gc-check').forEach(cb => cb.checked = false);
-        }
+      async function trackBacklinks(id, filename) {
+        try {
+          Swal.fire({
+            title: "역링크 추적 중...",
+            text: "잠시만 기다려주세요.",
+            allowOutsideClick: false,
+            didOpen: () => {
+              Swal.showLoading();
+            },
+          });
 
-        async function gcDeleteSelected() {
-            const selectedIds = Array.from(document.querySelectorAll('.gc-check:checked'))
-                .map(cb => Number(cb.dataset.id));
+          const res = await fetch(`/api/admin/media/${id}/backlinks`);
+          if (!res.ok) {
+            const data = await res.json();
+            throw new Error(data.error || "역링크 추적 실패");
+          }
+          const data = await res.json();
 
-            if (selectedIds.length === 0) {
-                Swal.fire('알림', '삭제할 이미지를 선택해주세요.', 'info');
-                return;
-            }
-
-            const result = await Swal.fire({
-                title: '미사용 이미지 삭제',
-                html: `선택된 <strong>${selectedIds.length}개</strong> 이미지를 영구 삭제하시겠습니까?<br><small class="text-muted">이 작업은 되돌릴 수 없습니다.</small>`,
-                icon: 'warning',
-                showCancelButton: true,
-                confirmButtonText: '삭제',
-                cancelButtonText: '취소',
-                confirmButtonColor: '#d33'
-            });
-
-            if (!result.isConfirmed) return;
-
-            const gcDeleteBtn = document.getElementById('gcDeleteBtn');
-            gcDeleteBtn.disabled = true;
-            gcDeleteBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 삭제 중...';
-
-            try {
-                const res = await fetch('/api/admin/media/gc', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ ids: selectedIds })
-                });
-                const data = await res.json();
-                if (!res.ok) throw new Error(data.error || '삭제 실패');
-
-                let msg = `${data.deleted_count}개 이미지가 삭제되었습니다.`;
-                if (data.errors && data.errors.length > 0) {
-                    msg += `\n\n경고:\n${data.errors.join('\n')}`;
-                }
-
-                Swal.fire({
-                    icon: data.deleted_count > 0 ? 'success' : 'warning',
-                    title: '쓰레기 수집 완료',
-                    text: msg,
-                    confirmButtonText: '확인'
-                });
-
-                // 메인 목록 현재 페이지 재로드
-                await loadMedia(mediaPage);
-
-                // GC 결과 다시 검색
-                runGarbageCollector();
-            } catch (err) {
-                Swal.fire('오류', err.message, 'error');
-            } finally {
-                gcDeleteBtn.disabled = false;
-                gcDeleteBtn.innerHTML = '<i class="mdi mdi-delete-forever"></i> 선택 항목 삭제';
-            }
-        }
-
-        async function trackBacklinks(id, filename) {
-            try {
-                Swal.fire({
-                    title: '역링크 추적 중...',
-                    text: '잠시만 기다려주세요.',
-                    allowOutsideClick: false,
-                    didOpen: () => {
-                        Swal.showLoading();
-                    }
-                });
-
-                const res = await fetch(`/api/admin/media/${id}/backlinks`);
-                if (!res.ok) {
-                    const data = await res.json();
-                    throw new Error(data.error || '역링크 추적 실패');
-                }
-                const data = await res.json();
-
-                let htmlContent = '';
-                if (data.backlinks && data.backlinks.length > 0) {
-                    htmlContent = '<ul class="list-group text-start mt-3" style="max-height: 300px; overflow-y: auto;">';
-                    data.backlinks.forEach(item => {
-                        if (item.type === 'blog') {
-                            htmlContent += `
+          let htmlContent = "";
+          if (data.backlinks && data.backlinks.length > 0) {
+            htmlContent =
+              '<ul class="list-group text-start mt-3" style="max-height: 300px; overflow-y: auto;">';
+            data.backlinks.forEach((item) => {
+              if (item.type === "blog") {
+                htmlContent += `
                                 <li class="list-group-item d-flex justify-content-between align-items-center">
                                     <a href="/blog/${encodeURIComponent(item.id)}" target="_blank" class="text-decoration-none">
                                         ${escapeHtml(item.title || `#${item.id}`)}
                                     </a>
                                     <span class="badge bg-info rounded-pill">블로그</span>
                                 </li>`;
-                        } else {
-                            htmlContent += `
+              } else {
+                htmlContent += `
                                 <li class="list-group-item d-flex justify-content-between align-items-center">
                                     <a href="/w/${encodeURIComponent(item.slug)}" target="_blank" class="text-decoration-none">
                                         ${escapeHtml(item.slug)}
                                     </a>
                                     <span class="badge bg-secondary rounded-pill">문서</span>
                                 </li>`;
-                        }
-                    });
-                    htmlContent += '</ul>';
-                } else {
-                    htmlContent = '<div class="alert alert-info mt-3 mb-0">이 이미지를 사용 중인 문서가 없습니다.</div>';
-                }
+              }
+            });
+            htmlContent += "</ul>";
+          } else {
+            htmlContent =
+              '<div class="alert alert-info mt-3 mb-0">이 이미지를 사용 중인 문서가 없습니다.</div>';
+          }
 
-                Swal.fire({
-                    title: '역링크 추적 결과',
-                    html: `<strong>${escapeHtml(filename)}</strong> 사용 문서 목록<br>` + htmlContent,
-                    width: '600px',
-                    confirmButtonText: '닫기'
-                });
-
-            } catch (err) {
-                Swal.fire('오류', err.message, 'error');
-            }
+          Swal.fire({
+            title: "역링크 추적 결과",
+            html:
+              `<strong>${escapeHtml(filename)}</strong> 사용 문서 목록<br>` +
+              htmlContent,
+            width: "600px",
+            confirmButtonText: "닫기",
+          });
+        } catch (err) {
+          Swal.fire("오류", err.message, "error");
         }
-
+      }
     </script>
-</body>
-
+  </body>
 </html>

@@ -59,7 +59,7 @@
   background-color: var(--wiki-card-bg);
   border: 1px solid var(--wiki-border);
   border-radius: 0.375rem;
-  box-shadow: var(--wiki-shadow-md, 0 0.5rem 1rem rgba(0, 0, 0, 0.15));
+  box-shadow: var(--wiki-shadow-md);
   font-size: 0.875rem;
 }
 

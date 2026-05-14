@@ -1,0 +1,908 @@
+/* ── 관리자 콘솔 공유 스타일 ──
+   Bootstrap 기반 마크업을 사이트의 "premium flat" 디자인 언어
+   (.wiki-article / .sidebar-section / .btn-wiki 와 동일한 radii, surface,
+   subtle shadow) 로 정렬한다. admin.html / admin-media.html 공용.
+
+   범위는 .admin-layout / .admin-container 로 한정되어 사이트 다른
+   페이지의 Bootstrap 컴포넌트 동작에는 영향을 주지 않는다. */
+
+/* 모바일 햄버거 메뉴 숨김 (admin 페이지에는 #mobileSidebar 가 없음) */
+.navbar-toggler[data-bs-target="#mobileSidebar"] {
+  display: none !important;
+}
+
+/* ── 3-컬럼 레이아웃 ── */
+.admin-layout {
+  display: flex;
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 0 1rem;
+  gap: 1.5rem;
+  margin-bottom: 3rem;
+}
+
+/* 관리 메뉴 사이드바 — DOM 순서상 .wiki-container 다음에 위치해
+   사이트 다른 페이지(.wiki-sidebar) 와 동일하게 오른쪽 정렬된다. */
+.admin-sidebar {
+  width: 240px;
+  flex-shrink: 0;
+  position: sticky;
+  top: 1.25rem;
+  align-self: flex-start;
+  z-index: 1020;
+}
+
+.admin-sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* 관리 메뉴 nav 항목 — .recent-change-item 와 유사한 flat 하이라이트 */
+.admin-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0.55rem 0.7rem;
+  border-radius: 8px;
+  font-weight: 500;
+  font-size: 0.9rem;
+  color: var(--wiki-text);
+  text-decoration: none;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.admin-nav-item i {
+  font-size: 1.05rem;
+  color: var(--wiki-text-muted);
+}
+
+.admin-nav-item:hover {
+  background: var(--wiki-bg);
+  color: var(--wiki-primary);
+}
+
+.admin-nav-item.active {
+  background: var(--wiki-bg);
+  border-color: var(--wiki-border);
+  color: var(--wiki-primary);
+  font-weight: 700;
+}
+
+.admin-nav-item:hover i,
+.admin-nav-item.active i {
+  color: var(--wiki-primary);
+}
+
+/* ── 페이지 헤더 ── */
+.admin-header {
+  margin-bottom: 1.5rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--wiki-border);
+}
+
+.admin-header h2 {
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  margin-bottom: 0.25rem;
+  color: var(--wiki-text);
+}
+
+.admin-header h2 i,
+.admin-header h2 .text-primary {
+  color: var(--wiki-primary) !important;
+}
+
+.admin-header p {
+  color: var(--wiki-text-muted);
+}
+
+/* ── 카드 (Bootstrap .card → flat 카드) ── */
+.admin-layout .card,
+.admin-container .card {
+  background: var(--wiki-card-bg);
+  border: 1px solid var(--wiki-border);
+  border-radius: 8px;
+  box-shadow: var(--wiki-shadow-sm);
+  transition: box-shadow 0.2s var(--wiki-ease);
+}
+
+.admin-layout .card:hover,
+.admin-container .card:hover {
+  box-shadow: var(--wiki-shadow);
+}
+
+/* card-header 의 Bootstrap-blue tint 제거 → 사이트의 muted-uppercase 라벨
+   패턴과 어울리는 차분한 헤더로 통일 */
+.admin-layout .card > .card-header,
+.admin-container .card > .card-header {
+  background: transparent !important;
+  border-bottom: 1px solid var(--wiki-border) !important;
+  padding: 0.85rem 1.25rem;
+  font-weight: 600;
+  color: var(--wiki-text);
+}
+
+.admin-layout .card > .card-header h5,
+.admin-container .card > .card-header h5,
+.admin-layout .card > .card-header h6,
+.admin-container .card > .card-header h6 {
+  color: var(--wiki-text);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  margin-bottom: 0;
+}
+
+/* card-header 내부 보조 아이콘은 primary 톤으로 통일 */
+.admin-layout .card > .card-header h5 > i:first-child,
+.admin-layout .card > .card-header h6 > i:first-child,
+.admin-container .card > .card-header h5 > i:first-child,
+.admin-container .card > .card-header h6 > i:first-child {
+  color: var(--wiki-primary);
+  margin-right: 0.35rem;
+}
+
+/* ── 테이블 헤더: 테마 인지형 (Bootstrap .table-light 는 다크모드에서
+   읽히지 않음) ── */
+.admin-layout .table > thead > tr > th,
+.admin-container .table > thead > tr > th,
+.admin-layout .table > thead.table-light > tr > th,
+.admin-container .table > thead.table-light > tr > th {
+  background: transparent;
+  color: var(--wiki-text-muted);
+  border-bottom: 1px solid var(--wiki-border);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-size: 0.72rem;
+  padding-top: 0.65rem;
+  padding-bottom: 0.65rem;
+}
+
+.admin-layout .table,
+.admin-container .table {
+  --bs-table-color: var(--wiki-text);
+  --bs-table-bg: transparent;
+  --bs-table-border-color: var(--wiki-border);
+  --bs-table-hover-color: var(--wiki-text);
+  --bs-table-hover-bg: var(--wiki-bg);
+  color: var(--wiki-text);
+}
+
+.admin-layout .table > tbody > tr > td,
+.admin-container .table > tbody > tr > td {
+  border-bottom-color: var(--wiki-border);
+  color: var(--wiki-text);
+  vertical-align: middle;
+}
+
+/* ── 폼 컨트롤: 사이트 톤에 맞춰 차분한 border + primary focus ring ── */
+.admin-layout .form-control,
+.admin-layout .form-select,
+.admin-container .form-control,
+.admin-container .form-select {
+  background-color: var(--wiki-card-bg);
+  color: var(--wiki-text);
+  border: 1px solid var(--wiki-border);
+  border-radius: 4px;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.admin-layout .form-control::placeholder,
+.admin-container .form-control::placeholder {
+  color: var(--wiki-text-muted);
+  opacity: 0.7;
+}
+
+.admin-layout .form-control:focus,
+.admin-layout .form-select:focus,
+.admin-container .form-control:focus,
+.admin-container .form-select:focus {
+  background-color: var(--wiki-card-bg);
+  color: var(--wiki-text);
+  border-color: var(--wiki-primary);
+  box-shadow: var(--wiki-focus-ring);
+  outline: none;
+}
+
+.admin-layout .input-group-text,
+.admin-container .input-group-text {
+  background-color: var(--wiki-bg);
+  color: var(--wiki-text-muted);
+  border-color: var(--wiki-border);
+}
+
+.admin-layout .form-check-input,
+.admin-container .form-check-input {
+  border-color: var(--wiki-border);
+}
+
+.admin-layout .form-check-input:checked,
+.admin-container .form-check-input:checked {
+  background-color: var(--wiki-primary);
+  border-color: var(--wiki-primary);
+}
+
+.admin-layout .form-check-input:focus,
+.admin-container .form-check-input:focus {
+  border-color: var(--wiki-primary);
+  box-shadow: var(--wiki-focus-ring);
+}
+
+.admin-layout .form-label,
+.admin-container .form-label,
+.admin-layout .form-check-label,
+.admin-container .form-check-label {
+  color: var(--wiki-text);
+}
+
+/* ── 버튼: Bootstrap variant 를 사이트의 flat 톤으로 매핑 ──
+   .btn-wiki / .btn-wiki-outline / .btn-wiki-danger 와 시각적으로
+   동일한 무게가 되도록 라운드/패딩/그림자/transition 을 정렬한다. */
+.admin-layout .btn,
+.admin-container .btn {
+  border-radius: 4px;
+  font-weight: 600;
+  transition: all 0.2s var(--wiki-ease);
+}
+
+.admin-layout .btn:active,
+.admin-container .btn:active {
+  transform: scale(0.98);
+}
+
+.admin-layout .btn:focus-visible,
+.admin-container .btn:focus-visible {
+  box-shadow: var(--wiki-focus-ring);
+  outline: none;
+}
+
+/* Primary (filled) — 사이트의 주 액션 톤 (단색 primary, 강한 hover) */
+.admin-layout .btn-primary,
+.admin-container .btn-primary {
+  background-color: var(--wiki-primary);
+  border-color: var(--wiki-primary);
+  color: #fff;
+  box-shadow: var(--wiki-shadow-sm);
+}
+
+.admin-layout .btn-primary:hover,
+.admin-container .btn-primary:hover {
+  background-color: var(--wiki-primary-hover);
+  border-color: var(--wiki-primary-hover);
+  color: #fff;
+  box-shadow: var(--wiki-shadow);
+  transform: translateY(-1px);
+}
+
+.admin-layout .btn-primary:disabled,
+.admin-container .btn-primary:disabled {
+  background-color: var(--wiki-primary);
+  border-color: var(--wiki-primary);
+  opacity: 0.55;
+}
+
+/* Secondary (filled) → outline 톤으로 강도 낮추기 (취소 버튼 등) */
+.admin-layout .btn-secondary,
+.admin-container .btn-secondary {
+  background-color: transparent;
+  border-color: var(--wiki-border);
+  color: var(--wiki-text-muted);
+  box-shadow: none;
+}
+
+.admin-layout .btn-secondary:hover,
+.admin-container .btn-secondary:hover {
+  background-color: var(--wiki-bg);
+  border-color: var(--wiki-text-muted);
+  color: var(--wiki-text);
+}
+
+/* Danger / Success / Warning (filled) — 텍스트 색만 살리고 배경은
+   tint 처리해서 사이트의 차분한 톤을 유지 */
+.admin-layout .btn-danger,
+.admin-container .btn-danger {
+  background-color: color-mix(in srgb, var(--wiki-danger) 14%, transparent);
+  border-color: color-mix(in srgb, var(--wiki-danger) 50%, transparent);
+  color: var(--wiki-danger);
+  box-shadow: none;
+}
+
+.admin-layout .btn-danger:hover,
+.admin-container .btn-danger:hover {
+  background-color: color-mix(in srgb, var(--wiki-danger) 22%, transparent);
+  border-color: var(--wiki-danger);
+  color: var(--wiki-danger);
+}
+
+.admin-layout .btn-success,
+.admin-container .btn-success {
+  background-color: color-mix(in srgb, var(--wiki-success) 14%, transparent);
+  border-color: color-mix(in srgb, var(--wiki-success) 50%, transparent);
+  color: var(--wiki-success);
+  box-shadow: none;
+}
+
+.admin-layout .btn-success:hover,
+.admin-container .btn-success:hover {
+  background-color: color-mix(in srgb, var(--wiki-success) 22%, transparent);
+  border-color: var(--wiki-success);
+  color: var(--wiki-success);
+}
+
+/* Outline variants — flat tint */
+.admin-layout .btn-outline-primary,
+.admin-container .btn-outline-primary {
+  background-color: transparent;
+  color: var(--wiki-primary);
+  border-color: color-mix(in srgb, var(--wiki-primary) 45%, transparent);
+}
+
+.admin-layout .btn-outline-primary:hover,
+.admin-container .btn-outline-primary:hover,
+.admin-layout .btn-outline-primary.active,
+.admin-container .btn-outline-primary.active {
+  background-color: color-mix(in srgb, var(--wiki-primary) 12%, transparent);
+  border-color: var(--wiki-primary);
+  color: var(--wiki-primary);
+}
+
+.admin-layout .btn-outline-secondary,
+.admin-container .btn-outline-secondary {
+  background-color: transparent;
+  color: var(--wiki-text-muted);
+  border-color: var(--wiki-border);
+}
+
+.admin-layout .btn-outline-secondary:hover,
+.admin-container .btn-outline-secondary:hover,
+.admin-layout .btn-outline-secondary.active,
+.admin-container .btn-outline-secondary.active {
+  background-color: var(--wiki-bg);
+  border-color: var(--wiki-text-muted);
+  color: var(--wiki-text);
+}
+
+.admin-layout .btn-outline-secondary:disabled,
+.admin-container .btn-outline-secondary:disabled {
+  opacity: 0.5;
+  background-color: transparent;
+}
+
+.admin-layout .btn-outline-info,
+.admin-container .btn-outline-info {
+  background-color: transparent;
+  color: var(--wiki-primary);
+  border-color: color-mix(in srgb, var(--wiki-primary) 35%, transparent);
+}
+
+.admin-layout .btn-outline-info:hover,
+.admin-container .btn-outline-info:hover {
+  background-color: color-mix(in srgb, var(--wiki-primary) 10%, transparent);
+  border-color: var(--wiki-primary);
+  color: var(--wiki-primary);
+}
+
+.admin-layout .btn-outline-success,
+.admin-container .btn-outline-success {
+  background-color: transparent;
+  color: var(--wiki-success);
+  border-color: color-mix(in srgb, var(--wiki-success) 45%, transparent);
+}
+
+.admin-layout .btn-outline-success:hover,
+.admin-container .btn-outline-success:hover,
+.admin-layout .btn-outline-success.active,
+.admin-container .btn-outline-success.active {
+  background-color: color-mix(in srgb, var(--wiki-success) 12%, transparent);
+  border-color: var(--wiki-success);
+  color: var(--wiki-success);
+}
+
+.admin-layout .btn-outline-danger,
+.admin-container .btn-outline-danger {
+  background-color: transparent;
+  color: var(--wiki-danger);
+  border-color: color-mix(in srgb, var(--wiki-danger) 45%, transparent);
+}
+
+.admin-layout .btn-outline-danger:hover,
+.admin-container .btn-outline-danger:hover,
+.admin-layout .btn-outline-danger.active,
+.admin-container .btn-outline-danger.active {
+  background-color: color-mix(in srgb, var(--wiki-danger) 12%, transparent);
+  border-color: var(--wiki-danger);
+  color: var(--wiki-danger);
+}
+
+.admin-layout .btn-outline-warning,
+.admin-container .btn-outline-warning {
+  background-color: transparent;
+  color: var(--wiki-warning);
+  border-color: color-mix(in srgb, var(--wiki-warning) 45%, transparent);
+}
+
+.admin-layout .btn-outline-warning:hover,
+.admin-container .btn-outline-warning:hover {
+  background-color: color-mix(in srgb, var(--wiki-warning) 12%, transparent);
+  border-color: var(--wiki-warning);
+  color: var(--wiki-warning);
+}
+
+/* Link 톤 (테이블 행 내부의 미니 액션) */
+.admin-layout .btn-link,
+.admin-container .btn-link {
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.admin-layout .btn-link:hover,
+.admin-container .btn-link:hover {
+  text-decoration: underline;
+}
+
+/* btn-xs 보조 사이즈 — Bootstrap 5 에는 없으므로 직접 정의 */
+.admin-layout .btn-xs,
+.admin-container .btn-xs {
+  padding: 0.15rem 0.45rem;
+  font-size: 0.72rem;
+  line-height: 1.3;
+}
+
+/* ── 페이지네이션 (Bootstrap .pagination → flat) ── */
+.admin-layout .pagination .page-link,
+.admin-container .pagination .page-link {
+  background-color: var(--wiki-card-bg);
+  color: var(--wiki-text);
+  border-color: var(--wiki-border);
+  font-weight: 500;
+}
+
+.admin-layout .pagination .page-link:hover,
+.admin-container .pagination .page-link:hover {
+  background-color: var(--wiki-bg);
+  color: var(--wiki-primary);
+  border-color: var(--wiki-border);
+}
+
+.admin-layout .pagination .page-link:focus,
+.admin-container .pagination .page-link:focus {
+  box-shadow: var(--wiki-focus-ring);
+}
+
+.admin-layout .pagination .page-item.active .page-link,
+.admin-container .pagination .page-item.active .page-link {
+  background-color: var(--wiki-primary);
+  border-color: var(--wiki-primary);
+  color: #fff;
+}
+
+.admin-layout .pagination .page-item.disabled .page-link,
+.admin-container .pagination .page-item.disabled .page-link {
+  background-color: var(--wiki-card-bg);
+  color: var(--wiki-text-muted);
+  border-color: var(--wiki-border);
+  opacity: 0.6;
+}
+
+/* ── 리스트 그룹 (카테고리/네임스페이스 등) ── */
+.admin-layout .list-group,
+.admin-container .list-group {
+  border-radius: 6px;
+  background: transparent;
+}
+
+.admin-layout .list-group-item,
+.admin-container .list-group-item {
+  background-color: transparent;
+  color: var(--wiki-text);
+  border-color: var(--wiki-border);
+}
+
+.admin-layout .list-group-flush.border,
+.admin-container .list-group-flush.border {
+  border-color: var(--wiki-border) !important;
+}
+
+/* ── 알림 박스 (alert) → 사이트 톤의 flat 배너 ── */
+.admin-layout .alert,
+.admin-container .alert {
+  border-radius: 6px;
+  border-width: 1px;
+  padding: 0.65rem 0.9rem;
+  font-size: 0.9rem;
+}
+
+.admin-layout .alert-success,
+.admin-container .alert-success {
+  background-color: color-mix(in srgb, var(--wiki-success) 12%, transparent);
+  border-color: color-mix(in srgb, var(--wiki-success) 40%, transparent);
+  color: var(--wiki-success);
+}
+
+.admin-layout .alert-warning,
+.admin-container .alert-warning {
+  background-color: color-mix(in srgb, var(--wiki-warning) 12%, transparent);
+  border-color: color-mix(in srgb, var(--wiki-warning) 40%, transparent);
+  color: var(--wiki-warning);
+}
+
+.admin-layout .alert-danger,
+.admin-container .alert-danger {
+  background-color: color-mix(in srgb, var(--wiki-danger) 12%, transparent);
+  border-color: color-mix(in srgb, var(--wiki-danger) 40%, transparent);
+  color: var(--wiki-danger);
+}
+
+.admin-layout .alert-info,
+.admin-container .alert-info {
+  background-color: color-mix(in srgb, var(--wiki-primary) 10%, transparent);
+  border-color: color-mix(in srgb, var(--wiki-primary) 35%, transparent);
+  color: var(--wiki-primary);
+}
+
+/* ── 배지 (badge) — 더 차분한 톤, pill 모양 통일 ── */
+.admin-layout .badge,
+.admin-container .badge {
+  font-weight: 600;
+  font-size: 0.72rem;
+  padding: 0.25rem 0.55rem;
+  border-radius: 999px;
+  letter-spacing: 0.01em;
+}
+
+.admin-layout .badge.bg-primary,
+.admin-container .badge.bg-primary {
+  background-color: color-mix(
+    in srgb,
+    var(--wiki-primary) 18%,
+    transparent
+  ) !important;
+  color: var(--wiki-primary) !important;
+}
+
+.admin-layout .badge.bg-secondary,
+.admin-container .badge.bg-secondary {
+  background-color: var(--wiki-bg) !important;
+  color: var(--wiki-text-muted) !important;
+}
+
+.admin-layout .badge.bg-success,
+.admin-container .badge.bg-success {
+  background-color: color-mix(
+    in srgb,
+    var(--wiki-success) 18%,
+    transparent
+  ) !important;
+  color: var(--wiki-success) !important;
+}
+
+.admin-layout .badge.bg-danger,
+.admin-container .badge.bg-danger {
+  background-color: color-mix(
+    in srgb,
+    var(--wiki-danger) 18%,
+    transparent
+  ) !important;
+  color: var(--wiki-danger) !important;
+}
+
+.admin-layout .badge.bg-warning,
+.admin-container .badge.bg-warning {
+  background-color: color-mix(
+    in srgb,
+    var(--wiki-warning) 20%,
+    transparent
+  ) !important;
+  color: var(--wiki-warning) !important;
+}
+
+.admin-layout .badge.bg-info,
+.admin-container .badge.bg-info {
+  background-color: color-mix(
+    in srgb,
+    var(--wiki-primary) 14%,
+    transparent
+  ) !important;
+  color: var(--wiki-primary) !important;
+}
+
+.admin-layout .badge.bg-dark,
+.admin-container .badge.bg-dark {
+  background-color: var(--wiki-text) !important;
+  color: var(--wiki-card-bg) !important;
+}
+
+/* ── 탭 전환 애니메이션 ── */
+.tab-pane {
+  display: none;
+  animation: adminTabFadeIn 0.3s ease;
+}
+
+.tab-pane.active {
+  display: block;
+}
+
+@keyframes adminTabFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ── 대시보드 통계 박스 ── */
+.dash-stat-box {
+  background: var(--wiki-card-bg);
+  border: 1px solid var(--wiki-border);
+  border-radius: 8px;
+  color: var(--wiki-text);
+}
+
+.dash-stat-box .text-muted {
+  color: var(--wiki-text-muted) !important;
+}
+
+/* ── 대시보드 "빠른 링크" 큰 액션 버튼 (정사각형 배너 톤) ── */
+.admin-quick-action {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.7rem 0.95rem;
+  border-radius: 8px;
+  border: 1px solid var(--wiki-border);
+  background: var(--wiki-card-bg);
+  color: var(--wiki-text);
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 0.9rem;
+  transition:
+    border-color 0.15s ease,
+    color 0.15s ease,
+    background 0.15s ease,
+    transform 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.admin-quick-action i {
+  font-size: 1.2rem;
+  color: var(--wiki-primary);
+}
+
+.admin-quick-action:hover {
+  border-color: var(--wiki-primary);
+  color: var(--wiki-primary);
+  background: var(--wiki-bg);
+  transform: translateY(-1px);
+  box-shadow: var(--wiki-shadow-sm);
+}
+
+/* ── 공지 발행 폼: 카드 내부의 sub-panel 톤 ── */
+.admin-subpanel {
+  background: var(--wiki-bg);
+  border: 1px solid var(--wiki-border);
+  border-radius: 6px;
+  padding: 0.85rem 1rem;
+}
+
+/* ── MCP 서버 안내 박스 (사이드 인포 박스) ── */
+.admin-info-box {
+  background: var(--wiki-bg);
+  color: var(--wiki-text);
+  border: 1px solid var(--wiki-border);
+  border-radius: 6px;
+  padding: 0.85rem 1rem;
+  font-size: 0.875rem;
+}
+
+.admin-info-box .form-control[readonly] {
+  background: var(--wiki-card-bg);
+}
+
+/* ── admin-media 전용 컨테이너 ── */
+.admin-container {
+  width: 100%;
+  min-width: 0;
+  max-width: 1000px;
+  margin: 1.5rem auto;
+  padding: 0 1rem;
+  box-sizing: border-box;
+  word-break: break-word;
+  overflow-wrap: break-word;
+}
+
+.admin-container > h2 {
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--wiki-text);
+}
+
+.admin-container > h2 i {
+  color: var(--wiki-primary);
+}
+
+/* admin-media 페이지가 .wiki-layout > .wiki-container > .admin-container
+   구조로 중첩되므로 가로 스크롤이 비정상으로 발생하지 않게 보강 */
+.wiki-layout:has(> .wiki-container > .admin-container) {
+  min-width: 0;
+  max-width: 100vw;
+  overflow-x: hidden;
+}
+
+.wiki-container > .admin-container ~ .card,
+.wiki-container > .admin-container .card,
+.wiki-container > .admin-container .card-body {
+  min-width: 0;
+}
+
+/* ── 미디어 아이템 카드 ── */
+.media-item {
+  border: 1px solid var(--wiki-border);
+  border-radius: 8px;
+  padding: 0.75rem;
+  margin-bottom: 0.5rem;
+  display: flex;
+  align-items: center;
+  gap: 0.875rem;
+  background: var(--wiki-card-bg);
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.media-item:hover {
+  border-color: var(--wiki-primary);
+  box-shadow: var(--wiki-shadow-sm);
+}
+
+.media-item img,
+.media-item video {
+  width: 80px;
+  height: 80px;
+  object-fit: cover;
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+
+.media-item-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.media-item-info .filename {
+  font-weight: 600;
+  word-break: break-all;
+  color: var(--wiki-text);
+}
+
+.media-item-info .meta {
+  font-size: 0.85em;
+  color: var(--wiki-text-muted);
+}
+
+.media-list-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.media-list-scroll .media-item {
+  min-width: 560px;
+}
+
+.media-item-tags {
+  margin-top: 4px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.media-item-tag {
+  display: inline-flex;
+  align-items: center;
+  background-color: color-mix(in srgb, var(--wiki-primary) 10%, transparent);
+  color: var(--wiki-primary);
+  border: 1px solid color-mix(in srgb, var(--wiki-primary) 25%, transparent);
+  border-radius: 6px;
+  padding: 1px 8px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.media-tag-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 0.625rem;
+}
+
+.media-tag-filter > label {
+  font-size: 0.85rem;
+  color: var(--wiki-text-muted);
+  margin: 0;
+  white-space: nowrap;
+}
+
+.media-tag-filter .category-tag-container {
+  flex: 1;
+  min-width: 240px;
+  min-height: 36px;
+  padding: 4px 10px;
+}
+
+/* table-responsive 가로 스크롤 보장 */
+.admin-container .table-responsive,
+.admin-layout .table-responsive {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  width: 100%;
+}
+
+/* ── 반응형 ── */
+@media (max-width: 1200px) {
+  .admin-layout {
+    flex-wrap: wrap;
+  }
+
+  .admin-sidebar {
+    width: 100%;
+    position: relative;
+    top: 0;
+    order: -1; /* 모바일/태블릿에서는 메뉴를 위로 끌어올림 */
+    margin-bottom: 1rem;
+  }
+
+  .admin-sidebar-nav {
+    flex-direction: row;
+    overflow-x: auto;
+    padding-bottom: 0.5rem;
+    white-space: nowrap;
+  }
+
+  .admin-nav-item {
+    padding: 0.45rem 0.75rem;
+    font-size: 0.875rem;
+  }
+}
+
+@media (max-width: 768px) {
+  .admin-header {
+    flex-direction: column;
+    align-items: flex-start !important;
+    gap: 0.75rem;
+  }
+
+  .admin-container {
+    margin: 1rem auto;
+    padding: 0 0.5rem;
+    max-width: 100vw;
+  }
+
+  .admin-container h2,
+  .admin-container h3,
+  .admin-container h5,
+  .admin-container p,
+  .admin-container label,
+  .admin-container .form-check-label,
+  .admin-container .card-header,
+  .admin-container .card-body {
+    word-break: break-word;
+    overflow-wrap: break-word;
+  }
+
+  .admin-container .card {
+    max-width: 100%;
+    overflow: hidden;
+  }
+}
