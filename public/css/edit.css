@@ -3492,3 +3492,71 @@ html[data-theme="dark"] .cm-search-match-active {
 .special-char-cell:active {
     transform: scale(0.94);
 }
+
+/* ── 저장 전 Turnstile 검증 모달 ── */
+.turnstile-verify-overlay {
+    position: fixed;
+    inset: 0;
+    background-color: rgba(0, 0, 0, 0.55);
+    z-index: 11000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    animation: turnstile-verify-fade-in 0.12s ease-out;
+}
+
+@keyframes turnstile-verify-fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+.turnstile-verify-dialog {
+    background: var(--wiki-card-bg, #ffffff);
+    color: var(--wiki-text, #212529);
+    border: 1px solid var(--wiki-border, #dee2e6);
+    border-radius: 10px;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.25);
+    padding: 20px 24px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    min-width: 320px;
+    max-width: min(420px, 90vw);
+}
+
+.turnstile-verify-title {
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: var(--wiki-text, #212529);
+}
+
+.turnstile-verify-body {
+    font-size: 0.9rem;
+    color: var(--wiki-text-muted, #6c757d);
+    text-align: center;
+}
+
+.turnstile-verify-mount {
+    min-height: 65px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.turnstile-verify-hint {
+    font-size: 0.78rem;
+    color: var(--wiki-text-muted, #6c757d);
+    text-align: center;
+}
+
+/* 원본 turnstile 위젯을 모달 표시 동안 배경색으로 가린다. */
+.turnstile-original-cover {
+    position: absolute;
+    inset: 0;
+    background-color: var(--wiki-bg, #ffffff);
+    border-radius: 4px;
+    z-index: 5;
+    pointer-events: auto;
+}

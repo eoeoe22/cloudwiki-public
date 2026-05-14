@@ -1108,6 +1108,10 @@ function _wrapLevelSections(containerEl, level) {
             // 섹션 래퍼 생성
             const section = document.createElement('div');
             section.className = 'wiki-section wiki-section-level-' + level;
+            // 프리뷰 상태 보존용 안정 키 (헤딩 텍스트 + 레벨 기반).
+            const headingTextEl = child.querySelector(':scope > .wiki-section-heading-text');
+            const headingText = (headingTextEl && headingTextEl.textContent) ? headingTextEl.textContent : (child.textContent || '');
+            section.setAttribute('data-state-key', _makeStateKey(`sec${level}`, headingText));
             child.parentNode.insertBefore(section, child);
             section.appendChild(child);
 
@@ -1517,6 +1521,28 @@ function _nextWikiBsId(prefix) {
     return `${prefix}-${_wikiBsBlockCounter}`;
 }
 
+// 프리뷰 상태 보존용 안정 키 생성. 같은 콘텐츠(제목 텍스트) 가 여러 번 나오는
+// 경우 N번째 등장에 :N 접미사를 붙여 구분한다. 한 번의 renderWikiContent 호출
+// 동안에만 의미를 가지므로 시작 시점에 _resetStateKeyDedup() 으로 초기화한다.
+// 모듈 전역이지만 호출이 await 로 인해 인터리브 될 수 있으므로(에디터 실시간
+// 프리뷰가 디바운스 없이 키 입력마다 renderWikiContent 를 호출), renderWikiContent
+// 는 자신의 dedup 객체에 대한 참조를 로컬 변수로 유지하고 매 await 직후 글로벌에
+// 복원한다. _resetStateKeyDedup() 은 새 dedup 객체를 반환해 호출처가 보관할 수
+// 있도록 한다.
+var _stateKeyDedup = Object.create(null);
+function _resetStateKeyDedup() {
+    _stateKeyDedup = Object.create(null);
+    return _stateKeyDedup;
+}
+function _makeStateKey(prefix, text) {
+    const base = (text == null ? '' : String(text)).trim().replace(/\s+/g, ' ');
+    const k = `${prefix}|${base}`;
+    const n = _stateKeyDedup[k] || 0;
+    _stateKeyDedup[k] = n + 1;
+    // 키 자체는 attribute value 로 들어가므로 escapeHtml 처리한 결과를 돌려준다.
+    return escapeHtml(n === 0 ? k : `${k}#${n}`);
+}
+
 /**
  * 컨테이너 블록(:::tabs / :::accordion / :::steps) 의 innerText 에서
  * WIKIBLOCKPH<i>XEND 플레이스홀더를 순서대로 수집해 자식 block 객체로 반환.
@@ -1755,17 +1781,19 @@ function _renderBlockHtml(block, blockData) {
                 const isActive = i === 0;
                 const iconHtml = meta.tokens.icon ? _iconHtmlFromToken(meta.tokens.icon) + ' ' : '';
                 const labelEsc = escapeHtml(meta.cleanTitle || `탭 ${i + 1}`);
+                const tabKey = _makeStateKey('tab', meta.cleanTitle || `tab-${i}`);
                 navItems.push(
                     `<li class="nav-item" role="presentation">` +
                     `<button class="nav-link${isActive ? ' active' : ''}" id="${navId}" ` +
                     `data-bs-toggle="tab" data-bs-target="#${tabId}" type="button" ` +
-                    `role="tab" aria-controls="${tabId}" aria-selected="${isActive ? 'true' : 'false'}">` +
+                    `role="tab" aria-controls="${tabId}" aria-selected="${isActive ? 'true' : 'false'}" ` +
+                    `data-state-key="${tabKey}">` +
                     `${iconHtml}${labelEsc}</button></li>`
                 );
                 const childInner = _renderChildInnerHtml(child.innerText, blockData);
                 panes.push(
                     `<div class="tab-pane fade${isActive ? ' show active' : ''}" id="${tabId}" ` +
-                    `role="tabpanel" aria-labelledby="${navId}" tabindex="0">${childInner}</div>`
+                    `role="tabpanel" aria-labelledby="${navId}" tabindex="0" data-state-key="${tabKey}">${childInner}</div>`
                 );
             });
             return `<div class="wiki-tabs">` +
@@ -1800,7 +1828,8 @@ function _renderBlockHtml(block, blockData) {
                 const labelEsc = escapeHtml(meta.cleanTitle || `항목 ${i + 1}`);
                 const parentAttr = allowMultiple ? '' : ` data-bs-parent="#${groupId}"`;
                 const childInner = _renderChildInnerHtml(child.innerText, blockData);
-                return `<div class="accordion-item">` +
+                const accKey = _makeStateKey('acc', meta.cleanTitle || `item-${i}`);
+                return `<div class="accordion-item" data-state-key="${accKey}">` +
                     `<h2 class="accordion-header" id="${headId}">` +
                     `<button class="accordion-button${isOpen ? '' : ' collapsed'}" type="button" ` +
                     `data-bs-toggle="collapse" data-bs-target="#${itemId}" ` +
@@ -2385,7 +2414,13 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
     if (!containerEl) return;
 
     try {
+        // 프리뷰 상태 보존용 안정 키 dedup 카운터를 매 렌더 시작 시점에 초기화.
+        // 반환된 객체를 로컬에 보관해두고, 매 await 직후 _stateKeyDedup 글로벌에
+        // 복원한다 — 그 사이 다른 renderWikiContent 호출이 카운터를 덮어써도
+        // 이번 호출의 키 순서가 일관되게 유지되도록.
+        const myDedup = _resetStateKeyDedup();
         const resolvedContent = await resolveTransclusions(content || '', slug);
+        _stateKeyDedup = myDedup;
         // resolveTransclusions 가 모듈 로컬 _wikiExtensionData 를 채우는 즉시 스냅샷.
         // 이후 await(fetchCategoryList 등) 사이 다른 renderWikiContent 호출이
         // _wikiExtensionData 를 덮어써도, 이번 호출의 DOM data-ext-idx 는 이 스냅샷을
@@ -2469,7 +2504,7 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
                 const b = foldBlockData[parseInt(blkIdx, 10)];
                 return b ? _renderBlockHtml(b, foldBlockData) : '';
             });
-            let contentHtml = (typeof DOMPurify !== 'undefined') ? DOMPurify.sanitize(rawContentHtml, { ADD_TAGS: ['i', 'span', 'details', 'summary', 'div', 'canvas'], ADD_ATTR: ['class', 'style', 'data-bg', 'data-color', 'data-size', 'data-unix', 'data-ext-name', 'data-ext-idx', 'colspan', 'rowspan', 'title'] }) : escapeHtml(rawContentHtml);
+            let contentHtml = (typeof DOMPurify !== 'undefined') ? DOMPurify.sanitize(rawContentHtml, { ADD_TAGS: ['i', 'span', 'details', 'summary', 'div', 'canvas'], ADD_ATTR: ['class', 'style', 'data-bg', 'data-color', 'data-size', 'data-unix', 'data-ext-name', 'data-ext-idx', 'data-state-key', 'colspan', 'rowspan', 'title'] }) : escapeHtml(rawContentHtml);
 
             foldBlocks.push({ summaryText, bgAttr, colorAttr, contentHtml });
             return `\n\nWIKIFOLDPH${idx}XEND\n\n`;
@@ -2503,7 +2538,8 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
         rawHtml = rawHtml.replace(/(?:<p>)?WIKIFOLDPH(\d+)XEND(?:<\/p>)?/g, (m, idx) => {
             const block = foldBlocks[parseInt(idx, 10)];
             if (!block) return '';
-            return `<details class="wiki-fold border rounded mb-3"${block.bgAttr}${block.colorAttr}>` +
+            const foldKey = _makeStateKey('fold', block.summaryText);
+            return `<details class="wiki-fold border rounded mb-3" data-state-key="${foldKey}"${block.bgAttr}${block.colorAttr}>` +
                 `<summary class="fw-bold p-2 wiki-fold-summary">${block.summaryText}</summary>` +
                 `<div class="wiki-fold-content p-3 border-top">${block.contentHtml}</div>` +
                 `</details>`;
@@ -2513,7 +2549,7 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
             return `<div class="wiki-ext wiki-ext-${escapeHtml(extName)}" data-ext-name="${escapeHtml(extName)}" data-ext-idx="${escapeHtml(idx)}"></div>`;
         });
 
-        let html = (typeof DOMPurify !== 'undefined') ? DOMPurify.sanitize(rawHtml, { ADD_TAGS: ['i', 'span', 'details', 'summary', 'div', 'canvas'], ADD_ATTR: ['class', 'style', 'data-bg', 'data-color', 'data-size', 'data-unix', 'data-ext-name', 'data-ext-idx', 'colspan', 'rowspan', 'title'] }) : escapeHtml(rawHtml);
+        let html = (typeof DOMPurify !== 'undefined') ? DOMPurify.sanitize(rawHtml, { ADD_TAGS: ['i', 'span', 'details', 'summary', 'div', 'canvas'], ADD_ATTR: ['class', 'style', 'data-bg', 'data-color', 'data-size', 'data-unix', 'data-ext-name', 'data-ext-idx', 'data-state-key', 'colspan', 'rowspan', 'title'] }) : escapeHtml(rawHtml);
 
         if (options.showCategory && slug) {
             // index.html 의 route() 가 decodeURIComponent 실패 시 원본 slug 를 그대로
@@ -2529,6 +2565,7 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
             if (decodedSlug.startsWith('카테고리:')) {
                 const categoryName = decodedSlug.replace(/^카테고리:/, '');
                 const listHtml = await fetchCategoryList(categoryName);
+                _stateKeyDedup = myDedup;
                 if (listHtml) {
                     html += (typeof DOMPurify !== 'undefined') ? DOMPurify.sanitize(listHtml, { ADD_TAGS: ['i', 'span'], ADD_ATTR: ['class', 'title'] }) : escapeHtml(listHtml);
                 }

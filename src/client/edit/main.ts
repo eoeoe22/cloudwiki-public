@@ -23,6 +23,7 @@
 import './types';
 import { escapeHtml } from '../utils/html';
 import { normalizeSlug } from '../utils/slug';
+import { snapshotPreviewState, restorePreviewState } from './preview-state';
 import type { CMEditor, CMSelection, PageMeta, SectionRange } from './types';
 
 declare global {
@@ -60,6 +61,9 @@ let mcpSubmissionId: number | null = null;
 let turnstileToken: string | null = null;
 let turnstileWidgetId: string | null = null;
 let turnstileReady = false;
+// 저장 시도 시 검증 모달이 떠 있는 동안의 pending Promise 와 cleanup 핸들.
+// 원본 위젯이 모달 도중 자동 검증으로 통과하면 callback 이 이를 resolve(true) 한다.
+let pendingTurnstileVerification: { resolve: (ok: boolean) => void } | null = null;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 인라인 onclick / 외부 CDN 콜백 브리지 — module body 의 가장 이른 시점에서 노출.
@@ -181,24 +185,32 @@ function initTurnstile() {
         sitekey: siteKey,
         callback: function (token) {
             turnstileToken = token;
-            document.getElementById('saveBtn').disabled = false;
+            const btn = document.getElementById('saveBtn');
+            if (btn) btn.disabled = false;
+            // 검증 모달이 열려 있는 동안 원본 위젯이 자동 검증으로 통과한 경우
+            // 모달을 즉시 닫고 저장 절차를 진행한다.
+            if (pendingTurnstileVerification) {
+                pendingTurnstileVerification.resolve(true);
+            }
         },
         'expired-callback': function () {
             turnstileToken = null;
-            document.getElementById('saveBtn').disabled = true;
+            // 만료 시 저장 버튼은 그대로 두고, 다음 저장 시도에서 검증 모달이 띄워진다.
             refreshTurnstile();
         },
         'error-callback': function () {
             turnstileToken = null;
-            document.getElementById('saveBtn').disabled = true;
         },
     });
+    // 위젯이 렌더링되면 사용자가 저장을 시도할 수 있도록 버튼을 활성화한다.
+    // 토큰이 없는 상태에서 저장 시도 시에는 ensureTurnstileVerified 가 검증 모달을 띄운다.
+    const btn = document.getElementById('saveBtn');
+    if (btn) btn.disabled = false;
 }
 
 function refreshTurnstile() {
     if (turnstileWidgetId !== null) {
         turnstileToken = null;
-        document.getElementById('saveBtn').disabled = true;
         window.turnstile!.reset(turnstileWidgetId);
     }
 }
@@ -234,6 +246,146 @@ function reloadTurnstile() {
     }
 }
 
+// ── 저장 직전 Turnstile 검증 모달 ──
+// 저장이 시도되었지만 turnstileToken 이 없을 때, 화면 중앙에 새 Turnstile 위젯을
+// 렌더링한 오프캔버스 모달을 띄운다. 모달 바깥(또는 ESC)을 누르면 저장 절차가
+// 취소되고 원래대로 복귀하며, 모달 위젯이 검증을 통과하면 turnstileToken 을 설정한
+// 뒤 Promise 가 true 로 resolve 되어 저장 흐름이 계속된다.
+//
+// 원본 turnstile-container 위젯은 모달 표시 동안 같은 색상 오버레이로 시각적으로
+// 가려 두 위젯이 동시에 노출되는 혼란을 막는다(모달이 닫히면 오버레이도 제거).
+function ensureTurnstileVerified(): Promise<boolean> {
+    return new Promise<boolean>((resolve) => {
+        const siteKey = window.appConfig && window.appConfig.turnstileSiteKey;
+        // Turnstile 비활성 또는 이미 토큰 보유: 그대로 진행
+        if (!siteKey || turnstileToken) {
+            resolve(true);
+            return;
+        }
+        // 스크립트/위젯 로드 전이면 모달을 띄울 수 없으므로 기존 안내로 대체
+        if (typeof window.turnstile === 'undefined' || !turnstileReady) {
+            window.Swal.fire({
+                icon: 'warning',
+                title: 'Turnstile 미준비',
+                text: '보안 검증 스크립트가 아직 로드되지 않았습니다. "캡챠 다시 로드" 버튼을 누른 뒤 다시 시도해주세요.',
+            });
+            resolve(false);
+            return;
+        }
+        if (pendingTurnstileVerification) {
+            // 이미 모달이 떠 있다면 중복 호출은 무시(이전 호출의 결과를 그대로 따른다)
+            resolve(false);
+            return;
+        }
+
+        // 1) 원본 위젯을 배경 컬러로 가리기
+        const originalContainer = document.getElementById('turnstile-container');
+        let originalCover: HTMLDivElement | null = null;
+        let prevContainerPos = '';
+        if (originalContainer) {
+            prevContainerPos = originalContainer.style.position;
+            originalContainer.style.position = 'relative';
+            originalCover = document.createElement('div');
+            originalCover.className = 'turnstile-original-cover';
+            originalContainer.appendChild(originalCover);
+        }
+
+        // 2) 오프캔버스 풍 모달 오버레이 + 다이얼로그 생성
+        const overlay = document.createElement('div');
+        overlay.className = 'turnstile-verify-overlay';
+        overlay.setAttribute('role', 'dialog');
+        overlay.setAttribute('aria-modal', 'true');
+        overlay.setAttribute('aria-label', '저장 전 보안 인증');
+
+        const dialog = document.createElement('div');
+        dialog.className = 'turnstile-verify-dialog';
+
+        const titleEl = document.createElement('div');
+        titleEl.className = 'turnstile-verify-title';
+        titleEl.textContent = '저장 전 보안 인증';
+
+        const bodyEl = document.createElement('div');
+        bodyEl.className = 'turnstile-verify-body';
+        bodyEl.textContent = '계속 저장하려면 아래 보안 검증을 완료해주세요.';
+
+        const mount = document.createElement('div');
+        mount.className = 'turnstile-verify-mount';
+
+        const hintEl = document.createElement('div');
+        hintEl.className = 'turnstile-verify-hint';
+        hintEl.textContent = '바깥 영역을 클릭하거나 ESC 키를 누르면 저장이 취소됩니다.';
+
+        dialog.appendChild(titleEl);
+        dialog.appendChild(bodyEl);
+        dialog.appendChild(mount);
+        dialog.appendChild(hintEl);
+        overlay.appendChild(dialog);
+        document.body.appendChild(overlay);
+
+        let modalWidgetId: string | null = null;
+        let settled = false;
+
+        const cleanup = () => {
+            if (modalWidgetId !== null) {
+                try { window.turnstile!.remove(modalWidgetId); } catch (e) { /* ignore */ }
+                modalWidgetId = null;
+            }
+            if (overlay.parentElement) overlay.parentElement.removeChild(overlay);
+            if (originalContainer) {
+                if (originalCover && originalCover.parentElement === originalContainer) {
+                    originalContainer.removeChild(originalCover);
+                }
+                originalContainer.style.position = prevContainerPos;
+            }
+            document.removeEventListener('keydown', onKey, true);
+            pendingTurnstileVerification = null;
+        };
+
+        const finish = (ok: boolean) => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            resolve(ok);
+        };
+
+        const onKey = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                e.stopPropagation();
+                finish(false);
+            }
+        };
+        document.addEventListener('keydown', onKey, true);
+
+        // 다이얼로그 내부 클릭은 취소로 전파되지 않도록 차단
+        dialog.addEventListener('click', (e) => e.stopPropagation());
+        overlay.addEventListener('click', () => finish(false));
+
+        pendingTurnstileVerification = { resolve: finish };
+
+        try {
+            modalWidgetId = window.turnstile!.render(mount, {
+                sitekey: siteKey,
+                callback: function (token: string) {
+                    turnstileToken = token;
+                    const btn = document.getElementById('saveBtn');
+                    if (btn) btn.disabled = false;
+                    finish(true);
+                },
+                'expired-callback': function () {
+                    turnstileToken = null;
+                },
+                'error-callback': function () {
+                    // 모달은 그대로 두어 사용자가 재시도하거나 바깥 클릭으로 취소할 수 있게 한다.
+                },
+            });
+        } catch (e) {
+            finish(false);
+            window.Swal.fire('오류', '보안 검증 위젯을 렌더링하지 못했습니다.', 'error');
+        }
+    });
+}
+
 // 아이콘 피커 상태(biIconList, mdiIconList, selectedIconsList, iconPickerToken,
 // iconPickerSavedSelection, pendingIconInsertion)는 edit/modals.ts(ESM)가 관리.
 // selectedIconsOnly (SELECTED_ICONS_ONLY 환경변수) 는 위쪽 모듈 상태 블록에서 선언했다.
@@ -263,7 +415,17 @@ async function updateCustomPreview() {
         <pre class="wiki-ext-raw-pre">${escapeHtml(md)}</pre>
     </div>`;
     } else {
-        await window.renderWikiContent(md, slug, 'custom-wiki-preview');
+        // 프리뷰 재렌더 전: 펼치기/접기, 아코디언, 탭, 외부 임베드 iframe 의
+        // 상태를 캡처하고 iframe 노드는 document 내 parking 컨테이너로 옮긴다.
+        // renderWikiContent 가 innerHTML 을 통째로 교체한 뒤 restore 단계에서
+        // 같은 data-state-key 를 가진 새 노드에 상태를 다시 적용하고, src 가
+        // 일치하는 iframe 은 캐시 노드로 in-place 치환한다.
+        const previewSnap = snapshotPreviewState(customPreview);
+        try {
+            await window.renderWikiContent(md, slug, 'custom-wiki-preview');
+        } finally {
+            restorePreviewState(customPreview, previewSnap);
+        }
     }
     // 프리뷰가 갱신됐으니 스크롤 동기화 가이드 캐시 무효화 + 사후 레이아웃 변동 감시 재설정
     if (typeof window._invalidateScrollSyncGuides === 'function') {
@@ -3179,20 +3341,16 @@ document.addEventListener('DOMContentLoaded', async () => {
         // 새 pageVersion 으로 그대로 제출되는 것을 방지한다.
         const conflictUi = document.getElementById('conflict-ui');
         if (conflictUi && conflictUi.offsetParent !== null) return;
-        if (window.appConfig && window.appConfig.turnstileSiteKey && !turnstileToken) {
-            window.Swal.fire({
-                icon: 'warning',
-                title: 'Turnstile 미완료',
-                text: 'Turnstile 검증이 완료된 뒤 저장할 수 있습니다.',
-                toast: true,
-                position: 'top-end',
-                timer: 2000,
-                showConfirmButton: false,
-            });
-            return;
-        }
         const saveBtn = document.getElementById('saveBtn');
-        if (e.repeat || saveInProgress || saveBtn?.disabled) return;
+        // Turnstile 미검증 사유로 비활성된 경우에는 단축키도 모달을 띄울 수 있어야 하므로
+        // 검증은 savePage 내부의 ensureTurnstileVerified 에 위임한다. 다만
+        // saveBtn.disabled 가 다른 안전 가드(예: section-mode 409 fallback 의 metadata
+        // 재조회 실패로 blockResave 가 set 되어 finally 가 의도적으로 disable 을 유지한
+        // 경우)인 경우에는 단축키 저장도 차단해야 한다. Turnstile 미검증 케이스는
+        // turnstileSiteKey 설정 + 토큰 부재로 판별해 disabled 여부와 무관하게 통과시킨다.
+        const turnstileNeedsVerify = !!(window.appConfig && window.appConfig.turnstileSiteKey && !turnstileToken);
+        if (e.repeat || saveInProgress) return;
+        if (saveBtn?.disabled && !turnstileNeedsVerify) return;
         savePage();
     }, true);
 
@@ -3501,9 +3659,11 @@ async function openSplitToSubdocModal(): Promise<void> {
     const leaveText = (result.value.leave || '').trim();
 
     // Turnstile 검증 — 하위 문서 PUT 호출에 토큰 1회 사용.
+    // 토큰이 없으면 화면 중앙 검증 모달을 띄우고, 사용자가 바깥을 누르거나 ESC 로 취소하면
+    // 하위 문서 생성 절차도 중단한다.
     if (window.appConfig && window.appConfig.turnstileSiteKey && !turnstileToken) {
-        await Swal.fire('오류', 'Turnstile 검증을 완료한 뒤 다시 시도해주세요.', 'warning');
-        return;
+        const verified = await ensureTurnstileVerified();
+        if (!verified) return;
     }
 
     // 현재 에디터(=섹션) 내용에서 헤딩 라인과 본문을 분리.
@@ -3671,8 +3831,8 @@ async function savePage() {
     if (summary.length > 255) summary = summary.slice(0, 255);
 
     if (window.appConfig.turnstileSiteKey && !turnstileToken) {
-        window.Swal.fire('오류', 'Turnstile 검증을 완료해주세요.', 'warning');
-        return;
+        const verified = await ensureTurnstileVerified();
+        if (!verified) return;
     }
 
     const saveBtn = document.getElementById('saveBtn');
