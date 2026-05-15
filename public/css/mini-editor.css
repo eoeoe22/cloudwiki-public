@@ -1,0 +1,125 @@
+/* 토론·티켓용 미니 마크다운 에디터 스타일.
+   src/client/discussion-edit/editor.ts 가 만드는 DOM 구조에 대응. */
+
+.mini-editor-root {
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--wiki-border, #ced4da);
+    border-radius: 6px;
+    background: var(--wiki-card-bg, #fff);
+    overflow: hidden;
+}
+
+.mini-editor-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 2px;
+    padding: 6px 8px;
+    background: var(--wiki-bg, #f8f9fa);
+    border-bottom: 1px solid var(--wiki-border, #ced4da);
+}
+
+.mini-editor-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 30px;
+    height: 30px;
+    padding: 0 8px;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    color: var(--wiki-text, #212529);
+    cursor: pointer;
+    font-size: 0.95rem;
+    line-height: 1;
+    transition: background-color 0.12s, border-color 0.12s;
+}
+
+.mini-editor-btn:hover {
+    background: var(--wiki-card-bg, #e9ecef);
+    border-color: var(--wiki-border, #ced4da);
+}
+
+.mini-editor-btn code {
+    font-size: 0.8em;
+    padding: 1px 3px;
+    background: transparent;
+    color: inherit;
+}
+
+.mini-editor-sep {
+    display: inline-block;
+    width: 1px;
+    height: 20px;
+    margin: 0 4px;
+    background: var(--wiki-border, #ced4da);
+}
+
+.mini-editor-host {
+    min-height: 120px;
+    max-height: 60vh;
+    overflow: auto;
+    background: var(--wiki-card-bg, #fff);
+}
+
+.mini-editor-host .cm-editor {
+    min-height: 120px;
+}
+
+.mini-editor-host .cm-editor.cm-focused {
+    outline: none;
+}
+
+.mini-editor-host .cm-scroller {
+    font-family: ui-monospace, SFMono-Regular, 'SF Mono', Consolas, 'Liberation Mono', Menlo, monospace;
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+/* CM6 내장 placeholder 색상 톤 다운 */
+.mini-editor-host .cm-placeholder {
+    color: var(--wiki-muted, #6c757d);
+    opacity: 0.7;
+}
+
+/* 이미지 메뉴 (업로드/검색 선택 팝업) */
+.mini-editor-img-wrapper {
+    position: relative;
+    display: inline-block;
+}
+
+.mini-editor-img-menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    display: none;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 180px;
+    padding: 4px;
+    background: var(--wiki-card-bg, #fff);
+    border: 1px solid var(--wiki-border, #ced4da);
+    border-radius: 6px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    z-index: 1050;
+}
+
+.mini-editor-img-menu-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    background: transparent;
+    border: none;
+    border-radius: 4px;
+    color: var(--wiki-text, #212529);
+    cursor: pointer;
+    font-size: 0.9rem;
+    text-align: left;
+}
+
+.mini-editor-img-menu-btn:hover {
+    background: var(--wiki-bg, #f1f3f5);
+}

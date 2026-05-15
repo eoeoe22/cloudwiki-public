@@ -2432,13 +2432,24 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
     const containerEl = document.getElementById(containerId);
     if (!containerEl) return;
 
+    // 토론·티켓처럼 위키 풀 문법이 필요 없는 경로용 옵트인 플래그.
+    //   skipTransclusion: {{include:...}} / {{틀:...}} 트랜스클루전 비활성 (raw content 그대로)
+    //   skipExtensions:   ::: 익스텐션 디스패치 (_processExtensions) 비활성
+    //   skipHeadingNumbers: numberHeadings() 호출 생략 (헤딩 앞 번호 prefix 미부착)
+    // 미전달 시 기존 동작 그대로.
+    const skipTransclusion = !!options.skipTransclusion;
+    const skipExtensions = !!options.skipExtensions;
+    const skipHeadingNumbers = !!options.skipHeadingNumbers;
+
     try {
         // 프리뷰 상태 보존용 안정 키 dedup 카운터를 매 렌더 시작 시점에 초기화.
         // 반환된 객체를 로컬에 보관해두고, 매 await 직후 _stateKeyDedup 글로벌에
         // 복원한다 — 그 사이 다른 renderWikiContent 호출이 카운터를 덮어써도
         // 이번 호출의 키 순서가 일관되게 유지되도록.
         const myDedup = _resetStateKeyDedup();
-        const resolvedContent = await resolveTransclusions(content || '', slug);
+        const resolvedContent = skipTransclusion
+            ? (content || '')
+            : await resolveTransclusions(content || '', slug);
         _stateKeyDedup = myDedup;
         // resolveTransclusions 가 모듈 로컬 _wikiExtensionData 를 채우는 즉시 스냅샷.
         // 이후 await(fetchCategoryList 등) 사이 다른 renderWikiContent 호출이
@@ -3205,8 +3216,10 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
             }
         }
 
-        // 헤딩 번호 삽입 (항상 실행)
-        numberHeadings(containerEl);
+        // 헤딩 번호 삽입 (옵션으로 비활성 가능 — 토론·티켓 본문 등)
+        if (!skipHeadingNumbers) {
+            numberHeadings(containerEl);
+        }
 
         // 각주 섹션 헤딩(<h4>각주</h4>)에는 문단 번호 prefix 를 부여하지 않는다.
         containerEl.querySelectorAll('.wiki-footnotes .wiki-heading-num').forEach(el => el.remove());
@@ -3246,7 +3259,9 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
         _initTimers(containerEl, containerId);
 
         // 익스텐션 렌더링 (Chart.js 등). resolveTransclusions 직후 캡처한 스냅샷을 전달.
-        _processExtensions(containerEl, renderExtensionData);
+        if (!skipExtensions) {
+            _processExtensions(containerEl, renderExtensionData);
+        }
 
     } catch (err) {
         console.error('renderWikiContent error:', err);

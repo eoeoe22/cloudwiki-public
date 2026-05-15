@@ -643,6 +643,24 @@
                                     </a>
                                     <span class="badge bg-info rounded-pill">블로그</span>
                                 </li>`;
+              } else if (item.type === "discussion") {
+                // 토론: page_slug 가 있으면 /w/:slug?mode=discussions&id=:id 로 링크, 없으면 텍스트만
+                const inner = item.page_slug
+                  ? `<a href="/w/${encodeURIComponent(item.page_slug)}?mode=discussions&id=${item.id}" target="_blank" class="text-decoration-none">${escapeHtml(item.title || `#${item.id}`)}</a>`
+                  : `<span>${escapeHtml(item.title || `#${item.id}`)}</span>`;
+                htmlContent += `
+                                <li class="list-group-item d-flex justify-content-between align-items-center">
+                                    ${inner}
+                                    <span class="badge bg-warning text-dark rounded-pill">토론</span>
+                                </li>`;
+              } else if (item.type === "ticket") {
+                htmlContent += `
+                                <li class="list-group-item d-flex justify-content-between align-items-center">
+                                    <a href="/tickets/${item.id}" target="_blank" class="text-decoration-none">
+                                        ${escapeHtml(item.title || `#${item.id}`)}
+                                    </a>
+                                    <span class="badge bg-secondary rounded-pill">티켓</span>
+                                </li>`;
               } else {
                 htmlContent += `
                                 <li class="list-group-item d-flex justify-content-between align-items-center">

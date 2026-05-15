@@ -53,13 +53,16 @@ export function extractFirstThumbnail(content: string): string | null {
 /** 블로그 포스트 저장 후 page_links 테이블의 이미지 역링크를 갱신 */
 export async function rebuildBlogImageLinks(db: D1Database, blogPostId: number, content: string): Promise<void> {
     const stmts: D1PreparedStatement[] = [
+        // blog=1 필터로 분리 — blog=1 은 블로그 INSERT 만 사용하므로 (토론·티켓 댓글 INSERT 는
+        // blog=0) 토론·티켓 댓글 역링크와 충돌하지 않는다. 마이그레이션 backfill 이전 legacy
+        // 행(source_type='page' + blog=1)도 함께 정리되도록 source_type 필터는 두지 않는다.
         db.prepare('DELETE FROM page_links WHERE source_page_id = ? AND blog = 1').bind(blogPostId),
     ];
     const imageLinks = extractBlogImageLinks(content);
     for (const targetSlug of imageLinks) {
         stmts.push(
             db.prepare(
-                'INSERT INTO page_links (source_page_id, target_slug, link_type, blog) VALUES (?, ?, ?, 1)'
+                "INSERT INTO page_links (source_page_id, target_slug, link_type, blog, source_type) VALUES (?, ?, ?, 1, 'blog')"
             ).bind(blogPostId, targetSlug, 'image')
         );
     }
@@ -285,7 +288,7 @@ blog.delete('/blog/:id', requireAdmin, async (c) => {
         'UPDATE blog_posts SET deleted_at = unixepoch() WHERE id = ?'
     ).bind(id).run();
 
-    // 역링크 정리
+    // 역링크 정리 (blog=1 로 분리 — legacy 호환)
     c.executionCtx.waitUntil(
         db.prepare('DELETE FROM page_links WHERE source_page_id = ? AND blog = 1')
             .bind(id)

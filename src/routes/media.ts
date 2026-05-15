@@ -321,6 +321,7 @@ media.get('/api/media/doc/:filename/backlinks', async (c) => {
         JOIN pages p ON pl.source_page_id = p.id
         WHERE pl.link_type = 'image'
           AND pl.blog = 0
+          AND pl.source_type = 'page'
           AND pl.target_slug = ?
     `;
     if (!isAdmin) {
@@ -337,6 +338,10 @@ media.get('/api/media/doc/:filename/backlinks', async (c) => {
           AND pl.blog = 1
           AND pl.target_slug = ?
     `;
+    // NOTE: source_type='blog' 필터를 두지 않는 이유 — 마이그레이션 backfill
+    // (UPDATE page_links SET source_type='blog' WHERE blog=1) 이 아직 안 돌았더라도
+    // 기존 legacy 블로그 역링크가 그대로 잡히도록. blog=1 은 어차피 블로그 INSERT 만
+    // 사용하므로 (토론·티켓 댓글 INSERT 는 blog=0) 토론·티켓 행이 새어 들어올 일이 없다.
     if (!isAdmin) {
         blogQuery += ' AND b.deleted_at IS NULL';
     }

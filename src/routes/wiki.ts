@@ -141,6 +141,7 @@ export async function invalidateBacklinkCaches(c: any, slug: string, db: D1Datab
             JOIN pages p ON pl.source_page_id = p.id
             WHERE p.deleted_at IS NULL
               AND pl.blog = 0
+              AND pl.source_type = 'page'
               AND pl.target_slug IN (${placeholders})
         `)
         .bind(...targetSlugs)
@@ -365,14 +366,19 @@ export function buildLinkAndCategoryStatements(
     const stmts: D1PreparedStatement[] = [];
 
     // page_links 갱신: 기존 삭제 후 재삽입
-    // blog=0 필터 필수 — pageId 와 blog_posts.id 가 같은 ID 공간을 공유하므로
-    // 필터 없이 삭제하면 같은 ID 의 블로그 역링크가 함께 지워짐.
-    stmts.push(db.prepare('DELETE FROM page_links WHERE source_page_id = ? AND blog = 0').bind(pageId));
+    // source_type='page' 필터 + blog=0 양쪽 — 마이그레이션 backfill 이전 legacy
+    // 블로그 행(source_type='page' DEFAULT + blog=1) 이 pageId 와 같은 id 일 때
+    // 잘못 삭제되지 않도록 blog=0 도 함께 매칭한다. (pages.id, blog_posts.id,
+    // discussion_comments.id, ticket_comments.id 가 정수 공간을 공유함)
+    stmts.push(db.prepare(
+        "DELETE FROM page_links WHERE source_page_id = ? AND source_type = 'page' AND blog = 0"
+    ).bind(pageId));
     const links = extractLinks(content);
     for (const link of links) {
         stmts.push(
-            db.prepare('INSERT INTO page_links (source_page_id, target_slug, link_type, blog) VALUES (?, ?, ?, 0)')
-                .bind(pageId, link.target_slug, link.link_type)
+            db.prepare(
+                "INSERT INTO page_links (source_page_id, target_slug, link_type, blog, source_type) VALUES (?, ?, ?, 0, 'page')"
+            ).bind(pageId, link.target_slug, link.link_type)
         );
     }
 
@@ -523,6 +529,7 @@ async function rewriteBacklinksForRename(
             JOIN pages p ON pl.source_page_id = p.id
             WHERE p.deleted_at IS NULL
               AND pl.blog = 0
+              AND pl.source_type = 'page'
               AND pl.target_slug IN (${placeholders})
         `)
         .bind(...targetSlugs)
@@ -1919,6 +1926,7 @@ wiki.get('/w/:slug/backlinks', async (c) => {
         JOIN pages p ON pl.source_page_id = p.id
         WHERE p.slug != ?
           AND pl.blog = 0
+          AND pl.source_type = 'page'
           AND pl.target_slug IN (${placeholders})
     `;
     if (!isAdmin) {
@@ -1977,9 +1985,12 @@ wiki.delete('/w/:slug', requireAuth, async (c) => {
 
         // Hard Delete Transaction
         const batch = [
-            // blog=0 필터: page.id 와 blog_posts.id 가 같은 ID 공간을 공유하므로
-            // 필터 없이 삭제하면 같은 ID 의 블로그 역링크가 함께 지워짐.
-            db.prepare('DELETE FROM page_links WHERE source_page_id = ? AND blog = 0').bind(page.id),
+            // source_type='page' + blog=0 양쪽 필터 — 마이그레이션 backfill 이전 legacy
+            // 블로그 행(source_type='page' DEFAULT + blog=1) 이 page.id 와 같은 id 일 때
+            // 잘못 삭제되지 않도록 한다.
+            db.prepare(
+                "DELETE FROM page_links WHERE source_page_id = ? AND source_type = 'page' AND blog = 0"
+            ).bind(page.id),
             db.prepare('DELETE FROM page_categories WHERE page_id = ?').bind(page.id),
             db.prepare('DELETE FROM revisions WHERE page_id = ?').bind(page.id),
             db.prepare('DELETE FROM pages WHERE id = ?').bind(page.id)

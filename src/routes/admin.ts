@@ -1189,6 +1189,59 @@ function buildImageUsageBindings(media: { r2_key: string; filename: string }): s
 }
 
 /**
+ * 미디어가 페이지 / 블로그 / 토론 댓글 / 티켓 댓글 본문 중 어디에서든 참조되면 true.
+ * page_links 1차 필터 통과 후 fallback substring 검사를 통합. soft-deleted 행은 제외 —
+ * 댓글의 deleted_at 뿐 아니라 부모 토론/티켓의 deleted_at 도 확인해야 한다.
+ * (토론·티켓 소프트 삭제는 부모 row 만 갱신하므로 자식 댓글의 deleted_at 은 NULL 인 채
+ *  남는다. 부모 검사를 생략하면 삭제된 스레드에만 쓰인 이미지가 영구히 "사용 중" 으로
+ *  잠겨 GC 후보에 들어오지 않는다.)
+ * 블로그도 함께 검사하는 이유: page_links 색인 외에 본문 substring 안전망을 두면
+ * 마이그레이션 backfill 누락 등 롤아웃 변수에도 사용 중 블로그 이미지가 잘못 삭제되지 않는다.
+ * 토론·티켓 본문은 마크다운 `![](/media/images/...)` 가 주이므로 첫 번째 binding(r2_key)
+ * 만 사실상 매칭되지만, 위키 본문과 동일한 4-패턴 검사를 그대로 적용한다.
+ */
+async function isImageReferencedAnywhere(
+    db: D1Database,
+    media: { r2_key: string; filename: string }
+): Promise<boolean> {
+    const where = buildImageUsageWhere();
+    const bindings = buildImageUsageBindings(media);
+
+    // 1) 페이지 본문
+    const pageHit = await db.prepare(
+        `SELECT 1 FROM pages WHERE deleted_at IS NULL AND ${where} LIMIT 1`
+    ).bind(...bindings).first();
+    if (pageHit) return true;
+
+    // 2) 블로그 포스트 본문 — page_links 색인이 누락되었더라도 본문에 r2_key 가 있으면 사용 중.
+    //    (마이그레이션 backfill 누락 등의 롤아웃 변수에 대한 안전망)
+    const blogHit = await db.prepare(
+        `SELECT 1 FROM blog_posts WHERE deleted_at IS NULL AND ${where} LIMIT 1`
+    ).bind(...bindings).first();
+    if (blogHit) return true;
+
+    // 3) 토론 댓글 — 부모 토론도 soft-deleted 아닌 것만
+    const discHit = await db.prepare(
+        `SELECT 1 FROM discussion_comments dc
+         JOIN discussions d ON dc.discussion_id = d.id
+         WHERE dc.deleted_at IS NULL AND d.deleted_at IS NULL AND ${where.replace(/content/g, 'dc.content')}
+         LIMIT 1`
+    ).bind(...bindings).first();
+    if (discHit) return true;
+
+    // 4) 티켓 댓글 — 부모 티켓도 soft-deleted 아닌 것만
+    const tickHit = await db.prepare(
+        `SELECT 1 FROM ticket_comments tc
+         JOIN tickets t ON tc.ticket_id = t.id
+         WHERE tc.deleted_at IS NULL AND t.deleted_at IS NULL AND ${where.replace(/content/g, 'tc.content')}
+         LIMIT 1`
+    ).bind(...bindings).first();
+    if (tickHit) return true;
+
+    return false;
+}
+
+/**
  * GET /media/gc
  * 어떤 문서에서도 참조되지 않는 미사용 이미지 목록 조회
  * page_links(image) + LIKE fallback 두 방식으로 사용 여부 확인
@@ -1207,10 +1260,39 @@ adminRoutes.get('/media/gc', async (c) => {
         return c.json({ unused: [], total_media: 0, unused_count: 0 });
     }
 
-    // page_links에서 image 타입으로 참조되는 r2_key 집합
-    const linkedResult = await db.prepare(
-        `SELECT DISTINCT target_slug FROM page_links WHERE link_type = 'image'`
-    ).all();
+    // page_links 에서 image 타입으로 참조되는 r2_key 집합 — 단, 살아있는 소스만 카운트한다.
+    // 소프트 삭제된 페이지/블로그/토론/티켓 의 page_links 는 cleanup 되지 않으므로,
+    // 단순히 `link_type='image'` 만 보면 삭제된 스레드에 남은 stale 행이 이미지를
+    // 영구히 "참조됨" 으로 잠가 GC 후보에 넣지 못한다. source_type 별로 부모 행의
+    // deleted_at 을 확인해 살아있는 참조만 prefilter 에 포함한다.
+    const linkedResult = await db.prepare(`
+        SELECT DISTINCT target_slug FROM (
+            SELECT pl.target_slug FROM page_links pl
+                JOIN pages p ON pl.source_page_id = p.id
+                WHERE pl.link_type = 'image' AND pl.source_type = 'page'
+                  AND p.deleted_at IS NULL
+            UNION
+            -- 'blog' 갈래는 source_type='blog' 필터를 두지 않는다 (legacy 호환).
+            -- 마이그레이션 backfill 이전 행은 source_type='page' + blog=1 인 상태로 남아 있으며,
+            -- blog=1 은 블로그 INSERT 만 사용하므로 토론·티켓 행이 새어 들어올 일이 없다.
+            SELECT pl.target_slug FROM page_links pl
+                JOIN blog_posts b ON pl.source_page_id = b.id
+                WHERE pl.link_type = 'image' AND pl.blog = 1
+                  AND b.deleted_at IS NULL
+            UNION
+            SELECT pl.target_slug FROM page_links pl
+                JOIN discussion_comments dc ON pl.source_page_id = dc.id
+                JOIN discussions d ON dc.discussion_id = d.id
+                WHERE pl.link_type = 'image' AND pl.source_type = 'discussion_comment'
+                  AND dc.deleted_at IS NULL AND d.deleted_at IS NULL
+            UNION
+            SELECT pl.target_slug FROM page_links pl
+                JOIN ticket_comments tc ON pl.source_page_id = tc.id
+                JOIN tickets t ON tc.ticket_id = t.id
+                WHERE pl.link_type = 'image' AND pl.source_type = 'ticket_comment'
+                  AND tc.deleted_at IS NULL AND t.deleted_at IS NULL
+        )
+    `).all();
     const linkedKeys = new Set((linkedResult.results || []).map((r: any) => r.target_slug));
 
     // 미사용 후보: page_links에 없는 것들
@@ -1220,13 +1302,10 @@ adminRoutes.get('/media/gc', async (c) => {
         return c.json({ unused: [], total_media: allMedia.results.length, unused_count: 0 });
     }
 
-    // LIKE fallback으로 실제 content에서도 참조 여부 확인
+    // LIKE fallback으로 실제 content에서도 참조 여부 확인 (페이지 + 토론 + 티켓)
     const unused: any[] = [];
     for (const media of candidates) {
-        const found = await db.prepare(
-            `SELECT 1 FROM pages WHERE deleted_at IS NULL AND ${buildImageUsageWhere()} LIMIT 1`
-        ).bind(...buildImageUsageBindings(media)).first();
-
+        const found = await isImageReferencedAnywhere(db, media);
         if (!found) {
             unused.push(media);
         }
@@ -1267,10 +1346,8 @@ adminRoutes.post('/media/gc', async (c) => {
             continue;
         }
 
-        // 삭제 전 실제 사용 여부 재확인 (race condition 방지)
-        const stillUsed = await db.prepare(
-            `SELECT 1 FROM pages WHERE deleted_at IS NULL AND ${buildImageUsageWhere()} LIMIT 1`
-        ).bind(...buildImageUsageBindings(mediaItem)).first();
+        // 삭제 전 실제 사용 여부 재확인 (race condition 방지) — 페이지/토론/티켓 모두 검사
+        const stillUsed = await isImageReferencedAnywhere(db, mediaItem);
 
         if (stillUsed) {
             errors.push(`${mediaItem.filename}: 현재 사용 중인 이미지`);
@@ -1327,14 +1404,15 @@ adminRoutes.get('/media/:id/backlinks', async (c) => {
         return c.json({ error: '이미지를 찾을 수 없습니다.' }, 404);
     }
 
-    // 1차: page_links 테이블에서 인덱스 기반 조회 (위키 + 블로그)
-    const [indexedPages, indexedBlogs] = await Promise.all([
+    // 1차: page_links 테이블에서 인덱스 기반 조회 (위키 + 블로그 + 토론 + 티켓)
+    const [indexedPages, indexedBlogs, indexedDiscussions, indexedTickets] = await Promise.all([
         db.prepare(`
             SELECT DISTINCT p.id, p.slug
             FROM page_links pl
             JOIN pages p ON pl.source_page_id = p.id
             WHERE pl.link_type = 'image'
               AND pl.blog = 0
+              AND pl.source_type = 'page'
               AND pl.target_slug = ?
               AND p.deleted_at IS NULL
         `).bind(mediaItem.r2_key).all(),
@@ -1347,14 +1425,41 @@ adminRoutes.get('/media/:id/backlinks', async (c) => {
               AND pl.target_slug = ?
               AND b.deleted_at IS NULL
         `).bind(mediaItem.r2_key).all(),
+        // 토론: source=discussion_comment → 부모 토론으로 묶어 보여준다.
+        db.prepare(`
+            SELECT DISTINCT d.id, d.title, p.slug AS page_slug
+            FROM page_links pl
+            JOIN discussion_comments dc ON pl.source_page_id = dc.id
+            JOIN discussions d ON dc.discussion_id = d.id
+            LEFT JOIN pages p ON d.page_id = p.id
+            WHERE pl.link_type = 'image'
+              AND pl.source_type = 'discussion_comment'
+              AND pl.target_slug = ?
+              AND dc.deleted_at IS NULL
+              AND d.deleted_at IS NULL
+        `).bind(mediaItem.r2_key).all(),
+        // 티켓: source=ticket_comment → 부모 티켓으로 묶어 보여준다.
+        db.prepare(`
+            SELECT DISTINCT t.id, t.title
+            FROM page_links pl
+            JOIN ticket_comments tc ON pl.source_page_id = tc.id
+            JOIN tickets t ON tc.ticket_id = t.id
+            WHERE pl.link_type = 'image'
+              AND pl.source_type = 'ticket_comment'
+              AND pl.target_slug = ?
+              AND tc.deleted_at IS NULL
+              AND t.deleted_at IS NULL
+        `).bind(mediaItem.r2_key).all(),
     ]);
 
-    // 2차: 본문 부분문자열 fallback (아직 page_links에 인덱싱되지 않은 오래된 문서/포스트 대응)
+    // 2차: 본문 부분문자열 fallback (아직 page_links에 인덱싱되지 않은 오래된 문서/포스트/토론/티켓 대응)
     // LIKE 대신 instr() 를 쓰는 이유 — r2_key 에 SQLite LIKE 와일드카드(`%`, `_`)가 포함되거나
     // 패턴이 길어지면 SQLite 가 "LIKE or GLOB pattern too complex" 오류를 던질 수 있다.
     const indexedPageIds = new Set((indexedPages.results || []).map((r: any) => r.id));
     const indexedBlogIds = new Set((indexedBlogs.results || []).map((r: any) => r.id));
-    const [substrPages, substrBlogs] = await Promise.all([
+    const indexedDiscussionIds = new Set((indexedDiscussions.results || []).map((r: any) => r.id));
+    const indexedTicketIds = new Set((indexedTickets.results || []).map((r: any) => r.id));
+    const [substrPages, substrBlogs, substrDiscussions, substrTickets] = await Promise.all([
         db.prepare(`
             SELECT id, slug
             FROM pages
@@ -1364,6 +1469,21 @@ adminRoutes.get('/media/:id/backlinks', async (c) => {
             SELECT id, title
             FROM blog_posts
             WHERE instr(content, ?) > 0 AND deleted_at IS NULL
+        `).bind(mediaItem.r2_key).all(),
+        db.prepare(`
+            SELECT DISTINCT d.id, d.title, p.slug AS page_slug
+            FROM discussion_comments dc
+            JOIN discussions d ON dc.discussion_id = d.id
+            LEFT JOIN pages p ON d.page_id = p.id
+            WHERE instr(dc.content, ?) > 0
+              AND dc.deleted_at IS NULL AND d.deleted_at IS NULL
+        `).bind(mediaItem.r2_key).all(),
+        db.prepare(`
+            SELECT DISTINCT t.id, t.title
+            FROM ticket_comments tc
+            JOIN tickets t ON tc.ticket_id = t.id
+            WHERE instr(tc.content, ?) > 0
+              AND tc.deleted_at IS NULL AND t.deleted_at IS NULL
         `).bind(mediaItem.r2_key).all(),
     ]);
 
@@ -1376,6 +1496,14 @@ adminRoutes.get('/media/:id/backlinks', async (c) => {
         ...((substrBlogs.results || []) as any[])
             .filter(r => !indexedBlogIds.has(r.id))
             .map(r => ({ type: 'blog', ...r })),
+        ...(indexedDiscussions.results || []).map((r: any) => ({ type: 'discussion', ...r })),
+        ...((substrDiscussions.results || []) as any[])
+            .filter(r => !indexedDiscussionIds.has(r.id))
+            .map(r => ({ type: 'discussion', ...r })),
+        ...(indexedTickets.results || []).map((r: any) => ({ type: 'ticket', ...r })),
+        ...((substrTickets.results || []) as any[])
+            .filter(r => !indexedTicketIds.has(r.id))
+            .map(r => ({ type: 'ticket', ...r })),
     ];
 
     return c.json({

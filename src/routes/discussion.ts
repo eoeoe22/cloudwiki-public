@@ -7,6 +7,26 @@ import { dispatchDiscord } from '../utils/webhook/discord';
 import { discussionCreate } from '../utils/webhook/events/discussion';
 import { isR2OnlyNamespace } from '../utils/slug';
 import { createNotifications } from '../utils/notification';
+import { extractImageLinks } from '../utils/extractImageLinks';
+
+/** 토론 댓글 본문에서 이미지 r2 키를 추출해 page_links 에 INSERT.
+ *  관리자 미디어 GC 가 토론에서만 쓰이는 이미지를 미사용으로 오인 삭제하지 않도록 보호한다.
+ *  실패는 본문 작성 흐름을 막지 않고 콘솔에 로그만 남긴다. */
+async function indexCommentImages(db: D1Database, commentId: number, content: string): Promise<void> {
+    try {
+        const keys = extractImageLinks(content);
+        if (keys.length === 0) return;
+        const stmts = keys.map(k =>
+            db.prepare(
+                `INSERT INTO page_links (source_page_id, target_slug, link_type, blog, source_type)
+                 VALUES (?, ?, 'image', 0, 'discussion_comment')`
+            ).bind(commentId, k)
+        );
+        await db.batch(stmts);
+    } catch (e) {
+        console.error('Failed to index discussion comment images:', e);
+    }
+}
 
 const discussionRoutes = new Hono<Env>();
 
@@ -104,9 +124,12 @@ discussionRoutes.post('/discussions/:pageId', requireAuth, requirePermission('co
     const discussionId = discussionResult.meta.last_row_id;
 
     // 첫 번째 댓글 자동 생성 (토론 본문)
-    await db.prepare(
+    const firstCommentResult = await db.prepare(
         'INSERT INTO discussion_comments (discussion_id, author_id, content) VALUES (?, ?, ?)'
     ).bind(discussionId, user.id, content.trim()).run();
+
+    // 본문 이미지를 page_links 에 색인 (미디어 GC 보호)
+    await indexCommentImages(db, Number(firstCommentResult.meta.last_row_id), content.trim());
 
     // Discord community 채널에 신규 토론 알림 (잠금 페이지 / R2 전용 ns 는 제외)
     const enabledExtensions = (c.env.ENABLED_EXTENSIONS || '').split(',').map(s => s.trim()).filter(Boolean);
@@ -222,6 +245,9 @@ discussionRoutes.post('/discussions/thread/:id/comments', requireAuth, requirePe
     const result = await db.prepare(
         'INSERT INTO discussion_comments (discussion_id, author_id, content, parent_id) VALUES (?, ?, ?, ?)'
     ).bind(discussionId, user.id, content.trim(), parent_id ?? null).run();
+
+    // 댓글 이미지 색인 (미디어 GC 보호)
+    await indexCommentImages(db, Number(result.meta.last_row_id), content.trim());
 
     // 토론 updated_at 갱신
     await db.prepare(
@@ -388,6 +414,14 @@ discussionRoutes.delete('/discussions/thread/:id/hard', requireAuth, async (c) =
         'SELECT p.slug FROM discussions d LEFT JOIN pages p ON d.page_id = p.id WHERE d.id = ?'
     ).bind(discussionId).first<{ slug: string | null }>();
 
+    // 이 토론의 모든 댓글에 매달린 page_links 를 먼저 정리한다 (이미지 역링크).
+    // discussion_comments DELETE 전에 수행해야 source_page_id 매칭이 가능.
+    await db.prepare(
+        `DELETE FROM page_links
+         WHERE source_type = 'discussion_comment'
+           AND source_page_id IN (SELECT id FROM discussion_comments WHERE discussion_id = ?)`
+    ).bind(discussionId).run();
+
     // 댓글 먼저 삭제 후 토론 삭제
     await db.prepare('DELETE FROM discussion_comments WHERE discussion_id = ?').bind(discussionId).run();
     const result = await db.prepare('DELETE FROM discussions WHERE id = ?').bind(discussionId).run();
@@ -455,6 +489,11 @@ discussionRoutes.delete('/discussions/comment/:id/hard', requireAuth, async (c) 
     if (!rbac.can(user.role, '*')) {
         return c.json({ error: '최고 관리자만 완전 삭제할 수 있습니다.' }, 403);
     }
+
+    // 이 댓글에 매달린 page_links 정리 (이미지 역링크)
+    await db.prepare(
+        "DELETE FROM page_links WHERE source_type = 'discussion_comment' AND source_page_id = ?"
+    ).bind(commentId).run();
 
     const result = await db.prepare('DELETE FROM discussion_comments WHERE id = ?').bind(commentId).run();
 

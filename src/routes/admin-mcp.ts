@@ -1438,7 +1438,11 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
                 await Promise.all(revisionKeys.results.map(r => c.env.MEDIA.delete(r.r2_key)));
             }
             await db.batch([
-                db.prepare('DELETE FROM page_links WHERE source_page_id = ? AND blog = 0').bind(page.id),
+                // source_type='page' + blog=0 양쪽 — legacy 블로그 행 (source_type='page' + blog=1)
+                // 이 같은 id 일 때 잘못 삭제되지 않도록.
+                db.prepare(
+                    "DELETE FROM page_links WHERE source_page_id = ? AND source_type = 'page' AND blog = 0"
+                ).bind(page.id),
                 db.prepare('DELETE FROM page_categories WHERE page_id = ?').bind(page.id),
                 db.prepare('DELETE FROM revisions WHERE page_id = ?').bind(page.id),
                 db.prepare('DELETE FROM pages WHERE id = ?').bind(page.id),
@@ -1570,7 +1574,8 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
                     SELECT DISTINCT p.id, p.slug, p.version, p.content, p.category, p.last_revision_id, p.is_locked
                     FROM page_links pl
                     JOIN pages p ON pl.source_page_id = p.id
-                    WHERE pl.blog = 0 AND pl.target_slug = ? AND p.deleted_at IS NULL AND p.id != ?
+                    WHERE pl.blog = 0 AND pl.source_type = 'page'
+                      AND pl.target_slug = ? AND p.deleted_at IS NULL AND p.id != ?
                 `)
                 .bind(oldSlug, page.id)
                 .all<{ id: number; slug: string; version: number; content: string; category: string | null; last_revision_id: number | null; is_locked: number }>();
@@ -1761,7 +1766,7 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
 
         await db.prepare('UPDATE blog_posts SET deleted_at = unixepoch() WHERE id = ?').bind(id).run();
 
-        // 역링크 정리 — routes/blog.ts 의 DELETE /api/blog/:id 와 동일.
+        // 역링크 정리 — routes/blog.ts 의 DELETE /api/blog/:id 와 동일 (blog=1 로 legacy 호환).
         c.executionCtx.waitUntil(
             db.prepare('DELETE FROM page_links WHERE source_page_id = ? AND blog = 1')
                 .bind(id).run()

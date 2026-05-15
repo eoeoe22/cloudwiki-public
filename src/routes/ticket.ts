@@ -6,6 +6,25 @@ import { ROLE_CASE_SQL, enrichRoles, enrichRole, RBAC } from '../utils/role';
 import { dispatchDiscord } from '../utils/webhook/discord';
 import { ticketCreate, ticketStatus } from '../utils/webhook/events/ticket';
 import { createNotifications } from '../utils/notification';
+import { extractImageLinks } from '../utils/extractImageLinks';
+
+/** 티켓 댓글 본문에서 이미지 r2 키를 추출해 page_links 에 INSERT.
+ *  관리자 미디어 GC 가 티켓에서만 쓰이는 이미지를 미사용으로 오인 삭제하지 않도록 보호한다. */
+async function indexCommentImages(db: D1Database, commentId: number, content: string): Promise<void> {
+    try {
+        const keys = extractImageLinks(content);
+        if (keys.length === 0) return;
+        const stmts = keys.map(k =>
+            db.prepare(
+                `INSERT INTO page_links (source_page_id, target_slug, link_type, blog, source_type)
+                 VALUES (?, ?, 'image', 0, 'ticket_comment')`
+            ).bind(commentId, k)
+        );
+        await db.batch(stmts);
+    } catch (e) {
+        console.error('Failed to index ticket comment images:', e);
+    }
+}
 
 const ticketRoutes = new Hono<Env>();
 
@@ -142,9 +161,12 @@ ticketRoutes.post('/tickets', requireAuth, requirePermission('ticket:create'), a
     const ticketId = ticketResult.meta.last_row_id;
 
     // 첫 번째 댓글 자동 생성 (문의 본문)
-    await db.prepare(
+    const firstCommentResult = await db.prepare(
         'INSERT INTO ticket_comments (ticket_id, author_id, content) VALUES (?, ?, ?)'
     ).bind(ticketId, user.id, content.trim()).run();
+
+    // 본문 이미지를 page_links 에 색인 (미디어 GC 보호)
+    await indexCommentImages(db, Number(firstCommentResult.meta.last_row_id), content.trim());
 
     // 해당하는 관리자에게 알림 발송
     try {
@@ -294,6 +316,9 @@ ticketRoutes.post('/tickets/:id/comments', requireAuth, requirePermission('comme
     const result = await db.prepare(
         'INSERT INTO ticket_comments (ticket_id, author_id, content, parent_id) VALUES (?, ?, ?, ?)'
     ).bind(ticketId, user.id, content.trim(), parent_id ?? null).run();
+
+    // 댓글 이미지 색인 (미디어 GC 보호)
+    await indexCommentImages(db, Number(result.meta.last_row_id), content.trim());
 
     // 티켓 updated_at 갱신
     await db.prepare(
@@ -447,6 +472,13 @@ ticketRoutes.delete('/tickets/:id/hard', requireAuth, async (c) => {
         return c.json({ error: '최고 관리자만 완전 삭제할 수 있습니다.' }, 403);
     }
 
+    // 이 티켓의 모든 댓글에 매달린 page_links 정리 (이미지 역링크)
+    await db.prepare(
+        `DELETE FROM page_links
+         WHERE source_type = 'ticket_comment'
+           AND source_page_id IN (SELECT id FROM ticket_comments WHERE ticket_id = ?)`
+    ).bind(ticketId).run();
+
     await db.prepare('DELETE FROM ticket_comments WHERE ticket_id = ?').bind(ticketId).run();
     const result = await db.prepare('DELETE FROM tickets WHERE id = ?').bind(ticketId).run();
 
@@ -505,6 +537,11 @@ ticketRoutes.delete('/tickets/comment/:id/hard', requireAuth, async (c) => {
     if (!rbac.can(user.role, '*')) {
         return c.json({ error: '최고 관리자만 완전 삭제할 수 있습니다.' }, 403);
     }
+
+    // 이 댓글에 매달린 page_links 정리 (이미지 역링크)
+    await db.prepare(
+        "DELETE FROM page_links WHERE source_type = 'ticket_comment' AND source_page_id = ?"
+    ).bind(commentId).run();
 
     const result = await db.prepare('DELETE FROM ticket_comments WHERE id = ?').bind(commentId).run();
 

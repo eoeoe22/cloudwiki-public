@@ -298,17 +298,33 @@ CREATE INDEX IF NOT EXISTS idx_mcp_drafts_submitted
 
 -- 문서 간 링크 테이블 (역링크 인덱싱용)
 -- 문서 수정 시 content에서 [[링크]]를 파싱하여 이 테이블에 저장
--- source_page_id는 blog=0 일 때 pages.id, blog=1 일 때 blog_posts.id 를 가리킴.
--- 두 ID 공간이 겹치므로 pages(id) 외래키는 두지 않는다 (FK 강제 시 블로그 INSERT 실패).
+-- source_page_id는 source_type 에 따라 다른 테이블의 id 를 가리킴:
+--   'page'              → pages.id
+--   'blog'              → blog_posts.id
+--   'discussion_comment'→ discussion_comments.id
+--   'ticket_comment'    → ticket_comments.id
+-- 여러 ID 공간이 겹치므로 외래키는 두지 않는다 (FK 강제 시 INSERT 실패).
+-- source_type 필터가 page/blog/discussion_comment/ticket_comment 행을 분리하므로
+-- source_page_id 충돌에도 다른 소스 행이 잘못 매칭/삭제되지 않는다.
+--
+-- 'blog' INTEGER 컬럼은 마이그레이션 전 배포된 admin GC / 블로그 라우트 호환을 위해
+-- 역호환 유지 — source_type='blog' 이면 blog=1, 그 외 source_type 은 blog=0.
+-- 신규 코드는 모두 source_type 으로 분기한다.
 CREATE TABLE IF NOT EXISTS page_links (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   source_page_id INTEGER NOT NULL,
   target_slug    TEXT NOT NULL,
-  link_type      TEXT NOT NULL DEFAULT 'wikilink',  -- 'wikilink', 'template', 'image'
-  blog          INTEGER NOT NULL DEFAULT 0          -- 0: 위키 페이지 링크, 1: 블로그 포스트 링크
+  link_type      TEXT NOT NULL DEFAULT 'wikilink',  -- 'wikilink', 'template', 'image', 'extension'
+  blog          INTEGER NOT NULL DEFAULT 0,         -- 0: 위키 / 토론 / 티켓, 1: 블로그 (legacy 호환)
+  source_type   TEXT NOT NULL DEFAULT 'page'        -- 'page' | 'blog' | 'discussion_comment' | 'ticket_comment'
 );
 CREATE INDEX IF NOT EXISTS idx_page_links_source ON page_links(source_page_id);
 CREATE INDEX IF NOT EXISTS idx_page_links_target ON page_links(target_slug);
+CREATE INDEX IF NOT EXISTS idx_page_links_source_type ON page_links(source_type, source_page_id);
+-- D1 콘솔 1회 수동 마이그레이션 (배포된 DB):
+--   ALTER TABLE page_links ADD COLUMN source_type TEXT NOT NULL DEFAULT 'page';
+--   UPDATE page_links SET source_type = 'blog' WHERE blog = 1;
+--   CREATE INDEX IF NOT EXISTS idx_page_links_source_type ON page_links(source_type, source_page_id);
 
 -- 문서-카테고리 관계 테이블 (다대다 정규화)
 CREATE TABLE IF NOT EXISTS page_categories (

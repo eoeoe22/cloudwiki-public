@@ -16,12 +16,41 @@
     href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Outfit:wght@500;600;700;800;900&family=Inter:wght@400;500;700;800&display=swap"
     rel="stylesheet">
   <link rel="stylesheet" href="/css/style.css">
+  <link rel="stylesheet" href="/render.css">
+  <link rel="stylesheet" href="/css/mini-editor.css">
+  <link rel="stylesheet" href="/css/image-editor.css">
   <!-- 테마 FOUC 방지: CSS 로드 후 즉시 테마 적용 -->
   <script>try{var t=localStorage.getItem('themeMode');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
+  <!-- CodeMirror 6 Import Map (미니 에디터용) -->
+  <script type="importmap">
+  {
+    "imports": {
+      "@codemirror/state": "https://esm.sh/@codemirror/state@6.6.0",
+      "@codemirror/view": "https://esm.sh/@codemirror/view@6.41.1",
+      "@codemirror/commands": "https://esm.sh/@codemirror/commands@6.10.3",
+      "@codemirror/language": "https://esm.sh/@codemirror/language@6.12.3",
+      "@codemirror/lang-markdown": "https://esm.sh/@codemirror/lang-markdown@6.5.0",
+      "@codemirror/language-data": "https://esm.sh/@codemirror/language-data@6.5.2",
+      "@codemirror/theme-one-dark": "https://esm.sh/@codemirror/theme-one-dark@6.1.3"
+    }
+  }
+  </script>
   <style>
     /* 모바일에서 햄버거 메뉴 숨김 */
     .navbar-toggler[data-bs-target="#mobileSidebar"] {
       display: none !important;
+    }
+    /* 댓글 본문 (.wiki-content) 의 마진/여백을 티켓 댓글 카드용으로 조이기 */
+    .discussion-comment-body.wiki-content > :first-child { margin-top: 0; }
+    .discussion-comment-body.wiki-content > :last-child { margin-bottom: 0; }
+    .discussion-comment-body.wiki-content p { margin-bottom: 0.5rem; }
+    .discussion-comment-body.wiki-content h1,
+    .discussion-comment-body.wiki-content h2,
+    .discussion-comment-body.wiki-content h3,
+    .discussion-comment-body.wiki-content h4,
+    .discussion-comment-body.wiki-content h5,
+    .discussion-comment-body.wiki-content h6 {
+      font-size: 1.05rem; margin-top: 0.75rem; margin-bottom: 0.4rem;
     }
   </style>
 </head>
@@ -97,7 +126,10 @@
                   <input type="text" class="form-control" id="newTicketTitle" placeholder="문의 제목">
                 </div>
                 <div class="mb-3">
-                  <textarea class="form-control" id="newTicketContent" rows="4" placeholder="문의 내용을 입력하세요"></textarea>
+                  <div id="newTicketContent"></div>
+                  <!-- 미니 에디터(CM6) 로드 실패 시 fallback. 미니 에디터 마운트 성공 시 숨겨진다. -->
+                  <textarea class="form-control" id="newTicketContentFallback" rows="4"
+                    placeholder="문의 내용을 입력하세요"></textarea>
                 </div>
                 <div class="d-flex gap-2">
                   <button class="btn btn-wiki btn-sm" onclick="submitNewTicket()">작성</button>
@@ -143,7 +175,10 @@
                 <div id="replyQuote" class="d-none mb-2"></div>
                 <input type="hidden" id="replyParentId" value="">
                 <div class="mb-2">
-                  <textarea class="form-control" id="commentContent" rows="3" placeholder="댓글을 입력하세요"></textarea>
+                  <div id="commentContent"></div>
+                  <!-- 미니 에디터 로드 실패 시 fallback -->
+                  <textarea class="form-control" id="commentContentFallback" rows="3"
+                    placeholder="댓글을 입력하세요"></textarea>
                 </div>
                 <div class="d-flex gap-2">
                   <button class="btn btn-wiki btn-sm" onclick="submitComment()">작성</button>
@@ -169,7 +204,13 @@
   <!-- ── Scripts ── -->
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11.26.24"></script>
+  <!-- 위키 문법 렌더링 (marked + DOMPurify + render.js) -->
+  <script src="https://cdn.jsdelivr.net/npm/marked@18.0.3/lib/marked.umd.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.4.2/dist/purify.min.js"></script>
   <script type="module" src="/dist/common.js"></script>
+  <script type="module" src="/dist/render.js"></script>
+  <script type="module" src="/dist/edit-image.js"></script>
+  <script type="module" src="/dist/discussion-edit.js"></script>
   <script>
     // ── 전역 상태 ──
     let currentTicketId = null;
@@ -177,6 +218,34 @@
     let currentTypeFilter = '';
     let currentPage = 1;
     let allTickets = [];
+
+    // 미니 에디터 핸들 (본문/댓글 두 인스턴스)
+    let newTicketEditor = null;
+    let commentEditor = null;
+
+    /** 미니 에디터 모듈 로드 대기 */
+    async function waitForMiniEditor() {
+      for (let i = 0; i < 60 && !window.createMiniEditor; i++) {
+        await new Promise(r => setTimeout(r, 50));
+      }
+      return window.createMiniEditor;
+    }
+
+    /** 댓글 본문(=한 row)을 컨테이너에 위키 문법으로 렌더. 트랜스클루전/익스텐션/헤딩번호 비활성.
+     *  render.js / 그 CDN 의존성이 로드되지 않은 환경에서는 plain-text(+개행)로 폴백해
+     *  본문이 사라지지 않도록 한다. */
+    async function renderCommentBody(content, containerId) {
+      if (!window.renderWikiContent) {
+        const el = document.getElementById(containerId);
+        if (el) el.innerHTML = escapeHtml(content || '').replace(/\n/g, '<br>');
+        return;
+      }
+      await window.renderWikiContent(content || '', null, containerId, {
+        skipTransclusion: true,
+        skipExtensions: true,
+        skipHeadingNumbers: true,
+      });
+    }
 
     const typeLabels = {
       general: '일반',
@@ -373,21 +442,53 @@
     }
 
     // ── 새 티켓 작성 ──
-    function showNewTicketForm() {
+    async function showNewTicketForm() {
       if (!currentUser) {
         Swal.fire('로그인 필요', '문의를 작성하려면 로그인해주세요.', 'info');
         return;
       }
       document.getElementById('newTicketForm').classList.remove('d-none');
       document.getElementById('newTicketTitle').value = '';
-      document.getElementById('newTicketContent').value = '';
       document.getElementById('newTicketType').value = 'general';
+      // fallback textarea 도 빈 상태로
+      document.getElementById('newTicketContentFallback').value = '';
+
+      // 미니 에디터 lazy-init. 로드 실패 시 fallback textarea 가 보이는 상태로 둠.
+      const create = await waitForMiniEditor();
+      if (create) {
+        const rootEl = document.getElementById('newTicketContent');
+        const fallback = document.getElementById('newTicketContentFallback');
+        if (!newTicketEditor) {
+          try {
+            // CM6 로드를 기다리는 동안 사용자가 fallback 에 입력했을 수 있으므로
+            // 그 텍스트를 에디터로 옮긴 뒤 fallback 을 숨긴다 (데이터 손실 방지).
+            const carryOver = fallback.value;
+            newTicketEditor = await create(rootEl, {
+              initialValue: carryOver,
+              placeholder: '문의 내용을 입력하세요 (위키 문법 지원)',
+            });
+            fallback.classList.add('d-none');
+            fallback.value = '';
+          } catch (e) {
+            console.error('mini editor init failed', e);
+            // fallback textarea 가 그대로 보임 — 입력 차단되지 않음
+          }
+        } else {
+          newTicketEditor.setValue('');
+        }
+      }
       document.getElementById('newTicketTitle').focus();
+    }
+
+    /** 미니 에디터 본문, 없으면 fallback textarea 값을 반환 */
+    function getNewTicketContent() {
+      if (newTicketEditor) return newTicketEditor.getValue();
+      return document.getElementById('newTicketContentFallback').value;
     }
 
     async function submitNewTicket() {
       const title = document.getElementById('newTicketTitle').value.trim();
-      const content = document.getElementById('newTicketContent').value.trim();
+      const content = getNewTicketContent().trim();
       const type = document.getElementById('newTicketType').value;
 
       if (!title) { Swal.fire('알림', '문의 제목을 입력하세요.', 'warning'); return; }
@@ -479,12 +580,21 @@
         commentsEl.innerHTML = comments.map(c => renderComment(c, ticket)).join('');
         initRoleIconPopovers(commentsEl);
 
+        // 각 댓글 본문에 위키 문법 렌더링 (삭제된 댓글 제외)
+        for (const c of comments) {
+          if (!c.deleted_at) {
+            renderCommentBody(c.content, `ticket-body-${c.id}`);
+          }
+        }
+
         // 댓글 폼 표시 여부
         const commentFormEl = document.getElementById('commentForm');
         if (ticket.status === 'closed' || ticket.deleted_at || !currentUser || currentUser.role === 'banned') {
           commentFormEl.classList.add('d-none');
         } else {
           commentFormEl.classList.remove('d-none');
+          // 미니 에디터 lazy-init
+          ensureCommentEditor();
         }
         cancelReply();
 
@@ -528,11 +638,12 @@
         `;
       }
 
+      // 본문은 위키 렌더링이 비동기이므로 빈 컨테이너만 박아두고 호출자가 별도 렌더.
       let contentHtml;
       if (isDeleted) {
         contentHtml = '<span class="text-muted fst-italic">삭제된 댓글입니다.</span>';
       } else {
-        contentHtml = escapeHtml(c.content).replace(/\n/g, '<br>');
+        contentHtml = '';
       }
 
       let commentActions = '';
@@ -566,7 +677,7 @@
             <span class="discussion-comment-date text-muted small">${date}</span>
           </div>
           ${quoteHtml}
-          <div class="discussion-comment-body">${contentHtml}</div>
+          <div class="discussion-comment-body wiki-content" id="ticket-body-${c.id}">${contentHtml}</div>
           <div class="discussion-comment-actions">${commentActions}</div>
         </div>
       `;
@@ -584,8 +695,50 @@
       `;
       quoteEl.classList.remove('d-none');
       document.getElementById('cancelReplyBtn').classList.remove('d-none');
-      document.getElementById('commentContent').focus();
+      if (commentEditor) {
+        commentEditor.focus();
+      } else {
+        document.getElementById('commentContentFallback').focus();
+      }
       document.getElementById('commentForm').scrollIntoView({ behavior: 'smooth' });
+    }
+
+    /** 댓글 본문: 미니 에디터가 마운트되었으면 그 값, 아니면 fallback textarea 값 */
+    function getCommentContent() {
+      if (commentEditor) return commentEditor.getValue();
+      return document.getElementById('commentContentFallback').value;
+    }
+    function clearCommentContent() {
+      if (commentEditor) commentEditor.setValue('');
+      const fb = document.getElementById('commentContentFallback');
+      if (fb) fb.value = '';
+    }
+
+    /** 댓글 폼 미니 에디터 lazy-init — 티켓 상세 진입 시 한 번.
+     *  이미 초기화되어 있으면 본문만 비운다. 로드/마운트 실패 시 fallback textarea 사용. */
+    async function ensureCommentEditor() {
+      if (commentEditor) {
+        commentEditor.setValue('');
+        return;
+      }
+      const fb = document.getElementById('commentContentFallback');
+      if (fb) fb.value = '';
+
+      const create = await waitForMiniEditor();
+      if (!create) return;
+      const rootEl = document.getElementById('commentContent');
+      if (!rootEl) return;
+      try {
+        // CM6 로드 중 사용자가 fallback 에 입력했을 수 있으므로 그 값을 에디터로 이관.
+        const carryOver = fb ? fb.value : '';
+        commentEditor = await create(rootEl, {
+          initialValue: carryOver,
+          placeholder: '댓글을 입력하세요 (위키 문법 지원)',
+        });
+        if (fb) { fb.classList.add('d-none'); fb.value = ''; }
+      } catch (e) {
+        console.error('mini editor init failed', e);
+      }
     }
 
     function cancelReply() {
@@ -595,7 +748,7 @@
     }
 
     async function submitComment() {
-      const content = document.getElementById('commentContent').value.trim();
+      const content = getCommentContent().trim();
       const parentId = document.getElementById('replyParentId').value;
 
       if (!content) { Swal.fire('알림', '댓글 내용을 입력하세요.', 'warning'); return; }
@@ -612,7 +765,7 @@
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || '댓글 작성 실패');
 
-        document.getElementById('commentContent').value = '';
+        clearCommentContent();
         cancelReply();
         showTicketDetail(currentTicketId);
       } catch (err) {
@@ -709,6 +862,59 @@
       }
     }
   </script>
+
+  <!-- ── 이미지 편집 모달 (handleImageUpload 가 사용) ── -->
+  <div class="modal fade" id="imageEditorModal" tabindex="-1" aria-hidden="true" data-bs-backdrop="static">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h6 class="modal-title"><i class="bi bi-crop"></i> 이미지 편집</h6>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="닫기"></button>
+        </div>
+        <div class="modal-body">
+          <div class="img-editor-canvas-wrap" id="imgEditorCanvasWrap">
+            <canvas id="imgEditorCanvas"></canvas>
+            <div class="crop-overlay" id="cropOverlay" style="display:none;">
+              <div class="crop-box" id="cropBox">
+                <div class="crop-handle tl" data-handle="tl"></div>
+                <div class="crop-handle tr" data-handle="tr"></div>
+                <div class="crop-handle bl" data-handle="bl"></div>
+                <div class="crop-handle br" data-handle="br"></div>
+              </div>
+            </div>
+          </div>
+          <div class="img-editor-toolbar">
+            <button type="button" id="btnCropToggle" title="크롭 모드 전환"><i class="bi bi-crop"></i></button>
+            <button type="button" id="btnCropApply" style="display:none;" title="크롭 적용"><i class="bi bi-check-lg"></i></button>
+            <div class="separator"></div>
+            <button type="button" id="btnRotateLeft" title="왼쪽 90도 회전"><i class="bi bi-arrow-counterclockwise"></i></button>
+            <button type="button" id="btnRotateRight" title="오른쪽 90도 회전"><i class="bi bi-arrow-clockwise"></i></button>
+            <div class="separator"></div>
+            <button type="button" id="btnImgReset" title="원본 복원"><i class="bi bi-arrow-repeat"></i> 초기화</button>
+          </div>
+          <div class="img-editor-info" id="imgEditorInfo"></div>
+        </div>
+        <div class="modal-footer d-flex justify-content-between align-items-center w-100">
+          <div class="dropdown">
+            <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button"
+              id="btnImgEditorSizeToggle" data-bs-toggle="dropdown" aria-expanded="false">
+              <i class="mdi mdi-arrow-expand-all me-1"></i>크게(기본)
+            </button>
+            <ul class="dropdown-menu" id="imgEditorSizeDropdown" aria-labelledby="btnImgEditorSizeToggle">
+              <li><a class="dropdown-item" href="#" data-size="icon"><i class="mdi mdi-square-medium-outline me-2"></i>아이콘</a></li>
+              <li><a class="dropdown-item" href="#" data-size="small"><i class="mdi mdi-arrow-collapse me-2"></i>작게</a></li>
+              <li><a class="dropdown-item" href="#" data-size="medium"><i class="mdi mdi-square-outline me-2"></i>중간</a></li>
+              <li><a class="dropdown-item" href="#" data-size="full"><i class="mdi mdi-arrow-expand-all me-2"></i>크게(기본)</a></li>
+            </ul>
+          </div>
+          <div>
+            <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">취소</button>
+            <button type="button" class="btn btn-primary btn-sm" id="btnImgEditorDone"><i class="bi bi-check-lg"></i> 편집 완료</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
 
 </body>
 
