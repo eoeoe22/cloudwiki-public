@@ -1,0 +1,161 @@
+/* "기존 이미지 검색" / "이미지 크기 선택" 모달 전용 스타일.
+ *
+ * src/client/edit/image.ts 의 openExistingImageSearch / askImageSize 가 SweetAlert 본문에
+ * 인라인으로 렌더링하는 `.existing-img-*` 마크업과 한 쌍.
+ *
+ * 위키 에디터 페이지(edit.html / blog-edit.html)는 css/edit.css 의 동일 정의를 그대로
+ * 쓰므로 이 파일을 추가로 로드할 필요가 없다. 토론·티켓 페이지처럼 edit.css 를 통째로
+ * 로드하기엔 무거운 페이지가 이 파일만 별도로 로드한다.
+ *
+ * edit.css 의 ".existing-img-*" 블록과 1:1 동일하게 유지 — 한쪽을 고치면 다른 쪽도 같이.
+ */
+
+.existing-img-search-wrap {
+    text-align: left;
+}
+
+.existing-img-search-bar {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.existing-img-search-bar .form-control {
+    flex: 1;
+}
+
+.existing-img-search-info {
+    font-size: 0.82rem;
+    color: var(--wiki-text-muted);
+    margin-bottom: 10px;
+}
+
+.existing-img-search-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    gap: 10px;
+    max-height: 420px;
+    overflow-y: auto;
+    padding: 2px;
+}
+
+.existing-img-search-empty {
+    grid-column: 1 / -1;
+    text-align: center;
+    padding: 32px 0;
+    color: var(--wiki-text-muted);
+    font-size: 0.9rem;
+}
+
+.existing-img-tile {
+    border: 1px solid var(--wiki-border);
+    border-radius: 6px;
+    overflow: hidden;
+    cursor: pointer;
+    background: var(--wiki-card-bg);
+    transition: border-color 0.15s, transform 0.15s, box-shadow 0.15s;
+    display: flex;
+    flex-direction: column;
+}
+
+.existing-img-tile:hover {
+    border-color: var(--wiki-primary);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.08);
+}
+
+.existing-img-tile img {
+    width: 100%;
+    height: 100px;
+    object-fit: cover;
+    display: block;
+    background: #f5f5f5;
+}
+
+.existing-img-tile-name {
+    padding: 4px 6px;
+    font-size: 0.75rem;
+    color: var(--wiki-text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.existing-img-tile-tags {
+    padding: 0 6px 6px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3px;
+    align-items: center;
+}
+
+.existing-img-tile-tag,
+.existing-img-tile-tag-more {
+    font-size: 0.68rem;
+    line-height: 1.1;
+    padding: 2px 6px;
+    background-color: color-mix(in srgb, var(--wiki-primary) 10%, transparent);
+    color: var(--wiki-primary);
+    border: 1px solid color-mix(in srgb, var(--wiki-primary) 20%, transparent);
+    border-radius: 6px;
+    white-space: nowrap;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.existing-img-tile-tag-more {
+    background-color: transparent;
+    color: var(--wiki-text-muted);
+    border-color: transparent;
+    padding-left: 0;
+    padding-right: 0;
+}
+
+.existing-img-search-more {
+    text-align: center;
+    margin-top: 12px;
+}
+
+.existing-img-size-preview {
+    text-align: center;
+    margin-bottom: 14px;
+}
+
+.existing-img-size-preview img {
+    max-width: 100%;
+    max-height: 200px;
+    border-radius: 6px;
+    border: 1px solid var(--wiki-border);
+}
+
+.existing-img-size-filename {
+    margin-top: 6px;
+    font-size: 0.82rem;
+    color: var(--wiki-text-muted);
+    word-break: break-all;
+}
+
+.existing-img-size-options {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    text-align: left;
+    max-width: 260px;
+    margin: 0 auto;
+}
+
+.existing-img-size-options label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border: 1px solid var(--wiki-border);
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.9rem;
+}
+
+.existing-img-size-options label:hover {
+    background: rgba(var(--wiki-primary-rgb), 0.06);
+}
