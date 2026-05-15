@@ -54,6 +54,10 @@ CREATE INDEX IF NOT EXISTS idx_pages_deleted ON pages(deleted_at);
 -- 리비전 테이블
 -- content: 본문이 직접 저장되거나, r2_key가 있으면 R2에서 조회.
 -- r2_key: R2 버킷 내 파일 경로 (예: revisions/{pageId}/{pageVersion}.md)
+-- deleted_at: 리비전 단위 소프트 삭제 시각. NULL = 정상.
+--             권한 없는 사용자에게 해당 리비전 자체가 존재하지 않는 것처럼 가려진다.
+-- purged_at:  하드 삭제 시각. NULL = R2 본문 살아있음. 값이 있으면 r2_key/content 가 비워져 있다.
+--             감사 가능성 유지를 위해 row 자체와 summary/author_id/page_version/created_at 은 보존한다.
 CREATE TABLE IF NOT EXISTS revisions (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
   page_id      INTEGER NOT NULL,
@@ -63,6 +67,8 @@ CREATE TABLE IF NOT EXISTS revisions (
   summary      TEXT,
   author_id    INTEGER,
   created_at   INTEGER DEFAULT (unixepoch()),
+  deleted_at   INTEGER,
+  purged_at    INTEGER,
   FOREIGN KEY (page_id) REFERENCES pages(id),
   FOREIGN KEY (author_id) REFERENCES users(id)
 );
@@ -70,6 +76,7 @@ CREATE TABLE IF NOT EXISTS revisions (
 CREATE INDEX IF NOT EXISTS idx_revisions_page_version ON revisions(page_id, page_version DESC);
 CREATE INDEX IF NOT EXISTS idx_revisions_author ON revisions(author_id);
 CREATE INDEX IF NOT EXISTS idx_revisions_created ON revisions(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_revisions_deleted ON revisions(deleted_at);
 
 -- 미디어 테이블
 -- content: 이미지 문서(/w/이미지:파일명) 접근 시 함께 표시되는 일반 텍스트 설명.

@@ -940,25 +940,29 @@ wiki.get('/w/recent-revisions', async (c) => {
     const rbac = c.get('rbac') as RBAC;
     const canSeePrivate = rbac.can(user?.role ?? 'guest', 'wiki:private');
     const privateFilter = canSeePrivate ? '' : ' AND p.is_private = 0';
+    const isAdmin = !!user && rbac.can(user.role, 'admin:access');
+    // 비관리자에게는 삭제된 리비전 자체가 존재하지 않는 것처럼 가린다.
+    const revDeletedFilter = isAdmin ? '' : ' AND r.deleted_at IS NULL';
     const offset = Math.max(0, parseInt(c.req.query('offset') || '0', 10));
     const limit = Math.min(50, Math.max(1, parseInt(c.req.query('limit') || '10', 10)));
 
+    const adminCols = isAdmin ? ', r.deleted_at, r.purged_at' : '';
     const listQuery = `
         SELECT r.id, r.page_id, r.page_version, r.summary, r.created_at,
                p.slug,
                u.id as author_id, u.name as author_name, u.picture as author_picture,
                ${ROLE_CASE_SQL} as author_role,
-               u.email as _author_email
+               u.email as _author_email${adminCols}
         FROM revisions r
         JOIN pages p ON r.page_id = p.id
         LEFT JOIN users u ON r.author_id = u.id
-        WHERE p.deleted_at IS NULL${privateFilter}
+        WHERE p.deleted_at IS NULL${privateFilter}${revDeletedFilter}
         ORDER BY r.created_at DESC LIMIT ? OFFSET ?`;
     const countQuery = `
         SELECT COUNT(*) as total
         FROM revisions r
         JOIN pages p ON r.page_id = p.id
-        WHERE p.deleted_at IS NULL${privateFilter}`;
+        WHERE p.deleted_at IS NULL${privateFilter}${revDeletedFilter}`;
 
     const [listResult, countResult] = await db.batch([
         db.prepare(listQuery).bind(limit, offset),
@@ -1646,16 +1650,26 @@ wiki.get('/w/:slug/revisions', async (c) => {
         return c.json({ error: '문서를 찾을 수 없습니다.' }, 404);
     }
 
+    // 비관리자에게는 삭제된 리비전 행 자체가 존재하지 않는 것처럼 가린다.
+    const revDeletedFilter = isAdmin ? '' : ' AND r.deleted_at IS NULL';
+    const countDeletedFilter = isAdmin ? '' : ' AND deleted_at IS NULL';
+    // fully_purged: 백엔드 하드 삭제 핸들러의 "완전히 정리됨" 가드와 동일 식.
+    // 부분 실패 상태(r2_key 남음 또는 content 남음)면 false 가 되어 UI 가 retry 버튼을 노출.
+    const adminCols = isAdmin
+        ? `, r.deleted_at, r.purged_at,
+           (CASE WHEN r.purged_at IS NOT NULL AND r.r2_key IS NULL AND r.content = '' THEN 1 ELSE 0 END) AS fully_purged`
+        : '';
+
     const [countResult, listResult] = await db.batch([
-        db.prepare('SELECT COUNT(*) as total FROM revisions WHERE page_id = ?').bind(page.id),
+        db.prepare(`SELECT COUNT(*) as total FROM revisions WHERE page_id = ?${countDeletedFilter}`).bind(page.id),
         db
             .prepare(
                 `SELECT r.id, r.page_version, r.summary, r.created_at, u.id as author_id, u.name as author_name, u.picture as author_picture,
                         ${ROLE_CASE_SQL} as author_role,
-                        u.email as _author_email
+                        u.email as _author_email${adminCols}
            FROM revisions r
            LEFT JOIN users u ON r.author_id = u.id
-           WHERE r.page_id = ?
+           WHERE r.page_id = ?${revDeletedFilter}
            ORDER BY r.created_at DESC
            LIMIT ? OFFSET ?`
             )
@@ -1668,7 +1682,19 @@ wiki.get('/w/:slug/revisions', async (c) => {
 
     enrichRoles(listResult.results, 'author_role', '_author_email', c.env);
 
-    return c.json(safeJSON({ revisions: listResult.results, total }));
+    // 최신 리비전은 삭제 불가 — 클라이언트가 액션 버튼을 비활성화 할 수 있도록 동봉.
+    const lastRevisionId = isAdmin
+        ? (await db.prepare('SELECT last_revision_id FROM pages WHERE id = ?').bind(page.id)
+            .first<{ last_revision_id: number | null }>())?.last_revision_id ?? null
+        : null;
+
+    return c.json(safeJSON({
+        revisions: listResult.results,
+        total,
+        is_admin_view: isAdmin,
+        last_revision_id: lastRevisionId,
+        can_hard_delete: !!user && rbac.can(user.role, '*'),
+    }));
 });
 
 /**
@@ -1700,16 +1726,31 @@ wiki.get('/w/:slug/revisions/:id', async (c) => {
     const revision = await db
         .prepare(
             `SELECT r.id, r.page_id, r.page_version, r.content, r.r2_key, r.summary, r.author_id, r.created_at,
+                    r.deleted_at, r.purged_at,
                     u.name as author_name
        FROM revisions r
        LEFT JOIN users u ON r.author_id = u.id
        WHERE r.id = ? AND r.page_id = ?`
         )
         .bind(revId, page.id)
-        .first<{ id: number; page_id: number; page_version: number | null; content: string; r2_key: string | null; summary: string | null; author_id: number | null; created_at: number; author_name: string | null }>();
+        .first<{ id: number; page_id: number; page_version: number | null; content: string; r2_key: string | null; summary: string | null; author_id: number | null; created_at: number; deleted_at: number | null; purged_at: number | null; author_name: string | null }>();
 
     if (!revision) {
         return c.json({ error: '리비전을 찾을 수 없습니다.' }, 404);
+    }
+
+    // 비관리자에게는 삭제된 리비전이 존재하지 않는 것처럼 보여야 한다.
+    if (revision.deleted_at && !isAdmin) {
+        return c.json({ error: '리비전을 찾을 수 없습니다.' }, 404);
+    }
+
+    // 하드 삭제된 리비전은 R2 본문이 없으므로 빈 본문으로 반환 (관리자 전용 경로).
+    if (revision.purged_at) {
+        return c.json(safeJSON({
+            ...revision,
+            content: '',
+            purged: true,
+        }));
     }
 
     // r2_key가 있으면 R2에서 본문 조회
@@ -1748,32 +1789,38 @@ wiki.get('/w/:slug/revisions/:id/diff', async (c) => {
     // 해당 리비전 조회
     const revision = await db
         .prepare(
-            `SELECT id, page_version, content, r2_key, page_id, created_at
+            `SELECT id, page_version, content, r2_key, page_id, created_at, deleted_at, purged_at
        FROM revisions
        WHERE id = ? AND page_id = ?`
         )
         .bind(revId, page.id)
-        .first<{ id: number; page_version: number | null; content: string; r2_key: string | null; page_id: number; created_at: number }>();
+        .first<{ id: number; page_version: number | null; content: string; r2_key: string | null; page_id: number; created_at: number; deleted_at: number | null; purged_at: number | null }>();
 
-    if (!revision) {
+    if (!revision || (revision.deleted_at && !isAdmin)) {
         return c.json({ error: '리비전을 찾을 수 없습니다.' }, 404);
     }
 
-    // 바로 이전 리비전 조회
+    // 바로 이전 리비전 조회 — 비관리자에게는 살아있는(=deleted_at IS NULL) 직전 리비전과
+    // 짝지어 연속 삭제된 리비전을 자동으로 건너뛴다.
+    const prevQuery = isAdmin
+        ? `SELECT id, page_version, content, r2_key, deleted_at, purged_at FROM revisions
+           WHERE page_id = ? AND id < ?
+           ORDER BY id DESC LIMIT 1`
+        : `SELECT id, page_version, content, r2_key, deleted_at, purged_at FROM revisions
+           WHERE page_id = ? AND id < ? AND deleted_at IS NULL
+           ORDER BY id DESC LIMIT 1`;
     const prevRevision = await db
-        .prepare(
-            `SELECT id, page_version, content, r2_key FROM revisions
-       WHERE page_id = ? AND id < ?
-       ORDER BY id DESC LIMIT 1`
-        )
+        .prepare(prevQuery)
         .bind(revision.page_id, revId)
-        .first<{ id: number; page_version: number | null; content: string; r2_key: string | null }>();
+        .first<{ id: number; page_version: number | null; content: string; r2_key: string | null; deleted_at: number | null; purged_at: number | null }>();
 
-    // R2 or D1에서 본문 조회
+    // R2 or D1에서 본문 조회 — 하드 삭제된(purged) 리비전은 본문이 비어있으므로 R2 호출을 건너뛴다.
     const origin = new URL(c.req.url).origin;
+    const fetchContent = (rev: { content: string; r2_key: string | null; purged_at: number | null }) =>
+        rev.purged_at ? Promise.resolve('') : getRevisionContent(c.env.MEDIA, rev, origin);
     const [newContent, oldContent] = await Promise.all([
-        getRevisionContent(c.env.MEDIA, revision, origin),
-        prevRevision ? getRevisionContent(c.env.MEDIA, prevRevision, origin) : Promise.resolve(''),
+        fetchContent(revision),
+        prevRevision ? fetchContent(prevRevision) : Promise.resolve(''),
     ]);
 
     return c.json(safeJSON({
@@ -2197,11 +2244,26 @@ wiki.post('/w/:slug/revert', requireAuth, async (c) => {
         return c.json({ error: '잠긴 문서는 관리자만 되돌릴 수 있습니다.' }, 403);
     }
 
-    const targetRevision = await db.prepare('SELECT content, r2_key, page_version FROM revisions WHERE id = ? AND page_id = ?')
-        .bind(revision_id, page.id).first<{ content: string; r2_key: string | null; page_version: number | null }>();
+    const targetRevision = await db.prepare('SELECT content, r2_key, page_version, deleted_at, purged_at FROM revisions WHERE id = ? AND page_id = ?')
+        .bind(revision_id, page.id).first<{ content: string; r2_key: string | null; page_version: number | null; deleted_at: number | null; purged_at: number | null }>();
 
     if (!targetRevision) {
         return c.json({ error: '해당 리비전을 찾을 수 없습니다.' }, 404);
+    }
+
+    // 숨겨진/영구 삭제된 리비전으로의 되돌리기는 redaction 우회 통로가 된다.
+    //   - 비관리자: 존재 자체를 가려야 하므로 404.
+    //   - 관리자: 본문이 의도적으로 가려진(또는 R2 에서 영구 삭제된) 상태이므로 명시적으로 거부.
+    //             되살리려면 별도 unhide 흐름이 필요하며 이 PR 범위 밖.
+    if (targetRevision.purged_at) {
+        return isAdmin
+            ? c.json({ error: '본문이 영구 삭제된 리비전으로는 되돌릴 수 없습니다.' }, 409)
+            : c.json({ error: '해당 리비전을 찾을 수 없습니다.' }, 404);
+    }
+    if (targetRevision.deleted_at) {
+        return isAdmin
+            ? c.json({ error: '숨겨진 리비전으로는 되돌릴 수 없습니다. 먼저 숨김을 해제해야 합니다.' }, 409)
+            : c.json({ error: '해당 리비전을 찾을 수 없습니다.' }, 404);
     }
 
     // 되돌릴 리비전의 본문을 R2 또는 D1에서 조회
@@ -2259,6 +2321,183 @@ wiki.post('/w/:slug/revert', requireAuth, async (c) => {
     ]));
 
     return c.json({ message: '문서가 되돌려졌습니다.', version: newVersion });
+});
+
+/**
+ * 리비전 단위 삭제 — 공용 페이지/리비전 검증 및 권한 체크.
+ * 페이지 단위 삭제(wiki:delete / *) 와 동일 정책을 사용하며, 추가로 최신 리비전은
+ * 절대 삭제하지 못하도록 막아 pages.last_revision_id / content / version 일관성을 유지한다.
+ */
+async function loadRevisionForDeletion(
+    c: any,
+    slug: string,
+    revId: number
+): Promise<
+    | { ok: true; page: { id: number; last_revision_id: number | null; is_private: number }; revision: { id: number; page_id: number; page_version: number | null; content: string; r2_key: string | null; deleted_at: number | null; purged_at: number | null } }
+    | { ok: false; response: Response }
+> {
+    const db = c.env.DB as D1Database;
+    const user = c.get('user');
+    const rbac = c.get('rbac') as RBAC;
+    const canSeePrivate = rbac.can(user?.role ?? 'guest', 'wiki:private');
+
+    // 페이지가 이미 soft-delete 되어 있으면 리비전 단위 변경을 차단한다 (페이지 단위 삭제 정책과 동일).
+    // 정리가 필요하면 먼저 페이지를 복원해야 한다.
+    const page = await db
+        .prepare('SELECT id, last_revision_id, is_private, deleted_at FROM pages WHERE slug = ?')
+        .bind(slug)
+        .first<{ id: number; last_revision_id: number | null; is_private: number; deleted_at: number | null }>();
+
+    if (!page) {
+        return { ok: false, response: c.json({ error: '문서를 찾을 수 없습니다.' }, 404) };
+    }
+    if (page.deleted_at) {
+        return { ok: false, response: c.json({ error: '삭제된 문서의 리비전은 정리할 수 없습니다. 먼저 문서를 복원하세요.' }, 409) };
+    }
+    if (page.is_private === 1 && !canSeePrivate) {
+        return { ok: false, response: c.json({ error: '문서를 찾을 수 없습니다.' }, 404) };
+    }
+
+    const revision = await db
+        .prepare('SELECT id, page_id, page_version, content, r2_key, deleted_at, purged_at FROM revisions WHERE id = ? AND page_id = ?')
+        .bind(revId, page.id)
+        .first<{ id: number; page_id: number; page_version: number | null; content: string; r2_key: string | null; deleted_at: number | null; purged_at: number | null }>();
+
+    if (!revision) {
+        return { ok: false, response: c.json({ error: '리비전을 찾을 수 없습니다.' }, 404) };
+    }
+    if (page.last_revision_id === revision.id) {
+        return { ok: false, response: c.json({ error: '최신 리비전은 삭제할 수 없습니다. 먼저 되돌리기를 한 뒤 시도하세요.' }, 409) };
+    }
+    return { ok: true, page, revision };
+}
+
+/**
+ * POST /w/:slug/revisions/:id/delete
+ * 리비전 단위 소프트 삭제 — 권한 없는 사용자에게 해당 리비전이 처음부터 없었던 것처럼 가린다.
+ * 편집 요약은 DB 에 보존되어 관리자에게만 노출된다.
+ */
+wiki.post('/w/:slug/revisions/:id/delete', requireAuth, requirePermission('wiki:delete'), async (c) => {
+    const slug = c.req.param('slug');
+    const revId = parseInt(c.req.param('id'), 10);
+    const user = c.get('user')!;
+    const db = c.env.DB;
+
+    if (!Number.isFinite(revId) || revId <= 0) {
+        return c.json({ error: '리비전 id 가 올바르지 않습니다.' }, 400);
+    }
+
+    const loaded = await loadRevisionForDeletion(c, slug, revId);
+    if (!loaded.ok) return loaded.response;
+    const { revision } = loaded;
+
+    if (revision.deleted_at) {
+        return c.json({ error: '이미 삭제된 리비전입니다.' }, 409);
+    }
+
+    await db.prepare('UPDATE revisions SET deleted_at = unixepoch() WHERE id = ?').bind(revId).run();
+
+    const versionLabel = revision.page_version != null ? `v${revision.page_version}` : `#${revId}`;
+    c.executionCtx.waitUntil(Promise.allSettled([
+        refreshRecentChangesCache(c),
+        db.prepare('INSERT INTO admin_log (type, log, user) VALUES (?, ?, ?)')
+            .bind('revision_soft_delete', `리비전 소프트 삭제: ${slug} ${versionLabel} (rev #${revId})`, user.id)
+            .run().catch((e: any) => console.error('Failed to write admin log:', e)),
+    ]));
+
+    return c.json({ message: '리비전이 삭제되었습니다.' });
+});
+
+/**
+ * DELETE /w/:slug/revisions/:id
+ * 리비전 단위 하드 삭제 — R2 본문을 제거하고 r2_key/content 컬럼을 비운다.
+ * row 자체와 summary/author_id/page_version/created_at 은 보존하므로 관리자 응답에서는
+ * "(본문 영구 삭제됨)" 마커와 함께 표시된다. 일반 사용자에게는 자연스럽게 가려진다.
+ * 최고 관리자(`*`) 전용 — 페이지 hard delete 와 동일 권한 정책.
+ */
+wiki.delete('/w/:slug/revisions/:id', requireAuth, async (c) => {
+    const slug = c.req.param('slug');
+    const revId = parseInt(c.req.param('id'), 10);
+    const user = c.get('user')!;
+    const rbac = c.get('rbac') as RBAC;
+    const db = c.env.DB;
+
+    if (!rbac.can(user.role, '*')) {
+        return c.json({ error: '리비전 영구 삭제는 최고 관리자만 가능합니다.' }, 403);
+    }
+    if (!Number.isFinite(revId) || revId <= 0) {
+        return c.json({ error: '리비전 id 가 올바르지 않습니다.' }, 400);
+    }
+
+    const loaded = await loadRevisionForDeletion(c, slug, revId);
+    if (!loaded.ok) return loaded.response;
+    const { revision } = loaded;
+
+    // 이미 완전히 정리된 경우만 409. r2_key 가 남아 있거나 content 에 본문 텍스트가
+    // 남아 있으면(=legacy D1-backed 리비전의 메타 정리 단계가 미완료) 멱등 재시도
+    // 경로로 진입한다.
+    if (revision.purged_at && !revision.r2_key && revision.content === '') {
+        return c.json({ error: '이미 영구 삭제된 리비전입니다.' }, 409);
+    }
+
+    // 분산 트랜잭션 (D1 + R2) 순서 — 각 단계 실패 시 read 경로가 절대 stale R2 객체를
+    // 건드리지 않도록 보장하면서 멱등 재시도가 가능하도록 설계:
+    //
+    //   1) Pre-mark intent: purged_at 만 먼저 설정. 이 시점에 read/diff/admin-mcp
+    //      경로는 모두 `purged_at` 체크로 R2 호출을 건너뛰고 빈 본문을 반환하므로,
+    //      이후 R2 단계가 어떻게 끝나든 사용자에게 stale 콘텐츠가 노출되지 않는다.
+    //   2) R2 본문 삭제: 실패 시 502 로 중단. purged_at 가 살아있으므로 read 는 안전.
+    //      사용자가 다시 DELETE 를 호출하면 위 가드(`purged_at && !r2_key`)가 통과시켜
+    //      이 경로로 재진입한다.
+    //   3) Workers Cache API 무효화 (PoP-local 베스트에포트). 다른 PoP 의 cached 엔트리는
+    //      남아있을 수 있으나, 아래 r2_key = NULL 이후 getRevisionContent 가 더 이상
+    //      그 캐시 키를 구성하지 않으므로 도달 불가능한 고아 엔트리가 된다.
+    //   4) 메타 정리: r2_key/content 비움. 실패해도 read 경로는 1) 의 purged_at 로
+    //      이미 안전하며, 재시도 시 R2 delete 는 멱등(이미 없으면 no-op).
+    try {
+        await db.prepare(
+            `UPDATE revisions
+             SET deleted_at = COALESCE(deleted_at, unixepoch()),
+                 purged_at  = COALESCE(purged_at, unixepoch())
+             WHERE id = ?`
+        ).bind(revId).run();
+    } catch (e) {
+        console.error('Hard delete pre-mark failed:', revId, e);
+        return c.json({ error: '삭제 마킹에 실패했습니다. 잠시 후 다시 시도하세요.' }, 500);
+    }
+
+    if (revision.r2_key) {
+        try {
+            await c.env.MEDIA.delete(revision.r2_key);
+        } catch (e) {
+            console.error('R2 hard delete failed:', revision.r2_key, e);
+            return c.json({ error: 'R2 본문 삭제에 실패했습니다. 잠시 후 다시 시도하세요.' }, 502);
+        }
+        const origin = new URL(c.req.url).origin;
+        const cacheKey = `${origin}/__r2_revision__/${revision.r2_key}`;
+        await (caches as any).default.delete(cacheKey).catch(() => {});
+    }
+
+    try {
+        await db.prepare(
+            `UPDATE revisions SET r2_key = NULL, content = '' WHERE id = ?`
+        ).bind(revId).run();
+    } catch (e) {
+        // 메타 정리 실패 — R2 객체는 이미 사라졌고 purged_at 가 read 경로를 차단하므로
+        // 데이터 일관성 위험은 없다. 다음 재시도 호출에서 같은 UPDATE 가 멱등 실행된다.
+        console.error('Hard delete metadata cleanup failed (will retry on next call):', revId, e);
+        return c.json({ error: '메타데이터 정리에 실패했습니다. 잠시 후 다시 시도하세요.' }, 500);
+    }
+
+    const versionLabel = revision.page_version != null ? `v${revision.page_version}` : `#${revId}`;
+    c.executionCtx.waitUntil(Promise.allSettled([
+        refreshRecentChangesCache(c),
+        db.prepare('INSERT INTO admin_log (type, log, user) VALUES (?, ?, ?)')
+            .bind('revision_hard_delete', `리비전 영구 삭제: ${slug} ${versionLabel} (rev #${revId})`, user.id)
+            .run().catch((e: any) => console.error('Failed to write admin log:', e)),
+    ]));
+
+    return c.json({ message: '리비전이 영구 삭제되었습니다.' });
 });
 
 /**

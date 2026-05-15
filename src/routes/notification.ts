@@ -218,6 +218,31 @@ notificationRoutes.post('/messages', requireAuth, async (c) => {
 });
 
 /**
+ * GET /api/messages/sent
+ * 현재 유저가 보낸 쪽지 목록 (최신순)
+ */
+notificationRoutes.get('/messages/sent', requireAuthAllowBanned, async (c) => {
+    const user = c.get('user')!;
+    const db = c.env.DB;
+    const offset = Number(c.req.query('offset')) || 0;
+    const limit = Number(c.req.query('limit')) || 10;
+
+    const { results } = await db.prepare(`
+        SELECT m.*, u.name as receiver_name, u.picture as receiver_picture
+        FROM messages m
+        LEFT JOIN users u ON m.receiver_id = u.id
+        WHERE m.sender_id = ?
+        ORDER BY m.created_at DESC
+        LIMIT ? OFFSET ?
+    `).bind(user.id, limit + 1, offset).all();
+
+    const has_more = results.length > limit;
+    const messages = results.slice(0, limit);
+
+    return c.json(safeJSON({ messages, has_more }));
+});
+
+/**
  * GET /api/messages
  * 현재 유저가 받은 쪽지 목록 (최신순)
  */

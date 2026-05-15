@@ -487,6 +487,7 @@ export async function dispatchAdminReadTool(c: Context<Env>, user: User, toolNam
 
         const rev = await db.prepare(`
             SELECT r.id, r.page_id, r.page_version, r.content, r.r2_key, r.summary, r.created_at,
+                   r.deleted_at, r.purged_at,
                    u.name AS author_name
             FROM revisions r
             LEFT JOIN users u ON r.author_id = u.id
@@ -494,15 +495,24 @@ export async function dispatchAdminReadTool(c: Context<Env>, user: User, toolNam
         `).bind(revisionId).first<{
             id: number; page_id: number; page_version: number | null;
             content: string; r2_key: string | null; summary: string | null;
-            created_at: number; author_name: string | null;
+            created_at: number; deleted_at: number | null; purged_at: number | null;
+            author_name: string | null;
         }>();
         if (!rev) return asTextResult('Error: 리비전을 찾을 수 없습니다.', true);
         if (rev.page_id !== page.id) {
             return asTextResult('Error: 지정한 리비전이 이 문서의 것이 아닙니다.', true);
         }
+        // 비관리자 호출자에게는 삭제된 리비전이 존재하지 않는 것처럼 가린다.
+        const isAdmin = rbac.can(user.role, 'admin:access');
+        if (rev.deleted_at && !isAdmin) {
+            return asTextResult('Error: 리비전을 찾을 수 없습니다.', true);
+        }
+        // 하드 삭제된 리비전은 R2 본문이 없으므로 빈 본문으로 반환 (관리자 전용 경로).
         const origin = new URL(c.req.url).origin;
-        const content = await getRevisionContent(c.env.MEDIA, { content: rev.content, r2_key: rev.r2_key }, origin);
-        const payload = {
+        const content = rev.purged_at
+            ? ''
+            : await getRevisionContent(c.env.MEDIA, { content: rev.content, r2_key: rev.r2_key }, origin);
+        const payload: Record<string, unknown> = {
             revision_id: rev.id,
             slug: page.slug,
             page_version: rev.page_version,
@@ -511,6 +521,13 @@ export async function dispatchAdminReadTool(c: Context<Env>, user: User, toolNam
             created_at: unixToIso(rev.created_at),
             content,
         };
+        if (isAdmin && rev.deleted_at) {
+            payload.deleted_at = unixToIso(rev.deleted_at);
+            if (rev.purged_at) {
+                payload.purged_at = unixToIso(rev.purged_at);
+                payload.purged = true;
+            }
+        }
         return asTextResult(JSON.stringify(payload, null, 2));
     }
 

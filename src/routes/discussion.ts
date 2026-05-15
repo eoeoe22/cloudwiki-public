@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import type { Env, Discussion, DiscussionComment } from '../types';
-import { requireAuth, requirePermission } from '../middleware/session';
+import { requireAuth, requireAuthAllowBanned, requirePermission } from '../middleware/session';
 import { safeJSON } from '../utils/json';
 import { ROLE_CASE_SQL, enrichRoles, enrichRole, RBAC } from '../utils/role';
 import { dispatchDiscord } from '../utils/webhook/discord';
@@ -9,6 +9,34 @@ import { isR2OnlyNamespace } from '../utils/slug';
 import { createNotifications } from '../utils/notification';
 
 const discussionRoutes = new Hono<Env>();
+
+/**
+ * GET /api/me/discussions
+ * 현재 유저가 생성한 토론 목록 (최신순)
+ */
+discussionRoutes.get('/me/discussions', requireAuth, async (c) => {
+    const user = c.get('user')!;
+    const db = c.env.DB;
+    const offset = Number(c.req.query('offset')) || 0;
+    const limit = Number(c.req.query('limit')) || 10;
+
+    const { results } = await db.prepare(`
+        SELECT d.id, d.title, d.status, d.created_at, d.updated_at,
+               p.slug as page_slug, p.id as page_id,
+               (SELECT COUNT(*) FROM discussion_comments dc
+                WHERE dc.discussion_id = d.id AND dc.deleted_at IS NULL) as comment_count
+        FROM discussions d
+        LEFT JOIN pages p ON d.page_id = p.id
+        WHERE d.author_id = ? AND d.deleted_at IS NULL
+        ORDER BY d.updated_at DESC
+        LIMIT ? OFFSET ?
+    `).bind(user.id, limit + 1, offset).all();
+
+    const has_more = results.length > limit;
+    const discussions = results.slice(0, limit);
+
+    return c.json(safeJSON({ discussions, has_more }));
+});
 
 /**
  * GET /api/discussions/:pageId

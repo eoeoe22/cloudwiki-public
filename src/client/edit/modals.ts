@@ -2720,7 +2720,6 @@ async function openTemplateModal(): Promise<void> {
 type StructureType = 'tabs' | 'accordion' | 'progress';
 type ProgressMode = 'steps' | 'bar';
 type StepStatus = 'todo' | 'current' | 'done';
-type StepsLayout = 'vertical' | 'horizontal';
 
 interface StructureItem {
     title: string;
@@ -2754,7 +2753,6 @@ function openStructureBlockInsertModal(): void {
         type: 'tabs' as StructureType,
         progressMode: 'steps' as ProgressMode,
         accordionMultiple: false,
-        stepsLayout: 'vertical' as StepsLayout,
         items: [_makeEmptyStructureItem(), _makeEmptyStructureItem()] as StructureItem[],
         // 진행 바({progress:X}) 전용 상태
         barValue: '50',
@@ -2868,16 +2866,6 @@ function openStructureBlockInsertModal(): void {
                         <input type="checkbox" id="structureInsertAccordionMultiple" ${state.accordionMultiple ? 'checked' : ''}>
                         <span>동시 다중 펼침 허용</span>
                     </label>
-                </div>`;
-        }
-        if (state.type === 'progress' && state.progressMode === 'steps') {
-            return `
-                <div class="mb-3">
-                    <label class="form-label">레이아웃</label>
-                    <div class="btn-group w-100" role="group" id="structureInsertStepsLayout">
-                        <button type="button" class="btn btn-outline-primary${state.stepsLayout === 'vertical' ? ' active' : ''}" data-layout="vertical">세로</button>
-                        <button type="button" class="btn btn-outline-primary${state.stepsLayout === 'horizontal' ? ' active' : ''}" data-layout="horizontal">가로</button>
-                    </div>
                 </div>`;
         }
         return '';
@@ -3011,19 +2999,6 @@ function openStructureBlockInsertModal(): void {
             });
         });
 
-        // steps 레이아웃 토글
-        document.querySelectorAll<HTMLElement>('#structureInsertStepsLayout button[data-layout]').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                e.preventDefault();
-                const v = btn.dataset.layout as StepsLayout | undefined;
-                if (!v) return;
-                state.stepsLayout = v;
-                document.querySelectorAll<HTMLElement>('#structureInsertStepsLayout button[data-layout]').forEach(b => {
-                    b.classList.toggle('active', b.dataset.layout === v);
-                });
-            });
-        });
-
         // 항목 삭제 / 상태 chip / open 체크박스 — items 리스트 위임
         const itemsRoot = document.getElementById('structureInsertItems');
         if (itemsRoot) {
@@ -3104,7 +3079,6 @@ function buildStructureBlockOutput(state: {
     type: StructureType;
     progressMode: ProgressMode;
     accordionMultiple: boolean;
-    stepsLayout: StepsLayout;
     items: StructureItem[];
     barValue: string;
     barLabel: string;
@@ -3177,7 +3151,7 @@ function buildStructureBlockOutput(state: {
     }
 
     // type === 'progress' && progressMode === 'steps'
-    const head = state.stepsLayout === 'horizontal' ? `:::steps {layout:horizontal}` : `:::steps`;
+    const head = `:::steps`;
     const inner = items.map((it, i) => {
         const titleRaw = (it.title || '').replace(/[\r\n]+/g, ' ').trim() || `${i + 1}단계`;
         const statusToken = ` {status:${it.status}}`;

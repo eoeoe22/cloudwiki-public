@@ -48,6 +48,8 @@ ticketRoutes.get('/tickets', requireAuth, async (c) => {
 
     const isAdmin = rbac.can(user.role, 'ticket:manage');
     const isDiscManager = rbac.can(user.role, 'discussion:manage');
+    // my=1: 권한에 관계없이 본인 티켓만 반환 (마이페이지 위젯 등에서 사용)
+    const forceOwn = c.req.query('my') === '1';
 
     let query = `
         SELECT t.*, u.name as user_name, u.picture as user_picture,
@@ -63,18 +65,18 @@ ticketRoutes.get('/tickets', requireAuth, async (c) => {
     const countParams: any[] = [];
 
     // 접근 범위 제한
-    if (isAdmin) {
+    if (forceOwn || (!isAdmin && !isDiscManager)) {
+        // 본인 티켓만 (my=1 강제 플래그 또는 일반 유저)
+        query += ' AND t.user_id = ? AND t.deleted_at IS NULL';
+        countQuery += ' AND t.user_id = ? AND t.deleted_at IS NULL';
+        params.push(user.id);
+        countParams.push(user.id);
+    } else if (isAdmin) {
         // admin은 전체 (soft deleted 포함)
-    } else if (isDiscManager) {
+    } else {
         // discussion_manager: 자기 티켓 + type=discussion 티켓 (deleted 제외)
         query += ` AND (t.user_id = ? OR t.type = 'discussion') AND t.deleted_at IS NULL`;
         countQuery += ` AND (t.user_id = ? OR t.type = 'discussion') AND t.deleted_at IS NULL`;
-        params.push(user.id);
-        countParams.push(user.id);
-    } else {
-        // 일반 유저: 자기 티켓만 (deleted 제외)
-        query += ' AND t.user_id = ? AND t.deleted_at IS NULL';
-        countQuery += ' AND t.user_id = ? AND t.deleted_at IS NULL';
         params.push(user.id);
         countParams.push(user.id);
     }

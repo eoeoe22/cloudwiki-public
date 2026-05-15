@@ -466,10 +466,73 @@
                     </button>
                 </div>
 
+                <!-- 보낸 쪽지함 -->
+                <div class="profile-section" id="sentMessagesSection" style="display:none;">
+                    <h4><i class="mdi mdi-email-send"></i> 보낸 쪽지함</h4>
+                    <div id="sentMessagesList">
+                        <div class="text-center text-muted py-3">불러오는 중...</div>
+                    </div>
+                    <button class="btn btn-sm btn-outline-secondary w-100 mt-2 d-none" id="loadMoreSentMessagesBtn"
+                        onclick="loadMoreSentMessages()">
+                        더보기 <i class="mdi mdi-chevron-down"></i>
+                    </button>
+                </div>
+
+                <!-- 주시 중인 문서 -->
+                <div class="profile-section" id="watchedPagesSection" style="display:none;">
+                    <h4>
+                        <i class="mdi mdi-eye-outline"></i> 주시 중인 문서
+                        <span class="badge bg-secondary ms-1" id="watchedPagesCount">0</span>
+                    </h4>
+                    <small class="text-muted d-block mb-3">
+                        주시 중인 문서가 편집되면 알림이 전송됩니다. 범위를 조정하거나 주시를 해제할 수 있습니다.
+                    </small>
+                    <div id="watchedPagesList">
+                        <div class="text-center text-muted py-3">불러오는 중...</div>
+                    </div>
+                </div>
+
+                <!-- 주시 중인 카테고리 -->
+                <div class="profile-section" id="watchedCategoriesSection" style="display:none;">
+                    <h4>
+                        <i class="mdi mdi-folder-eye-outline"></i> 주시 중인 카테고리
+                        <span class="badge bg-secondary ms-1" id="watchedCategoriesCount">0</span>
+                    </h4>
+                    <small class="text-muted d-block mb-3">
+                        주시 중인 카테고리에 속한 문서가 편집되면 알림이 전송됩니다.
+                    </small>
+                    <div id="watchedCategoriesList">
+                        <div class="text-center text-muted py-3">불러오는 중...</div>
+                    </div>
+                </div>
+
                 <!-- 내가 편집한 문서 -->
                 <div class="profile-section" id="contributionsSection" style="display:none;">
                     <h4><i class="mdi mdi-pencil-box-multiple"></i> 내가 편집한 문서</h4>
                     <div id="contributionsList">
+                        <div class="text-center text-muted py-3">불러오는 중...</div>
+                    </div>
+                </div>
+
+                <!-- 내가 쓴 토론 목록 -->
+                <div class="profile-section" id="myDiscussionsSection" style="display:none;">
+                    <h4><i class="mdi mdi-forum-outline"></i> 내가 쓴 토론</h4>
+                    <div id="myDiscussionsList">
+                        <div class="text-center text-muted py-3">불러오는 중...</div>
+                    </div>
+                    <button class="btn btn-sm btn-outline-secondary w-100 mt-2 d-none" id="loadMoreDiscussionsBtn"
+                        onclick="loadMoreMyDiscussions()">
+                        더보기 <i class="mdi mdi-chevron-down"></i>
+                    </button>
+                </div>
+
+                <!-- 내 티켓 목록 -->
+                <div class="profile-section" id="myTicketsSection" style="display:none;">
+                    <div class="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2">
+                        <h4 class="mb-0"><i class="mdi mdi-help-circle-outline"></i> 내 문의 티켓</h4>
+                        <a href="/tickets" class="btn btn-sm btn-outline-secondary">전체 보기 <i class="mdi mdi-open-in-new"></i></a>
+                    </div>
+                    <div id="myTicketsList">
                         <div class="text-center text-muted py-3">불러오는 중...</div>
                     </div>
                 </div>
@@ -548,7 +611,11 @@
             }
             renderProfile();
             loadContributions();
+            loadWatches();
             loadMessages();
+            loadSentMessages();
+            loadMyDiscussions();
+            loadMyTickets();
             loadSessions();
             loadMcpClients();
             loadMcpSubmissions();
@@ -720,6 +787,194 @@
             } catch (e) {
                 document.getElementById('contributionsList').innerHTML =
                     '<div class="text-center text-muted py-3">불러오기 실패</div>';
+            }
+        }
+
+        // ─── 주시 목록 ───────────────────────────────────────────────────
+        async function loadWatches() {
+            const pagesSection = document.getElementById('watchedPagesSection');
+            const catsSection = document.getElementById('watchedCategoriesSection');
+            const pagesList = document.getElementById('watchedPagesList');
+            const catsList = document.getElementById('watchedCategoriesList');
+            try {
+                const res = await fetch('/api/me/watches');
+                if (!res.ok) throw new Error();
+                const data = await res.json();
+                pagesSection.style.display = '';
+                catsSection.style.display = '';
+                renderWatchedPages(data.pages || []);
+                renderWatchedCategories(data.categories || []);
+            } catch (e) {
+                pagesSection.style.display = '';
+                catsSection.style.display = '';
+                pagesList.innerHTML = '<div class="text-center text-muted py-3">불러오기 실패</div>';
+                catsList.innerHTML = '<div class="text-center text-muted py-3">불러오기 실패</div>';
+                document.getElementById('watchedPagesCount').textContent = '0';
+                document.getElementById('watchedCategoriesCount').textContent = '0';
+            }
+        }
+
+        function renderWatchedPages(items) {
+            const listEl = document.getElementById('watchedPagesList');
+            document.getElementById('watchedPagesCount').textContent = String(items.length);
+
+            if (items.length === 0) {
+                listEl.innerHTML = '<div class="text-center text-muted py-3">주시 중인 문서가 없습니다.</div>';
+                return;
+            }
+
+            // 슬러그는 사용자 입력이므로 따옴표 등이 포함될 수 있다. 인라인 onclick 핸들러에
+            // 문자열로 직접 보간하면 XSS 가 가능하므로 data-* 속성 + addEventListener 패턴을 사용한다.
+            listEl.innerHTML = items.map(p => {
+                const slug = p.slug;
+                const scope = p.scope === 'subtree' ? 'subtree' : 'this';
+                const scopeLabel = scope === 'subtree' ? '하위 포함' : '이 문서만';
+                const scopeBadgeColor = scope === 'subtree' ? 'bg-info text-dark' : 'bg-light text-dark border';
+                const otherScope = scope === 'subtree' ? 'this' : 'subtree';
+                const switchLabel = scope === 'subtree' ? '이 문서만' : '하위 포함';
+                const categoryBadge = p.category
+                    ? `<span class="badge bg-secondary ms-1">${escapeHtml(p.category)}</span>`
+                    : '';
+                return `
+                    <div class="contribution-item">
+                        <div class="flex-grow-1 me-2 text-truncate">
+                            <a href="/w/${encodeURIComponent(slug)}">${escapeHtml(slug)}</a>
+                            <span class="badge ${scopeBadgeColor} ms-1">${scopeLabel}</span>
+                            ${categoryBadge}
+                        </div>
+                        <div class="d-flex gap-1 flex-shrink-0">
+                            <button class="btn btn-sm btn-outline-secondary"
+                                data-watch-action="change-scope"
+                                data-slug="${escapeHtml(slug)}"
+                                data-target-scope="${otherScope}"
+                                title="주시 범위 변경">
+                                <i class="mdi mdi-swap-horizontal"></i> ${switchLabel}
+                            </button>
+                            <button class="btn btn-sm btn-outline-danger"
+                                data-watch-action="unwatch-page"
+                                data-slug="${escapeHtml(slug)}"
+                                data-current-scope="${scope}"
+                                title="주시 해제">
+                                <i class="mdi mdi-eye-off-outline"></i> 해제
+                            </button>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            listEl.querySelectorAll('button[data-watch-action]').forEach(btn => {
+                btn.addEventListener('click', onWatchedPageAction);
+            });
+        }
+
+        function renderWatchedCategories(items) {
+            const listEl = document.getElementById('watchedCategoriesList');
+            document.getElementById('watchedCategoriesCount').textContent = String(items.length);
+
+            if (items.length === 0) {
+                listEl.innerHTML = '<div class="text-center text-muted py-3">주시 중인 카테고리가 없습니다.</div>';
+                return;
+            }
+
+            // 카테고리명도 사용자 입력이므로 동일하게 data-* 속성 패턴을 사용.
+            listEl.innerHTML = items.map(c => {
+                const cat = c.category;
+                const count = Number(c.page_count) || 0;
+                return `
+                    <div class="contribution-item">
+                        <div class="flex-grow-1 me-2 text-truncate">
+                            <a href="/w/category/${encodeURIComponent(cat)}">${escapeHtml(cat)}</a>
+                            <span class="badge bg-light text-dark border ms-1">${count} 문서</span>
+                        </div>
+                        <div class="d-flex gap-1 flex-shrink-0">
+                            <button class="btn btn-sm btn-outline-danger"
+                                data-watch-action="unwatch-category"
+                                data-category="${escapeHtml(cat)}"
+                                title="주시 해제">
+                                <i class="mdi mdi-eye-off-outline"></i> 해제
+                            </button>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            listEl.querySelectorAll('button[data-watch-action]').forEach(btn => {
+                btn.addEventListener('click', onWatchedCategoryAction);
+            });
+        }
+
+        async function onWatchedPageAction(ev) {
+            const btn = ev.currentTarget;
+            const action = btn.dataset.watchAction;
+            const slug = btn.dataset.slug;
+            if (!slug) return;
+            if (action === 'change-scope') {
+                await changeWatchScope(btn, slug, btn.dataset.targetScope || 'this');
+            } else if (action === 'unwatch-page') {
+                await unwatchPage(btn, slug, btn.dataset.currentScope || 'this');
+            }
+        }
+
+        async function onWatchedCategoryAction(ev) {
+            const btn = ev.currentTarget;
+            if (btn.dataset.watchAction !== 'unwatch-category') return;
+            const category = btn.dataset.category;
+            if (!category) return;
+            await unwatchCategory(btn, category);
+        }
+
+        async function changeWatchScope(btn, slug, newScope) {
+            btn.disabled = true;
+            try {
+                const res = await fetch(`/api/w/${encodeURIComponent(slug)}/watch`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ scope: newScope, action: 'set' }),
+                });
+                if (!res.ok) {
+                    const data = await res.json().catch(() => ({}));
+                    throw new Error(data.error || '범위 변경에 실패했습니다.');
+                }
+                await loadWatches();
+            } catch (err) {
+                btn.disabled = false;
+                Swal.fire('오류', err.message, 'error');
+            }
+        }
+
+        async function unwatchPage(btn, slug, currentScope) {
+            btn.disabled = true;
+            try {
+                const res = await fetch(`/api/w/${encodeURIComponent(slug)}/watch`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ scope: currentScope, action: 'toggle' }),
+                });
+                if (!res.ok) {
+                    const data = await res.json().catch(() => ({}));
+                    throw new Error(data.error || '주시 해제에 실패했습니다.');
+                }
+                await loadWatches();
+            } catch (err) {
+                btn.disabled = false;
+                Swal.fire('오류', err.message, 'error');
+            }
+        }
+
+        async function unwatchCategory(btn, category) {
+            btn.disabled = true;
+            try {
+                const res = await fetch(`/api/w/category/${encodeURIComponent(category)}/watch`, {
+                    method: 'POST',
+                });
+                if (!res.ok) {
+                    const data = await res.json().catch(() => ({}));
+                    throw new Error(data.error || '카테고리 주시 해제에 실패했습니다.');
+                }
+                await loadWatches();
+            } catch (err) {
+                btn.disabled = false;
+                Swal.fire('오류', err.message, 'error');
             }
         }
 
@@ -1461,6 +1716,215 @@
                     }
                 }
             });
+        }
+
+        // ─── 보낸 쪽지함 ─────────────────────────────────────────────────
+        let currentSentOffset = 0;
+        const SENT_LIMIT = 10;
+
+        async function loadSentMessages(isLoadMore = false) {
+            if (!isLoadMore) currentSentOffset = 0;
+
+            try {
+                const res = await fetch(`/api/messages/sent?offset=${currentSentOffset}&limit=${SENT_LIMIT}`);
+                if (!res.ok) throw new Error();
+                const data = await res.json();
+                const messages = data.messages || [];
+
+                const section = document.getElementById('sentMessagesSection');
+                section.style.display = '';
+                const listEl = document.getElementById('sentMessagesList');
+                const loadMoreBtn = document.getElementById('loadMoreSentMessagesBtn');
+
+                if (!isLoadMore && messages.length === 0) {
+                    listEl.innerHTML = '<div class="text-center text-muted py-3">보낸 쪽지가 없습니다.</div>';
+                    loadMoreBtn.classList.add('d-none');
+                    return;
+                }
+
+                if (!isLoadMore) listEl.innerHTML = '';
+
+                listEl.insertAdjacentHTML('beforeend', messages.map(m => {
+                    const date = new Date(m.created_at * 1000).toLocaleString('ko-KR');
+                    const preview = m.content.length > 50 ? escapeHtml(m.content.substring(0, 50)) + '...' : escapeHtml(m.content);
+                    const receiverName = m.receiver_name || '알 수 없음';
+                    return `
+                        <div class="contribution-item" style="cursor:pointer;" onclick="viewSentMessage(${m.id})">
+                            <div class="flex-grow-1">
+                                <span class="fw-bold"><i class="mdi mdi-account-circle text-muted"></i> → ${escapeHtml(receiverName)}</span>
+                                <span class="text-muted ms-2">${preview}</span>
+                            </div>
+                            <span class="meta">${date}</span>
+                        </div>
+                    `;
+                }).join(''));
+
+                currentSentOffset += messages.length;
+                data.has_more ? loadMoreBtn.classList.remove('d-none') : loadMoreBtn.classList.add('d-none');
+            } catch (e) {
+                if (!isLoadMore) {
+                    document.getElementById('sentMessagesSection').style.display = '';
+                    document.getElementById('sentMessagesList').innerHTML = '<div class="text-center text-danger py-3">불러오기 실패</div>';
+                }
+            }
+        }
+
+        async function loadMoreSentMessages() {
+            const btn = document.getElementById('loadMoreSentMessagesBtn');
+            btn.disabled = true;
+            btn.innerHTML = '<div class="spinner-border spinner-border-sm"></div> 불러오는 중...';
+            await loadSentMessages(true);
+            btn.disabled = false;
+            btn.innerHTML = '더보기 <i class="mdi mdi-chevron-down"></i>';
+        }
+
+        async function viewSentMessage(messageId) {
+            try {
+                const res = await fetch(`/api/messages/${messageId}`);
+                if (!res.ok) throw new Error();
+                const msg = await res.json();
+
+                const date = new Date(msg.created_at * 1000).toLocaleString('ko-KR');
+                const receiverName = msg.receiver_name || '알 수 없음';
+                const receiverPic = msg.receiver_picture && isSafeUrl(msg.receiver_picture)
+                    ? `<img src="${escapeHtml(msg.receiver_picture)}" class="rounded-circle me-2" width="28" height="28" loading="lazy">`
+                    : '<i class="mdi mdi-account-circle fs-4 me-2 text-muted"></i>';
+
+                Swal.fire({
+                    title: '<i class="mdi mdi-email-send-outline text-primary"></i> 보낸 쪽지',
+                    html: `
+                        <div class="text-start">
+                            <div class="d-flex align-items-center mb-3 pb-2 border-bottom">
+                                ${receiverPic}
+                                <div>
+                                    <span class="text-muted small">받는 사람</span><br>
+                                    <strong>${escapeHtml(receiverName)}</strong>
+                                    <div class="text-muted small">${date}</div>
+                                </div>
+                            </div>
+                            <div style="white-space: pre-wrap; word-break: break-word;">${escapeHtml(msg.content)}</div>
+                        </div>
+                    `,
+                    showConfirmButton: true,
+                    confirmButtonText: '닫기',
+                    width: 480,
+                });
+            } catch (e) {
+                Swal.fire('오류', '쪽지를 불러오지 못했습니다.', 'error');
+            }
+        }
+
+        // ─── 내가 쓴 토론 목록 ───────────────────────────────────────────
+        let currentDiscussionsOffset = 0;
+        const DISCUSSIONS_LIMIT = 10;
+
+        async function loadMyDiscussions(isLoadMore = false) {
+            if (!isLoadMore) currentDiscussionsOffset = 0;
+
+            try {
+                const res = await fetch(`/api/me/discussions?offset=${currentDiscussionsOffset}&limit=${DISCUSSIONS_LIMIT}`);
+                if (!res.ok) throw new Error();
+                const data = await res.json();
+                const discussions = data.discussions || [];
+
+                const section = document.getElementById('myDiscussionsSection');
+                section.style.display = '';
+                const listEl = document.getElementById('myDiscussionsList');
+                const loadMoreBtn = document.getElementById('loadMoreDiscussionsBtn');
+
+                if (!isLoadMore && discussions.length === 0) {
+                    listEl.innerHTML = '<div class="text-center text-muted py-3">작성한 토론이 없습니다.</div>';
+                    loadMoreBtn.classList.add('d-none');
+                    return;
+                }
+
+                if (!isLoadMore) listEl.innerHTML = '';
+
+                listEl.insertAdjacentHTML('beforeend', discussions.map(d => {
+                    const date = new Date(d.updated_at * 1000).toLocaleDateString('ko-KR');
+                    const statusBadge = d.status === 'open'
+                        ? '<span class="badge bg-success ms-1">진행중</span>'
+                        : '<span class="badge bg-secondary ms-1">종료</span>';
+                    const discUrl = d.page_slug
+                        ? `/w/${encodeURIComponent(d.page_slug)}?mode=discussions&id=${encodeURIComponent(d.id)}`
+                        : null;
+                    const titleEl = discUrl
+                        ? `<a href="${discUrl}">${escapeHtml(d.title)}</a>`
+                        : `<span>${escapeHtml(d.title)}</span>`;
+                    const pageLink = d.page_slug
+                        ? `<a href="/w/${encodeURIComponent(d.page_slug)}" class="badge bg-light text-dark border text-decoration-none ms-1">${escapeHtml(d.page_slug)}</a>`
+                        : '';
+                    return `
+                        <div class="contribution-item">
+                            <div class="flex-grow-1 text-truncate me-2">
+                                ${titleEl}
+                                ${statusBadge}
+                                ${pageLink}
+                                <span class="text-muted ms-1" style="font-size:0.8rem;">댓글 ${d.comment_count || 0}</span>
+                            </div>
+                            <span class="meta flex-shrink-0">${date}</span>
+                        </div>
+                    `;
+                }).join(''));
+
+                currentDiscussionsOffset += discussions.length;
+                data.has_more ? loadMoreBtn.classList.remove('d-none') : loadMoreBtn.classList.add('d-none');
+            } catch (e) {
+                if (!isLoadMore) {
+                    document.getElementById('myDiscussionsSection').style.display = '';
+                    document.getElementById('myDiscussionsList').innerHTML = '<div class="text-center text-danger py-3">불러오기 실패</div>';
+                }
+            }
+        }
+
+        async function loadMoreMyDiscussions() {
+            const btn = document.getElementById('loadMoreDiscussionsBtn');
+            btn.disabled = true;
+            btn.innerHTML = '<div class="spinner-border spinner-border-sm"></div> 불러오는 중...';
+            await loadMyDiscussions(true);
+            btn.disabled = false;
+            btn.innerHTML = '더보기 <i class="mdi mdi-chevron-down"></i>';
+        }
+
+        // ─── 내 티켓 목록 ────────────────────────────────────────────────
+        const TICKET_TYPE_LABELS = { general: '일반', document: '문서', discussion: '토론', account: '계정' };
+
+        async function loadMyTickets() {
+            const section = document.getElementById('myTicketsSection');
+            const listEl = document.getElementById('myTicketsList');
+            try {
+                const res = await fetch('/api/tickets?page=1&my=1');
+                if (!res.ok) throw new Error();
+                const data = await res.json();
+                const tickets = (data.tickets || []).slice(0, 5);
+
+                section.style.display = '';
+
+                if (tickets.length === 0) {
+                    listEl.innerHTML = '<div class="text-center text-muted py-3">문의한 티켓이 없습니다.</div>';
+                    return;
+                }
+
+                listEl.innerHTML = tickets.map(t => {
+                    const date = new Date(t.updated_at * 1000).toLocaleDateString('ko-KR');
+                    const typeBadge = `<span class="badge bg-secondary ms-1">${TICKET_TYPE_LABELS[t.type] || t.type}</span>`;
+                    const statusBadge = t.status === 'open'
+                        ? '<span class="badge bg-warning text-dark ms-1">처리중</span>'
+                        : '<span class="badge bg-success ms-1">완료</span>';
+                    return `
+                        <div class="contribution-item">
+                            <div class="flex-grow-1 text-truncate me-2">
+                                <a href="/tickets/${encodeURIComponent(t.id)}">${escapeHtml(t.title)}</a>
+                                ${typeBadge}${statusBadge}
+                            </div>
+                            <span class="meta flex-shrink-0">${date}</span>
+                        </div>
+                    `;
+                }).join('');
+            } catch (e) {
+                section.style.display = '';
+                listEl.innerHTML = '<div class="text-center text-danger py-3">불러오기 실패</div>';
+            }
         }
 
     </script>

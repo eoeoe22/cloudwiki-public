@@ -135,6 +135,11 @@
     let currentRevisionSlug = '';
     let isRawView = false;
     let isExtensionData = false;
+    // 응답에서 받은 관리자 가시성 플래그. 일반 사용자에게는 서버가 삭제된 행을
+    // 애초에 보내지 않으므로 클라이언트는 따로 RBAC 판단을 하지 않는다.
+    let isAdminView = false;
+    let canHardDelete = false;
+    let lastRevisionId = null;
 
     // 편집 요약 어디에 있든 [+N줄 -M줄] / [+N줄] / [-M줄] 토큰을 초록/빨강으로 색칠.
     // 토큰 사이의 일반 텍스트는 escapeHtml 로 안전하게 인코딩하고, 토큰 자체는
@@ -206,6 +211,9 @@
         if (!res.ok) throw new Error('리비전 로딩 실패');
 
         const data = await res.json();
+        isAdminView = !!data.is_admin_view;
+        canHardDelete = !!data.can_hard_delete;
+        lastRevisionId = (typeof data.last_revision_id === 'number') ? data.last_revision_id : null;
 
         if (isFirstLoad) {
           const pageRes = await fetch(`/api/w/${encodeURIComponent(slug)}`);
@@ -233,24 +241,59 @@
         const itemsHtml = data.revisions.map((rev, idx) => {
           const isLatest = page === 1 && idx === 0;
           const date = new Date(rev.created_at * 1000).toLocaleString('ko-KR');
+          // 삭제 상태: 비관리자 응답에는 삭제된 행 자체가 오지 않으므로 아래 분기는 관리자 한정.
+          const isDeleted = !!rev.deleted_at;
+          const isPurged = !!rev.purged_at;
+          // fully_purged: 서버가 계산한 "R2 + 메타 정리까지 완전히 끝남" 플래그.
+          // purged_at 만 있고 r2_key 또는 content 가 남아있는 부분 실패 상태에서는 false 가 되어
+          // 영구 삭제 버튼을 다시 노출해 멱등 재시도를 허용한다.
+          const isFullyPurged = !!rev.fully_purged;
+          const isLastRev = lastRevisionId != null && rev.id === lastRevisionId;
+          const deletedBadge = isPurged
+            ? '<span class="badge text-bg-danger" style="font-size: 0.7em; flex-shrink: 0;" title="R2 본문이 영구 삭제되었습니다."><i class="bi bi-trash"></i> 본문 영구 삭제됨</span>'
+            : (isDeleted
+              ? '<span class="badge text-bg-secondary" style="font-size: 0.7em; flex-shrink: 0;" title="일반 사용자에게 숨겨진 리비전입니다."><i class="bi bi-eye-slash"></i> 삭제됨</span>'
+              : '');
+          // 관리자에게만 보이는 통합 삭제 버튼.
+          //  - 일반 admin: !isDeleted 일 때만 노출 → 클릭 시 소프트 삭제 확인만.
+          //  - super_admin: !isFullyPurged 일 때 노출 → 클릭 시 모달 내부의 체크박스로 영구 삭제 여부를 선택.
+          //  - 최신 리비전(last_revision_id)은 일관성 보호를 위해 모두 차단.
+          const canDeleteThisRow = isAdminView && !isLastRev && (canHardDelete ? !isFullyPurged : !isDeleted);
+          const isPartialPurge = isPurged && !isFullyPurged;
+          const deleteBtnLabel = isPartialPurge ? '영구 삭제 재시도' : '삭제';
+          const deleteBtnDangerClass = (canHardDelete && (isDeleted || isPartialPurge)) ? ' text-danger' : '';
+          const deleteBtnTitle = isPartialPurge
+            ? '이전 영구 삭제 시도가 부분 실패했습니다. 다시 시도합니다.'
+            : (isDeleted
+              ? (canHardDelete ? '이미 숨겨진 리비전입니다. 본문까지 영구 삭제하려면 클릭하세요.' : '')
+              : (canHardDelete ? '이 리비전을 숨기거나 영구 삭제합니다.' : '이 리비전을 일반 사용자에게서 숨깁니다.'));
+          const deleteActions = canDeleteThisRow ? `
+            <button class="btn btn-rev-action btn-rev-delete${deleteBtnDangerClass}" data-slug="${escapeHtml(slug)}" data-id="${rev.id}" data-page-version="${rev.page_version ?? ''}" data-is-deleted="${isDeleted ? '1' : '0'}" data-is-partial="${isPartialPurge ? '1' : '0'}" onclick="confirmDeleteRevision(this.dataset.slug, +this.dataset.id, this.dataset.pageVersion, this.dataset.isDeleted === '1', this.dataset.isPartial === '1')" title="${escapeHtml(deleteBtnTitle)}">
+              <i class="bi bi-trash"></i> ${deleteBtnLabel}
+            </button>` : '';
+          const viewBtn = isPurged
+            ? `<button class="btn btn-rev-action btn-rev-view" disabled title="본문이 영구 삭제되어 열람할 수 없습니다."><i class="bi bi-file-text"></i> 보기</button>`
+            : `<button class="btn btn-rev-action btn-rev-view" data-slug="${escapeHtml(slug)}" data-id="${rev.id}" data-page-version="${rev.page_version ?? ''}" onclick="viewRevision(this.dataset.slug, +this.dataset.id, this.dataset.pageVersion)">
+                  <i class="bi bi-file-text"></i> 보기
+                </button>`;
           return `
-            <div class="revision-item${isLatest ? ' is-current' : ''} d-flex align-items-center justify-content-between border-bottom py-2">
+            <div class="revision-item${isLatest ? ' is-current' : ''}${isDeleted ? ' is-deleted' : ''} d-flex align-items-center justify-content-between border-bottom py-2"${isDeleted ? ' style="opacity: 0.65;"' : ''}>
               <div class="d-flex align-items-center gap-3 flex-grow-1">
                 <span class="revision-date text-muted small" style="min-width: 160px;">${date}</span>
                 ${rev.author_id ? `<a href="${rev.author_role === 'deleted' ? '/404' : '/profile/' + rev.author_id}" class="revision-author badge bg-light text-dark border text-decoration-none">${escapeHtml(rev.author_name || '알 수 없음')}${renderUserRoleIcon(rev.author_role)}</a>` : `<span class="revision-author badge bg-light text-dark border">${escapeHtml(rev.author_name || '알 수 없음')}${renderUserRoleIcon(rev.author_role)}</span>`}
                 ${isLatest ? '<span class="badge text-bg-warning" style="font-size: 0.7em; flex-shrink: 0;">현재 버전</span>' : ''}
+                ${deletedBadge}
                 <span class="revision-summary">${renderRevisionSummary(rev.summary)}</span>
               </div>
               <div class="d-flex gap-2 ms-2" style="white-space: nowrap;">
-                <button class="btn btn-rev-action btn-rev-view" data-slug="${escapeHtml(slug)}" data-id="${rev.id}" data-page-version="${rev.page_version ?? ''}" onclick="viewRevision(this.dataset.slug, +this.dataset.id, this.dataset.pageVersion)">
-                  <i class="bi bi-file-text"></i> 보기
-                </button>
+                ${viewBtn}
                 <button class="btn btn-rev-action btn-rev-diff" data-slug="${escapeHtml(slug)}" data-id="${rev.id}" data-require-confirm="${isExtSlug}" onclick="confirmAndShowDiff(this.dataset.slug, +this.dataset.id, this.dataset.requireConfirm === 'true')">
                   <i class="bi bi-file-diff"></i> 비교
                 </button>
-                <button class="btn btn-rev-action btn-rev-revert" data-slug="${escapeHtml(slug)}" data-id="${rev.id}" data-page-version="${rev.page_version ?? ''}" onclick="confirmRevert(this.dataset.slug, +this.dataset.id, this.dataset.pageVersion)" ${isPageDeleted ? 'disabled title="삭제된 문서는 되돌릴 수 없습니다. 먼저 복원하세요."' : ''}>
+                <button class="btn btn-rev-action btn-rev-revert" data-slug="${escapeHtml(slug)}" data-id="${rev.id}" data-page-version="${rev.page_version ?? ''}" onclick="confirmRevert(this.dataset.slug, +this.dataset.id, this.dataset.pageVersion)" ${isPageDeleted ? 'disabled title="삭제된 문서는 되돌릴 수 없습니다. 먼저 복원하세요."' : (isPurged ? 'disabled title="본문이 영구 삭제되어 되돌릴 수 없습니다."' : (isDeleted ? 'disabled title="숨겨진 리비전으로는 되돌릴 수 없습니다. 먼저 숨김을 해제하세요."' : ''))}>
                   <i class="bi bi-arrow-counterclockwise"></i> 되돌리기
                 </button>
+                ${deleteActions}
               </div>
             </div>
           `;
@@ -452,6 +495,91 @@
           forceRaw: isExtensionDataDiff,
           swalOptions: { confirmButtonText: '닫기' },
         });
+      } catch (err) {
+        Swal.fire('오류', err.message, 'error');
+      }
+    }
+
+    // ── 리비전 삭제 (소프트/하드 통합) ──
+    // 일반 admin: 본 함수 호출 시점에 모달은 단순 소프트 삭제 확인.
+    // super_admin: 모달 내부에 "본문도 영구 삭제" 체크박스. 체크 여부에 따라 hard/soft 분기.
+    //   - 이미 소프트 삭제된 행이면 체크박스로 영구 삭제까지 진행하도록 안내 (체크 안 하면 no-op).
+    //   - 부분 실패(isPartial) 상태면 체크박스를 선택+잠금하여 영구 삭제 재시도만 허용.
+    async function confirmDeleteRevision(slug, revId, pageVersion, isAlreadySoft, isPartial) {
+      const versionLabel = (pageVersion !== '' && pageVersion != null) ? `v${pageVersion}` : `#${revId}`;
+
+      // 일반 admin: 체크박스 없는 간단 소프트 삭제 확인.
+      if (!canHardDelete) {
+        const result = await Swal.fire({
+          title: '리비전 숨기기',
+          text: `리비전 ${versionLabel} 을 일반 사용자에게서 숨기시겠습니까? 본문은 그대로 유지되며 관리자만 열람할 수 있습니다.`,
+          icon: 'warning',
+          showCancelButton: true,
+          confirmButtonText: '삭제',
+          cancelButtonText: '취소',
+        });
+        if (!result.isConfirmed) return;
+        await sendDeleteRequest(slug, revId, /*hard*/ false);
+        return;
+      }
+
+      // super_admin: 영구 삭제 체크박스 포함 모달.
+      const checkboxDefault = isPartial || isAlreadySoft;
+      const checkboxDisabled = isPartial; // 재시도 경로에서는 강제로 영구 삭제만 허용.
+      const titleText = isPartial
+        ? '리비전 영구 삭제 재시도'
+        : (isAlreadySoft ? '리비전 추가 정리' : '리비전 삭제');
+      const explanation = isPartial
+        ? `리비전 <strong>${escapeHtml(versionLabel)}</strong> 의 이전 영구 삭제 시도가 부분 실패했습니다. 다시 시도합니다.`
+        : (isAlreadySoft
+          ? `리비전 <strong>${escapeHtml(versionLabel)}</strong> 은 이미 일반 사용자에게서 숨겨진 상태입니다. 본문까지 영구 삭제하려면 아래 체크박스를 선택하세요. 선택하지 않고 확인을 누르면 아무 변경 없이 닫힙니다.`
+          : `리비전 <strong>${escapeHtml(versionLabel)}</strong> 을 삭제합니다. 기본은 일반 사용자에게서 숨기는 소프트 삭제이며, 아래 체크박스를 선택하면 R2 본문까지 함께 영구 삭제됩니다.`);
+
+      const result = await Swal.fire({
+        title: titleText,
+        icon: 'warning',
+        html: `
+          <div class="text-start">
+            <p class="mb-3">${explanation}</p>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="hardDeleteCheck" ${checkboxDefault ? 'checked' : ''} ${checkboxDisabled ? 'disabled' : ''}>
+              <label class="form-check-label" for="hardDeleteCheck">
+                본문도 영구 삭제 (R2 에서 제거, <strong class="text-danger">복구 불가</strong>)
+              </label>
+            </div>
+          </div>
+        `,
+        showCancelButton: true,
+        confirmButtonText: '삭제',
+        cancelButtonText: '취소',
+        preConfirm: () => {
+          const cb = document.getElementById('hardDeleteCheck');
+          return { hard: !!(cb && cb.checked) };
+        },
+      });
+      if (!result.isConfirmed) return;
+      const hard = !!(result.value && result.value.hard);
+
+      if (!hard && isAlreadySoft) {
+        // 이미 소프트 삭제된 상태이고 체크박스 미선택 → 의도된 no-op.
+        return;
+      }
+      await sendDeleteRequest(slug, revId, hard);
+    }
+
+    // 실제 삭제 API 호출 + 결과 처리. hard=true → DELETE, false → POST /delete.
+    async function sendDeleteRequest(slug, revId, hard) {
+      try {
+        const url = hard
+          ? `/api/w/${encodeURIComponent(slug)}/revisions/${revId}`
+          : `/api/w/${encodeURIComponent(slug)}/revisions/${revId}/delete`;
+        const method = hard ? 'DELETE' : 'POST';
+        const res = await fetch(url, { method });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '리비전 삭제 실패');
+        const message = hard ? '리비전 본문이 영구 삭제되었습니다.' : '리비전이 숨겨졌습니다.';
+        await Swal.fire('완료', message, 'success');
+        showRevisions(slug, currentRevPage);
       } catch (err) {
         Swal.fire('오류', err.message, 'error');
       }

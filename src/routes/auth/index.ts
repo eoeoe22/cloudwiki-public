@@ -9,6 +9,7 @@ import { googleProvider } from './providers/google';
 import { discordProvider } from './providers/discord';
 import { handleOAuthLogin } from './common';
 import type { RBAC } from '../../utils/role';
+import { enrichRole } from '../../utils/role';
 import type { AuthProvidersResponse } from '../../shared/api/auth';
 import { dispatchDiscord } from '../../utils/webhook/discord';
 import { signupPending } from '../../utils/webhook/events/signup';
@@ -503,6 +504,52 @@ auth.get('/api/me/contributions', requireAuth, async (c) => {
 });
 
 /**
+ * GET /api/me/watches
+ * 내가 주시 중인 문서·카테고리 목록
+ *
+ * 응답:
+ *  {
+ *    pages:      [{ slug, scope: 'this'|'subtree', created_at, updated_at, category }],
+ *    categories: [{ category, created_at, page_count }]
+ *  }
+ *
+ * 비공개 문서는 `wiki:private` 권한이 없는 사용자에게는 목록에서 숨긴다.
+ * 주시 레코드 자체는 보존하므로 권한이 다시 부여되면 자동으로 다시 보인다.
+ */
+auth.get('/api/me/watches', requireAuth, async (c) => {
+    const user = c.get('user')!;
+    const rbac = c.get('rbac') as RBAC;
+    const db = c.env.DB;
+    const canSeePrivate = rbac.can(user.role, 'wiki:private');
+    const privateFilter = canSeePrivate ? '' : ' AND p.is_private = 0';
+
+    const pagesQuery = await db.prepare(
+        `SELECT p.slug, pw.scope, pw.created_at, p.updated_at, p.category
+         FROM page_watches pw
+         JOIN pages p ON p.id = pw.page_id
+         WHERE pw.user_id = ? AND p.deleted_at IS NULL${privateFilter}
+         ORDER BY p.updated_at DESC`
+    ).bind(user.id).all();
+
+    const categoriesQuery = await db.prepare(
+        `SELECT cw.category,
+                cw.created_at,
+                (SELECT COUNT(*) FROM page_categories pc
+                 JOIN pages p ON p.id = pc.page_id
+                 WHERE pc.category = cw.category
+                   AND p.deleted_at IS NULL${privateFilter}) AS page_count
+         FROM category_watches cw
+         WHERE cw.user_id = ?
+         ORDER BY cw.created_at DESC`
+    ).bind(user.id).all();
+
+    return c.json({
+        pages: pagesQuery.results || [],
+        categories: categoriesQuery.results || [],
+    });
+});
+
+/**
  * GET /api/users/:id/profile
  * 특정 유저의 공개 프로필 정보 반환
  */
@@ -513,6 +560,36 @@ auth.get('/api/users/:id/profile', async (c) => {
     }
 
     const db = c.env.DB;
+    const rbac = c.get('rbac') as RBAC;
+    const viewer = c.get('user');
+
+    // 관리자인 경우 역할·차단 정보 포함 응답
+    if (viewer && rbac.can(viewer.role, 'admin:access')) {
+        const adminUser = await db
+            .prepare('SELECT id, name, picture, role, banned_until, email, created_at FROM users WHERE id = ?')
+            .bind(userId)
+            .first<{ id: number; name: string; picture: string; role: string; banned_until: number | null; email: string; created_at: number }>();
+        if (!adminUser || adminUser.role === 'deleted') {
+            return c.json({ error: '사용자를 찾을 수 없습니다.' }, 404);
+        }
+        enrichRole(adminUser, 'role', 'email', c.env);
+        // banned_until 만료 시 role 보정 (super_admin 보정 이후에 수행)
+        if (adminUser.role !== 'super_admin') {
+            const now = Math.floor(Date.now() / 1000);
+            if (adminUser.role === 'banned' && (!adminUser.banned_until || adminUser.banned_until <= now)) {
+                adminUser.role = 'user';
+            }
+        }
+        return c.json({
+            id: adminUser.id,
+            name: adminUser.name,
+            picture: adminUser.picture,
+            created_at: adminUser.created_at,
+            role: adminUser.role,
+            banned_until: adminUser.banned_until,
+        });
+    }
+
     const user = await db
         .prepare('SELECT id, name, picture, role, created_at FROM users WHERE id = ?')
         .bind(userId)

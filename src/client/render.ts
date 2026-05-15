@@ -139,6 +139,35 @@ function initMarkedConfig() {
                 }
             },
             {
+                // 팝오버 각주 [* ... ]. 인라인 토크나이저로 등록해 marked 가
+                // 코드 스팬/코드 블록/인덴트 코드 등에서 자동으로 건드리지 않게 한다.
+                // 내부 텍스트는 lexer.inline 으로 재귀 토크나이즈해 기본 인라인
+                // 마크다운(굵게/기울임/링크/인라인 코드 등)을 허용. 렌더된 HTML 은
+                // data-fn-html 속성에 escape 해 보관하고, 후속 processFootnotes 단계가
+                // DOMPurify 로 정제 후 팝오버/하단 섹션에 사용한다.
+                name: 'wikiFootnote',
+                level: 'inline',
+                start(src) { return src.indexOf('[* '); },
+                tokenizer(src) {
+                    const match = src.match(/^\[\*\s((?:[^\[\]\n]|\[[^\[\]\n]*\]|\[)+)\]/);
+                    if (match) {
+                        const token = {
+                            type: 'wikiFootnote',
+                            raw: match[0],
+                            text: match[1],
+                            tokens: []
+                        };
+                        this.lexer.inline(token.text, token.tokens);
+                        return token;
+                    }
+                },
+                childTokens: ['tokens'],
+                renderer(token) {
+                    const innerHtml = this.parser.parseInline(token.tokens);
+                    return `<sup class="wiki-fn-marker" data-fn-html="${escapeHtml(innerHtml)}"></sup>`;
+                }
+            },
+            {
                 // {button:텍스트|url} 은 GFM 자동 링크로부터 보호해야 URL이 그대로 보존됨.
                 // tokenizer가 토큰으로 잡으면 autolink 단계가 내부를 건드리지 않음.
                 // 실제 <a> 변환은 _processInlineLayoutTokens에서 수행.
@@ -1301,70 +1330,64 @@ function processWikiLinks(contentEl) {
 
 // ── 각주 처리 ──
 var _fnUniqueCounter = 0;
+
+const _WIKI_FN_ALLOWED_TAGS = ['strong', 'em', 'code', 's', 'del', 'a', 'span', 'i', 'b', 'u', 'mark', 'sup', 'sub', 'br'];
+const _WIKI_FN_ALLOWED_ATTR = ['href', 'title', 'class', 'style', 'target', 'rel'];
+
+function _sanitizeFootnoteHtml(html) {
+    const src = html == null ? '' : String(html);
+    if (typeof DOMPurify !== 'undefined') {
+        return DOMPurify.sanitize(src, {
+            ALLOWED_TAGS: _WIKI_FN_ALLOWED_TAGS,
+            ALLOWED_ATTR: _WIKI_FN_ALLOWED_ATTR,
+        });
+    }
+    return escapeHtml(src);
+}
+
 function processFootnotes(contentEl) {
     if (!contentEl) return;
-    const walker = document.createTreeWalker(contentEl, NodeFilter.SHOW_TEXT, null, false);
-    const textNodes = [];
-
-    while (walker.nextNode()) {
-        const parentTag = walker.currentNode.parentNode.tagName;
-        if (parentTag === 'CODE' || parentTag === 'PRE') continue;
-
-        const val = walker.currentNode.nodeValue;
-        if (/\[\*\s/.test(val)) {
-            textNodes.push(walker.currentNode);
-        }
-    }
-
-    if (textNodes.length === 0) return;
+    const markers = Array.from(contentEl.querySelectorAll('sup.wiki-fn-marker[data-fn-html]'));
+    if (markers.length === 0) return;
 
     let footnoteIndex = 0;
     const footnotes = [];
 
-    textNodes.forEach(node => {
-        const frag = document.createDocumentFragment();
-        const parts = node.nodeValue.split(/(\[\*\s[^\]]+\])/g);
+    markers.forEach(marker => {
+        const rawHtml = marker.getAttribute('data-fn-html') || '';
+        const sanitized = _sanitizeFootnoteHtml(rawHtml);
 
-        parts.forEach(part => {
-            const fnMatch = part.match(/^\[\*\s(.+)\]$/);
-            if (fnMatch) {
-                footnoteIndex++;
-                const fnContent = fnMatch[1];
-                const uniqueId = ++_fnUniqueCounter;
-                const fnId = `fn-${footnoteIndex}-${uniqueId}`;
-                const refId = `fn-ref-${footnoteIndex}-${uniqueId}`;
+        footnoteIndex++;
+        const uniqueId = ++_fnUniqueCounter;
+        const fnId = `fn-${footnoteIndex}-${uniqueId}`;
+        const refId = `fn-ref-${footnoteIndex}-${uniqueId}`;
 
-                footnotes.push({ id: fnId, refId: refId, num: footnoteIndex, content: fnContent });
+        footnotes.push({ id: fnId, refId: refId, num: footnoteIndex, html: sanitized });
 
-                const sup = document.createElement('sup');
-                sup.className = 'wiki-fn-ref';
-                const a = document.createElement('a');
-                a.href = `#${fnId}`;
-                a.id = refId;
-                a.textContent = `[${footnoteIndex}]`;
+        const sup = document.createElement('sup');
+        sup.className = 'wiki-fn-ref';
+        const a = document.createElement('a');
+        a.href = `#${fnId}`;
+        a.id = refId;
+        a.textContent = `[${footnoteIndex}]`;
 
-                if (typeof bootstrap !== 'undefined') {
-                    a.setAttribute('data-bs-toggle', 'popover');
-                    a.setAttribute('data-bs-trigger', 'hover focus');
-                    a.setAttribute('data-bs-placement', 'top');
-                    a.setAttribute('data-bs-content', escapeHtml(fnContent || ''));
-                }
+        if (typeof bootstrap !== 'undefined') {
+            a.setAttribute('data-bs-toggle', 'popover');
+            a.setAttribute('data-bs-trigger', 'hover focus');
+            a.setAttribute('data-bs-placement', 'top');
+            a.setAttribute('data-bs-html', 'true');
+            a.setAttribute('data-bs-content', sanitized);
+        }
 
-                a.onclick = (e) => {
-                    e.preventDefault();
-                    if (window.innerWidth >= 992) {
-                        const target = document.getElementById(fnId);
-                        if (target) _scrollToElementWithAncestors(target, { behavior: 'smooth', block: 'start' });
-                    }
-                };
-                sup.appendChild(a);
-                frag.appendChild(sup);
-            } else if (part) {
-                frag.appendChild(document.createTextNode(part));
+        a.onclick = (e) => {
+            e.preventDefault();
+            if (window.innerWidth >= 992) {
+                const target = document.getElementById(fnId);
+                if (target) _scrollToElementWithAncestors(target, { behavior: 'smooth', block: 'start' });
             }
-        });
-
-        node.parentNode.replaceChild(frag, node);
+        };
+        sup.appendChild(a);
+        marker.parentNode?.replaceChild(sup, marker);
     });
 
     if (footnotes.length > 0) {
@@ -1388,7 +1411,7 @@ function processFootnotes(contentEl) {
             };
 
             const span = document.createElement('span');
-            span.textContent = ' ' + fn.content;
+            span.innerHTML = ' ' + fn.html;
 
             li.appendChild(backLink);
             li.appendChild(span);
@@ -1843,10 +1866,6 @@ function _renderBlockHtml(block, blockData) {
             return `<div class="accordion wiki-accordion" id="${groupId}">${items.join('')}</div>`;
         }
         case 'steps': {
-            const { tokens } = _extractStrictTokens(block.titleLine, {
-                layout: { type: 'enum', values: ['vertical', 'horizontal'] }
-            });
-            const layout = tokens.layout || 'vertical';
             const children = _collectWikiChildBlocks(block.innerText, blockData, ['step']);
             if (children.length === 0) return `<div class="wiki-steps-empty"></div>`;
             const items = children.map((child, i) => {
@@ -1868,7 +1887,7 @@ function _renderBlockHtml(block, blockData) {
                     `<div class="wiki-step-body">${childInner}</div>` +
                     `</div></li>`;
             });
-            return `<ol class="wiki-steps wiki-steps-${layout}">${items.join('')}</ol>`;
+            return `<ol class="wiki-steps">${items.join('')}</ol>`;
         }
         case 'tab':
         case 'item':
@@ -2504,7 +2523,7 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
                 const b = foldBlockData[parseInt(blkIdx, 10)];
                 return b ? _renderBlockHtml(b, foldBlockData) : '';
             });
-            let contentHtml = (typeof DOMPurify !== 'undefined') ? DOMPurify.sanitize(rawContentHtml, { ADD_TAGS: ['i', 'span', 'details', 'summary', 'div', 'canvas'], ADD_ATTR: ['class', 'style', 'data-bg', 'data-color', 'data-size', 'data-unix', 'data-ext-name', 'data-ext-idx', 'data-state-key', 'colspan', 'rowspan', 'title'] }) : escapeHtml(rawContentHtml);
+            let contentHtml = (typeof DOMPurify !== 'undefined') ? DOMPurify.sanitize(rawContentHtml, { ADD_TAGS: ['i', 'span', 'details', 'summary', 'div', 'canvas'], ADD_ATTR: ['class', 'style', 'data-bg', 'data-color', 'data-size', 'data-unix', 'data-ext-name', 'data-ext-idx', 'data-state-key', 'data-fn-html', 'colspan', 'rowspan', 'title'] }) : escapeHtml(rawContentHtml);
 
             foldBlocks.push({ summaryText, bgAttr, colorAttr, contentHtml });
             return `\n\nWIKIFOLDPH${idx}XEND\n\n`;
@@ -2548,8 +2567,7 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
         rawHtml = rawHtml.replace(/(?:<p>)?WIKIEXTPH_([a-zA-Z0-9]+)_(\d+)_XEND(?:<\/p>)?/g, (m, extName, idx) => {
             return `<div class="wiki-ext wiki-ext-${escapeHtml(extName)}" data-ext-name="${escapeHtml(extName)}" data-ext-idx="${escapeHtml(idx)}"></div>`;
         });
-
-        let html = (typeof DOMPurify !== 'undefined') ? DOMPurify.sanitize(rawHtml, { ADD_TAGS: ['i', 'span', 'details', 'summary', 'div', 'canvas'], ADD_ATTR: ['class', 'style', 'data-bg', 'data-color', 'data-size', 'data-unix', 'data-ext-name', 'data-ext-idx', 'data-state-key', 'colspan', 'rowspan', 'title'] }) : escapeHtml(rawHtml);
+        let html = (typeof DOMPurify !== 'undefined') ? DOMPurify.sanitize(rawHtml, { ADD_TAGS: ['i', 'span', 'details', 'summary', 'div', 'canvas'], ADD_ATTR: ['class', 'style', 'data-bg', 'data-color', 'data-size', 'data-unix', 'data-ext-name', 'data-ext-idx', 'data-state-key', 'data-fn-html', 'colspan', 'rowspan', 'title'] }) : escapeHtml(rawHtml);
 
         if (options.showCategory && slug) {
             // index.html 의 route() 가 decodeURIComponent 실패 시 원본 slug 를 그대로
@@ -2999,7 +3017,8 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
         const popoverTriggerList = [].slice.call(containerEl.querySelectorAll('[data-bs-toggle="popover"]'));
         if (typeof bootstrap !== 'undefined') {
             popoverTriggerList.map(function (popoverTriggerEl) {
-                return new bootstrap.Popover(popoverTriggerEl, { html: false });
+                const useHtml = popoverTriggerEl.getAttribute('data-bs-html') === 'true';
+                return new bootstrap.Popover(popoverTriggerEl, { html: useHtml });
             });
         }
 

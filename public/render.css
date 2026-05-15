@@ -1803,16 +1803,15 @@ html[data-theme="dark"] .wiki-callout-note    { --callout-bg-tint: rgba(161, 161
 .wiki-accordion .accordion-body > :first-child { margin-top: 0; }
 .wiki-accordion .accordion-body > :last-child  { margin-bottom: 0; }
 
-/* :::steps — Bootstrap 에 stepper 가 없어 커스텀. bi 아이콘 + 가로/세로 레이아웃 */
+/* :::steps — Bootstrap 에 stepper 가 없어 커스텀. bi 아이콘 + 세로 레이아웃 */
 .wiki-steps {
   list-style: none;
   margin: 0.75rem 0;
   padding: 0;
   display: flex;
-  gap: 0.5rem;
+  flex-direction: column;
+  gap: 0;
 }
-.wiki-steps-vertical { flex-direction: column; gap: 0; }
-.wiki-steps-horizontal { flex-direction: row; flex-wrap: wrap; gap: 1rem; }
 
 .wiki-step {
   display: flex;
@@ -1820,11 +1819,6 @@ html[data-theme="dark"] .wiki-callout-note    { --callout-bg-tint: rgba(161, 161
   gap: 0.75rem;
   position: relative;
   padding: 0.4rem 0;
-}
-.wiki-steps-horizontal > .wiki-step {
-  flex: 1 1 200px;
-  flex-direction: column;
-  align-items: stretch;
 }
 
 .wiki-step-marker {
@@ -1851,8 +1845,8 @@ html[data-theme="dark"] .wiki-callout-note    { --callout-bg-tint: rgba(161, 161
 .wiki-step-current .wiki-step-marker { border-color: var(--wiki-primary); color: var(--wiki-primary); }
 .wiki-step-todo    .wiki-step-marker { /* default */ }
 
-/* 세로 레이아웃: 마커 사이를 잇는 세로선 */
-.wiki-steps-vertical > .wiki-step:not(:last-child)::before {
+/* 마커 사이를 잇는 세로선 */
+.wiki-steps > .wiki-step:not(:last-child)::before {
   content: "";
   position: absolute;
   left: calc(1rem - 1px);
@@ -1861,19 +1855,7 @@ html[data-theme="dark"] .wiki-callout-note    { --callout-bg-tint: rgba(161, 161
   width: 2px;
   background: var(--wiki-border);
 }
-.wiki-steps-vertical > .wiki-step.wiki-step-done:not(:last-child)::before { background: var(--wiki-primary); }
-
-/* 가로 레이아웃: 마커 옆 가로선 */
-.wiki-steps-horizontal > .wiki-step:not(:last-child) .wiki-step-marker::after {
-  content: "";
-  position: absolute;
-  left: calc(100% + 4px);
-  top: 50%;
-  width: calc(1rem - 8px);
-  height: 2px;
-  background: var(--wiki-border);
-  transform: translateY(-50%);
-}
+.wiki-steps > .wiki-step.wiki-step-done:not(:last-child)::before { background: var(--wiki-primary); }
 
 .wiki-step-content { flex: 1; min-width: 0; }
 .wiki-step-title {
