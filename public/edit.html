@@ -345,6 +345,11 @@
                             placeholder="카테고리 입력 후 엔터나 쉼표">
                     </div>
                     <input type="hidden" id="categoryInput">
+                    <div class="mt-2" id="bulkCategoryAdminPanel" style="display: none;">
+                        <button type="button" class="btn btn-sm btn-outline-secondary" id="bulkCategoryBtn">
+                            <i class="mdi mdi-folder-multiple-plus-outline"></i> 하위 문서 일괄 카테고리…
+                        </button>
+                    </div>
                 </div>
                 <div class="col-md-6 d-flex align-items-end gap-3" id="adminFlagsContainer" style="display: none !important;">
                     <div class="form-check mb-2" id="adminLockContainer">
@@ -441,6 +446,7 @@
     <script type="module" src="/dist/edit-conflict.js"></script>
     <script type="module" src="/dist/edit-summary.js"></script>
     <script type="module" src="/dist/edit-main.js"></script>
+    <script type="module" src="/dist/edit-bulk-category.js"></script>
     <!-- ── 이미지 편집 모달 ── -->
     <div class="modal fade" id="imageEditorModal" tabindex="-1" aria-hidden="true" data-bs-backdrop="static">
         <div class="modal-dialog modal-dialog-centered">

@@ -42,6 +42,7 @@ export default defineConfig({
                 'edit-autocomplete': resolve(__dirname, 'src/client/edit/autocomplete.ts'),
                 'edit-modals': resolve(__dirname, 'src/client/edit/modals.ts'),
                 'edit-main': resolve(__dirname, 'src/client/edit/main.ts'),
+                'edit-bulk-category': resolve(__dirname, 'src/client/edit/bulk-category.ts'),
                 'discussion-edit': resolve(__dirname, 'src/client/discussion-edit/editor.ts'),
                 'render': resolve(__dirname, 'src/client/render.ts'),
                 'common': resolve(__dirname, 'src/client/common.ts'),

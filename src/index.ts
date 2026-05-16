@@ -609,7 +609,6 @@ app.get('/w/*', async (c) => {
             const titleStr = `${slug} - ${wikiName}`;
 
             if (isCrawler) {
-                trackPageView(c, slug, Date.now() - startTime);
                 const mediaUrl = `/media/${mediaRow.r2_key}`;
                 const tagListHtml = (tags && tags.length)
                     ? `<p><strong>태그:</strong> ${tags.map(t => escapeHtml(String(t))).join(', ')}</p>`
@@ -653,7 +652,6 @@ ${contentBlock}
             };
 
             const response = await renderHtml(c, '/', ssrData);
-            trackPageView(c, slug, Date.now() - startTime);
 
             if (canUseCache) {
                 const cachedResponse = new Response(response.body, response);

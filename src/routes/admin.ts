@@ -1,4 +1,10 @@
 import { Hono } from 'hono';
+import {
+    buildCategoryOnlyStatements,
+    invalidatePageCache,
+    mergeCategoriesFromRules,
+    refreshRecentChangesCache,
+} from './wiki';
 import { requireAdmin } from '../middleware/session';
 import { isSuperAdmin, getSuperAdmins } from '../utils/auth';
 import { RBAC } from '../utils/role';
@@ -1623,5 +1629,252 @@ adminRoutes.get('/pages/deleted', async (c) => {
         hasMore: offset + limit < (countResult?.count || 0)
     });
 });
+
+
+// ── 카테고리 prefix 일괄/자동 적용 규칙 ──
+// 슬래시 기반 하위 문서(prefix/...) 묶음에 카테고리를 일괄 적용하거나,
+// 같은 prefix 로 새 문서가 생성/이동될 때 자동으로 카테고리가 합집합 적용되도록 규칙 저장.
+// 관리자 전용 (이 라우터 자체가 requireAdmin 미들웨어로 보호됨).
+
+const PREFIX_FORBIDDEN_CHARS = /[\x00-\x1F\x7F]/;
+const CATEGORY_PATTERN = /^[가-힣a-zA-Z0-9\s,]+$/;
+
+function normalizeCategoryString(s: string): string {
+    return s
+        .split(',')
+        .map(c => c.trim())
+        .filter(c => c.length > 0)
+        .filter((v, i, a) => a.indexOf(v) === i)
+        .join(',');
+}
+
+function escapeLike(s: string): string {
+    return s.replace(/[\\%_]/g, ch => '\\' + ch);
+}
+
+/**
+ * GET /category-prefix-rules
+ * 자동 카테고리 prefix 규칙 목록
+ */
+adminRoutes.get('/category-prefix-rules', async (c) => {
+    const db = c.env.DB;
+    const { results } = await db
+        .prepare(
+            `SELECT r.id, r.prefix, r.categories, r.created_at, u.name AS created_by_name
+             FROM category_prefix_rules r
+             LEFT JOIN users u ON u.id = r.created_by
+             ORDER BY r.prefix ASC`
+        )
+        .all();
+    return c.json(results);
+});
+
+/**
+ * POST /category-prefix-rules
+ * 규칙 upsert (prefix UNIQUE)
+ */
+adminRoutes.post('/category-prefix-rules', async (c) => {
+    const db = c.env.DB;
+    const currentUser = c.get('user')!;
+    const body = await c.req.json<{ prefix?: string; categories?: string }>();
+
+    const rawPrefix = typeof body.prefix === 'string' ? body.prefix : '';
+    const prefix = rawPrefix.trim().replace(/\/+$/, '');
+    if (!prefix) {
+        return c.json({ error: 'prefix 를 입력해주세요.' }, 400);
+    }
+    if (prefix.length > 200) {
+        return c.json({ error: 'prefix 는 최대 200자까지 입력할 수 있습니다.' }, 400);
+    }
+    if (PREFIX_FORBIDDEN_CHARS.test(prefix)) {
+        return c.json({ error: 'prefix 에 제어문자를 사용할 수 없습니다.' }, 400);
+    }
+
+    const rawCategories = typeof body.categories === 'string' ? body.categories : '';
+    if (!CATEGORY_PATTERN.test(rawCategories) || rawCategories.trim() === '') {
+        return c.json({ error: '카테고리에는 한글/영문/숫자/공백/쉼표만 사용할 수 있습니다.' }, 400);
+    }
+    const categories = normalizeCategoryString(rawCategories);
+    if (!categories) {
+        return c.json({ error: '카테고리를 1개 이상 입력해주세요.' }, 400);
+    }
+
+    await db
+        .prepare(
+            `INSERT INTO category_prefix_rules (prefix, categories, created_by)
+             VALUES (?, ?, ?)
+             ON CONFLICT(prefix) DO UPDATE SET
+               categories = excluded.categories,
+               created_by = excluded.created_by,
+               created_at = unixepoch()`
+        )
+        .bind(prefix, categories, currentUser.id)
+        .run();
+
+    writeAdminLog(
+        c,
+        'category_prefix_rule_save',
+        `자동 카테고리 규칙 저장: ${prefix} → ${categories}`,
+        currentUser.id
+    );
+    return c.json({ success: true, prefix, categories });
+});
+
+/**
+ * DELETE /category-prefix-rules/:id
+ */
+adminRoutes.delete('/category-prefix-rules/:id', async (c) => {
+    const db = c.env.DB;
+    const id = c.req.param('id');
+    const currentUser = c.get('user')!;
+
+    const rule = await db
+        .prepare('SELECT prefix FROM category_prefix_rules WHERE id = ?')
+        .bind(id)
+        .first<{ prefix: string }>();
+    const result = await db
+        .prepare('DELETE FROM category_prefix_rules WHERE id = ?')
+        .bind(id)
+        .run();
+
+    if (result.meta.changes === 0) {
+        return c.json({ error: '규칙을 찾을 수 없습니다.' }, 404);
+    }
+    writeAdminLog(
+        c,
+        'category_prefix_rule_delete',
+        `자동 카테고리 규칙 삭제: ${rule?.prefix || id}`,
+        currentUser.id
+    );
+    return c.json({ success: true });
+});
+
+/**
+ * POST /category-prefix-rules/bulk-apply
+ * 본문: { prefix, categories, persist? }
+ * - prefix/ 로 시작하는 모든 하위 문서에 categories 를 합집합 적용
+ * - persist=true 면 동일 prefix 규칙을 category_prefix_rules 에 upsert (자동 적용용)
+ */
+adminRoutes.post('/category-prefix-rules/bulk-apply', async (c) => {
+    const db = c.env.DB;
+    const currentUser = c.get('user')!;
+    const body = await c.req.json<{ prefix?: string; categories?: string; persist?: boolean }>();
+
+    const rawPrefix = typeof body.prefix === 'string' ? body.prefix : '';
+    const prefix = rawPrefix.trim().replace(/\/+$/, '');
+    if (!prefix) {
+        return c.json({ error: 'prefix 를 입력해주세요.' }, 400);
+    }
+    if (prefix.length > 200) {
+        return c.json({ error: 'prefix 는 최대 200자까지 입력할 수 있습니다.' }, 400);
+    }
+    if (PREFIX_FORBIDDEN_CHARS.test(prefix)) {
+        return c.json({ error: 'prefix 에 제어문자를 사용할 수 없습니다.' }, 400);
+    }
+
+    const rawCategories = typeof body.categories === 'string' ? body.categories : '';
+    if (!CATEGORY_PATTERN.test(rawCategories) || rawCategories.trim() === '') {
+        return c.json({ error: '카테고리에는 한글/영문/숫자/공백/쉼표만 사용할 수 있습니다.' }, 400);
+    }
+    const categories = normalizeCategoryString(rawCategories);
+    if (!categories) {
+        return c.json({ error: '카테고리를 1개 이상 입력해주세요.' }, 400);
+    }
+
+    // 대상 페이지 조회 — prefix/% (모든 깊이 포함, 부모 문서 자체는 제외)
+    // SQLite 의 LIKE 는 ASCII 에 대해 기본 case-insensitive 이므로 'Docs/%' 가
+    // 'docs/Page' 까지 매칭한다. 반면 create/move hook 의 mergeCategoriesFromRules
+    // 는 case-sensitive 한 startsWith 로 룰을 적용하므로, 여기서도 동일한 정책으로
+    // JS 측 case-sensitive 필터를 한 번 더 걸어 일관성과 scanned 카운트 정확도를 보장한다.
+    const escaped = escapeLike(prefix);
+    const likePattern = escaped + '/%';
+    // Cloudflare D1 의 LIKE/GLOB 패턴은 50바이트 제한이 있다 (UTF-8 한글은 3바이트
+    // 이므로 17자만 되어도 한도 초과 가능). 미리 차단해 런타임 오류 대신 명확한
+    // 검증 메시지를 돌려준다. 자동 적용 hook 은 JS startsWith 를 쓰므로 영향 없으며,
+    // 같은 prefix 로 룰을 저장(POST /category-prefix-rules)하는 것은 여전히 가능하다.
+    const patternBytes = new TextEncoder().encode(likePattern).length;
+    if (patternBytes > 50) {
+        return c.json({
+            error: `prefix 가 너무 깁니다 (LIKE 패턴 ${patternBytes}바이트, 한도 50바이트). 더 짧은 prefix 로 시도하거나, 자동 규칙으로만 저장해주세요.`,
+        }, 400);
+    }
+    const { results: rawPages } = await db
+        .prepare(
+            `SELECT id, slug, category FROM pages
+             WHERE deleted_at IS NULL
+               AND slug LIKE ? ESCAPE '\\'
+             ORDER BY slug ASC`
+        )
+        .bind(likePattern)
+        .all<{ id: number; slug: string; category: string | null }>();
+    const prefixWithSlash = prefix + '/';
+    const pages = rawPages.filter(p => p.slug.startsWith(prefixWithSlash));
+
+    const ruleForMerge = [{ prefix, categories }];
+    const updates: { id: number; slug: string; newCategory: string }[] = [];
+    for (const page of pages) {
+        const merged = mergeCategoriesFromRules(page.slug, page.category, ruleForMerge);
+        if (merged !== (page.category ?? '')) {
+            updates.push({ id: page.id, slug: page.slug, newCategory: merged });
+        }
+    }
+
+    // 일괄 업데이트 (D1 배치)
+    if (updates.length > 0) {
+        const stmts = [];
+        for (const u of updates) {
+            const value: string | null = u.newCategory || null;
+            stmts.push(
+                db.prepare('UPDATE pages SET category = ? WHERE id = ?').bind(value, u.id)
+            );
+            stmts.push(...buildCategoryOnlyStatements(db, u.id, value));
+        }
+        // D1 배치 사이즈가 매우 크면 분할 — 대략 한 묶음 200문 기준
+        const chunkSize = 200;
+        for (let i = 0; i < stmts.length; i += chunkSize) {
+            await db.batch(stmts.slice(i, i + chunkSize));
+        }
+    }
+
+    let ruleSaved = false;
+    if (body.persist === true) {
+        await db
+            .prepare(
+                `INSERT INTO category_prefix_rules (prefix, categories, created_by)
+                 VALUES (?, ?, ?)
+                 ON CONFLICT(prefix) DO UPDATE SET
+                   categories = excluded.categories,
+                   created_by = excluded.created_by,
+                   created_at = unixepoch()`
+            )
+            .bind(prefix, categories, currentUser.id)
+            .run();
+        ruleSaved = true;
+    }
+
+    // 캐시 무효화 (비동기 백그라운드)
+    if (updates.length > 0) {
+        c.executionCtx.waitUntil(
+            Promise.allSettled([
+                ...updates.map(u => invalidatePageCache(c, u.slug)),
+                refreshRecentChangesCache(c),
+            ])
+        );
+    }
+
+    writeAdminLog(
+        c,
+        'category_bulk_apply',
+        `하위 문서 카테고리 일괄 적용: ${prefix}/** (대상=${pages.length}, 변경=${updates.length}, categories=${categories}${ruleSaved ? ', 규칙저장' : ''})`,
+        currentUser.id
+    );
+
+    return c.json({
+        scanned: pages.length,
+        updated: updates.length,
+        ruleSaved,
+    });
+});
+
 
 export default adminRoutes;

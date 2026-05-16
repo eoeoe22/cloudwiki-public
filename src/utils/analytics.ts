@@ -27,6 +27,7 @@ function detectDevice(ua: string): string {
 }
 
 export function trackPageView(c: Context<Env>, slug: string, responseTimeMs: number = 0) {
+    if (slug.startsWith('이미지:')) return;
     try {
         const analytics = c.env.ANALYTICS;
         if (!analytics) return;

@@ -398,6 +398,70 @@ export function buildLinkAndCategoryStatements(
 }
 
 /**
+ * page_categories 만 갱신하는 D1 배치 문 생성 (page_links 는 건드리지 않음).
+ * 카테고리 일괄 적용 / 자동 prefix 룰 hook 에서 사용된다.
+ */
+export function buildCategoryOnlyStatements(
+    db: D1Database,
+    pageId: number,
+    category: string | null
+): D1PreparedStatement[] {
+    const stmts: D1PreparedStatement[] = [];
+    stmts.push(db.prepare('DELETE FROM page_categories WHERE page_id = ?').bind(pageId));
+    if (category) {
+        const cats = category.split(',').map(c => c.trim()).filter(c => c);
+        for (const cat of cats) {
+            stmts.push(
+                db.prepare('INSERT OR IGNORE INTO page_categories (page_id, category) VALUES (?, ?)')
+                    .bind(pageId, cat)
+            );
+        }
+    }
+    return stmts;
+}
+
+/**
+ * 카테고리 문자열(쉼표 구분) 을 trim/공백제거/중복제거 한 배열로 정규화.
+ */
+function splitCategoryString(s: string | null | undefined): string[] {
+    if (!s) return [];
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const raw of s.split(',')) {
+        const v = raw.trim();
+        if (!v) continue;
+        if (seen.has(v)) continue;
+        seen.add(v);
+        out.push(v);
+    }
+    return out;
+}
+
+/**
+ * slug 가 룰의 prefix/... 형태에 매칭되면 해당 룰의 카테고리들을 합집합한다.
+ * 반환은 새 category 문자열 (쉼표 구분). 기존 카테고리 순서를 보존한 뒤 신규 카테고리만 뒤에 붙인다.
+ */
+export function mergeCategoriesFromRules(
+    slug: string,
+    currentCategory: string | null | undefined,
+    rules: { prefix: string; categories: string }[]
+): string {
+    const base = splitCategoryString(currentCategory);
+    const seen = new Set<string>(base);
+    for (const rule of rules) {
+        if (!rule.prefix) continue;
+        if (!slug.startsWith(rule.prefix + '/')) continue;
+        for (const cat of splitCategoryString(rule.categories)) {
+            if (!seen.has(cat)) {
+                seen.add(cat);
+                base.push(cat);
+            }
+        }
+    }
+    return base.join(',');
+}
+
+/**
  * 문서 주소 변경 시 사용될 본문 재작성 헬퍼.
  * - 코드블럭(```...```)과 인라인 코드(`...`)는 마스킹하여 보존
  * - `[[oldSlug]]`, `[[oldSlug|표시]]`, `[[oldSlug#섹션]]`, `[[oldSlug#섹션|표시]]`를 새 슬러그로 치환
@@ -1540,12 +1604,24 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
         const isR2Only = isR2OnlyNamespace(slug, enabledExtensionsCreate);
         const contentToStore = isR2Only ? '' : body.content;
 
+        // 자동 카테고리 prefix 룰 합집합 (생성 시점)
+        let effectiveCategory: string | null = body.category || null;
+        try {
+            const ruleRows = await db
+                .prepare('SELECT prefix, categories FROM category_prefix_rules')
+                .all<{ prefix: string; categories: string }>();
+            const merged = mergeCategoriesFromRules(slug, effectiveCategory, ruleRows.results || []);
+            effectiveCategory = merged || null;
+        } catch (e) {
+            console.error('category_prefix_rules lookup failed (create):', e);
+        }
+
         const metrics = computePageMetricsTracked(body.content, isR2Only);
         const pageResult = await db
             .prepare(
                 'INSERT INTO pages (slug, content, category, is_locked, is_private, redirect_to, rows, characters) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
             )
-            .bind(slug, contentToStore, body.category || null, finalIsLocked, finalIsPrivate, body.redirect_to || null, metrics.rows, metrics.characters)
+            .bind(slug, contentToStore, effectiveCategory, finalIsLocked, finalIsPrivate, body.redirect_to || null, metrics.rows, metrics.characters)
             .run();
 
         const pageId = pageResult.meta.last_row_id;
@@ -1586,7 +1662,7 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
             .run();
 
         // page_links, page_categories 갱신 (비동기)
-        const linkCatStmts = buildLinkAndCategoryStatements(db, pageId, body.content, body.category || null);
+        const linkCatStmts = buildLinkAndCategoryStatements(db, pageId, body.content, effectiveCategory);
         c.executionCtx.waitUntil(db.batch(linkCatStmts).catch(e => console.error('Failed to update links/categories:', e)));
 
         // 캐시 무효화 (API + SSR) + 최근 변경 즉시 갱신
@@ -2139,7 +2215,7 @@ wiki.post('/w/:slug/move', requireAdmin, async (c) => {
         return c.json({ error: '이미 존재하는 문서 이름입니다.' }, 409);
     }
 
-    const page = await db.prepare('SELECT id, is_locked, is_private FROM pages WHERE slug = ? AND deleted_at IS NULL').bind(currentSlug).first<{ id: number, is_locked: number, is_private: number }>();
+    const page = await db.prepare('SELECT id, category, is_locked, is_private FROM pages WHERE slug = ? AND deleted_at IS NULL').bind(currentSlug).first<{ id: number, category: string | null, is_locked: number, is_private: number }>();
     if (!page) {
         return c.json({ error: '문서를 찾을 수 없습니다.' }, 404);
     }
@@ -2156,6 +2232,24 @@ wiki.post('/w/:slug/move', requireAdmin, async (c) => {
     await db.prepare('UPDATE pages SET slug = ? WHERE id = ?')
         .bind(trimmedNewSlug, page.id)
         .run();
+
+    // 자동 카테고리 prefix 룰: 새 slug 가 룰에 매칭되면 카테고리 합집합 적용
+    try {
+        const ruleRows = await db
+            .prepare('SELECT prefix, categories FROM category_prefix_rules')
+            .all<{ prefix: string; categories: string }>();
+        const merged = mergeCategoriesFromRules(trimmedNewSlug, page.category, ruleRows.results || []);
+        const mergedValue = merged || null;
+        if (mergedValue !== (page.category ?? null)) {
+            const stmts: D1PreparedStatement[] = [
+                db.prepare('UPDATE pages SET category = ? WHERE id = ?').bind(mergedValue, page.id),
+                ...buildCategoryOnlyStatements(db, page.id, mergedValue),
+            ];
+            await db.batch(stmts);
+        }
+    } catch (e) {
+        console.error('category_prefix_rules apply failed (move):', e);
+    }
 
     // 관리자 로그 기록
     c.executionCtx.waitUntil(

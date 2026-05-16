@@ -392,6 +392,19 @@ CREATE TABLE IF NOT EXISTS category_watches (
 );
 CREATE INDEX IF NOT EXISTS idx_category_watches_category ON category_watches(category);
 
+-- 슬러그 prefix 별 자동 카테고리 부여 규칙
+-- prefix/ 로 시작하는 문서가 새로 생성되거나 이동(rename) 될 때
+-- categories(쉼표 구분) 가 기존 카테고리에 합집합으로 적용된다.
+-- 관리자만 생성/삭제할 수 있다 (라우트 단의 requireAdmin 미들웨어로 보호).
+CREATE TABLE IF NOT EXISTS category_prefix_rules (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    prefix     TEXT NOT NULL UNIQUE,
+    categories TEXT NOT NULL,
+    created_at INTEGER DEFAULT (unixepoch()),
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_category_prefix_rules_prefix ON category_prefix_rules(prefix);
+
 -- 블로그 포스트 테이블
 -- 위키 문서와 독립된 블로그 기능. 리비전 없음, 관리자만 작성 가능.
 -- URL 식별자는 id (정수), title이 표시 제목 겸 식별자.

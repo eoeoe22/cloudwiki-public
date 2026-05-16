@@ -2959,6 +2959,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (window.currentUser.role === 'admin' || window.currentUser.role === 'super_admin') {
         const flagsEl = document.getElementById('adminFlagsContainer');
         if (flagsEl) flagsEl.style.display = 'flex';
+        const bulkPanel = document.getElementById('bulkCategoryAdminPanel');
+        if (bulkPanel) bulkPanel.style.display = '';
     }
 
     // 관리자 전용 카테고리 목록 불러오기
