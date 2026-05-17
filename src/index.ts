@@ -837,7 +837,7 @@ ${contentBlock}
                 ? `<p><em>${escapeHtml(redirectedFrom)} 에서 자동으로 넘어왔습니다.</em></p>`
                 : '';
             const slugLine = page.title
-                ? `<p><small>슬러그: <code>${escapeHtml(page.slug)}</code></small></p>`
+                ? `<p><small>제목: <code>${escapeHtml(page.slug)}</code></small></p>`
                 : '';
             const contentBlock = aiText
                 ? `<pre>${escapeHtml(aiText)}</pre>`

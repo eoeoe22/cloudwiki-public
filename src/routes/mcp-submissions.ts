@@ -352,7 +352,7 @@ mcpSubmissionsRoutes.post('/mcp-submissions/:id/approve', requireAuth, async (c)
                     error: 'conflict',
                     reason: titleConflict.matchedColumn === 'slug' ? 'title_collides_with_slug' : 'title_taken',
                     message: titleConflict.matchedColumn === 'slug'
-                        ? `'${draft.title}' 는 이미 다른 문서의 슬러그입니다.`
+                        ? `'${draft.title}' 는 이미 다른 문서의 제목입니다.`
                         : `'${draft.title}' 는 이미 다른 문서의 대체 제목입니다.`,
                 }, 409);
             }
@@ -432,7 +432,7 @@ mcpSubmissionsRoutes.post('/mcp-submissions/:id/approve', requireAuth, async (c)
             return c.json({
                 error: 'conflict',
                 reason: 'slug_soft_deleted',
-                message: '동일 슬러그의 소프트 삭제된 문서가 존재합니다. 관리자가 먼저 복원/영구삭제 처리해야 합니다.',
+                message: '동일 제목의 소프트 삭제된 문서가 존재합니다. 관리자가 먼저 복원/영구삭제 처리해야 합니다.',
             }, 409);
         }
 
@@ -445,7 +445,7 @@ mcpSubmissionsRoutes.post('/mcp-submissions/:id/approve', requireAuth, async (c)
             return c.json({
                 error: 'conflict',
                 reason: 'slug_collides_with_title',
-                message: `'${slug}' 는 다른 문서의 대체 제목과 충돌해 슬러그로 사용할 수 없습니다.`,
+                message: `'${slug}' 는 다른 문서의 대체 제목과 충돌해 제목으로 사용할 수 없습니다.`,
             }, 409);
         }
         if (draft.has_title_change && draft.title) {
@@ -455,7 +455,7 @@ mcpSubmissionsRoutes.post('/mcp-submissions/:id/approve', requireAuth, async (c)
                     error: 'conflict',
                     reason: titleConflict.matchedColumn === 'slug' ? 'title_collides_with_slug' : 'title_taken',
                     message: titleConflict.matchedColumn === 'slug'
-                        ? `'${draft.title}' 는 이미 다른 문서의 슬러그입니다.`
+                        ? `'${draft.title}' 는 이미 다른 문서의 제목입니다.`
                         : `'${draft.title}' 는 이미 다른 문서의 대체 제목입니다.`,
                 }, 409);
             }

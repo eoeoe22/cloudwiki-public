@@ -1352,7 +1352,7 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
 
     // 슬러그 유효성 검사: 금지 문자 포함 여부
     if (SLUG_FORBIDDEN_CHARS.test(slug)) {
-        return c.json({ error: '슬러그에 사용할 수 없는 특수문자가 포함되어 있습니다.' }, 400);
+        return c.json({ error: '제목에 사용할 수 없는 특수문자가 포함되어 있습니다.' }, 400);
     }
 
     const user = c.get('user')!;
@@ -1419,7 +1419,7 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
     // "이미지:" 접두사 문서는 media 테이블 기반의 이미지 문서 전용이며,
     // content 수정은 /api/media/doc/:filename 엔드포인트로만 가능하다.
     if (slug.startsWith('이미지:')) {
-        return c.json({ error: '"이미지:"는 이미지 문서 전용 네임스페이스이므로 일반 문서 슬러그로 사용할 수 없습니다.' }, 403);
+        return c.json({ error: '"이미지:"는 이미지 문서 전용 네임스페이스이므로 일반 문서 제목으로 사용할 수 없습니다.' }, 403);
     }
 
     // 관리자 전용 네임스페이스(prefix) 검증
@@ -1483,7 +1483,7 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
         if (conflict) {
             const deletedSuffix = conflict.isDeleted ? ' (소프트 삭제 상태 — 관리자가 복원 또는 영구 삭제해야 재사용 가능)' : '';
             const msg = conflict.matchedColumn === 'slug'
-                ? `'${requestedTitle}' 는 이미 다른 문서의 슬러그로 사용 중입니다.${deletedSuffix}`
+                ? `'${requestedTitle}' 는 이미 다른 문서의 제목으로 사용 중입니다.${deletedSuffix}`
                 : `'${requestedTitle}' 는 이미 다른 문서의 대체 제목으로 사용 중입니다.${deletedSuffix}`;
             return c.json({ error: msg }, 409);
         }
@@ -1496,7 +1496,7 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
         const slugTitleConflict = await findConflictingPage(db, slug, null);
         if (slugTitleConflict && slugTitleConflict.matchedColumn === 'title') {
             const deletedSuffix = slugTitleConflict.isDeleted ? ' (소프트 삭제 상태)' : '';
-            return c.json({ error: `'${slug}' 는 이미 다른 문서의 대체 제목과 같아 슬러그로 사용할 수 없습니다.${deletedSuffix}` }, 409);
+            return c.json({ error: `'${slug}' 는 이미 다른 문서의 대체 제목과 같아 제목으로 사용할 수 없습니다.${deletedSuffix}` }, 409);
         }
     }
 
@@ -1515,7 +1515,7 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
         // 필요한 호출자가 결정론적으로 거부 응답을 받도록 한다.
         if (body.expected_version === 0) {
             return c.json(
-                { error: '같은 슬러그의 문서가 이미 존재합니다.', current_version: existing.version },
+                { error: '같은 제목의 문서가 이미 존재합니다.', current_version: existing.version },
                 409
             );
         }
@@ -1743,7 +1743,7 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
                 if (/title/i.test(msg)) {
                     return c.json({ error: '대체 제목이 다른 문서와 충돌했습니다. 잠시 후 다시 시도해주세요.' }, 409);
                 }
-                return c.json({ error: '같은 슬러그의 문서가 동시에 생성되었습니다. 다시 시도해주세요.' }, 409);
+                return c.json({ error: '같은 제목의 문서가 동시에 생성되었습니다. 다시 시도해주세요.' }, 409);
             }
             throw e;
         }
@@ -2322,7 +2322,7 @@ wiki.post('/w/:slug/move', requireAdmin, async (c) => {
 
     // 보안: 슬러그 금지 문자 점검
     if (SLUG_FORBIDDEN_CHARS.test(trimmedNewSlug)) {
-        return c.json({ error: '슬러그에 사용할 수 없는 특수문자가 포함되어 있습니다.' }, 400);
+        return c.json({ error: '제목에 사용할 수 없는 특수문자가 포함되어 있습니다.' }, 400);
     }
 
     // "이미지:" 네임스페이스는 media 테이블 기반 이미지 문서 전용이므로 이동 대상/출처가 될 수 없다
@@ -2372,7 +2372,7 @@ wiki.post('/w/:slug/move', requireAdmin, async (c) => {
         const msg = String(e?.message || e);
         if (/UNIQUE|constraint/i.test(msg)) {
             console.error('Page slug UPDATE failed due to UNIQUE race:', e);
-            return c.json({ error: '새 슬러그가 다른 문서와 충돌합니다. 다시 시도해주세요.' }, 409);
+            return c.json({ error: '새 제목이 다른 문서와 충돌합니다. 다시 시도해주세요.' }, 409);
         }
         throw e;
     }

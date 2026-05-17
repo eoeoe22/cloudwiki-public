@@ -424,7 +424,7 @@ async function openBulkCategoryModal() {
         await swal.fire({
             icon: 'warning',
             title: '대상 문서 없음',
-            text: '현재 편집 중인 문서의 슬러그를 확인할 수 없습니다.',
+            text: '현재 편집 중인 문서의 제목을 확인할 수 없습니다.',
         });
         return;
     }
