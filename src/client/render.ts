@@ -224,12 +224,55 @@ function _isExtensionCall(name) {
 }
 
 /**
+ * text[i] 가 인라인 코드 스팬(`...`, ``...`` 등 매칭 백틱 런) 의 시작이면
+ * 닫는 백틱 런 직후의 인덱스를 반환. 아니면 -1.
+ *
+ * 위키 토큰 파서({{...}}, [[...]], `|`, `=`) 가 백틱 코드 스팬 내부를
+ * verbatim 으로 취급하도록 도와준다 — 예: `{{Foo|`a|b`|c}}` 에서 가운데
+ * `|` 가 인자 구분자로 잘못 잡히지 않도록 한다.
+ *
+ * 닫는 백틱 런이 없으면 -1 을 반환해 호출자가 `` ` `` 를 일반 문자로 처리하게 한다.
+ */
+function _scanCodeSpan(text, i) {
+    if (text[i] !== '`') return -1;
+    // CommonMark: 코드 스팬 오프너는 "선행/후행 백틱이 없는" 백틱 런이다.
+    // text[i-1] 이 백틱이면 우리는 더 긴 런의 중간에서 시작하는 셈 — 그 런 전체가
+    // 이미 (앞쪽에서 호출된) _scanCodeSpan 에 의해 평가되어 짝이 없다고 결론났을
+    // 수 있으므로 부분 매칭을 거부해 가짜 스팬으로 `|`/`=`/`{{…}}` 를 가리는
+    // 회귀를 막는다. (예: ` `````foo```` ` 의 2번째 백틱부터 4-런 스팬으로 잘못 매칭되는 케이스)
+    if (i > 0 && text[i - 1] === '`') return -1;
+    // CommonMark: 백슬래시로 이스케이프된 백틱(`\``)은 리터럴 문자라 델리미터가 되지 못한다.
+    // 직전 연속 백슬래시 개수가 홀수면 이스케이프된 상태(짝수면 `\\`+`\``... 즉 백슬래시
+    // 자체가 이스케이프되어 백틱은 정상 델리미터). 클로저 측은 검사하지 않는다 — CommonMark
+    // 사양상 코드 스팬 내부에서는 백슬래시 이스케이프가 작동하지 않아 ` `foo\` ` 의 트레일링
+    // ` 도 정상 클로저로 매칭된다.
+    let backslashes = 0;
+    let bk = i - 1;
+    while (bk >= 0 && text[bk] === '\\') { backslashes++; bk--; }
+    if (backslashes % 2 === 1) return -1;
+    let n = 1;
+    while (i + n < text.length && text[i + n] === '`') n++;
+    let j = i + n;
+    while (j < text.length) {
+        if (text[j] !== '`') { j++; continue; }
+        // k 는 j 에서 시작하는 백틱 런의 최대 길이(while 종료 시 다음 문자는 비-백틱).
+        // 따라서 k === n 이면 자동으로 "후행 백틱이 없는" 완전한 클로저 런이다.
+        let k = 1;
+        while (j + k < text.length && text[j + k] === '`') k++;
+        if (k === n) return j + k;
+        j += k;
+    }
+    return -1;
+}
+
+/**
  * 최상위(depth=0) 파이프(|)만 기준으로 raw를 분리합니다.
  * 다음 위키 문법 내부의 '|'는 분리하지 않습니다:
  *   - [[링크|레이블]]          이중 대괄호
  *   - {{틀|인자}}              이중 중괄호
  *   - {{{파라미터|기본값}}}    삼중 중괄호 (파라미터 참조)
  *   - {button:text|url}, {stat:value|label} 등 단일 중괄호 토큰
+ *   - `...` 인라인 코드 스팬
  */
 function _splitPipeTopLevel(raw) {
     const parts = [];
@@ -239,6 +282,10 @@ function _splitPipeTopLevel(raw) {
     let i = 0;
     while (i < raw.length) {
         const ch = raw[i];
+        if (ch === '`') {
+            const end = _scanCodeSpan(raw, i);
+            if (end > 0) { i = end; continue; }
+        }
         if (ch === '{') {
             // 가장 긴 접두사 우선: {{ 는 이중 중괄호 (혹은 {{{ 의 일부)
             if (raw[i + 1] === '{') {
@@ -298,6 +345,10 @@ function _findTopLevelEquals(part) {
     let i = 0;
     while (i < part.length) {
         const ch = part[i];
+        if (ch === '`') {
+            const end = _scanCodeSpan(part, i);
+            if (end > 0) { i = end; continue; }
+        }
         if (ch === '{') {
             if (part[i + 1] === '{') {
                 depth++;
@@ -360,6 +411,10 @@ function _findParamRefEnd(text, contentStart) {
     let i = contentStart;
     while (i < text.length) {
         const ch = text[i];
+        if (ch === '`') {
+            const end = _scanCodeSpan(text, i);
+            if (end > 0) { i = end; continue; }
+        }
         if (ch === '{') {
             if (text[i + 1] === '{' && text[i + 2] === '{') { stack.push('tri'); i += 3; continue; }
             if (text[i + 1] === '{') { stack.push('dbl'); i += 2; continue; }
@@ -403,6 +458,10 @@ function _findParamRefs(text) {
     const refs = [];
     let i = 0;
     while (i < text.length - 2) {
+        if (text[i] === '`') {
+            const end = _scanCodeSpan(text, i);
+            if (end > 0) { i = end; continue; }
+        }
         if (text[i] === '{' && text[i + 1] === '{' && text[i + 2] === '{') {
             const end = _findParamRefEnd(text, i + 3);
             if (end) {
@@ -470,6 +529,10 @@ function _findTemplateCallEnd(text, contentStart) {
     let i = contentStart;
     while (i < text.length) {
         const ch = text[i];
+        if (ch === '`') {
+            const end = _scanCodeSpan(text, i);
+            if (end > 0) { i = end; continue; }
+        }
         if (ch === '}') {
             // 단일 중괄호 토큰이 열려 있으면 먼저 닫아 준다 ({button:...|...} 내부 `|` 보호와 대칭)
             if (sgl > 0) {
@@ -511,6 +574,10 @@ function _findTemplateCalls(text) {
     const calls = [];
     let i = 0;
     while (i < text.length - 1) {
+        if (text[i] === '`') {
+            const end = _scanCodeSpan(text, i);
+            if (end > 0) { i = end; continue; }
+        }
         if (text[i] === '{' && text[i + 1] === '{') {
             if (text[i + 2] === '{') {
                 const refEnd = _findParamRefEnd(text, i + 3);

@@ -334,13 +334,12 @@
                 <label for="titleInput" class="form-label fw-bold">제목</label>
                 <input type="text" id="titleInput" class="edit-title-input" placeholder="문서 제목" maxlength="100"
                     readonly style="opacity: 0.7; cursor: not-allowed;">
-                <div class="form-text text-muted">위키 링크 <code>[[...]]</code>·틀 <code>{{...}}</code> 호출은 항상 이 제목을 사용합니다.</div>
             </div>
 
             <!-- 대체 제목(선택) — 표시 전용. 특수문자 허용. -->
             <div class="mb-3">
                 <label for="alternateTitleInput" class="form-label fw-bold">대체 제목 <span class="text-muted fw-normal">(선택)</span></label>
-                <input type="text" id="alternateTitleInput" class="form-control" placeholder="대체 제목(선택)" maxlength="100">
+                <input type="text" id="alternateTitleInput" class="form-control" placeholder="대체 제목" maxlength="100">
             </div>
 
             <div class="mb-3 row">
@@ -354,7 +353,7 @@
                     <input type="hidden" id="categoryInput">
                     <div class="mt-2" id="bulkCategoryAdminPanel" style="display: none;">
                         <button type="button" class="btn btn-sm btn-outline-secondary" id="bulkCategoryBtn">
-                            <i class="mdi mdi-folder-multiple-plus-outline"></i> 하위 문서 일괄 카테고리…
+                            <i class="mdi mdi-folder-multiple-plus-outline"></i> 카테고리 관리
                         </button>
                     </div>
                 </div>

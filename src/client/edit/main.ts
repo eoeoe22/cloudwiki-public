@@ -3399,7 +3399,7 @@ async function loadMcpSubmissionForConflict(submissionId: number): Promise<boole
     if (typeof detail.slug !== 'string' || detail.slug !== slug) {
         await window.Swal.fire({
             icon: 'error',
-            title: '제출안 슬러그 불일치',
+            title: '제출안 제목 불일치',
             text: `제출안의 문서(${detail.slug ?? '?'}) 가 현재 편집 중인 문서(${slug ?? '?'}) 와 다릅니다. 해당 문서로 이동해 다시 시도하세요.`,
         });
         window.location.href = '/mypage#mcp-submissions';
@@ -3410,7 +3410,7 @@ async function loadMcpSubmissionForConflict(submissionId: number): Promise<boole
         await window.Swal.fire({
             icon: 'warning',
             title: '에디터에서 처리할 수 없는 충돌',
-            text: '슬러그 충돌(신규 생성) 류 충돌은 에디터에서 해결할 수 없습니다. mypage 에서 거부하거나 다른 슬러그로 다시 시도하세요.',
+            text: '제목 충돌(신규 생성) 류 충돌은 에디터에서 해결할 수 없습니다. mypage 에서 거부하거나 다른 제목으로 다시 시도하세요.',
         });
         window.location.href = '/mypage#mcp-submissions';
         return false;
@@ -3583,7 +3583,7 @@ async function openSplitToSubdocModal(): Promise<void> {
                     <label for="splitSubdocTitle" class="form-label fw-bold">생성할 하위 문서 제목</label>
                     <input type="text" id="splitSubdocTitle" class="form-control"
                         value="${escapeHtml(defaultTitle)}" maxlength="100" autocomplete="off">
-                    <div class="form-text small text-muted">생성될 하위 문서의 슬러그(=제목)입니다. 이미 존재하는 문서 제목은 사용할 수 없습니다.</div>
+                    <div class="form-text small text-muted">생성될 하위 문서의 제목입니다. 이미 존재하는 문서 제목은 사용할 수 없습니다.</div>
                 </div>
                 <div class="mb-2">
                     <label for="splitLeaveBehind" class="form-label fw-bold">남길 내용</label>
