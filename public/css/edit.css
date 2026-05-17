@@ -1089,7 +1089,8 @@ html[data-theme="dark"] #concurrent-edit-banner {
 }
 
 /* Category Tag Autocomplete Dropdown */
-#category-autocomplete {
+#category-autocomplete,
+#bulkCatAutocomplete {
     position: fixed;
     z-index: 2100;
     background: var(--wiki-card-bg);
@@ -1100,7 +1101,13 @@ html[data-theme="dark"] #concurrent-edit-banner {
     overflow: hidden;
 }
 
-#category-autocomplete .list-group-item {
+/* SweetAlert2 모달(.swal2-container, z-index: 1060) 위로 자동완성을 띄우기 위함 */
+#bulkCatAutocomplete {
+    z-index: 2200;
+}
+
+#category-autocomplete .list-group-item,
+#bulkCatAutocomplete .list-group-item {
     background: transparent;
     color: var(--wiki-text);
     border: none;
@@ -1113,12 +1120,15 @@ html[data-theme="dark"] #concurrent-edit-banner {
     padding: 8px 12px;
 }
 
-#category-autocomplete .list-group-item:last-child {
+#category-autocomplete .list-group-item:last-child,
+#bulkCatAutocomplete .list-group-item:last-child {
     border-bottom: none;
 }
 
 #category-autocomplete .list-group-item:hover,
-#category-autocomplete .list-group-item.active {
+#category-autocomplete .list-group-item.active,
+#bulkCatAutocomplete .list-group-item:hover,
+#bulkCatAutocomplete .list-group-item.active {
     background-color: var(--wiki-bg);
     border-left: 3px solid var(--wiki-primary);
     padding-left: 9px;

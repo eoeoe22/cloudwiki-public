@@ -13,6 +13,54 @@ const wiki = new Hono<Env>();
 /** 슬러그에 사용할 수 없는 금지 문자 패턴 ({}, [] 는 트랜스클루전/위키링크 문법과 충돌) */
 export const SLUG_FORBIDDEN_CHARS = /[\[\]{}()#%|<>^\x00-\x1F\x7F]/;
 
+/** 대체 title 입력 금지 문자 — 제어문자만 차단. 슬러그와 달리 [], {}, # 등 특수문자 허용. */
+export const TITLE_FORBIDDEN_CHARS = /[\x00-\x1F\x7F]/;
+export const TITLE_MAX_LENGTH = 100;
+
+/**
+ * 클라이언트가 보낸 title 입력을 정규화한다.
+ * - undefined / null / 빈 문자열(공백 포함) → null
+ * - 그 외 → trim 된 문자열
+ */
+export function normalizeTitleInput(raw: unknown): string | null {
+    if (raw === null || raw === undefined) return null;
+    if (typeof raw !== 'string') return null;
+    const trimmed = raw.trim();
+    if (!trimmed) return null;
+    return trimmed;
+}
+
+/**
+ * candidate(슬러그 또는 title 후보) 가 다른 페이지의 slug 또는 title 과 충돌하는지 검사.
+ * 호출 경로는 항상 slug 만 매칭하지만, slug↔title / title↔title 동명이인이 존재하면
+ * 표시·검색 결과에서 혼란을 일으키므로 사전에 차단한다.
+ *
+ * 소프트 삭제 페이지도 포함해 검사한다 — `slug UNIQUE` 와 `idx_pages_title_unique`
+ * 부분 인덱스 모두 deleted_at 을 조건으로 두지 않기 때문이다. precheck 에서 빠뜨리면
+ * 이후 INSERT/UPDATE 가 SQLITE_CONSTRAINT 로 실패하면서 R2 리비전 등 부분 적용이 남는다.
+ *
+ * @param excludePageId 자기 자신의 page id (UPDATE 흐름) — null 이면 모든 행을 검사 (INSERT).
+ */
+export async function findConflictingPage(
+    db: D1Database,
+    candidate: string,
+    excludePageId: number | null,
+): Promise<{ slug: string; matchedColumn: 'slug' | 'title'; isDeleted: boolean } | null> {
+    const row = await db
+        .prepare(
+            `SELECT slug,
+                    CASE WHEN slug = ?1 THEN 'slug' ELSE 'title' END AS matched,
+                    deleted_at
+             FROM pages
+             WHERE (slug = ?1 OR title = ?1)
+               AND (?2 IS NULL OR id != ?2)
+             LIMIT 1`,
+        )
+        .bind(candidate, excludePageId)
+        .first<{ slug: string; matched: 'slug' | 'title'; deleted_at: number | null }>();
+    return row ? { slug: row.slug, matchedColumn: row.matched, isDeleted: !!row.deleted_at } : null;
+}
+
 // ── 커스텀 팔레트 파서 ──
 // PALETTES 환경변수(JSON 문자열)를 정규화된 팔레트 맵으로 변환.
 // 플랫 형태({bg,color})는 light/dark 공통 사용, 분리 형태({light,dark})는 각 모드별 적용.
@@ -1318,7 +1366,24 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
         redirect_to?: string;
         expected_version?: number;
         turnstileToken?: string;
+        title?: string | null;
     }>();
+
+    // 대체 title 검증 — slug 와 별개로 모든 특수문자 허용하되 제어문자만 차단.
+    // body 에 title 키가 명시되어 있을 때만 변경 의도로 해석한다. (undefined = 기존값 유지)
+    // 잘못된 타입(숫자/객체 등) 은 null 로 정규화 후 "기존 title 삭제" 로 처리되면 데이터가
+    // 조용히 손실되므로, title 키가 있을 때는 string | null 만 허용하고 그 외엔 400.
+    const hasTitleInBody = Object.prototype.hasOwnProperty.call(body, 'title');
+    if (hasTitleInBody && body.title !== null && typeof body.title !== 'string') {
+        return c.json({ error: '대체 제목은 문자열 또는 null 이어야 합니다.' }, 400);
+    }
+    const requestedTitle = hasTitleInBody ? normalizeTitleInput(body.title) : undefined;
+    if (requestedTitle && TITLE_FORBIDDEN_CHARS.test(requestedTitle)) {
+        return c.json({ error: '대체 제목에 제어문자는 사용할 수 없습니다.' }, 400);
+    }
+    if (requestedTitle && requestedTitle.length > TITLE_MAX_LENGTH) {
+        return c.json({ error: `대체 제목은 ${TITLE_MAX_LENGTH}자 이하여야 합니다.` }, 400);
+    }
 
     // Turnstile 검증
     if (c.env.TURNSTILE_SECRET_KEY) {
@@ -1405,9 +1470,35 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
     }
 
     const existing = await db
-        .prepare('SELECT id, version, is_locked, is_private, redirect_to, content, deleted_at FROM pages WHERE slug = ?')
+        .prepare('SELECT id, version, is_locked, is_private, redirect_to, content, deleted_at, title FROM pages WHERE slug = ?')
         .bind(slug)
-        .first<{ id: number; version: number; is_locked: number; is_private: number; redirect_to: string | null; content: string; deleted_at: number | null }>();
+        .first<{ id: number; version: number; is_locked: number; is_private: number; redirect_to: string | null; content: string; deleted_at: number | null; title: string | null }>();
+
+    // 신규 title 이 다른 페이지의 slug 또는 title 과 충돌하면 거부.
+    // (자기 자신의 slug 와 같은 값을 title 로 적는 것도 의미가 없으므로 차단된다 — 그 경우 그냥 title 을 비우면 동일 표시.)
+    // 소프트 삭제 행도 충돌로 인정 — UNIQUE 인덱스가 deleted_at 무관하게 강제하기 때문.
+    if (requestedTitle) {
+        const selfId = existing?.id ?? null;
+        const conflict = await findConflictingPage(db, requestedTitle, selfId);
+        if (conflict) {
+            const deletedSuffix = conflict.isDeleted ? ' (소프트 삭제 상태 — 관리자가 복원 또는 영구 삭제해야 재사용 가능)' : '';
+            const msg = conflict.matchedColumn === 'slug'
+                ? `'${requestedTitle}' 는 이미 다른 문서의 슬러그로 사용 중입니다.${deletedSuffix}`
+                : `'${requestedTitle}' 는 이미 다른 문서의 대체 제목으로 사용 중입니다.${deletedSuffix}`;
+            return c.json({ error: msg }, 409);
+        }
+    }
+
+    // 신규 슬러그 자체가 다른 문서의 title 과 충돌하는지 검사 (생성 흐름 한정).
+    // 기존 문서면 slug 자체는 바뀌지 않으므로 검사 불필요.
+    // (slug-slug 소프트 삭제 충돌은 기존 existing 분기에서 별도 안내 메시지로 처리.)
+    if (!existing) {
+        const slugTitleConflict = await findConflictingPage(db, slug, null);
+        if (slugTitleConflict && slugTitleConflict.matchedColumn === 'title') {
+            const deletedSuffix = slugTitleConflict.isDeleted ? ' (소프트 삭제 상태)' : '';
+            return c.json({ error: `'${slug}' 는 이미 다른 문서의 대체 제목과 같아 슬러그로 사용할 수 없습니다.${deletedSuffix}` }, 409);
+        }
+    }
 
     // 삭제된 문서는 권한자(admin:access)만 복원할 수 있고 일반 사용자의 편집은 불가.
     // 일반 사용자가 동일 슬러그로 새 문서를 만들지 못하도록 명시적으로 차단한다.
@@ -1524,15 +1615,32 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
         // 3. 페이지 업데이트 (pages.content는 R2-only가 아닐 때만 최신 본문 유지)
         const contentToStore = isR2Only ? '' : body.content;
         const metrics = computePageMetricsTracked(body.content, isR2Only);
-        await db
-            .prepare(
-                `UPDATE pages
-         SET content = ?, category = ?, is_locked = ?, is_private = ?, redirect_to = ?, last_revision_id = ?,
-             version = ?, rows = ?, characters = ?, updated_at = unixepoch()
-         WHERE id = ?`
-            )
-            .bind(contentToStore, body.category || null, finalIsLocked, finalIsPrivate, body.redirect_to || null, revisionId, newVersion, metrics.rows, metrics.characters, existing.id)
-            .run();
+        // title: body 에 명시된 경우만 변경(기존 유지). normalizeTitleInput 결과(null) 가
+        // 명시된 경우 NULL 로 저장돼 슬러그가 다시 표시 이름으로 노출된다.
+        const finalTitle = hasTitleInBody ? requestedTitle ?? null : existing.title;
+        try {
+            await db
+                .prepare(
+                    `UPDATE pages
+             SET content = ?, title = ?, category = ?, is_locked = ?, is_private = ?, redirect_to = ?, last_revision_id = ?,
+                 version = ?, rows = ?, characters = ?, updated_at = unixepoch()
+             WHERE id = ?`
+                )
+                .bind(contentToStore, finalTitle, body.category || null, finalIsLocked, finalIsPrivate, body.redirect_to || null, revisionId, newVersion, metrics.rows, metrics.characters, existing.id)
+                .run();
+        } catch (e: any) {
+            // UPDATE 실패 시 (예: title 의 idx_pages_title_unique race) 막 만든 리비전 / R2 객체를 정리해
+            // 고아 본문이 남지 않게 한다. UNIQUE 위반(SQLITE_CONSTRAINT) 은 409 로 매핑, 그 외는 500.
+            await db.prepare('DELETE FROM revisions WHERE id = ?').bind(revisionId).run().catch(() => {});
+            await c.env.MEDIA.delete(r2Key).catch(() => {});
+            const msg = String(e?.message || e);
+            if (/UNIQUE|constraint/i.test(msg) && /title/i.test(msg)) {
+                console.error('D1 page UPDATE failed due to title UNIQUE race:', e);
+                return c.json({ error: '대체 제목이 다른 문서와 충돌했습니다. 잠시 후 다시 시도해주세요.' }, 409);
+            }
+            console.error('D1 page UPDATE failed:', e);
+            return c.json({ error: '문서 저장에 실패했습니다. 잠시 후 다시 시도해주세요.' }, 500);
+        }
 
         // page_links, page_categories 갱신 (비동기)
         const linkCatStmts = buildLinkAndCategoryStatements(db, existing.id, body.content, body.category || null);
@@ -1617,12 +1725,28 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
         }
 
         const metrics = computePageMetricsTracked(body.content, isR2Only);
-        const pageResult = await db
-            .prepare(
-                'INSERT INTO pages (slug, content, category, is_locked, is_private, redirect_to, rows, characters) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-            )
-            .bind(slug, contentToStore, effectiveCategory, finalIsLocked, finalIsPrivate, body.redirect_to || null, metrics.rows, metrics.characters)
-            .run();
+        const newDocTitle = requestedTitle ?? null;
+        let pageResult;
+        try {
+            pageResult = await db
+                .prepare(
+                    'INSERT INTO pages (slug, title, content, category, is_locked, is_private, redirect_to, rows, characters) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+                )
+                .bind(slug, newDocTitle, contentToStore, effectiveCategory, finalIsLocked, finalIsPrivate, body.redirect_to || null, metrics.rows, metrics.characters)
+                .run();
+        } catch (e: any) {
+            // UNIQUE race (slug 의 UNIQUE 또는 idx_pages_title_unique) — precheck 와 INSERT 사이에
+            // 다른 요청이 같은 slug/title 을 가져간 경우. 500 대신 409 로 매핑해 클라이언트가 재시도 안내.
+            const msg = String(e?.message || e);
+            if (/UNIQUE|constraint/i.test(msg)) {
+                console.error('Page INSERT failed due to UNIQUE race:', e);
+                if (/title/i.test(msg)) {
+                    return c.json({ error: '대체 제목이 다른 문서와 충돌했습니다. 잠시 후 다시 시도해주세요.' }, 409);
+                }
+                return c.json({ error: '같은 슬러그의 문서가 동시에 생성되었습니다. 다시 시도해주세요.' }, 409);
+            }
+            throw e;
+        }
 
         const pageId = pageResult.meta.last_row_id;
 
@@ -2190,6 +2314,12 @@ wiki.post('/w/:slug/move', requireAdmin, async (c) => {
         return c.json({ error: '새 문서 이름을 입력해주세요.' }, 400);
     }
 
+    // 동일 슬러그로의 no-op 이동 차단. findConflictingPage 는 page.id 를 제외하므로 자기 자신을
+    // 잡아내지 않아, 그대로 두면 admin_log 와 백링크 재작성이 무의미하게 실행된다.
+    if (trimmedNewSlug === currentSlug) {
+        return c.json({ error: '새 문서 이름이 기존 이름과 동일합니다.' }, 400);
+    }
+
     // 보안: 슬러그 금지 문자 점검
     if (SLUG_FORBIDDEN_CHARS.test(trimmedNewSlug)) {
         return c.json({ error: '슬러그에 사용할 수 없는 특수문자가 포함되어 있습니다.' }, 400);
@@ -2208,16 +2338,21 @@ wiki.post('/w/:slug/move', requireAdmin, async (c) => {
         return c.json({ error: '네임스페이스가 있는 문서는 다른 네임스페이스로 이동할 수 없습니다.' }, 400);
     }
 
-    // new_slug validation logic same as create (e.g. valid chars) - skip for brevity or assume client sends valid slug
-    // Check if target exists
-    const targetExists = await db.prepare('SELECT id FROM pages WHERE slug = ? AND deleted_at IS NULL').bind(trimmedNewSlug).first();
-    if (targetExists) {
-        return c.json({ error: '이미 존재하는 문서 이름입니다.' }, 409);
-    }
-
+    // 페이지 먼저 조회 — 충돌 검사에서 자기 자신을 제외해야 한다 (rename to same slug 등 idempotent 호출 안전망).
     const page = await db.prepare('SELECT id, category, is_locked, is_private FROM pages WHERE slug = ? AND deleted_at IS NULL').bind(currentSlug).first<{ id: number, category: string | null, is_locked: number, is_private: number }>();
     if (!page) {
         return c.json({ error: '문서를 찾을 수 없습니다.' }, 404);
+    }
+
+    // new_slug 가 다른 페이지의 slug 또는 title 과 충돌하는지 검사.
+    // 소프트 삭제 행도 포함 — pages.slug UNIQUE 와 idx_pages_title_unique 둘 다 deleted_at 무관하게 강제.
+    const moveConflict = await findConflictingPage(db, trimmedNewSlug, page.id);
+    if (moveConflict) {
+        const deletedSuffix = moveConflict.isDeleted ? ' (소프트 삭제 상태)' : '';
+        const msg = moveConflict.matchedColumn === 'slug'
+            ? `이미 존재하는 문서 이름입니다.${deletedSuffix}`
+            : `'${trimmedNewSlug}' 는 이미 다른 문서의 대체 제목과 같아 사용할 수 없습니다.${deletedSuffix}`;
+        return c.json({ error: msg }, 409);
     }
 
     if (page.is_private === 1 && !rbac.can(user.role, 'wiki:private')) {
@@ -2228,10 +2363,19 @@ wiki.post('/w/:slug/move', requireAdmin, async (c) => {
         return c.json({ error: '잠긴 문서는 관리자만 이동할 수 있습니다.' }, 403);
     }
 
-    // Update Page Slug (slug 가 곧 표시 이름이므로 별도 title 업데이트 불필요)
-    await db.prepare('UPDATE pages SET slug = ? WHERE id = ?')
-        .bind(trimmedNewSlug, page.id)
-        .run();
+    // Update Page Slug — pages_slug_vs_title_update / slug UNIQUE 트리거가 race 를 잡으면 409.
+    try {
+        await db.prepare('UPDATE pages SET slug = ? WHERE id = ?')
+            .bind(trimmedNewSlug, page.id)
+            .run();
+    } catch (e: any) {
+        const msg = String(e?.message || e);
+        if (/UNIQUE|constraint/i.test(msg)) {
+            console.error('Page slug UPDATE failed due to UNIQUE race:', e);
+            return c.json({ error: '새 슬러그가 다른 문서와 충돌합니다. 다시 시도해주세요.' }, 409);
+        }
+        throw e;
+    }
 
     // 자동 카테고리 prefix 룰: 새 slug 가 룰에 매칭되면 카테고리 합집합 적용
     try {

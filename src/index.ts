@@ -829,16 +829,22 @@ ${contentBlock}
             if (page.is_private !== 1 && !sourceWasPrivate) {
                 trackPageView(c, page.slug, Date.now() - startTime);
             }
-            const title = `${page.slug} - ${wikiName}`;
+            // 표시 이름은 title 우선, 호출/공식 식별자는 slug. 둘 다 크롤러에 노출해 검색 색인성 유지.
+            const displayName = page.title || page.slug;
+            const title = `${displayName} - ${wikiName}`;
             const aiText = page.content ? await renderForAI(page.content, db, 0, page.slug) : '';
             const redirectedNote = redirectedFrom
                 ? `<p><em>${escapeHtml(redirectedFrom)} 에서 자동으로 넘어왔습니다.</em></p>`
+                : '';
+            const slugLine = page.title
+                ? `<p><small>슬러그: <code>${escapeHtml(page.slug)}</code></small></p>`
                 : '';
             const contentBlock = aiText
                 ? `<pre>${escapeHtml(aiText)}</pre>`
                 : '<p><em>본문이 비어있습니다.</em></p>';
             const body = `<article>
-<h1>${escapeHtml(page.slug)}</h1>
+<h1>${escapeHtml(displayName)}</h1>
+${slugLine}
 ${redirectedNote}
 ${contentBlock}
 </article>`;
@@ -859,7 +865,8 @@ ${contentBlock}
             ...safeJSON({ ...page, redirected_from: redirectedFrom }),
             _ssrSlug: slug,
             _ssrNotFound: false,
-            _ssrTitle: `${page.slug} - ${wikiName}`,
+            // title 이 있으면 표시용 제목으로 사용. 호출 식별자(URL, og:url 등)는 슬러그.
+            _ssrTitle: `${page.title || page.slug} - ${wikiName}`,
             _ssrDescription: desc,
         };
     }

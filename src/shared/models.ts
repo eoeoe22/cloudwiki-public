@@ -38,6 +38,7 @@ export interface Session {
 export interface Page {
     id: number;
     slug: string;
+    title: string | null;
     content: string;
     category: string | null;
     redirect_to: string | null;

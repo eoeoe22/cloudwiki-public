@@ -116,11 +116,16 @@
                     sugBox.innerHTML = '';
                     return;
                 }
-                sugBox.innerHTML = items.map((item, i) =>
-                    '<li class="search-suggestion-item" data-slug="' + escapeHtml(item.slug) + '">'
-                    + '<i class="mdi mdi-file-document-outline"></i> '
-                    + escapeHtml(item.slug) + '</li>'
-                ).join('');
+                // item.title 이 있으면 표시 이름은 그것을, 호출 식별자(data-slug, /w/) 는 항상 slug.
+                sugBox.innerHTML = items.map((item, i) => {
+                    const displayName = item.title || item.slug;
+                    const slugSubLabel = item.title
+                        ? ' <small class="text-muted">' + escapeHtml(item.slug) + '</small>'
+                        : '';
+                    return '<li class="search-suggestion-item" data-slug="' + escapeHtml(item.slug) + '">'
+                        + '<i class="mdi mdi-file-document-outline"></i> '
+                        + escapeHtml(displayName) + slugSubLabel + '</li>';
+                }).join('');
                 sugBox.classList.add('show');
 
                 sugBox.querySelectorAll('.search-suggestion-item').forEach(el => {

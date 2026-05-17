@@ -38,6 +38,10 @@ import { ensureMcpDraftsMigration } from '../utils/mcpDraftsMigration';
 import { createNotification } from '../utils/notification';
 import {
     SLUG_FORBIDDEN_CHARS,
+    TITLE_FORBIDDEN_CHARS,
+    TITLE_MAX_LENGTH,
+    normalizeTitleInput,
+    findConflictingPage,
     computePageMetricsTracked,
     buildLinkAndCategoryStatements,
     rewriteContentForRename,
@@ -115,12 +119,13 @@ export const USER_EDIT_TOOL_DEFS: McpToolDef[] = [
         inputSchema: {
             type: 'object',
             properties: {
-                title: { type: 'string', description: '문서 슬러그(=제목)' },
+                title: { type: 'string', description: '문서 슬러그 (호출/식별자)' },
                 content: { type: 'string', description: '문서 전체 본문 (마크다운/위키 문법)' },
                 category: { type: 'string', description: '쉼표로 구분된 카테고리 (선택, 한글/영숫자/공백/쉼표만 허용)' },
                 is_locked: { type: 'boolean', description: '관리자 전용 잠금 여부 (선택)' },
                 redirect_to: { type: 'string', description: '리다이렉트 대상 슬러그 (선택)' },
-                create_only: { type: 'boolean', description: 'true 시 슬러그가 이미 존재하면 오류 반환 (기본 false)' }
+                create_only: { type: 'boolean', description: 'true 시 슬러그가 이미 존재하면 오류 반환 (기본 false)' },
+                display_title: { type: ['string', 'null'], description: '표시 전용 대체 제목 (선택). 슬러그와 달리 모든 특수문자 허용. null/빈 문자열이면 제거. 호출 매칭에는 사용되지 않으며 위키 링크/트랜스클루전/MCP 인자는 항상 슬러그(title 파라미터)를 사용합니다.' }
             },
             required: ['title', 'content']
         }
@@ -540,12 +545,13 @@ export async function dispatchAdminReadTool(c: Context<Env>, user: User, toolNam
 export async function applyExistingPageUpdate(
     c: Context<Env>,
     user: User,
-    page: { id: number; version: number; is_locked: number; category: string | null },
+    page: { id: number; version: number; is_locked: number; category: string | null; title?: string | null },
     content: string,
     opts: {
         summary: string | null;
         category?: string | null;     // undefined → 기존 유지, null/string → 덮어쓰기
         redirectTo?: string | null;   // undefined → 기존 유지, null/string → 덮어쓰기
+        title?: string | null;        // undefined → 기존 유지, null → 제거, string → 설정. 호출자가 사전 충돌 검증을 마쳤다고 가정.
         finalIsLocked: number;
         slug: string;
         logType?: string;             // admin_log type (예: page_update / page_patch / page_revert) — 생략 시 로그 없음
@@ -573,31 +579,41 @@ export async function applyExistingPageUpdate(
 
     const contentToStore = isR2Only ? '' : content;
     const categoryValue = opts.category === undefined ? page.category : opts.category;
+    // title: opts.title 가 누락되면 기존 값을 그대로 유지해야 한다. page 인자에 title 이 포함되지 않은
+    // 호출자(예: revert_page) 도 안전하도록 SET 절 자체를 조건부로 구성한다 — page.title 을
+    // 비신뢰적으로 (undefined → null) 폴백하면 매 revert 마다 대체 제목이 조용히 지워진다.
+    const setClauses: string[] = ['content = ?', 'category = ?'];
+    const bindings: unknown[] = [contentToStore, categoryValue];
+    if (opts.title !== undefined) {
+        setClauses.push('title = ?');
+        bindings.push(opts.title);
+    }
+    setClauses.push('is_locked = ?');
+    bindings.push(opts.finalIsLocked);
+    if (opts.redirectTo !== undefined) {
+        setClauses.push('redirect_to = ?');
+        bindings.push(opts.redirectTo);
+    }
+    setClauses.push('last_revision_id = ?', 'version = ?', 'rows = ?', 'characters = ?', 'updated_at = unixepoch()');
+    bindings.push(revisionId, newVersion, metrics.rows, metrics.characters);
+    bindings.push(page.id, page.version);
+
     // 옵티미스틱 락(CAS): 호출자가 SELECT 한 시점의 version 과 일치할 때만 UPDATE.
     // 이 사이 다른 커밋이 들어와 version 이 올라갔으면 0행 변경되며, 우리는 막 만든
     // revision 과 R2 객체를 정리하고 CONCURRENT_MODIFICATION 으로 던진다 — 호출자가
     // 충돌 응답으로 변환한다. wiki.ts 의 PUT /w/:slug 도 동일하게 version-CAS 를 사용.
+    // UPDATE 자체가 throw 하는 경우(예: title 의 idx_pages_title_unique race) 도 동일하게
+    // 막 만든 리비전 / R2 객체를 청소한 뒤 에러를 재던져 호출자가 적절한 응답으로 매핑하게 한다.
     let updResult: D1Result;
-    if (opts.redirectTo === undefined) {
+    try {
         updResult = await db
-            .prepare(
-                `UPDATE pages
-                 SET content = ?, category = ?, is_locked = ?, last_revision_id = ?,
-                     version = ?, rows = ?, characters = ?, updated_at = unixepoch()
-                 WHERE id = ? AND version = ?`
-            )
-            .bind(contentToStore, categoryValue, opts.finalIsLocked, revisionId, newVersion, metrics.rows, metrics.characters, page.id, page.version)
+            .prepare(`UPDATE pages SET ${setClauses.join(', ')} WHERE id = ? AND version = ?`)
+            .bind(...bindings)
             .run();
-    } else {
-        updResult = await db
-            .prepare(
-                `UPDATE pages
-                 SET content = ?, category = ?, is_locked = ?, redirect_to = ?, last_revision_id = ?,
-                     version = ?, rows = ?, characters = ?, updated_at = unixepoch()
-                 WHERE id = ? AND version = ?`
-            )
-            .bind(contentToStore, categoryValue, opts.finalIsLocked, opts.redirectTo, revisionId, newVersion, metrics.rows, metrics.characters, page.id, page.version)
-            .run();
+    } catch (e) {
+        await db.prepare('DELETE FROM revisions WHERE id = ?').bind(revisionId).run().catch(() => {});
+        await c.env.MEDIA.delete(r2Key).catch(() => {});
+        throw e;
     }
     if (!updResult.meta.changes) {
         // 동시 수정으로 CAS 실패 — 막 만든 리비전과 R2 객체를 청소.
@@ -639,6 +655,7 @@ export async function applyNewPageInsert(
         category: string | null;
         redirectTo: string | null;
         finalIsLocked: number;
+        title?: string | null;        // 호출자가 사전 충돌 검증을 마쳤다고 가정. 누락 시 NULL.
         logType?: string;
         logMessage?: string;
     }
@@ -649,10 +666,24 @@ export async function applyNewPageInsert(
     const metrics = computePageMetricsTracked(content, isR2Only);
     const contentToStore = isR2Only ? '' : content;
 
-    const pageResult = await db
-        .prepare('INSERT INTO pages (slug, content, category, is_locked, redirect_to, rows, characters) VALUES (?, ?, ?, ?, ?, ?, ?)')
-        .bind(slug, contentToStore, opts.category, opts.finalIsLocked, opts.redirectTo, metrics.rows, metrics.characters)
-        .run();
+    let pageResult;
+    try {
+        pageResult = await db
+            .prepare('INSERT INTO pages (slug, title, content, category, is_locked, redirect_to, rows, characters) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+            .bind(slug, opts.title ?? null, contentToStore, opts.category, opts.finalIsLocked, opts.redirectTo, metrics.rows, metrics.characters)
+            .run();
+    } catch (e: any) {
+        // UNIQUE race: precheck ~ INSERT 사이에 다른 요청이 같은 slug/title 을 점유.
+        // 호출자(commit_edit / submission approve) 가 409 형태로 매핑하도록 code 태깅.
+        const msg = String(e?.message || e);
+        if (/UNIQUE|constraint/i.test(msg)) {
+            const err: any = new Error(/title/i.test(msg) ? 'TITLE_TAKEN' : 'SLUG_TAKEN');
+            err.code = /title/i.test(msg) ? 'TITLE_TAKEN' : 'SLUG_TAKEN';
+            err.dbMessage = msg;
+            throw err;
+        }
+        throw e;
+    }
     const pageId = pageResult.meta.last_row_id;
 
     let firstR2Key: string;
@@ -845,10 +876,49 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
         const requestedLock = typeof args.is_locked === 'boolean' ? (args.is_locked ? 1 : 0) : null;
         const createOnly = args.create_only === true;
 
+        // 대체 표시 제목(display_title): args 에 키가 명시되어 있을 때만 변경 의도로 해석. (undefined = 기존 유지)
+        // MCP 컨벤션 상 args.title 은 슬러그를 가리키므로, 표시용 대체 제목은 별도의 display_title 키로 받는다.
+        // 잘못된 타입은 string|null 외 모두 거부 — 조용한 데이터 손실(null 로 정규화 후 삭제) 방지.
+        const hasTitleChange = Object.prototype.hasOwnProperty.call(args, 'display_title');
+        if (hasTitleChange && args.display_title !== null && typeof args.display_title !== 'string') {
+            return asTextResult('Error: display_title 은 문자열 또는 null 이어야 합니다.', true);
+        }
+        const requestedTitle = hasTitleChange ? normalizeTitleInput(args.display_title) : null;
+        if (hasTitleChange && requestedTitle !== null) {
+            if (TITLE_FORBIDDEN_CHARS.test(requestedTitle)) {
+                return asTextResult('Error: 대체 제목에 제어문자는 사용할 수 없습니다.', true);
+            }
+            if (requestedTitle.length > TITLE_MAX_LENGTH) {
+                return asTextResult(`Error: 대체 제목은 ${TITLE_MAX_LENGTH}자 이하여야 합니다.`, true);
+            }
+        }
+
         const existing = await db
-            .prepare('SELECT id, version, is_locked, last_revision_id, category FROM pages WHERE slug = ? AND deleted_at IS NULL')
+            .prepare('SELECT id, version, is_locked, last_revision_id, category, title FROM pages WHERE slug = ? AND deleted_at IS NULL')
             .bind(slug)
-            .first<{ id: number; version: number; is_locked: number; last_revision_id: number | null; category: string | null }>();
+            .first<{ id: number; version: number; is_locked: number; last_revision_id: number | null; category: string | null; title: string | null }>();
+
+        // 신규 title 이 다른 페이지의 slug 또는 title 과 충돌하면 거부. 소프트 삭제 행도 포함.
+        if (hasTitleChange && requestedTitle) {
+            const selfId = existing?.id ?? null;
+            const conflict = await findConflictingPage(db, requestedTitle, selfId);
+            if (conflict) {
+                const deletedSuffix = conflict.isDeleted ? ' (소프트 삭제 상태 — 관리자 복원 또는 영구 삭제 필요)' : '';
+                const msg = conflict.matchedColumn === 'slug'
+                    ? `Error: '${requestedTitle}' 는 이미 다른 문서의 슬러그로 사용 중입니다.${deletedSuffix}`
+                    : `Error: '${requestedTitle}' 는 이미 다른 문서의 대체 제목으로 사용 중입니다.${deletedSuffix}`;
+                return asTextResult(msg, true);
+            }
+        }
+
+        // 신규 슬러그가 다른 문서의 title 과 충돌하는지 검사 (생성 흐름 한정).
+        if (!existing) {
+            const slugTitleConflict = await findConflictingPage(db, slug, null);
+            if (slugTitleConflict && slugTitleConflict.matchedColumn === 'title') {
+                const deletedSuffix = slugTitleConflict.isDeleted ? ' (소프트 삭제 상태)' : '';
+                return asTextResult(`Error: '${slug}' 는 이미 다른 문서의 대체 제목과 같아 슬러그로 사용할 수 없습니다.${deletedSuffix}`, true);
+            }
+        }
 
         if (existing && createOnly) {
             return asTextResult('Error: 이미 존재하는 문서입니다. 수정하려면 create_only 를 false 로 설정하거나 patch_page 를 사용하세요.', true);
@@ -890,19 +960,35 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
             return asTextResult('Error: 이 draft 는 이미 승인 대기로 제출된 상태입니다. 사용자가 mypage 에서 승인/거부할 때까지 수정할 수 없습니다. 폐기하려면 discard_edit 를 사용하세요.', true);
         }
 
+        // draft 단계의 title 저장: hasTitleChange 가 true 일 때만 적용. (false 면 commit 시점에 페이지 기존 title 유지)
+        // 기존 draft 갱신 시 display_title 키가 누락된 호출은 이전에 스테이지된 title 변경을 그대로
+        // 보존해야 한다 — 후속 patch/edit 호출에서 title 의도가 조용히 지워지는 문제를 막는다.
+        const draftHasTitleChange = hasTitleChange ? 1 : 0;
+        const draftTitleValue = hasTitleChange ? requestedTitle : null;
+
         let draftId: number;
         if (existingDraft) {
-            await db.prepare(
-                `UPDATE mcp_drafts
-                 SET content = ?, category = ?, redirect_to = ?, requested_lock = ?, updated_at = unixepoch()
-                 WHERE id = ?`
-            ).bind(content, category, redirectTo, requestedLock, existingDraft.id).run();
+            if (hasTitleChange) {
+                await db.prepare(
+                    `UPDATE mcp_drafts
+                     SET content = ?, category = ?, redirect_to = ?, requested_lock = ?,
+                         title = ?, has_title_change = ?, updated_at = unixepoch()
+                     WHERE id = ?`
+                ).bind(content, category, redirectTo, requestedLock, draftTitleValue, draftHasTitleChange, existingDraft.id).run();
+            } else {
+                // display_title 미지정: 기존 draft 의 title / has_title_change 그대로 유지.
+                await db.prepare(
+                    `UPDATE mcp_drafts
+                     SET content = ?, category = ?, redirect_to = ?, requested_lock = ?, updated_at = unixepoch()
+                     WHERE id = ?`
+                ).bind(content, category, redirectTo, requestedLock, existingDraft.id).run();
+            }
             draftId = existingDraft.id;
         } else {
             const ins = await db.prepare(
-                `INSERT INTO mcp_drafts (user_id, slug, action, base_revision_id, base_version, content, category, redirect_to, requested_lock)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-            ).bind(user.id, slug, action, baseRevisionId, baseVersion, content, category, redirectTo, requestedLock).run();
+                `INSERT INTO mcp_drafts (user_id, slug, action, base_revision_id, base_version, content, category, redirect_to, requested_lock, title, has_title_change)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+            ).bind(user.id, slug, action, baseRevisionId, baseVersion, content, category, redirectTo, requestedLock, draftTitleValue, draftHasTitleChange).run();
             draftId = ins.meta.last_row_id;
         }
 
@@ -1114,12 +1200,13 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
 
         const draft = await db.prepare(
             `SELECT id, user_id, slug, action, base_revision_id, base_version,
-                    content, category, redirect_to, requested_lock, submitted_at
+                    content, category, redirect_to, requested_lock, title, has_title_change, submitted_at
              FROM mcp_drafts WHERE id = ?`
         ).bind(draftId).first<{
             id: number; user_id: number; slug: string; action: string;
             base_revision_id: number | null; base_version: number; content: string;
             category: string | null; redirect_to: string | null; requested_lock: number | null;
+            title: string | null; has_title_change: number;
             submitted_at: number | null;
         }>();
         if (!draft) return asTextResult('Error: draft 를 찾을 수 없습니다 (이미 commit/discard 됐거나 12시간 TTL 만료).', true);
@@ -1137,8 +1224,8 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
 
         if (draft.action === 'update') {
             const page = await db.prepare(
-                'SELECT id, version, is_locked, content, category, last_revision_id FROM pages WHERE slug = ? AND deleted_at IS NULL'
-            ).bind(slug).first<{ id: number; version: number; is_locked: number; content: string; category: string | null; last_revision_id: number | null }>();
+                'SELECT id, version, is_locked, content, category, last_revision_id, title FROM pages WHERE slug = ? AND deleted_at IS NULL'
+            ).bind(slug).first<{ id: number; version: number; is_locked: number; content: string; category: string | null; last_revision_id: number | null; title: string | null }>();
             if (!page) {
                 return asTextResult(JSON.stringify({
                     error: 'conflict',
@@ -1159,6 +1246,22 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
             }
             if (page.is_locked === 1 && !rbac.can(user.role, 'wiki:lock')) {
                 return asTextResult('Error: 잠긴 문서는 wiki:lock 권한이 있어야 편집할 수 있습니다.', true);
+            }
+
+            // draft 가 title 변경을 요청한 경우, 즉시 커밋 시점에 다른 페이지가 그 title 을
+            // 이미 가져갔는지 재검증 — idx_pages_title_unique UNIQUE 위반으로 R2/revision 쓰기 후
+            // 무특정 실패가 나는 것을 방지.
+            if (draft.has_title_change && draft.title) {
+                const titleConflict = await findConflictingPage(db, draft.title, page.id);
+                if (titleConflict) {
+                    const deletedSuffix = titleConflict.isDeleted ? ' (소프트 삭제 상태)' : '';
+                    return asTextResult(
+                        titleConflict.matchedColumn === 'slug'
+                            ? `Error: '${draft.title}' 는 이미 다른 문서의 슬러그입니다.${deletedSuffix}`
+                            : `Error: '${draft.title}' 는 이미 다른 문서의 대체 제목입니다.${deletedSuffix}`,
+                        true,
+                    );
+                }
             }
 
             const finalIsLocked = draft.requested_lock !== null
@@ -1218,11 +1321,16 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
                 }, null, 2));
             }
 
+            // draft.has_title_change=1 일 때만 title 변경 의도 — 그 외에는 undefined 로 둬 기존 값 유지.
+            // 제출 시점에 검증한 충돌 검사는 draft 시점이라 commit 직전에 다른 페이지가 같은 title 을 가져갔을
+            // 가능성이 있다 — 그 경우 D1 의 idx_pages_title_unique 부분 인덱스가 UNIQUE 위반을 던지며
+            // applyExistingPageUpdate 의 catch (CONCURRENT_MODIFICATION 외 경로) 가 실패로 표면화한다.
             try {
                 const result = await applyExistingPageUpdate(c, user, page, draft.content, {
                     summary: summaryWithDiff,
                     category: draft.category,
                     redirectTo: draft.redirect_to,
+                    title: draft.has_title_change ? draft.title : undefined,
                     finalIsLocked,
                     slug,
                 });
@@ -1273,6 +1381,27 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
                 );
             }
 
+            // 신규 슬러그 자체 또는 draft 가 변경 요청한 title 이 다른 페이지와 충돌하는지 재검증.
+            // (draft 작성 시점 검사만으로는 race 를 막을 수 없고 UNIQUE 위반으로 무특정 500 이 나올 수 있다.)
+            const slugTitleConflict = await findConflictingPage(db, slug, null);
+            if (slugTitleConflict && slugTitleConflict.matchedColumn === 'title') {
+                return asTextResult(
+                    `Error: '${slug}' 는 다른 문서의 대체 제목과 충돌해 슬러그로 사용할 수 없습니다.`,
+                    true,
+                );
+            }
+            if (draft.has_title_change && draft.title) {
+                const titleConflict = await findConflictingPage(db, draft.title, null);
+                if (titleConflict) {
+                    return asTextResult(
+                        titleConflict.matchedColumn === 'slug'
+                            ? `Error: '${draft.title}' 는 이미 다른 문서의 슬러그입니다.`
+                            : `Error: '${draft.title}' 는 이미 다른 문서의 대체 제목입니다.`,
+                        true,
+                    );
+                }
+            }
+
             const finalIsLocked = (draft.requested_lock !== null && rbac.can(user.role, 'wiki:lock'))
                 ? draft.requested_lock : 0;
 
@@ -1306,6 +1435,7 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
                     summary: createSummaryWithDiff,
                     category: draft.category,
                     redirectTo: draft.redirect_to,
+                    title: draft.has_title_change ? draft.title : null,
                     finalIsLocked,
                 });
                 await db.prepare('DELETE FROM mcp_drafts WHERE id = ?').bind(draft.id).run();
@@ -1321,6 +1451,21 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
                     draft_id: draft.id,
                 }, null, 2));
             } catch (e: any) {
+                // precheck 와 INSERT 사이의 UNIQUE race 를 명시적 conflict 로 매핑.
+                if (e?.code === 'SLUG_TAKEN') {
+                    return asTextResult(JSON.stringify({
+                        error: 'conflict',
+                        reason: 'slug_taken',
+                        message: '동일 슬러그의 문서가 동시에 생성되었습니다. discard_edit 후 read_document 로 확인하세요.',
+                    }, null, 2), true);
+                }
+                if (e?.code === 'TITLE_TAKEN') {
+                    return asTextResult(JSON.stringify({
+                        error: 'conflict',
+                        reason: 'title_taken',
+                        message: '같은 대체 제목이 동시에 다른 문서에 등록되었습니다. 다시 시도하세요.',
+                    }, null, 2), true);
+                }
                 return asTextResult(`Error: 신규 페이지 저장 실패 (${e?.message || e})`, true);
             }
         }
@@ -1526,8 +1671,15 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
             return asTextResult('Error: 잠긴 문서는 wiki:lock 권한이 있어야 이동할 수 있습니다.', true);
         }
 
-        const conflict = await db.prepare('SELECT id FROM pages WHERE slug = ? AND deleted_at IS NULL').bind(newSlug).first();
-        if (conflict) return asTextResult('Error: 새 슬러그가 이미 존재합니다.', true);
+        // 새 슬러그가 다른 문서의 slug 또는 title 과 충돌하는지 검사. 소프트 삭제 행도 포함.
+        const moveConflict = await findConflictingPage(db, newSlug, page.id);
+        if (moveConflict) {
+            const deletedSuffix = moveConflict.isDeleted ? ' (소프트 삭제 상태)' : '';
+            const msg = moveConflict.matchedColumn === 'slug'
+                ? `Error: 새 슬러그가 이미 존재합니다.${deletedSuffix}`
+                : `Error: '${newSlug}' 는 이미 다른 문서의 대체 제목과 같아 사용할 수 없습니다.${deletedSuffix}`;
+            return asTextResult(msg, true);
+        }
 
         const enabledExt = (c.env.ENABLED_EXTENSIONS || '').split(',').map((s: string) => s.trim()).filter(Boolean);
         const isR2Only = isR2OnlyNamespace(oldSlug, enabledExt);
@@ -1545,25 +1697,40 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
         let newVersion = page.version;
         let newRevisionId = page.last_revision_id;
 
-        if (contentChanged) {
-            newVersion = page.version + 1;
-            const r2Key = await uploadRevisionToR2(c.env.MEDIA, page.id, newVersion, rewritten);
-            const revResult = await db
-                .prepare('INSERT INTO revisions (page_id, page_version, content, r2_key, summary, author_id) VALUES (?, ?, ?, ?, ?, ?)')
-                .bind(page.id, newVersion, '', r2Key, withMcpPrefix(`[move] ${oldSlug} → ${newSlug}`), user.id)
-                .run();
-            newRevisionId = revResult.meta.last_row_id;
-            const newIsR2Only = isR2OnlyNamespace(newSlug, enabledExt);
-            const contentToStore = newIsR2Only ? '' : rewritten;
-            const metrics = computePageMetricsTracked(rewritten, newIsR2Only);
-            await db
-                .prepare('UPDATE pages SET slug = ?, content = ?, last_revision_id = ?, version = ?, rows = ?, characters = ?, updated_at = unixepoch() WHERE id = ?')
-                .bind(newSlug, contentToStore, newRevisionId, newVersion, metrics.rows, metrics.characters, page.id)
-                .run();
-            const linkCatStmts = buildLinkAndCategoryStatements(db, page.id, rewritten, page.category);
-            c.executionCtx.waitUntil(db.batch(linkCatStmts).catch(e => console.error('admin-mcp move link/cat batch failed:', e)));
-        } else {
-            await db.prepare('UPDATE pages SET slug = ?, updated_at = unixepoch() WHERE id = ?').bind(newSlug, page.id).run();
+        try {
+            if (contentChanged) {
+                newVersion = page.version + 1;
+                const r2Key = await uploadRevisionToR2(c.env.MEDIA, page.id, newVersion, rewritten);
+                const revResult = await db
+                    .prepare('INSERT INTO revisions (page_id, page_version, content, r2_key, summary, author_id) VALUES (?, ?, ?, ?, ?, ?)')
+                    .bind(page.id, newVersion, '', r2Key, withMcpPrefix(`[move] ${oldSlug} → ${newSlug}`), user.id)
+                    .run();
+                newRevisionId = revResult.meta.last_row_id;
+                const newIsR2Only = isR2OnlyNamespace(newSlug, enabledExt);
+                const contentToStore = newIsR2Only ? '' : rewritten;
+                const metrics = computePageMetricsTracked(rewritten, newIsR2Only);
+                try {
+                    await db
+                        .prepare('UPDATE pages SET slug = ?, content = ?, last_revision_id = ?, version = ?, rows = ?, characters = ?, updated_at = unixepoch() WHERE id = ?')
+                        .bind(newSlug, contentToStore, newRevisionId, newVersion, metrics.rows, metrics.characters, page.id)
+                        .run();
+                } catch (e) {
+                    // 트리거/UNIQUE 위반 시 막 만든 리비전 + R2 객체 정리.
+                    await db.prepare('DELETE FROM revisions WHERE id = ?').bind(newRevisionId).run().catch(() => {});
+                    await c.env.MEDIA.delete(r2Key).catch(() => {});
+                    throw e;
+                }
+                const linkCatStmts = buildLinkAndCategoryStatements(db, page.id, rewritten, page.category);
+                c.executionCtx.waitUntil(db.batch(linkCatStmts).catch(e => console.error('admin-mcp move link/cat batch failed:', e)));
+            } else {
+                await db.prepare('UPDATE pages SET slug = ?, updated_at = unixepoch() WHERE id = ?').bind(newSlug, page.id).run();
+            }
+        } catch (e: any) {
+            const msg = String(e?.message || e);
+            if (/UNIQUE|constraint/i.test(msg)) {
+                return asTextResult('Error: 새 슬러그가 다른 문서와 충돌합니다. 다시 시도해주세요.', true);
+            }
+            throw e;
         }
 
         const updatedSlugs: string[] = [];

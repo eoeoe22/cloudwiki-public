@@ -178,8 +178,10 @@ search.get('/search', async (c) => {
     // case-insensitive 대조는 클라이언트가 결과 페이지 슬러그를 toLowerCase() 로 보조 검사한다.
     const privateFilter = canSeePrivate ? '' : ' AND is_private = 0';
     const exactMatchVisibility = (isAdmin ? '' : ' AND deleted_at IS NULL') + privateFilter;
+    // 정확 일치는 슬러그 OR 대체 제목 양쪽에서 검사한다. title 만 일치하는 경우에도 "새 문서 만들기"
+    // CTA 가 노출되면 사용자가 클릭해도 서버가 409(slug↔title 충돌) 로 거부하므로 일관성 깨짐.
     const exactMatchRow = await db
-        .prepare(`SELECT 1 FROM pages WHERE slug = ?${exactMatchVisibility} LIMIT 1`)
+        .prepare(`SELECT 1 FROM pages WHERE (slug = ?1 OR title = ?1)${exactMatchVisibility} LIMIT 1`)
         .bind(trimmedQuery)
         .first();
     const exactMatch = !!exactMatchRow;
@@ -219,25 +221,30 @@ search.get('/search', async (c) => {
         const likePattern = `%${likeEscaped}%`;
 
         const totalRow = await db
-            .prepare(`SELECT COUNT(*) as total FROM pages WHERE (slug LIKE ? ESCAPE '\\' OR content LIKE ? ESCAPE '\\')${visibility}`)
-            .bind(likePattern, likePattern)
+            .prepare(`SELECT COUNT(*) as total FROM pages WHERE (slug LIKE ? ESCAPE '\\' OR title LIKE ? ESCAPE '\\' OR content LIKE ? ESCAPE '\\')${visibility}`)
+            .bind(likePattern, likePattern, likePattern)
             .first<{ total: number }>();
         const total = totalRow?.total ?? 0;
         const { page, offset } = clampPage(total);
 
-        // 슬러그 LIKE 매치를 본문 매치보다 우선해 정렬한다.
+        // 슬러그 LIKE 매치를 가장 우선, 다음 title 매치, 마지막 본문 매치로 정렬한다.
         // 스니펫을 직접 만들기 위해 content도 함께 가져온다(<3글자 fallback이라 호출 빈도가 낮다).
         const sql = `
-            SELECT slug, content, deleted_at
+            SELECT slug, title, content, deleted_at
             FROM pages
-            WHERE (slug LIKE ? ESCAPE '\\' OR content LIKE ? ESCAPE '\\')${visibility}
-            ORDER BY (CASE WHEN slug LIKE ? ESCAPE '\\' THEN 0 ELSE 1 END), updated_at DESC
+            WHERE (slug LIKE ? ESCAPE '\\' OR title LIKE ? ESCAPE '\\' OR content LIKE ? ESCAPE '\\')${visibility}
+            ORDER BY (CASE WHEN slug LIKE ? ESCAPE '\\' THEN 0
+                          WHEN title LIKE ? ESCAPE '\\' THEN 1
+                          ELSE 2 END), updated_at DESC
             LIMIT ? OFFSET ?
         `;
-        const results = await db.prepare(sql).bind(likePattern, likePattern, likePattern, PAGE_SIZE, offset).all<{ slug: string; content: string; deleted_at: number | null }>();
+        const results = await db.prepare(sql)
+            .bind(likePattern, likePattern, likePattern, likePattern, likePattern, PAGE_SIZE, offset)
+            .all<{ slug: string; title: string | null; content: string; deleted_at: number | null }>();
 
         const safeResults = results.results.map((r) => ({
             slug: r.slug,
+            title: r.title,
             deleted_at: r.deleted_at,
             isDeleted: !!r.deleted_at,
             snippet: buildLikeSnippet(r.slug, r.content, trimmedQuery),
@@ -267,22 +274,25 @@ search.get('/search', async (c) => {
         const total = totalRow?.total ?? 0;
         const { page, offset } = clampPage(total);
 
-        // 슬러그 LIKE 매치를 FTS rank보다 우선해 정렬한다.
-        // (FTS5 trigram도 부분 일치를 잡지만 슬러그 일치를 항상 상단에 노출하기 위함)
+        // 슬러그/title LIKE 매치를 FTS rank 보다 우선해 정렬한다.
+        // (FTS5 trigram도 부분 일치를 잡지만 슬러그·title 일치를 항상 상단에 노출하기 위함)
+        // snippet 컬럼 번호는 pages_fts(slug, title, content) 중 content (=index 2) 를 가리킨다.
         const slugLikePattern = `%${trimmedQuery}%`;
         const sql = `
-           SELECT p.slug, p.deleted_at,
-                  snippet(pages_fts, 1, '__MARK_START__', '__MARK_END__', '...', 40) as snippet
+           SELECT p.slug, p.title, p.deleted_at,
+                  snippet(pages_fts, 2, '__MARK_START__', '__MARK_END__', '...', 40) as snippet
            FROM pages_fts
            JOIN pages p ON pages_fts.rowid = p.id
            WHERE pages_fts MATCH ?${visibility}
-           ORDER BY (CASE WHEN p.slug LIKE ? THEN 0 ELSE 1 END), rank
+           ORDER BY (CASE WHEN p.slug LIKE ? THEN 0
+                          WHEN p.title LIKE ? THEN 1
+                          ELSE 2 END), rank
            LIMIT ? OFFSET ?
         `;
 
         const results = await db
             .prepare(sql)
-            .bind(safeMatchQuery, slugLikePattern, PAGE_SIZE, offset)
+            .bind(safeMatchQuery, slugLikePattern, slugLikePattern, PAGE_SIZE, offset)
             .all();
 
         // XSS 방지를 위해 스니펫의 HTML 특수문자를 이스케이프 처리한 뒤 임시 문자열을 <mark> 태그로 치환
@@ -316,24 +326,29 @@ search.get('/search', async (c) => {
         const likePattern = `%${likeEscaped}%`;
 
         const totalRow = await db
-            .prepare(`SELECT COUNT(*) as total FROM pages WHERE (slug LIKE ? ESCAPE '\\' OR content LIKE ? ESCAPE '\\')${visibility}`)
-            .bind(likePattern, likePattern)
+            .prepare(`SELECT COUNT(*) as total FROM pages WHERE (slug LIKE ? ESCAPE '\\' OR title LIKE ? ESCAPE '\\' OR content LIKE ? ESCAPE '\\')${visibility}`)
+            .bind(likePattern, likePattern, likePattern)
             .first<{ total: number }>();
         const total = totalRow?.total ?? 0;
         const { page, offset } = clampPage(total);
 
-        // 슬러그 LIKE 매치를 본문 매치보다 우선해 정렬한다.
+        // 슬러그 LIKE 매치를 가장 우선, 다음 title 매치, 마지막 본문 매치로 정렬한다.
         const fallbackSql = `
-            SELECT slug, content, deleted_at
+            SELECT slug, title, content, deleted_at
             FROM pages
-            WHERE (slug LIKE ? ESCAPE '\\' OR content LIKE ? ESCAPE '\\')${visibility}
-            ORDER BY (CASE WHEN slug LIKE ? ESCAPE '\\' THEN 0 ELSE 1 END), updated_at DESC
+            WHERE (slug LIKE ? ESCAPE '\\' OR title LIKE ? ESCAPE '\\' OR content LIKE ? ESCAPE '\\')${visibility}
+            ORDER BY (CASE WHEN slug LIKE ? ESCAPE '\\' THEN 0
+                          WHEN title LIKE ? ESCAPE '\\' THEN 1
+                          ELSE 2 END), updated_at DESC
             LIMIT ? OFFSET ?
         `;
-        const fallbackResults = await db.prepare(fallbackSql).bind(likePattern, likePattern, likePattern, PAGE_SIZE, offset).all<{ slug: string; content: string; deleted_at: number | null }>();
+        const fallbackResults = await db.prepare(fallbackSql)
+            .bind(likePattern, likePattern, likePattern, likePattern, likePattern, PAGE_SIZE, offset)
+            .all<{ slug: string; title: string | null; content: string; deleted_at: number | null }>();
 
         const safeResults = fallbackResults.results.map((r) => ({
             slug: r.slug,
+            title: r.title,
             deleted_at: r.deleted_at,
             isDeleted: !!r.deleted_at,
             snippet: buildLikeSnippet(r.slug, r.content, trimmedQuery),
@@ -372,10 +387,10 @@ search.get('/search/suggest', async (c) => {
     `;
     const catResults = await db.prepare(catSql).bind(likePattern, startPattern).all();
 
-    // 2. 문서 검색 (슬러그 = 표시 이름)
+    // 2. 문서 검색 — slug 와 대체 title 양쪽에서 매칭. 호출용 식별자는 항상 slug, title 은 표시용.
     let pageSql = `
-        SELECT slug FROM pages
-        WHERE slug LIKE ?
+        SELECT slug, title FROM pages
+        WHERE (slug LIKE ? OR title LIKE ?)
     `;
     if (!isAdmin) {
         pageSql += ' AND deleted_at IS NULL';
@@ -383,11 +398,16 @@ search.get('/search/suggest', async (c) => {
     if (!canSeePrivate) {
         pageSql += ' AND is_private = 0';
     }
-    pageSql += ' ORDER BY CASE WHEN slug LIKE ? THEN 0 ELSE 1 END, length(slug) LIMIT 7';
+    pageSql += ` ORDER BY (CASE WHEN slug LIKE ? THEN 0
+                                WHEN title LIKE ? THEN 1
+                                ELSE 2 END),
+                          length(slug) LIMIT 7`;
 
-    const pageResults = await db.prepare(pageSql).bind(likePattern, startPattern).all();
+    const pageResults = await db.prepare(pageSql)
+        .bind(likePattern, likePattern, startPattern, startPattern)
+        .all<{ slug: string; title: string | null }>();
 
-    const suggestions: { slug: string }[] = [];
+    const suggestions: { slug: string; title?: string | null }[] = [];
     const seenSlugs = new Set<string>();
 
     // 카테고리 결과를 먼저 추가 (형식: 카테고리:이름)
@@ -402,9 +422,9 @@ search.get('/search/suggest', async (c) => {
 
     // 문서 결과를 추가 (중복 방지)
     for (const r of pageResults.results) {
-        if (!seenSlugs.has(r.slug as string)) {
-            suggestions.push({ slug: r.slug as string });
-            seenSlugs.add(r.slug as string);
+        if (!seenSlugs.has(r.slug)) {
+            suggestions.push({ slug: r.slug, title: r.title });
+            seenSlugs.add(r.slug);
         }
     }
 

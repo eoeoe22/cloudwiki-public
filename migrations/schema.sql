@@ -29,10 +29,12 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 
 -- 문서 테이블
--- slug 가 문서의 고유 식별자이자 표시 이름이다. 별도 title 컬럼은 두지 않는다.
+-- slug 가 문서의 고유 식별자이며 모든 호출 경로(위키 링크/트랜스클루전/MCP/URL)의 단일 진실이다.
+-- title 은 선택적 표시 전용 대체 제목(NULL = slug 사용). 호출 매칭에는 절대 참여하지 않는다.
 CREATE TABLE IF NOT EXISTS pages (
   id                INTEGER PRIMARY KEY AUTOINCREMENT,
   slug              TEXT NOT NULL UNIQUE,
+  title             TEXT,
   content           TEXT NOT NULL DEFAULT '',
   last_revision_id  INTEGER,
   version           INTEGER DEFAULT 1,
@@ -50,6 +52,8 @@ CREATE TABLE IF NOT EXISTS pages (
 
 CREATE INDEX IF NOT EXISTS idx_pages_updated ON pages(updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_pages_deleted ON pages(deleted_at);
+-- title 중복 방지 (NULL 다중 허용). slug 와의 교차 중복은 애플리케이션에서 검증.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pages_title_unique ON pages(title) WHERE title IS NOT NULL;
 
 -- 리비전 테이블
 -- content: 본문이 직접 저장되거나, r2_key가 있으면 R2에서 조회.
@@ -105,22 +109,60 @@ CREATE TABLE IF NOT EXISTS media_tags (
 CREATE INDEX IF NOT EXISTS idx_media_tags_tag ON media_tags(tag);
 
 -- FTS5 검색 가상 테이블
--- 컬럼 0: slug (문서 식별자/표시 이름), 컬럼 1: content (본문)
+-- 컬럼 0: slug (문서 식별자), 컬럼 1: title (대체 제목), 컬럼 2: content (본문)
 CREATE VIRTUAL TABLE IF NOT EXISTS pages_fts
-USING fts5(slug, content, content=pages, content_rowid=id, tokenize="trigram");
+USING fts5(slug, title, content, content=pages, content_rowid=id, tokenize="trigram");
 
 -- FTS 트리거
 CREATE TRIGGER IF NOT EXISTS pages_ai AFTER INSERT ON pages BEGIN
-  INSERT INTO pages_fts(rowid, slug, content) VALUES (new.id, new.slug, new.content);
+  INSERT INTO pages_fts(rowid, slug, title, content) VALUES (new.id, new.slug, new.title, new.content);
 END;
 
 CREATE TRIGGER IF NOT EXISTS pages_ad AFTER DELETE ON pages BEGIN
-  INSERT INTO pages_fts(pages_fts, rowid, slug, content) VALUES('delete', old.id, old.slug, old.content);
+  INSERT INTO pages_fts(pages_fts, rowid, slug, title, content) VALUES('delete', old.id, old.slug, old.title, old.content);
 END;
 
 CREATE TRIGGER IF NOT EXISTS pages_au AFTER UPDATE ON pages BEGIN
-  INSERT INTO pages_fts(pages_fts, rowid, slug, content) VALUES('delete', old.id, old.slug, old.content);
-  INSERT INTO pages_fts(rowid, slug, content) VALUES (new.id, new.slug, new.content);
+  INSERT INTO pages_fts(pages_fts, rowid, slug, title, content) VALUES('delete', old.id, old.slug, old.title, old.content);
+  INSERT INTO pages_fts(rowid, slug, title, content) VALUES (new.id, new.slug, new.title, new.content);
+END;
+
+-- slug↔title 교차 중복 방지 트리거.
+-- slug-slug 는 컬럼 UNIQUE, title-title 은 idx_pages_title_unique 부분 인덱스가 막는다.
+-- slug-title / title-slug 교차 충돌은 단일 UNIQUE 인덱스로 표현할 수 없어 BEFORE 트리거로
+-- 원자적으로 강제한다 — 애플리케이션 precheck 만으로는 TOCTOU race 가 남기 때문.
+CREATE TRIGGER IF NOT EXISTS pages_title_vs_slug_insert
+BEFORE INSERT ON pages
+WHEN NEW.title IS NOT NULL
+BEGIN
+  SELECT RAISE(ABORT, 'UNIQUE constraint failed: pages.title collides with another page slug')
+  FROM pages
+  WHERE slug = NEW.title;
+END;
+
+CREATE TRIGGER IF NOT EXISTS pages_title_vs_slug_update
+BEFORE UPDATE OF title ON pages
+WHEN NEW.title IS NOT NULL
+BEGIN
+  SELECT RAISE(ABORT, 'UNIQUE constraint failed: pages.title collides with another page slug')
+  FROM pages
+  WHERE slug = NEW.title AND id != NEW.id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS pages_slug_vs_title_insert
+BEFORE INSERT ON pages
+BEGIN
+  SELECT RAISE(ABORT, 'UNIQUE constraint failed: pages.slug collides with another page title')
+  FROM pages
+  WHERE title IS NOT NULL AND title = NEW.slug;
+END;
+
+CREATE TRIGGER IF NOT EXISTS pages_slug_vs_title_update
+BEFORE UPDATE OF slug ON pages
+BEGIN
+  SELECT RAISE(ABORT, 'UNIQUE constraint failed: pages.slug collides with another page title')
+  FROM pages
+  WHERE title IS NOT NULL AND title = NEW.slug AND id != NEW.id;
 END;
 
 -- 관리자 카테고리
@@ -278,6 +320,8 @@ CREATE TABLE IF NOT EXISTS mcp_drafts (
   category          TEXT,
   redirect_to       TEXT,
   requested_lock    INTEGER,
+  title             TEXT,
+  has_title_change  INTEGER NOT NULL DEFAULT 0,
   submitted_at      INTEGER,
   submitted_summary TEXT,
   created_at        INTEGER DEFAULT (unixepoch()),

@@ -374,16 +374,22 @@
                     </div>
                 `).join('');
             } else {
-                // 슬러그(=제목)+내용 검색 결과
-                itemsHtml = data.results.map(r => `
+                // 슬러그+본문 검색 결과. r.title 이 있으면 표시 이름으로 사용하고 슬러그를 보조 라벨로.
+                itemsHtml = data.results.map(r => {
+                    const displayName = r.title || r.slug;
+                    const slugSubLabel = r.title
+                        ? `<div class="small text-muted mt-1"><code>${escapeHtml(r.slug)}</code></div>`
+                        : '';
+                    return `
                     <div class="search-result-item mb-4 pb-3 border-bottom">
                         <h4 class="mb-2 fs-5">
-                            <a class="text-decoration-none text-primary fw-semibold" href="/w/${encodeURIComponent(r.slug)}">${escapeHtml(r.slug)}</a>
+                            <a class="text-decoration-none text-primary fw-semibold" href="/w/${encodeURIComponent(r.slug)}">${escapeHtml(displayName)}</a>
                             ${r.isDeleted ? '<span class="badge bg-danger ms-2">삭제됨</span>' : ''}
                         </h4>
+                        ${slugSubLabel}
                         <p class="snippet text-body mb-0" style="line-height: 1.6;">${r.snippet || ''}</p>
-                    </div>
-                `).join('');
+                    </div>`;
+                }).join('');
             }
 
             const paginationHtml = renderPagination(currentPage, totalPages);

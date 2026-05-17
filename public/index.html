@@ -75,6 +75,8 @@
 
         <div class="wiki-article">
           <h1 class="wiki-article-title" id="articleTitle"></h1>
+          <!-- 대체 title 이 설정된 경우만 노출 — 우측 정렬, muted 작은 글씨로 실제 슬러그 + 복사 버튼 표시 -->
+          <div id="articleSlugLabel" class="wiki-article-slug-label" hidden></div>
           <div id="redirectMessage"></div>
           <div class="wiki-article-meta" id="articleMeta"></div>
 
@@ -596,6 +598,43 @@
       }
     }
 
+    // 대체 title 이 설정된 문서에서 h1 아래에 표시되는 실제 슬러그 라벨.
+    // slug=null 이면 라벨을 숨긴다 (title 미설정 문서 또는 비-문서 페이지에서 호출).
+    function renderSlugLabel(slug) {
+      const el = document.getElementById('articleSlugLabel');
+      if (!el) return;
+      if (!slug) {
+        el.hidden = true;
+        el.innerHTML = '';
+        return;
+      }
+      el.hidden = false;
+      el.innerHTML = '';
+      const code = document.createElement('code');
+      code.className = 'text-muted';
+      code.textContent = slug;
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'btn btn-sm btn-link text-muted p-0 ms-1 wiki-slug-copy-btn';
+      btn.title = '슬러그 복사';
+      btn.setAttribute('aria-label', '슬러그 복사');
+      btn.innerHTML = '<i class="bi bi-clipboard" aria-hidden="true"></i>';
+      btn.addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(slug);
+          const icon = btn.querySelector('i');
+          if (icon) {
+            icon.className = 'bi bi-check2';
+            setTimeout(() => { icon.className = 'bi bi-clipboard'; }, 1500);
+          }
+        } catch (e) {
+          console.error('슬러그 복사 실패:', e);
+        }
+      });
+      el.appendChild(code);
+      el.appendChild(btn);
+    }
+
     async function showArticle(slug) {
       showLoading();
       currentSlug = slug;
@@ -720,10 +759,11 @@
 
         currentPage = page;
 
-        document.title = `${page.slug} - ${appConfig.wikiName}`;
-
-        // 제목 (= slug)
-        document.getElementById('articleTitle').textContent = page.slug;
+        // 표시 이름: title 이 있으면 그것을, 없으면 slug. 모든 호출(링크/API) 은 항상 page.slug 기준.
+        const displayName = page.title || page.slug;
+        document.title = `${displayName} - ${appConfig.wikiName}`;
+        document.getElementById('articleTitle').textContent = displayName;
+        renderSlugLabel(page.title ? page.slug : null);
 
         // 리다이렉트 안내
         const redirectMsgEl = document.getElementById('redirectMessage');
@@ -1255,8 +1295,9 @@
       currentPage = page;
       document.title = `${page.slug} - ${appConfig.wikiName}`;
 
-      // 제목/메타
+      // 제목/메타 — 이미지 문서는 별도 title 컬럼을 갖지 않으므로 항상 슬러그만 표시.
       document.getElementById('articleTitle').textContent = page.slug;
+      renderSlugLabel(null);
       document.getElementById('redirectMessage').innerHTML = '';
 
       // 토론 배너 초기화: 이전 문서에서 열린 토론이 있었다면 배너가 남아 다른 슬러그를
@@ -1448,6 +1489,7 @@
 
       document.title = `${decodedSlug} - ${appConfig.wikiName}`;
       document.getElementById('articleTitle').textContent = decodedSlug;
+      renderSlugLabel(null);
       document.getElementById('articleMeta').innerHTML = '<span class="text-muted">아직 작성되지 않은 카테고리 문서입니다.</span>';
 
       const watchBtn = currentUser

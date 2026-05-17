@@ -31,6 +31,7 @@ import {
     buildCommitSummary,
     validateMcpSummaryLength,
 } from './admin-mcp';
+import { findConflictingPage } from './wiki';
 
 const mcpSubmissionsRoutes = new Hono<Env>();
 
@@ -52,6 +53,8 @@ interface DraftRow {
     category: string | null;
     redirect_to: string | null;
     requested_lock: number | null;
+    title: string | null;
+    has_title_change: number;
     submitted_at: number | null;
     submitted_summary: string | null;
     updated_at: number;
@@ -71,7 +74,7 @@ async function loadSubmittedDraftForUser(
 ): Promise<DraftRow | null> {
     const row = await env.DB.prepare(
         `SELECT id, user_id, slug, action, base_revision_id, base_version,
-                content, category, redirect_to, requested_lock,
+                content, category, redirect_to, requested_lock, title, has_title_change,
                 submitted_at, submitted_summary, updated_at
          FROM mcp_drafts WHERE id = ? AND user_id = ? AND submitted_at IS NOT NULL`
     ).bind(draftId, user.id).first<DraftRow>();
@@ -320,8 +323,8 @@ mcpSubmissionsRoutes.post('/mcp-submissions/:id/approve', requireAuth, async (c)
 
     if (draft.action === 'update') {
         const page = await c.env.DB.prepare(
-            'SELECT id, version, is_locked, content, category, last_revision_id FROM pages WHERE slug = ? AND deleted_at IS NULL'
-        ).bind(slug).first<{ id: number; version: number; is_locked: number; content: string; category: string | null; last_revision_id: number | null }>();
+            'SELECT id, version, is_locked, content, category, last_revision_id, title FROM pages WHERE slug = ? AND deleted_at IS NULL'
+        ).bind(slug).first<{ id: number; version: number; is_locked: number; content: string; category: string | null; last_revision_id: number | null; title: string | null }>();
         if (!page) {
             return c.json({ error: 'conflict', reason: 'page_missing' }, 409);
         }
@@ -338,6 +341,23 @@ mcpSubmissionsRoutes.post('/mcp-submissions/:id/approve', requireAuth, async (c)
         if (page.is_locked === 1 && !rbac.can(user.role, 'wiki:lock')) {
             return c.json({ error: 'locked', message: '잠긴 문서는 wiki:lock 권한이 있어야 승인할 수 있습니다.' }, 403);
         }
+
+        // draft 가 title 변경을 요청한 경우, 승인 시점에 다른 페이지가 같은 문자열을 slug/title 로
+        // 가져갔는지 재검증한다 (idx_pages_title_unique 충돌로 인한 UNIQUE 위반 → applyExistingPageUpdate
+        // catch 가 비특정 'apply_failed' 로 떨어지는 것을 방지).
+        if (draft.has_title_change && draft.title) {
+            const titleConflict = await findConflictingPage(c.env.DB, draft.title, page.id);
+            if (titleConflict) {
+                return c.json({
+                    error: 'conflict',
+                    reason: titleConflict.matchedColumn === 'slug' ? 'title_collides_with_slug' : 'title_taken',
+                    message: titleConflict.matchedColumn === 'slug'
+                        ? `'${draft.title}' 는 이미 다른 문서의 슬러그입니다.`
+                        : `'${draft.title}' 는 이미 다른 문서의 대체 제목입니다.`,
+                }, 409);
+            }
+        }
+
         const finalIsLocked = draft.requested_lock !== null
             ? (rbac.can(user.role, 'wiki:lock') ? draft.requested_lock : page.is_locked)
             : page.is_locked;
@@ -370,6 +390,7 @@ mcpSubmissionsRoutes.post('/mcp-submissions/:id/approve', requireAuth, async (c)
                 summary: summaryWithDiff,
                 category: draft.category,
                 redirectTo: draft.redirect_to,
+                title: draft.has_title_change ? draft.title : undefined,
                 finalIsLocked,
                 slug,
                 logType: 'page_commit_approved',
@@ -414,6 +435,31 @@ mcpSubmissionsRoutes.post('/mcp-submissions/:id/approve', requireAuth, async (c)
                 message: '동일 슬러그의 소프트 삭제된 문서가 존재합니다. 관리자가 먼저 복원/영구삭제 처리해야 합니다.',
             }, 409);
         }
+
+        // draft 제출 ~ 승인 사이에 다른 문서가 같은 문자열을 title 로 가져갔거나, draft 가 title 변경을
+        // 요청했는데 그 사이 다른 문서가 같은 title 을 등록한 경우를 재검증한다.
+        // (drafting 단계의 사전 검사만으로는 race 를 막을 수 없고, idx_pages_title_unique 와 충돌해
+        // applyNewPageInsert 가 UNIQUE 위반으로 500 을 던질 수 있다.)
+        const slugTitleConflict = await findConflictingPage(c.env.DB, slug, null);
+        if (slugTitleConflict && slugTitleConflict.matchedColumn === 'title') {
+            return c.json({
+                error: 'conflict',
+                reason: 'slug_collides_with_title',
+                message: `'${slug}' 는 다른 문서의 대체 제목과 충돌해 슬러그로 사용할 수 없습니다.`,
+            }, 409);
+        }
+        if (draft.has_title_change && draft.title) {
+            const titleConflict = await findConflictingPage(c.env.DB, draft.title, null);
+            if (titleConflict) {
+                return c.json({
+                    error: 'conflict',
+                    reason: titleConflict.matchedColumn === 'slug' ? 'title_collides_with_slug' : 'title_taken',
+                    message: titleConflict.matchedColumn === 'slug'
+                        ? `'${draft.title}' 는 이미 다른 문서의 슬러그입니다.`
+                        : `'${draft.title}' 는 이미 다른 문서의 대체 제목입니다.`,
+                }, 409);
+            }
+        }
         const finalIsLocked = (draft.requested_lock !== null && rbac.can(user.role, 'wiki:lock'))
             ? draft.requested_lock : 0;
         const createDiffStats = computeLineDiffStats('', draft.content.replace(/\r\n?/g, '\n'));
@@ -424,6 +470,7 @@ mcpSubmissionsRoutes.post('/mcp-submissions/:id/approve', requireAuth, async (c)
                 summary: createSummaryWithDiff,
                 category: draft.category,
                 redirectTo: draft.redirect_to,
+                title: draft.has_title_change ? draft.title : null,
                 finalIsLocked,
                 logType: 'page_create_commit_approved',
                 logMessage: `[mcp-submission] approved draft #${draft.id} (create): ${slug} (v1)`,
@@ -444,6 +491,13 @@ mcpSubmissionsRoutes.post('/mcp-submissions/:id/approve', requireAuth, async (c)
                 created: true,
             });
         } catch (e: any) {
+            // applyNewPageInsert 가 UNIQUE race 를 명시적 코드로 던지는 경우 409 매핑.
+            if (e?.code === 'SLUG_TAKEN') {
+                return c.json({ error: 'conflict', reason: 'slug_taken' }, 409);
+            }
+            if (e?.code === 'TITLE_TAKEN') {
+                return c.json({ error: 'conflict', reason: 'title_taken' }, 409);
+            }
             return c.json({ error: 'apply_failed', message: e?.message || String(e) }, 500);
         }
     }

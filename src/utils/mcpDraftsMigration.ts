@@ -31,6 +31,12 @@ export async function ensureMcpDraftsMigration(db: D1Database): Promise<void> {
             if (!have.has('submitted_summary')) {
                 await db.prepare('ALTER TABLE mcp_drafts ADD COLUMN submitted_summary TEXT').run();
             }
+            if (!have.has('title')) {
+                await db.prepare('ALTER TABLE mcp_drafts ADD COLUMN title TEXT').run();
+            }
+            if (!have.has('has_title_change')) {
+                await db.prepare('ALTER TABLE mcp_drafts ADD COLUMN has_title_change INTEGER NOT NULL DEFAULT 0').run();
+            }
             // 부분 인덱스는 IF NOT EXISTS 가 정상 동작 — idempotent.
             await db.prepare(
                 'CREATE INDEX IF NOT EXISTS idx_mcp_drafts_submitted ON mcp_drafts(user_id, submitted_at) WHERE submitted_at IS NOT NULL'

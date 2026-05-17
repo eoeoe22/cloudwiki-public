@@ -240,6 +240,23 @@ function getOriginalHeadingsForSummary(): HeadingForSummary[] {
 // part.value 는 트레일링 \n 을 포함하므로 conflict.ts 의 splitLines 와 동일하게
 // 마지막 빈 토큰을 제거한 길이로 라인 수를 센다. jsdiff 미로드/예외 시 빈 문자열.
 function formatLineDiffStats(orig: string, curr: string): string {
+    // 익스텐션 데이터(수 MB 단위 raw): jsdiff LCS 가 메인 스레드를 점거해 저장 버튼이
+    // 동결되는 문제를 회피한다. 라인 수 차이만 선형 스캔으로 계산.
+    // 트레일링 \n 은 라인 수에 포함되지 않도록 빈 토큰을 제외해 jsdiff 분기와 동일한
+    // 규약을 따른다 (마지막 라인 \n 만 추가/삭제한 편집을 +N/-N 줄로 오보고하는 것 방지).
+    if (window.isExtensionData) {
+        if (orig === curr) return '';
+        const countLines = (s: string): number => {
+            if (!s) return 0;
+            const arr = s.split('\n');
+            if (arr[arr.length - 1] === '') arr.pop();
+            return arr.length;
+        };
+        const oldN = countLines(orig);
+        const newN = countLines(curr);
+        if (oldN === newN) return '';
+        return newN > oldN ? `[+${newN - oldN}줄]` : `[-${oldN - newN}줄]`;
+    }
     const Diff = window.Diff;
     if (!Diff || typeof Diff.diffLines !== 'function') return '';
     let added = 0;

@@ -310,10 +310,66 @@ function getCompareSources(mode: ConflictState['compareMode']): CompareSources {
 
 function countChangeHunks(oldStr: string, newStr: string): number {
     if (oldStr === newStr) return 0;
+    // 익스텐션 데이터(수 MB 단위 raw 데이터) 는 jsdiff 가 메인 스레드를 점거하므로
+    // 정확한 hunk 수 대신 변경 유무만 반환한다.
+    if (window.isExtensionData) return 1;
     const Diff = window.Diff;
     if (!Diff || !Diff.structuredPatch) return 0;
     const patch = Diff.structuredPatch('a', 'b', oldStr || '', newStr || '', '', '', { context: 0 });
     return patch.hunks ? patch.hunks.length : 0;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 익스텐션 데이터(대용량 raw) 전용 경량 비교 카드.
+// jsdiff LCS 호출을 피하고 라인 수 / 바이트 차이 + 머리 5 줄 미리보기만 보여준다.
+// 라인 수는 \n 카운트 1 회 선형 스캔으로 산출되어 5MB 데이터도 수 ms 이내.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function _countLines(s: string): number {
+    if (!s) return 0;
+    let n = 1;
+    for (let i = 0; i < s.length; i++) if (s.charCodeAt(i) === 10) n++;
+    if (s.charCodeAt(s.length - 1) === 10) n--;
+    return n;
+}
+
+function buildExtensionDataDiffCard(oldStr: string, newStr: string): string {
+    if (oldStr === newStr) {
+        return '<div class="diff-empty">변경된 내용이 없습니다.</div>';
+    }
+    const oldLines = _countLines(oldStr);
+    const newLines = _countLines(newStr);
+    const oldKB = (oldStr.length / 1024);
+    const newKB = (newStr.length / 1024);
+    // 빈 베이스(신규 추가 또는 빈 본문 비교)에서는 비율 계산이 의미가 없으므로 별도 표기.
+    let sizeChangeText: string;
+    if (oldStr.length === 0 && newStr.length === 0) {
+        sizeChangeText = '';
+    } else if (oldStr.length === 0) {
+        sizeChangeText = '(신규 추가)';
+    } else if (newStr.length === 0) {
+        sizeChangeText = '(전체 삭제)';
+    } else {
+        const reductionPct = (1 - newStr.length / oldStr.length) * 100;
+        const sign = reductionPct >= 0 ? '−' : '+';
+        sizeChangeText = '(' + sign + Math.abs(reductionPct).toFixed(1) + '%)';
+    }
+    const oldHead = oldStr.split('\n', 5).join('\n');
+    const newHead = newStr.split('\n', 5).join('\n');
+    return (
+        '<div class="ext-diff-summary">' +
+        '<div class="ext-diff-summary-line">' +
+        '<b>줄 수</b>: ' + oldLines.toLocaleString() + ' → ' + newLines.toLocaleString() +
+        ' &nbsp;·&nbsp; <b>크기</b>: ' + oldKB.toFixed(1) + ' KB → ' + newKB.toFixed(1) + ' KB ' +
+        sizeChangeText +
+        '</div>' +
+        '<div class="ext-diff-summary-hint text-muted small mt-1">' +
+        '대용량 익스텐션 데이터는 줄 단위 diff 대신 요약만 표시합니다. 자세한 비교는 저장 후 리비전 페이지를 이용해 주세요.' +
+        '</div>' +
+        '<div class="mt-2"><b>이전 본문(앞 5줄)</b><pre class="diff-removed" style="white-space:pre-wrap;margin:0">' + escapeHtml(oldHead) + '</pre></div>' +
+        '<div class="mt-2"><b>현재 본문(앞 5줄)</b><pre class="diff-added" style="white-space:pre-wrap;margin:0">' + escapeHtml(newHead) + '</pre></div>' +
+        '</div>'
+    );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -323,6 +379,10 @@ function countChangeHunks(oldStr: string, newStr: string): number {
 function buildDiffTable(oldStr: string, newStr: string, mode: ConflictState['diffMode']): string {
     if (oldStr === newStr) {
         return '<div class="diff-empty">변경된 내용이 없습니다.</div>';
+    }
+    // 익스텐션 데이터: jsdiff structuredPatch 우회 — 요약 카드로 대체.
+    if (window.isExtensionData) {
+        return buildExtensionDataDiffCard(oldStr, newStr);
     }
     const Diff = window.Diff;
     if (!Diff || !Diff.structuredPatch) {
@@ -441,6 +501,13 @@ function renderLocalDiff(): void {
     const currentContent = editor ? editor.getMarkdown() : '';
     if (originalContent === currentContent) {
         container.innerHTML = '<span class="text-muted">변경 사항이 없습니다.</span>';
+        return;
+    }
+
+    // 익스텐션 데이터(수 MB 단위 raw 데이터)는 jsdiff LCS 가 메인 스레드를 점거해
+    // 고성능 기기에서도 동결을 유발하므로, 라인 수 / 바이트 / 머리 5 줄 요약 카드로 대체.
+    if (window.isExtensionData) {
+        container.innerHTML = buildExtensionDataDiffCard(originalContent, currentContent);
         return;
     }
 

@@ -3070,6 +3070,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (res.ok) {
             const page = await res.json();
             document.getElementById('titleInput').value = page.slug;
+            // 대체 제목 — page.title 은 NULL 일 수 있음. 빈 문자열로 표시.
+            const altTitleEl = document.getElementById('alternateTitleInput') as HTMLInputElement | null;
+            if (altTitleEl) altTitleEl.value = page.title || '';
 
             // 섹션 모드에서는 서버가 보낸 메타데이터를 그대로 유지해 저장 시 함께 송신.
             // window.renderCategoryTags()가 input 이벤트를 디스패치해 자동 편집 요약을 갱신하기 전에
@@ -3135,9 +3138,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                     if (fullLink) {
                         fullLink.href = '/edit?slug=' + encodeURIComponent(slug);
                     }
-                    // 섹션 모드에서 수정 불가한 필드 숨김 (제목/카테고리/잠금/리다이렉트)
+                    // 섹션 모드에서 수정 불가한 필드 숨김 (슬러그/대체 제목/카테고리/잠금/리다이렉트)
                     const lockedContainers = [
                         document.getElementById('titleInput'),
+                        document.getElementById('alternateTitleInput'),
                         document.getElementById('categoryInput'),
                         document.getElementById('redirectInput')
                     ];
@@ -3275,24 +3279,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     // 변경 사항 미리보기 이벤트 연동
     const diffDetails = document.getElementById('diffPreviewDetails');
     if (diffDetails) {
-        diffDetails.addEventListener('toggle', async (e) => {
-            if (diffDetails.open) {
-                if (isExtensionData) {
-                    const result = await window.Swal.fire({
-                        icon: 'warning',
-                        title: '대용량 데이터 비교',
-                        text: '이 문서는 대용량 익스텐션 데이터입니다. diff 로딩 시 모바일 기기에서 성능 저하가 발생할 수 있습니다. 계속하시겠습니까?',
-                        showCancelButton: true,
-                        confirmButtonText: '비교 보기',
-                        cancelButtonText: '취소',
-                    });
-                    if (!result.isConfirmed) {
-                        diffDetails.open = false;
-                        return;
-                    }
-                }
-                renderLocalDiff();
-            }
+        diffDetails.addEventListener('toggle', () => {
+            // 익스텐션 데이터는 conflict.ts:renderLocalDiff 가 jsdiff 우회 요약 카드를
+            // 즉시 반환하므로 별도 경고 prompt 가 필요하지 않다.
+            if (diffDetails.open) renderLocalDiff();
         });
 
         // 펼쳐진 상태에서 에디터 변경 시 실시간 재렌더 (디바운스)
@@ -3865,6 +3855,16 @@ async function savePage() {
             body.expected_version = pageVersion;
         }
 
+        // 대체 제목 — 섹션 편집 모드에서는 전송하지 않아 서버가 기존 값을 유지하도록 한다.
+        // 전체 편집 모드에서만 사용자가 입력한 값을 PUT 한다. 빈 문자열은 명시적 "제거" 의도로 null 송신.
+        if (!sectionMode) {
+            const altTitleEl = document.getElementById('alternateTitleInput') as HTMLInputElement | null;
+            if (altTitleEl) {
+                const v = altTitleEl.value.trim();
+                (body as any).title = v ? v : null;
+            }
+        }
+
         const res = await fetch(`/api/w/${encodeURIComponent(slug)}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
@@ -3979,6 +3979,7 @@ async function savePage() {
                 // 숨겼던 필드 복원
                 const fallbackLockedFields = [
                     document.getElementById('titleInput'),
+                    document.getElementById('alternateTitleInput'),
                     document.getElementById('categoryInput'),
                     document.getElementById('redirectInput')
                 ];

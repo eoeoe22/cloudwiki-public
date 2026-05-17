@@ -842,6 +842,35 @@ html[data-theme="dark"] .user-dropdown-toggle {
   overflow-wrap: break-word;
 }
 
+/* 대체 title 이 설정된 문서에서 h1 아래에 실제 슬러그를 우측 정렬·muted 작게 노출하는 라벨. */
+.wiki-article-slug-label {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.85rem;
+  color: var(--wiki-text-muted);
+  margin-top: -0.4rem;
+  margin-bottom: 0.6rem;
+}
+
+.wiki-article-slug-label code {
+  background: transparent;
+  color: inherit;
+  font-size: inherit;
+  padding: 0;
+}
+
+.wiki-article-slug-label .wiki-slug-copy-btn {
+  color: var(--wiki-text-muted);
+  line-height: 1;
+  text-decoration: none;
+}
+
+.wiki-article-slug-label .wiki-slug-copy-btn:hover {
+  color: var(--wiki-text);
+}
+
 .wiki-article-meta {
   font-size: 0.9rem;
   color: var(--wiki-text-muted);

@@ -89,7 +89,7 @@ export interface McpToolDef {
 export const MCP_TOOL_DEFS_ALL: McpToolDef[] = [
     {
         name: 'search_title',
-        description: '위키 문서의 슬러그(=제목)를 검색합니다.',
+        description: '위키 문서의 슬러그와 대체 제목(title)을 검색합니다. 응답의 slug 는 모든 호출 도구가 사용하는 식별자이며, title 은 표시 전용 대체 제목(없으면 null)입니다. 다른 도구의 title 인자에는 반드시 slug 값을 사용하세요.',
         inputSchema: { type: 'object', properties: { query: { type: 'string', description: '검색어' } }, required: ['query'] }
     },
     {
@@ -287,8 +287,12 @@ export async function dispatchReadTool(
     }
 
     if (toolName === 'search_title') {
-        const results = await db.prepare(`SELECT slug, rows, characters FROM pages WHERE slug LIKE ? AND deleted_at IS NULL${privateFilter} LIMIT 15`)
-            .bind(`%${args.query}%`).all();
+        // slug 와 대체 title 양쪽에서 LIKE 매칭. title 은 표시용이라 모든 호출 도구의 인자(title 파라미터) 는 slug 를 받지만,
+        // 디스커버리 단계에서는 사용자가 기억하는 표시 이름(특수문자 포함) 으로도 검색이 가능해야 하므로 함께 매칭한다.
+        const results = await db.prepare(
+            `SELECT slug, title, rows, characters FROM pages
+             WHERE (slug LIKE ?1 OR title LIKE ?1) AND deleted_at IS NULL${privateFilter} LIMIT 15`,
+        ).bind(`%${args.query}%`).all();
         return { content: [{ type: 'text', text: JSON.stringify(results.results, null, 2) }] };
     }
 
