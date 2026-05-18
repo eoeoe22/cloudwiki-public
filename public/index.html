@@ -481,13 +481,17 @@
         }
         annotateDescendants(tree);
 
-        function renderTree(nodes, parentPrefix) {
-          const entries = Object.keys(nodes).sort((a, b) => {
+        function sortEntries(nodes) {
+          return Object.keys(nodes).sort((a, b) => {
             const ca = nodes[a]._descendants;
             const cb = nodes[b]._descendants;
             if (ca !== cb) return ca - cb;
             return a.localeCompare(b);
           });
+        }
+
+        function renderTree(nodes, parentPrefix) {
+          const entries = sortEntries(nodes);
           let html = '';
           entries.forEach((key, idx) => {
             const node = nodes[key];
@@ -511,7 +515,7 @@
         }
 
         function renderPlain(nodes, parentPrefix) {
-          const entries = Object.keys(nodes).sort();
+          const entries = sortEntries(nodes);
           let text = '';
           entries.forEach((key, idx) => {
             const node = nodes[key];
@@ -528,7 +532,7 @@
         }
 
         function renderMarkdown(nodes, parentPrefix) {
-          const entries = Object.keys(nodes).sort();
+          const entries = sortEntries(nodes);
           let md = '';
           entries.forEach((key, idx) => {
             const node = nodes[key];
