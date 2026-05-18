@@ -303,6 +303,50 @@ function hideBlockAutocomplete(): void {
     if (blockAc.div) blockAc.div.style.display = 'none';
 }
 
+// 현재 라인 직전까지 열려 있고 아직 닫히지 않은 ::: 블록이 있는지 검사.
+// 열린 블록 안에서 입력하는 단독 `:::` 는 여는 쪽이 아니라 닫는 쪽일 가능성이
+// 높으므로 자동완성을 띄우지 않는다.
+// 펜스드 코드 블록(```/~~~) 내부의 `:::` 는 디렉티브가 아니므로 깊이 계산에서 제외.
+function hasUnclosedBlockBefore(lines: string[], currentLineNum: number): boolean {
+    let depth = 0;
+    let inFencedCode = false;
+    let fenceChar = '';
+    let fenceLen = 0;
+    for (let i = 0; i < currentLineNum - 1; i++) {
+        const line = lines[i] || '';
+        if (!inFencedCode) {
+            // CommonMark 는 펜스 오프너 앞에 공백 0~3칸 들여쓰기를 허용한다 (4칸 이상은 들여쓰기 코드블록).
+            const fenceMatch = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+            if (fenceMatch) {
+                const opener = fenceMatch[1];
+                const rest = fenceMatch[2];
+                const ch = opener[0];
+                // CommonMark: 백틱 펜스의 info string 에는 백틱이 들어갈 수 없다.
+                const isValidFence = ch !== '`' || !rest.includes('`');
+                if (isValidFence) {
+                    inFencedCode = true;
+                    fenceChar = ch;
+                    fenceLen = opener.length;
+                    continue;
+                }
+            }
+            // render.ts 의 openRe / closeRe 와 동일하게 컬럼 1 에서만 디렉티브로 인식.
+            // 들여쓰기된 `  :::card` 같은 라인은 본문 텍스트로 간주.
+            if (/^:::([a-zA-Z][a-zA-Z0-9_-]*)(?:[ \t]+.*)?[ \t]*$/.test(line)) depth++;
+            else if (/^:::[ \t]*$/.test(line) && depth > 0) depth--;
+        } else {
+            // CommonMark 닫는 펜스는 들여쓰기 0~3칸, 오프너와 동일한 문자만 사용,
+            // 오프너 이상 길이여야 한다. 혼합 시퀀스(예: ```~) 는 코드 라인.
+            const closeRe = new RegExp('^ {0,3}(' + (fenceChar === '`' ? '`' : '~') + '+)[ \\t]*$');
+            const closeMatch = line.match(closeRe);
+            if (closeMatch && closeMatch[1].length >= fenceLen) {
+                inFencedCode = false;
+            }
+        }
+    }
+    return depth > 0;
+}
+
 function showBlockAutocomplete(query: string): void {
     blockAc.query = (query || '').toLowerCase();
     blockAc.filtered = blockAc.options.filter(o => {
@@ -1891,7 +1935,11 @@ function attachAutocomplete(viaFallback = false): void {
             const ageMatch      = textBefore.match(/\{age:([^}]*)$/);
             const calendarMatch = textBefore.match(/\{calendar:([^}]*)$/);
             const codeMatch     = textBefore.match(/(?<!\{)\{([a-zA-Z]*)$/);
-            const blockMatch    = textBefore.match(/^:::([a-zA-Z][a-zA-Z0-9_-]*)?$/);
+            const blockMatchRaw = textBefore.match(/^:::([a-zA-Z][a-zA-Z0-9_-]*)?$/);
+            // 이름이 없는 단독 `:::` 가 열린 블록 안에서 입력된 경우 닫는 쪽으로 간주.
+            const blockMatch = (blockMatchRaw && !blockMatchRaw[1] && hasUnclosedBlockBefore(lines, from[0]))
+                ? null
+                : blockMatchRaw;
 
             if (linkMatch) {
                 hideAutocompletesExcept('wiki'); showAutocomplete(linkMatch[1], 'link');
