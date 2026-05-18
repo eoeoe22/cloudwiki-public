@@ -9,6 +9,7 @@ import { applyPageSSR, extractMetaDescription } from './middleware/ssr';
 import { safeJSON } from './utils/json';
 import { escapeHtml, sanitizeUrl } from './utils/html';
 import { fetchMediaTags } from './utils/mediaTags';
+import { loadPalettesForPage, loadPalettesForBlogPost } from './utils/palettes';
 import authRoutes from './routes/auth/index';
 import wikiRoutes from './routes/wiki';
 import searchRoutes from './routes/search';
@@ -861,6 +862,23 @@ ${contentBlock}
             });
         }
 
+        // 본문이 참조하는 커스텀 팔레트만 로드해 SSR 페이로드 최소화.
+        // 트랜스클루전된 틀이 자체 본문에서 참조하는 팔레트도 합집합으로 포함.
+        let usedPalettes: Record<string, unknown> = {};
+        try {
+            // canSeePrivate: 비공개 틀 본문은 권한자에게만 렌더러가 펼치므로,
+            // 그 경우에만 비공개 틀이 참조하는 팔레트도 _usedPalettes 에 포함한다.
+            // 단, 응답이 공유 캐시에 저장될 경우 사용자 권한에 따른 차이가 다른 사용자에게
+            // 누출되므로 — 캐시 가능 응답에서는 항상 false 로 강제 (private 페이지 / admin
+            // / 크롤러 경로는 shouldCache=false 라 영향 없음, wiki:private 권한이 있어도
+            // 공개 페이지를 볼 땐 공개 팔레트만 받음).
+            const palettePerm = canSeePrivate && !shouldCache;
+            usedPalettes = await loadPalettesForPage(db, page.id, page.content, palettePerm);
+        } catch (e) {
+            // palettes 테이블 미마이그레이션 환경에서도 본문 자체는 정상 렌더돼야 함
+            console.error('loadPalettesForPage failed:', e);
+        }
+
         ssrData = {
             ...safeJSON({ ...page, redirected_from: redirectedFrom }),
             _ssrSlug: slug,
@@ -868,6 +886,7 @@ ${contentBlock}
             // title 이 있으면 표시용 제목으로 사용. 호출 식별자(URL, og:url 등)는 슬러그.
             _ssrTitle: `${page.title || page.slug} - ${wikiName}`,
             _ssrDescription: desc,
+            _usedPalettes: usedPalettes,
         };
     }
 
@@ -980,7 +999,32 @@ app.get('/blog/:id', async (c) => {
     if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) {
         return c.redirect('/login');
     }
-    return renderHtml(c, '/blog.html');
+    // 본문이 참조하는 커스텀 팔레트만 SSR 주입. blog.html 의 클라이언트 렌더링 시점에
+    // window._ssrData._usedPalettes 가 사용된다.
+    // soft-delete 된 포스트의 page_links 가 남아있을 수 있으므로, 비관리자에게
+    // 노출되는 SSR 응답에 그 데이터가 새지 않도록 가시성 체크 후에만 로드.
+    const idNum = Number(c.req.param('id'));
+    let usedPalettes: Record<string, unknown> = {};
+    if (Number.isFinite(idNum) && idNum > 0) {
+        const user = c.get('user');
+        const rbac = c.get('rbac') as RBAC | undefined;
+        const isAdmin = !!(user && rbac && rbac.can(user.role, 'admin:access'));
+        // 블로그 본문도 트랜스클루전 시 /api/w/:slug 로 틀을 가져오므로, 비공개 틀의
+        // 팔레트는 wiki:private 권한자에게만 SSR 페이로드에 포함시킨다.
+        const canSeePrivate = !!(rbac && rbac.can(user?.role ?? 'guest', 'wiki:private'));
+        try {
+            const post = await c.env.DB
+                .prepare('SELECT deleted_at FROM blog_posts WHERE id = ?')
+                .bind(idNum)
+                .first<{ deleted_at: number | null }>();
+            if (post && (!post.deleted_at || isAdmin)) {
+                usedPalettes = await loadPalettesForBlogPost(c.env.DB, idNum, undefined, canSeePrivate);
+            }
+        } catch (e) {
+            console.error('loadPalettesForBlogPost failed:', e);
+        }
+    }
+    return renderHtml(c, '/blog.html', { _usedPalettes: usedPalettes });
 });
 
 // /blog → blog.html 서빙 (목록, 공개)

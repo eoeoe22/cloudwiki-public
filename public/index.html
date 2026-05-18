@@ -75,7 +75,7 @@
 
         <div class="wiki-article">
           <h1 class="wiki-article-title" id="articleTitle"></h1>
-          <!-- 대체 title 이 설정된 경우만 노출 — 우측 정렬, muted 작은 글씨로 실제 슬러그 + 복사 버튼 표시 -->
+          <!-- 대체 title 이 설정된 경우만 노출 — 좌측 정렬, muted 작은 글씨로 실제 슬러그 + 복사 버튼 표시 -->
           <div id="articleSlugLabel" class="wiki-article-slug-label" hidden></div>
           <div id="redirectMessage"></div>
           <div class="wiki-article-meta" id="articleMeta"></div>
@@ -113,13 +113,13 @@
                 <li id="shareItemPrint"><button class="dropdown-item" onclick="sharePrint()">
                     <i class="bi bi-printer"></i> 인쇄하기
                   </button></li>
-                <li>
+                <li id="shareAiDivider">
                   <hr class="dropdown-divider">
                 </li>
-                <li><button class="dropdown-item" onclick="shareAskClaude()">
+                <li id="shareItemAskClaude"><button class="dropdown-item" onclick="shareAskClaude()">
                     <i class="bi bi-claude"></i> Claude에게 질문하기
                   </button></li>
-                <li><button class="dropdown-item" onclick="shareAskChatGPT()">
+                <li id="shareItemAskChatGPT"><button class="dropdown-item" onclick="shareAskChatGPT()">
                     <i class="bi bi-openai"></i> ChatGPT에게 질문하기
                   </button></li>
               </ul>
@@ -652,7 +652,8 @@
       if (_tocFabBtn) _tocFabBtn.classList.remove('d-none');
 
       // 공유하기 드롭다운 초기화 (이전 익스텐션 문서에서 숨겨진 경우 복원)
-      ['shareItemCopyText', 'shareItemCopyMarkdown', 'shareItemPrint'].forEach(id => {
+      ['shareItemCopyText', 'shareItemCopyMarkdown', 'shareItemPrint',
+        'shareAiDivider', 'shareItemAskClaude', 'shareItemAskChatGPT'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.classList.remove('d-none');
       });
@@ -758,6 +759,7 @@
         }
 
         currentPage = page;
+        applyShareAiVisibility(page);
 
         // 표시 이름: title 이 있으면 그것을, 없으면 slug. 모든 호출(링크/API) 은 항상 page.slug 기준.
         const displayName = page.title || page.slug;
@@ -1028,7 +1030,8 @@
             collapsibleSections: true,
             enableSectionEdit: true,
             canEdit: canEdit,
-            sectionEditSlug: actionSlug
+            sectionEditSlug: actionSlug,
+            palettes: page.used_palettes || null
           });
         }
 
@@ -1293,6 +1296,7 @@
     // ── 이미지 문서 (미디어 기반) ──
     async function showImageDocument(slug, page) {
       currentPage = page;
+      applyShareAiVisibility(page);
       document.title = `${page.slug} - ${appConfig.wikiName}`;
 
       // 제목/메타 — 이미지 문서는 별도 title 컬럼을 갖지 않으므로 항상 슬러그만 표시.
@@ -1487,6 +1491,7 @@
       const categoryName = decodedSlug.replace(/^카테고리:/, '');
       const listHtml = await fetchCategoryList(categoryName);
 
+      applyShareAiVisibility(null);
       document.title = `${decodedSlug} - ${appConfig.wikiName}`;
       document.getElementById('articleTitle').textContent = decodedSlug;
       renderSlugLabel(null);
@@ -1961,6 +1966,20 @@
 
     function sharePrint() {
       window.print();
+    }
+
+    // AI 질문 옵션(Claude/ChatGPT)은 해당 문서를 비회원이 열람할 수 있을 때만 노출한다.
+    // 위키 전체가 closed 상태(로그인 필수)이거나 페이지가 관리자용 비공개(is_private)면
+    // 외부 AI 가 URL 을 가져올 수 없으므로 숨긴다.
+    function applyShareAiVisibility(page) {
+      const wikiOpen = !appConfig || appConfig.wikiVisibility !== 'closed';
+      const isPrivate = !!(page && page.is_private);
+      const canGuestRead = wikiOpen && !isPrivate;
+      ['shareAiDivider', 'shareItemAskClaude', 'shareItemAskChatGPT'].forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.classList.toggle('d-none', !canGuestRead);
+      });
     }
 
     function shareAskClaude() {

@@ -539,6 +539,7 @@ export async function dispatchReadTool(
             WHERE p.slug != ?
               AND pl.blog = 0
               AND pl.source_type = 'page'
+              AND pl.link_type IN ('wikilink', 'template', 'extension')
               AND pl.target_slug IN (${placeholders})
               AND p.deleted_at IS NULL${pPrivateFilter}
             ORDER BY p.updated_at DESC LIMIT 100

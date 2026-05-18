@@ -17,6 +17,13 @@ import { superAdminAction } from '../utils/webhook/events/superAdmin';
 import { pushToUser, pushToSignupRequest, promoteSignupSubscriptions, deleteSignupSubscriptions } from '../utils/push';
 import { createNotification } from '../utils/notification';
 import {
+    loadAllPaletteRows,
+    isSafeCssColor,
+    PALETTE_NAME_RE,
+    RESERVED_PALETTE_NAMES,
+    type PaletteVariant,
+} from '../utils/palettes';
+import {
     loadAnnouncements,
     mutateAnnouncements,
     AnnouncementMutationError,
@@ -1874,6 +1881,281 @@ adminRoutes.post('/category-prefix-rules/bulk-apply', async (c) => {
         updated: updates.length,
         ruleSaved,
     });
+});
+
+// ── 컬러 팔레트 CRUD ────────────────────────────────────────────────
+// 본 라우터 전체가 requireAdmin 미들웨어로 보호되므로 추가 권한 체크 불필요.
+
+/**
+ * body 의 raw row 형태 ({ light_bg, light_color, dark_bg, dark_color } — 각 값은
+ * string | null) 를 정규화. 명시적으로 null 인 채널은 그대로 NULL 로 저장되고,
+ * sibling 폴백은 일어나지 않는다. 관리자 콘솔 UI 가 sparse 팔레트의 채널 단위
+ * NULL 보존을 위해 사용한다.
+ */
+function normalizeRawRowBody(body: any): {
+    light_bg: string | null;
+    light_color: string | null;
+    dark_bg: string | null;
+    dark_color: string | null;
+    error?: string;
+} {
+    const out: {
+        light_bg: string | null;
+        light_color: string | null;
+        dark_bg: string | null;
+        dark_color: string | null;
+    } = { light_bg: null, light_color: null, dark_bg: null, dark_color: null };
+
+    for (const k of ['light_bg', 'light_color', 'dark_bg', 'dark_color'] as const) {
+        const v = (body as any)[k];
+        if (v === null) {
+            out[k] = null;
+        } else if (typeof v === 'string') {
+            if (!isSafeCssColor(v)) {
+                return { ...out, error: `허용되지 않은 색상 값입니다: ${v}` };
+            }
+            out[k] = v;
+        } else {
+            // 누락된 키도 null 로 처리.
+            out[k] = null;
+        }
+    }
+
+    if (
+        out.light_bg === null && out.light_color === null &&
+        out.dark_bg === null && out.dark_color === null
+    ) {
+        return { ...out, error: 'bg 또는 color 값을 최소 1개 입력해주세요.' };
+    }
+    return out;
+}
+
+/** body 의 light/dark 또는 플랫 {bg,color} 를 정규화. 폴백 정책은 utils/palettes 와 동일. */
+function normalizePaletteBody(body: any): {
+    light: PaletteVariant;
+    dark: PaletteVariant;
+    error?: string;
+} {
+    const v = body ?? {};
+
+    let light: PaletteVariant = {};
+    let dark: PaletteVariant = {};
+
+    const hasSplit = (v.light && typeof v.light === 'object') || (v.dark && typeof v.dark === 'object');
+    if (hasSplit) {
+        if (v.light && typeof v.light === 'object') {
+            light = {
+                bg: typeof v.light.bg === 'string' ? v.light.bg : undefined,
+                color: typeof v.light.color === 'string' ? v.light.color : undefined,
+            };
+        }
+        if (v.dark && typeof v.dark === 'object') {
+            dark = {
+                bg: typeof v.dark.bg === 'string' ? v.dark.bg : undefined,
+                color: typeof v.dark.color === 'string' ? v.dark.color : undefined,
+            };
+        }
+    } else {
+        const bg = typeof v.bg === 'string' ? v.bg : undefined;
+        const color = typeof v.color === 'string' ? v.color : undefined;
+        light = { bg, color };
+        dark = { bg, color };
+    }
+
+    const finalLight: PaletteVariant = {
+        bg: light.bg ?? dark.bg,
+        color: light.color ?? dark.color,
+    };
+    const finalDark: PaletteVariant = {
+        bg: dark.bg ?? light.bg,
+        color: dark.color ?? light.color,
+    };
+
+    if (
+        finalLight.bg === undefined && finalLight.color === undefined &&
+        finalDark.bg === undefined && finalDark.color === undefined
+    ) {
+        return { light: finalLight, dark: finalDark, error: 'bg 또는 color 값을 최소 1개 입력해주세요.' };
+    }
+
+    for (const v of [finalLight.bg, finalLight.color, finalDark.bg, finalDark.color]) {
+        if (v !== undefined && !isSafeCssColor(v)) {
+            return { light: finalLight, dark: finalDark, error: `허용되지 않은 색상 값입니다: ${v}` };
+        }
+    }
+    return { light: finalLight, dark: finalDark };
+}
+
+/**
+ * GET /api/admin/palettes
+ * 모든 커스텀 팔레트 raw row 반환 (관리자 콘솔 목록 표시용).
+ * sibling 폴백을 거치지 않은 NULL 보존 형태로 반환해 클라이언트가 어느 채널이
+ * 실제로 NULL 인지 판별할 수 있게 한다. 편집기는 별도 엔드포인트(/api/palettes)
+ * 가 sibling 폴백된 PaletteMap 을 반환한다.
+ */
+adminRoutes.get('/palettes', async (c) => {
+    return c.json({ palettes: await loadAllPaletteRows(c.env.DB) });
+});
+
+/**
+ * 팔레트 변경/삭제 후, 해당 팔레트를 참조하는 페이지/블로그의 캐시를 무효화.
+ *   1) 본문에서 직접 {palette:NAME} 참조 (page_links link_type='palette')
+ *   2) 그런 팔레트를 사용하는 틀을 트랜스클루전한 페이지 (link_type='template' → 1단계)
+ * /api/w/:slug 응답이 used_palettes 를 본문에 포함해 max-age 86400 캐시되므로,
+ * 색상 변경 후 사용자가 다시 열어도 stale 색상이 보일 수 있어 능동적으로 비운다.
+ * 깊은 트랜스클루전 체인은 잡지 않는다 — 일반 위키 사용에서 1단계 폴백으로 충분.
+ */
+async function invalidatePaletteUsers(c: any, name: string): Promise<void> {
+    const db = c.env.DB as D1Database;
+    try {
+        // template_users CTE: 팔레트를 본문에서 직접 참조하는 틀(t1) 의 slug,
+        //   그리고 t1 로 redirect 되는 다른 틀(tr) 의 slug 까지 포함. loadPalettesForPage 가
+        //   redirect_to 1단계를 따라 팔레트를 수집하므로, 색상 변경 시 redirect 시작
+        //   슬러그를 트랜스클루전한 페이지의 캐시도 함께 비워야 stale 색상이 남지 않는다.
+        const { results } = await db
+            .prepare(`
+                WITH template_users AS (
+                    SELECT pt.slug AS slug
+                    FROM page_links plp
+                    JOIN pages pt ON pt.id = plp.source_page_id
+                    WHERE plp.source_type = 'page'
+                      AND plp.link_type = 'palette'
+                      AND plp.target_slug = ?1
+                    UNION
+                    SELECT tr.slug AS slug
+                    FROM pages tr
+                    JOIN pages t1 ON t1.slug = tr.redirect_to
+                    JOIN page_links plp ON plp.source_page_id = t1.id
+                    WHERE plp.source_type = 'page'
+                      AND plp.link_type = 'palette'
+                      AND plp.target_slug = ?1
+                )
+                SELECT DISTINCT p.slug FROM pages p
+                JOIN page_links pl ON pl.source_page_id = p.id
+                WHERE pl.source_type = 'page'
+                  AND (
+                    (pl.link_type = 'palette' AND pl.target_slug = ?1)
+                    OR (pl.link_type = 'template' AND pl.target_slug IN (SELECT slug FROM template_users))
+                  )
+            `)
+            .bind(name)
+            .all();
+
+        const slugs = ((results ?? []) as Array<{ slug: string }>).map(r => r.slug);
+        if (slugs.length > 0) {
+            c.executionCtx.waitUntil(
+                Promise.allSettled(slugs.map((s: string) => invalidatePageCache(c, s)))
+            );
+        }
+    } catch (e) {
+        console.error('invalidatePaletteUsers failed:', e);
+    }
+}
+
+/**
+ * POST /api/admin/palettes
+ * body 지원 형태:
+ *   (1) raw row: { name, light_bg, light_color, dark_bg, dark_color } — 각 값은 string|null.
+ *       null 은 그대로 NULL 로 저장되며 sibling 폴백이 일어나지 않는다 (sparse 보존).
+ *   (2) nested: { name, light: {bg,color}, dark: {bg,color} } — 누락 채널은 sibling 으로 폴백.
+ *   (3) flat:   { name, bg, color } — 라이트/다크 모두 동일 값으로 저장.
+ * 이름 UNIQUE upsert. 하드코딩 프리셋 이름은 예약돼 거부.
+ */
+adminRoutes.post('/palettes', async (c) => {
+    const db = c.env.DB;
+    const currentUser = c.get('user')!;
+    const body = await c.req.json<any>().catch(() => null);
+    if (!body || typeof body !== 'object') {
+        return c.json({ error: '요청 본문이 올바르지 않습니다.' }, 400);
+    }
+
+    const name = typeof body.name === 'string' ? body.name.trim() : '';
+    if (!PALETTE_NAME_RE.test(name)) {
+        return c.json({ error: '팔레트 이름은 영문/숫자/언더스코어/하이픈 1~64자만 사용할 수 있습니다.' }, 400);
+    }
+    if (RESERVED_PALETTE_NAMES.has(name.toLowerCase())) {
+        return c.json({ error: `'${name}' 은 하드코딩 프리셋과 겹치므로 사용할 수 없습니다.` }, 400);
+    }
+
+    let lightBg: string | null;
+    let lightColor: string | null;
+    let darkBg: string | null;
+    let darkColor: string | null;
+
+    const isRawForm =
+        'light_bg' in body || 'light_color' in body ||
+        'dark_bg' in body || 'dark_color' in body;
+
+    if (isRawForm) {
+        const norm = normalizeRawRowBody(body);
+        if (norm.error) {
+            return c.json({ error: norm.error }, 400);
+        }
+        lightBg = norm.light_bg;
+        lightColor = norm.light_color;
+        darkBg = norm.dark_bg;
+        darkColor = norm.dark_color;
+    } else {
+        const normalized = normalizePaletteBody(body);
+        if (normalized.error) {
+            return c.json({ error: normalized.error }, 400);
+        }
+        lightBg = normalized.light.bg ?? null;
+        lightColor = normalized.light.color ?? null;
+        darkBg = normalized.dark.bg ?? null;
+        darkColor = normalized.dark.color ?? null;
+    }
+
+    await db
+        .prepare(
+            `INSERT INTO palettes (name, light_bg, light_color, dark_bg, dark_color, created_by)
+             VALUES (?, ?, ?, ?, ?, ?)
+             ON CONFLICT(name) DO UPDATE SET
+               light_bg    = excluded.light_bg,
+               light_color = excluded.light_color,
+               dark_bg     = excluded.dark_bg,
+               dark_color  = excluded.dark_color,
+               created_by  = excluded.created_by,
+               created_at  = unixepoch()`
+        )
+        .bind(name, lightBg, lightColor, darkBg, darkColor, currentUser.id)
+        .run();
+
+    writeAdminLog(c, 'palette_save', `팔레트 저장: ${name}`, currentUser.id);
+    await invalidatePaletteUsers(c, name);
+    return c.json({ success: true, name });
+});
+
+/**
+ * DELETE /api/admin/palettes/:name
+ * 단일 팔레트 삭제. page_links 의 link_type='palette' 잔존 행은 그대로 둔다 — 본문 재저장
+ * 시 자동 정리되며, 보존하더라도 loadPalettesForPage JOIN 결과가 누락될 뿐 다른 부작용 없음.
+ */
+adminRoutes.delete('/palettes/:name', async (c) => {
+    const db = c.env.DB;
+    const currentUser = c.get('user')!;
+    const name = c.req.param('name');
+
+    if (!PALETTE_NAME_RE.test(name)) {
+        return c.json({ error: '잘못된 팔레트 이름입니다.' }, 400);
+    }
+
+    // DELETE 전에 사용 페이지 목록을 먼저 수집 — 삭제 후엔 palette name lookup 이 빈 결과.
+    // 단, page_links 의 palette/template 행이 그대로 남으므로 사후 invalidate 도 가능하지만,
+    // 의미적 명확성 + 미래에 palettes 와 page_links 동시 정리 가능성을 위해 사전 수집.
+    await invalidatePaletteUsers(c, name);
+
+    const result = await db
+        .prepare('DELETE FROM palettes WHERE name = ?')
+        .bind(name)
+        .run();
+
+    if (result.meta.changes === 0) {
+        return c.json({ error: '팔레트를 찾을 수 없습니다.' }, 404);
+    }
+
+    writeAdminLog(c, 'palette_delete', `팔레트 삭제: ${name}`, currentUser.id);
+    return c.json({ success: true });
 });
 
 

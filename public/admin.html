@@ -375,6 +375,245 @@
               ></div>
             </div>
           </div>
+
+          <!-- ── 컬러 팔레트 관리 ── -->
+          <div class="card shadow-sm border-0 mb-4" id="paletteManagementSection">
+            <div class="card-header py-3">
+              <h5 class="mb-0">컬러 팔레트 관리</h5>
+            </div>
+            <div class="card-body">
+              <p class="text-muted small mb-3">
+                본문에서 <code>{palette:이름}==텍스트==</code> 로 사용할 수 있는
+                커스텀 컬러 팔레트를 관리합니다. 배경색을 지정하면 휘도에 따라
+                글씨색이 자동 계산되며(수동 변경 가능), 다크모드에서 다른 색을
+                쓰려면 별도 색상 토글을 켜세요. 기본 색상인프리셋
+                (<code>primary</code>·<code>secondary</code>·<code>success</code>·<code>info</code>·<code>warning</code>·<code>danger</code>·<code>muted</code>)
+                는 사용할 수 없습니다.
+              </p>
+
+              <!-- ── 새 팔레트 추가 폼 ── -->
+              <div class="admin-subpanel mb-3" id="paletteForm">
+                <div class="palette-form-header">
+                  <h6 class="mb-0" id="paletteFormTitle">새 팔레트 추가</h6>
+                  <div class="palette-form-actions">
+                    <button
+                      class="btn btn-wiki-outline btn-sm"
+                      type="button"
+                      id="paletteFormReset"
+                      style="display: none"
+                    >
+                      취소
+                    </button>
+                    <button
+                      class="btn btn-primary btn-sm"
+                      type="button"
+                      id="paletteFormSubmit"
+                    >
+                      저장
+                    </button>
+                  </div>
+                </div>
+
+                <div class="palette-form-name mt-2">
+                  <label class="form-label small mb-1" for="paletteNameInput">이름</label>
+                  <input
+                    type="text"
+                    id="paletteNameInput"
+                    class="form-control"
+                    placeholder="팔레트 이름"
+                    maxlength="64"
+                    autocomplete="off"
+                  />
+                  <div
+                    class="text-danger small mt-1"
+                    id="paletteNameError"
+                    style="display: none"
+                  ></div>
+                </div>
+
+                <!-- Light 변형 -->
+                <div class="palette-variant-section mt-3" data-variant="light">
+                  <div class="palette-variant-header">
+                    <i class="mdi mdi-white-balance-sunny"></i>
+                    <span>라이트 모드</span>
+                  </div>
+                  <div class="palette-color-pair">
+                    <div class="palette-color-block" data-channel="light.bg">
+                      <div class="palette-color-block-header">
+                        <span class="palette-color-block-label">배경색</span>
+                      </div>
+                      <div
+                        id="paletteLightBgSwatches"
+                        class="palette-swatches-grid mb-2"
+                      ></div>
+                      <canvas
+                        id="paletteLightBgCanvas"
+                        class="palette-sv-canvas"
+                        width="220"
+                        height="120"
+                      ></canvas>
+                      <canvas
+                        id="paletteLightBgHue"
+                        class="palette-hue-canvas mt-2"
+                        width="220"
+                        height="16"
+                      ></canvas>
+                      <input
+                        type="text"
+                        id="paletteLightBgHex"
+                        class="form-control form-control-sm font-monospace mt-2"
+                        value="#0D65F5"
+                        maxlength="9"
+                      />
+                    </div>
+                    <div class="palette-color-block" data-channel="light.color">
+                      <div class="palette-color-block-header">
+                        <span class="palette-color-block-label">글씨색</span>
+                        <span class="form-check form-switch mb-0 palette-auto-toggle">
+                          <input
+                            class="form-check-input"
+                            type="checkbox"
+                            id="paletteLightAuto"
+                            checked
+                          />
+                          <label class="form-check-label small" for="paletteLightAuto">자동 대비</label>
+                        </span>
+                      </div>
+                      <div
+                        id="paletteLightColorSwatches"
+                        class="palette-swatches-grid mb-2"
+                      ></div>
+                      <canvas
+                        id="paletteLightColorCanvas"
+                        class="palette-sv-canvas"
+                        width="220"
+                        height="120"
+                      ></canvas>
+                      <canvas
+                        id="paletteLightColorHue"
+                        class="palette-hue-canvas mt-2"
+                        width="220"
+                        height="16"
+                      ></canvas>
+                      <input
+                        type="text"
+                        id="paletteLightColorHex"
+                        class="form-control form-control-sm font-monospace mt-2"
+                        value="#FFFFFF"
+                        maxlength="9"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div class="form-check form-switch mt-3">
+                  <input
+                    class="form-check-input"
+                    type="checkbox"
+                    id="paletteHasDark"
+                  />
+                  <label class="form-check-label small" for="paletteHasDark">
+                    다크모드 별도 색상 지정
+                  </label>
+                </div>
+
+                <!-- Dark 변형 -->
+                <div
+                  class="palette-variant-section mt-3"
+                  id="paletteDarkRow"
+                  data-variant="dark"
+                  style="display: none"
+                >
+                  <div class="palette-variant-header">
+                    <i class="mdi mdi-weather-night"></i>
+                    <span>다크 모드</span>
+                  </div>
+                  <div class="palette-color-pair">
+                    <div class="palette-color-block" data-channel="dark.bg">
+                      <div class="palette-color-block-header">
+                        <span class="palette-color-block-label">배경색</span>
+                      </div>
+                      <div
+                        id="paletteDarkBgSwatches"
+                        class="palette-swatches-grid mb-2"
+                      ></div>
+                      <canvas
+                        id="paletteDarkBgCanvas"
+                        class="palette-sv-canvas"
+                        width="220"
+                        height="120"
+                      ></canvas>
+                      <canvas
+                        id="paletteDarkBgHue"
+                        class="palette-hue-canvas mt-2"
+                        width="220"
+                        height="16"
+                      ></canvas>
+                      <input
+                        type="text"
+                        id="paletteDarkBgHex"
+                        class="form-control form-control-sm font-monospace mt-2"
+                        value="#0D65F5"
+                        maxlength="9"
+                      />
+                    </div>
+                    <div class="palette-color-block" data-channel="dark.color">
+                      <div class="palette-color-block-header">
+                        <span class="palette-color-block-label">글씨색</span>
+                        <span class="form-check form-switch mb-0 palette-auto-toggle">
+                          <input
+                            class="form-check-input"
+                            type="checkbox"
+                            id="paletteDarkAuto"
+                            checked
+                          />
+                          <label class="form-check-label small" for="paletteDarkAuto">자동 대비</label>
+                        </span>
+                      </div>
+                      <div
+                        id="paletteDarkColorSwatches"
+                        class="palette-swatches-grid mb-2"
+                      ></div>
+                      <canvas
+                        id="paletteDarkColorCanvas"
+                        class="palette-sv-canvas"
+                        width="220"
+                        height="120"
+                      ></canvas>
+                      <canvas
+                        id="paletteDarkColorHue"
+                        class="palette-hue-canvas mt-2"
+                        width="220"
+                        height="16"
+                      ></canvas>
+                      <input
+                        type="text"
+                        id="paletteDarkColorHex"
+                        class="form-control form-control-sm font-monospace mt-2"
+                        value="#FFFFFF"
+                        maxlength="9"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 프리뷰 -->
+                <div class="palette-preview-row mt-3">
+                  <span class="text-muted small me-2">프리뷰:</span>
+                  <span class="palette-preview-badge" id="paletteLightPreview">Light</span>
+                  <span class="palette-preview-badge palette-preview-dark" id="paletteDarkPreview" style="display: none">Dark</span>
+                </div>
+              </div>
+
+              <!-- ── 팔레트 목록 ── -->
+              <div
+                id="paletteList"
+                class="list-group list-group-flush border rounded"
+              >
+                <div class="p-3 text-center text-muted small">불러오는 중…</div>
+              </div>
+            </div>
+          </div>
         </div>
 
         <!-- ── 탭: 시스템 설정 (Settings) ── -->
@@ -1112,6 +1351,7 @@
 
     <script type="module" src="/dist/common.js"></script>
     <script type="module" src="/dist/icon-picker.js"></script>
+    <script type="module" src="/dist/admin-palettes.js"></script>
     <script>
       // ── 탭 전환 로직 ──
       function showTab(tabId) {
@@ -1159,6 +1399,9 @@
         loadWikiSettings();
         loadSignupPolicy();
         loadDashStats();
+        if (typeof window.loadPaletteList === "function") {
+          window.loadPaletteList();
+        }
       });
 
       async function loadDashStats() {

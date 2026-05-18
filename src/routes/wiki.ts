@@ -7,6 +7,7 @@ import { safeJSON } from '../utils/json';
 import { ROLE_CASE_SQL, enrichRoles, RBAC } from '../utils/role';
 import { fetchMediaTags } from '../utils/mediaTags';
 import { createNotifications } from '../utils/notification';
+import { loadAllPalettes, loadPalettesForPage } from '../utils/palettes';
 
 const wiki = new Hono<Env>();
 
@@ -59,51 +60,6 @@ export async function findConflictingPage(
         .bind(candidate, excludePageId)
         .first<{ slug: string; matched: 'slug' | 'title'; deleted_at: number | null }>();
     return row ? { slug: row.slug, matchedColumn: row.matched, isDeleted: !!row.deleted_at } : null;
-}
-
-// ── 커스텀 팔레트 파서 ──
-// PALETTES 환경변수(JSON 문자열)를 정규화된 팔레트 맵으로 변환.
-// 플랫 형태({bg,color})는 light/dark 공통 사용, 분리 형태({light,dark})는 각 모드별 적용.
-// 유효한 엔트리만 통과시키며 파싱 실패 시 빈 객체 반환(프론트엔드에서 조용히 무시).
-function parseCustomPalettes(raw: string | undefined): Record<string, { light: { bg?: string; color?: string }; dark: { bg?: string; color?: string } }> {
-    if (!raw) return {};
-    let parsed: any;
-    try {
-        parsed = JSON.parse(raw);
-    } catch {
-        return {};
-    }
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
-
-    const result: Record<string, { light: { bg?: string; color?: string }; dark: { bg?: string; color?: string } }> = {};
-    for (const [name, value] of Object.entries(parsed)) {
-        if (!name) continue;
-        if (!/^[A-Za-z0-9_-]+$/.test(name)) continue;
-        if (!value || typeof value !== 'object') continue;
-        const v = value as any;
-
-        const hasSplit = (v.light && typeof v.light === 'object') || (v.dark && typeof v.dark === 'object');
-        if (hasSplit) {
-            const light = (v.light && typeof v.light === 'object') ? { bg: typeof v.light.bg === 'string' ? v.light.bg : undefined, color: typeof v.light.color === 'string' ? v.light.color : undefined } : {};
-            const dark = (v.dark && typeof v.dark === 'object') ? { bg: typeof v.dark.bg === 'string' ? v.dark.bg : undefined, color: typeof v.dark.color === 'string' ? v.dark.color : undefined } : {};
-            // 한쪽만 정의된 경우 반대편으로 폴백
-            const finalLight = { bg: light.bg ?? dark.bg, color: light.color ?? dark.color };
-            const finalDark = { bg: dark.bg ?? light.bg, color: dark.color ?? light.color };
-            if (
-                finalLight.bg === undefined &&
-                finalLight.color === undefined &&
-                finalDark.bg === undefined &&
-                finalDark.color === undefined
-            ) continue;
-            result[name] = { light: finalLight, dark: finalDark };
-        } else {
-            const bg = typeof v.bg === 'string' ? v.bg : undefined;
-            const color = typeof v.color === 'string' ? v.color : undefined;
-            if (bg === undefined && color === undefined) continue;
-            result[name] = { light: { bg, color }, dark: { bg, color } };
-        }
-    }
-    return result;
 }
 
 /**
@@ -190,6 +146,7 @@ export async function invalidateBacklinkCaches(c: any, slug: string, db: D1Datab
             WHERE p.deleted_at IS NULL
               AND pl.blog = 0
               AND pl.source_type = 'page'
+              AND pl.link_type IN ('wikilink', 'template', 'extension')
               AND pl.target_slug IN (${placeholders})
         `)
         .bind(...targetSlugs)
@@ -294,6 +251,21 @@ function extractLinks(content: string): { target_slug: string; link_type: string
         if (!seen.has(key)) {
             seen.add(key);
             links.push({ target_slug: r2Key, link_type: 'image' });
+        }
+    }
+
+    // 4) {palette:이름} 토큰 — 본문이 참조하는 커스텀 팔레트를 page_links 에 인덱싱.
+    // 문서 열람 시 loadPalettesForPage 가 이 인덱스를 참고해 실제로 사용된 팔레트만 SSR 한다.
+    // 트랜스클루전된 틀의 본문이 참조하는 팔레트는 이 함수가 보지 못하지만 (틀 본문은 다른
+    // 문서에 속하므로 그 문서의 page_links 에 자체 인덱싱돼 있음), loadPalettesForPage 가
+    // page_links(link_type='template') 를 통해 합집합으로 끌어온다.
+    const paletteRegex = /\{palette:\s*([A-Za-z0-9_-]+)\s*\}/g;
+    for (const m of cleaned.matchAll(paletteRegex)) {
+        const name = m[1];
+        const key = `palette:${name}`;
+        if (!seen.has(key)) {
+            seen.add(key);
+            links.push({ target_slug: name, link_type: 'palette' });
         }
     }
 
@@ -642,6 +614,7 @@ async function rewriteBacklinksForRename(
             WHERE p.deleted_at IS NULL
               AND pl.blog = 0
               AND pl.source_type = 'page'
+              AND pl.link_type IN ('wikilink', 'template', 'extension')
               AND pl.target_slug IN (${placeholders})
         `)
         .bind(...targetSlugs)
@@ -830,18 +803,42 @@ wiki.get('/config', async (c) => {
         }
     }
 
+    // 모든 커스텀 팔레트를 동봉 — index/blog 의 SSR 경로는 _usedPalettes (사용된 부분집합) 를
+    // 우선 사용하므로 이 필드는 사실상 무시되지만, revisions/discussions/tickets/mypage 등
+    // SSR _usedPalettes 도 options.palettes 도 없는 비-SSR 렌더 경로는 이 폴백으로 동작한다.
+    let palettes: Record<string, unknown> = {};
+    try {
+        palettes = await loadAllPalettes(c.env.DB);
+    } catch (e) {
+        console.error('loadAllPalettes for /config failed:', e);
+    }
+
     return c.json({
         wikiName: c.env.WIKI_NAME || 'CloudWiki',
         wikiLogoUrl: c.env.WIKI_LOGO_URL || '',
         wikiFaviconUrl: c.env.WIKI_FAVICON_URL || '',
+        wikiVisibility: c.env.WIKI_VISIBILITY === 'closed' ? 'closed' : 'open',
         selectedIconsOnly: c.env.SELECTED_ICONS_ONLY === 'true',
         enableConcurrentEditDetection: c.env.ENABLE_CONCURRENT_EDIT_DETECTION !== 'false',
         turnstileSiteKey: c.env.TURNSTILE_SITE_KEY || '',
         enabledExtensions: (c.env.ENABLED_EXTENSIONS || '').split(',').map((s: string) => s.trim()).filter(Boolean),
-        palettes: parseCustomPalettes(c.env.PALETTES),
         mediaPublicUrl: c.env.MEDIA_PUBLIC_URL || '',
         announcements,
+        palettes,
     });
+});
+
+/**
+ * GET /palettes
+ * 모든 커스텀 팔레트(palettes 테이블) 반환. 편집기 자동완성/모달과 실시간 미리보기에서 사용.
+ * 문서 열람 페이지는 SSR 의 _usedPalettes (사용된 부분집합) 를 쓰므로 호출하지 않는다.
+ * WIKI_VISIBILITY='closed' 인 사이트에서는 로그인 사용자에게만 노출.
+ */
+wiki.get('/palettes', async (c) => {
+    if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) {
+        return c.json({ error: '로그인이 필요합니다.' }, 401);
+    }
+    return c.json({ palettes: await loadAllPalettes(c.env.DB) });
 });
 
 /**
@@ -1319,7 +1316,23 @@ wiki.get('/w/:slug', async (c) => {
         }
     }
 
-    const result = safeJSON({ ...page, redirected_from: redirectedFrom });
+    // 본문이 참조하는 커스텀 팔레트만 응답에 동봉 (SPA 네비게이션 시에도 정확한 팔레트로
+    // 렌더되도록 — SSR 의 _usedPalettes 는 초기 페이지 첫 로드에만 유효하다).
+    let usedPalettes: Record<string, unknown> = {};
+    // 응답이 공유 캐시(Cloudflare edge)에 저장될 조건: 공개 페이지이고 !nocache.
+    // 캐시 가능 응답은 사용자 권한별로 갈라지지 않아야 하므로, canSeePrivate 효과는
+    // 비-캐시 응답(비공개 페이지 / nocache=true) 에서만 적용한다.
+    const willShareCache = !(page.is_private === 1 || sourceWasPrivate) && !nocache;
+    const palettePerm = canSeePrivate && !willShareCache;
+    try {
+        // page.content 를 함께 넘겨 page_links 인덱스가 아직 비동기로 갱신 중일 때도
+        // 본문이 참조한 팔레트가 누락되지 않게 폴백.
+        usedPalettes = await loadPalettesForPage(db, page.id, page.content, palettePerm);
+    } catch (e) {
+        console.error('loadPalettesForPage failed:', e);
+    }
+
+    const result = safeJSON({ ...page, redirected_from: redirectedFrom, used_palettes: usedPalettes });
 
     // 비공개 페이지는 권한 있는 사용자에게만 노출되므로, 공유 캐시/브라우저 캐시에 저장되지 않도록 한다.
     // sourceWasPrivate 가 true 이면 리다이렉트로 page 가 public 으로 바뀌어도 캐시 키(원본 private 슬러그)에 저장하면 안 된다.
@@ -2127,6 +2140,7 @@ wiki.get('/w/:slug/backlinks', async (c) => {
         WHERE p.slug != ?
           AND pl.blog = 0
           AND pl.source_type = 'page'
+          AND pl.link_type IN ('wikilink', 'template', 'extension')
           AND pl.target_slug IN (${placeholders})
     `;
     if (!isAdmin) {

@@ -480,6 +480,22 @@ document.addEventListener('DOMContentLoaded', async () => {
     await window.loadConfig();
     selectedIconsOnly = !!(window.appConfig && window.appConfig.selectedIconsOnly);
     window.selectedIconsOnly = selectedIconsOnly; // ESM 모듈에서 읽기 위한 노출
+
+    // 편집기에서는 자동완성/모달이 동작하려면 전체 커스텀 팔레트가 필요하다.
+    // /api/config 는 더 이상 palettes 를 반환하지 않으므로 /api/palettes 로 별도 로드.
+    // (문서 열람 페이지는 SSR 이 사용된 부분집합만 #ssr-data 로 주입한다.)
+    try {
+        const res = await fetch('/api/palettes');
+        if (res.ok) {
+            const data: any = await res.json();
+            if (data && data.palettes && typeof data.palettes === 'object' && window.appConfig) {
+                window.appConfig.palettes = data.palettes;
+            }
+        }
+    } catch (e) {
+        console.error('Failed to load palettes:', e);
+    }
+
     initTurnstile();
     // 인증 확인
     try {
@@ -3017,6 +3033,21 @@ document.addEventListener('DOMContentLoaded', async () => {
             window.refreshAutoSummary();
         });
     }
+
+    // 대체 제목 변경 시 편집 요약 자동 갱신 — 본문/메타 변경이 전혀 없이 대체 제목만
+    // 수정하는 경우에도 자동 요약 prefix 가 채워져 저장이 가능하도록 한다.
+    const altTitleInputEl = document.getElementById('alternateTitleInput');
+    if (altTitleInputEl) {
+        let altTitleDebounce = null;
+        altTitleInputEl.addEventListener('input', () => {
+            clearTimeout(altTitleDebounce);
+            altTitleDebounce = setTimeout(window.refreshAutoSummary, 300);
+        });
+        altTitleInputEl.addEventListener('change', () => {
+            clearTimeout(altTitleDebounce);
+            window.refreshAutoSummary();
+        });
+    }
     // 기존 문서 불러오기 (블로그 모드는 별도 처리)
     if (BLOG_MODE) {
         await loadBlogContentForEdit();
@@ -3080,6 +3111,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             // 깜빡임을 방지할 수 있다.
             originalPageMeta = {
                 slug: page.slug,
+                title: page.title || '',
                 category: page.category || '',
                 redirect_to: page.redirect_to || '',
                 is_locked: page.is_locked ? 1 : 0,
@@ -3523,7 +3555,13 @@ function hasMeaningfulChanges() {
     if (currentContent !== originalContent) return true;
 
     // 신규 문서(originalPageMeta === null)는 빈 메타데이터를 기준선으로 사용한다.
-    const baseMeta = originalPageMeta || { category: '', redirect_to: '', is_locked: 0, is_private: 0 };
+    const baseMeta = originalPageMeta || { title: '', category: '', redirect_to: '', is_locked: 0, is_private: 0 };
+
+    // 대체 제목 — null/빈 문자열은 동일(미설정)로 취급.
+    const origTitle = (baseMeta.title || '').trim();
+    const altTitleEl = document.getElementById('alternateTitleInput') as HTMLInputElement | null;
+    const currTitle = altTitleEl ? altTitleEl.value.trim() : '';
+    if (origTitle !== currTitle) return true;
 
     const origCats = baseMeta.category
         ? baseMeta.category.split(',').map(c => c.trim()).filter(Boolean).sort()
@@ -4001,11 +4039,13 @@ async function savePage() {
 
                 // 메타데이터 입력 필드를 서버 최신값으로 갱신 — 재시도 시 스테일 값 송신 방지
                 const titleEl = document.getElementById('titleInput');
+                const altTitleElFallback = document.getElementById('alternateTitleInput') as HTMLInputElement | null;
                 const categoryEl = document.getElementById('categoryInput');
                 const redirectEl = document.getElementById('redirectInput');
                 const lockedEl = document.getElementById('isLockedCheck');
                 const privateElFallback = document.getElementById('isPrivateCheck');
                 if (titleEl) titleEl.value = freshPageForFallback.slug || slug;
+                if (altTitleElFallback) altTitleElFallback.value = freshPageForFallback.title || '';
                 const freshCategory = freshPageForFallback.category || '';
                 if (categoryEl) categoryEl.value = freshCategory;
                 categoryTags = freshCategory ? freshCategory.split(',').map(c => c.trim()).filter(c => c) : [];
@@ -4015,6 +4055,7 @@ async function savePage() {
                 // originalPageMeta 도 일관성 유지 (sectionMode 는 false 가 되었지만 방어적으로 갱신)
                 originalPageMeta = {
                     slug: freshPageForFallback.slug,
+                    title: freshPageForFallback.title || '',
                     category: freshPageForFallback.category || '',
                     redirect_to: freshPageForFallback.redirect_to || '',
                     is_locked: freshPageForFallback.is_locked ? 1 : 0,

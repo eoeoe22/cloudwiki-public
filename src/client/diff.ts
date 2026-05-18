@@ -343,6 +343,41 @@ export function computeLineDiff(oldText: string, newText: string): string {
     return '<table class="diff-table">' + rows + '</table>';
 }
 
+// computeLineDiff 가 만든 표와 동일한 가시 영역(변경 줄 + 컨텍스트, 생략 라벨 포함)
+// 을 plain text 로 복사하기 위한 헬퍼. Raw 비교 모드의 "복사하기" 버튼이 사용한다.
+export function buildLineDiffText(oldText: string, newText: string): string {
+    const result = _lcsLineOps(oldText, newText);
+    if (result.length === 0 || !result.some((r) => r.type !== 'same')) return '';
+
+    const CONTEXT = 3;
+    const visible = new Set<number>();
+    result.forEach((r, idx) => {
+        if (r.type !== 'same') {
+            for (let k = Math.max(0, idx - CONTEXT); k <= Math.min(result.length - 1, idx + CONTEXT); k++) {
+                visible.add(k);
+            }
+        }
+    });
+
+    const lines: string[] = [];
+    let skipStart = -1;
+    for (let idx = 0; idx < result.length; idx++) {
+        if (visible.has(idx)) {
+            if (skipStart !== -1) {
+                lines.push(`... ${idx - skipStart}줄 생략됨`);
+                skipStart = -1;
+            }
+            const r = result[idx];
+            const prefix = r.type === 'add' ? '+' : r.type === 'del' ? '-' : ' ';
+            lines.push(prefix + (r.text || ''));
+        } else if (skipStart === -1) {
+            skipStart = idx;
+        }
+    }
+    if (skipStart !== -1) lines.push(`... ${result.length - skipStart}줄 생략됨`);
+    return lines.join('\n');
+}
+
 // ── 두 본문에 대해 raw / rendered 토글을 가진 SweetAlert2 모달을 띄우는 헬퍼.
 // mypage 의 MCP 편집 승인 모달이 이 함수를 호출하고, revisions.html 의 showDiff 와
 // 동일한 사용자 경험을 제공한다. 호출자가 모달 상단/하단에 추가 UI 를 끼우고 싶을 때를
@@ -374,24 +409,29 @@ export function showDiffModal(opts: DiffModalOptions) {
     let renderToken = 0;
     let renderChain: Promise<void> = Promise.resolve();
 
-    const toggleHtml = (m: 'rendered' | 'raw') => {
-        if (forceRaw) return '';
-        return `
-        <div class="diff-mode-toggle btn-group btn-group-sm" role="group" aria-label="diff 모드">
-          <button type="button" class="btn ${m === 'rendered' ? 'btn-primary' : 'btn-outline-secondary'}" data-diff-mode="rendered">
-            <i class="bi bi-eye"></i> 렌더링 비교
-          </button>
-          <button type="button" class="btn ${m === 'raw' ? 'btn-primary' : 'btn-outline-secondary'}" data-diff-mode="raw">
-            <i class="bi bi-code"></i> Raw 비교
-          </button>
-        </div>`;
+    const toolbarHtml = (m: 'rendered' | 'raw') => {
+        const toggleGroup = forceRaw
+            ? ''
+            : `<div class="diff-mode-toggle btn-group btn-group-sm" role="group" aria-label="diff 모드">
+            <button type="button" class="btn ${m === 'rendered' ? 'btn-primary' : 'btn-outline-secondary'}" data-diff-mode="rendered">
+              <i class="bi bi-eye"></i> 렌더링 비교
+            </button>
+            <button type="button" class="btn ${m === 'raw' ? 'btn-primary' : 'btn-outline-secondary'}" data-diff-mode="raw">
+              <i class="bi bi-code"></i> Raw 비교
+            </button>
+          </div>`;
+        const copyHidden = m !== 'raw' ? ' style="display:none;"' : '';
+        const copyBtn = `<button type="button" class="btn btn-sm btn-outline-secondary diff-copy-btn" data-diff-copy${copyHidden}>
+            <i class="bi bi-clipboard"></i> 복사하기
+          </button>`;
+        return `<div class="diff-toolbar">${toggleGroup}${copyBtn}</div>`;
     };
 
     const loadingHtml = '<div class="text-center text-muted py-4"><div class="spinner-border spinner-border-sm me-2"></div>렌더링 중...</div>';
 
     return Swal.fire({
         title,
-        html: `${extraTopHtml}${toggleHtml(mode)}<div id="diffBodyContainer">${loadingHtml}</div>`,
+        html: `${extraTopHtml}${toolbarHtml(mode)}<div id="diffBodyContainer">${loadingHtml}</div>`,
         width,
         showCloseButton: true,
         ...swalOptions,
@@ -421,6 +461,11 @@ export function showDiffModal(opts: DiffModalOptions) {
                 });
             };
 
+            const updateCopyBtnVisibility = () => {
+                const copyBtn = popup.querySelector('[data-diff-copy]') as HTMLElement | null;
+                if (copyBtn) copyBtn.style.display = mode === 'raw' ? '' : 'none';
+            };
+
             popup.querySelectorAll('.diff-mode-toggle [data-diff-mode]').forEach((btn) => {
                 btn.addEventListener('click', () => {
                     const next = btn.getAttribute('data-diff-mode') as 'rendered' | 'raw' | null;
@@ -432,9 +477,35 @@ export function showDiffModal(opts: DiffModalOptions) {
                         b.classList.toggle('btn-primary', isActive);
                         b.classList.toggle('btn-outline-secondary', !isActive);
                     });
+                    updateCopyBtnVisibility();
                     renderInto(mode);
                 });
             });
+
+            const copyBtn = popup.querySelector('[data-diff-copy]') as HTMLButtonElement | null;
+            if (copyBtn) {
+                // baseline 라벨은 첫 바인딩 시점에 한 번만 캡처한다. 클릭마다 캡처하면
+                // 1.5초 피드백 윈도우 안의 재클릭이 transient 라벨을 "원본"으로 저장해
+                // 버튼이 "복사됨"/"복사 실패" 에 머무는 버그가 생긴다. 같은 이유로 직전
+                // 복원 타이머가 남아있으면 취소하고 새 타이머만 활성화한다.
+                const originalHtml = copyBtn.innerHTML;
+                let restoreTimer: ReturnType<typeof setTimeout> | null = null;
+                copyBtn.addEventListener('click', async () => {
+                    const text = buildLineDiffText(oldText, newText);
+                    if (!text) return;
+                    try {
+                        await navigator.clipboard.writeText(text);
+                        copyBtn.innerHTML = '<i class="bi bi-check2"></i> 복사됨';
+                    } catch {
+                        copyBtn.innerHTML = '<i class="bi bi-x-lg"></i> 복사 실패';
+                    }
+                    if (restoreTimer !== null) clearTimeout(restoreTimer);
+                    restoreTimer = setTimeout(() => {
+                        copyBtn.innerHTML = originalHtml;
+                        restoreTimer = null;
+                    }, 1500);
+                });
+            }
 
             if (onOpen) {
                 try {
@@ -453,6 +524,7 @@ export function showDiffModal(opts: DiffModalOptions) {
 (window as any)._lcsLineOps = _lcsLineOps;
 (window as any).buildRichDiffHtml = buildRichDiffHtml;
 (window as any).computeLineDiff = computeLineDiff;
+(window as any).buildLineDiffText = buildLineDiffText;
 (window as any).getDiffViewMode = getDiffViewMode;
 (window as any).setDiffViewMode = setDiffViewMode;
 (window as any).showDiffModal = showDiffModal;

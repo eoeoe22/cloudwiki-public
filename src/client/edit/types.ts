@@ -68,8 +68,10 @@ export interface CMView {
     focus(): void;
 }
 
-/** 페이지 메타 (originalPageMeta 상태 — 카테고리 / 리다이렉트 / 잠금 변경 비교용) */
+/** 페이지 메타 (originalPageMeta 상태 — 대체 제목 / 카테고리 / 리다이렉트 / 잠금 변경 비교용) */
 export interface PageMeta {
+    /** 대체 제목 (display title). null/빈 문자열은 "미설정" 으로 동일 취급한다. */
+    title?: string | null;
     category?: string | null;
     redirect_to?: string | null;
     is_locked?: number | boolean | null;

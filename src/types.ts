@@ -47,7 +47,6 @@ export type Env = {
         TERMS_OF_SERVICE: string;
         PRIVACY_POLICY: string;
         ROLE_PERMISSIONS_JSON?: string;
-        PALETTES?: string;
         WIKI_SYNTAX?: string;
         // === Discord Webhook (Secret 으로 등록) ===
         DISCORD_ADMIN_WEBHOOK_URL?: string;

@@ -87,9 +87,16 @@
 }
 
 /* ── Rich (rendered) Diff View — GitHub 의 md rich diff 와 유사 ── */
+.diff-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 0.75rem;
+}
+
 .diff-mode-toggle {
   display: inline-flex;
-  margin-bottom: 0.75rem;
 }
 
 .rich-diff-container {

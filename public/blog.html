@@ -325,7 +325,7 @@
         syncAnnounceButtons(post.id);
 
         // 위키 문법 렌더링
-        await renderWikiContent(post.content || '', post.title, 'blogPostContent');
+        await renderWikiContent(post.content || '', post.title, 'blogPostContent', { palettes: post.used_palettes || null });
 
         showView('blogPost');
       } catch (e) {

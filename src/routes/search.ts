@@ -262,42 +262,63 @@ search.get('/search', async (c) => {
         // Trigram 토크나이저에서는 따옴표로 감싸면 정확한 substring 매칭
         const safeMatchQuery = '"' + trimmedQuery.replace(/"/g, '""') + '"';
 
+        // 슬러그/title LIKE 패턴 (정렬 키 + title 보조 매칭용).
+        // pages_fts 가 (slug, title, content) 3컬럼 trigram 인덱싱이므로 FTS MATCH 만으로도
+        // title 매치가 포함되어야 하지만, 과거 스키마에서 마이그레이션된 인덱스에 title 컬럼이
+        // 누락된 경우에도 title 만 일치한 문서를 결과에 포함시키기 위해 OR p.title LIKE ? 를
+        // 명시적으로 추가한다. CLAUDE.md 규칙(검색 디스커버리는 title 도 LIKE 매칭 대상)에 일치.
+        // 사용자 입력 그대로만 매치되도록 LIKE 메타문자(%, _, \)를 escape 한 후 ESCAPE '\' 사용.
+        // (예: 검색어 "100%"가 모든 행에 매치되어 결과가 부풀려지는 현상 방지)
+        const likeEscaped = trimmedQuery.replace(/[\\%_]/g, '\\$&');
+        const likePattern = `%${likeEscaped}%`;
+
         const totalRow = await db
             .prepare(
                 `SELECT COUNT(*) as total
-                 FROM pages_fts
-                 JOIN pages p ON pages_fts.rowid = p.id
-                 WHERE pages_fts MATCH ?${visibility}`
+                 FROM pages p
+                 LEFT JOIN (SELECT rowid FROM pages_fts WHERE pages_fts MATCH ?) AS fts
+                   ON fts.rowid = p.id
+                 WHERE (fts.rowid IS NOT NULL OR p.title LIKE ? ESCAPE '\\')${visibility}`
             )
-            .bind(safeMatchQuery)
+            .bind(safeMatchQuery, likePattern)
             .first<{ total: number }>();
         const total = totalRow?.total ?? 0;
         const { page, offset } = clampPage(total);
 
         // 슬러그/title LIKE 매치를 FTS rank 보다 우선해 정렬한다.
-        // (FTS5 trigram도 부분 일치를 잡지만 슬러그·title 일치를 항상 상단에 노출하기 위함)
         // snippet 컬럼 번호는 pages_fts(slug, title, content) 중 content (=index 2) 를 가리킨다.
-        const slugLikePattern = `%${trimmedQuery}%`;
+        // title-only 매치(FTS 미스)의 경우 fts.snippet 이 NULL — 본문/슬러그에서 buildLikeSnippet 으로
+        // 대체 스니펫을 만들거나, 매치가 없으면 빈 문자열을 사용한다(표시명은 title 이 노출됨).
         const sql = `
-           SELECT p.slug, p.title, p.deleted_at,
-                  snippet(pages_fts, 2, '__MARK_START__', '__MARK_END__', '...', 40) as snippet
-           FROM pages_fts
-           JOIN pages p ON pages_fts.rowid = p.id
-           WHERE pages_fts MATCH ?${visibility}
-           ORDER BY (CASE WHEN p.slug LIKE ? THEN 0
-                          WHEN p.title LIKE ? THEN 1
-                          ELSE 2 END), rank
+           SELECT p.slug, p.title, p.content, p.deleted_at,
+                  fts.snippet as snippet,
+                  fts.rank as rank
+           FROM pages p
+           LEFT JOIN (
+               SELECT rowid,
+                      snippet(pages_fts, 2, '__MARK_START__', '__MARK_END__', '...', 40) as snippet,
+                      rank
+               FROM pages_fts
+               WHERE pages_fts MATCH ?
+           ) AS fts ON fts.rowid = p.id
+           WHERE (fts.rowid IS NOT NULL OR p.title LIKE ? ESCAPE '\\')${visibility}
+           ORDER BY (CASE WHEN p.slug LIKE ? ESCAPE '\\' THEN 0
+                          WHEN p.title LIKE ? ESCAPE '\\' THEN 1
+                          ELSE 2 END),
+                    CASE WHEN fts.rank IS NULL THEN 1 ELSE 0 END,
+                    fts.rank
            LIMIT ? OFFSET ?
         `;
 
         const results = await db
             .prepare(sql)
-            .bind(safeMatchQuery, slugLikePattern, slugLikePattern, PAGE_SIZE, offset)
-            .all();
+            .bind(safeMatchQuery, likePattern, likePattern, likePattern, PAGE_SIZE, offset)
+            .all<{ slug: string; title: string | null; content: string; deleted_at: number | null; snippet: string | null; rank: number | null }>();
 
-        // XSS 방지를 위해 스니펫의 HTML 특수문자를 이스케이프 처리한 뒤 임시 문자열을 <mark> 태그로 치환
-        const safeResults = results.results.map((r: any) => {
-            let finalR = { ...r, isDeleted: !!r.deleted_at };
+        // XSS 방지를 위해 스니펫의 HTML 특수문자를 이스케이프 처리한 뒤 임시 문자열을 <mark> 태그로 치환.
+        // FTS 매치가 없고 title 로만 매치한 경우 fts.snippet 이 NULL 이므로 본문/슬러그 기반으로 직접 만든다.
+        const safeResults = results.results.map((r) => {
+            let snippet = '';
             if (typeof r.snippet === 'string') {
                 let safeSnippet = r.snippet
                     .replace(/&/g, '&amp;')
@@ -306,13 +327,19 @@ search.get('/search', async (c) => {
                     .replace(/"/g, '&quot;')
                     .replace(/'/g, '&#039;');
 
-                safeSnippet = safeSnippet
+                snippet = safeSnippet
                     .replace(/__MARK_START__/g, '<mark>')
                     .replace(/__MARK_END__/g, '</mark>');
-
-                return { ...finalR, snippet: safeSnippet };
+            } else {
+                snippet = buildLikeSnippet(r.slug, r.content || '', trimmedQuery);
             }
-            return finalR;
+            return {
+                slug: r.slug,
+                title: r.title,
+                deleted_at: r.deleted_at,
+                isDeleted: !!r.deleted_at,
+                snippet,
+            };
         });
 
         if (shouldTrack) trackSearch(c, trimmedQuery, total, Date.now() - searchStartTime);

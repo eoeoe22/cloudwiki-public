@@ -1742,6 +1742,7 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
                     FROM page_links pl
                     JOIN pages p ON pl.source_page_id = p.id
                     WHERE pl.blog = 0 AND pl.source_type = 'page'
+                      AND pl.link_type IN ('wikilink', 'template', 'extension')
                       AND pl.target_slug = ? AND p.deleted_at IS NULL AND p.id != ?
                 `)
                 .bind(oldSlug, page.id)

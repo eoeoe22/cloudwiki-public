@@ -51,6 +51,7 @@ export default defineConfig({
                 'sw': resolve(__dirname, 'src/client/sw.ts'),
                 'setup-profile': resolve(__dirname, 'src/client/pages/setup-profile.ts'),
                 'icon-picker': resolve(__dirname, 'src/client/iconPicker.ts'),
+                'admin-palettes': resolve(__dirname, 'src/client/admin/palettes.ts'),
             },
             // CodeMirror 6 / Lezer 패키지는 npm 으로 설치하지 않고 HTML 의
             // <script type="importmap"> 으로 esm.sh CDN 을 통해 직접 해석한다.

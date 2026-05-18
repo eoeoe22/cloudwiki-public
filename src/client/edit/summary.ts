@@ -382,6 +382,11 @@ function buildAutoEditSummary(): string {
     const added = currCats.filter(c => !origCats.includes(c));
     const removed = origCats.filter(c => !currCats.includes(c));
 
+    // 대체 제목 — null/빈 문자열은 동일(미설정)로 취급.
+    const origTitle = (originalPageMeta.title || '').trim();
+    const altTitleEl = document.getElementById('alternateTitleInput') as HTMLInputElement | null;
+    const currTitle = altTitleEl ? altTitleEl.value.trim() : '';
+
     const origRedirect = originalPageMeta.redirect_to || '';
     const redirectEl = document.getElementById('redirectInput') as HTMLInputElement | null;
     const currRedirect = redirectEl ? redirectEl.value.trim() : '';
@@ -395,6 +400,11 @@ function buildAutoEditSummary(): string {
     const currPrivate = privEl && privEl.checked ? 1 : 0;
 
     const parts: string[] = [];
+    if (origTitle !== currTitle) {
+        if (!origTitle) parts.push(`대체 제목 '${currTitle}' 설정`);
+        else if (!currTitle) parts.push(`대체 제목 '${origTitle}' 해제`);
+        else parts.push(`대체 제목 '${origTitle}' → '${currTitle}' 변경`);
+    }
     if (added.length) parts.push(`분류 ${added.map(c => `'${c}'`).join(', ')} 추가`);
     if (removed.length) parts.push(`분류 ${removed.map(c => `'${c}'`).join(', ')} 삭제`);
     if (origRedirect !== currRedirect) {

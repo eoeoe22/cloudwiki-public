@@ -403,6 +403,12 @@
                     <summary class="fw-bold text-primary" style="cursor: pointer; user-select: none;">
                         <i class="mdi mdi-information-outline"></i> 변경 사항 미리보기
                     </summary>
+                    <div class="mt-2 d-flex justify-content-end">
+                        <button type="button" id="diffPreviewCopyBtn" class="btn btn-sm btn-outline-secondary"
+                            onclick="copyDiffPreview()" title="표시된 변경 사항을 텍스트로 복사">
+                            <i class="mdi mdi-content-copy"></i> 복사하기
+                        </button>
+                    </div>
                     <div id="diffPreviewContainer" class="diff-container mt-2" style="font-size: 0.9em;">
                         <!-- Diff 내용이 여기에 렌더링 됩니다 -->
                     </div>

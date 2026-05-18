@@ -1563,9 +1563,40 @@ const WIKI_HARDCODED_PALETTES = {
     muted:     { light: { bg: '#ADB5BD', color: '#212529' }, dark: { bg: '#6C757D', color: '#FFFFFF' } },
 };
 
-/** 커스텀(appConfig.palettes) + 하드코딩을 병합한 팔레트 맵. 커스텀 우선. */
+/**
+ * 커스텀 팔레트 + 하드코딩을 병합한 팔레트 맵. 커스텀 우선.
+ *
+ * 소스 우선순위:
+ *   1. _currentRenderPalettes — renderWikiContent(content, slug, container, {palettes})
+ *      가 매 호출 시점에 세팅. SPA 네비게이션 / 블로그 동적 로드처럼 페이지마다 다른
+ *      팔레트 집합을 받는 경로에서 정확한 매핑을 보장. 초기 SSR 페이지의 메인 본문
+ *      렌더 역시 index.html / blog.html 이 window._ssrData._usedPalettes 를 options.palettes
+ *      로 명시 전달하므로 이 분기로 처리된다.
+ *   2. appConfig.palettes — /api/config 가 채우는 전체 집합. revisions/diff/discussions/
+ *      tickets/mypage 처럼 options.palettes 를 명시 전달하지 않는 렌더 경로에서 사용.
+ *      그 렌더의 본문에서 참조하는 팔레트가 초기 페이지의 _usedPalettes 부분집합과 다를
+ *      수 있으므로 SSR 부분집합 폴백보다 우선해 전체 집합을 적용.
+ *   3. #ssr-data 의 _usedPalettes — appConfig 미로딩 상태(드물게) 의 최후 폴백.
+ *      options.palettes 를 명시 전달하는 초기 본문 렌더에서는 도달하지 않는다.
+ *   4. 모두 없으면 빈 객체 → 하드코딩 프리셋만 사용.
+ */
+let _currentRenderPalettes = null;
+function _readSsrUsedPalettes() {
+    try {
+        if (typeof document === 'undefined') return null;
+        const el = document.getElementById('ssr-data');
+        if (!el || !el.textContent) return null;
+        const data = JSON.parse(el.textContent);
+        const used = data && data._usedPalettes;
+        return (used && typeof used === 'object') ? used : null;
+    } catch {
+        return null;
+    }
+}
 function getMergedWikiPalettes() {
-    const custom = (typeof appConfig !== 'undefined' && appConfig && appConfig.palettes && typeof appConfig.palettes === 'object') ? appConfig.palettes : {};
+    const appCustom = (typeof appConfig !== 'undefined' && appConfig && appConfig.palettes && typeof appConfig.palettes === 'object') ? appConfig.palettes : null;
+    const ssrUsed = (_currentRenderPalettes || appCustom) ? null : _readSsrUsedPalettes();
+    const custom = _currentRenderPalettes ?? appCustom ?? ssrUsed ?? {};
     return Object.assign({}, WIKI_HARDCODED_PALETTES, custom);
 }
 
@@ -2499,6 +2530,16 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
     const containerEl = document.getElementById(containerId);
     if (!containerEl) return;
 
+    // 이 렌더 호출 동안 _resolvePaletteTokens 가 참조할 팔레트 맵을 옵션으로 받는다.
+    // SPA 네비게이션 / 블로그 동적 로드처럼 페이지마다 다른 used_palettes 집합을 받는
+    // 경로에서 정확한 매핑을 보장한다. 미전달 시 appConfig.palettes / #ssr-data 폴백.
+    //
+    // _stateKeyDedup 와 동일한 인터리브 보호 패턴: 로컬 변수에 보관해두고 매 await 직후
+    // 모듈 글로벌을 복원해, 동시 다발적 renderWikiContent 호출이 서로의 팔레트 맵을
+    // 덮어쓰지 않도록 한다 (편집기 프리뷰의 키 입력 / 빠른 SPA 네비게이션).
+    const myPalettes = (options.palettes && typeof options.palettes === 'object') ? options.palettes : null;
+    _currentRenderPalettes = myPalettes;
+
     // 토론·티켓처럼 위키 풀 문법이 필요 없는 경로용 옵트인 플래그.
     //   skipTransclusion: {{include:...}} / {{틀:...}} 트랜스클루전 비활성 (raw content 그대로)
     //   skipExtensions:   ::: 익스텐션 디스패치 (_processExtensions) 비활성
@@ -2518,6 +2559,7 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
             ? (content || '')
             : await resolveTransclusions(content || '', slug);
         _stateKeyDedup = myDedup;
+        _currentRenderPalettes = myPalettes;
         // resolveTransclusions 가 모듈 로컬 _wikiExtensionData 를 채우는 즉시 스냅샷.
         // 이후 await(fetchCategoryList 등) 사이 다른 renderWikiContent 호출이
         // _wikiExtensionData 를 덮어써도, 이번 호출의 DOM data-ext-idx 는 이 스냅샷을
@@ -2662,6 +2704,7 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
                 const categoryName = decodedSlug.replace(/^카테고리:/, '');
                 const listHtml = await fetchCategoryList(categoryName);
                 _stateKeyDedup = myDedup;
+                _currentRenderPalettes = myPalettes;
                 if (listHtml) {
                     html += (typeof DOMPurify !== 'undefined') ? DOMPurify.sanitize(listHtml, { ADD_TAGS: ['i', 'span'], ADD_ATTR: ['class', 'title'] }) : escapeHtml(listHtml);
                 }

@@ -107,12 +107,9 @@ ROLE_PERMISSIONS_JSON = """
 {"roles":{"user":{"permissions":["wiki:read","wiki:edit","comment:create","ticket:create","media:upload"],"inherits":[]},"discussion_manager":{"permissions":["discussion:manage"],"inherits":["user"]},"admin":{"permissions":["admin:access","wiki:delete","wiki:lock","wiki:private","user:manage","ticket:manage"],"inherits":["discussion_manager"]},"super_admin":{"permissions":["*"],"inherits":["admin"]},"banned":{"permissions":[],"inherits":[]},"deleted":{"permissions":[],"inherits":[]}}}
 """
 
-# 컬러 팔레트 제작 : https://vialinks.xyz/palette-json
-# 하드코딩 프리셋(primary/secondary/success/info/warning/danger/muted)은 설정 없이 사용 가능.
-# 이름 충돌 시 커스텀이 하드코딩보다 우선합니다.
-PALETTES = """
-{"typescript":{"bg":"#3178C6","color":"#FFFFFF"},"python":{"bg":"#3776AB","color":"#FFD43B"},"js":{"bg":"#F7DF1E","color":"#000000"},"reverse":{"light":{"bg":"#000000","color":"#000000"},"dark":{"bg":"#FFFFFF","color":"#FFFFFF"}}}
-"""
+# 컬러 팔레트는 D1 `palettes` 테이블에서 관리합니다. 관리자 콘솔에서 추가/삭제.
+# 하드코딩 프리셋(primary/secondary/success/info/warning/danger/muted)은 코드에 내장돼 있고
+# 추가 설정 없이 사용 가능합니다.
 
 # === Discord Webhook ===
 # DISCORD_COMMUNITY_WEBHOOK_URL, DISCORD_ADMIN_WEBHOOK_URL 은 Workers 대시보드에서 시크릿으로 설정

@@ -449,6 +449,40 @@ CREATE TABLE IF NOT EXISTS category_prefix_rules (
 );
 CREATE INDEX IF NOT EXISTS idx_category_prefix_rules_prefix ON category_prefix_rules(prefix);
 
+-- 커스텀 컬러 팔레트
+-- {palette:이름} 위키 문법에서 사용. 하드코딩 프리셋(primary/secondary/success/info/warning/danger/muted) 위에 머지된다.
+-- 관리자만 CUD (라우트 단의 requireAdmin 미들웨어로 보호).
+-- 라이트/다크 동일 색을 쓰는 플랫 정의는 light_*=dark_* 로 저장.
+CREATE TABLE IF NOT EXISTS palettes (
+    name        TEXT PRIMARY KEY,             -- ^[A-Za-z0-9_-]+$, 1~64자
+    light_bg    TEXT,
+    light_color TEXT,
+    dark_bg     TEXT,
+    dark_color  TEXT,
+    created_at  INTEGER DEFAULT (unixepoch()),
+    created_by  INTEGER REFERENCES users(id) ON DELETE SET NULL
+);
+-- D1 콘솔 1회 수동 마이그레이션 (배포된 DB):
+--   CREATE TABLE IF NOT EXISTS palettes (
+--       name TEXT PRIMARY KEY,
+--       light_bg TEXT, light_color TEXT,
+--       dark_bg TEXT,  dark_color TEXT,
+--       created_at INTEGER DEFAULT (unixepoch()),
+--       created_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+--   );
+--   -- 기존 PALETTES env JSON 시드 예 (필요한 항목만 추려서 실행):
+--   INSERT OR IGNORE INTO palettes (name, light_bg, light_color, dark_bg, dark_color) VALUES
+--     ('cloudflare', '#F6821F', '#000000', '#F6821F', '#000000'),
+--     ('claude',     '#F0EEE6', '#C15F3C', '#F0EEE6', '#C15F3C'),
+--     ('typescript', '#3178C6', '#FFFFFF', '#3178C6', '#FFFFFF'),
+--     ('reverse',    '#000000', '#000000', '#FFFFFF', '#FFFFFF'),
+--     ('Anthropic',  '#F0EEE6', '#000000', '#F0EEE6', '#000000'),
+--     ('python',     '#3776AB', '#FFD43B', '#3776AB', '#FFD43B'),
+--     ('js',         '#F7DF1E', '#000000', '#F7DF1E', '#000000'),
+--     ('discord',    '#5865F2', '#FFFFFF', '#5865F2', '#FFFFFF');
+--   -- page_links 에 link_type='palette' 행은 문서 저장 시 자동으로 채워진다.
+--   -- 기존 문서의 색인을 일괄 채우려면, 각 문서를 한 번씩 재저장하거나 별도 백필 스크립트를 실행한다.
+
 -- 블로그 포스트 테이블
 -- 위키 문서와 독립된 블로그 기능. 리비전 없음, 관리자만 작성 가능.
 -- URL 식별자는 id (정수), title이 표시 제목 겸 식별자.

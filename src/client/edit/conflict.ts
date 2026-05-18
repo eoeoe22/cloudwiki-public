@@ -521,6 +521,120 @@ function renderLocalDiff(): void {
     container.innerHTML = renderInlineDiffSummary(diffData, CONFLICT_CONTEXT_LINES);
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// 변경 사항 미리보기 텍스트 복사
+// ─────────────────────────────────────────────────────────────────────────────
+
+function buildLocalDiffText(): string {
+    const editor = window.editor;
+    const originalContent = typeof window.originalContent === 'string' ? window.originalContent : '';
+    const currentContent = editor ? editor.getMarkdown() : '';
+    if (originalContent === currentContent) return '';
+
+    if (window.isExtensionData) {
+        const oldLines = _countLines(originalContent);
+        const newLines = _countLines(currentContent);
+        const oldKB = (originalContent.length / 1024).toFixed(1);
+        const newKB = (currentContent.length / 1024).toFixed(1);
+        const oldHead = originalContent.split('\n', 5).join('\n');
+        const newHead = currentContent.split('\n', 5).join('\n');
+        return (
+            `줄 수: ${oldLines} → ${newLines}\n` +
+            `크기: ${oldKB} KB → ${newKB} KB\n\n` +
+            `--- 이전 본문(앞 5줄) ---\n${oldHead}\n\n` +
+            `+++ 현재 본문(앞 5줄) +++\n${newHead}\n`
+        );
+    }
+
+    const Diff = window.Diff;
+    if (!Diff || !Diff.diffLines) return currentContent;
+
+    const diffData = Diff.diffLines(originalContent, currentContent);
+    const ctx = CONFLICT_CONTEXT_LINES;
+    const out: string[] = [];
+    diffData.forEach((part, i) => {
+        const prefix = part.added ? '+' : part.removed ? '-' : ' ';
+        const raw = part.value;
+        const trailingNl = raw.endsWith('\n');
+        const lines = raw.split('\n');
+        if (trailingNl) lines.pop();
+
+        if (part.added || part.removed) {
+            lines.forEach(line => out.push(prefix + line));
+            return;
+        }
+
+        const showTop = (i !== 0);
+        const showBottom = (i !== diffData.length - 1);
+        if (!showTop && !showBottom) {
+            lines.forEach(line => out.push(' ' + line));
+        } else if (lines.length <= ctx * 2 + 1) {
+            lines.forEach(line => out.push(' ' + line));
+        } else {
+            if (showTop) {
+                lines.slice(0, ctx).forEach(line => out.push(' ' + line));
+            }
+            out.push('... (생략됨) ...');
+            if (showBottom) {
+                lines.slice(-ctx).forEach(line => out.push(' ' + line));
+            }
+        }
+    });
+    return out.join('\n');
+}
+
+async function copyDiffPreview(): Promise<void> {
+    const btn = document.getElementById('diffPreviewCopyBtn') as HTMLButtonElement | null;
+    const text = buildLocalDiffText();
+    if (!text) {
+        if (btn) {
+            const orig = btn.innerHTML;
+            btn.innerHTML = '<i class="mdi mdi-information-outline"></i> 변경 없음';
+            setTimeout(() => { btn.innerHTML = orig; }, 1500);
+        }
+        return;
+    }
+
+    const setSuccess = (): void => {
+        if (!btn) return;
+        const orig = '<i class="mdi mdi-content-copy"></i> 복사하기';
+        btn.innerHTML = '<i class="mdi mdi-check"></i> 복사됨';
+        setTimeout(() => { btn.innerHTML = orig; }, 1500);
+    };
+    const setFailure = (): void => {
+        if (!btn) return;
+        const orig = '<i class="mdi mdi-content-copy"></i> 복사하기';
+        btn.innerHTML = '<i class="mdi mdi-alert"></i> 복사 실패';
+        setTimeout(() => { btn.innerHTML = orig; }, 1500);
+    };
+
+    try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(text);
+            setSuccess();
+            return;
+        }
+    } catch {
+        // fall through to execCommand
+    }
+
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.select();
+    try {
+        const ok = document.execCommand('copy');
+        if (ok) setSuccess();
+        else setFailure();
+    } catch {
+        setFailure();
+    } finally {
+        document.body.removeChild(textarea);
+    }
+}
+
 // 작은 인라인 diff: 메인 에디터의 변경 미리보기용 — 기존 동작 유지
 function renderInlineDiffSummary(diffData: JsDiffPart[], contextLines: number): string {
     let html = '';
@@ -1131,6 +1245,7 @@ async function checkConcurrentEditors(): Promise<void> {
 declare global {
     interface Window {
         renderLocalDiff?: typeof renderLocalDiff;
+        copyDiffPreview?: typeof copyDiffPreview;
         startEditingHeartbeat?: typeof startEditingHeartbeat;
         stopEditingHeartbeat?: typeof stopEditingHeartbeat;
         /**
@@ -1150,6 +1265,7 @@ declare global {
 
 window.showConflictModal = showConflictModal;
 window.renderLocalDiff = renderLocalDiff;
+window.copyDiffPreview = copyDiffPreview;
 window.startEditingHeartbeat = startEditingHeartbeat;
 window.stopEditingHeartbeat = stopEditingHeartbeat;
 window.checkConcurrentEditors = checkConcurrentEditors;

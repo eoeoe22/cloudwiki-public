@@ -3,6 +3,7 @@ import type { Env, BlogPost } from '../types';
 import { requireAdmin } from '../middleware/session';
 import { safeJSON } from '../utils/json';
 import { RBAC } from '../utils/role';
+import { loadPalettesForBlogPost } from '../utils/palettes';
 import { writeAdminLog } from './admin';
 import { dispatchDiscord } from '../utils/webhook/discord';
 import { announcementPublish } from '../utils/webhook/events/blog';
@@ -50,7 +51,48 @@ export function extractFirstThumbnail(content: string): string | null {
     return m ? `/media/${m[0]}` : null;
 }
 
-/** 블로그 포스트 저장 후 page_links 테이블의 이미지 역링크를 갱신 */
+/**
+ * 블로그 본문에서 {palette:이름} 토큰 이름을 모두 추출. 문서 열람 시
+ * loadPalettesForBlogPost 가 이 인덱스를 참고해 사용된 팔레트만 SSR 한다.
+ */
+export function extractBlogPaletteLinks(content: string): string[] {
+    const cleaned = stripCodeBlocks(content);
+    const seen = new Set<string>();
+    const paletteRegex = /\{palette:\s*([A-Za-z0-9_-]+)\s*\}/g;
+    for (const m of cleaned.matchAll(paletteRegex)) {
+        seen.add(m[1]);
+    }
+    return [...seen];
+}
+
+/**
+ * 블로그 본문에서 {{틀명}} 트랜스클루전 대상 slug 를 추출.
+ * loadPalettesForBlogPost 가 page_links(link_type='template') 를 따라가
+ * 트랜스클루전된 틀이 참조하는 팔레트도 합집합으로 끌어오기 위함.
+ * wiki.ts extractLinks() 의 template 분기와 동일한 정규화 정책(틀:/template:/템플릿: prefix
+ * 자동 부착, # 섹션 앵커 제거)을 사용한다.
+ */
+export function extractBlogTemplateLinks(content: string): string[] {
+    const cleaned = stripCodeBlocks(content);
+    const seen = new Set<string>();
+    const templateRegex = /\{\{([^}]+?)\}\}/g;
+    for (const m of cleaned.matchAll(templateRegex)) {
+        let slug = m[1].trim().split('#')[0].trim();
+        if (!slug) continue;
+        const colonIdx = slug.indexOf(':');
+        // 익스텐션 호출 (`freq:foo` 등) 은 트랜스클루전이 아니므로 제외
+        if (colonIdx > 0 && !slug.startsWith('틀:') && !slug.startsWith('template:') && !slug.startsWith('템플릿:')) {
+            continue;
+        }
+        if (!slug.startsWith('틀:') && !slug.startsWith('template:') && !slug.startsWith('템플릿:')) {
+            slug = '틀:' + slug;
+        }
+        seen.add(slug);
+    }
+    return [...seen];
+}
+
+/** 블로그 포스트 저장 후 page_links 테이블의 이미지/팔레트 역링크를 갱신 */
 export async function rebuildBlogImageLinks(db: D1Database, blogPostId: number, content: string): Promise<void> {
     const stmts: D1PreparedStatement[] = [
         // blog=1 필터로 분리 — blog=1 은 블로그 INSERT 만 사용하므로 (토론·티켓 댓글 INSERT 는
@@ -64,6 +106,22 @@ export async function rebuildBlogImageLinks(db: D1Database, blogPostId: number, 
             db.prepare(
                 "INSERT INTO page_links (source_page_id, target_slug, link_type, blog, source_type) VALUES (?, ?, ?, 1, 'blog')"
             ).bind(blogPostId, targetSlug, 'image')
+        );
+    }
+    const paletteLinks = extractBlogPaletteLinks(content);
+    for (const paletteName of paletteLinks) {
+        stmts.push(
+            db.prepare(
+                "INSERT INTO page_links (source_page_id, target_slug, link_type, blog, source_type) VALUES (?, ?, 'palette', 1, 'blog')"
+            ).bind(blogPostId, paletteName)
+        );
+    }
+    const templateLinks = extractBlogTemplateLinks(content);
+    for (const templateSlug of templateLinks) {
+        stmts.push(
+            db.prepare(
+                "INSERT INTO page_links (source_page_id, target_slug, link_type, blog, source_type) VALUES (?, ?, 'template', 1, 'blog')"
+            ).bind(blogPostId, templateSlug)
         );
     }
     // D1 배치 상한(약 50) 고려해 chunk 분할 — wiki.ts 와 동일 정책
@@ -136,7 +194,18 @@ blog.get('/blog/:id', async (c) => {
     if (!post) return c.json({ error: 'Not Found' }, 404);
     if (post.deleted_at && !isAdmin) return c.json({ error: 'Not Found' }, 404);
 
-    return c.json(safeJSON(post));
+    // 본문이 참조하는 커스텀 팔레트만 응답에 동봉 (SPA 네비게이션 대응).
+    // post.content 도 함께 넘겨 저장 직후 page_links 비동기 갱신 윈도우를 폴백 처리.
+    // canSeePrivate: 권한자가 펼쳐볼 수 있는 비공개 틀의 팔레트도 포함시키는 플래그.
+    const canSeePrivate = rbac.can(user?.role ?? 'guest', 'wiki:private');
+    let usedPalettes: Record<string, unknown> = {};
+    try {
+        usedPalettes = await loadPalettesForBlogPost(db, id, post.content, canSeePrivate);
+    } catch (e) {
+        console.error('loadPalettesForBlogPost failed:', e);
+    }
+
+    return c.json(safeJSON({ ...post, used_palettes: usedPalettes }));
 });
 
 /**
