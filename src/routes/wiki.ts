@@ -443,7 +443,7 @@ export function buildCategoryOnlyStatements(
 /**
  * 카테고리 문자열(쉼표 구분) 을 trim/공백제거/중복제거 한 배열로 정규화.
  */
-function splitCategoryString(s: string | null | undefined): string[] {
+export function splitCategoryString(s: string | null | undefined): string[] {
     if (!s) return [];
     const seen = new Set<string>();
     const out: string[] = [];
@@ -479,6 +479,22 @@ export function mergeCategoriesFromRules(
         }
     }
     return base.join(',');
+}
+
+/**
+ * 현재 카테고리에서 toRemove 항목들을 차집합으로 제거. 기존 순서를 보존하며,
+ * 정규화는 splitCategoryString 정책을 그대로 따른다. 결과가 비면 빈 문자열을
+ * 반환하며 호출자가 pages.category 에 NULL 로 매핑한다.
+ */
+export function subtractCategoryString(
+    currentCategory: string | null | undefined,
+    toRemove: string | null | undefined
+): string {
+    const removeSet = new Set(splitCategoryString(toRemove));
+    if (removeSet.size === 0) return splitCategoryString(currentCategory).join(',');
+    return splitCategoryString(currentCategory)
+        .filter(c => !removeSet.has(c))
+        .join(',');
 }
 
 /**

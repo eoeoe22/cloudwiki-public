@@ -4,6 +4,8 @@ import {
     invalidatePageCache,
     mergeCategoriesFromRules,
     refreshRecentChangesCache,
+    splitCategoryString,
+    subtractCategoryString,
 } from './wiki';
 import { requireAdmin } from '../middleware/session';
 import { isSuperAdmin, getSuperAdmins } from '../utils/auth';
@@ -1660,6 +1662,53 @@ function escapeLike(s: string): string {
 }
 
 /**
+ * prefix 검증: trim, 1~200자, 제어문자 금지.
+ * 정상이면 정규화된 prefix 를, 에러면 { error } 를 반환.
+ */
+function validateCategoryPrefix(raw: unknown): { prefix: string } | { error: string } {
+    const rawStr = typeof raw === 'string' ? raw : '';
+    const prefix = rawStr.trim().replace(/\/+$/, '');
+    if (!prefix) return { error: 'prefix 를 입력해주세요.' };
+    if (prefix.length > 200) return { error: 'prefix 는 최대 200자까지 입력할 수 있습니다.' };
+    if (PREFIX_FORBIDDEN_CHARS.test(prefix)) return { error: 'prefix 에 제어문자를 사용할 수 없습니다.' };
+    return { prefix };
+}
+
+type SubpageRow = { id: number; slug: string; category: string | null };
+
+/**
+ * prefix/% 패턴으로 하위 문서를 스캔. LIKE 50바이트 한도 검사 + JS startsWith
+ * case-sensitive 후처리로 mergeCategoriesFromRules 와 동일한 일관성 보장.
+ * 정상이면 { pages: SubpageRow[] } 를, 한도 초과면 { error } 를 반환.
+ */
+async function scanCategorySubpages(
+    db: D1Database,
+    prefix: string
+): Promise<{ pages: SubpageRow[] } | { error: string }> {
+    const likePattern = escapeLike(prefix) + '/%';
+    // Cloudflare D1 의 LIKE/GLOB 패턴은 50바이트 제한 (UTF-8 한글 3바이트 → 17자만 되어도 초과).
+    const patternBytes = new TextEncoder().encode(likePattern).length;
+    if (patternBytes > 50) {
+        return { error: `prefix 가 너무 깁니다 (LIKE 패턴 ${patternBytes}바이트, 한도 50바이트). 더 짧은 prefix 로 시도하거나, 자동 규칙으로만 저장해주세요.` };
+    }
+    const { results } = await db
+        .prepare(
+            `SELECT id, slug, category FROM pages
+             WHERE deleted_at IS NULL
+               AND slug LIKE ? ESCAPE '\\'
+             ORDER BY slug ASC`
+        )
+        .bind(likePattern)
+        .all<SubpageRow>();
+    // SQLite LIKE 는 ASCII case-insensitive — JS startsWith 로 한 번 더 거른다.
+    const prefixWithSlash = prefix + '/';
+    return { pages: results.filter(p => p.slug.startsWith(prefixWithSlash)) };
+}
+
+// 모달이 한 번에 처리할 수 있는 하위 문서 상한 — 브라우저 DOM 비대화 방지.
+const CATEGORY_SUBPAGES_MAX = 5000;
+
+/**
  * GET /category-prefix-rules
  * 자동 카테고리 prefix 규칙 목록
  */
@@ -1685,17 +1734,9 @@ adminRoutes.post('/category-prefix-rules', async (c) => {
     const currentUser = c.get('user')!;
     const body = await c.req.json<{ prefix?: string; categories?: string }>();
 
-    const rawPrefix = typeof body.prefix === 'string' ? body.prefix : '';
-    const prefix = rawPrefix.trim().replace(/\/+$/, '');
-    if (!prefix) {
-        return c.json({ error: 'prefix 를 입력해주세요.' }, 400);
-    }
-    if (prefix.length > 200) {
-        return c.json({ error: 'prefix 는 최대 200자까지 입력할 수 있습니다.' }, 400);
-    }
-    if (PREFIX_FORBIDDEN_CHARS.test(prefix)) {
-        return c.json({ error: 'prefix 에 제어문자를 사용할 수 없습니다.' }, 400);
-    }
+    const prefixCheck = validateCategoryPrefix(body.prefix);
+    if ('error' in prefixCheck) return c.json({ error: prefixCheck.error }, 400);
+    const { prefix } = prefixCheck;
 
     const rawCategories = typeof body.categories === 'string' ? body.categories : '';
     if (!CATEGORY_PATTERN.test(rawCategories) || rawCategories.trim() === '') {
@@ -1757,27 +1798,57 @@ adminRoutes.delete('/category-prefix-rules/:id', async (c) => {
 });
 
 /**
+ * GET /category-prefix-rules/subpages?prefix=<slug>
+ * prefix 하위 문서 트리 + 각 문서의 현재 카테고리 목록.
+ * 카테고리 관리 모달이 트리 + 체크박스 UI 를 그릴 때 사용한다.
+ */
+adminRoutes.get('/category-prefix-rules/subpages', async (c) => {
+    const db = c.env.DB;
+    const prefixCheck = validateCategoryPrefix(c.req.query('prefix'));
+    if ('error' in prefixCheck) return c.json({ error: prefixCheck.error }, 400);
+    const { prefix } = prefixCheck;
+
+    const scan = await scanCategorySubpages(db, prefix);
+    if ('error' in scan) return c.json({ error: scan.error }, 400);
+
+    if (scan.pages.length > CATEGORY_SUBPAGES_MAX) {
+        return c.json({
+            error: `하위 문서가 너무 많아 일괄 모달에서 다룰 수 없습니다 (${scan.pages.length}건, 한도 ${CATEGORY_SUBPAGES_MAX}). 더 깊은 prefix 로 분할해주세요.`,
+        }, 400);
+    }
+
+    const prefixDepth = prefix.split('/').length;
+    const items = scan.pages.map(p => ({
+        id: p.id,
+        slug: p.slug,
+        depth: p.slug.split('/').length - prefixDepth - 1,
+        categories: splitCategoryString(p.category),
+    }));
+
+    return c.json({ prefix, scanned: items.length, items });
+});
+
+/**
  * POST /category-prefix-rules/bulk-apply
- * 본문: { prefix, categories, persist? }
- * - prefix/ 로 시작하는 모든 하위 문서에 categories 를 합집합 적용
- * - persist=true 면 동일 prefix 규칙을 category_prefix_rules 에 upsert (자동 적용용)
+ * 본문: { prefix, categories, addIds[], removeIds[], persist? }
+ * - addIds: 합집합 추가 대상, removeIds: 차집합 제거 대상
+ * - 서버는 prefix 스캔 결과와 교집합으로 필터링해 prefix 밖/삭제된 페이지 차단
+ * - persist=true 면 동일 prefix 규칙을 category_prefix_rules 에 upsert (추가 전용)
  */
 adminRoutes.post('/category-prefix-rules/bulk-apply', async (c) => {
     const db = c.env.DB;
     const currentUser = c.get('user')!;
-    const body = await c.req.json<{ prefix?: string; categories?: string; persist?: boolean }>();
+    const body = await c.req.json<{
+        prefix?: string;
+        categories?: string;
+        addIds?: unknown;
+        removeIds?: unknown;
+        persist?: boolean;
+    }>();
 
-    const rawPrefix = typeof body.prefix === 'string' ? body.prefix : '';
-    const prefix = rawPrefix.trim().replace(/\/+$/, '');
-    if (!prefix) {
-        return c.json({ error: 'prefix 를 입력해주세요.' }, 400);
-    }
-    if (prefix.length > 200) {
-        return c.json({ error: 'prefix 는 최대 200자까지 입력할 수 있습니다.' }, 400);
-    }
-    if (PREFIX_FORBIDDEN_CHARS.test(prefix)) {
-        return c.json({ error: 'prefix 에 제어문자를 사용할 수 없습니다.' }, 400);
-    }
+    const prefixCheck = validateCategoryPrefix(body.prefix);
+    if ('error' in prefixCheck) return c.json({ error: prefixCheck.error }, 400);
+    const { prefix } = prefixCheck;
 
     const rawCategories = typeof body.categories === 'string' ? body.categories : '';
     if (!CATEGORY_PATTERN.test(rawCategories) || rawCategories.trim() === '') {
@@ -1788,63 +1859,81 @@ adminRoutes.post('/category-prefix-rules/bulk-apply', async (c) => {
         return c.json({ error: '카테고리를 1개 이상 입력해주세요.' }, 400);
     }
 
-    // 대상 페이지 조회 — prefix/% (모든 깊이 포함, 부모 문서 자체는 제외)
-    // SQLite 의 LIKE 는 ASCII 에 대해 기본 case-insensitive 이므로 'Docs/%' 가
-    // 'docs/Page' 까지 매칭한다. 반면 create/move hook 의 mergeCategoriesFromRules
-    // 는 case-sensitive 한 startsWith 로 룰을 적용하므로, 여기서도 동일한 정책으로
-    // JS 측 case-sensitive 필터를 한 번 더 걸어 일관성과 scanned 카운트 정확도를 보장한다.
-    const escaped = escapeLike(prefix);
-    const likePattern = escaped + '/%';
-    // Cloudflare D1 의 LIKE/GLOB 패턴은 50바이트 제한이 있다 (UTF-8 한글은 3바이트
-    // 이므로 17자만 되어도 한도 초과 가능). 미리 차단해 런타임 오류 대신 명확한
-    // 검증 메시지를 돌려준다. 자동 적용 hook 은 JS startsWith 를 쓰므로 영향 없으며,
-    // 같은 prefix 로 룰을 저장(POST /category-prefix-rules)하는 것은 여전히 가능하다.
-    const patternBytes = new TextEncoder().encode(likePattern).length;
-    if (patternBytes > 50) {
-        return c.json({
-            error: `prefix 가 너무 깁니다 (LIKE 패턴 ${patternBytes}바이트, 한도 50바이트). 더 짧은 prefix 로 시도하거나, 자동 규칙으로만 저장해주세요.`,
-        }, 400);
-    }
-    const { results: rawPages } = await db
-        .prepare(
-            `SELECT id, slug, category FROM pages
-             WHERE deleted_at IS NULL
-               AND slug LIKE ? ESCAPE '\\'
-             ORDER BY slug ASC`
-        )
-        .bind(likePattern)
-        .all<{ id: number; slug: string; category: string | null }>();
-    const prefixWithSlash = prefix + '/';
-    const pages = rawPages.filter(p => p.slug.startsWith(prefixWithSlash));
-
-    const ruleForMerge = [{ prefix, categories }];
-    const updates: { id: number; slug: string; newCategory: string }[] = [];
-    for (const page of pages) {
-        const merged = mergeCategoriesFromRules(page.slug, page.category, ruleForMerge);
-        if (merged !== (page.category ?? '')) {
-            updates.push({ id: page.id, slug: page.slug, newCategory: merged });
+    const sanitizeIds = (raw: unknown): number[] => {
+        if (!Array.isArray(raw)) return [];
+        const out: number[] = [];
+        const seen = new Set<number>();
+        for (const v of raw) {
+            const n = typeof v === 'number' ? v : Number(v);
+            if (!Number.isInteger(n) || n <= 0 || seen.has(n)) continue;
+            seen.add(n);
+            out.push(n);
         }
+        return out;
+    };
+    const addIdsIn = sanitizeIds(body.addIds);
+    const removeIdsIn = sanitizeIds(body.removeIds);
+    const persist = body.persist === true;
+
+    if (addIdsIn.length === 0 && removeIdsIn.length === 0 && !persist) {
+        return c.json({ error: '적용할 문서를 선택하거나 자동 규칙으로 저장 옵션을 켜주세요.' }, 400);
+    }
+    if (Math.max(addIdsIn.length, removeIdsIn.length) > CATEGORY_SUBPAGES_MAX) {
+        return c.json({ error: `한 번에 처리할 수 있는 문서는 ${CATEGORY_SUBPAGES_MAX}개까지입니다.` }, 400);
     }
 
-    // 일괄 업데이트 (D1 배치)
-    if (updates.length > 0) {
-        const stmts = [];
-        for (const u of updates) {
-            const value: string | null = u.newCategory || null;
-            stmts.push(
-                db.prepare('UPDATE pages SET category = ? WHERE id = ?').bind(value, u.id)
-            );
-            stmts.push(...buildCategoryOnlyStatements(db, u.id, value));
+    // 적용 대상이 있을 때만 페이지 스캔 (persist-only 면 스캔 생략 가능)
+    let scanned = 0;
+    const addUpdates: { id: number; slug: string; newCategory: string }[] = [];
+    const removeUpdates: { id: number; slug: string; newCategory: string }[] = [];
+
+    if (addIdsIn.length > 0 || removeIdsIn.length > 0) {
+        const scan = await scanCategorySubpages(db, prefix);
+        if ('error' in scan) return c.json({ error: scan.error }, 400);
+        scanned = scan.pages.length;
+        const idToPage = new Map(scan.pages.map(p => [p.id, p]));
+
+        const addSet = new Set(addIdsIn.filter(id => idToPage.has(id)));
+        const removeSet = new Set(removeIdsIn.filter(id => idToPage.has(id)));
+        // 동일 id 가 양쪽에 있으면 사용자가 토글로 +로 끝낸 것 → add 우선
+        for (const id of addSet) removeSet.delete(id);
+
+        const ruleForMerge = [{ prefix, categories }];
+        for (const id of addSet) {
+            const page = idToPage.get(id)!;
+            const merged = mergeCategoriesFromRules(page.slug, page.category, ruleForMerge);
+            if (merged !== (page.category ?? '')) {
+                addUpdates.push({ id: page.id, slug: page.slug, newCategory: merged });
+            }
         }
-        // D1 배치 사이즈가 매우 크면 분할 — 대략 한 묶음 200문 기준
-        const chunkSize = 200;
-        for (let i = 0; i < stmts.length; i += chunkSize) {
-            await db.batch(stmts.slice(i, i + chunkSize));
+        for (const id of removeSet) {
+            const page = idToPage.get(id)!;
+            const subtracted = subtractCategoryString(page.category, categories);
+            if (subtracted !== (page.category ?? '')) {
+                removeUpdates.push({ id: page.id, slug: page.slug, newCategory: subtracted });
+            }
+        }
+
+        const allUpdates = [...addUpdates, ...removeUpdates];
+        if (allUpdates.length > 0) {
+            const stmts: D1PreparedStatement[] = [];
+            for (const u of allUpdates) {
+                const value: string | null = u.newCategory || null;
+                stmts.push(
+                    db.prepare('UPDATE pages SET category = ? WHERE id = ?').bind(value, u.id)
+                );
+                stmts.push(...buildCategoryOnlyStatements(db, u.id, value));
+            }
+            // D1 배치 사이즈가 매우 크면 분할 — 대략 한 묶음 200문 기준
+            const chunkSize = 200;
+            for (let i = 0; i < stmts.length; i += chunkSize) {
+                await db.batch(stmts.slice(i, i + chunkSize));
+            }
         }
     }
 
     let ruleSaved = false;
-    if (body.persist === true) {
+    if (persist) {
         await db
             .prepare(
                 `INSERT INTO category_prefix_rules (prefix, categories, created_by)
@@ -1859,11 +1948,12 @@ adminRoutes.post('/category-prefix-rules/bulk-apply', async (c) => {
         ruleSaved = true;
     }
 
-    // 캐시 무효화 (비동기 백그라운드)
-    if (updates.length > 0) {
+    // 캐시 무효화 (비동기 백그라운드) — 추가/제거 양쪽 변경 슬러그 합집합
+    const changedSlugs = [...addUpdates, ...removeUpdates].map(u => u.slug);
+    if (changedSlugs.length > 0) {
         c.executionCtx.waitUntil(
             Promise.allSettled([
-                ...updates.map(u => invalidatePageCache(c, u.slug)),
+                ...changedSlugs.map(s => invalidatePageCache(c, s)),
                 refreshRecentChangesCache(c),
             ])
         );
@@ -1872,13 +1962,16 @@ adminRoutes.post('/category-prefix-rules/bulk-apply', async (c) => {
     writeAdminLog(
         c,
         'category_bulk_apply',
-        `하위 문서 카테고리 일괄 적용: ${prefix}/** (대상=${pages.length}, 변경=${updates.length}, categories=${categories}${ruleSaved ? ', 규칙저장' : ''})`,
+        `하위 문서 카테고리 관리: ${prefix}/** (스캔=${scanned}, 추가=${addUpdates.length}/${addIdsIn.length}, 제거=${removeUpdates.length}/${removeIdsIn.length}, categories=${categories}${ruleSaved ? ', 규칙저장' : ''})`,
         currentUser.id
     );
 
     return c.json({
-        scanned: pages.length,
-        updated: updates.length,
+        scanned,
+        addedRequested: addIdsIn.length,
+        added: addUpdates.length,
+        removedRequested: removeIdsIn.length,
+        removed: removeUpdates.length,
         ruleSaved,
     });
 });

@@ -210,7 +210,7 @@
             flex-wrap: wrap;
         }
         .mcp-submission-item.has-conflict {
-            border-left: 4px solid #dc3545;
+            border-left: 4px solid var(--wiki-danger);
         }
         .mcp-submission-banner {
             display: flex;
@@ -1061,8 +1061,8 @@
             if (canEditInEditor) {
                 const editBtn = document.createElement('button');
                 editBtn.className = s.conflict_reason === 'concurrent_modification'
-                    ? 'btn btn-sm btn-warning'
-                    : 'btn btn-sm btn-outline-primary';
+                    ? 'btn btn-sm btn-wiki'
+                    : 'btn btn-sm btn-wiki-outline';
                 editBtn.innerHTML = s.conflict_reason === 'concurrent_modification'
                     ? '<i class="mdi mdi-source-merge"></i> 에디터에서 편집/병합'
                     : '<i class="mdi mdi-pencil"></i> 편집';
@@ -1072,7 +1072,7 @@
             }
 
             const rejectBtn = document.createElement('button');
-            rejectBtn.className = 'btn btn-sm btn-outline-danger';
+            rejectBtn.className = 'btn btn-sm btn-wiki btn-wiki-danger';
             rejectBtn.innerHTML = '<i class="mdi mdi-close"></i> 거부';
             rejectBtn.addEventListener('click', () => rejectMcpSubmission(s.id, s.slug));
             actions.appendChild(rejectBtn);
@@ -1147,8 +1147,8 @@
                         : '<i class="mdi mdi-check"></i> 승인',
                     denyButtonText: '<i class="mdi mdi-close"></i> 거부',
                     cancelButtonText: '닫기',
-                    confirmButtonColor: canMergeInEditor ? '#ffc107' : '#28a745',
-                    denyButtonColor: '#dc3545',
+                    confirmButtonColor: canMergeInEditor ? '#F59E0B' : '#10B981',
+                    denyButtonColor: '#EF4444',
                     preConfirm: () => {
                         const input = document.getElementById('mcpApproveSummary');
                         return { summary: input ? input.value : '' };
@@ -1210,7 +1210,7 @@
                 showCancelButton: true,
                 confirmButtonText: '거부',
                 cancelButtonText: '취소',
-                confirmButtonColor: '#dc3545',
+                confirmButtonColor: '#EF4444',
             });
             if (!confirmRes.isConfirmed) return;
             try {

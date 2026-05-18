@@ -1,10 +1,13 @@
 /**
- * 하위 문서 일괄 카테고리 적용 + 자동 prefix 룰 관리 모달.
+ * 하위 문서 카테고리 관리 모달 (구 "하위 문서 일괄 카테고리 적용").
  *
  * - public/edit.html 의 #bulkCategoryBtn 클릭 시 SweetAlert2 모달을 띄운다.
  * - 관리자 전용. 백엔드(/api/admin/category-prefix-rules*) 도 requireAdmin 으로 보호된다.
- * - 모달은 현재 편집 중인 문서의 슬러그를 자동으로 prefix 로 사용하며,
- *   카테고리는 메인 에디터와 동일한 칩(태그) + 자동완성 UX 로 입력받는다.
+ * - 모달은 현재 편집 중인 문서의 슬러그를 prefix 로 사용해 하위 문서 트리를 펼치고,
+ *   각 행에 체크박스를 두어 선택적으로 카테고리를 추가/제거할 수 있다.
+ * - 카테고리 칩을 입력하면 이미 그 칩 전부를 가진 문서가 자동 체크된다.
+ *   사용자가 직접 토글한 행은 칩 변경에 영향받지 않는다 (userTouched 플래그).
+ * - 사전 체크된(이미 카테고리를 가진) 행의 체크를 해제하면 그 문서에서 카테고리를 제거한다.
  */
 
 import '../utils/swal';
@@ -17,6 +20,35 @@ interface PrefixRule {
     categories: string;
     created_at: number;
     created_by_name: string | null;
+}
+
+interface SubpageItem {
+    id: number;
+    slug: string;
+    depth: number;
+    categories: string[];
+}
+
+interface SubpagesResponse {
+    prefix: string;
+    scanned: number;
+    items: SubpageItem[];
+}
+
+interface RowState {
+    id: number;
+    slug: string;
+    depth: number;
+    categories: string[];
+    userTouched: boolean;
+    currentlyChecked: boolean;
+    checkbox: HTMLInputElement;
+}
+
+interface BulkCatModalState {
+    prefix: string;
+    rows: RowState[];
+    getTags: () => string[];
 }
 
 function escapeHtml(s: string): string {
@@ -41,6 +73,15 @@ async function fetchRules(): Promise<PrefixRule[]> {
     return Array.isArray(data) ? (data as PrefixRule[]) : [];
 }
 
+async function fetchSubpages(prefix: string): Promise<SubpagesResponse | { error: string }> {
+    const res = await fetch(`/api/admin/category-prefix-rules/subpages?prefix=${encodeURIComponent(prefix)}`);
+    if (!res.ok) {
+        const err = (await res.json().catch(() => ({}))) as { error?: string };
+        return { error: err.error || `오류 (${res.status})` };
+    }
+    return (await res.json()) as SubpagesResponse;
+}
+
 function rulesTableHtml(rules: PrefixRule[]): string {
     if (rules.length === 0) {
         return '<div class="text-muted small">저장된 자동 규칙이 없습니다.</div>';
@@ -52,7 +93,7 @@ function rulesTableHtml(rules: PrefixRule[]): string {
                 <td class="text-break"><code>${escapeHtml(r.prefix)}/**</code></td>
                 <td class="text-break">${escapeHtml(r.categories)}</td>
                 <td class="text-end">
-                    <button type="button" class="btn btn-sm btn-outline-danger bulkcat-rule-delete">
+                    <button type="button" class="btn btn-sm btn-wiki btn-wiki-danger bulkcat-rule-delete">
                         <i class="mdi mdi-trash-can-outline"></i>
                     </button>
                 </td>
@@ -72,31 +113,34 @@ function rulesTableHtml(rules: PrefixRule[]): string {
 function buildModalHtml(currentSlug: string, rules: PrefixRule[]): string {
     return `
         <div class="text-start">
-            <div class="mb-3">
-                <label class="form-label fw-bold">대상</label>
-                <div class="form-text">
-                    <code>${escapeHtml(currentSlug)}/**</code> 형태의 모든 하위 문서 (손자/증손자 포함, 현재 문서 자체는 제외)
-                </div>
+            <div class="mb-2 small text-muted">
+                대상 prefix: <code>${escapeHtml(currentSlug)}/**</code>
             </div>
-            <div class="mb-3">
+            <div class="mb-2 d-flex align-items-center gap-2 flex-wrap">
+                <div class="fw-bold flex-grow-1 mb-0">대상 하위 문서</div>
+                <span class="text-muted small" id="bulkCatCounter">불러오는 중…</span>
+                <button type="button" class="btn btn-sm btn-wiki-outline" id="bulkCatSelectAll">전체 선택</button>
+                <button type="button" class="btn btn-sm btn-wiki-outline" id="bulkCatSelectNone">전체 해제</button>
+            </div>
+            <div class="bulkcat-subpages-panel" id="bulkCatSubpagesPanel">
+                <div class="bulkcat-empty small text-muted">불러오는 중…</div>
+            </div>
+            <div class="mt-3 mb-3">
                 <label for="bulkCatTagInput" class="form-label fw-bold">적용할 카테고리</label>
                 <div class="category-tag-container" id="bulkCatTagContainer">
                     <input type="text" id="bulkCatTagInput" class="category-tag-input"
                         placeholder="카테고리 입력 후 엔터나 쉼표" autocomplete="off">
                 </div>
-                <div class="form-text">기존 카테고리는 보존되며, 위 카테고리들은 합집합으로 추가됩니다.</div>
+                <div class="form-text">
+                    체크된 문서에 카테고리를 <b>추가</b>하고, 사전 체크된 문서의 체크를 해제하면
+                    그 문서에서 카테고리를 <b>제거</b>합니다.
+                </div>
             </div>
             <div class="mb-2">
                 <div class="form-check">
-                    <input class="form-check-input" type="checkbox" id="bulkCatApplyNow" checked>
-                    <label class="form-check-label" for="bulkCatApplyNow">
-                        지금 하위 문서에 일괄 적용
-                    </label>
-                </div>
-                <div class="form-check">
                     <input class="form-check-input" type="checkbox" id="bulkCatPersist">
                     <label class="form-check-label" for="bulkCatPersist">
-                        자동 규칙으로 저장 (이후 새 문서 생성/이동 시 자동 적용)
+                        자동 규칙으로 저장 (이후 새 문서 생성/이동 시 자동 적용 — 추가 전용)
                     </label>
                 </div>
             </div>
@@ -133,6 +177,7 @@ function hookRuleDeleteButtons(container: HTMLElement) {
                 showCancelButton: true,
                 confirmButtonText: '삭제',
                 cancelButtonText: '취소',
+                confirmButtonColor: '#EF4444',
             });
             if (!confirm?.isConfirmed) return;
             const ok = await deleteRule(id);
@@ -162,12 +207,10 @@ interface BulkCatAcState {
 
 /**
  * 모달이 열린 뒤 #bulkCatTagContainer / #bulkCatTagInput 에 칩 UI 와
- * 자동완성을 설치한다. 모달 라이프사이클(open → close) 동안에만 유효한
- * 클로저 상태로 동작하므로 메인 에디터의 categoryTagInput 과 충돌하지 않는다.
- *
- * 반환된 tags 배열은 preConfirm 에서 직접 읽어 페이로드를 만든다.
+ * 자동완성을 설치한다. tags 가 바뀔 때마다 onTagsChanged 콜백을 호출해
+ * 트리의 자동 체크 상태를 재계산할 수 있게 한다.
  */
-function installBulkCategoryTagUI(): {
+function installBulkCategoryTagUI(opts: { onTagsChanged?: () => void } = {}): {
     tags: string[];
     flushPending: () => void;
     hideAutocomplete: () => void;
@@ -177,6 +220,7 @@ function installBulkCategoryTagUI(): {
     const input = document.getElementById('bulkCatTagInput') as HTMLInputElement | null;
 
     const tags: string[] = [];
+    const fireChanged = () => opts.onTagsChanged?.();
 
     // 자동완성 dropdown 컨테이너는 모달 안에 동적으로 추가 (CSS 는 #category-autocomplete 와 공유)
     let acDiv: HTMLElement | null = null;
@@ -213,6 +257,7 @@ function installBulkCategoryTagUI(): {
                 e.stopPropagation();
                 tags.splice(index, 1);
                 renderTags();
+                fireChanged();
             });
             tagEl.appendChild(labelSpan);
             tagEl.appendChild(document.createTextNode(' '));
@@ -243,6 +288,7 @@ function installBulkCategoryTagUI(): {
         }
         tags.push(cleanTag);
         renderTags();
+        fireChanged();
         return true;
     }
 
@@ -288,8 +334,7 @@ function installBulkCategoryTagUI(): {
             label.textContent = item;
             row.appendChild(icon);
             row.appendChild(label);
-            // 모듈 클로저 안의 selectByIndex 를 호출해야 하므로 인라인 onclick 대신 mousedown 리스너 사용
-            // (blur 처리보다 먼저 fire 되어야 input.blur 의 hideAutocomplete 가 동작하기 전에 선택이 끝난다)
+            // blur 처리보다 먼저 fire 되도록 mousedown 사용
             row.addEventListener('mousedown', (e) => {
                 e.preventDefault();
                 selectByIndex(index);
@@ -372,6 +417,7 @@ function installBulkCategoryTagUI(): {
                 if (tags.length > 0) {
                     tags.pop();
                     renderTags();
+                    fireChanged();
                 }
             }
         });
@@ -415,6 +461,141 @@ function installBulkCategoryTagUI(): {
     };
 }
 
+function computePreCheck(row: RowState, tags: string[]): boolean {
+    if (tags.length === 0) return false;
+    const cats = new Set(row.categories);
+    return tags.every((t) => cats.has(t));
+}
+
+function renderSubpagesTable(items: SubpageItem[], prefix: string): { rows: RowState[]; panelHtml: string } {
+    if (items.length === 0) {
+        return {
+            rows: [],
+            panelHtml: '<div class="bulkcat-empty small text-muted">선택 가능한 하위 문서가 없습니다.</div>',
+        };
+    }
+    // DOM 생성은 호출자가 수행 — 여기서는 마크업만 만들고 rows 는 별도 객체로 채운다.
+    const prefixWithSlash = prefix + '/';
+    const tbodyRows = items.map((item) => {
+        const display = item.slug.startsWith(prefixWithSlash) ? item.slug.slice(prefixWithSlash.length) : item.slug;
+        const catsHtml = item.categories.length === 0
+            ? '<span class="bulkcat-row-categories text-muted fst-italic">카테고리 없음</span>'
+            : `<span class="bulkcat-row-categories">${item.categories.map((c) => `<span class="badge text-bg-light">${escapeHtml(c)}</span>`).join(' ')}</span>`;
+        return `
+            <tr data-page-id="${item.id}" style="--bulkcat-depth: ${item.depth};">
+                <td>
+                    <label class="bulkcat-row-label d-flex align-items-center gap-2 mb-0">
+                        <input type="checkbox" class="form-check-input bulkcat-checkbox" data-page-id="${item.id}">
+                        <code class="bulkcat-slug">${escapeHtml(display)}</code>
+                    </label>
+                </td>
+                <td class="bulkcat-row-cats-cell">${catsHtml}</td>
+            </tr>
+        `;
+    }).join('');
+
+    const warning = items.length > 500
+        ? `<div class="alert alert-warning small mb-0">총 ${items.length}개 — 많을 경우 브라우저가 느려질 수 있습니다.</div>`
+        : '';
+
+    return {
+        rows: [],
+        panelHtml: `
+            ${warning}
+            <table class="table table-sm table-hover align-middle mb-0">
+                <tbody>${tbodyRows}</tbody>
+            </table>
+        `,
+    };
+}
+
+function updateCounter(state: BulkCatModalState): void {
+    const counter = document.getElementById('bulkCatCounter');
+    if (!counter) return;
+    if (state.rows.length === 0) {
+        counter.textContent = '하위 문서 없음';
+        return;
+    }
+    const checked = state.rows.filter((r) => r.currentlyChecked).length;
+    const tags = state.getTags();
+    let addCount = 0;
+    let removeCount = 0;
+    for (const r of state.rows) {
+        const pageHasAll = tags.length > 0 && tags.every((t) => r.categories.includes(t));
+        if (r.currentlyChecked && !pageHasAll) addCount++;
+        // 자동 체크 규칙(ALL)과 대칭: pageHasAll 인 행만 체크 해제 시 제거 대상.
+        // 부분 매칭만 되는 행을 "전체 해제" 등으로 우연히 해제해도 카테고리가 제거되지 않도록 한다.
+        if (!r.currentlyChecked && r.userTouched && pageHasAll) removeCount++;
+    }
+    counter.textContent = `체크 ${checked} / ${state.rows.length} (적용 +${addCount} / 제거 -${removeCount})`;
+}
+
+function recomputePreChecks(state: BulkCatModalState): void {
+    const tags = state.getTags();
+    for (const row of state.rows) {
+        if (row.userTouched) continue;
+        const pre = computePreCheck(row, tags);
+        row.currentlyChecked = pre;
+        row.checkbox.checked = pre;
+    }
+    updateCounter(state);
+}
+
+async function loadAndRenderTree(state: BulkCatModalState): Promise<void> {
+    const panel = document.getElementById('bulkCatSubpagesPanel');
+    if (!panel) return;
+
+    const res = await fetchSubpages(state.prefix);
+    if ('error' in res) {
+        panel.innerHTML = `<div class="alert alert-warning small mb-0">${escapeHtml(res.error)}</div>`;
+        const counter = document.getElementById('bulkCatCounter');
+        if (counter) counter.textContent = '불러오기 실패';
+        return;
+    }
+
+    const { panelHtml } = renderSubpagesTable(res.items, state.prefix);
+    panel.innerHTML = panelHtml;
+
+    // RowState 채우기 — DOM 안의 체크박스 참조를 잡아 보관
+    state.rows.length = 0;
+    for (const item of res.items) {
+        const cb = panel.querySelector<HTMLInputElement>(
+            `input.bulkcat-checkbox[data-page-id="${item.id}"]`
+        );
+        if (!cb) continue;
+        const row: RowState = {
+            id: item.id,
+            slug: item.slug,
+            depth: item.depth,
+            categories: item.categories,
+            userTouched: false,
+            currentlyChecked: false,
+            checkbox: cb,
+        };
+        cb.addEventListener('change', () => {
+            row.userTouched = true;
+            row.currentlyChecked = cb.checked;
+            const tr = cb.closest<HTMLTableRowElement>('tr[data-page-id]');
+            tr?.classList.add('bulkcat-row-touched');
+            updateCounter(state);
+        });
+        state.rows.push(row);
+    }
+
+    recomputePreChecks(state);
+}
+
+function setAllRows(state: BulkCatModalState, checked: boolean): void {
+    for (const row of state.rows) {
+        row.userTouched = true;
+        row.currentlyChecked = checked;
+        row.checkbox.checked = checked;
+        const tr = row.checkbox.closest<HTMLTableRowElement>('tr[data-page-id]');
+        tr?.classList.add('bulkcat-row-touched');
+    }
+    updateCounter(state);
+}
+
 async function openBulkCategoryModal() {
     const swal = window.Swal;
     if (!swal) return;
@@ -437,11 +618,16 @@ async function openBulkCategoryModal() {
     }
 
     let tagUI: ReturnType<typeof installBulkCategoryTagUI> | null = null;
+    const state: BulkCatModalState = {
+        prefix: currentSlug,
+        rows: [],
+        getTags: () => tagUI?.tags ?? [],
+    };
 
     const result = await swal.fire({
-        title: '하위 문서 카테고리 일괄 적용',
+        title: '하위 문서 카테고리 관리',
         html: buildModalHtml(currentSlug, rules),
-        width: 720,
+        width: 760,
         showCancelButton: true,
         confirmButtonText: '실행',
         cancelButtonText: '닫기',
@@ -449,62 +635,95 @@ async function openBulkCategoryModal() {
         didOpen: () => {
             const tableEl = document.getElementById('bulkCatRulesTable');
             if (tableEl) hookRuleDeleteButtons(tableEl);
-            tagUI = installBulkCategoryTagUI();
+
+            tagUI = installBulkCategoryTagUI({
+                onTagsChanged: () => recomputePreChecks(state),
+            });
+
+            document.getElementById('bulkCatSelectAll')?.addEventListener('click', () => setAllRows(state, true));
+            document.getElementById('bulkCatSelectNone')?.addEventListener('click', () => setAllRows(state, false));
+
+            void loadAndRenderTree(state);
             tagUI.inputEl?.focus();
         },
         willClose: () => {
             tagUI?.hideAutocomplete();
         },
         preConfirm: () => {
-            const applyEl = document.getElementById('bulkCatApplyNow') as HTMLInputElement | null;
-            const persistEl = document.getElementById('bulkCatPersist') as HTMLInputElement | null;
-
-            const applyNow = !!applyEl?.checked;
-            const persist = !!persistEl?.checked;
-
             tagUI?.flushPending();
             const tags = tagUI?.tags ?? [];
+            const persistEl = document.getElementById('bulkCatPersist') as HTMLInputElement | null;
+            const persist = !!persistEl?.checked;
 
-            if (tags.length === 0) {
+            const addIds: number[] = [];
+            const removeIds: number[] = [];
+            for (const r of state.rows) {
+                const pageHasAll = tags.length > 0 && tags.every((t) => r.categories.includes(t));
+                if (r.currentlyChecked && !pageHasAll) addIds.push(r.id);
+                // 자동 체크 규칙(ALL)과 대칭: pageHasAll 인 행만 체크 해제 시 제거 대상.
+                // 부분 매칭 행은 "전체 해제" 로 우연히 토글돼도 카테고리가 제거되지 않는다.
+                if (!r.currentlyChecked && r.userTouched && pageHasAll) removeIds.push(r.id);
+            }
+
+            const willApply = addIds.length > 0 || removeIds.length > 0;
+            if (willApply && tags.length === 0) {
                 swal.showValidationMessage('카테고리를 1개 이상 입력해주세요.');
                 return false;
             }
-            if (!applyNow && !persist) {
-                swal.showValidationMessage('"일괄 적용" 또는 "자동 규칙으로 저장" 중 최소 하나는 선택해야 합니다.');
+            if (!willApply && !persist) {
+                swal.showValidationMessage('적용할 문서를 선택하거나 "자동 규칙으로 저장"을 선택해주세요.');
                 return false;
             }
-            return { prefix: currentSlug, categories: tags.join(','), applyNow, persist };
+            if (persist && tags.length === 0) {
+                swal.showValidationMessage('자동 규칙을 저장하려면 카테고리를 입력해주세요.');
+                return false;
+            }
+
+            return {
+                prefix: currentSlug,
+                categories: tags.join(','),
+                addIds,
+                removeIds,
+                persist,
+                willApply,
+            };
         },
     });
 
     if (!result.isConfirmed || !result.value) return;
-    const { prefix, categories, applyNow, persist } = result.value as {
+    const { prefix, categories, addIds, removeIds, persist, willApply } = result.value as {
         prefix: string;
         categories: string;
-        applyNow: boolean;
+        addIds: number[];
+        removeIds: number[];
         persist: boolean;
+        willApply: boolean;
     };
 
     try {
-        if (applyNow) {
+        if (willApply) {
             const res = await fetch('/api/admin/category-prefix-rules/bulk-apply', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ prefix, categories, persist }),
+                body: JSON.stringify({ prefix, categories, addIds, removeIds, persist }),
             });
             if (!res.ok) {
                 const err = (await res.json().catch(() => ({}))) as { error?: string };
                 await swal.fire({ icon: 'error', title: '실패', text: err.error || `오류 (${res.status})` });
                 return;
             }
-            const data = (await res.json()) as { scanned: number; updated: number; ruleSaved: boolean };
+            const data = (await res.json()) as {
+                scanned: number;
+                added: number;
+                removed: number;
+                ruleSaved: boolean;
+            };
             await swal.fire({
                 icon: 'success',
                 title: '적용 완료',
-                html: `대상 ${escapeHtml(String(data.scanned))}개 중 <b>${escapeHtml(String(data.updated))}개</b> 문서에 카테고리를 추가했습니다.${data.ruleSaved ? '<br>자동 규칙도 함께 저장되었습니다.' : ''}`,
+                html: `대상 ${escapeHtml(String(data.scanned))}개 중 추가 <b>${escapeHtml(String(data.added))}개</b>, 제거 <b>${escapeHtml(String(data.removed))}개</b> 적용되었습니다.${data.ruleSaved ? '<br>자동 규칙도 함께 저장되었습니다.' : ''}`,
             });
         } else if (persist) {
-            // 일괄 적용 없이 자동 규칙만 저장
             const res = await fetch('/api/admin/category-prefix-rules', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },

@@ -24,6 +24,9 @@ export interface SwalOptions {
     confirmButtonText?: string;
     cancelButtonText?: string;
     denyButtonText?: string;
+    confirmButtonColor?: string;
+    cancelButtonColor?: string;
+    denyButtonColor?: string;
     customClass?: { popup?: string };
     toast?: boolean;
     position?: string;
