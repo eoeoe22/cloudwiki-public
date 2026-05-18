@@ -84,7 +84,7 @@ async function fetchSubpages(prefix: string): Promise<SubpagesResponse | { error
 
 function rulesTableHtml(rules: PrefixRule[]): string {
     if (rules.length === 0) {
-        return '<div class="text-muted small">저장된 자동 규칙이 없습니다.</div>';
+        return '<div class="bulkcat-rules-empty">저장된 자동 규칙이 없습니다.</div>';
     }
     const rows = rules
         .map(
@@ -101,9 +101,9 @@ function rulesTableHtml(rules: PrefixRule[]): string {
         )
         .join('');
     return `
-        <table class="table table-sm align-middle mb-0">
+        <table class="bulkcat-rules-table">
             <thead>
-                <tr><th>접두사</th><th>자동 부여 카테고리</th><th></th></tr>
+                <tr><th>접두사</th><th>자동 부여 카테고리</th><th aria-label="삭제"></th></tr>
             </thead>
             <tbody>${rows}</tbody>
         </table>
@@ -112,41 +112,47 @@ function rulesTableHtml(rules: PrefixRule[]): string {
 
 function buildModalHtml(currentSlug: string, rules: PrefixRule[]): string {
     return `
-        <div class="text-start">
-            <div class="mb-2 small text-muted">
-                대상 prefix: <code>${escapeHtml(currentSlug)}/**</code>
-            </div>
-            <div class="mb-2 d-flex align-items-center gap-2 flex-wrap">
-                <div class="fw-bold flex-grow-1 mb-0">대상 하위 문서</div>
-                <span class="text-muted small" id="bulkCatCounter">불러오는 중…</span>
-                <button type="button" class="btn btn-sm btn-wiki-outline" id="bulkCatSelectAll">전체 선택</button>
-                <button type="button" class="btn btn-sm btn-wiki-outline" id="bulkCatSelectNone">전체 해제</button>
-            </div>
-            <div class="bulkcat-subpages-panel" id="bulkCatSubpagesPanel">
-                <div class="bulkcat-empty small text-muted">불러오는 중…</div>
-            </div>
-            <div class="mt-3 mb-3">
-                <label for="bulkCatTagInput" class="form-label fw-bold">적용할 카테고리</label>
-                <div class="category-tag-container" id="bulkCatTagContainer">
+        <div class="bulkcat-modal">
+            <section class="bulkcat-section">
+                <header class="bulkcat-section-head">
+                    <h6 class="bulkcat-section-title">대상 하위 문서</h6>
+                    <span class="bulkcat-counter" id="bulkCatCounter">불러오는 중…</span>
+                </header>
+                <div class="bulkcat-prefix-line">
+                    <span class="bulkcat-prefix-label">prefix</span>
+                    <code class="bulkcat-prefix-code">${escapeHtml(currentSlug)}/**</code>
+                </div>
+                <div class="bulkcat-subpages-panel" id="bulkCatSubpagesPanel">
+                    <div class="bulkcat-empty">불러오는 중…</div>
+                </div>
+            </section>
+
+            <section class="bulkcat-section">
+                <header class="bulkcat-section-head">
+                    <h6 class="bulkcat-section-title">
+                        <label for="bulkCatTagInput" class="bulkcat-section-title-label">적용할 카테고리</label>
+                    </h6>
+                </header>
+                <div class="category-tag-container bulkcat-tag-container" id="bulkCatTagContainer">
                     <input type="text" id="bulkCatTagInput" class="category-tag-input"
                         placeholder="카테고리 입력 후 엔터나 쉼표" autocomplete="off">
                 </div>
-                <div class="form-text">
+                <p class="bulkcat-section-hint">
                     체크된 문서에 카테고리를 <b>추가</b>하고, 사전 체크된 문서의 체크를 해제하면
                     그 문서에서 카테고리를 <b>제거</b>합니다.
-                </div>
-            </div>
-            <div class="mb-2">
-                <div class="form-check">
+                </p>
+                <label class="bulkcat-persist-row">
                     <input class="form-check-input" type="checkbox" id="bulkCatPersist">
-                    <label class="form-check-label" for="bulkCatPersist">
-                        자동 규칙으로 저장 (이후 새 문서 생성/이동 시 자동 적용 — 추가 전용)
-                    </label>
-                </div>
-            </div>
-            <hr>
-            <div class="fw-bold mb-2">기존 자동 규칙</div>
-            <div id="bulkCatRulesTable">${rulesTableHtml(rules)}</div>
+                    <span>자동 규칙으로 저장 <span class="bulkcat-persist-sub">(이후 새 문서 생성/이동 시 자동 적용 — 추가 전용)</span></span>
+                </label>
+            </section>
+
+            <section class="bulkcat-section">
+                <header class="bulkcat-section-head">
+                    <h6 class="bulkcat-section-title">기존 자동 규칙</h6>
+                </header>
+                <div class="bulkcat-rules-wrap" id="bulkCatRulesTable">${rulesTableHtml(rules)}</div>
+            </section>
         </div>
     `;
 }
@@ -471,7 +477,7 @@ function renderSubpagesTable(items: SubpageItem[], prefix: string): { rows: RowS
     if (items.length === 0) {
         return {
             rows: [],
-            panelHtml: '<div class="bulkcat-empty small text-muted">선택 가능한 하위 문서가 없습니다.</div>',
+            panelHtml: '<div class="bulkcat-empty">선택 가능한 하위 문서가 없습니다.</div>',
         };
     }
     // DOM 생성은 호출자가 수행 — 여기서는 마크업만 만들고 rows 는 별도 객체로 채운다.
@@ -479,12 +485,12 @@ function renderSubpagesTable(items: SubpageItem[], prefix: string): { rows: RowS
     const tbodyRows = items.map((item) => {
         const display = item.slug.startsWith(prefixWithSlash) ? item.slug.slice(prefixWithSlash.length) : item.slug;
         const catsHtml = item.categories.length === 0
-            ? '<span class="bulkcat-row-categories text-muted fst-italic">카테고리 없음</span>'
-            : `<span class="bulkcat-row-categories">${item.categories.map((c) => `<span class="badge text-bg-light">${escapeHtml(c)}</span>`).join(' ')}</span>`;
+            ? '<span class="bulkcat-row-categories bulkcat-row-categories-empty">카테고리 없음</span>'
+            : `<span class="bulkcat-row-categories">${item.categories.map((c) => `<span class="bulkcat-cat-chip">${escapeHtml(c)}</span>`).join('')}</span>`;
         return `
             <tr data-page-id="${item.id}" style="--bulkcat-depth: ${item.depth};">
                 <td>
-                    <label class="bulkcat-row-label d-flex align-items-center gap-2 mb-0">
+                    <label class="bulkcat-row-label">
                         <input type="checkbox" class="form-check-input bulkcat-checkbox" data-page-id="${item.id}">
                         <code class="bulkcat-slug">${escapeHtml(display)}</code>
                     </label>
@@ -495,39 +501,71 @@ function renderSubpagesTable(items: SubpageItem[], prefix: string): { rows: RowS
     }).join('');
 
     const warning = items.length > 500
-        ? `<div class="alert alert-warning small mb-0">총 ${items.length}개 — 많을 경우 브라우저가 느려질 수 있습니다.</div>`
+        ? `<div class="bulkcat-warning">총 ${items.length}개 — 많을 경우 브라우저가 느려질 수 있습니다.</div>`
         : '';
 
     return {
         rows: [],
         panelHtml: `
             ${warning}
-            <table class="table table-sm table-hover align-middle mb-0">
+            <div class="bulkcat-master-row">
+                <label class="bulkcat-master-label">
+                    <input type="checkbox" class="form-check-input bulkcat-master-checkbox" id="bulkCatMasterCheckbox">
+                    <span class="bulkcat-master-text">전체</span>
+                </label>
+                <span class="bulkcat-master-count">${items.length}개</span>
+            </div>
+            <table class="bulkcat-subpages-table">
                 <tbody>${tbodyRows}</tbody>
             </table>
         `,
     };
 }
 
-function updateCounter(state: BulkCatModalState): void {
-    const counter = document.getElementById('bulkCatCounter');
-    if (!counter) return;
+function updateMasterCheckbox(state: BulkCatModalState): void {
+    const master = document.getElementById('bulkCatMasterCheckbox') as HTMLInputElement | null;
+    if (!master) return;
     if (state.rows.length === 0) {
-        counter.textContent = '하위 문서 없음';
+        master.checked = false;
+        master.indeterminate = false;
+        master.disabled = true;
         return;
     }
+    master.disabled = false;
     const checked = state.rows.filter((r) => r.currentlyChecked).length;
-    const tags = state.getTags();
-    let addCount = 0;
-    let removeCount = 0;
-    for (const r of state.rows) {
-        const pageHasAll = tags.length > 0 && tags.every((t) => r.categories.includes(t));
-        if (r.currentlyChecked && !pageHasAll) addCount++;
-        // 자동 체크 규칙(ALL)과 대칭: pageHasAll 인 행만 체크 해제 시 제거 대상.
-        // 부분 매칭만 되는 행을 "전체 해제" 등으로 우연히 해제해도 카테고리가 제거되지 않도록 한다.
-        if (!r.currentlyChecked && r.userTouched && pageHasAll) removeCount++;
+    if (checked === 0) {
+        master.checked = false;
+        master.indeterminate = false;
+    } else if (checked === state.rows.length) {
+        master.checked = true;
+        master.indeterminate = false;
+    } else {
+        master.checked = false;
+        master.indeterminate = true;
     }
-    counter.textContent = `체크 ${checked} / ${state.rows.length} (적용 +${addCount} / 제거 -${removeCount})`;
+}
+
+function updateCounter(state: BulkCatModalState): void {
+    const counter = document.getElementById('bulkCatCounter');
+    if (counter) {
+        if (state.rows.length === 0) {
+            counter.textContent = '하위 문서 없음';
+        } else {
+            const checked = state.rows.filter((r) => r.currentlyChecked).length;
+            const tags = state.getTags();
+            let addCount = 0;
+            let removeCount = 0;
+            for (const r of state.rows) {
+                const pageHasAll = tags.length > 0 && tags.every((t) => r.categories.includes(t));
+                if (r.currentlyChecked && !pageHasAll) addCount++;
+                // 자동 체크 규칙(ALL)과 대칭: pageHasAll 인 행만 체크 해제 시 제거 대상.
+                // 부분 매칭만 되는 행을 "전체 해제" 등으로 우연히 해제해도 카테고리가 제거되지 않도록 한다.
+                if (!r.currentlyChecked && r.userTouched && pageHasAll) removeCount++;
+            }
+            counter.textContent = `체크 ${checked} / ${state.rows.length} (적용 +${addCount} / 제거 -${removeCount})`;
+        }
+    }
+    updateMasterCheckbox(state);
 }
 
 function recomputePreChecks(state: BulkCatModalState): void {
@@ -547,7 +585,7 @@ async function loadAndRenderTree(state: BulkCatModalState): Promise<void> {
 
     const res = await fetchSubpages(state.prefix);
     if ('error' in res) {
-        panel.innerHTML = `<div class="alert alert-warning small mb-0">${escapeHtml(res.error)}</div>`;
+        panel.innerHTML = `<div class="bulkcat-warning">${escapeHtml(res.error)}</div>`;
         const counter = document.getElementById('bulkCatCounter');
         if (counter) counter.textContent = '불러오기 실패';
         return;
@@ -555,6 +593,14 @@ async function loadAndRenderTree(state: BulkCatModalState): Promise<void> {
 
     const { panelHtml } = renderSubpagesTable(res.items, state.prefix);
     panel.innerHTML = panelHtml;
+
+    // 마스터 "전체" 체크박스 — 모든 행 일괄 토글
+    const master = panel.querySelector<HTMLInputElement>('#bulkCatMasterCheckbox');
+    if (master) {
+        master.addEventListener('change', () => {
+            setAllRows(state, master.checked);
+        });
+    }
 
     // RowState 채우기 — DOM 안의 체크박스 참조를 잡아 보관
     state.rows.length = 0;
@@ -639,9 +685,6 @@ async function openBulkCategoryModal() {
             tagUI = installBulkCategoryTagUI({
                 onTagsChanged: () => recomputePreChecks(state),
             });
-
-            document.getElementById('bulkCatSelectAll')?.addEventListener('click', () => setAllRows(state, true));
-            document.getElementById('bulkCatSelectNone')?.addEventListener('click', () => setAllRows(state, false));
 
             void loadAndRenderTree(state);
             tagUI.inputEl?.focus();

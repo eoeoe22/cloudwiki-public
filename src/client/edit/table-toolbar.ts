@@ -73,6 +73,29 @@ function splitRowCells(lineText: string): string[] {
     return cells.map(c => c.trim());
 }
 
+/**
+ * 표 행에서 colIndex 번째 셀의 콘텐츠 시작 절대 오프셋을 반환한다.
+ * `|` 직후 표 컨벤션(`| cell |`)의 패딩 공백 1 개만 스킵한다 — 빈 셀(`|   |`)에서
+ * 모든 공백을 스킵하면 닫는 파이프 직전(셀 오른쪽 끝)으로 가버려 "맨 앞 삽입"
+ * 의도와 어긋난다.
+ * 표 행은 항상 선두 `|` 를 가진다(isPipeRow 가 `^\s*\|` 강제).
+ * 후행 `|` 가 없는 GFM 행(`| a | b`)의 마지막 셀도 지원 — 마지막 파이프부터
+ * 줄 끝까지를 셀 범위로 본다.
+ */
+function findCellStartByIndex(lineText: string, colIndex: number, lineFrom: number): number | null {
+    const pipes: number[] = [];
+    for (let i = 0; i < lineText.length; i++) {
+        if (lineText[i] === '\\') { i++; continue; }
+        if (lineText[i] === '|') pipes.push(i);
+    }
+    if (pipes.length === 0 || colIndex < 0 || colIndex >= pipes.length) return null;
+    const lo = pipes[colIndex];
+    const hi = colIndex + 1 < pipes.length ? pipes[colIndex + 1] : lineText.length;
+    let start = lo + 1;
+    if (start < hi && lineText[start] === ' ') start++;
+    return lineFrom + start;
+}
+
 function findEmptyCellAt(lineText: string, col: number, lineFrom: number): { from: number; to: number } | null {
     const pipes: number[] = [];
     for (let i = 0; i < lineText.length; i++) {
@@ -418,12 +441,21 @@ export function setupTableToolbar(): TableToolbarHandle {
             case 'merge-right': actionMergeToken(view, ctx, '{>}'); break;
             case 'merge-up':    actionMergeToken(view, ctx, '{^}'); break;
             case 'merge-mid':   actionMergeToken(view, ctx, '{><}'); break;
-            case 'color':
+            case 'color': {
                 // 기존 에디터 툴바의 "색상 삽입" 모달을 재사용. 모달이 닫히면 커서
                 // 위치에 `{palette:...}` 또는 `{color:#xxx,bg:#xxx}` 토큰을 삽입한다.
+                // 셀 어디서든 색상을 셀 맨 앞에 삽입하기 위해 모달 호출 전 커서를
+                // 현재 셀 콘텐츠 시작 위치로 이동한다.
+                const lineNum = ctx.startLine + ctx.rowIndex;
+                const line = view.state.doc.line(lineNum);
+                const cellStart = findCellStartByIndex(line.text, ctx.colIndex, line.from);
+                if (cellStart != null) {
+                    view.dispatch({ selection: { anchor: cellStart } });
+                }
                 view.focus();
                 window.openPaletteColorModal?.();
                 return;
+            }
         }
         view.focus();
     });
