@@ -631,6 +631,14 @@
             icon.className = 'bi bi-check2';
             setTimeout(() => { icon.className = 'bi bi-clipboard'; }, 1500);
           }
+          Swal.fire({
+            icon: 'success',
+            title: '제목이 복사되었습니다',
+            toast: true,
+            position: 'top-end',
+            timer: 2000,
+            showConfirmButton: false,
+          });
         } catch (e) {
           console.error('슬러그 복사 실패:', e);
         }

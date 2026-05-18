@@ -209,7 +209,7 @@
         }
 
         const phaseWarning = parsed.hasPhase
-            ? '<div class="text-warning small mt-2"><i class="bi bi-exclamation-triangle"></i> 스무딩 적용 후 위상(Phase) 데이터는 제거됩니다.</div>'
+            ? '<div class="wiki-freq-phase-warning"><i class="bi bi-exclamation-triangle-fill"></i><span>스무딩 적용 후 위상(Phase) 데이터는 제거됩니다.</span></div>'
             : '';
 
         const existingSmoothing = parsed.meta.smoothing

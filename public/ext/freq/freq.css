@@ -153,6 +153,35 @@
   }
 }
 
+/* 스무딩 다이얼로그의 위상 데이터 제거 안내 — SweetAlert 모달 배경에서
+   Bootstrap text-warning(#ffc107) 의 대비가 부족해 별도 색상 토큰 사용. */
+.wiki-freq-phase-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+  padding: 0.45rem 0.6rem;
+  font-size: 0.8125rem;
+  line-height: 1.4;
+  color: #92400e;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: 6px;
+}
+
+.wiki-freq-phase-warning > i {
+  flex-shrink: 0;
+  margin-top: 0.1rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  .wiki-freq-phase-warning {
+    color: #fcd34d;
+    background: rgba(251, 191, 36, 0.12);
+    border-color: rgba(251, 191, 36, 0.4);
+  }
+}
+
 .wiki-freq-canvas-wrap {
   position: relative;
   height: 320px;

@@ -1821,147 +1821,7 @@ html[data-theme="dark"] #concurrent-edit-banner {
     font-size: 1rem;
 }
 
-/* ── 고급 표 삽입 모달 ── */
-.adv-table-form .adv-table-size-row {
-    display: flex;
-    gap: 14px;
-    margin-bottom: 12px;
-}
-
-.adv-table-form .adv-table-size-label {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 0.85rem;
-    color: var(--wiki-text);
-}
-
-.adv-table-form .adv-table-size-label input {
-    width: 64px;
-    padding: 4px 6px;
-    font-size: 0.85rem;
-    border: 1px solid var(--wiki-border);
-    border-radius: 4px;
-    text-align: center;
-}
-
-.adv-table-grid-wrap {
-    overflow: auto;
-    max-height: 360px;
-    border: 1px solid var(--wiki-border);
-    border-radius: 6px;
-    padding: 6px;
-    background: var(--wiki-bg-alt);
-}
-
-.adv-table-grid {
-    border-collapse: separate;
-    border-spacing: 4px;
-    width: 100%;
-}
-
-.adv-table-cell {
-    padding: 0;
-    border: none;
-}
-
-.adv-table-cell-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 4px;
-    width: 100%;
-    min-width: 72px;
-    min-height: 38px;
-    padding: 4px 8px;
-    font-size: 0.78rem;
-    background: var(--wiki-bg);
-    color: var(--wiki-text);
-    border: 1px dashed var(--wiki-border);
-    border-radius: 4px;
-    cursor: pointer;
-    transition: background 0.12s, border-color 0.12s;
-}
-
-.adv-table-cell-btn:hover {
-    background: rgba(var(--wiki-primary-rgb), 0.08);
-    border-color: var(--wiki-primary);
-}
-
-.adv-table-cell.is-header .adv-table-cell-btn {
-    font-weight: 600;
-    background: var(--wiki-bg-alt);
-}
-
-.adv-table-cell.has-merge .adv-table-cell-btn {
-    background: rgba(var(--wiki-primary-rgb), 0.15);
-    border-style: solid;
-    border-color: var(--wiki-primary);
-    color: var(--wiki-link);
-}
-
-.adv-table-cell-btn i {
-    font-size: 0.95rem;
-    flex-shrink: 0;
-}
-
-.adv-table-cell-label {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.adv-table-merge-popover {
-    position: absolute;
-    z-index: 10000;
-    background: var(--wiki-bg);
-    border: 1px solid var(--wiki-border);
-    border-radius: 6px;
-    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
-    padding: 4px;
-    display: flex;
-    flex-direction: column;
-    min-width: 200px;
-}
-
-.adv-table-merge-option {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 6px 10px;
-    font-size: 0.85rem;
-    background: transparent;
-    color: var(--wiki-text);
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-    text-align: left;
-    transition: background 0.1s;
-}
-
-.adv-table-merge-option:hover {
-    background: rgba(var(--wiki-primary-rgb), 0.1);
-}
-
-.adv-table-merge-option.active {
-    background: rgba(var(--wiki-primary-rgb), 0.18);
-    color: var(--wiki-link);
-}
-
-.adv-table-merge-option i {
-    font-size: 1rem;
-}
-
-.adv-table-merge-token {
-    margin-left: auto;
-    font-size: 0.78rem;
-    background: var(--wiki-bg-alt);
-    padding: 1px 6px;
-    border-radius: 3px;
-    color: var(--wiki-text-muted);
-}
-
-/* ── 빈 표 셀 병합 미니툴바 (커서 기반 인플레이스) ── */
+/* ── 표 안 커서 위 인라인 편집 툴바 ── */
 .cm-cell-merge-toolbar {
     position: absolute;
     z-index: 9998;
@@ -1993,6 +1853,45 @@ html[data-theme="dark"] #concurrent-edit-banner {
 
 .cm-cell-merge-btn:hover {
     background: rgba(var(--wiki-primary-rgb), 0.12);
+    color: var(--wiki-link);
+}
+
+.cm-cell-merge-btn:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+    background: transparent;
+    color: var(--wiki-text);
+}
+
+.cm-cell-merge-btn.active {
+    background: rgba(var(--wiki-primary-rgb), 0.2);
+    color: var(--wiki-link);
+    font-weight: 600;
+}
+
+.cm-table-toolbar-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 1px;
+}
+
+.cm-table-toolbar-sep {
+    width: 1px;
+    height: 18px;
+    background: var(--wiki-border);
+    margin: 0 2px;
+}
+
+.cm-table-toolbar-danger {
+    color: var(--wiki-text-muted);
+}
+
+.cm-table-toolbar-danger:hover:not(:disabled) {
+    background: rgba(239, 68, 68, 0.15);
+    color: #ef4444;
+}
+
+.cm-table-toolbar-beautify {
     color: var(--wiki-link);
 }
 

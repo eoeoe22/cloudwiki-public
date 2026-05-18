@@ -1,7 +1,7 @@
 /**
  * 에디터(public/edit.html / public/blog-edit.html) 의 다양한 삽입 모달 UI.
  *
- * - 표/CSV/고급표/특수문자/타임스탬프/구글 지도/카드/팔레트색상/배지/하위문서/템플릿 등.
+ * - 표/CSV/특수문자/타임스탬프/구글 지도/카드/팔레트색상/배지/하위문서/템플릿 등.
  * - 아이콘 피커(라이브러리 그리드)도 함께 담당.
  *
  * 외부 의존성:
@@ -340,10 +340,6 @@ function setupTableInsertPopover(tableBtn: HTMLElement): void {
                     <i class="mdi mdi-file-delimited-outline"></i>
                     <span>CSV로 삽입</span>
                 </button>
-                <button type="button" class="table-insert-csv-btn table-insert-advanced-btn">
-                    <i class="mdi mdi-table-cog"></i>
-                    <span>고급 표 삽입 (셀 병합)</span>
-                </button>
             `;
     document.body.appendChild(popup);
 
@@ -351,7 +347,6 @@ function setupTableInsertPopover(tableBtn: HTMLElement): void {
     const cells = popup.querySelectorAll<HTMLElement>('.table-insert-cell');
     const labelText = popup.querySelector<HTMLElement>('.table-insert-label-text')!;
     const csvBtn = popup.querySelector<HTMLElement>('.table-insert-csv-btn')!;
-    const advancedBtn = popup.querySelector<HTMLElement>('.table-insert-advanced-btn')!;
 
     function getCell(rows: number, cols: number): HTMLElement | null {
         return popup.querySelector<HTMLElement>(`.table-insert-cell[data-row="${rows}"][data-col="${cols}"]`);
@@ -485,11 +480,6 @@ function setupTableInsertPopover(tableBtn: HTMLElement): void {
     csvBtn.addEventListener('click', () => {
         popup.classList.remove('active');
         openCsvTableModal();
-    });
-
-    advancedBtn.addEventListener('click', () => {
-        popup.classList.remove('active');
-        openAdvancedTableModal();
     });
 
     // suppress unused-warning: activeRow/activeCol are state vars used inside setActiveCell.
@@ -1008,205 +998,6 @@ function openCsvTableModal(): void {
             window.editor?.insertText?.('\n' + result.value + '\n');
             window._cmView?.focus();
         }
-    });
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// 고급 표 삽입 모달 (셀 병합)
-// ─────────────────────────────────────────────────────────────────────────────
-
-function openAdvancedTableModal(): void {
-    const Swal = window.Swal;
-    if (!Swal) return;
-    const MAX_ROWS = 12;
-    const MAX_COLS = 10;
-    interface MergeType { id: string; label: string; icon: string; token: string; }
-    const MERGE_TYPES: MergeType[] = [
-        { id: '',     label: '일반 셀',   icon: 'mdi-square-outline',          token: '' },
-        { id: 'left', label: '좌측 병합', icon: 'mdi-arrow-left-bold-outline', token: '{<}' },
-        { id: 'right',label: '우측 병합', icon: 'mdi-arrow-right-bold-outline',token: '{>}' },
-        { id: 'up',   label: '상단 병합', icon: 'mdi-arrow-up-bold-outline',   token: '{^}' },
-        { id: 'mid',  label: '가운데 모음',icon: 'mdi-arrow-collapse-horizontal',token: '{><}' }
-    ];
-    const MERGE_BY_ID: Record<string, MergeType> = Object.fromEntries(MERGE_TYPES.map(m => [m.id, m]));
-
-    const state: { rows: number; cols: number; merge: Record<string, string>; } = {
-        rows: 3,
-        cols: 3,
-        merge: {}
-    };
-
-    function clampRows(v: string): number { return Math.min(MAX_ROWS, Math.max(2, parseInt(v, 10) || 2)); }
-    function clampCols(v: string): number { return Math.min(MAX_COLS, Math.max(2, parseInt(v, 10) || 2)); }
-
-    function cellKey(r: number, c: number): string { return `${r}-${c}`; }
-
-    function pruneMergeMap() {
-        const next: Record<string, string> = {};
-        for (const k in state.merge) {
-            const [r, c] = k.split('-').map(Number);
-            if (r < state.rows && c < state.cols) next[k] = state.merge[k];
-        }
-        state.merge = next;
-    }
-
-    function renderTable() {
-        const root = document.getElementById('advTableGrid');
-        if (!root) return;
-        let html = '<table class="adv-table-grid"><tbody>';
-        for (let r = 0; r < state.rows; r++) {
-            html += '<tr>';
-            for (let c = 0; c < state.cols; c++) {
-                const id = state.merge[cellKey(r, c)] || '';
-                const meta = MERGE_BY_ID[id] || MERGE_BY_ID[''];
-                const isHeader = r === 0;
-                const cls = `adv-table-cell${id ? ' has-merge' : ''}${isHeader ? ' is-header' : ''}`;
-                const labelTxt = id ? meta.token : (isHeader ? `제목${c + 1}` : `내용${c + 1}`);
-                html += `<td class="${cls}" data-r="${r}" data-c="${c}">
-                    <button type="button" class="adv-table-cell-btn" data-r="${r}" data-c="${c}"
-                        title="${escapeHtml(meta.label)}" aria-label="${r + 1}행 ${c + 1}열 - ${escapeHtml(meta.label)}">
-                        <i class="mdi ${meta.icon}"></i>
-                        <span class="adv-table-cell-label">${escapeHtml(labelTxt)}</span>
-                    </button>
-                </td>`;
-            }
-            html += '</tr>';
-        }
-        html += '</tbody></table>';
-        root.innerHTML = html;
-
-        root.querySelectorAll<HTMLElement>('.adv-table-cell-btn').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                const r = parseInt(btn.dataset.r || '0', 10);
-                const c = parseInt(btn.dataset.c || '0', 10);
-                openMergePopover(btn, r, c);
-            });
-        });
-    }
-
-    let popoverEl: HTMLElement | null = null;
-    let outsideHandler: ((e: MouseEvent) => void) | null = null;
-
-    function closeMergePopover() {
-        if (popoverEl && popoverEl.parentNode) popoverEl.parentNode.removeChild(popoverEl);
-        popoverEl = null;
-        if (outsideHandler) {
-            document.removeEventListener('mousedown', outsideHandler, true);
-            outsideHandler = null;
-        }
-    }
-
-    function openMergePopover(anchor: HTMLElement, r: number, c: number) {
-        closeMergePopover();
-        const currentId = state.merge[cellKey(r, c)] || '';
-        popoverEl = document.createElement('div');
-        popoverEl.className = 'adv-table-merge-popover';
-        popoverEl.innerHTML = MERGE_TYPES.map(m => `
-            <button type="button" class="adv-table-merge-option${m.id === currentId ? ' active' : ''}" data-merge="${m.id}">
-                <i class="mdi ${m.icon}"></i>
-                <span>${escapeHtml(m.label)}</span>
-                ${m.token ? `<code class="adv-table-merge-token">${escapeHtml(m.token)}</code>` : ''}
-            </button>`).join('');
-        document.body.appendChild(popoverEl);
-
-        const rect = anchor.getBoundingClientRect();
-        const popH = popoverEl.offsetHeight || 200;
-        const belowSpace = window.innerHeight - rect.bottom;
-        const top = belowSpace < popH + 12 && rect.top > popH + 12
-            ? Math.max(8, rect.top - popH - 4)
-            : rect.bottom + 4;
-        popoverEl.style.top = `${top + window.scrollY}px`;
-        popoverEl.style.left = `${Math.max(8, rect.left + window.scrollX)}px`;
-
-        popoverEl.querySelectorAll<HTMLElement>('.adv-table-merge-option').forEach(opt => {
-            opt.addEventListener('click', (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                const id = opt.dataset.merge || '';
-                if (id) state.merge[cellKey(r, c)] = id;
-                else delete state.merge[cellKey(r, c)];
-                closeMergePopover();
-                renderTable();
-            });
-        });
-
-        outsideHandler = (e: MouseEvent) => {
-            const target = e.target as HTMLElement;
-            if (popoverEl && popoverEl.contains(target)) return;
-            if (target.closest && target.closest('.adv-table-cell-btn')) return;
-            closeMergePopover();
-        };
-        document.addEventListener('mousedown', outsideHandler, true);
-    }
-
-    function buildMarkdown(): string {
-        const lines: string[] = [];
-        for (let r = 0; r < state.rows; r++) {
-            const cells: string[] = [];
-            for (let c = 0; c < state.cols; c++) {
-                const id = state.merge[cellKey(r, c)];
-                if (id) cells.push(MERGE_BY_ID[id].token);
-                else cells.push(r === 0 ? `제목${c + 1}` : `내용${c + 1}`);
-            }
-            lines.push('| ' + cells.join(' | ') + ' |');
-            if (r === 0) lines.push('|' + ' --- |'.repeat(state.cols));
-        }
-        return lines.join('\n');
-    }
-
-    Swal.fire({
-        title: '<i class="mdi mdi-table-cog me-2"></i>고급 표 삽입',
-        width: 720,
-        html: `
-            <div class="text-start adv-table-form">
-                <p style="font-size:0.82rem;color:var(--wiki-text-muted);margin-bottom:10px;">
-                    각 셀을 클릭해 병합 토큰을 지정할 수 있습니다. 첫 번째 행은 표 헤더로 사용됩니다.
-                </p>
-                <div class="adv-table-size-row">
-                    <label class="adv-table-size-label">행
-                        <input type="number" id="advTableRows" min="2" max="${MAX_ROWS}" value="${state.rows}"
-                            style="background:var(--wiki-bg);color:var(--wiki-text);border-color:var(--wiki-border);">
-                    </label>
-                    <label class="adv-table-size-label">열
-                        <input type="number" id="advTableCols" min="2" max="${MAX_COLS}" value="${state.cols}"
-                            style="background:var(--wiki-bg);color:var(--wiki-text);border-color:var(--wiki-border);">
-                    </label>
-                </div>
-                <div id="advTableGrid" class="adv-table-grid-wrap"></div>
-            </div>
-        `,
-        showCancelButton: true,
-        confirmButtonText: '삽입',
-        cancelButtonText: '취소',
-        didOpen: () => {
-            renderTable();
-            const rowsInput = document.getElementById('advTableRows') as HTMLInputElement | null;
-            const colsInput = document.getElementById('advTableCols') as HTMLInputElement | null;
-            if (rowsInput) {
-                rowsInput.addEventListener('input', () => {
-                    state.rows = clampRows(rowsInput.value);
-                    pruneMergeMap();
-                    renderTable();
-                });
-            }
-            if (colsInput) {
-                colsInput.addEventListener('input', () => {
-                    state.cols = clampCols(colsInput.value);
-                    pruneMergeMap();
-                    renderTable();
-                });
-            }
-        },
-        willClose: () => {
-            closeMergePopover();
-        }
-    }).then(result => {
-        if (!result.isConfirmed) return;
-        const md = buildMarkdown();
-        window.editor?.insertText?.('\n' + md + '\n');
-        window._cmView?.focus();
     });
 }
 

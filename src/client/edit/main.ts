@@ -1225,155 +1225,13 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         }, { decorations: v => v.decorations });
 
-        // ── 빈 표 셀 병합 미니툴바 ──
-        // 커서가 마크다운 표의 빈 셀에 위치하면 병합 토큰 4종을 빠르게 삽입할 수 있는 툴바를 띄운다.
-        const CELL_MERGE_BUTTONS = [
-            { token: '{<}', label: '좌측 셀과 병합', icon: 'mdi mdi-arrow-left-bold-outline' },
-            { token: '{>}', label: '우측 셀과 병합', icon: 'mdi mdi-arrow-right-bold-outline' },
-            { token: '{^}', label: '상단 셀과 병합', icon: 'mdi mdi-arrow-up-bold-outline' },
-            { token: '{><}', label: '가운데로 모음', icon: 'mdi mdi-arrow-collapse-horizontal' }
-        ];
-        const cellMergeToolbarEl = document.createElement('div');
-        cellMergeToolbarEl.className = 'cm-cell-merge-toolbar';
-        cellMergeToolbarEl.style.display = 'none';
-        CELL_MERGE_BUTTONS.forEach(b => {
-            const btn = document.createElement('button');
-            btn.type = 'button';
-            btn.className = 'cm-cell-merge-btn';
-            btn.title = `${b.label} ${b.token}`;
-            btn.dataset.token = b.token;
-            btn.innerHTML = `<i class="${b.icon}"></i>`;
-            cellMergeToolbarEl.appendChild(btn);
-        });
-        document.body.appendChild(cellMergeToolbarEl);
-
-        // 현재 활성 셀 정보 (range는 절대 오프셋)
-        let activeMergeCell = null;
-
-        function isTableSeparatorLine(text) {
-            return /^\s*\|\s*:?-{3,}:?(?:\s*\|\s*:?-{3,}:?)*\s*\|?\s*$/.test(text);
-        }
-        function isPipeRow(text) {
-            // 표 행: '|'로 시작 (구분선/일반 행 모두)
-            return /^\s*\|/.test(text) && (text.match(/(?<!\\)\|/g) || []).length >= 2;
-        }
-        function isInsideTableBlock(state, lineNum) {
-            // 현재 라인 또는 인접 라인 중 하나가 구분선이면 표 블록으로 간주
-            const totalLines = state.doc.lines;
-            const cur = state.doc.line(lineNum).text;
-            if (isTableSeparatorLine(cur)) return false; // 구분선 자체에서는 표시 안 함
-            // 아래 한 줄이 구분선 (현재 라인이 헤더)
-            if (lineNum + 1 <= totalLines && isTableSeparatorLine(state.doc.line(lineNum + 1).text)) return true;
-            // 위로 거슬러 올라가며 구분선 발견 (현재 라인이 본문)
-            for (let n = lineNum - 1; n >= Math.max(1, lineNum - 30); n--) {
-                const t = state.doc.line(n).text;
-                if (isTableSeparatorLine(t)) return true;
-                if (!isPipeRow(t)) break;
-            }
-            return false;
-        }
-        function findEmptyCellAt(lineText, col) {
-            // col: 라인 내 0-based 커서 오프셋
-            // 이스케이프 처리된 \\| 는 셀 구분자가 아님
-            const pipes = [];
-            for (let i = 0; i < lineText.length; i++) {
-                if (lineText[i] === '\\') { i++; continue; }
-                if (lineText[i] === '|') pipes.push(i);
-            }
-            if (pipes.length < 2) return null;
-            for (let i = 0; i < pipes.length - 1; i++) {
-                const lo = pipes[i];
-                const hi = pipes[i + 1];
-                if (col > lo && col <= hi) {
-                    const segStart = lo + 1;
-                    const segEnd = hi;
-                    const seg = lineText.substring(segStart, segEnd);
-                    if (seg.trim() === '') {
-                        return { segStart, segEnd };
-                    }
-                    return null;
-                }
-            }
-            return null;
-        }
-
-        function hideCellMergeToolbar() {
-            if (cellMergeToolbarEl.style.display !== 'none') {
-                cellMergeToolbarEl.style.display = 'none';
-            }
-            activeMergeCell = null;
-        }
-
-        function updateCellMergeToolbar(view) {
-            const sel = view.state.selection.main;
-            if (sel.from !== sel.to) { hideCellMergeToolbar(); return; }
-            const pos = sel.head;
-            const line = view.state.doc.lineAt(pos);
-            const col = pos - line.from;
-            if (!isPipeRow(line.text) || isTableSeparatorLine(line.text)) {
-                hideCellMergeToolbar();
-                return;
-            }
-            if (!isInsideTableBlock(view.state, line.number)) {
-                hideCellMergeToolbar();
-                return;
-            }
-            const cell = findEmptyCellAt(line.text, col);
-            if (!cell) { hideCellMergeToolbar(); return; }
-
-            activeMergeCell = {
-                from: line.from + cell.segStart,
-                to: line.from + cell.segEnd
-            };
-
-            // 위치: 커서 위쪽 (공간 부족 시 아래쪽)
-            const coords = view.coordsAtPos(pos);
-            if (!coords) { hideCellMergeToolbar(); return; }
-            cellMergeToolbarEl.style.display = 'flex';
-            // 측정을 위해 보이지 않게 한 번 렌더
-            const tbW = cellMergeToolbarEl.offsetWidth || 160;
-            const tbH = cellMergeToolbarEl.offsetHeight || 32;
-            const margin = 6;
-            let top = coords.top - tbH - margin;
-            if (top < margin) top = coords.bottom + margin;
-            let left = coords.left - tbW / 2;
-            const viewportW = document.documentElement.clientWidth;
-            left = Math.max(margin, Math.min(left, viewportW - tbW - margin));
-            cellMergeToolbarEl.style.left = (left + window.scrollX) + 'px';
-            cellMergeToolbarEl.style.top = (top + window.scrollY) + 'px';
-        }
-
-        cellMergeToolbarEl.addEventListener('mousedown', (e) => {
-            // 에디터 blur로 인한 셀렉션 해제 방지
-            e.preventDefault();
-        });
-        cellMergeToolbarEl.addEventListener('click', (e) => {
-            const btn = e.target.closest('.cm-cell-merge-btn');
-            if (!btn || !activeMergeCell) return;
-            const token = btn.dataset.token;
-            const view = window._cmView;
-            if (!view) return;
-            const insert = ` ${token} `;
-            const { from, to } = activeMergeCell;
-            view.dispatch({
-                changes: { from, to, insert },
-                selection: { anchor: from + insert.length }
-            });
-            hideCellMergeToolbar();
-            view.focus();
-        });
-
-        // 에디터 스크롤/리사이즈 시 위치 갱신
-        window.addEventListener('scroll', () => {
-            if (cellMergeToolbarEl.style.display !== 'none' && window._cmView) {
-                updateCellMergeToolbar(window._cmView);
-            }
-        }, true);
-        window.addEventListener('resize', () => {
-            if (cellMergeToolbarEl.style.display !== 'none' && window._cmView) {
-                updateCellMergeToolbar(window._cmView);
-            }
-        });
+        // ── 표 안 커서 위 통합 인라인 편집 툴바 ──
+        // 정렬/행/열/셀 병합/간격 정렬을 한 곳에서 제공. 스크롤·리사이즈 리스너는 모듈 내부에서 등록.
+        // edit-table-toolbar.js 모듈 로드가 실패할 경우(캐시 불일치 등) 에디터 자체가
+        // 죽지 않도록 no-op fallback 으로 가드한다.
+        const tableToolbar = window.setupTableToolbar
+            ? window.setupTableToolbar()
+            : { update: () => {}, hide: () => {} };
 
         // 찾기/바꾸기 패널이 외부 편집을 감지하기 위한 훅 (find 패널 init 후 할당됨)
         var _findFeatureOnDocChange = null;
@@ -1385,9 +1243,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                 window.updateEditorTextCounterFromDoc(update.state.doc);
                 if (_findFeatureOnDocChange) _findFeatureOnDocChange(update);
             }
-            // 빈 표 셀 병합 미니툴바 위치/표시 갱신
+            // 표 인라인 편집 툴바 위치/표시 갱신
             if (update.selectionSet || update.docChanged || update.viewportChanged) {
-                updateCellMergeToolbar(update.view);
+                tableToolbar.update(update.view);
             }
         });
 
@@ -1395,9 +1253,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         const blurHandler = EditorView.domEventHandlers({
             blur: () => {
                 editorEventHandlers.blur.forEach(cb => cb());
-                // 에디터에서 포커스가 떠나면(모달 열기, 다른 입력 등) 셀 병합 툴바도 숨김.
+                // 에디터에서 포커스가 떠나면(모달 열기, 다른 입력 등) 표 툴바도 숨김.
                 // 툴바 버튼 클릭은 mousedown.preventDefault()로 blur가 발생하지 않으므로 안전.
-                hideCellMergeToolbar();
+                tableToolbar.hide();
             },
             mousedown: (event, view) => {
                 const target = event.target;

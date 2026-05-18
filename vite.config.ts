@@ -41,6 +41,7 @@ export default defineConfig({
                 'edit-conflict': resolve(__dirname, 'src/client/edit/conflict.ts'),
                 'edit-autocomplete': resolve(__dirname, 'src/client/edit/autocomplete.ts'),
                 'edit-modals': resolve(__dirname, 'src/client/edit/modals.ts'),
+                'edit-table-toolbar': resolve(__dirname, 'src/client/edit/table-toolbar.ts'),
                 'edit-main': resolve(__dirname, 'src/client/edit/main.ts'),
                 'edit-bulk-category': resolve(__dirname, 'src/client/edit/bulk-category.ts'),
                 'discussion-edit': resolve(__dirname, 'src/client/discussion-edit/editor.ts'),
