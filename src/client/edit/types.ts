@@ -250,6 +250,13 @@ declare global {
         _observePreviewLayoutShifts?: () => void;
         /** edit.html 의 인라인 floating TOC 핸들러 */
         toggleEditorFloatingToc?: () => void;
+        /**
+         * 위키 문법 자동완성·인라인 표 툴바 활성화 플래그.
+         * edit/main.ts 가 localStorage(editor_syntax_autocomplete) 기준으로 초기화하고
+         * 설정 패널 체크박스가 토글한다. autocomplete.ts / table-toolbar.ts 가 매
+         * 트리거마다 lazy 하게 읽어 비활성 시 동작을 건너뛴다.
+         */
+        wikiSyntaxAutocompleteEnabled?: boolean;
         // ── 다음 글로벌은 각자의 ESM 모듈이 단독 declare 하므로 여기서 다시 선언하지 않는다 ──
         // showColorAutocomplete / showPaletteAutocomplete / hideAutocomplete /
         // hideIconAutocomplete / hideColorAutocomplete / paletteAc / renderCategoryTags

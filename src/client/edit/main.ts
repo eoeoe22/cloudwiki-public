@@ -776,7 +776,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             syntaxHighlight: localStorage.getItem('editor_syntax_highlight') !== 'false',
             advancedEdit: localStorage.getItem('editor_advanced_edit') !== 'false',
             autoSummary: localStorage.getItem('editor_auto_summary') !== 'false',
+            syntaxAutocomplete: localStorage.getItem('editor_syntax_autocomplete') !== 'false',
         };
+
+        // 자동완성·인라인 표 툴바가 lazy 하게 읽는 플래그.
+        // 모듈 평가 순서상 autocomplete.ts 의 첫 부착 시점에 이미 정의되어 있어야 한다.
+        window.wikiSyntaxAutocompleteEnabled = editorSettings.syntaxAutocomplete;
 
         // ── CM6 동적 재설정용 Compartment ──
         const lineNumbersCompartment = new Compartment();
@@ -1262,6 +1267,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const isColorBadge = target.classList && target.classList.contains('cm-color-badge');
                 const isPaletteBadge = target.classList && target.classList.contains('cm-palette-badge');
                 if (isColorBadge || isPaletteBadge) {
+                    // "문법 자동완성" 이 꺼져 있으면 컬러/팔레트 배지 클릭으로 인라인
+                    // 자동완성을 띄우는 명시적 진입점도 막아야 한다. 일반 텍스트 클릭처럼
+                    // 동작하도록 그대로 위임.
+                    if (window.wikiSyntaxAutocompleteEnabled === false) return;
                     const rect = target.getBoundingClientRect();
                     // 배지(가상 요소) 클릭 여부 확인: 컬러 18px / 팔레트 28px 우측 영역
                     const badgeWidth = isColorBadge ? 18 : 28;
@@ -1888,6 +1897,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             </label>
             <div class="editor-settings-divider"></div>
             <label class="editor-settings-item">
+                <span>문법 자동완성</span>
+                <input type="checkbox" id="settingSyntaxAutocomplete" ${editorSettings.syntaxAutocomplete ? 'checked' : ''}>
+            </label>
+            <label class="editor-settings-item">
                 <span>편집 요약 자동 작성</span>
                 <input type="checkbox" id="settingAutoSummary" ${editorSettings.autoSummary ? 'checked' : ''}>
             </label>
@@ -2285,6 +2298,28 @@ document.addEventListener('DOMContentLoaded', async () => {
                 }
             });
         });
+
+        // ── 문법 자동완성 토글 (인라인 자동완성 + 표 인라인 툴바 공용 스위치) ──
+        const syntaxAutocompleteCheckbox = document.getElementById('settingSyntaxAutocomplete');
+        if (syntaxAutocompleteCheckbox) {
+            syntaxAutocompleteCheckbox.addEventListener('change', (e) => {
+                editorSettings.syntaxAutocomplete = e.target.checked;
+                localStorage.setItem('editor_syntax_autocomplete', editorSettings.syntaxAutocomplete);
+                window.wikiSyntaxAutocompleteEnabled = editorSettings.syntaxAutocomplete;
+                // 비활성 즉시 떠 있을 수 있는 자동완성 드롭다운/표 툴바를 정리.
+                // hideAllSyntaxAutocompletes 는 단순 display:none 이 아니라 각 hide*
+                // 헬퍼를 호출해 visible/selectedIndex/query 등 내부 상태까지 초기화하므로,
+                // 토글 직후 잔존하는 visible 플래그가 키보드 네비게이션(Enter/방향키)을
+                // 가로채는 문제를 피할 수 있다.
+                if (!editorSettings.syntaxAutocomplete) {
+                    window.hideAllSyntaxAutocompletes?.();
+                    tableToolbar.hide();
+                } else {
+                    // 재활성 시 현재 커서 위치에서 즉시 표 툴바 갱신 (자동완성은 다음 키입력에서 부착).
+                    tableToolbar.update(cmEditorView);
+                }
+            });
+        }
 
         // ── 편집 요약 자동 작성 토글 ──
         const autoSummaryCheckbox = document.getElementById('settingAutoSummary');

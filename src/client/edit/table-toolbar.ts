@@ -379,6 +379,8 @@ export function setupTableToolbar(): TableToolbarHandle {
     }
 
     function update(view: EditorView): void {
+        // "문법 자동완성" 설정이 꺼져 있으면 표 인라인 툴바도 비활성화한다.
+        if (window.wikiSyntaxAutocompleteEnabled === false) { hide(); return; }
         const ctx = findTableContext(view);
         if (!ctx) { hide(); return; }
         activeCtx = ctx;

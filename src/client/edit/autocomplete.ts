@@ -54,6 +54,13 @@ declare global {
         paletteAc?: PaletteAcState;
         // edit-main.ts 가 editor shim 초기화 직후 명시 호출해 자동완성 부착을 보장
         ensureAutocompleteAttached?: () => void;
+        /**
+         * 자동완성 드롭다운 9종을 한 번에 닫으면서 내부 visible/index/query
+         * 상태까지 초기화한다. 단순 DOM display 조작만으로는 visible 플래그가
+         * 남아 키보드 네비게이션이 계속 가로채일 수 있으므로, "문법 자동완성"
+         * 설정 토글 등 외부에서 호출할 진입점으로 노출한다.
+         */
+        hideAllSyntaxAutocompletes?: () => void;
     }
 }
 
@@ -1900,6 +1907,12 @@ function attachAutocomplete(viaFallback = false): void {
 
     editor.on('change', () => {
         requestAnimationFrame(() => {
+            // 사용자가 "문법 자동완성" 을 끈 경우 어떤 트리거에도 반응하지 않는다.
+            // 이미 떠 있을 수 있는 드롭다운도 정리한다.
+            if (window.wikiSyntaxAutocompleteEnabled === false) {
+                hideAutocompletesExcept(null);
+                return;
+            }
             // 매 키스트로크마다 *Ac.div 의 null 캐시를 보강한다. attach 시점에
             // 한 번만 _resolveAutocompleteDivs() 를 호출하면, 그 시점에 일부
             // div 가 DOM 에 없었거나 (스트리밍/큐잉) 미래에 어떤 DOM 조작으로
@@ -2014,6 +2027,12 @@ window.addEventListener('wiki-editor-ready', () => attachAutocomplete());
 // 이벤트 디스패치와 별개로 백업 경로로 유지해 둔다.
 // 가드는 attachAutocomplete 내부에서 수행하므로 여기서는 단순 위임.
 window.ensureAutocompleteAttached = () => attachAutocomplete();
+
+// 외부 진입점: "문법 자동완성" 설정 해제 등으로 모든 드롭다운을 즉시 닫아야 할 때.
+// hideAutocompletesExcept(null) 가 각 hide* 헬퍼를 호출해 visible/selectedIndex/
+// query 등 내부 상태까지 초기화하므로, 토글 직후 잔존하는 visible 플래그가
+// 키보드 네비게이션을 가로채는 문제를 피할 수 있다.
+window.hideAllSyntaxAutocompletes = () => hideAutocompletesExcept(null);
 
 // 폴링 안전망 — 위 정상 트리거(이벤트 + 명시 호출)가 어떤 이유로든 누락되거나
 // 호출 시점에 window.editor 가 아직 비어 있어 부착되지 못한 케이스를 자동 복구.
