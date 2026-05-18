@@ -449,6 +449,20 @@ CREATE TABLE IF NOT EXISTS category_prefix_rules (
 );
 CREATE INDEX IF NOT EXISTS idx_category_prefix_rules_prefix ON category_prefix_rules(prefix);
 
+-- 슬러그 prefix 별 자동 문서 설정(편집 잠금/비공개) 부여 규칙
+-- prefix/ 로 시작하는 문서가 새로 생성될 때 is_locked / is_private 가 강제 적용된다.
+-- 한 컬럼이 NULL 이면 그 플래그에 대해서는 규칙 없음(생성자의 값 유지).
+-- 관리자만 CRUD (라우트 단의 admin:access RBAC 로 보호).
+CREATE TABLE IF NOT EXISTS doc_setting_prefix_rules (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    prefix     TEXT NOT NULL UNIQUE,
+    is_locked  INTEGER,                          -- NULL=규칙 없음, 0/1=신규 생성 시 강제값
+    is_private INTEGER,                          -- NULL=규칙 없음, 0/1=신규 생성 시 강제값
+    created_at INTEGER DEFAULT (unixepoch()),
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    CHECK (is_locked IS NOT NULL OR is_private IS NOT NULL)
+);
+
 -- 커스텀 컬러 팔레트
 -- {palette:이름} 위키 문법에서 사용. 하드코딩 프리셋(primary/secondary/success/info/warning/danger/muted) 위에 머지된다.
 -- 관리자만 CUD (라우트 단의 requireAdmin 미들웨어로 보호).

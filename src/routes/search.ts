@@ -63,7 +63,9 @@ function buildLikeSnippet(slug: string, content: string, query: string): string 
  * mode=category: 카테고리 이름으로 문서 목록 반환
  *
  * 이미지 문서 검색: 쿼리가 "이미지:"로 시작하면 media 테이블에서 filename/content를 검색한다.
- * 일반 문서 검색 결과에는 이미지 문서가 포함되지 않는다.
+ * 카테고리 검색: 쿼리가 "카테고리:"로 시작하면 page_categories 에서 매치하는 카테고리를
+ *                가상 문서로 취급해 노출한다(설명 문서가 없는 카테고리도 포함).
+ * 일반 문서 검색 결과에는 이미지/카테고리 가상 문서가 포함되지 않는다.
  */
 search.get('/search', async (c) => {
     const query = c.req.query('q');
@@ -78,6 +80,7 @@ search.get('/search', async (c) => {
     const rbac = c.get('rbac') as RBAC;
     const isAdmin = user && rbac.can(user.role, 'admin:access');
     const canSeePrivate = rbac.can(user?.role ?? 'guest', 'wiki:private');
+    const privateFilter = canSeePrivate ? '' : ' AND is_private = 0';
     const searchStartTime = Date.now();
 
     // 서버 사이드 페이지네이션: 페이지당 PAGE_SIZE 건, LIMIT/OFFSET 으로 DB 부하 최소화.
@@ -168,6 +171,82 @@ search.get('/search', async (c) => {
         // media에서 결과가 없으면 아래 일반 pages 검색으로 폴스루
     }
 
+    // 카테고리 가상 문서 검색 모드: "카테고리:키워드"로 시작하면 page_categories 에서 매치하는
+    // 카테고리를 가상 문서로 취급해 노출한다. 설명 문서('카테고리:이름' 페이지)가 존재하지 않는
+    // 카테고리도 결과에 포함된다.
+    // 매치가 전혀 없으면 (예: 사용자가 카테고리 설명 문서 자체를 찾고 있는 경우) 아래
+    // 일반 pages 검색으로 폴스루한다(이미지: 네임스페이스 분기와 동일한 fallthrough 패턴).
+    if (mode === 'content' && query.trim().startsWith('카테고리:')) {
+        if (c.env.WIKI_VISIBILITY === 'closed' && !user) {
+            return c.json({ error: '로그인이 필요합니다.' }, 401);
+        }
+        const catQuery = query.trim().substring('카테고리:'.length).trim();
+        // LIKE 메타문자 escape — 사용자가 입력한 문자열 그대로만 매치한다.
+        const likeEscaped = catQuery.replace(/[\\%_]/g, '\\$&');
+        const likePattern = catQuery.length > 0 ? `%${likeEscaped}%` : '%';
+        const startPattern = catQuery.length > 0 ? `${likeEscaped}%` : '%';
+
+        // page_categories 의 카테고리는 pages 와 join 해 사용자 권한에 맞는 가시 문서만 카운트.
+        const visibility = (isAdmin ? '' : ' AND p.deleted_at IS NULL') + (canSeePrivate ? '' : ' AND p.is_private = 0');
+
+        const totalRow = await db
+            .prepare(
+                `SELECT COUNT(DISTINCT pc.category) as total
+                 FROM page_categories pc
+                 JOIN pages p ON p.id = pc.page_id
+                 WHERE pc.category LIKE ? ESCAPE '\\'${visibility}`
+            )
+            .bind(likePattern)
+            .first<{ total: number }>();
+        const total = totalRow?.total ?? 0;
+
+        if (total > 0) {
+            const { page, offset } = clampPage(total);
+            // prefix(시작) 매치를 substring 매치보다 우선해 정렬. 동률은 카테고리 이름 오름차순.
+            const sql = `
+                SELECT pc.category AS name, COUNT(DISTINCT pc.page_id) AS page_count
+                FROM page_categories pc
+                JOIN pages p ON p.id = pc.page_id
+                WHERE pc.category LIKE ? ESCAPE '\\'${visibility}
+                GROUP BY pc.category
+                ORDER BY (CASE WHEN pc.category LIKE ? ESCAPE '\\' THEN 0 ELSE 1 END), pc.category
+                LIMIT ? OFFSET ?
+            `;
+            const results = await db
+                .prepare(sql)
+                .bind(likePattern, startPattern, PAGE_SIZE, offset)
+                .all<{ name: string; page_count: number }>();
+
+            // 페이지된 카테고리에 대해 설명 문서('카테고리:이름' 페이지) 존재 여부 일괄 조회.
+            const catSlugs = results.results.map((r) => `카테고리:${r.name}`);
+            let existingDocs = new Set<string>();
+            if (catSlugs.length > 0) {
+                const placeholders = catSlugs.map(() => '?').join(',');
+                const docVisibility = (isAdmin ? '' : ' AND deleted_at IS NULL') + privateFilter;
+                const docRows = await db
+                    .prepare(`SELECT slug FROM pages WHERE slug IN (${placeholders})${docVisibility}`)
+                    .bind(...catSlugs)
+                    .all<{ slug: string }>();
+                existingDocs = new Set(docRows.results.map((r) => r.slug));
+            }
+
+            const categoryResults = results.results.map((r) => {
+                const slug = `카테고리:${r.name}`;
+                return {
+                    slug,
+                    isDeleted: false,
+                    is_category_doc: true,
+                    page_count: r.page_count,
+                    has_description: existingDocs.has(slug),
+                };
+            });
+
+            if (shouldTrack) trackSearch(c, query.trim(), total, Date.now() - searchStartTime);
+            return c.json({ results: categoryResults, category_mode: true, total, page, pageSize: PAGE_SIZE });
+        }
+        // page_categories 매치가 없으면 아래 일반 pages 검색으로 폴스루(설명 문서 검색 가능).
+    }
+
     const trimmedQuery = query.trim();
 
     // 페이지네이션 결과만으로는 정확 일치 여부를 확정할 수 없으므로(슬러그가 페이지 2 이후로
@@ -176,7 +255,6 @@ search.get('/search', async (c) => {
     // CTA 가 노출될 수 있으므로 mode 분기 이전에 한 번만 계산해 모든 응답에 포함시킨다.
     // pages.slug 의 UNIQUE 인덱스를 활용하기 위해 case-sensitive 동등 비교를 사용한다.
     // case-insensitive 대조는 클라이언트가 결과 페이지 슬러그를 toLowerCase() 로 보조 검사한다.
-    const privateFilter = canSeePrivate ? '' : ' AND is_private = 0';
     const exactMatchVisibility = (isAdmin ? '' : ' AND deleted_at IS NULL') + privateFilter;
     // 정확 일치는 슬러그 OR 대체 제목 양쪽에서 검사한다. title 만 일치하는 경우에도 "새 문서 만들기"
     // CTA 가 노출되면 사용자가 클릭해도 서버가 409(slug↔title 충돌) 로 거부하므로 일관성 깨짐.

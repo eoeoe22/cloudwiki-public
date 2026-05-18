@@ -1675,34 +1675,55 @@ function validateCategoryPrefix(raw: unknown): { prefix: string } | { error: str
 }
 
 type SubpageRow = { id: number; slug: string; category: string | null };
+type LockPrivateRow = { id: number; slug: string; is_locked: number; is_private: number };
+
+// SQL 인젝션 방지: 컬럼 화이트리스트로만 SELECT 절을 구성한다.
+const SCAN_ALLOWED_COLUMNS = new Set([
+    'id', 'slug', 'category', 'is_locked', 'is_private',
+]);
 
 /**
  * prefix/% 패턴으로 하위 문서를 스캔. LIKE 50바이트 한도 검사 + JS startsWith
  * case-sensitive 후처리로 mergeCategoriesFromRules 와 동일한 일관성 보장.
- * 정상이면 { pages: SubpageRow[] } 를, 한도 초과면 { error } 를 반환.
+ * `columns` 는 SCAN_ALLOWED_COLUMNS 화이트리스트 안의 식별자만 허용한다.
+ * 정상이면 { pages: T[] } 를, 한도 초과면 { error } 를 반환.
  */
-async function scanCategorySubpages(
+async function scanPrefixSubpages<T extends { slug: string }>(
     db: D1Database,
-    prefix: string
-): Promise<{ pages: SubpageRow[] } | { error: string }> {
+    prefix: string,
+    columns: readonly string[]
+): Promise<{ pages: T[] } | { error: string }> {
+    for (const col of columns) {
+        if (!SCAN_ALLOWED_COLUMNS.has(col)) {
+            throw new Error(`scanPrefixSubpages: disallowed column '${col}'`);
+        }
+    }
     const likePattern = escapeLike(prefix) + '/%';
     // Cloudflare D1 의 LIKE/GLOB 패턴은 50바이트 제한 (UTF-8 한글 3바이트 → 17자만 되어도 초과).
     const patternBytes = new TextEncoder().encode(likePattern).length;
     if (patternBytes > 50) {
         return { error: `prefix 가 너무 깁니다 (LIKE 패턴 ${patternBytes}바이트, 한도 50바이트). 더 짧은 prefix 로 시도하거나, 자동 규칙으로만 저장해주세요.` };
     }
+    const selectList = columns.join(', ');
     const { results } = await db
         .prepare(
-            `SELECT id, slug, category FROM pages
+            `SELECT ${selectList} FROM pages
              WHERE deleted_at IS NULL
                AND slug LIKE ? ESCAPE '\\'
              ORDER BY slug ASC`
         )
         .bind(likePattern)
-        .all<SubpageRow>();
+        .all<T>();
     // SQLite LIKE 는 ASCII case-insensitive — JS startsWith 로 한 번 더 거른다.
     const prefixWithSlash = prefix + '/';
     return { pages: results.filter(p => p.slug.startsWith(prefixWithSlash)) };
+}
+
+const CATEGORY_SCAN_COLUMNS = ['id', 'slug', 'category'] as const;
+const DOC_SETTING_SCAN_COLUMNS = ['id', 'slug', 'is_locked', 'is_private'] as const;
+
+async function scanCategorySubpages(db: D1Database, prefix: string) {
+    return scanPrefixSubpages<SubpageRow>(db, prefix, CATEGORY_SCAN_COLUMNS);
 }
 
 // 모달이 한 번에 처리할 수 있는 하위 문서 상한 — 브라우저 DOM 비대화 방지.
@@ -1972,6 +1993,289 @@ adminRoutes.post('/category-prefix-rules/bulk-apply', async (c) => {
         added: addUpdates.length,
         removedRequested: removeIdsIn.length,
         removed: removeUpdates.length,
+        ruleSaved,
+    });
+});
+
+// ── 하위 문서 일괄 잠금/비공개 설정 + 자동 규칙 ───────────────────────
+// 카테고리 prefix 룰과 동일한 구조: prefix 스캔 + 일괄 적용 + 자동 규칙 저장.
+// `is_locked` / `is_private` 두 플래그를 한 모달에서 함께 다룬다.
+// 자동 규칙은 신규 문서 생성 시점에만 적용된다 (편집 시에는 강제하지 않음).
+
+type DocSettingRuleRow = {
+    id: number;
+    prefix: string;
+    is_locked: number | null;
+    is_private: number | null;
+    created_at: number;
+    created_by_name: string | null;
+};
+
+// body.is_locked / body.is_private 가 0/1/null 중 하나인지 엄격 검증.
+function parseFlag(v: unknown): { value: number | null } | { error: string } {
+    if (v === undefined || v === null) return { value: null };
+    if (v === 0 || v === 1) return { value: v };
+    return { error: '플래그 값은 0, 1, null 중 하나여야 합니다.' };
+}
+
+type FlagAction = 'none' | 'on' | 'off';
+function parseAction(v: unknown): FlagAction | null {
+    return v === 'none' || v === 'on' || v === 'off' ? v : null;
+}
+function actionToFlag(a: FlagAction): number | null {
+    return a === 'on' ? 1 : a === 'off' ? 0 : null;
+}
+
+/**
+ * GET /doc-setting-prefix-rules
+ * 자동 문서 설정 prefix 규칙 목록
+ */
+adminRoutes.get('/doc-setting-prefix-rules', async (c) => {
+    const db = c.env.DB;
+    const { results } = await db
+        .prepare(
+            `SELECT r.id, r.prefix, r.is_locked, r.is_private, r.created_at, u.name AS created_by_name
+             FROM doc_setting_prefix_rules r
+             LEFT JOIN users u ON u.id = r.created_by
+             ORDER BY r.prefix ASC`
+        )
+        .all<DocSettingRuleRow>();
+    return c.json(results);
+});
+
+/**
+ * POST /doc-setting-prefix-rules
+ * 규칙 upsert (prefix UNIQUE)
+ */
+adminRoutes.post('/doc-setting-prefix-rules', async (c) => {
+    const db = c.env.DB;
+    const currentUser = c.get('user')!;
+    const body = await c.req.json<{ prefix?: string; is_locked?: 0 | 1 | null; is_private?: 0 | 1 | null }>();
+
+    const prefixCheck = validateCategoryPrefix(body.prefix);
+    if ('error' in prefixCheck) return c.json({ error: prefixCheck.error }, 400);
+    const { prefix } = prefixCheck;
+
+    const lockCheck = parseFlag(body.is_locked);
+    if ('error' in lockCheck) return c.json({ error: lockCheck.error }, 400);
+    const privateCheck = parseFlag(body.is_private);
+    if ('error' in privateCheck) return c.json({ error: privateCheck.error }, 400);
+
+    if (lockCheck.value === null && privateCheck.value === null) {
+        return c.json({ error: '편집 잠금/비공개 중 적어도 한 플래그는 규칙을 지정해야 합니다.' }, 400);
+    }
+
+    await db
+        .prepare(
+            `INSERT INTO doc_setting_prefix_rules (prefix, is_locked, is_private, created_by)
+             VALUES (?, ?, ?, ?)
+             ON CONFLICT(prefix) DO UPDATE SET
+               is_locked = excluded.is_locked,
+               is_private = excluded.is_private,
+               created_by = excluded.created_by,
+               created_at = unixepoch()`
+        )
+        .bind(prefix, lockCheck.value, privateCheck.value, currentUser.id)
+        .run();
+
+    writeAdminLog(
+        c,
+        'doc_setting_prefix_rule_save',
+        `자동 문서 설정 규칙 저장: ${prefix} → lock=${lockCheck.value ?? '-'}, private=${privateCheck.value ?? '-'}`,
+        currentUser.id
+    );
+    return c.json({ success: true, prefix, is_locked: lockCheck.value, is_private: privateCheck.value });
+});
+
+/**
+ * DELETE /doc-setting-prefix-rules/:id
+ */
+adminRoutes.delete('/doc-setting-prefix-rules/:id', async (c) => {
+    const db = c.env.DB;
+    const id = c.req.param('id');
+    const currentUser = c.get('user')!;
+
+    const rule = await db
+        .prepare('SELECT prefix FROM doc_setting_prefix_rules WHERE id = ?')
+        .bind(id)
+        .first<{ prefix: string }>();
+    const result = await db
+        .prepare('DELETE FROM doc_setting_prefix_rules WHERE id = ?')
+        .bind(id)
+        .run();
+
+    if (result.meta.changes === 0) {
+        return c.json({ error: '규칙을 찾을 수 없습니다.' }, 404);
+    }
+    writeAdminLog(
+        c,
+        'doc_setting_prefix_rule_delete',
+        `자동 문서 설정 규칙 삭제: ${rule?.prefix || id}`,
+        currentUser.id
+    );
+    return c.json({ success: true });
+});
+
+/**
+ * GET /doc-setting-prefix-rules/subpages?prefix=<slug>
+ * prefix 하위 문서 트리 + 각 문서의 현재 is_locked / is_private.
+ */
+adminRoutes.get('/doc-setting-prefix-rules/subpages', async (c) => {
+    const db = c.env.DB;
+    const prefixCheck = validateCategoryPrefix(c.req.query('prefix'));
+    if ('error' in prefixCheck) return c.json({ error: prefixCheck.error }, 400);
+    const { prefix } = prefixCheck;
+
+    const scan = await scanPrefixSubpages<LockPrivateRow>(db, prefix, DOC_SETTING_SCAN_COLUMNS);
+    if ('error' in scan) return c.json({ error: scan.error }, 400);
+
+    if (scan.pages.length > CATEGORY_SUBPAGES_MAX) {
+        return c.json({
+            error: `하위 문서가 너무 많아 일괄 모달에서 다룰 수 없습니다 (${scan.pages.length}건, 한도 ${CATEGORY_SUBPAGES_MAX}). 더 깊은 prefix 로 분할해주세요.`,
+        }, 400);
+    }
+
+    const prefixDepth = prefix.split('/').length;
+    const items = scan.pages.map(p => ({
+        id: p.id,
+        slug: p.slug,
+        depth: p.slug.split('/').length - prefixDepth - 1,
+        is_locked: p.is_locked ? 1 : 0,
+        is_private: p.is_private ? 1 : 0,
+    }));
+
+    return c.json({ prefix, scanned: items.length, items });
+});
+
+/**
+ * POST /doc-setting-prefix-rules/bulk-apply
+ * 본문: { prefix, lockAction: 'none'|'on'|'off', privateAction: 'none'|'on'|'off',
+ *         ids: number[], persist?: boolean }
+ * - 'on' = 1로 설정, 'off' = 0으로 설정, 'none' = 변경하지 않음.
+ * - 서버는 prefix 스캔 결과와 교집합으로 ids 를 필터링.
+ * - persist=true 면 동일 prefix 규칙을 doc_setting_prefix_rules 에 upsert.
+ */
+adminRoutes.post('/doc-setting-prefix-rules/bulk-apply', async (c) => {
+    const db = c.env.DB;
+    const currentUser = c.get('user')!;
+    const body = await c.req.json<{
+        prefix?: string;
+        lockAction?: unknown;
+        privateAction?: unknown;
+        ids?: unknown;
+        persist?: boolean;
+    }>();
+
+    const prefixCheck = validateCategoryPrefix(body.prefix);
+    if ('error' in prefixCheck) return c.json({ error: prefixCheck.error }, 400);
+    const { prefix } = prefixCheck;
+
+    const lockAction = parseAction(body.lockAction);
+    const privateAction = parseAction(body.privateAction);
+    if (!lockAction || !privateAction) {
+        return c.json({ error: "lockAction/privateAction 은 'none'|'on'|'off' 중 하나여야 합니다." }, 400);
+    }
+    const persist = body.persist === true;
+
+    if (lockAction === 'none' && privateAction === 'none' && !persist) {
+        return c.json({ error: '변경할 설정을 선택하거나 자동 규칙으로 저장 옵션을 켜주세요.' }, 400);
+    }
+
+    const sanitizeIds = (raw: unknown): number[] => {
+        if (!Array.isArray(raw)) return [];
+        const out: number[] = [];
+        const seen = new Set<number>();
+        for (const v of raw) {
+            const n = typeof v === 'number' ? v : Number(v);
+            if (!Number.isInteger(n) || n <= 0 || seen.has(n)) continue;
+            seen.add(n);
+            out.push(n);
+        }
+        return out;
+    };
+    const idsIn = sanitizeIds(body.ids);
+
+    if (idsIn.length > CATEGORY_SUBPAGES_MAX) {
+        return c.json({ error: `한 번에 처리할 수 있는 문서는 ${CATEGORY_SUBPAGES_MAX}개까지입니다.` }, 400);
+    }
+
+    let scanned = 0;
+    const updates: { id: number; slug: string; newLock: number; newPriv: number }[] = [];
+
+    if (idsIn.length > 0 && (lockAction !== 'none' || privateAction !== 'none')) {
+        const scan = await scanPrefixSubpages<LockPrivateRow>(db, prefix, DOC_SETTING_SCAN_COLUMNS);
+        if ('error' in scan) return c.json({ error: scan.error }, 400);
+        scanned = scan.pages.length;
+        const idToPage = new Map(scan.pages.map(p => [p.id, p]));
+        const targetLock = actionToFlag(lockAction);   // number | null
+        const targetPriv = actionToFlag(privateAction);
+
+        for (const id of idsIn) {
+            const page = idToPage.get(id);
+            if (!page) continue;
+            const curLock = page.is_locked ? 1 : 0;
+            const curPriv = page.is_private ? 1 : 0;
+            const newLock = targetLock === null ? curLock : targetLock;
+            const newPriv = targetPriv === null ? curPriv : targetPriv;
+            if (newLock === curLock && newPriv === curPriv) continue;
+            updates.push({ id: page.id, slug: page.slug, newLock, newPriv });
+        }
+
+        if (updates.length > 0) {
+            const stmts: D1PreparedStatement[] = updates.map(u =>
+                db.prepare('UPDATE pages SET is_locked = ?, is_private = ? WHERE id = ?')
+                    .bind(u.newLock, u.newPriv, u.id)
+            );
+            const chunkSize = 200;
+            for (let i = 0; i < stmts.length; i += chunkSize) {
+                await db.batch(stmts.slice(i, i + chunkSize));
+            }
+        }
+    }
+
+    let ruleSaved = false;
+    if (persist) {
+        const ruleLock = actionToFlag(lockAction);
+        const rulePriv = actionToFlag(privateAction);
+        if (ruleLock === null && rulePriv === null) {
+            return c.json({ error: '자동 규칙으로 저장하려면 편집 잠금/비공개 중 하나 이상을 지정해야 합니다.' }, 400);
+        }
+        await db
+            .prepare(
+                `INSERT INTO doc_setting_prefix_rules (prefix, is_locked, is_private, created_by)
+                 VALUES (?, ?, ?, ?)
+                 ON CONFLICT(prefix) DO UPDATE SET
+                   is_locked = excluded.is_locked,
+                   is_private = excluded.is_private,
+                   created_by = excluded.created_by,
+                   created_at = unixepoch()`
+            )
+            .bind(prefix, ruleLock, rulePriv, currentUser.id)
+            .run();
+        ruleSaved = true;
+    }
+
+    const changedSlugs = updates.map(u => u.slug);
+    if (changedSlugs.length > 0) {
+        c.executionCtx.waitUntil(
+            Promise.allSettled([
+                ...changedSlugs.map(s => invalidatePageCache(c, s)),
+                refreshRecentChangesCache(c),
+            ])
+        );
+    }
+
+    writeAdminLog(
+        c,
+        'doc_setting_bulk_apply',
+        `하위 문서 설정 관리: ${prefix}/** (스캔=${scanned}, 변경=${updates.length}/${idsIn.length}, lock=${lockAction}, private=${privateAction}${ruleSaved ? ', 규칙저장' : ''})`,
+        currentUser.id
+    );
+
+    return c.json({
+        scanned,
+        requested: idsIn.length,
+        changed: updates.length,
         ruleSaved,
     });
 });

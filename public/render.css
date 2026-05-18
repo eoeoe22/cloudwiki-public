@@ -621,6 +621,84 @@ html[data-theme="dark"] .wiki-content pre[class*="language-"] code[class*="langu
   white-space: pre;
   line-height: 1.6;
 }
+
+/* Category list grid + character grouping */
+.category-list .category-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  margin-top: 0.75rem;
+}
+
+.category-list .category-group {
+  display: block;
+}
+
+.category-list .category-group-label {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--wiki-primary);
+  margin: 0 0 0.5rem 0;
+  padding-bottom: 0.25rem;
+  border-bottom: 1px solid var(--wiki-border);
+}
+
+.category-list .category-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 0.5rem;
+}
+
+.category-list .category-item {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.45rem 0.65rem;
+  border: 1px solid var(--wiki-border);
+  border-radius: 6px;
+  background: var(--wiki-card-bg);
+  color: var(--wiki-text);
+  text-decoration: none;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.category-list .category-item:hover,
+.category-list .category-item:focus {
+  border-color: var(--wiki-primary);
+  background: var(--wiki-bg);
+  text-decoration: none;
+}
+
+.category-list .category-item-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.35;
+}
+
+.category-list .category-summary {
+  margin-top: 0.25rem;
+}
+
+.category-list .category-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  justify-content: center;
+  align-items: center;
+  margin-top: 1.5rem;
+}
+
+.category-list .category-pagination button {
+  min-width: 2.25rem;
+}
+
+.category-list .category-pagination-ellipsis {
+  padding: 0 0.25rem;
+  color: var(--wiki-text-muted);
+}
 /* ── Folding Block (펼치기/접기) ── */
 .wiki-fold {
   background-color: var(--wiki-card-bg);

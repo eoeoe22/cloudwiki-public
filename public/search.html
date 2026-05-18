@@ -33,8 +33,11 @@
                         <i class="mdi mdi-magnify"></i> 검색 결과
                     </h2>
                     <div class="d-flex gap-2">
-                        <button type="button" class="btn btn-wiki-outline btn-sm" id="imageSearchBtn" onclick="goImageSearch()">
-                            <i class="mdi mdi-image-search-outline"></i> 이미지 검색하기
+                        <button type="button" class="btn btn-wiki-outline btn-sm" id="imageSearchBtn" onclick="goImageSearch()" title="이미지 검색하기" aria-label="이미지 검색하기">
+                            <i class="mdi mdi-image-search-outline"></i>
+                        </button>
+                        <button type="button" class="btn btn-wiki-outline btn-sm" id="categorySearchBtn" onclick="goCategorySearch()" title="카테고리 검색하기" aria-label="카테고리 검색하기">
+                            <i class="mdi mdi-folder-search-outline"></i>
                         </button>
                         <button type="button" class="btn btn-wiki-outline btn-sm" onclick="history.back()">
                             <i class="bi bi-arrow-left"></i> 뒤로
@@ -109,17 +112,34 @@
         let currentMode = 'content';
         const responseCache = new Map();
         const IMAGE_PREFIX = '이미지:';
+        const CATEGORY_PREFIX = '카테고리:';
 
-        // 상단 "이미지 검색하기" 버튼: 현재 검색어 맨 앞에 "이미지:"를 붙여 재검색한다.
-        // 이미 이미지 네임스페이스 검색 중이면 그대로 재실행(쿼리 없이 누르면 전체 이미지 목록).
-        function goImageSearch() {
+        // 검색어에 네임스페이스 prefix 를 보장한 뒤 재검색한다. 다른 네임스페이스 prefix 가
+        // 이미 붙어 있으면 제거하고 새 prefix 를 적용해 모드 간 전환을 매끄럽게 한다.
+        function goNamespaceSearch(prefix) {
             const params = new URLSearchParams(window.location.search);
             const headerInput = document.getElementById('searchInput');
             const rawBaseQuery = (headerInput && headerInput.value.trim()) || params.get('q') || currentQuery || '';
-            const baseQuery = rawBaseQuery.trim();
-            const next = baseQuery.startsWith(IMAGE_PREFIX) ? baseQuery : (IMAGE_PREFIX + baseQuery);
+            let baseQuery = rawBaseQuery.trim();
+            for (const other of [IMAGE_PREFIX, CATEGORY_PREFIX]) {
+                if (other !== prefix && baseQuery.startsWith(other)) {
+                    baseQuery = baseQuery.slice(other.length).trim();
+                    break;
+                }
+            }
+            const next = baseQuery.startsWith(prefix) ? baseQuery : (prefix + baseQuery);
             if (headerInput) headerInput.value = next;
             window.location.href = `/search?q=${encodeURIComponent(next)}&mode=content`;
+        }
+
+        // 상단 "이미지 검색하기" 버튼: 현재 검색어 맨 앞에 "이미지:"를 붙여 재검색한다.
+        function goImageSearch() {
+            goNamespaceSearch(IMAGE_PREFIX);
+        }
+
+        // 상단 "카테고리 검색하기" 버튼: 현재 검색어 맨 앞에 "카테고리:"를 붙여 재검색한다.
+        function goCategorySearch() {
+            goNamespaceSearch(CATEGORY_PREFIX);
         }
         // 진행 중인 fetch 를 추적해 새 요청이 시작될 때 이전 요청을 취소한다.
         // 이전 요청이 늦게 완료되어 현재 UI 를 덮어쓰는 경쟁 상태를 방지한다.
@@ -299,8 +319,11 @@
                 );
             const hasExactMatch = !!data.exact_match || hasUnicodeExactMatchInResults;
             const isImageNamespaceQuery = q.trim().startsWith('이미지:');
+            // category_mode 응답일 때는 카테고리 가상 문서가 결과에 노출되므로 "새 문서 만들기" CTA 를 숨긴다.
+            // "카테고리:" prefix 인데 page_categories 매치가 없어 일반 검색으로 폴스루된 경우에는
+            // 사용자가 카테고리 설명 문서를 직접 생성하도록 CTA 를 허용한다.
             const canCreate = currentUser && currentUser.role !== 'banned'
-                && !data.image_mode && !isImageNamespaceQuery;
+                && !data.image_mode && !data.category_mode && !isImageNamespaceQuery;
             let newDocumentButtonHtml = '';
             if (q.trim() !== '' && canCreate && currentPage === 1 && !hasExactMatch) {
                 newDocumentButtonHtml = `
@@ -362,6 +385,27 @@
                             </div>
                         </div>
                     `;
+                }).join('');
+            } else if (data.category_mode) {
+                // "카테고리:" prefix 검색 결과: 카테고리를 가상 문서로 노출. 설명 문서가 없는
+                // 카테고리도 포함되며, 클릭 시 /w/카테고리:<이름> 의 가상 카테고리 페이지로 이동한다.
+                itemsHtml = data.results.map(r => {
+                    const descBadge = r.has_description
+                        ? '<span class="badge bg-light text-dark border ms-2">설명 있음</span>'
+                        : '<span class="badge bg-light text-muted border ms-2">설명 없음</span>';
+                    const countText = typeof r.page_count === 'number'
+                        ? `<p class="text-body-secondary mb-0 small"><i class="mdi mdi-file-document-multiple-outline"></i> ${r.page_count}개 문서</p>`
+                        : '';
+                    return `
+                    <div class="search-result-item mb-3 pb-2 border-bottom">
+                        <h4 class="mb-1 fs-5">
+                            <a class="text-decoration-none text-primary fw-semibold" href="/w/${encodeURIComponent(r.slug)}">
+                                <i class="mdi mdi-folder-outline"></i> ${escapeHtml(r.slug)}
+                            </a>
+                            ${descBadge}
+                        </h4>
+                        ${countText}
+                    </div>`;
                 }).join('');
             } else if (data.mode === 'category') {
                 // 카테고리 검색 결과: 스니펫 없이 슬러그(=제목) 목록

@@ -896,70 +896,239 @@ async function resolveTransclusionsForMarkdown(content, pageSlug) {
 }
 
 // ── 카테고리 목록 렌더링 ──
-async function fetchCategoryList(category) {
+// 첫 글자(알파벳 / 한글 초성 / 일본어 가나)별로 그룹핑하고 그리드로 나열.
+// 가타카나는 동일 음의 히라가나로 정규화 (예: カ → か).
+// 한글 자모 쌍자음(ㄲ ㄸ ㅃ ㅆ ㅉ)은 평음(ㄱ ㄷ ㅂ ㅅ ㅈ)에 묶음.
+function _wikiCategoryGroupOf(name) {
+    if (!name) return { order: '9999', label: '#' };
+    const ch = name.charAt(0);
+    const code = ch.charCodeAt(0);
+
+    // 한글 음절 (가-힣)
+    if (code >= 0xAC00 && code <= 0xD7A3) {
+        const chosung = Math.floor((code - 0xAC00) / 588);
+        // 19 초성 → 14 자음으로 정규화 (쌍자음 병합)
+        const normLabel = ['ㄱ','ㄱ','ㄴ','ㄷ','ㄷ','ㄹ','ㅁ','ㅂ','ㅂ','ㅅ','ㅅ','ㅇ','ㅈ','ㅈ','ㅊ','ㅋ','ㅌ','ㅍ','ㅎ'];
+        const normIdx   = [ 0,    0,    1,    2,    2,    3,    4,    5,    5,    6,    6,    7,    8,    8,    9,    10,   11,   12,   13 ];
+        return { order: '1' + String(normIdx[chosung]).padStart(2, '0'), label: normLabel[chosung] };
+    }
+    // 한글 자모 (호환 자모 영역: ㄱ-ㅎ)
+    if (code >= 0x3131 && code <= 0x314E) {
+        const jamoMap = { 'ㄱ':[0,'ㄱ'],'ㄲ':[0,'ㄱ'],'ㄳ':[0,'ㄱ'],
+                          'ㄴ':[1,'ㄴ'],'ㄵ':[1,'ㄴ'],'ㄶ':[1,'ㄴ'],
+                          'ㄷ':[2,'ㄷ'],'ㄸ':[2,'ㄷ'],
+                          'ㄹ':[3,'ㄹ'],'ㄺ':[3,'ㄹ'],'ㄻ':[3,'ㄹ'],'ㄼ':[3,'ㄹ'],'ㄽ':[3,'ㄹ'],'ㄾ':[3,'ㄹ'],'ㄿ':[3,'ㄹ'],'ㅀ':[3,'ㄹ'],
+                          'ㅁ':[4,'ㅁ'],
+                          'ㅂ':[5,'ㅂ'],'ㅃ':[5,'ㅂ'],'ㅄ':[5,'ㅂ'],
+                          'ㅅ':[6,'ㅅ'],'ㅆ':[6,'ㅅ'],
+                          'ㅇ':[7,'ㅇ'],
+                          'ㅈ':[8,'ㅈ'],'ㅉ':[8,'ㅈ'],
+                          'ㅊ':[9,'ㅊ'],'ㅋ':[10,'ㅋ'],'ㅌ':[11,'ㅌ'],'ㅍ':[12,'ㅍ'],'ㅎ':[13,'ㅎ'] };
+        const m = jamoMap[ch];
+        if (m) return { order: '1' + String(m[0]).padStart(2, '0'), label: m[1] };
+    }
+    // 가타카나 → 히라가나 정규화
+    let hira = ch;
+    if (code >= 0x30A1 && code <= 0x30F6) {
+        hira = String.fromCharCode(code - 0x60);
+    }
+    const hcode = hira.charCodeAt(0);
+    if (hcode >= 0x3041 && hcode <= 0x3096) {
+        // 50音圖 행별 분류
+        const rows = [
+            { label: 'あ', start: 0x3041, end: 0x304A },
+            { label: 'か', start: 0x304B, end: 0x3054 },
+            { label: 'さ', start: 0x3055, end: 0x305E },
+            { label: 'た', start: 0x305F, end: 0x3069 },
+            { label: 'な', start: 0x306A, end: 0x306E },
+            { label: 'は', start: 0x306F, end: 0x307D },
+            { label: 'ま', start: 0x307E, end: 0x3082 },
+            { label: 'や', start: 0x3083, end: 0x3088 },
+            { label: 'ら', start: 0x3089, end: 0x308D },
+            { label: 'わ', start: 0x308E, end: 0x3093 },
+        ];
+        for (let i = 0; i < rows.length; i++) {
+            if (hcode >= rows[i].start && hcode <= rows[i].end) {
+                return { order: '2' + String(i).padStart(2, '0'), label: rows[i].label };
+            }
+        }
+    }
+    // 알파벳
+    if (/[A-Za-z]/.test(ch)) {
+        const u = ch.toUpperCase();
+        return { order: '3' + u, label: u };
+    }
+    // 숫자
+    if (/[0-9]/.test(ch)) {
+        return { order: '40', label: '0-9' };
+    }
+    return { order: '9999', label: '#' };
+}
+
+function _renderCategoryPagination(category, page, totalPages) {
+    if (totalPages <= 1) return '';
+    const make = (p, label, disabled, active) => {
+        const cls = `btn btn-sm ${active ? 'btn-primary' : 'btn-outline-secondary'}`;
+        const dis = disabled ? ' disabled' : '';
+        return `<button type="button" class="${cls}${dis}" data-category-page="${p}"${disabled ? ' aria-disabled="true"' : ''}>${escapeHtml(label)}</button>`;
+    };
+    let html = '';
+    html += make(Math.max(1, page - 1), '‹', page <= 1, false);
+    const win = 2;
+    const lo = Math.max(1, page - win);
+    const hi = Math.min(totalPages, page + win);
+    if (lo > 1) {
+        html += make(1, '1', false, page === 1);
+        if (lo > 2) html += '<span class="category-pagination-ellipsis">…</span>';
+    }
+    for (let p = lo; p <= hi; p++) html += make(p, String(p), false, p === page);
+    if (hi < totalPages) {
+        if (hi < totalPages - 1) html += '<span class="category-pagination-ellipsis">…</span>';
+        html += make(totalPages, String(totalPages), false, page === totalPages);
+    }
+    html += make(Math.min(totalPages, page + 1), '›', page >= totalPages, false);
+    return `<nav class="category-pagination" aria-label="카테고리 페이지">${html}</nav>`;
+}
+
+// 카테고리별 전체 정렬 결과 캐시. SPA 세션 내에서 stale 데이터를 막기 위해 짧은 TTL 적용.
+const _wikiCategorySortedCache = new Map();
+const _WIKI_CATEGORY_CACHE_TTL_MS = 30 * 1000;
+
+function _wikiCategoryLeafName(slug) {
+    const s = String(slug || '');
+    const segs = s.split('/');
+    return segs[segs.length - 1] || s;
+}
+
+function _wikiCategoryInvalidate(category) {
+    if (category) _wikiCategorySortedCache.delete(category);
+    else _wikiCategorySortedCache.clear();
+}
+
+async function _loadCategorySortedItems(category) {
+    const now = Date.now();
+    const cached = _wikiCategorySortedCache.get(category);
+    if (cached && (now - cached.t) < _WIKI_CATEGORY_CACHE_TTL_MS) return cached.items;
+    const res = await fetch(`/api/w/category/${encodeURIComponent(category)}`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    const raw = Array.isArray(data.pages) ? data.pages : [];
+    const items = raw.map(p => {
+        const slug = String(p.slug || '');
+        // 카테고리 그룹/정렬 기준은 "문서 이름" (슬러그 마지막 세그먼트).
+        // 표시 자체는 전체 슬러그를 유지하지만 'docs/가이드' 가 D 그룹으로 분류되면 안 됨.
+        const leaf = _wikiCategoryLeafName(slug);
+        const g = _wikiCategoryGroupOf(leaf);
+        return { slug, leaf, is_locked: !!p.is_locked, _gOrder: g.order, _gLabel: g.label };
+    });
+    // 1차: 스크립트 그룹 순서 (한글 → 일본어 → 알파벳 → 숫자 → 기타)
+    // 2차: 같은 그룹 안에서 leaf 이름 기준 로케일 사전순 (전체 슬러그 대신)
+    const collator = new Intl.Collator(['ko', 'ja', 'en'], { sensitivity: 'base', numeric: true });
+    items.sort((a, b) => {
+        if (a._gOrder !== b._gOrder) return a._gOrder < b._gOrder ? -1 : 1;
+        const leafCmp = collator.compare(a.leaf, b.leaf);
+        if (leafCmp !== 0) return leafCmp;
+        // leaf 동률이면 전체 슬러그로 안정 정렬 (예: a/이름 vs b/이름)
+        return collator.compare(a.slug, b.slug);
+    });
+    _wikiCategorySortedCache.set(category, { items, t: now });
+    return items;
+}
+
+async function fetchCategoryList(category, page) {
+    const reqPage = Math.max(1, parseInt(page, 10) || 1);
+    const pageSize = 60;
+    const catAttr = escapeHtml(category);
     try {
-        const res = await fetch(`/api/w/category/${encodeURIComponent(category)}`);
-        if (!res.ok) return '';
+        const items = await _loadCategorySortedItems(category);
+        if (items === null) return '';
+        const total = items.length;
 
-        const data = await res.json();
-        if (data.pages.length === 0) {
-            return '<div class="alert alert-light border text-center my-4">이 카테고리에 속한 문서가 없습니다.</div>';
+        if (total === 0) {
+            return `<div class="category-list mt-4" data-category="${catAttr}" data-cpage="1">
+                <h4><i class="bi bi-folder2-open"></i> "${escapeHtml(category)}" 카테고리에 속한 문서</h4>
+                <div class="alert alert-light border text-center my-4">이 카테고리에 속한 문서가 없습니다.</div>
+            </div>`;
         }
 
-        // 트리 구조 빌드
-        const tree = {};
-        for (const page of data.pages) {
-            const parts = page.slug.split('/');
-            let node = tree;
-            for (const part of parts) {
-                if (!node[part]) node[part] = { _children: {}, _doc: null };
-                node = node[part]._children;
+        const totalPages = Math.max(1, Math.ceil(total / pageSize));
+        // 범위 초과 페이지 요청은 마지막 유효 페이지로 클램프 (stale URL / 문서 삭제 직후 등)
+        const curPage = Math.min(Math.max(1, reqPage), totalPages);
+        const startIdx0 = (curPage - 1) * pageSize;
+        const pageItems = items.slice(startIdx0, startIdx0 + pageSize);
+
+        // 슬라이스 안에서 연속된 그룹 라벨로 묶음. 전체 정렬이 그룹 순서이므로
+        // 슬라이스해도 그룹 경계는 그대로 유지된다.
+        const groups = [];
+        let curG = null;
+        for (const it of pageItems) {
+            if (!curG || curG.label !== it._gLabel) {
+                curG = { label: it._gLabel, items: [] };
+                groups.push(curG);
             }
-            let target = tree;
-            for (let i = 0; i < parts.length; i++) {
-                if (i === parts.length - 1) {
-                    target[parts[i]]._doc = page;
-                } else {
-                    target = target[parts[i]]._children;
-                }
-            }
+            curG.items.push(it);
         }
 
-        function renderTree(nodes, parentPrefix) {
-            const entries = Object.keys(nodes).sort();
-            let html = '';
-            entries.forEach((key, idx) => {
-                const node = nodes[key];
-                const isLast = idx === entries.length - 1;
-                const hasChildren = Object.keys(node._children).length > 0;
-                const connector = isLast ? '└── ' : '├── ';
-                const childPrefix = parentPrefix + (isLast ? '    ' : '│   ');
+        const groupsHtml = groups.map(g => {
+            const itemsHtml = g.items.map(it => {
+                const lockIcon = it.is_locked ? ' <i class="bi bi-lock-fill text-danger" title="편집 잠금"></i>' : '';
+                return `<a class="category-item" href="/w/${encodeURIComponent(it.slug)}" title="${escapeHtml(it.slug)}"><span class="category-item-name">${escapeHtml(it.slug)}</span>${lockIcon}</a>`;
+            }).join('');
+            return `<section class="category-group"><h5 class="category-group-label">${escapeHtml(g.label)}</h5><div class="category-grid">${itemsHtml}</div></section>`;
+        }).join('');
 
-                if (node._doc) {
-                    html += `<div class="wiki-tree-line">${parentPrefix}${connector}<a href="/w/${encodeURIComponent(node._doc.slug)}" class="text-decoration-none wiki-spa-link">${escapeHtml(key)}</a></div>`;
-                } else {
-                    html += `<div class="wiki-tree-line">${parentPrefix}${connector}${escapeHtml(key)}</div>`;
-                }
+        const pagination = _renderCategoryPagination(category, curPage, totalPages);
+        const startIdx = startIdx0 + 1;
+        const endIdx = startIdx0 + pageItems.length;
+        const summary = `<div class="category-summary text-muted small mb-2">총 ${total}개 문서 · ${startIdx}–${endIdx} 표시</div>`;
 
-                if (hasChildren) {
-                    html += renderTree(node._children, childPrefix);
-                }
-            });
-            return html;
-        }
-
-        const treeHtml = renderTree(tree, '');
-
-        return `
-        <div class="category-list mt-4">
+        return `<div class="category-list mt-4" data-category="${catAttr}" data-cpage="${curPage}">
             <h4><i class="bi bi-folder2-open"></i> "${escapeHtml(category)}" 카테고리에 속한 문서</h4>
-            <div class="mt-3">${treeHtml}</div>
-        </div>
-    `;
+            ${summary}
+            <div class="category-groups">${groupsHtml}</div>
+            ${pagination}
+        </div>`;
     } catch (e) {
         console.error(e);
         return '<div class="alert alert-danger">카테고리 목록을 불러오는 데 실패했습니다.</div>';
     }
+}
+
+// 카테고리 목록 페이지네이션 + 아이템 SPA 네비게이션 전역 위임.
+// renderWikiContent 의 DOMPurify 경로(인라인 onclick 제거)와
+// showCategoryArticle 의 직접 innerHTML 경로 양쪽에서 동작.
+if (typeof document !== 'undefined' && !(window as any).__wikiCategoryListBound) {
+    (window as any).__wikiCategoryListBound = true;
+    document.addEventListener('click', (e) => {
+        const target = e.target as Element | null;
+        if (!target) return;
+        const pageBtn = target.closest('button[data-category-page]') as HTMLButtonElement | null;
+        if (pageBtn && !pageBtn.classList.contains('disabled')) {
+            e.preventDefault();
+            const container = pageBtn.closest('.category-list') as HTMLElement | null;
+            if (!container) return;
+            const cat = container.getAttribute('data-category');
+            const p = parseInt(pageBtn.getAttribute('data-category-page') || '1', 10);
+            if (!cat || !Number.isFinite(p)) return;
+            container.setAttribute('aria-busy', 'true');
+            (window as any).fetchCategoryList(cat, p).then((html) => {
+                const wrap = document.createElement('div');
+                wrap.innerHTML = html;
+                const next = wrap.firstElementChild;
+                if (next) {
+                    container.replaceWith(next);
+                    const top = (next as HTMLElement).getBoundingClientRect().top + window.scrollY - 80;
+                    window.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+                }
+            });
+            return;
+        }
+        const itemLink = target.closest('a.category-item') as HTMLAnchorElement | null;
+        if (itemLink && typeof (window as any).navigateTo === 'function') {
+            e.preventDefault();
+            (window as any).navigateTo(itemLink.href);
+        }
+    });
 }
 
 // ── TOC 생성 ──
@@ -2702,6 +2871,9 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
             }
             if (decodedSlug.startsWith('카테고리:')) {
                 const categoryName = decodedSlug.replace(/^카테고리:/, '');
+                // 카테고리 페이지 진입 시 캐시 무효화 — SPA 세션 중 mutation 후의 stale 목록 방지.
+                // 페이지네이션 버튼은 동일 카테고리 안에서 TTL 동안 캐시를 재사용.
+                _wikiCategoryInvalidate(categoryName);
                 const listHtml = await fetchCategoryList(categoryName);
                 _stateKeyDedup = myDedup;
                 _currentRenderPalettes = myPalettes;
@@ -3848,6 +4020,7 @@ window._replaceSelfCalls = _replaceSelfCalls;
 window.resolveTransclusions = resolveTransclusions;
 window.resolveTransclusionsForMarkdown = resolveTransclusionsForMarkdown;
 window.fetchCategoryList = fetchCategoryList;
+window._wikiCategoryInvalidate = _wikiCategoryInvalidate;
 window.numberHeadings = numberHeadings;
 window.generateTOC = generateTOC;
 window.makeCollapsibleSections = makeCollapsibleSections;

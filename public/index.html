@@ -1501,6 +1501,11 @@
     // ── 카테고리 문서 (문서가 없는 경우) ──
     async function showCategoryArticle(slug, decodedSlug) {
       const categoryName = decodedSlug.replace(/^카테고리:/, '');
+      // 카테고리 페이지 진입 시 캐시를 무효화해 SPA 세션 중 mutation 이후의 stale 목록을 막는다.
+      // 페이지네이션 버튼이 호출하는 fetchCategoryList 는 TTL 안에서 캐시를 재사용해 빠름.
+      if (typeof window._wikiCategoryInvalidate === 'function') {
+        window._wikiCategoryInvalidate(categoryName);
+      }
       const listHtml = await fetchCategoryList(categoryName);
 
       applyShareAiVisibility(null);
@@ -1603,67 +1608,32 @@
     }
 
     // ── 카테고리 목록 렌더링 ──
-    async function fetchCategoryList(category) {
+    // 동일 로직이 src/client/render.ts 의 fetchCategoryList 에도 존재.
+    // 이 인라인 사본은 /dist/render.js 로딩 실패 시 fallback 역할.
+    // 핵심 구현(그룹핑/페이지네이션 위임 핸들러)은 render.ts 가 담당하므로
+    // 여기서는 render.ts 의 window.fetchCategoryList 가 정의돼 있으면 그것을 호출하고,
+    // 없을 때만 단순 목록을 보여준다.
+    async function fetchCategoryList(category, page) {
+      if (typeof window.__wikiCategoryListBound !== 'undefined' && typeof window.fetchCategoryList === 'function' && window.fetchCategoryList !== fetchCategoryList) {
+        return window.fetchCategoryList(category, page);
+      }
       try {
         const res = await fetch(`/api/w/category/${encodeURIComponent(category)}`);
         if (!res.ok) return '';
 
         const data = await res.json();
-        if (data.pages.length === 0) {
+        const pages = Array.isArray(data.pages) ? data.pages : [];
+        if (pages.length === 0) {
           return '<div class="alert alert-light border text-center my-4">이 카테고리에 속한 문서가 없습니다.</div>';
         }
-
-        // 트리 구조 빌드
-        const tree = {};
-        for (const page of data.pages) {
-          const parts = page.slug.split('/');
-          let node = tree;
-          for (const part of parts) {
-            if (!node[part]) node[part] = { _children: {}, _doc: null };
-            node = node[part]._children;
-          }
-          let target = tree;
-          for (let i = 0; i < parts.length; i++) {
-            if (i === parts.length - 1) {
-              target[parts[i]]._doc = page;
-            } else {
-              target = target[parts[i]]._children;
-            }
-          }
-        }
-
-        function renderTree(nodes, parentPrefix) {
-          const entries = Object.keys(nodes).sort();
-          let html = '';
-          entries.forEach((key, idx) => {
-            const node = nodes[key];
-            const isLast = idx === entries.length - 1;
-            const hasChildren = Object.keys(node._children).length > 0;
-            const connector = isLast ? '└── ' : '├── ';
-            const childPrefix = parentPrefix + (isLast ? '    ' : '│   ');
-
-            if (node._doc) {
-              html += `<div class="wiki-tree-line">${parentPrefix}${connector}` +
-                `<a href="/w/${encodeURIComponent(node._doc.slug)}" onclick="navigateTo(this.href);return false;" class="text-decoration-none">${escapeHtml(key)}</a></div>`;
-            } else {
-              html += `<div class="wiki-tree-line">${parentPrefix}${connector}${escapeHtml(key)}</div>`;
-            }
-
-            if (hasChildren) {
-              html += renderTree(node._children, childPrefix);
-            }
-          });
-          return html;
-        }
-
-        const treeHtml = renderTree(tree, '');
-
-        return `
-            <div class="category-list mt-5">
-                <h4><i class="bi bi-folder2-open"></i> "${escapeHtml(category)}" 카테고리에 속한 문서</h4>
-                <div class="mt-3">${treeHtml}</div>
-            </div>
-        `;
+        const items = pages.map(p => {
+          const slug = String(p.slug || '');
+          return `<a class="category-item" href="/w/${encodeURIComponent(slug)}" onclick="navigateTo(this.href);return false;" title="${escapeHtml(slug)}"><span class="category-item-name">${escapeHtml(slug)}</span></a>`;
+        }).join('');
+        return `<div class="category-list mt-4">
+          <h4><i class="bi bi-folder2-open"></i> "${escapeHtml(category)}" 카테고리에 속한 문서</h4>
+          <div class="category-grid">${items}</div>
+        </div>`;
       } catch (e) {
         console.error(e);
         return '<div class="alert alert-danger">카테고리 목록을 불러오는 데 실패했습니다.</div>';

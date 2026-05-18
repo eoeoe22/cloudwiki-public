@@ -1753,6 +1753,31 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
             console.error('category_prefix_rules lookup failed (create):', e);
         }
 
+        // 자동 문서 설정 prefix 룰 (생성 시점에만 적용)
+        // 가장 긴 일치 prefix 가 승리. 규칙 자체가 관리자가 작성한 정책이므로
+        // 생성자의 RBAC 검사를 우회해 강제 적용한다. 비관리자의 body.is_locked /
+        // body.is_private 입력은 위에서 이미 0 으로 마스크된 상태이므로 추가 처리 불필요.
+        try {
+            const ruleRows = await db
+                .prepare('SELECT prefix, is_locked, is_private FROM doc_setting_prefix_rules')
+                .all<{ prefix: string; is_locked: number | null; is_private: number | null }>();
+            let bestLen = -1;
+            let lockOverride: number | null = null;
+            let privateOverride: number | null = null;
+            for (const r of ruleRows.results || []) {
+                if (!slug.startsWith(r.prefix + '/')) continue;
+                if (r.prefix.length > bestLen) {
+                    bestLen = r.prefix.length;
+                    lockOverride = r.is_locked;
+                    privateOverride = r.is_private;
+                }
+            }
+            if (lockOverride !== null) finalIsLocked = lockOverride;
+            if (privateOverride !== null) finalIsPrivate = privateOverride;
+        } catch (e) {
+            console.error('doc_setting_prefix_rules lookup failed (create):', e);
+        }
+
         const metrics = computePageMetricsTracked(body.content, isR2Only);
         const newDocTitle = requestedTitle ?? null;
         let pageResult;
@@ -1833,6 +1858,8 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
 /**
  * GET /w/category/:category
  * 카테고리별 문서 목록 (page_categories 테이블 기반)
+ * - 그룹핑/정렬/페이지네이션은 모두 클라이언트가 수행하므로 서버는 전체 행을 단일 응답으로 반환
+ *   (SQLite 정렬은 ASCII 기반 NOCASE 라 한글/일본어/알파벳 혼합 그룹 순서와 일치시키기 어렵다)
  */
 wiki.get('/w/category/:category', async (c) => {
     const category = c.req.param('category');
@@ -1848,7 +1875,7 @@ wiki.get('/w/category/:category', async (c) => {
         JOIN pages p ON pc.page_id = p.id
         WHERE p.deleted_at IS NULL${privateFilter}
           AND pc.category = ?
-        ORDER BY p.updated_at DESC
+        ORDER BY p.slug ASC
     `;
 
     const { results } = await db
@@ -1856,7 +1883,7 @@ wiki.get('/w/category/:category', async (c) => {
         .bind(category)
         .all();
 
-    return c.json(safeJSON({ pages: results }));
+    return c.json(safeJSON({ pages: results, total: results.length }));
 });
 
 /**
