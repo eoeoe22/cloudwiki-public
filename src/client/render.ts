@@ -2773,12 +2773,20 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
             const rows = Array.from(table.querySelectorAll(':scope > thead > tr, :scope > tbody > tr, :scope > tr'));
             if (rows.length === 0) return;
 
+            // 셀이 병합 마커 하나만 담고 있는지 판정. 셀 안에 다른 텍스트나 포매팅 요소
+            // (예: <strong>{>}</strong>) 가 있으면 일반 텍스트로 취급하고 병합하지 않는다.
+            const _matchMergeMarker = (cell: Element): string | null => {
+                if (cell.children.length > 0) return null;
+                const m = cell.textContent.trim().match(/^\{(><|[<>^])\}$/);
+                return m ? m[1] : null;
+            };
+
             // {^} 병합이 thead/tbody 경계를 넘는 경우 rowspan이 작동하지 않으므로,
             // thead 행을 tbody로 이동하고 th를 td로 변환
             const thead = table.querySelector(':scope > thead');
             const tbody = table.querySelector(':scope > tbody');
             if (thead && tbody) {
-                const hasVerticalMerge = Array.from(tbody.querySelectorAll('td, th')).some(cell => cell.textContent.trim().match(/^\{\^\}$/));
+                const hasVerticalMerge = Array.from(tbody.querySelectorAll('td, th')).some(cell => _matchMergeMarker(cell) === '^');
                 if (hasVerticalMerge) {
                     const theadRows = Array.from(thead.querySelectorAll('tr'));
                     theadRows.forEach(tr => {
@@ -2801,11 +2809,7 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
             if (updatedRows.length === 0) return;
 
             const grid = updatedRows.map(row => Array.from(row.cells));
-            const markers = grid.map(row => row.map(cell => {
-                const text = cell.textContent.trim();
-                const m = text.match(/^\{(><|[<>^])\}$/);
-                return m ? m[1] : null;
-            }));
+            const markers = grid.map(row => row.map(cell => _matchMergeMarker(cell)));
 
             const toRemove = grid.map(row => row.map(() => false));
 

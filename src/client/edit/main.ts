@@ -1226,7 +1226,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }, { decorations: v => v.decorations });
 
         // ── 표 안 커서 위 통합 인라인 편집 툴바 ──
-        // 정렬/행/열/셀 병합/간격 정렬을 한 곳에서 제공. 스크롤·리사이즈 리스너는 모듈 내부에서 등록.
+        // 정렬/행/열/셀 병합을 한 곳에서 제공. 스크롤·리사이즈 리스너는 모듈 내부에서 등록.
         // edit-table-toolbar.js 모듈 로드가 실패할 경우(캐시 불일치 등) 에디터 자체가
         // 죽지 않도록 no-op fallback 으로 가드한다.
         const tableToolbar = window.setupTableToolbar
@@ -3071,28 +3071,28 @@ document.addEventListener('DOMContentLoaded', async () => {
                 useSectionMode
                     ? `<i class="mdi mdi-pencil-box-multiple"></i> 섹션 편집: ${escapeHtml(page.slug)}`
                     : pendingMcpSubmissionId
-                        ? `<i class="mdi mdi-source-merge"></i> MCP 편집안 충돌 해결: ${escapeHtml(page.slug)}`
+                        ? `<i class="mdi mdi-robot-outline"></i> MCP 편집안 편집: ${escapeHtml(page.slug)}`
                         : `<i class="mdi mdi-pencil-box-multiple"></i> 편집: ${escapeHtml(page.slug)}`;
             document.title = `편집: ${page.slug} - ${window.appConfig.wikiName}`;
             document.getElementById('diffPreviewSection').style.display = 'block'; // 편집일 때만 노출
 
-            // MCP 편집안 충돌 해결 모드: 페이지의 정상 본문 로드를 마쳤지만,
-            // base/ours/theirs 를 제출안 데이터로 덮어쓴 뒤 충돌 모달을 띄운다.
+            // MCP 편집안 적재 모드: 페이지의 정상 본문 로드를 마쳤지만, 본문을 제출안으로
+            // 덮어쓴다. 동시 편집 충돌이 있으면 추가로 3-way merge 모달까지 띄운다.
             // (정상 로드를 끝까지 거치는 이유: 카테고리 입력/잠금/리다이렉트/UI 초기화 등
             //  편집기 부트스트랩이 page 데이터에 의존하기 때문. 본문 / pageVersion 만 교체.)
             // checkDraft / refreshAutoSummary 의 일반 흐름은 건너뛴다 — 본문은 이미 제출안으로
-            // 세팅되며 로컬 초안 복구 프롬프트가 충돌 모달과 겹치면 안 된다.
+            // 세팅되며 로컬 초안 복구 프롬프트가 함께 떠선 안 된다.
             if (pendingMcpSubmissionId) {
-                let mergeStarted = false;
+                let mcpLoaded = false;
                 try {
-                    // loaded === true 인 경우에만 3-way merge UI 가 켜졌고 사용자가 실제로 병합을
-                    // 진행할 수 있는 상태. false 는 거부 분기(슬러그 불일치 등) 로 redirect 안내만
-                    // 띄운 상태이므로 cleanup 게이트를 켜면 안 된다 (navigation 이 끝나기 전 저장이
-                    // 트리거되면 무관한 draft 가 silently 삭제될 위험).
-                    const loaded = await loadMcpSubmissionForConflict(pendingMcpSubmissionId);
+                    // loaded === true 인 경우에만 제출안이 정상 적재되어 사용자가 저장 시 /resolve
+                    // cleanup 을 트리거해야 한다. false 는 거부 분기(슬러그 불일치/처리 불가 충돌) 로
+                    // redirect 안내만 띄운 상태이므로 cleanup 게이트를 켜면 안 된다 (navigation 이
+                    // 끝나기 전 저장이 트리거되면 무관한 draft 가 silently 삭제될 위험).
+                    const loaded = await loadMcpSubmissionIntoEditor(pendingMcpSubmissionId);
                     if (loaded) {
                         mcpSubmissionId = pendingMcpSubmissionId;
-                        mergeStarted = true;
+                        mcpLoaded = true;
                     }
                 } catch (e: any) {
                     // 제출안 preload 실패: 정상 편집 세션으로 진행하되 cleanup 게이트는 끈 채로 둔다
@@ -3101,11 +3101,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                     // draft 를 silently 삭제할 위험이 있다.
                     window.Swal.fire('오류', e?.message || 'MCP 편집안을 불러오지 못했습니다.', 'error');
                 }
-                // merge UI 가 켜지지 않은 경우 (preload 실패 등) 정상 편집 세션으로 fallback. 이때
+                // 제출안 적재가 실패한 경우 (preload 실패 등) 정상 편집 세션으로 fallback. 이때
                 // checkDraft() 가 한번도 실행되지 않으면 같은 슬러그의 로컬 초안은 사용자에게
                 // 노출되지 않고 다음 저장 시 silent 삭제된다 — 일반 분기와 동일한 draft 복구 흐름을
                 // 돌려 사용자가 미저장 초안을 인지/복구할 기회를 보장한다.
-                if (!mergeStarted) {
+                if (!mcpLoaded) {
                     window.checkDraft().then(() => {
                         syncStateFromWindow();
                         if (!sectionMode && typeof window.checkSectionDrafts === 'function') {
@@ -3145,19 +3145,52 @@ document.addEventListener('DOMContentLoaded', async () => {
             syncStateToWindow();
             originalContent = '';
             document.getElementById('titleInput').value = decodeURIComponent(slug);
-            document.getElementById('editPageTitle').innerHTML =
-                `<i class="mdi mdi-plus-circle"></i> 새 문서 만들기`;
-            document.title = `새 문서 - ${window.appConfig.wikiName}`;
 
-            // 템플릿 불러오기 버튼 추가
-            const templateBtn = document.createElement('button');
-            templateBtn.className = 'btn btn-sm btn-outline-primary ms-3';
-            templateBtn.innerHTML = '<i class="mdi mdi-content-copy"></i> 템플릿으로 시작하기';
-            templateBtn.onclick = window.openTemplateModal;
-            document.getElementById('editPageTitle').appendChild(templateBtn);
-            window.checkDraft();
-            // 새 문서: 편집 요약을 '문서 생성'으로 자동 채움
-            window.refreshAutoSummary();
+            // MCP 편집안(create 액션) 적재 모드: 신규 문서 UI 골격은 그대로 두고 본문/메타만
+            // 제출안으로 채운다. 적재 성공 시 mcpSubmissionId 를 켜 저장 후 /resolve cleanup 트리거.
+            if (pendingMcpSubmissionId) {
+                let mcpLoaded = false;
+                try {
+                    const loaded = await loadMcpSubmissionIntoEditor(pendingMcpSubmissionId);
+                    if (loaded) {
+                        mcpSubmissionId = pendingMcpSubmissionId;
+                        mcpLoaded = true;
+                    }
+                } catch (e: any) {
+                    window.Swal.fire('오류', e?.message || 'MCP 편집안을 불러오지 못했습니다.', 'error');
+                }
+                document.getElementById('editPageTitle').innerHTML = mcpLoaded
+                    ? `<i class="mdi mdi-robot-outline"></i> MCP 편집안 편집(신규): ${escapeHtml(slug)}`
+                    : `<i class="mdi mdi-plus-circle"></i> 새 문서 만들기`;
+                document.title = mcpLoaded
+                    ? `MCP 편집: ${slug} - ${window.appConfig.wikiName}`
+                    : `새 문서 - ${window.appConfig.wikiName}`;
+                if (!mcpLoaded) {
+                    // 적재 실패 시에는 일반 신규 문서 흐름으로 fallback (템플릿 버튼 + 초안 복구).
+                    const templateBtn = document.createElement('button');
+                    templateBtn.className = 'btn btn-sm btn-outline-primary ms-3';
+                    templateBtn.innerHTML = '<i class="mdi mdi-content-copy"></i> 템플릿으로 시작하기';
+                    templateBtn.onclick = window.openTemplateModal;
+                    document.getElementById('editPageTitle').appendChild(templateBtn);
+                    window.checkDraft();
+                }
+                syncStateToWindow();
+                window.refreshAutoSummary();
+            } else {
+                document.getElementById('editPageTitle').innerHTML =
+                    `<i class="mdi mdi-plus-circle"></i> 새 문서 만들기`;
+                document.title = `새 문서 - ${window.appConfig.wikiName}`;
+
+                // 템플릿 불러오기 버튼 추가
+                const templateBtn = document.createElement('button');
+                templateBtn.className = 'btn btn-sm btn-outline-primary ms-3';
+                templateBtn.innerHTML = '<i class="mdi mdi-content-copy"></i> 템플릿으로 시작하기';
+                templateBtn.onclick = window.openTemplateModal;
+                document.getElementById('editPageTitle').appendChild(templateBtn);
+                window.checkDraft();
+                // 새 문서: 편집 요약을 '문서 생성'으로 자동 채움
+                window.refreshAutoSummary();
+            }
         }
     } catch (e) {
         // 새 문서로 취급
@@ -3253,28 +3286,33 @@ document.addEventListener('DOMContentLoaded', async () => {
 // 본문이 바뀌지 않았어도 카테고리/리다이렉트/관리자 잠금이 변경되었다면 저장을 허용한다.
 // 신규 문서(originalPageMeta 미설정)에서는 기본값(빈 카테고리/리다이렉트, 잠금 해제) 대비
 // 메타데이터 입력 여부로 판단 — 본문 없이 리다이렉트만 설정해 새 문서를 만드는 용례 지원.
-// ── MCP 편집안 충돌 해결: 제출안을 에디터에 적재한 뒤 3-way merge 모달 띄우기 ──
+// ── MCP 편집안 에디터 적재: 제출안을 에디터에 불러와 (필요시) 3-way merge 모달까지 띄우기 ──
 //
-// 호출 시점: 정상 페이지 로드(/api/w/:slug)가 끝난 직후 DOMContentLoaded 핸들러 안.
-// 사전조건: editor 가 마운트되어 setMarkdown 가능 상태, originalContent / pageVersion 가
+// 호출 시점:
+//   - update 액션: 정상 페이지 로드(/api/w/:slug)가 끝난 직후 DOMContentLoaded 핸들러 안.
+//   - create 액션: GET /api/w/:slug 가 404 로 떨어진 신규 문서 분기 안.
+// 사전조건: editor 가 마운트되어 setMarkdown 가능 상태, (update 분기) originalContent / pageVersion 가
 //          이 모듈 / window 양쪽에 미러링되어 있음.
 //
 // 수행:
 //   1) /api/mcp-submissions/:id 에서 base_content / proposed_content / current_content + 메타 fetch.
-//   2) action !== 'update' 또는 page_missing / slug_taken 류 충돌은 에디터에서 다룰 수 없음 — 안내 후
-//      mypage 로 돌려보낸다 (에디터에 우회로가 없는 케이스).
-//   3) originalContent = base_content, pageVersion = base_version 으로 베이스 세팅 (충돌 모달이
-//      window.originalContent 를 base 로 사용함).
-//   4) editor.setMarkdown(proposed_content) 로 "내 수정본(ours)" 채움. 카테고리/리다이렉트도 제출안
-//      메타로 덮어쓴다 (있는 경우만 — null 이면 페이지 현재값 유지).
-//   5) window.showConflictModal({ current_version, content: current_content }) — base/ours/theirs
-//      3-way merge 가 켜진다. pageVersion 은 모달이 current_version 으로 갱신해 이후 저장이 정상 통과.
+//   2) 처리 불가 충돌은 에디터에서 다룰 수 없음 — 안내 후 mypage 로 돌려보낸다.
+//        - page_missing: 페이지가 삭제됨
+//        - slug_taken / slug_soft_deleted: create 액션인데 같은 슬러그가 점거됨
+//   3) 카테고리/리다이렉트/잠금/제목/요약 입력란을 제출안 메타로 채운다 (있는 값만).
+//   4) editor.setMarkdown(proposed_content) 로 본문을 제출안으로 적재.
+//   5) concurrent_modification 충돌 분기:
+//        - originalContent = base_content, pageVersion = current_version 으로 세팅
+//        - window.showConflictModal 로 3-way merge UI 띄움
+//      그 외 (충돌 없음) 분기:
+//        - update: originalContent = current_content 유지 (페이지 로드값 그대로)
+//        - 사용자는 그대로 저장하거나 추가 편집 후 저장 → 정상 PUT /api/w/:slug → /resolve cleanup
 //
-// 반환값: 3-way merge 모달이 실제로 켜졌으면 true, 거부 분기(슬러그 불일치/액션 불일치/처리 불가
-// 충돌)로 안내 후 mypage 로 redirect 한 경우 false. 호출자는 true 인 경우에만 cleanup 게이트
-// (mcpSubmissionId)를 켠다 — false 인 분기에서 set 하면 navigation 이 비동기라 그 사이 사용자가
-// 저장을 트리거할 경우 무관한 draft 가 /resolve 로 silently 삭제될 수 있다.
-async function loadMcpSubmissionForConflict(submissionId: number): Promise<boolean> {
+// 반환값: 에디터에 정상 적재되었으면 true, 거부 분기(슬러그 불일치/처리 불가 충돌)로 안내 후
+// mypage 로 redirect 한 경우 false. 호출자는 true 인 경우에만 cleanup 게이트 (mcpSubmissionId)
+// 를 켠다 — false 인 분기에서 set 하면 navigation 이 비동기라 그 사이 사용자가 저장을 트리거할
+// 경우 무관한 draft 가 /resolve 로 silently 삭제될 수 있다.
+async function loadMcpSubmissionIntoEditor(submissionId: number): Promise<boolean> {
     const res = await fetch(`/api/mcp-submissions/${submissionId}`);
     if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -3296,27 +3334,18 @@ async function loadMcpSubmissionForConflict(submissionId: number): Promise<boole
         return false;
     }
 
-    if (detail.action !== 'update') {
+    // 에디터에서 처리 불가한 충돌은 거부. 충돌이 없는 경우와 동시 편집 충돌은 아래에서 분기 처리.
+    if (detail.has_conflict && detail.conflict_reason !== 'concurrent_modification') {
         await window.Swal.fire({
             icon: 'warning',
             title: '에디터에서 처리할 수 없는 충돌',
-            text: '제목 충돌(신규 생성) 류 충돌은 에디터에서 해결할 수 없습니다. mypage 에서 거부하거나 다른 제목으로 다시 시도하세요.',
-        });
-        window.location.href = '/mypage#mcp-submissions';
-        return false;
-    }
-    // 에디터 merge 동선은 concurrent_modification 충돌 전용. 그 외 (충돌 없음 / page_missing /
-    // slug_taken / slug_soft_deleted) 는 /approve 경로의 로깅·요약·정책을 우회할 수 있으므로 거부.
-    // 충돌이 없는 정상 제출안은 사용자가 mypage 에서 「검토 → 승인」 으로 처리해야 한다.
-    if (!detail.has_conflict || detail.conflict_reason !== 'concurrent_modification') {
-        await window.Swal.fire({
-            icon: 'warning',
-            title: '에디터 병합 동선이 아닙니다',
-            text: detail.has_conflict
-                ? (detail.conflict_reason === 'page_missing'
-                    ? '문서가 삭제되었습니다. 에디터에서 해결할 수 없습니다.'
-                    : '에디터에서 해결할 수 없는 충돌입니다.')
-                : '이 제출안에는 충돌이 없습니다. mypage 에서 정상 승인 동선으로 처리하세요.',
+            text: detail.conflict_reason === 'page_missing'
+                ? '문서가 삭제되었습니다. 에디터에서 편집할 수 없습니다.'
+                : detail.conflict_reason === 'slug_taken'
+                    ? '동일 제목의 다른 문서가 그 사이 생성되었습니다. mypage 에서 거부하거나 다른 제목으로 다시 시도하세요.'
+                    : detail.conflict_reason === 'slug_soft_deleted'
+                        ? '동일 제목의 소프트 삭제된 문서가 존재합니다. 관리자가 먼저 처리해야 합니다.'
+                        : '에디터에서 해결할 수 없는 충돌입니다.',
         });
         window.location.href = '/mypage#mcp-submissions';
         return false;
@@ -3343,6 +3372,11 @@ async function loadMcpSubmissionForConflict(submissionId: number): Promise<boole
         const lockEl = document.getElementById('isLockedCheck') as HTMLInputElement | null;
         if (lockEl) lockEl.checked = detail.requested_lock === 1 || detail.requested_lock === true;
     }
+    // 대체 제목 변경을 요청한 제출안이면 대체 제목 입력란도 미리 채워둔다.
+    if (detail.action === 'update' && detail.has_title_change && typeof detail.title === 'string') {
+        const altTitleEl = document.getElementById('alternateTitleInput') as HTMLInputElement | null;
+        if (altTitleEl) altTitleEl.value = detail.title;
+    }
     // 요약 입력칸에 제출 시 AI 가 작성한 요약을 미리 채워준다.
     // edit.html 의 편집 요약 입력 id 는 'summaryInput' (summary.ts 도 동일 id 를 갱신).
     if (typeof detail.submitted_summary === 'string' && detail.submitted_summary) {
@@ -3355,9 +3389,10 @@ async function loadMcpSubmissionForConflict(submissionId: number): Promise<boole
     const baseContent: string = typeof detail.base_content === 'string' ? detail.base_content : '';
     const proposedContent: string = typeof detail.proposed_content === 'string' ? detail.proposed_content : '';
     const currentContent: string = typeof detail.current_content === 'string' ? detail.current_content : '';
+    const isConflictMerge = detail.has_conflict && detail.conflict_reason === 'concurrent_modification';
 
     // 같은 슬러그에 사용자의 로컬 초안(checkDraft 가 보통 띄울 prompt 대상)이 남아 있으면,
-    // MCP merge 모드는 그것을 건너뛰고 에디터를 제출안 본문으로 덮어쓴다 — 저장 성공 시
+    // MCP 적재 모드는 그것을 건너뛰고 에디터를 제출안 본문으로 덮어쓴다 — 저장 성공 시
     // DRAFT_KEY 가 제거되어 그 로컬 초안이 silent 손실된다. 손실 방지를 위해 백업 키로
     // 옮겨두고 사용자에게 안내한다 (사용자는 mypage 나 콘솔에서 키를 확인해 복구 가능).
     if (DRAFT_KEY) {
@@ -3370,7 +3405,7 @@ async function loadMcpSubmissionForConflict(submissionId: number): Promise<boole
                 window.Swal?.fire({
                     icon: 'info',
                     title: '기존 로컬 초안을 백업했습니다',
-                    html: `같은 문서에 작성 중이던 로컬 초안이 있어 MCP 편집안 병합 진행 전에 보존했습니다.<br>저장 후에도 다음 키로 localStorage 에서 복구할 수 있습니다:<br><code>${escapeHtml(backupKey)}</code>`,
+                    html: `같은 문서에 작성 중이던 로컬 초안이 있어 MCP 편집안 적재 전에 보존했습니다.<br>저장 후에도 다음 키로 localStorage 에서 복구할 수 있습니다:<br><code>${escapeHtml(backupKey)}</code>`,
                     toast: false,
                     confirmButtonText: '확인',
                 });
@@ -3378,27 +3413,44 @@ async function loadMcpSubmissionForConflict(submissionId: number): Promise<boole
         } catch { /* localStorage 비활성 등은 무시 */ }
     }
 
-    originalContent = baseContent;
     if (editor) editor.setMarkdown(proposedContent);
 
-    // 충돌 모달은 window.pageVersion 을 current_version 으로 갱신하지만, 본 모듈은 모듈 로컬
-    // `pageVersion` 을 사용해 savePage 의 expected_version 을 송신한다. resolveConflict 직후
-    // 사용자가 저장하면 stale 한 base_version 이 보내져 다시 409 가 나므로, 충돌 모달 호출 전에
-    // 로컬값도 미리 갱신한다 — 일반 동시편집 충돌 경로(line ~3766) 와 동일한 패턴.
-    if (detail.current_version != null) {
-        pageVersion = detail.current_version;
-    } else {
-        pageVersion = detail.base_version ?? pageVersion;
+    if (isConflictMerge) {
+        // 동시 편집 충돌 — base/ours/theirs 3-way merge UI 로 진입.
+        // originalContent = base 시점 본문 (충돌 모달이 window.originalContent 를 base 로 사용).
+        // 충돌 모달은 window.pageVersion 을 current_version 으로 갱신하지만, 본 모듈은 모듈 로컬
+        // `pageVersion` 을 사용해 savePage 의 expected_version 을 송신한다. resolveConflict 직후
+        // 사용자가 저장하면 stale 한 base_version 이 보내져 다시 409 가 나므로, 충돌 모달 호출 전에
+        // 로컬값도 미리 갱신한다 — 일반 동시편집 충돌 경로와 동일한 패턴.
+        originalContent = baseContent;
+        if (detail.current_version != null) {
+            pageVersion = detail.current_version;
+        } else {
+            pageVersion = detail.base_version ?? pageVersion;
+        }
+        syncStateToWindow();
+        // 충돌 모달 트리거 — window.pageVersion 은 모달이 한 번 더 current_version 으로 세팅한다.
+        if (typeof window.showConflictModal === 'function') {
+            window.showConflictModal({
+                current_version: detail.current_version,
+                content: currentContent,
+            });
+        }
+        return true;
+    }
+
+    // 충돌 없음 — 사용자가 제출안 본문을 그대로 (또는 수정 후) 저장.
+    // update 액션: originalContent 는 페이지 로드 시점의 현재 본문 유지 (호출자가 이미 세팅).
+    //              저장 시 PUT /api/w/:slug 가 통상 흐름으로 새 리비전 생성 → /resolve cleanup.
+    // create 액션: 호출자(신규 문서 분기)가 originalContent='' 로 세팅. 저장 시 신규 페이지 생성.
+    //   pageVersion = 0 은 PUT /api/w/:slug 의 "신규 생성 전용" 시멘틱 — 같은 슬러그의 페이지가
+    //   preload~save 사이에 생성되면 서버가 409 로 거부한다. /approve 경로가 가진 slug_taken
+    //   재검증을 대체하기 위함이며, 설정하지 않으면 expected_version 이 빠져 다른 사용자가
+    //   먼저 만든 페이지를 silent 하게 덮어쓸 위험이 있다.
+    if (detail.action === 'create') {
+        pageVersion = 0;
     }
     syncStateToWindow();
-
-    // 충돌 모달 트리거 — window.pageVersion 은 모달이 한 번 더 current_version 으로 세팅한다.
-    if (typeof window.showConflictModal === 'function') {
-        window.showConflictModal({
-            current_version: detail.current_version,
-            content: currentContent,
-        });
-    }
     return true;
 }
 

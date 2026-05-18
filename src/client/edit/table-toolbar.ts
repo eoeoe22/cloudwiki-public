@@ -2,10 +2,13 @@
  * 표 안 커서 위에 떠 있는 통합 인라인 편집 툴바.
  *
  * 마크다운 표(GFM 파이프 + 위키 고유 셀 병합 토큰)에 커서가 들어가면 셀 바로 위에
- * 정렬·행/열 추가/삭제 + (빈 셀일 때) 셀 병합 토큰 4종 + 표 간격 정렬 버튼을 띄운다.
+ * 정렬·행/열 추가/삭제 + (빈 셀일 때) 셀 병합 토큰 4종 + 색상 삽입 버튼을 띄운다.
+ * 색상 삽입은 기존 에디터 툴바의 `openPaletteColorModal()` 을 그대로 재호출해
+ * 동일한 팔레트/커스텀 색상 모달을 띄운다.
  *
  * 외부 의존성:
  *   - window._cmView (CodeMirror6 EditorView; main.ts 가 생성)
+ *   - window.openPaletteColorModal (edit/modals.ts 가 노출하는 색상 삽입 모달)
  *
  * 노출 글로벌:
  *   - window.setupTableToolbar() → { update, hide } 핸들. main.ts 의 updateListener /
@@ -89,16 +92,6 @@ function findEmptyCellAt(lineText: string, col: number, lineFrom: number): { fro
         }
     }
     return null;
-}
-
-function getVisualLength(str: string): number {
-    // 한글/CJK 는 2칸, 그 외 1칸으로 가중. monospace 정렬용 근사치.
-    let len = 0;
-    for (let i = 0; i < str.length; i++) {
-        if (str.charCodeAt(i) > 127) len += 2;
-        else len += 1;
-    }
-    return len;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -286,86 +279,6 @@ function actionMergeToken(view: EditorView, ctx: TableContext, token: string): v
     });
 }
 
-function actionBeautify(view: EditorView, ctx: TableContext): void {
-    const parsedRows: string[][] = [];
-    for (let n = ctx.startLine; n <= ctx.endLine; n++) {
-        parsedRows.push(splitRowCells(view.state.doc.line(n).text));
-    }
-    const sepRowIdx = ctx.separatorRowIndex;
-    const colCount = Math.max(...parsedRows.map(r => r.length));
-
-    const colWidths: number[] = Array(colCount).fill(3);
-    parsedRows.forEach((row, rIdx) => {
-        if (rIdx === sepRowIdx) return;
-        row.forEach((cell, c) => {
-            const len = getVisualLength(cell);
-            if (len > colWidths[c]) colWidths[c] = len;
-        });
-    });
-
-    const sepRow = parsedRows[sepRowIdx] || [];
-
-    // 분리선 셀의 최소 너비: 정렬 표식에 따라 다름.
-    //   `:---:` 중앙   → 5 (콜론 2 + 대시 3)
-    //   `:---` / `---:` → 4 (콜론 1 + 대시 3)
-    //   `---` 기본     → 3 (대시 3)
-    // isTableSeparatorLine 의 `-{3,}` 규칙을 만족시키지 않으면 beautify 후 표 인식이
-    // 깨지므로 colWidths 계산에 이 최소치를 반영한다.
-    const separatorMinWidth = (c: number): number => {
-        const s = sepRow[c] || '';
-        const isLeft = s.startsWith(':');
-        const isRight = s.endsWith(':');
-        if (isLeft && isRight) return 5;
-        if (isLeft || isRight) return 4;
-        return 3;
-    };
-    for (let c = 0; c < colCount; c++) {
-        const sw = separatorMinWidth(c);
-        if (sw > colWidths[c]) colWidths[c] = sw;
-    }
-
-    const newLines = parsedRows.map((row, rIdx) => {
-        if (rIdx === sepRowIdx) {
-            const formatted: string[] = [];
-            for (let c = 0; c < colCount; c++) {
-                const cell = row[c] || '---';
-                const w = Math.max(3, colWidths[c]);
-                const isLeft = cell.startsWith(':');
-                const isRight = cell.endsWith(':');
-                // 대시는 최소 3 개 보장 (GFM + isTableSeparatorLine 의 `-{3,}` 요구).
-                if (isLeft && isRight) formatted.push(':' + '-'.repeat(Math.max(3, w - 2)) + ':');
-                else if (isRight) formatted.push('-'.repeat(Math.max(3, w - 1)) + ':');
-                else if (isLeft) formatted.push(':' + '-'.repeat(Math.max(3, w - 1)));
-                else formatted.push('-'.repeat(Math.max(3, w)));
-            }
-            return '| ' + formatted.join(' | ') + ' |';
-        }
-        const aligned: string[] = [];
-        for (let c = 0; c < colCount; c++) {
-            const cell = row[c] || '';
-            const w = colWidths[c] || 3;
-            const diff = Math.max(0, w - getVisualLength(cell));
-            const s = sepRow[c] || '';
-            const isLeft = s.startsWith(':') && !s.endsWith(':');
-            const isRight = !s.startsWith(':') && s.endsWith(':');
-            const isCenter = s.startsWith(':') && s.endsWith(':');
-            if (isCenter) {
-                const l = Math.floor(diff / 2);
-                aligned.push(' '.repeat(l) + cell + ' '.repeat(diff - l));
-            } else if (isRight) {
-                aligned.push(' '.repeat(diff) + cell);
-            } else {
-                // 기본 왼쪽 정렬 (isLeft 포함)
-                void isLeft;
-                aligned.push(cell + ' '.repeat(diff));
-            }
-        }
-        return '| ' + aligned.join(' | ') + ' |';
-    });
-
-    replaceTableBlock(view, ctx, newLines);
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // 툴바 DOM
 // ─────────────────────────────────────────────────────────────────────────────
@@ -409,7 +322,7 @@ function buildToolbarEl(): ToolbarRefs {
             <button type="button" class="cm-cell-merge-btn" data-action="merge-mid" title="가운데로 모음 {><}"><i class="mdi mdi-arrow-collapse-horizontal"></i></button>
         </div>
         <div class="cm-table-toolbar-sep"></div>
-        <button type="button" class="cm-cell-merge-btn cm-table-toolbar-beautify" data-action="beautify" title="표 간격 정렬"><i class="mdi mdi-table-sync"></i></button>
+        <button type="button" class="cm-cell-merge-btn cm-table-toolbar-color" data-action="color" title="색상 삽입"><i class="mdi mdi-palette-outline"></i></button>
     `;
     const alignBtns = {
         left: el.querySelector<HTMLButtonElement>('[data-action="align-left"]')!,
@@ -505,7 +418,12 @@ export function setupTableToolbar(): TableToolbarHandle {
             case 'merge-right': actionMergeToken(view, ctx, '{>}'); break;
             case 'merge-up':    actionMergeToken(view, ctx, '{^}'); break;
             case 'merge-mid':   actionMergeToken(view, ctx, '{><}'); break;
-            case 'beautify':    actionBeautify(view, ctx); break;
+            case 'color':
+                // 기존 에디터 툴바의 "색상 삽입" 모달을 재사용. 모달이 닫히면 커서
+                // 위치에 `{palette:...}` 또는 `{color:#xxx,bg:#xxx}` 토큰을 삽입한다.
+                view.focus();
+                window.openPaletteColorModal?.();
+                return;
         }
         view.focus();
     });

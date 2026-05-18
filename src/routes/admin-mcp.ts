@@ -112,10 +112,15 @@ export const ADMIN_ONLY_READ_TOOL_DEFS: McpToolDef[] = [
 // (revert_page 는 본질적으로 새 리비전을 만드는 편집이므로 user 계층에 둔다.)
 // ────────────────────────────────────────────────────────────────
 
+const HEADING_RULE_NOTE =
+    '\n\n⚠️ 헤딩 작성 규칙: 위키는 헤딩(##, ###, ...)에 자동으로 계층 번호("1.", "1.1." 등)를 부여합니다. ' +
+    '헤딩 텍스트에 번호를 직접 적지 마세요 (예: `## 1. 개요` ❌ → `## 개요` ✅). 직접 적으면 렌더링 시 "1. 1. 개요" 처럼 중복 번호가 표시됩니다. ' +
+    '목차 내 다른 섹션을 참조할 때는 `[[문서#s-1.2]]` 형식의 섹션 앵커를 사용하세요.';
+
 export const USER_EDIT_TOOL_DEFS: McpToolDef[] = [
     {
         name: 'create_or_update_page',
-        description: '위키 문서 전체 본문을 새로 만들거나 통째로 교체할 draft 를 생성합니다. ⚠️ 즉시 저장하지 않고 draft 에 누적되며, 완료 후 commit_edit(draft_id, summary) 를 호출해야 새 리비전이 생성됩니다. 이미 본인의 draft 가 같은 슬러그로 있으면 그 draft 의 본문이 이 호출의 content 로 교체됩니다. create_only=true 면 페이지가 이미 존재할 때 오류를 반환합니다 (실수 덮어쓰기 방지).\n\n응답에 draft_id 가 포함되며, 이 id 로 read_draft / commit_edit / discard_edit 를 호출합니다. draft 는 마지막 활동 이후 12시간이 지나면 자동 삭제됩니다.',
+        description: '위키 문서 전체 본문을 새로 만들거나 통째로 교체할 draft 를 생성합니다. ⚠️ 즉시 저장하지 않고 draft 에 누적되며, 완료 후 commit_edit(draft_id, summary) 를 호출해야 새 리비전이 생성됩니다. 이미 본인의 draft 가 같은 슬러그로 있으면 그 draft 의 본문이 이 호출의 content 로 교체됩니다. create_only=true 면 페이지가 이미 존재할 때 오류를 반환합니다 (실수 덮어쓰기 방지).\n\n응답에 draft_id 가 포함되며, 이 id 로 read_draft / commit_edit / discard_edit 를 호출합니다. draft 는 마지막 활동 이후 12시간이 지나면 자동 삭제됩니다.' + HEADING_RULE_NOTE,
         inputSchema: {
             type: 'object',
             properties: {
@@ -132,7 +137,7 @@ export const USER_EDIT_TOOL_DEFS: McpToolDef[] = [
     },
     {
         name: 'patch_page',
-        description: '문서의 특정 텍스트를 찾아 교체하는 부분 편집입니다 (Claude Code Edit 도구와 같은 방식). ⚠️ 즉시 저장하지 않고 draft 에 누적되며, commit_edit 호출 시 비로소 새 리비전이 생성됩니다. 같은 슬러그로 이미 본인 draft 가 있으면 그 draft 의 본문에 대해 치환을 수행합니다 (없으면 페이지 현재 본문을 자동 스냅샷해 draft 시작). old_string 은 대상 본문(=draft 또는 페이지 현재 본문)에서 정확히 한 번만 등장해야 하며, 겹치는 매치 포함 2회 이상이면 오류입니다 — 앞뒤 맥락을 더 포함해 고유하게 만드세요. new_string 이 빈 문자열이면 해당 부분이 삭제됩니다.\n\n응답에 draft_id 가 포함됩니다. 섹션 단위는 edit_section, 전체 본문 교체는 create_or_update_page 를 사용하세요.',
+        description: '문서의 특정 텍스트를 찾아 교체하는 부분 편집입니다 (Claude Code Edit 도구와 같은 방식). ⚠️ 즉시 저장하지 않고 draft 에 누적되며, commit_edit 호출 시 비로소 새 리비전이 생성됩니다. 같은 슬러그로 이미 본인 draft 가 있으면 그 draft 의 본문에 대해 치환을 수행합니다 (없으면 페이지 현재 본문을 자동 스냅샷해 draft 시작). old_string 은 대상 본문(=draft 또는 페이지 현재 본문)에서 정확히 한 번만 등장해야 하며, 겹치는 매치 포함 2회 이상이면 오류입니다 — 앞뒤 맥락을 더 포함해 고유하게 만드세요. new_string 이 빈 문자열이면 해당 부분이 삭제됩니다.\n\n응답에 draft_id 가 포함됩니다. 섹션 단위는 edit_section, 전체 본문 교체는 create_or_update_page 를 사용하세요.' + HEADING_RULE_NOTE,
         inputSchema: {
             type: 'object',
             properties: {
@@ -145,7 +150,7 @@ export const USER_EDIT_TOOL_DEFS: McpToolDef[] = [
     },
     {
         name: 'edit_section',
-        description: '문서의 특정 섹션 본문을 새 내용으로 통째로 교체합니다. ⚠️ 즉시 저장하지 않고 draft 에 누적되며, commit_edit 호출 시 비로소 새 리비전이 생성됩니다. 같은 슬러그로 이미 본인 draft 가 있으면 draft 본문에 대해 섹션 치환을 수행합니다 (없으면 페이지 현재 본문을 자동 스냅샷). section_number 는 get_toc(raw=true) 또는 read_draft 의 본문에서 산출한 원본 기준 번호("1", "1.1", "0" 등) 입니다. new_content 는 read_section(raw=true) 으로 받은 형식 그대로(헤딩 라인 포함) 보내는 것을 권장합니다. 교체 범위는 지정 헤딩부터 같은 레벨 이상의 다음 헤딩 직전까지입니다 ("0" 은 첫 헤딩 이전 도입부).\n\n응답에 draft_id 가 포함됩니다.',
+        description: '문서의 특정 섹션 본문을 새 내용으로 통째로 교체합니다. ⚠️ 즉시 저장하지 않고 draft 에 누적되며, commit_edit 호출 시 비로소 새 리비전이 생성됩니다. 같은 슬러그로 이미 본인 draft 가 있으면 draft 본문에 대해 섹션 치환을 수행합니다 (없으면 페이지 현재 본문을 자동 스냅샷). section_number 는 get_toc(raw=true) 또는 read_draft 의 본문에서 산출한 원본 기준 번호("1", "1.1", "0" 등) 입니다. new_content 는 read_section(raw=true) 으로 받은 형식 그대로(헤딩 라인 포함) 보내는 것을 권장합니다. 교체 범위는 지정 헤딩부터 같은 레벨 이상의 다음 헤딩 직전까지입니다 ("0" 은 첫 헤딩 이전 도입부).\n\n응답에 draft_id 가 포함됩니다.' + HEADING_RULE_NOTE,
         inputSchema: {
             type: 'object',
             properties: {
@@ -729,9 +734,6 @@ export async function applyNewPageInsert(
 // 같은 draft 가 이어서 갱신될 때는 더 짧은 안내(DRAFT_UPDATE_NOTE)만 보낸다.
 const DRAFT_FIRST_ISSUE_NOTE =
     'draft 가 발급되었습니다.\n\n' +
-    '⚠️ 헤딩 작성 규칙: 위키는 헤딩(##, ###, ...)에 자동으로 계층 번호("1.", "1.1." 등)를 부여합니다. ' +
-    '헤딩 텍스트에 번호를 직접 적지 마세요. 예: `## 1. 개요` ❌ → `## 개요` ✅. ' +
-    '직접 적으면 렌더링 시 "1. 1. 개요" 처럼 번호가 중복 표시됩니다. 목차 내 다른 섹션을 참조할 때는 [[문서#s-1.2]] 형식의 섹션 앵커를 사용하세요.\n\n' +
     '사용법:\n' +
     '  1) 이어서 같은 title 로 patch_page / edit_section / create_or_update_page 를 호출하면 이 draft 에 누적됩니다 (사용자×슬러그당 1개).\n' +
     '  2) read_draft(title) 로 진행 중 본문 확인.\n' +

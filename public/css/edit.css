@@ -1891,7 +1891,7 @@ html[data-theme="dark"] #concurrent-edit-banner {
     color: #ef4444;
 }
 
-.cm-table-toolbar-beautify {
+.cm-table-toolbar-color {
     color: var(--wiki-link);
 }
 
