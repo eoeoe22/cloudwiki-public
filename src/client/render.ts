@@ -3050,27 +3050,34 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
                 try {
                     const url = new URL(href, window.location.origin);
                     let videoId = '';
-                    let listId = url.searchParams.get('list');
-                    let start = url.searchParams.get('t');
+                    // 일부 플레이리스트 공유 링크는 pathname 끝에 슬래시가 붙기도 한다.
+                    const path = url.pathname.replace(/\/+$/, '') || '/';
+                    const listId = url.searchParams.get('list');
+                    const siParam = url.searchParams.get('si');
+                    const start = url.searchParams.get('t');
+                    const ytAllow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share';
 
                     if (url.hostname.includes('youtu.be')) {
                         videoId = url.pathname.slice(1);
-                    } else if (url.pathname === '/watch') {
+                    } else if (path === '/watch') {
                         videoId = url.searchParams.get('v');
-                    } else if (url.pathname.startsWith('/shorts/')) {
-                        videoId = url.pathname.split('/')[2];
-                    } else if (url.pathname.startsWith('/live/')) {
-                        videoId = url.pathname.split('/')[2];
-                    } else if (url.pathname === '/playlist' && listId) {
-                        // Playlist only URL
+                    } else if (path.startsWith('/shorts/')) {
+                        videoId = path.split('/')[2];
+                    } else if (path.startsWith('/live/')) {
+                        videoId = path.split('/')[2];
+                    } else if ((path === '/playlist' || path === '/embed/videoseries') && listId) {
+                        // 플레이리스트 단독 URL (youtube.com/playlist?list=... 또는
+                        // 이미 embed 형태로 들어온 youtube.com/embed/videoseries?list=...)
+                        const params = [`list=${encodeURIComponent(listId)}`, 'listType=playlist'];
+                        if (siParam) params.push(`si=${encodeURIComponent(siParam)}`);
                         const iframeWrapper = document.createElement('div');
                         iframeWrapper.className = 'ratio ratio-16x9 my-3';
                         iframeWrapper.style.maxWidth = '100%';
                         const ytIframe = document.createElement('iframe');
-                        ytIframe.setAttribute('src', `https://www.youtube.com/embed/videoseries?list=${encodeURIComponent(listId)}`);
+                        ytIframe.setAttribute('src', `https://www.youtube.com/embed/videoseries?${params.join('&')}`);
                         ytIframe.setAttribute('title', 'YouTube playlist player');
                         ytIframe.setAttribute('frameborder', '0');
-                        ytIframe.setAttribute('allow', 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture');
+                        ytIframe.setAttribute('allow', ytAllow);
                         ytIframe.setAttribute('referrerpolicy', 'strict-origin-when-cross-origin');
                         ytIframe.setAttribute('allowfullscreen', '');
                         iframeWrapper.appendChild(ytIframe);
@@ -3094,6 +3101,9 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
                         if (listId) {
                             queryParams.push(`list=${encodeURIComponent(listId)}`);
                         }
+                        if (siParam) {
+                            queryParams.push(`si=${encodeURIComponent(siParam)}`);
+                        }
                         const query = queryParams.length > 0 ? '?' + queryParams.join('&') : '';
 
                         const iframeWrapper = document.createElement('div');
@@ -3103,7 +3113,7 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
                         ytIframe.setAttribute('src', `https://www.youtube.com/embed/${encodeURIComponent(videoId)}${query}`);
                         ytIframe.setAttribute('title', 'YouTube video player');
                         ytIframe.setAttribute('frameborder', '0');
-                        ytIframe.setAttribute('allow', 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture');
+                        ytIframe.setAttribute('allow', ytAllow);
                         ytIframe.setAttribute('referrerpolicy', 'strict-origin-when-cross-origin');
                         ytIframe.setAttribute('allowfullscreen', '');
                         iframeWrapper.appendChild(ytIframe);
