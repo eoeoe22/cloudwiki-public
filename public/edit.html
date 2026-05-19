@@ -22,6 +22,7 @@
     <link rel="stylesheet" href="/render.css">
     <link rel="stylesheet" href="/css/diff.css">
     <link rel="stylesheet" href="/css/edit.css">
+    <link rel="stylesheet" href="/css/bulk-modal.css">
 
     <!-- CodeMirror 6 Import Map (ESM CDN) -->
     <script type="importmap">
@@ -342,37 +343,18 @@
                 <input type="text" id="alternateTitleInput" class="form-control" placeholder="대체 제목" maxlength="100">
             </div>
 
-            <div class="mb-3 row">
-                <div class="col-md-6">
-                    <label for="categoryTagInput" class="form-label fw-bold">카테고리 (분류)</label>
-                    <div class="category-tag-container" id="categoryTagContainer"
-                        onclick="document.getElementById('categoryTagInput').focus()">
-                        <input type="text" id="categoryTagInput" class="category-tag-input"
-                            placeholder="카테고리 입력 후 엔터나 쉼표">
-                    </div>
-                    <input type="hidden" id="categoryInput">
-                    <div class="mt-2 d-flex gap-2 flex-wrap" id="bulkCategoryAdminPanel" style="display: none;">
-                        <button type="button" class="btn btn-sm btn-wiki-outline" id="bulkCategoryBtn">
-                            <i class="mdi mdi-folder-multiple-plus-outline"></i> 카테고리 관리
-                        </button>
-                        <button type="button" class="btn btn-sm btn-wiki-outline" id="docSettingsBtn">
-                            <i class="mdi mdi-security"></i> 문서 설정 관리
-                        </button>
-                    </div>
+            <div class="mb-3">
+                <label for="categoryTagInput" class="form-label fw-bold">카테고리 (분류)</label>
+                <div class="category-tag-container" id="categoryTagContainer"
+                    onclick="document.getElementById('categoryTagInput').focus()">
+                    <input type="text" id="categoryTagInput" class="category-tag-input"
+                        placeholder="카테고리 입력 후 엔터나 쉼표">
                 </div>
-                <div class="col-md-6 d-flex align-items-end gap-3" id="adminFlagsContainer" style="display: none !important;">
-                    <div class="form-check mb-2" id="adminLockContainer">
-                        <input class="form-check-input" type="checkbox" id="isLockedCheck">
-                        <label class="form-check-label text-danger fw-bold" for="isLockedCheck">
-                            <i class="mdi mdi-lock"></i> 편집 잠금
-                        </label>
-                    </div>
-                    <div class="form-check mb-2" id="adminPrivateContainer">
-                        <input class="form-check-input" type="checkbox" id="isPrivateCheck">
-                        <label class="form-check-label text-danger fw-bold" for="isPrivateCheck">
-                            <i class="mdi mdi-eye-off"></i> 비공개 (관리자만 열람)
-                        </label>
-                    </div>
+                <input type="hidden" id="categoryInput">
+                <div class="mt-2 d-flex gap-2 flex-wrap" id="bulkCategoryAdminPanel" style="display: none;">
+                    <button type="button" class="btn btn-sm btn-wiki-outline" id="bulkCategoryBtn">
+                        <i class="mdi mdi-folder-multiple-plus-outline"></i> 카테고리 관리
+                    </button>
                 </div>
             </div>
 
@@ -463,7 +445,6 @@
     <script type="module" src="/dist/edit-table-toolbar.js"></script>
     <script type="module" src="/dist/edit-main.js"></script>
     <script type="module" src="/dist/edit-bulk-category.js"></script>
-    <script type="module" src="/dist/edit-doc-settings.js"></script>
     <!-- ── 이미지 편집 모달 ── -->
     <div class="modal fade" id="imageEditorModal" tabindex="-1" aria-hidden="true" data-bs-backdrop="static">
         <div class="modal-dialog modal-dialog-centered">

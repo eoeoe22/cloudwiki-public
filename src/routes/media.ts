@@ -291,12 +291,16 @@ media.get('/api/media/doc/:filename', async (c) => {
 
 /**
  * GET /api/media/doc/:filename/backlinks
- * 이미지 문서를 사용(참조)하는 문서/블로그 포스트 목록 조회.
+ * 이미지 문서를 사용(참조)하는 문서/블로그 포스트/토론·티켓 댓글 목록 조회.
  * page_links 테이블(link_type='image', target_slug=r2_key) 기반.
  * 비공개/삭제 문서는 관리자만 열람.
  * 응답 항목 형식:
  *   - 위키 문서: { type: 'page', slug, updated_at, is_locked, is_deleted }
  *   - 블로그 포스트: { type: 'blog', id, title, updated_at, is_deleted }
+ *   - 토론 댓글:  { type: 'discussion_comment', discussion_id, discussion_title, page_slug, updated_at, is_deleted }
+ *   - 티켓 댓글:  { type: 'ticket_comment', ticket_id, ticket_title, ticket_type, updated_at, is_deleted }
+ * 토론은 모든 사용자 열람 가능(소속 페이지 삭제 시 비관리자에게 숨김).
+ * 티켓은 작성자 본인 / ticket:manage / type='discussion' && discussion:manage 한정.
  */
 media.get('/api/media/doc/:filename/backlinks', async (c) => {
     if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) {
@@ -307,6 +311,9 @@ media.get('/api/media/doc/:filename/backlinks', async (c) => {
     const user = c.get('user');
     const rbac = c.get('rbac') as RBAC | undefined;
     const isAdmin = !!(user && rbac && rbac.can(user.role, 'admin:access'));
+    const canManageTickets = !!(user && rbac && rbac.can(user.role, 'ticket:manage'));
+    const canManageDiscussions = !!(user && rbac && rbac.can(user.role, 'discussion:manage'));
+    const canSeePrivate = !!(rbac && rbac.can(user?.role ?? 'guest', 'wiki:private'));
 
     const mediaRow = await db.prepare('SELECT r2_key FROM media WHERE filename = ? LIMIT 1')
         .bind(filename).first<{ r2_key: string }>();
@@ -347,14 +354,109 @@ media.get('/api/media/doc/:filename/backlinks', async (c) => {
     }
     blogQuery += ' ORDER BY b.updated_at DESC LIMIT 100';
 
-    const [pageResult, blogResult] = await Promise.all([
+    // 토론 댓글: source_page_id = discussion_comments.id
+    // 같은 토론을 가리키는 댓글이 여러 개여도 토론 단위로 묶어 한 줄로 표시한다.
+    // 토론·소속 페이지 soft-delete 시 비관리자에게는 숨긴다.
+    // 비공개 문서(p.is_private=1) 의 토론은 wiki:private 권한이 없는 사용자에게 숨겨,
+    // 비공개 문서 제목·슬러그가 이미지 가상 문서를 통해 새어 나가지 않도록 한다.
+    let discussionQuery = `
+        SELECT
+            d.id AS discussion_id,
+            d.title AS discussion_title,
+            p.slug AS page_slug,
+            MAX(dc.created_at) AS updated_at,
+            -- 관리자는 soft-delete 된 댓글까지 포함해 조회하므로,
+            -- 이미지를 참조하는 살아있는 댓글이 하나도 없으면 토론 자체가 삭제되지 않았더라도 삭제 상태로 표기한다.
+            CASE WHEN d.deleted_at IS NOT NULL OR p.deleted_at IS NOT NULL
+                  OR MIN(CASE WHEN dc.deleted_at IS NULL THEN 0 ELSE 1 END) = 1
+                 THEN 1 ELSE 0 END AS is_deleted
+        FROM page_links pl
+        JOIN discussion_comments dc ON pl.source_page_id = dc.id
+        JOIN discussions d ON dc.discussion_id = d.id
+        JOIN pages p ON d.page_id = p.id
+        WHERE pl.link_type = 'image'
+          AND pl.source_type = 'discussion_comment'
+          AND pl.target_slug = ?
+    `;
+    if (!isAdmin) {
+        discussionQuery += ' AND dc.deleted_at IS NULL AND d.deleted_at IS NULL AND p.deleted_at IS NULL';
+    }
+    if (!canSeePrivate) {
+        discussionQuery += ' AND p.is_private = 0';
+    }
+    discussionQuery += ' GROUP BY d.id, d.title, p.slug, d.deleted_at, p.deleted_at ORDER BY updated_at DESC LIMIT 100';
+
+    // 티켓 댓글: source_page_id = ticket_comments.id
+    // 접근 권한이 없는 사용자에게는 노출하지 않는다(canAccessTicket 와 동일 규칙).
+    // 비로그인 사용자에게는 티켓 역링크를 일체 표시하지 않는다.
+    // 접근 권한 술어는 LIMIT 적용 전에 SQL 단에서 거른다 — 그렇지 않으면 접근 가능한 티켓이
+    // 동일 이미지를 참조하는 접근 불가 티켓 뒤로 밀려 LIMIT 에 의해 누락될 수 있다.
+    const ticketRows: Array<{
+        ticket_id: number; ticket_title: string; ticket_type: string;
+        updated_at: number; is_deleted: number;
+    }> = [];
+    if (user) {
+        let ticketQuery = `
+            SELECT
+                t.id AS ticket_id,
+                t.title AS ticket_title,
+                t.type AS ticket_type,
+                MAX(tc.created_at) AS updated_at,
+                -- 관리자(ticket:manage)는 soft-delete 된 댓글까지 포함하므로,
+                -- 이미지를 참조하는 살아있는 댓글이 하나도 없으면 티켓 자체가 삭제되지 않았더라도 삭제 상태로 표기한다.
+                CASE WHEN t.deleted_at IS NOT NULL
+                      OR MIN(CASE WHEN tc.deleted_at IS NULL THEN 0 ELSE 1 END) = 1
+                     THEN 1 ELSE 0 END AS is_deleted
+            FROM page_links pl
+            JOIN ticket_comments tc ON pl.source_page_id = tc.id
+            JOIN tickets t ON tc.ticket_id = t.id
+            WHERE pl.link_type = 'image'
+              AND pl.source_type = 'ticket_comment'
+              AND pl.target_slug = ?
+        `;
+        const ticketBinds: unknown[] = [mediaRow.r2_key];
+        if (!canManageTickets) {
+            // soft-delete 된 행은 ticket:manage 한정.
+            ticketQuery += ' AND t.deleted_at IS NULL AND tc.deleted_at IS NULL';
+            // 본인 작성 OR (discussion:manage 가 있다면 type='discussion' 도 허용).
+            if (canManageDiscussions) {
+                ticketQuery += " AND (t.user_id = ? OR t.type = 'discussion')";
+            } else {
+                ticketQuery += ' AND t.user_id = ?';
+            }
+            ticketBinds.push(user.id);
+        }
+        ticketQuery += ' GROUP BY t.id, t.title, t.type, t.deleted_at ORDER BY updated_at DESC LIMIT 100';
+        const ticketResult = await db.prepare(ticketQuery).bind(...ticketBinds).all();
+        for (const r of (ticketResult.results || []) as any[]) {
+            ticketRows.push({
+                ticket_id: r.ticket_id,
+                ticket_title: r.ticket_title,
+                ticket_type: r.ticket_type,
+                updated_at: r.updated_at,
+                is_deleted: r.is_deleted,
+            });
+        }
+    }
+
+    const [pageResult, blogResult, discussionResult] = await Promise.all([
         db.prepare(pageQuery).bind(mediaRow.r2_key).all(),
         db.prepare(blogQuery).bind(mediaRow.r2_key).all(),
+        db.prepare(discussionQuery).bind(mediaRow.r2_key).all(),
     ]);
 
     const backlinks = [
         ...(pageResult.results || []).map((r: any) => ({ type: 'page', ...r })),
         ...(blogResult.results || []).map((r: any) => ({ type: 'blog', ...r })),
+        ...(discussionResult.results || []).map((r: any) => ({ type: 'discussion_comment', ...r })),
+        ...ticketRows.map((r) => ({
+            type: 'ticket_comment',
+            ticket_id: r.ticket_id,
+            ticket_title: r.ticket_title,
+            ticket_type: r.ticket_type,
+            updated_at: r.updated_at,
+            is_deleted: r.is_deleted,
+        })),
     ];
     return c.json(safeJSON({ backlinks }));
 });

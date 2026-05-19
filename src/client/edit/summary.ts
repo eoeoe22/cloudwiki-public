@@ -391,13 +391,8 @@ function buildAutoEditSummary(): string {
     const redirectEl = document.getElementById('redirectInput') as HTMLInputElement | null;
     const currRedirect = redirectEl ? redirectEl.value.trim() : '';
 
-    const origLocked = originalPageMeta.is_locked ? 1 : 0;
-    const lockEl = document.getElementById('isLockedCheck') as HTMLInputElement | null;
-    const currLocked = lockEl && lockEl.checked ? 1 : 0;
-
-    const origPrivate = originalPageMeta.is_private ? 1 : 0;
-    const privEl = document.getElementById('isPrivateCheck') as HTMLInputElement | null;
-    const currPrivate = privEl && privEl.checked ? 1 : 0;
+    // 잠금/비공개 토글은 에디터에서 제거되어 자동 요약 후보에서도 빠진다.
+    // 권한 관리 모달은 본문 리비전과 분리된 별도 엔드포인트(PATCH /pages/:slug/flags) 를 사용.
 
     const parts: string[] = [];
     if (origTitle !== currTitle) {
@@ -409,12 +404,6 @@ function buildAutoEditSummary(): string {
     if (removed.length) parts.push(`분류 ${removed.map(c => `'${c}'`).join(', ')} 삭제`);
     if (origRedirect !== currRedirect) {
         parts.push(currRedirect ? `넘겨주기 '${currRedirect}' 설정` : '넘겨주기 해제');
-    }
-    if (origLocked !== currLocked) {
-        parts.push(currLocked ? '편집 잠금 설정' : '편집 잠금 해제');
-    }
-    if (origPrivate !== currPrivate) {
-        parts.push(currPrivate ? '비공개 설정' : '비공개 해제');
     }
 
     if (editorAvailable) {

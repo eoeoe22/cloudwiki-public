@@ -31,7 +31,7 @@ import {
     buildCommitSummary,
     validateMcpSummaryLength,
 } from './admin-mcp';
-import { findConflictingPage } from './wiki';
+import { findConflictingPage, invalidatePageCache, refreshRecentChangesCache } from './wiki';
 import {
     findPrefixRuleEditAcl,
     serializeEditAcl,
@@ -561,6 +561,11 @@ mcpSubmissionsRoutes.post('/mcp-submissions/:id/approve', requireAuth, async (c)
  * 사용자가 에디터에서 충돌을 직접 병합해 저장(=새 리비전 생성)한 뒤 호출한다.
  * draft + 관련 알림을 정리하고, /reject 와 구분되는 admin_log 타입('mcp_submission_resolve') 을 남긴다.
  * 새 리비전 생성 자체는 /api/w/:slug PUT 이 처리하므로 본 핸들러는 후처리(정리)만 담당한다.
+ *
+ * 단, draft.requested_lock 이 설정되어 있고 호출자가 wiki:lock 권한을 가진 경우
+ * pages.is_locked 도 함께 갱신한다 — 에디터 폼에서 잠금 체크박스가 제거되었으므로 (권한 관리 모달
+ * 로 일원화) 에디터 검토 경로에서는 PUT 본문이 lock 을 운반하지 못한다. /approve 가 직접 적용하는
+ * 정책과 동일한 의미를 본 후처리 단계에서 보존한다.
  */
 mcpSubmissionsRoutes.post('/mcp-submissions/:id/resolve', requireAuth, async (c) => {
     const user = c.get('user')!;
@@ -569,16 +574,42 @@ mcpSubmissionsRoutes.post('/mcp-submissions/:id/resolve', requireAuth, async (c)
     const draft = await loadSubmittedDraftForUser(c.env, user, draftId);
     if (!draft) return c.json({ error: 'not found' }, 404);
 
+    let lockApplied: { from: number; to: number } | null = null;
+    if (draft.requested_lock !== null) {
+        const rbac = c.get('rbac') as RBAC;
+        if (rbac.can(user.role, 'wiki:lock')) {
+            const page = await c.env.DB
+                .prepare('SELECT id, is_locked FROM pages WHERE slug = ? AND deleted_at IS NULL')
+                .bind(draft.slug)
+                .first<{ id: number; is_locked: number }>();
+            if (page && page.is_locked !== draft.requested_lock) {
+                await c.env.DB
+                    .prepare('UPDATE pages SET is_locked = ?, updated_at = unixepoch() WHERE id = ?')
+                    .bind(draft.requested_lock, page.id)
+                    .run();
+                lockApplied = { from: page.is_locked, to: draft.requested_lock };
+                // updated_at 이 bump 되었으므로 recent-changes 캐시(updated_at 정렬)도 함께 무효화.
+                c.executionCtx.waitUntil(Promise.allSettled([
+                    invalidatePageCache(c, draft.slug),
+                    refreshRecentChangesCache(c),
+                ]));
+            }
+        }
+    }
+
     await c.env.DB.batch([
         c.env.DB.prepare("DELETE FROM notifications WHERE type = 'mcp_submission' AND ref_id = ?").bind(draft.id),
         c.env.DB.prepare('DELETE FROM mcp_drafts WHERE id = ?').bind(draft.id),
     ]);
+    const logSuffix = lockApplied
+        ? ` (is_locked ${lockApplied.from === 1} → ${lockApplied.to === 1})`
+        : '';
     c.executionCtx.waitUntil(
         c.env.DB.prepare('INSERT INTO admin_log (type, log, user) VALUES (?, ?, ?)')
-            .bind('mcp_submission_resolve', `[mcp-submission] resolved via editor draft #${draft.id}: ${draft.slug}`, user.id)
+            .bind('mcp_submission_resolve', `[mcp-submission] resolved via editor draft #${draft.id}: ${draft.slug}${logSuffix}`, user.id)
             .run().catch(() => {})
     );
-    return c.json({ resolved: true, id: draft.id, slug: draft.slug });
+    return c.json({ resolved: true, id: draft.id, slug: draft.slug, lock_applied: lockApplied });
 });
 
 /**

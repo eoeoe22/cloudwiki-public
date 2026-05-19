@@ -201,14 +201,9 @@
                 <input type="text" id="blogTitleInput" class="edit-title-input" placeholder="블로그 포스트 제목" maxlength="500">
             </div>
 
-            <!-- 위키 전용 필드 stub: edit.js 가 BLOG_MODE return 이전에 무가드로 접근하는
-                 ID 만 남긴다. 그 외 위키 전용 ID(titleInput, redirectInput, sectionEdit*,
-                 categoryTagInput/Container 등) 의 참조 경로는 모두 BLOG_MODE return 이후이거나
-                 null 가드를 가지므로 stub 이 필요 없다. -->
+            <!-- 위키 전용 필드 stub: edit-main.ts 가 BLOG_MODE return 이전에 무가드로 접근하는 ID 만 남긴다. -->
             <div style="display:none;">
                 <input type="hidden" id="categoryInput">
-                <input type="checkbox" id="isLockedCheck">
-                <div id="adminLockContainer"></div>
             </div>
 
             <!-- Markdown 에디터 -->

@@ -44,7 +44,7 @@ export default defineConfig({
                 'edit-table-toolbar': resolve(__dirname, 'src/client/edit/table-toolbar.ts'),
                 'edit-main': resolve(__dirname, 'src/client/edit/main.ts'),
                 'edit-bulk-category': resolve(__dirname, 'src/client/edit/bulk-category.ts'),
-                'edit-doc-settings': resolve(__dirname, 'src/client/edit/doc-settings.ts'),
+                'permissions-modal': resolve(__dirname, 'src/client/permissions/permissions-modal.ts'),
                 'discussion-edit': resolve(__dirname, 'src/client/discussion-edit/editor.ts'),
                 'render': resolve(__dirname, 'src/client/render.ts'),
                 'common': resolve(__dirname, 'src/client/common.ts'),

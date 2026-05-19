@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import {
     buildCategoryOnlyStatements,
     invalidatePageCache,
+    invalidateBacklinkCaches,
     mergeCategoriesFromRules,
     refreshRecentChangesCache,
     splitCategoryString,
@@ -2546,6 +2547,80 @@ adminRoutes.put('/pages/:slug/edit-acl', async (c) => {
         currentUser.id
     );
     return c.json({ success: true, edit_acl: norm.value });
+});
+
+/**
+ * PATCH /pages/:slug/flags
+ * Body: { is_locked?: 0|1, is_private?: 0|1 }
+ * 본문/리비전 변경 없이 잠금/비공개 플래그만 갱신. 권한 관리 모달 단건 저장 경로.
+ * 생략된 키는 그대로 유지하며, 둘 다 생략 시 변경 없이 현재 값을 반환한다.
+ */
+adminRoutes.patch('/pages/:slug/flags', async (c) => {
+    const db = c.env.DB;
+    const currentUser = c.get('user')!;
+    const slug = normalizeSlug(c.req.param('slug'));
+    if (!slug) return c.json({ error: 'slug 가 비어 있습니다.' }, 400);
+
+    const body = await c.req.json<Record<string, unknown>>().catch(() => ({} as Record<string, unknown>));
+    const hasLock = Object.prototype.hasOwnProperty.call(body, 'is_locked');
+    const hasPriv = Object.prototype.hasOwnProperty.call(body, 'is_private');
+
+    let nextLock: 0 | 1 | undefined;
+    if (hasLock) {
+        const v = body.is_locked;
+        if (v !== 0 && v !== 1) return c.json({ error: 'is_locked 는 0 또는 1 이어야 합니다.' }, 400);
+        nextLock = v;
+    }
+    let nextPriv: 0 | 1 | undefined;
+    if (hasPriv) {
+        const v = body.is_private;
+        if (v !== 0 && v !== 1) return c.json({ error: 'is_private 는 0 또는 1 이어야 합니다.' }, 400);
+        nextPriv = v;
+    }
+
+    const page = await db
+        .prepare('SELECT id, is_locked, is_private FROM pages WHERE slug = ? AND deleted_at IS NULL')
+        .bind(slug)
+        .first<{ id: number; is_locked: number; is_private: number }>();
+    if (!page) return c.json({ error: '문서를 찾을 수 없습니다.' }, 404);
+
+    if (nextLock === undefined && nextPriv === undefined) {
+        return c.json({ success: true, slug, is_locked: page.is_locked, is_private: page.is_private });
+    }
+
+    const finalLock = nextLock ?? page.is_locked;
+    const finalPriv = nextPriv ?? page.is_private;
+
+    await db
+        .prepare('UPDATE pages SET is_locked = ?, is_private = ?, updated_at = unixepoch() WHERE id = ?')
+        .bind(finalLock, finalPriv, page.id)
+        .run();
+
+    const privateChanged = nextPriv !== undefined && nextPriv !== page.is_private;
+
+    // UPDATE 가 updated_at 을 항상 bump 하므로 recent-changes 캐시(updated_at 정렬)도 항상 새로고침.
+    // is_private 변경은 추가로 백링크 캐시(이 문서를 트랜스클루드 한 페이지의 렌더 결과) 에도 영향.
+    // admin-mcp set_page_status 와 동일한 정책.
+    const cacheTasks: Promise<unknown>[] = [
+        invalidatePageCache(c, slug),
+        refreshRecentChangesCache(c),
+    ];
+    if (privateChanged) cacheTasks.push(invalidateBacklinkCaches(c, slug, db));
+    c.executionCtx.waitUntil(Promise.allSettled(cacheTasks));
+
+    const changes: string[] = [];
+    if (nextLock !== undefined && nextLock !== page.is_locked) changes.push(`잠금 ${nextLock ? 'ON' : 'OFF'}`);
+    if (privateChanged) changes.push(`비공개 ${nextPriv ? 'ON' : 'OFF'}`);
+    if (changes.length > 0) {
+        writeAdminLog(
+            c,
+            'page_flags_set',
+            `문서 플래그 변경: ${slug} → ${changes.join(', ')}`,
+            currentUser.id
+        );
+    }
+
+    return c.json({ success: true, slug, is_locked: finalLock, is_private: finalPriv });
 });
 
 // ── 컬러 팔레트 CRUD ────────────────────────────────────────────────

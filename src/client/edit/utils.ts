@@ -574,12 +574,7 @@ async function checkDraft(): Promise<void> {
                     if (wrapper) (wrapper as HTMLElement).style.display = '';
                 }
             });
-            const adminFlagsWrapper = document.getElementById('adminFlagsContainer') as HTMLElement | null;
-            if (adminFlagsWrapper) {
-                const cu = window.currentUser;
-                const isAdminUser = !!(cu && (cu.role === 'admin' || cu.role === 'super_admin'));
-                adminFlagsWrapper.style.display = isAdminUser ? 'flex' : 'none';
-            }
+            // 잠금/비공개 토글은 에디터에서 제거됨 (권한 관리 모달이 처리) — 별도 DOM 복원 불필요.
 
             // window 상태를 full-edit mode 로 전환. main.ts 는 await 직후
             // syncStateFromWindow() 로 이 변경을 로컬 변수에 반영한다.
