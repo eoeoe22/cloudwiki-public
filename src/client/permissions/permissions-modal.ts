@@ -31,6 +31,7 @@ declare global {
 type FlagValue = 0 | 1 | null;
 type FlagAction = 'none' | 'on' | 'off';
 type AclAction = 'none' | 'clear' | 'set';
+type CategoriesAction = 'none' | 'add' | 'set' | 'clear';
 type EditAclFlag = 'aged' | 'page_editor' | 'any_editor' | 'admin_only';
 interface EditAcl { flags: EditAclFlag[]; }
 
@@ -46,6 +47,7 @@ interface DocSettingRule {
     prefix: string;
     is_private: FlagValue;
     edit_acl: string | null;
+    categories: string | null;
     created_at: number;
     created_by_name: string | null;
 }
@@ -56,6 +58,7 @@ interface SubpageItem {
     depth: number;
     is_private: 0 | 1;
     edit_acl: EditAcl | null;
+    categories: string[];
 }
 
 interface RowState {
@@ -64,6 +67,7 @@ interface RowState {
     depth: number;
     is_private: 0 | 1;
     edit_acl: EditAcl | null;
+    categories: string[];
     currentlyChecked: boolean;
     checkbox: HTMLInputElement;
 }
@@ -227,6 +231,30 @@ function ruleAclLabel(raw: string | null): string {
     return `<span title="${escapeHtml(JSON.stringify(acl))}"><i class="mdi mdi-shield-account"></i> ${escapeHtml(aclSummary(acl))}</span>`;
 }
 
+function parseCategoriesString(raw: string | null | undefined): string[] {
+    if (!raw) return [];
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const piece of raw.split(',')) {
+        const v = piece.trim();
+        if (!v || seen.has(v)) continue;
+        seen.add(v);
+        out.push(v);
+    }
+    return out;
+}
+
+function categoriesChips(cats: string[]): string {
+    if (cats.length === 0) return '<span class="bulkcat-cat-chip" style="opacity: .4;">—</span>';
+    return cats.map(c => `<span class="bulkcat-cat-chip" title="${escapeHtml(c)}"><i class="mdi mdi-tag-outline"></i> ${escapeHtml(c)}</span>`).join(' ');
+}
+
+function ruleCategoriesLabel(raw: string | null): string {
+    const cats = parseCategoriesString(raw);
+    if (cats.length === 0) return '<span style="opacity: .4;">—</span>';
+    return categoriesChips(cats);
+}
+
 function rulesTableHtml(rules: DocSettingRule[]): string {
     if (rules.length === 0) {
         return '<div class="bulkcat-rules-empty">저장된 자동 규칙이 없습니다.</div>';
@@ -236,6 +264,7 @@ function rulesTableHtml(rules: DocSettingRule[]): string {
             <td class="text-break"><code>${escapeHtml(r.prefix)}/**</code></td>
             <td>${rulePrivateLabel(r.is_private)}</td>
             <td>${ruleAclLabel(r.edit_acl)}</td>
+            <td>${ruleCategoriesLabel(r.categories)}</td>
             <td class="text-end">
                 <button type="button" class="btn btn-sm btn-wiki btn-wiki-danger perm-rule-delete">
                     <i class="mdi mdi-trash-can-outline"></i>
@@ -245,7 +274,7 @@ function rulesTableHtml(rules: DocSettingRule[]): string {
     `).join('');
     return `
         <table class="bulkcat-rules-table">
-            <thead><tr><th>접두사</th><th>비공개</th><th>편집 ACL</th><th aria-label="삭제"></th></tr></thead>
+            <thead><tr><th>접두사</th><th>비공개</th><th>편집 ACL</th><th>카테고리</th><th aria-label="삭제"></th></tr></thead>
             <tbody>${rows}</tbody>
         </table>
     `;
@@ -328,6 +357,18 @@ function buildModalHtml(slug: string, page: CurrentPage | null, pageLoadError: s
                         <label class="form-check-inline mb-0"><input class="form-check-input" type="radio" name="permBulkAclAction" value="set"> <span class="ms-1">아래 ACL 적용</span></label>
                     </div>
                     ${aclFieldsetHtml('permBulkAcl', null, false)}
+                    <div role="radiogroup" aria-label="카테고리" style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                        <span style="min-width: 84px; font-weight: 600;"><i class="mdi mdi-tag-multiple-outline"></i> 카테고리</span>
+                        <label class="form-check-inline mb-0"><input class="form-check-input" type="radio" name="permBulkCatAction" value="none" checked> <span class="ms-1">그대로</span></label>
+                        <label class="form-check-inline mb-0"><input class="form-check-input" type="radio" name="permBulkCatAction" value="add"> <span class="ms-1">아래 카테고리 추가</span></label>
+                        <label class="form-check-inline mb-0"><input class="form-check-input" type="radio" name="permBulkCatAction" value="set"> <span class="ms-1">아래로 교체</span></label>
+                        <label class="form-check-inline mb-0"><input class="form-check-input" type="radio" name="permBulkCatAction" value="clear"> <span class="ms-1">비움</span></label>
+                    </div>
+                    <fieldset class="perm-acl-fieldset" id="permBulkCatFieldset" style="border: 1px dashed var(--bs-border-color); padding: 8px 12px; border-radius: 6px; display: none;">
+                        <legend class="bulkcat-section-title" style="font-size: 0.85em; padding: 0 6px;">카테고리 (쉼표로 구분)</legend>
+                        <input type="text" class="form-control form-control-sm" id="permBulkCatInput" placeholder="예: 기술, API">
+                        <small class="text-muted">한글/영문/숫자/공백/쉼표만 입력 가능. 자동 규칙으로 저장 시, 이후 이 prefix 하위에 새로 생성되는 문서에 합집합으로 자동 부여됩니다.</small>
+                    </fieldset>
                 </div>
                 <p class="bulkcat-section-hint">
                     체크된 하위 문서에만 위 액션이 적용됩니다. <b>그대로</b> 인 항목은 변경되지 않습니다.
@@ -453,6 +494,46 @@ function toggleBulkAclFieldset() {
     fs.style.display = readBulkAclAction() === 'set' ? '' : 'none';
 }
 
+function readBulkCatAction(): CategoriesAction {
+    const el = document.querySelector<HTMLInputElement>('input[name="permBulkCatAction"]:checked');
+    const v = el?.value;
+    return v === 'add' || v === 'set' || v === 'clear' ? v : 'none';
+}
+function readBulkCatInput(): string {
+    const el = document.getElementById('permBulkCatInput') as HTMLInputElement | null;
+    return el?.value ?? '';
+}
+function toggleBulkCatFieldset() {
+    const fs = document.getElementById('permBulkCatFieldset') as HTMLFieldSetElement | null;
+    if (!fs) return;
+    const action = readBulkCatAction();
+    fs.style.display = (action === 'add' || action === 'set') ? '' : 'none';
+}
+
+function normalizeCatList(raw: string): string[] {
+    return parseCategoriesString(raw);
+}
+
+function arrayEqualSet(a: string[], b: string[]): boolean {
+    if (a.length !== b.length) return false;
+    const s = new Set(a);
+    for (const v of b) if (!s.has(v)) return false;
+    return true;
+}
+
+function targetCatsForRow(row: RowState, action: CategoriesAction, catVal: string[]): string[] {
+    if (action === 'none') return row.categories;
+    if (action === 'clear') return [];
+    if (action === 'set') return [...catVal];
+    // add: 합집합 (기존 순서 보존)
+    const seen = new Set(row.categories);
+    const out = [...row.categories];
+    for (const v of catVal) {
+        if (!seen.has(v)) { seen.add(v); out.push(v); }
+    }
+    return out;
+}
+
 function actionToTarget(a: FlagAction): 0 | 1 | null {
     return a === 'on' ? 1 : a === 'off' ? 0 : null;
 }
@@ -492,6 +573,8 @@ function updateBulkCounter(state: ModalState): void {
             const privA = readBulkPrivateAction();
             const aclA = readBulkAclAction();
             const aclV = aclA === 'set' ? readAclValueFrom('permBulkAcl') : null;
+            const catA = readBulkCatAction();
+            const catV = (catA === 'add' || catA === 'set') ? normalizeCatList(readBulkCatInput()) : [];
             const targetPriv = actionToTarget(privA);
             const checked = state.rows.filter(r => r.currentlyChecked).length;
             let changeCount = 0;
@@ -499,7 +582,12 @@ function updateBulkCounter(state: ModalState): void {
                 if (!r.currentlyChecked) continue;
                 const newPriv = targetPriv === null ? r.is_private : targetPriv;
                 const newAcl = targetAclForRow(r, aclA, aclV);
-                if (newPriv !== r.is_private || !aclEqual(newAcl, r.edit_acl)) changeCount++;
+                const newCats = targetCatsForRow(r, catA, catV);
+                if (
+                    newPriv !== r.is_private ||
+                    !aclEqual(newAcl, r.edit_acl) ||
+                    !arrayEqualSet(newCats, r.categories)
+                ) changeCount++;
             }
             counter.textContent = `체크 ${checked} / ${state.rows.length} (변경 +${changeCount})`;
         }
@@ -524,7 +612,7 @@ function renderBulkSubpages(items: SubpageItem[], prefix: string): string {
     const prefixWithSlash = prefix + '/';
     const rows = items.map((item) => {
         const display = item.slug.startsWith(prefixWithSlash) ? item.slug.slice(prefixWithSlash.length) : item.slug;
-        const flags = `${privateBadge(item.is_private)} ${aclBadge(item.edit_acl)}`;
+        const flags = `${privateBadge(item.is_private)} ${aclBadge(item.edit_acl)} ${categoriesChips(item.categories)}`;
         return `
             <tr data-page-id="${item.id}" style="--bulkcat-depth: ${item.depth};">
                 <td>
@@ -578,6 +666,7 @@ async function loadBulkTree(state: ModalState): Promise<void> {
             depth: item.depth,
             is_private: item.is_private,
             edit_acl: item.edit_acl,
+            categories: Array.isArray(item.categories) ? item.categories : [],
             currentlyChecked: false,
             checkbox: cb,
         };
@@ -677,15 +766,20 @@ export async function openPermissionsModal(rawSlug: string): Promise<void> {
 
             // 섹션 2: 일괄
             document.querySelectorAll<HTMLInputElement>(
-                'input[name="permBulkPrivateAction"], input[name="permBulkAclAction"]'
+                'input[name="permBulkPrivateAction"], input[name="permBulkAclAction"], input[name="permBulkCatAction"]'
             ).forEach((el) => el.addEventListener('change', () => updateBulkCounter(state)));
             document.querySelectorAll<HTMLInputElement>('input[name="permBulkAclAction"]').forEach((el) => {
                 el.addEventListener('change', toggleBulkAclFieldset);
             });
+            document.querySelectorAll<HTMLInputElement>('input[name="permBulkCatAction"]').forEach((el) => {
+                el.addEventListener('change', toggleBulkCatFieldset);
+            });
             document.querySelectorAll<HTMLInputElement>('.permBulkAcl-flag').forEach((el) => {
                 el.addEventListener('change', () => updateBulkCounter(state));
             });
+            document.getElementById('permBulkCatInput')?.addEventListener('input', () => updateBulkCounter(state));
             toggleBulkAclFieldset();
+            toggleBulkCatFieldset();
             void loadBulkTree(state);
 
             // 섹션 3: 규칙 표
@@ -696,12 +790,27 @@ export async function openPermissionsModal(rawSlug: string): Promise<void> {
             const privateAction = readBulkPrivateAction();
             const aclAction = readBulkAclAction();
             const aclValue = aclAction === 'set' ? readAclValueFrom('permBulkAcl') : null;
+            const categoriesAction = readBulkCatAction();
+            const categoriesList = (categoriesAction === 'add' || categoriesAction === 'set')
+                ? normalizeCatList(readBulkCatInput())
+                : [];
             const persistEl = document.getElementById('permBulkPersist') as HTMLInputElement | null;
             const persist = !!persistEl?.checked;
 
             if (aclAction === 'set' && !aclValue) {
                 swal.showValidationMessage("편집 ACL '아래 ACL 적용'을 선택했지만 플래그가 비어 있습니다.");
                 return false;
+            }
+            if ((categoriesAction === 'add' || categoriesAction === 'set') && categoriesList.length === 0) {
+                swal.showValidationMessage('카테고리 액션에 입력값이 비어 있습니다. 한글/영문/숫자만 쉼표로 구분해 입력해주세요.');
+                return false;
+            }
+            if (categoriesAction === 'add' || categoriesAction === 'set') {
+                const raw = readBulkCatInput();
+                if (!/^[가-힣a-zA-Z0-9\s,]+$/.test(raw)) {
+                    swal.showValidationMessage('카테고리에는 한글/영문/숫자/공백/쉼표만 사용할 수 있습니다.');
+                    return false;
+                }
             }
 
             const targetPriv = actionToTarget(privateAction);
@@ -710,44 +819,63 @@ export async function openPermissionsModal(rawSlug: string): Promise<void> {
                 if (!r.currentlyChecked) continue;
                 const newPriv = targetPriv === null ? r.is_private : targetPriv;
                 const newAcl = aclAction === 'none' ? r.edit_acl : aclAction === 'clear' ? null : aclValue;
-                if (newPriv !== r.is_private || !aclEqual(newAcl, r.edit_acl)) ids.push(r.id);
+                const newCats = targetCatsForRow(r, categoriesAction, categoriesList);
+                if (
+                    newPriv !== r.is_private ||
+                    !aclEqual(newAcl, r.edit_acl) ||
+                    !arrayEqualSet(newCats, r.categories)
+                ) ids.push(r.id);
             }
 
             const willApply = ids.length > 0;
-            const anyAction = privateAction !== 'none' || aclAction !== 'none';
+            const anyAction = privateAction !== 'none' || aclAction !== 'none' || categoriesAction !== 'none';
 
             if (!willApply && !persist) {
                 swal.showValidationMessage('적용할 하위 문서를 선택하거나 "자동 규칙으로 저장"을 선택해주세요.');
                 return false;
             }
             if (willApply && !anyAction) {
-                swal.showValidationMessage('비공개/편집 ACL 중 하나 이상의 액션을 선택해주세요.');
+                swal.showValidationMessage('비공개/편집 ACL/카테고리 중 하나 이상의 액션을 선택해주세요.');
                 return false;
             }
             if (persist) {
+                // 'clear' 도 명시적 액션 — 기존 룰의 해당 필드만 NULL 로 갱신하면서 나머지 필드는 서버에서 보존된다.
+                // 카테고리만 비우거나 ACL 만 끄는 비파괴적 편집 경로를 막지 않도록 'none' 만 "지정 안 함" 으로 본다.
                 const persistHasPriv = privateAction !== 'none';
-                const persistHasAcl = aclAction === 'set';
-                if (!persistHasPriv && !persistHasAcl) {
-                    swal.showValidationMessage('자동 규칙을 저장하려면 비공개/편집 ACL 중 하나 이상을 지정해야 합니다.');
+                const persistHasAcl = aclAction !== 'none';
+                const persistHasCats = categoriesAction !== 'none';
+                if (!persistHasPriv && !persistHasAcl && !persistHasCats) {
+                    swal.showValidationMessage('자동 규칙을 저장하려면 비공개/편집 ACL/카테고리 중 하나 이상을 지정해야 합니다.');
                     return false;
                 }
             }
 
-            return { prefix: state.prefix, privateAction, aclAction, aclValue, ids, persist, willApply };
+            return {
+                prefix: state.prefix,
+                privateAction,
+                aclAction,
+                aclValue,
+                categoriesAction,
+                categoriesValue: categoriesList.join(','),
+                ids,
+                persist,
+                willApply,
+            };
         },
     });
 
     if (!result.isConfirmed || !result.value) return;
-    const { prefix, privateAction, aclAction, aclValue, ids, persist, willApply } = result.value as {
+    const { prefix, privateAction, aclAction, aclValue, categoriesAction, categoriesValue, ids, persist, willApply } = result.value as {
         prefix: string; privateAction: FlagAction; aclAction: AclAction;
-        aclValue: EditAcl | null; ids: number[]; persist: boolean; willApply: boolean;
+        aclValue: EditAcl | null; categoriesAction: CategoriesAction; categoriesValue: string;
+        ids: number[]; persist: boolean; willApply: boolean;
     };
 
     try {
         const res = await fetch('/api/admin/doc-setting-prefix-rules/bulk-apply', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ prefix, privateAction, aclAction, aclValue, ids, persist }),
+            body: JSON.stringify({ prefix, privateAction, aclAction, aclValue, categoriesAction, categoriesValue, ids, persist }),
         });
         if (!res.ok) {
             const err = (await res.json().catch(() => ({}))) as { error?: string };

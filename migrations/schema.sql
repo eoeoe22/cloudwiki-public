@@ -429,17 +429,19 @@ CREATE TABLE IF NOT EXISTS category_prefix_rules (
 );
 CREATE INDEX IF NOT EXISTS idx_category_prefix_rules_prefix ON category_prefix_rules(prefix);
 
--- 슬러그 prefix 별 자동 문서 설정(비공개/편집 ACL) 부여 규칙
--- prefix/ 로 시작하는 문서 생성 시 is_private / edit_acl 가 강제 적용된다.
+-- 슬러그 prefix 별 자동 문서 설정(비공개/편집 ACL/카테고리) 부여 규칙
+-- prefix/ 로 시작하는 문서 생성 시 is_private / edit_acl 가 강제 적용되고,
+-- categories 는 합집합으로 자동 부여된다(category_prefix_rules 와 동일 정책).
 -- NULL 컬럼은 해당 설정에 규칙 없음 (생성자의 값 유지).
 CREATE TABLE IF NOT EXISTS doc_setting_prefix_rules (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     prefix     TEXT NOT NULL UNIQUE,
     is_private INTEGER,
     edit_acl   TEXT,
+    categories TEXT,
     created_at INTEGER DEFAULT (unixepoch()),
     created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
-    CHECK (is_private IS NOT NULL OR edit_acl IS NOT NULL)
+    CHECK (is_private IS NOT NULL OR edit_acl IS NOT NULL OR categories IS NOT NULL)
 );
 
 -- 커스텀 컬러 팔레트

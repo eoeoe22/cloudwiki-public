@@ -188,6 +188,8 @@ export async function getEditAclMinAgeDays(db: D1Database): Promise<number> {
  * 가장 긴 일치 prefix 를 먼저 고르고, 그 룰의 edit_acl 만 읽는다 (wiki.ts 의 create 분기와 동일 정책).
  * edit_acl IS NOT NULL 로 사전 필터하면 private 만 가진 더 긴 자식 룰 대신 ACL 을 가진
  * 짧은 부모 룰이 잘못 선택돼 false denial 이 발생하므로 WHERE 절에서 필터하지 않는다.
+ * 단, 카테고리 전용 룰(is_private/edit_acl 모두 null)은 ACL 의도가 없으므로 longest-match
+ * 후보에서 제외해 짧은 부모 룰의 ACL 을 가리지 않도록 한다.
  */
 export async function findPrefixRuleEditAcl(
     db: D1Database,
@@ -195,12 +197,13 @@ export async function findPrefixRuleEditAcl(
 ): Promise<EditAcl | null> {
     try {
         const { results } = await db
-            .prepare('SELECT prefix, edit_acl FROM doc_setting_prefix_rules')
-            .all<{ prefix: string; edit_acl: string | null }>();
+            .prepare('SELECT prefix, is_private, edit_acl FROM doc_setting_prefix_rules')
+            .all<{ prefix: string; is_private: number | null; edit_acl: string | null }>();
         let bestLen = -1;
         let bestRaw: string | null = null;
         for (const r of results || []) {
             if (!slug.startsWith(r.prefix + '/')) continue;
+            if (r.is_private === null && r.edit_acl === null) continue; // 카테고리 전용 룰 제외
             if (r.prefix.length > bestLen) {
                 bestLen = r.prefix.length;
                 bestRaw = r.edit_acl;

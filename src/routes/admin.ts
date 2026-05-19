@@ -44,6 +44,7 @@ import {
     applyCategoryAclToPage,
     normalizeCategoryAclMode,
 } from '../utils/categoryAcl';
+import { ensureDocSettingPrefixRulesMigration } from '../utils/docSettingPrefixRulesMigration';
 import { normalizeSlug } from '../utils/slug';
 import type {
     AnnouncementAdminDTO,
@@ -2030,7 +2031,7 @@ function validateCategoryPrefix(raw: unknown): { prefix: string } | { error: str
 }
 
 type SubpageRow = { id: number; slug: string; category: string | null };
-type LockPrivateRow = { id: number; slug: string; is_private: number; edit_acl: string | null };
+type LockPrivateRow = { id: number; slug: string; is_private: number; edit_acl: string | null; category: string | null };
 
 // SQL 인젝션 방지: 컬럼 화이트리스트로만 SELECT 절을 구성한다.
 const SCAN_ALLOWED_COLUMNS = new Set([
@@ -2075,7 +2076,7 @@ async function scanPrefixSubpages<T extends { slug: string }>(
 }
 
 const CATEGORY_SCAN_COLUMNS = ['id', 'slug', 'category'] as const;
-const DOC_SETTING_SCAN_COLUMNS = ['id', 'slug', 'is_private', 'edit_acl'] as const;
+const DOC_SETTING_SCAN_COLUMNS = ['id', 'slug', 'is_private', 'edit_acl', 'category'] as const;
 
 async function scanCategorySubpages(db: D1Database, prefix: string) {
     return scanPrefixSubpages<SubpageRow>(db, prefix, CATEGORY_SCAN_COLUMNS);
@@ -2362,6 +2363,7 @@ type DocSettingRuleRow = {
     prefix: string;
     is_private: number | null;
     edit_acl: string | null;
+    categories: string | null;
     created_at: number;
     created_by_name: string | null;
 };
@@ -2387,9 +2389,10 @@ function actionToFlag(a: FlagAction): number | null {
  */
 adminRoutes.get('/doc-setting-prefix-rules', async (c) => {
     const db = c.env.DB;
+    await ensureDocSettingPrefixRulesMigration(db);
     const { results } = await db
         .prepare(
-            `SELECT r.id, r.prefix, r.is_private, r.edit_acl, r.created_at, u.name AS created_by_name
+            `SELECT r.id, r.prefix, r.is_private, r.edit_acl, r.categories, r.created_at, u.name AS created_by_name
              FROM doc_setting_prefix_rules r
              LEFT JOIN users u ON u.id = r.created_by
              ORDER BY r.prefix ASC`
@@ -2404,22 +2407,29 @@ adminRoutes.get('/doc-setting-prefix-rules', async (c) => {
  */
 adminRoutes.post('/doc-setting-prefix-rules', async (c) => {
     const db = c.env.DB;
+    await ensureDocSettingPrefixRulesMigration(db);
     const currentUser = c.get('user')!;
     const body = await c.req.json<{
         prefix?: string;
         is_private?: 0 | 1 | null;
         edit_acl?: unknown;
+        categories?: unknown;
     }>();
 
     const prefixCheck = validateCategoryPrefix(body.prefix);
     if ('error' in prefixCheck) return c.json({ error: prefixCheck.error }, 400);
     const { prefix } = prefixCheck;
 
-    const privateCheck = parseFlag(body.is_private);
-    if ('error' in privateCheck) return c.json({ error: privateCheck.error }, 400);
+    // 세 필드 모두 "키 누락 = 변경 없음" 규칙. 명시적 null / 0 / 1 만 갱신으로 본다.
+    // (예: categories 만 갱신하는 클라이언트가 기존 is_private 을 silent 하게 지워버리는 것을 막는다.)
+    const privateProvided = Object.prototype.hasOwnProperty.call(body, 'is_private');
+    let privateValue: number | null = null;
+    if (privateProvided) {
+        const privateCheck = parseFlag(body.is_private);
+        if ('error' in privateCheck) return c.json({ error: privateCheck.error }, 400);
+        privateValue = privateCheck.value;
+    }
 
-    // edit_acl 키 자체가 body 에 없으면 "변경 없음" 으로 처리 — 기존 행이 있다면 그 값을 유지한다.
-    // (private 만 갱신하는 구 클라이언트가 ACL 을 silent 하게 지워버리는 것을 막는다.)
     const editAclProvided = Object.prototype.hasOwnProperty.call(body, 'edit_acl');
     let editAclSerialized: string | null = null;
     if (editAclProvided) {
@@ -2428,47 +2438,58 @@ adminRoutes.post('/doc-setting-prefix-rules', async (c) => {
         editAclSerialized = serializeEditAcl(norm.value);
     }
 
-    // 신규 행을 만드는 경우, 정책이 하나라도 있어야 한다.
-    const newRowHasNoPolicy = privateCheck.value === null && editAclSerialized === null;
-
-    // upsert: edit_acl 컬럼은 키가 제공된 경우에만 갱신, 아니면 기존 값을 유지.
-    const existingRow = await db
-        .prepare('SELECT id, edit_acl FROM doc_setting_prefix_rules WHERE prefix = ?')
-        .bind(prefix)
-        .first<{ id: number; edit_acl: string | null }>();
-
-    if (newRowHasNoPolicy && !existingRow) {
-        return c.json({ error: '비공개/편집 ACL 중 적어도 한 항목은 규칙을 지정해야 합니다.' }, 400);
-    }
-    if (existingRow && privateCheck.value === null) {
-        const finalAclAfter = editAclProvided ? editAclSerialized : existingRow.edit_acl;
-        if (finalAclAfter === null) {
-            return c.json({ error: '비공개/편집 ACL 중 적어도 한 항목은 규칙을 지정해야 합니다.' }, 400);
+    const categoriesProvided = Object.prototype.hasOwnProperty.call(body, 'categories');
+    let categoriesNormalized: string | null = null;
+    if (categoriesProvided) {
+        const raw = body.categories;
+        if (raw === null || raw === undefined || (typeof raw === 'string' && raw.trim() === '')) {
+            categoriesNormalized = null;
+        } else if (typeof raw === 'string') {
+            if (!CATEGORY_PATTERN.test(raw)) {
+                return c.json({ error: '카테고리에는 한글/영문/숫자/공백/쉼표만 사용할 수 있습니다.' }, 400);
+            }
+            const norm = normalizeCategoryString(raw);
+            categoriesNormalized = norm || null;
+        } else {
+            return c.json({ error: 'categories 는 쉼표 구분 문자열이어야 합니다.' }, 400);
         }
     }
 
+    // upsert 전, 누락된 필드의 "기존값"을 확인해 정책 최소 1개 보장.
+    const existingRow = await db
+        .prepare('SELECT id, is_private, edit_acl, categories FROM doc_setting_prefix_rules WHERE prefix = ?')
+        .bind(prefix)
+        .first<{ id: number; is_private: number | null; edit_acl: string | null; categories: string | null }>();
+
+    const finalPriv = privateProvided ? privateValue : (existingRow?.is_private ?? null);
+    const finalAcl = editAclProvided ? editAclSerialized : (existingRow?.edit_acl ?? null);
+    const finalCats = categoriesProvided ? categoriesNormalized : (existingRow?.categories ?? null);
+    if (finalPriv === null && finalAcl === null && finalCats === null) {
+        return c.json({ error: '비공개/편집 ACL/카테고리 중 적어도 한 항목은 규칙을 지정해야 합니다.' }, 400);
+    }
+
+    // finalPriv/finalAcl/finalCats 가 이미 "보존 vs 갱신" 로직을 포함하므로 단순 excluded.* 매핑만 한다.
     await db
         .prepare(
-            `INSERT INTO doc_setting_prefix_rules (prefix, is_private, edit_acl, created_by)
-             VALUES (?, ?, ?, ?)
+            `INSERT INTO doc_setting_prefix_rules (prefix, is_private, edit_acl, categories, created_by)
+             VALUES (?, ?, ?, ?, ?)
              ON CONFLICT(prefix) DO UPDATE SET
                is_private = excluded.is_private,
-               edit_acl = CASE WHEN ?5 = 1 THEN excluded.edit_acl ELSE edit_acl END,
+               edit_acl   = excluded.edit_acl,
+               categories = excluded.categories,
                created_by = excluded.created_by,
                created_at = unixepoch()`
         )
-        .bind(prefix, privateCheck.value, editAclSerialized, currentUser.id, editAclProvided ? 1 : 0)
+        .bind(prefix, finalPriv, finalAcl, finalCats, currentUser.id)
         .run();
-
-    const finalAclForResponse = editAclProvided ? editAclSerialized : (existingRow?.edit_acl ?? null);
 
     writeAdminLog(
         c,
         'doc_setting_prefix_rule_save',
-        `자동 문서 설정 규칙 저장: ${prefix} → private=${privateCheck.value ?? '-'}, edit_acl=${finalAclForResponse ?? '-'}`,
+        `자동 문서 설정 규칙 저장: ${prefix} → private=${finalPriv ?? '-'}, edit_acl=${finalAcl ?? '-'}, categories=${finalCats ?? '-'}`,
         currentUser.id
     );
-    return c.json({ success: true, prefix, is_private: privateCheck.value, edit_acl: finalAclForResponse });
+    return c.json({ success: true, prefix, is_private: finalPriv, edit_acl: finalAcl, categories: finalCats });
 });
 
 /**
@@ -2506,6 +2527,7 @@ adminRoutes.delete('/doc-setting-prefix-rules/:id', async (c) => {
  */
 adminRoutes.get('/doc-setting-prefix-rules/subpages', async (c) => {
     const db = c.env.DB;
+    await ensureDocSettingPrefixRulesMigration(db);
     const prefixCheck = validateCategoryPrefix(c.req.query('prefix'));
     if ('error' in prefixCheck) return c.json({ error: prefixCheck.error }, 400);
     const { prefix } = prefixCheck;
@@ -2526,6 +2548,7 @@ adminRoutes.get('/doc-setting-prefix-rules/subpages', async (c) => {
         depth: p.slug.split('/').length - prefixDepth - 1,
         is_private: p.is_private ? 1 : 0,
         edit_acl: parseEditAcl(p.edit_acl),
+        categories: splitCategoryString(p.category),
     }));
 
     return c.json({ prefix, scanned: items.length, items });
@@ -2535,19 +2558,24 @@ adminRoutes.get('/doc-setting-prefix-rules/subpages', async (c) => {
  * POST /doc-setting-prefix-rules/bulk-apply
  * 본문: { prefix, privateAction: 'none'|'on'|'off',
  *         aclAction: 'none'|'clear'|'set', aclValue?,
+ *         categoriesAction: 'none'|'add'|'set'|'clear', categoriesValue?,
  *         ids: number[], persist?: boolean }
  * - 'on' = 1로 설정, 'off' = 0으로 설정, 'none' = 변경하지 않음.
+ * - categoriesAction: 'add' = 합집합 추가, 'set' = 완전 교체, 'clear' = 비움.
  * - 서버는 prefix 스캔 결과와 교집합으로 ids 를 필터링.
  * - persist=true 면 동일 prefix 규칙을 doc_setting_prefix_rules 에 upsert.
  */
 adminRoutes.post('/doc-setting-prefix-rules/bulk-apply', async (c) => {
     const db = c.env.DB;
+    await ensureDocSettingPrefixRulesMigration(db);
     const currentUser = c.get('user')!;
     const body = await c.req.json<{
         prefix?: string;
         privateAction?: unknown;
         aclAction?: unknown;
         aclValue?: unknown;
+        categoriesAction?: unknown;
+        categoriesValue?: unknown;
         ids?: unknown;
         persist?: boolean;
     }>();
@@ -2574,9 +2602,30 @@ adminRoutes.post('/doc-setting-prefix-rules/bulk-apply', async (c) => {
             return c.json({ error: "aclAction='set' 일 때 aclValue 가 비어 있습니다. 비활성은 'clear' 를 사용하세요." }, 400);
         }
     }
+
+    // 카테고리 액션: 'none' = 변경 없음, 'add' = 합집합 추가, 'set' = 완전 교체, 'clear' = 비움.
+    const catRaw = body.categoriesAction;
+    const categoriesAction: 'none' | 'add' | 'set' | 'clear' =
+        catRaw === 'add' ? 'add'
+        : catRaw === 'set' ? 'set'
+        : catRaw === 'clear' ? 'clear'
+        : 'none';
+    let categoriesValue: string = '';
+    if (categoriesAction === 'add' || categoriesAction === 'set') {
+        const raw = typeof body.categoriesValue === 'string' ? body.categoriesValue : '';
+        if (!CATEGORY_PATTERN.test(raw) || raw.trim() === '') {
+            return c.json({ error: '카테고리에는 한글/영문/숫자/공백/쉼표만 사용할 수 있습니다.' }, 400);
+        }
+        const norm = normalizeCategoryString(raw);
+        if (!norm) {
+            return c.json({ error: '카테고리를 1개 이상 입력해주세요.' }, 400);
+        }
+        categoriesValue = norm;
+    }
+
     const persist = body.persist === true;
 
-    if (privateAction === 'none' && aclAction === 'none' && !persist) {
+    if (privateAction === 'none' && aclAction === 'none' && categoriesAction === 'none' && !persist) {
         return c.json({ error: '변경할 설정을 선택하거나 자동 규칙으로 저장 옵션을 켜주세요.' }, 400);
     }
 
@@ -2599,31 +2648,56 @@ adminRoutes.post('/doc-setting-prefix-rules/bulk-apply', async (c) => {
     }
 
     let scanned = 0;
-    const updates: { id: number; slug: string; newPriv: number; newAcl: string | null }[] = [];
+    const updates: { id: number; slug: string; newPriv: number; newAcl: string | null; catChanged: boolean; newCategory: string | null }[] = [];
 
-    if (idsIn.length > 0 && (privateAction !== 'none' || aclAction !== 'none')) {
+    if (idsIn.length > 0 && (privateAction !== 'none' || aclAction !== 'none' || categoriesAction !== 'none')) {
         const scan = await scanPrefixSubpages<LockPrivateRow>(db, prefix, DOC_SETTING_SCAN_COLUMNS);
         if ('error' in scan) return c.json({ error: scan.error }, 400);
         scanned = scan.pages.length;
         const idToPage = new Map(scan.pages.map(p => [p.id, p]));
         const targetPriv = actionToFlag(privateAction);
+        const catRuleForMerge = categoriesAction === 'add' ? [{ prefix, categories: categoriesValue }] : null;
 
         for (const id of idsIn) {
             const page = idToPage.get(id);
             if (!page) continue;
             const curPriv = page.is_private ? 1 : 0;
             const curAcl = page.edit_acl ?? null;
+            const curCat = page.category ?? null;
             const newPriv = targetPriv === null ? curPriv : targetPriv;
             const newAcl = aclAction === 'none' ? curAcl : aclAction === 'clear' ? null : aclSetValue;
-            if (newPriv === curPriv && newAcl === curAcl) continue;
-            updates.push({ id: page.id, slug: page.slug, newPriv, newAcl });
+
+            let newCategory: string | null = curCat;
+            if (categoriesAction === 'add' && catRuleForMerge) {
+                const merged = mergeCategoriesFromRules(page.slug, curCat, catRuleForMerge);
+                newCategory = merged || null;
+            } else if (categoriesAction === 'set') {
+                newCategory = categoriesValue || null;
+            } else if (categoriesAction === 'clear') {
+                newCategory = null;
+            }
+            const catChanged = (newCategory ?? '') !== (curCat ?? '');
+
+            if (newPriv === curPriv && newAcl === curAcl && !catChanged) continue;
+            updates.push({ id: page.id, slug: page.slug, newPriv, newAcl, catChanged, newCategory });
         }
 
         if (updates.length > 0) {
-            const stmts: D1PreparedStatement[] = updates.map(u =>
-                db.prepare('UPDATE pages SET is_private = ?, edit_acl = ? WHERE id = ?')
-                    .bind(u.newPriv, u.newAcl, u.id)
-            );
+            const stmts: D1PreparedStatement[] = [];
+            for (const u of updates) {
+                if (u.catChanged) {
+                    stmts.push(
+                        db.prepare('UPDATE pages SET is_private = ?, edit_acl = ?, category = ? WHERE id = ?')
+                            .bind(u.newPriv, u.newAcl, u.newCategory, u.id)
+                    );
+                    stmts.push(...buildCategoryOnlyStatements(db, u.id, u.newCategory));
+                } else {
+                    stmts.push(
+                        db.prepare('UPDATE pages SET is_private = ?, edit_acl = ? WHERE id = ?')
+                            .bind(u.newPriv, u.newAcl, u.id)
+                    );
+                }
+            }
             const chunkSize = 200;
             for (let i = 0; i < stmts.length; i += chunkSize) {
                 await db.batch(stmts.slice(i, i + chunkSize));
@@ -2633,23 +2707,54 @@ adminRoutes.post('/doc-setting-prefix-rules/bulk-apply', async (c) => {
 
     let ruleSaved = false;
     if (persist) {
-        const rulePriv = actionToFlag(privateAction);
-        // 룰에는 ACL 'clear' 의미가 없다 ('none' = 룰에 ACL 없음, 'set' = ACL 강제). 'clear' 는 신규 문서에 NULL 강제와 동일하므로 ACL 룰 자체를 지정 안 한 것으로 본다.
-        const ruleAcl = aclAction === 'set' ? aclSetValue : null;
-        if (rulePriv === null && ruleAcl === null) {
-            return c.json({ error: '자동 규칙으로 저장하려면 비공개/편집 ACL 중 하나 이상을 지정해야 합니다.' }, 400);
+        // 기존 룰 조회 — 사용자가 명시하지 않은(액션='none') 필드는 기존 값을 보존한다.
+        // 그렇지 않으면 카테고리만 추가하려는 admin 이 기존 private/edit_acl 을 사일런트하게 삭제할 수 있다.
+        const existing = await db
+            .prepare('SELECT is_private, edit_acl, categories FROM doc_setting_prefix_rules WHERE prefix = ?')
+            .bind(prefix)
+            .first<{ is_private: number | null; edit_acl: string | null; categories: string | null }>();
+
+        const rulePriv: number | null = privateAction === 'none'
+            ? (existing?.is_private ?? null)
+            : actionToFlag(privateAction);
+        const ruleAcl: string | null =
+            aclAction === 'none' ? (existing?.edit_acl ?? null)
+            : aclAction === 'clear' ? null
+            : aclSetValue;
+        let ruleCats: string | null;
+        if (categoriesAction === 'none') {
+            ruleCats = existing?.categories ?? null;
+        } else if (categoriesAction === 'clear') {
+            ruleCats = null;
+        } else if (categoriesAction === 'set') {
+            ruleCats = categoriesValue || null;
+        } else {
+            // 'add': 기존 룰 카테고리에 합집합 추가
+            const baseCats = splitCategoryString(existing?.categories);
+            const addCats = splitCategoryString(categoriesValue);
+            const seen = new Set<string>(baseCats);
+            const merged = [...baseCats];
+            for (const c of addCats) {
+                if (!seen.has(c)) { seen.add(c); merged.push(c); }
+            }
+            ruleCats = merged.length > 0 ? merged.join(',') : null;
+        }
+
+        if (rulePriv === null && ruleAcl === null && ruleCats === null) {
+            return c.json({ error: '자동 규칙으로 저장하려면 비공개/편집 ACL/카테고리 중 하나 이상을 지정해야 합니다.' }, 400);
         }
         await db
             .prepare(
-                `INSERT INTO doc_setting_prefix_rules (prefix, is_private, edit_acl, created_by)
-                 VALUES (?, ?, ?, ?)
+                `INSERT INTO doc_setting_prefix_rules (prefix, is_private, edit_acl, categories, created_by)
+                 VALUES (?, ?, ?, ?, ?)
                  ON CONFLICT(prefix) DO UPDATE SET
                    is_private = excluded.is_private,
-                   edit_acl = excluded.edit_acl,
+                   edit_acl   = excluded.edit_acl,
+                   categories = excluded.categories,
                    created_by = excluded.created_by,
                    created_at = unixepoch()`
             )
-            .bind(prefix, rulePriv, ruleAcl, currentUser.id)
+            .bind(prefix, rulePriv, ruleAcl, ruleCats, currentUser.id)
             .run();
         ruleSaved = true;
     }
@@ -2667,7 +2772,7 @@ adminRoutes.post('/doc-setting-prefix-rules/bulk-apply', async (c) => {
     writeAdminLog(
         c,
         'doc_setting_bulk_apply',
-        `하위 문서 설정 관리: ${prefix}/** (스캔=${scanned}, 변경=${updates.length}/${idsIn.length}, private=${privateAction}, acl=${aclAction}${ruleSaved ? ', 규칙저장' : ''})`,
+        `하위 문서 설정 관리: ${prefix}/** (스캔=${scanned}, 변경=${updates.length}/${idsIn.length}, private=${privateAction}, acl=${aclAction}, cats=${categoriesAction}${ruleSaved ? ', 규칙저장' : ''})`,
         currentUser.id
     );
 

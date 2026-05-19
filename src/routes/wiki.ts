@@ -828,6 +828,7 @@ import {
     normalizeCategoryAclMode,
     type CategoryAclMode,
 } from '../utils/categoryAcl';
+import { ensureDocSettingPrefixRulesMigration } from '../utils/docSettingPrefixRulesMigration';
 /**
  * GET /config
  * 동적 설정 (위키 이름 등) 반환
@@ -2118,18 +2119,26 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
         }
 
         // 자동 문서 설정 prefix 룰 (생성 시점에만 적용)
-        // 가장 긴 일치 prefix 가 승리. 규칙 자체가 관리자가 작성한 정책이므로
-        // 생성자의 RBAC 검사를 우회해 강제 적용한다. 비관리자의 body.is_private 입력은
-        // 위에서 이미 0 으로 마스크된 상태이므로 추가 처리 불필요.
+        // - is_private / edit_acl: 가장 긴 일치 prefix 가 승리 (longest-match).
+        //   더 긴 prefix 가 해당 필드를 null 로 두면 "여기서는 제한 없음" 으로 부모를 덮어쓴다 (기존 의미론 유지).
+        //   단, 카테고리 전용 룰(is_private/edit_acl 모두 null)은 ACL/private 의도가 없으므로
+        //   longest-match 후보에서 제외해 짧은 부모 룰의 ACL/private 을 가린(shadow) 사고를 막는다.
+        // - categories: 매칭되는 모든 prefix 의 합집합 (category_prefix_rules 와 동일 정책).
+        // 규칙 자체가 관리자가 작성한 정책이므로 생성자의 RBAC 검사를 우회해 강제 적용한다.
+        // 비관리자의 body.is_private 입력은 위에서 이미 0 으로 마스크된 상태이므로 추가 처리 불필요.
         try {
+            // 구 배포 DB 에는 categories 컬럼이 없어 SELECT 가 실패하면 이 try 블록 전체가 catch 로
+            // 빠져 기존 is_private/edit_acl 강제 적용까지 모두 무력화된다 — 콜드 스타트 1회 마이그레이션.
+            await ensureDocSettingPrefixRulesMigration(db);
             const ruleRows = await db
-                .prepare('SELECT prefix, is_private, edit_acl FROM doc_setting_prefix_rules')
-                .all<{ prefix: string; is_private: number | null; edit_acl: string | null }>();
+                .prepare('SELECT prefix, is_private, edit_acl, categories FROM doc_setting_prefix_rules')
+                .all<{ prefix: string; is_private: number | null; edit_acl: string | null; categories: string | null }>();
             let bestLen = -1;
             let privateOverride: number | null = null;
             let aclOverride: string | null = null;
             for (const r of ruleRows.results || []) {
                 if (!slug.startsWith(r.prefix + '/')) continue;
+                if (r.is_private === null && r.edit_acl === null) continue; // 카테고리 전용 룰 제외
                 if (r.prefix.length > bestLen) {
                     bestLen = r.prefix.length;
                     privateOverride = r.is_private;
@@ -2143,6 +2152,16 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
             const adminExplicitlySetEditAcl = isAdmin && requestedEditAcl.provided;
             if (aclOverride !== null && finalEditAcl === null && !adminExplicitlySetEditAcl) {
                 finalEditAcl = serializeEditAcl(parseEditAcl(aclOverride));
+            }
+
+            // categories: 매칭되는 모든 룰의 합집합. effectiveCategory 에 머지하면
+            // 뒤따르는 category_acl 머지 블록이 자동 부여된 카테고리에 매달린 ACL 도 함께 적용한다.
+            const catRules = (ruleRows.results || [])
+                .filter(r => r.categories)
+                .map(r => ({ prefix: r.prefix, categories: r.categories as string }));
+            if (catRules.length > 0) {
+                const merged = mergeCategoriesFromRules(slug, effectiveCategory, catRules);
+                effectiveCategory = merged || null;
             }
         } catch (e) {
             console.error('doc_setting_prefix_rules lookup failed (create):', e);
