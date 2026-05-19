@@ -622,7 +622,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                     source?: 'page' | 'prefix_rule' | 'none';
                     min_age_days?: number;
                     is_private?: number;
-                    admin_namespace_prefix?: string;
                 };
                 if (!ep.allowed) {
                     const reason = ep.reason || 'unknown';
@@ -649,8 +648,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                         html = '메인 문서는 관리자만 편집할 수 있습니다.';
                     } else if (reason === 'image_namespace') {
                         html = '"이미지:" 네임스페이스의 문서는 미디어 업로드 페이지로 관리됩니다.';
-                    } else if (reason === 'admin_namespace') {
-                        html = `<code>${ep.admin_namespace_prefix || ''}</code> 로 시작하는 문서는 관리자만 편집할 수 있습니다.`;
                     } else if (reason === 'no_permission') {
                         html = '편집 권한이 없는 계정입니다.';
                     } else if (reason === 'edit_acl' && aclSummary) {

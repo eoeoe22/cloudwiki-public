@@ -186,14 +186,6 @@ CREATE TABLE IF NOT EXISTS category_acl (
     created_by INTEGER REFERENCES users(id) ON DELETE SET NULL
 );
 
--- 관리자 전용 네임스페이스 (prefix 기반)
--- prefix 로 시작하는 슬러그를 가진 문서는 관리자(admin:access)만 생성/편집/이동/되돌리기 가능
-CREATE TABLE IF NOT EXISTS admin_namespaces (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    prefix     TEXT NOT NULL UNIQUE,
-    created_at INTEGER DEFAULT (unixepoch())
-);
-
 -- 설정 테이블
 CREATE TABLE IF NOT EXISTS settings (
   id                      INTEGER PRIMARY KEY CHECK (id = 1),

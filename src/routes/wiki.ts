@@ -2,7 +2,6 @@ import { Hono } from 'hono';
 import type { Env, Page, Revision } from '../types';
 import { requireAuth, requireAdmin, requirePermission } from '../middleware/session';
 import { normalizeSlug, isR2OnlyNamespace } from '../utils/slug';
-import { matchAdminNamespace } from '../utils/adminNamespace';
 import { safeJSON } from '../utils/json';
 import { ROLE_CASE_SQL, enrichRoles, RBAC } from '../utils/role';
 import { fetchMediaTags } from '../utils/mediaTags';
@@ -1533,22 +1532,6 @@ wiki.get('/w/:slug/edit-permission', requireAuth, async (c) => {
         });
     }
 
-    // 3) 관리자 전용 네임스페이스 prefix — 기존/신규 페이지 양쪽에 동일하게 적용.
-    if (!isAdmin) {
-        const adminPrefix = await matchAdminNamespace(db, slug);
-        if (adminPrefix) {
-            return c.json({
-                allowed: false,
-                reason: 'admin_namespace',
-                acl: null,
-                source: 'none',
-                min_age_days: 0,
-                is_private: 0,
-                admin_namespace_prefix: adminPrefix,
-            });
-        }
-    }
-
     const page = await db
         .prepare('SELECT id, is_private, edit_acl, deleted_at FROM pages WHERE slug = ?')
         .bind(slug)
@@ -1725,14 +1708,6 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
     // content 수정은 /api/media/doc/:filename 엔드포인트로만 가능하다.
     if (slug.startsWith('이미지:')) {
         return c.json({ error: '"이미지:"는 이미지 문서 전용 네임스페이스이므로 일반 문서 제목으로 사용할 수 없습니다.' }, 403);
-    }
-
-    // 관리자 전용 네임스페이스(prefix) 검증
-    if (!isAdmin) {
-        const adminPrefix = await matchAdminNamespace(db, slug);
-        if (adminPrefix) {
-            return c.json({ error: `"${adminPrefix}" 로 시작하는 문서는 관리자만 편집할 수 있습니다.` }, 403);
-        }
     }
 
     // 관리자 전용 카테고리 검증 — category_acl 의 admin_only 플래그 기준 (구 admin_categories 화이트리스트 대체).
@@ -2969,14 +2944,6 @@ wiki.post('/w/:slug/revert', requireAuth, async (c) => {
 
     if (page.is_private === 1 && !rbac.can(user.role, 'wiki:private')) {
         return c.json({ error: '문서를 찾을 수 없습니다.' }, 404);
-    }
-
-    // 관리자 전용 네임스페이스 검증
-    if (!isAdmin) {
-        const adminPrefix = await matchAdminNamespace(db, slug);
-        if (adminPrefix) {
-            return c.json({ error: `"${adminPrefix}" 로 시작하는 문서는 관리자만 되돌릴 수 있습니다.` }, 403);
-        }
     }
 
     // admin_only ACL 문서 되돌리기는 관리자만 가능. (구 is_locked 분기 대체)

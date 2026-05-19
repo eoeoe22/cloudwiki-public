@@ -193,11 +193,17 @@
           <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
         </div>
         <div class="modal-body">
-          <div class="d-flex gap-2 mb-2">
-            <button type="button" id="iconPickerTabMdi" class="btn btn-sm btn-outline-primary active">MDI</button>
-            <button type="button" id="iconPickerTabBi" class="btn btn-sm btn-outline-primary">Bootstrap</button>
-            <button type="button" id="iconPickerNoneBtn" class="btn btn-sm btn-outline-secondary ms-auto">
-              <i class="bi bi-x me-1"></i>아이콘 없음
+          <div class="icon-picker-toolbar mb-2">
+            <div class="icon-picker-tabs" role="tablist" aria-label="아이콘 라이브러리">
+              <button type="button" id="iconPickerTabMdi" class="icon-picker-tab active" role="tab" aria-selected="true">
+                <i class="mdi mdi-material-design"></i><span>MDI</span>
+              </button>
+              <button type="button" id="iconPickerTabBi" class="icon-picker-tab" role="tab" aria-selected="false">
+                <i class="bi bi-bootstrap"></i><span>Bootstrap</span>
+              </button>
+            </div>
+            <button type="button" id="iconPickerNoneBtn" class="icon-picker-none-btn">
+              <i class="bi bi-x-lg"></i><span>아이콘 없음</span>
             </button>
           </div>
           <input type="text" id="iconSearchInput" class="form-control mb-3" placeholder="아이콘 이름 검색...">

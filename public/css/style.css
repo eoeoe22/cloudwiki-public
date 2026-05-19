@@ -2336,6 +2336,94 @@ html[data-theme="dark"] .push-status-on {
   filter: invert(1);
 }
 
+/* ── 아이콘 피커 모달 툴바 (라이브러리 탭 + 아이콘 없음 버튼) ──
+ * 기본 Bootstrap btn-outline-primary 가 사이트 wiki 토큰과 어긋나 보여 별도 스타일 부여. */
+.icon-picker-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.icon-picker-tabs {
+  display: inline-flex;
+  padding: 3px;
+  gap: 2px;
+  background: var(--wiki-bg-alt);
+  border: 1px solid var(--wiki-border);
+  border-radius: 999px;
+}
+
+.icon-picker-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 14px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  line-height: 1.2;
+  color: var(--wiki-text-muted);
+  background: transparent;
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.15s var(--wiki-ease), color 0.15s var(--wiki-ease);
+}
+
+.icon-picker-tab i {
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.icon-picker-tab:hover:not(.active) {
+  color: var(--wiki-text);
+  background: rgba(var(--wiki-primary-rgb), 0.08);
+}
+
+.icon-picker-tab.active {
+  color: var(--wiki-btn-text);
+  background: var(--wiki-primary);
+  box-shadow: var(--wiki-shadow-sm);
+}
+
+.icon-picker-tab:focus-visible {
+  outline: none;
+  box-shadow: var(--wiki-focus-ring);
+}
+
+.icon-picker-none-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  padding: 5px 12px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  line-height: 1.2;
+  color: var(--wiki-text-muted);
+  background: transparent;
+  border: 1px solid var(--wiki-border);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: color 0.15s var(--wiki-ease), border-color 0.15s var(--wiki-ease), background 0.15s var(--wiki-ease);
+}
+
+.icon-picker-none-btn i {
+  font-size: 0.85rem;
+  line-height: 1;
+}
+
+.icon-picker-none-btn:hover {
+  color: var(--wiki-danger);
+  border-color: var(--wiki-danger);
+  background: rgba(239, 68, 68, 0.08);
+}
+
+.icon-picker-none-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--wiki-focus-ring);
+}
+
 /* ── 아이콘 피커 모달 그리드 ──
  * 에디터(edit/modals.ts) 와 standalone(iconPicker.ts) 양쪽에서 사용.
  * 이전엔 edit.css 에만 있어 admin/blog 페이지에서는 스타일이 적용되지 않았음. */

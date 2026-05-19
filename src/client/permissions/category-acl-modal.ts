@@ -152,13 +152,12 @@ function aclFieldsetHtml(idPrefix: string, initialAcl: EditAcl | null): string {
     const flagSet = new Set(initialAcl?.flags ?? []);
     return `
         <fieldset class="perm-acl-fieldset" style="border: 1px dashed var(--bs-border-color); padding: 8px 12px; border-radius: 6px;">
-            <legend class="bulkcat-section-title" style="font-size: 0.85em; padding: 0 6px;">ACL 정의 (모든 조건 충족 — AND)</legend>
             <div style="display: flex; flex-wrap: wrap; gap: 6px 16px;">
                 ${ACL_FLAG_ORDER.map(f => `
                     <label class="form-check-inline mb-0"><input class="form-check-input ${idPrefix}-flag" type="checkbox" value="${f}"${flagSet.has(f) ? ' checked' : ''}> <span class="ms-1">${ACL_FLAG_LABELS[f]}</span></label>
                 `).join('')}
             </div>
-            <small class="text-muted"><b>관리자 전용</b> 플래그가 있는 카테고리는 일반 사용자가 적용할 수 없습니다 (구 "관리자 전용 카테고리" 와 동일 효과).</small>
+            <small class="text-muted"><b>관리자 전용</b> 플래그가 있는 카테고리는 일반 사용자가 적용할 수 없습니다.</small>
         </fieldset>
     `;
 }
@@ -170,7 +169,7 @@ function aclBadge(acl: EditAcl | null): string {
 
 function pageListHtml(pages: PageItem[]): string {
     if (pages.length === 0) {
-        return `<div class="bulkcat-empty">이 카테고리에 속한 문서가 없습니다. 템플릿만 저장하면 이후 적용되는 문서에 prompt 가 표시됩니다.</div>`;
+        return `<div class="bulkcat-empty">이 카테고리에 속한 문서가 없습니다. 템플릿만 저장하면 이후 적용되는 문서에 적용됩니다.</div>`;
     }
     const rows = pages.map(p => `
         <tr data-page-id="${p.id}">
@@ -184,7 +183,7 @@ function pageListHtml(pages: PageItem[]): string {
         </tr>
     `).join('');
     const warning = pages.length > 500
-        ? `<div class="bulkcat-warning">총 ${pages.length}개 — 많을 경우 브라우저가 느려질 수 있습니다.</div>`
+        ? `<div class="bulkcat-warning">총 ${pages.length}개</div>`
         : '';
     return `
         ${warning}
@@ -213,7 +212,7 @@ function buildEditorHtml(name: string, initialAcl: EditAcl | null, pageCount: nu
                         <i class="mdi mdi-content-save"></i> 템플릿 저장
                     </button>
                 </div>
-                <small class="text-muted">템플릿을 저장하면 이후 문서가 이 카테고리를 적용할 때 사용자에게 모드 선택 prompt 가 표시됩니다. 기존 문서들의 ACL 은 변경되지 않습니다.</small>
+                <small class="text-muted">템플릿을 저장하면 이후 문서가 이 카테고리를 적용할 때 적용됩니다. 기존 문서들의 ACL 은 변경되지 않습니다.</small>
             </section>
 
             <section class="bulkcat-section bulk-modal-section-card bulk-modal-section-muted">

@@ -76,6 +76,8 @@ export function openIconPicker(): Promise<string | null> {
             currentType = type;
             tabBi!.classList.toggle('active', type === 'bi');
             tabMdi!.classList.toggle('active', type === 'mdi');
+            tabBi!.setAttribute('aria-selected', String(type === 'bi'));
+            tabMdi!.setAttribute('aria-selected', String(type === 'mdi'));
             if (type === 'bi') {
                 titleEl!.textContent = 'Bootstrap Icons 선택';
                 typeIconEl!.className = 'bi bi-bootstrap me-2';
