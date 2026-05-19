@@ -181,6 +181,11 @@ function drawSV(canvasId: string, state: ColorState) {
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
+    // Sync internal resolution to CSS display size to prevent stretching distortion.
+    const dw = canvas.offsetWidth;
+    const dh = canvas.offsetHeight;
+    if (dw > 0) canvas.width = dw;
+    if (dh > 0) canvas.height = dh;
     const w = canvas.width, h = canvas.height;
     for (let x = 0; x < w; x++) {
         const s = x / w;
@@ -209,6 +214,9 @@ function drawHue(canvasId: string, state: ColorState) {
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
+    // Sync internal resolution to CSS display size to prevent stretching distortion.
+    const dw = canvas.offsetWidth;
+    if (dw > 0) canvas.width = dw;
     const w = canvas.width, h = canvas.height;
     const gradient = ctx.createLinearGradient(0, 0, w, 0);
     for (let i = 0; i <= 6; i++) gradient.addColorStop(i / 6, hsvToHex(i * 60, 1, 1));
