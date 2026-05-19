@@ -284,13 +284,13 @@ function aclFieldsetHtml(idPrefix: string, initialAcl: EditAcl | null, initially
     const flagSet = new Set(initialAcl?.flags ?? []);
     return `
         <fieldset class="perm-acl-fieldset" id="${idPrefix}Fieldset" style="border: 1px dashed var(--bs-border-color); padding: 8px 12px; border-radius: 6px; ${initiallyVisible ? '' : 'display: none;'}">
-            <legend class="bulkcat-section-title" style="font-size: 0.85em; padding: 0 6px;">ACL 정의 (모든 조건 충족 — AND)</legend>
+            <legend class="bulkcat-section-title" style="font-size: 0.85em; padding: 0 6px;">권한</legend>
             <div style="display: flex; flex-wrap: wrap; gap: 6px 16px;">
                 ${ACL_FLAG_ORDER.map(f => `
                     <label class="form-check-inline mb-0"><input class="form-check-input ${idPrefix}-flag" type="checkbox" value="${f}"${flagSet.has(f) ? ' checked' : ''}> <span class="ms-1">${ACL_FLAG_LABELS[f]}</span></label>
                 `).join('')}
             </div>
-            <small class="text-muted">가입일 임계값(N일)은 관리자 콘솔 &gt; 위키 설정의 <b>편집 ACL 가입 일수</b> 전역 설정을 따릅니다. <b>관리자 전용</b> 플래그는 일반 사용자 편집을 일괄 차단합니다 (구 편집 잠금 대체).</small>
+            <small class="text-muted">가입일 임계값(N일)은 관리자 콘솔 &gt; 위키 설정의 <b>편집 ACL 가입 일수</b> 전역 설정을 따릅니다. <br><b>관리자 전용</b> 플래그는 일반 사용자 편집을 일괄 차단합니다.</small>
         </fieldset>
     `;
 }
@@ -325,7 +325,7 @@ function buildModalHtml(slug: string, page: CurrentPage | null, pageLoadError: s
             <section class="bulkcat-section bulk-modal-section-card">
                 <header class="bulkcat-section-head">
                     <h6 class="bulkcat-section-title">현재 문서</h6>
-                    <span class="bulkcat-counter">단건 적용 — 즉시 반영</span>
+                    <span class="bulkcat-counter">이 문서에만 적용</span>
                 </header>
                 ${currentSection}
             </section>
@@ -367,7 +367,7 @@ function buildModalHtml(slug: string, page: CurrentPage | null, pageLoadError: s
                     <fieldset class="perm-acl-fieldset" id="permBulkCatFieldset" style="border: 1px dashed var(--bs-border-color); padding: 8px 12px; border-radius: 6px; display: none;">
                         <legend class="bulkcat-section-title" style="font-size: 0.85em; padding: 0 6px;">카테고리 (쉼표로 구분)</legend>
                         <input type="text" class="form-control form-control-sm" id="permBulkCatInput" placeholder="예: 기술, API">
-                        <small class="text-muted">한글/영문/숫자/공백/쉼표만 입력 가능. 자동 규칙으로 저장 시, 이후 이 prefix 하위에 새로 생성되는 문서에 합집합으로 자동 부여됩니다.</small>
+                        <small class="text-muted">한글/영문/숫자/공백/쉼표만 입력 가능. 자동 규칙으로 저장 시, 이후 이 문서 하위에 새로 생성되는 문서에 자동 부여됩니다.</small>
                     </fieldset>
                 </div>
                 <p class="bulkcat-section-hint">
@@ -422,7 +422,7 @@ function setCurSaveStatus(text: string, kind: 'info' | 'ok' | 'err' = 'info') {
     el.textContent = text;
     el.style.color = kind === 'err' ? 'var(--wiki-danger, #EF4444)'
         : kind === 'ok' ? 'var(--wiki-success, #10B981)'
-        : 'var(--wiki-text-muted)';
+            : 'var(--wiki-text-muted)';
 }
 
 async function saveCurrent(state: ModalState): Promise<void> {
