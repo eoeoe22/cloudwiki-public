@@ -31,7 +31,7 @@ import {
     buildCommitSummary,
     validateMcpSummaryLength,
 } from './admin-mcp';
-import { findConflictingPage, invalidatePageCache, refreshRecentChangesCache } from './wiki';
+import { findConflictingPage } from './wiki';
 import {
     findPrefixRuleEditAcl,
     serializeEditAcl,
@@ -59,7 +59,6 @@ interface DraftRow {
     content: string;
     category: string | null;
     redirect_to: string | null;
-    requested_lock: number | null;
     title: string | null;
     has_title_change: number;
     submitted_at: number | null;
@@ -81,7 +80,7 @@ async function loadSubmittedDraftForUser(
 ): Promise<DraftRow | null> {
     const row = await env.DB.prepare(
         `SELECT id, user_id, slug, action, base_revision_id, base_version,
-                content, category, redirect_to, requested_lock, title, has_title_change,
+                content, category, redirect_to, title, has_title_change,
                 submitted_at, submitted_summary, updated_at
          FROM mcp_drafts WHERE id = ? AND user_id = ? AND submitted_at IS NOT NULL`
     ).bind(draftId, user.id).first<DraftRow>();
@@ -104,7 +103,6 @@ mcpSubmissionsRoutes.get('/mcp-submissions', requireAuth, async (c) => {
                length(d.content) AS content_length,
                p.last_revision_id AS current_revision_id,
                p.version AS current_version,
-               p.is_locked AS current_is_locked,
                p.deleted_at AS current_deleted_at,
                EXISTS (SELECT 1 FROM pages WHERE slug = d.slug AND deleted_at IS NOT NULL) AS has_soft_deleted
         FROM mcp_drafts d
@@ -115,7 +113,7 @@ mcpSubmissionsRoutes.get('/mcp-submissions', requireAuth, async (c) => {
     `).bind(user.id).all<{
         id: number; slug: string; action: string; base_revision_id: number | null; base_version: number;
         submitted_at: number; submitted_summary: string | null; updated_at: number; content_length: number;
-        current_revision_id: number | null; current_version: number | null; current_is_locked: number | null;
+        current_revision_id: number | null; current_version: number | null;
         current_deleted_at: number | null; has_soft_deleted: number;
     }>();
 
@@ -153,7 +151,6 @@ mcpSubmissionsRoutes.get('/mcp-submissions', requireAuth, async (c) => {
             base_version: r.base_version,
             current_revision_id: r.current_revision_id,
             current_version: r.current_version,
-            current_is_locked: r.current_is_locked === 1,
             has_conflict: hasConflict,
             conflict_reason: conflictReason,
         };
@@ -194,11 +191,11 @@ mcpSubmissionsRoutes.get('/mcp-submissions/:id', requireAuth, async (c) => {
     if (!draft) return c.json({ error: 'not found' }, 404);
 
     const page = await c.env.DB.prepare(
-        `SELECT id, version, is_locked, is_private, content, last_revision_id, deleted_at,
+        `SELECT id, version, is_private, content, last_revision_id, deleted_at,
                 category AS current_category, redirect_to AS current_redirect_to
          FROM pages WHERE slug = ?`
     ).bind(draft.slug).first<{
-        id: number; version: number; is_locked: number; is_private: number;
+        id: number; version: number; is_private: number;
         content: string; last_revision_id: number | null; deleted_at: number | null;
         current_category: string | null; current_redirect_to: string | null;
     }>();
@@ -280,13 +277,11 @@ mcpSubmissionsRoutes.get('/mcp-submissions/:id', requireAuth, async (c) => {
         base_version: draft.base_version,
         category: draft.category,
         redirect_to: draft.redirect_to,
-        requested_lock: draft.requested_lock,
         proposed_content: draft.content,
         current_content: currentContent,
         base_content: baseContent,
         current_revision_id: page?.last_revision_id ?? null,
         current_version: page?.version ?? null,
-        current_is_locked: page?.is_locked === 1,
         current_is_private: page?.is_private === 1,
         current_category: page?.current_category ?? null,
         has_conflict: hasConflict,
@@ -330,8 +325,8 @@ mcpSubmissionsRoutes.post('/mcp-submissions/:id/approve', requireAuth, async (c)
 
     if (draft.action === 'update') {
         const page = await c.env.DB.prepare(
-            'SELECT id, version, is_locked, content, category, last_revision_id, title FROM pages WHERE slug = ? AND deleted_at IS NULL'
-        ).bind(slug).first<{ id: number; version: number; is_locked: number; content: string; category: string | null; last_revision_id: number | null; title: string | null }>();
+            'SELECT id, version, content, category, last_revision_id, title FROM pages WHERE slug = ? AND deleted_at IS NULL'
+        ).bind(slug).first<{ id: number; version: number; content: string; category: string | null; last_revision_id: number | null; title: string | null }>();
         if (!page) {
             return c.json({ error: 'conflict', reason: 'page_missing' }, 409);
         }
@@ -345,26 +340,28 @@ mcpSubmissionsRoutes.post('/mcp-submissions/:id/approve', requireAuth, async (c)
                 current_version: page.version,
             }, 409);
         }
-        if (page.is_locked === 1 && !rbac.can(user.role, 'wiki:lock')) {
-            return c.json({ error: 'locked', message: '잠긴 문서는 wiki:lock 권한이 있어야 승인할 수 있습니다.' }, 403);
-        }
 
         // 페이지의 edit_acl 평가 — 제출 시점에는 통과했더라도 승인 시점 (= 실제 author) 기준으로 재검증.
-        // 관리자는 우회. admin-mcp commit_edit 의 enforceMcpEditAcl 와 같은 정책.
-        if (!rbac.can(user.role, 'admin:access')) {
-            const pageAclRow = await c.env.DB
-                .prepare('SELECT edit_acl FROM pages WHERE id = ?')
-                .bind(page.id)
-                .first<{ edit_acl: string | null }>();
-            const pageAcl = parseEditAcl(pageAclRow?.edit_acl ?? null);
-            if (pageAcl && pageAcl.flags.length > 0) {
+        // admin_only 플래그가 없으면 관리자는 우회. admin-mcp commit_edit 의 enforceMcpEditAcl 와 같은 정책.
+        const isAdminApprove = rbac.can(user.role, 'admin:access');
+        const pageAclRow = await c.env.DB
+            .prepare('SELECT edit_acl FROM pages WHERE id = ?')
+            .bind(page.id)
+            .first<{ edit_acl: string | null }>();
+        const pageAcl = parseEditAcl(pageAclRow?.edit_acl ?? null);
+        if (pageAcl && pageAcl.flags.length > 0) {
+            const hasAdminOnly = pageAcl.flags.includes('admin_only');
+            if (!isAdminApprove || hasAdminOnly) {
                 const minAge = await getEditAclMinAgeDays(c.env.DB);
-                const ev = await evaluateEditAcl(c.env.DB, pageAcl, user, page.id, minAge);
+                const ev = await evaluateEditAcl(c.env.DB, pageAcl, user, page.id, minAge, isAdminApprove);
                 if (!ev.allowed) {
+                    const isAdminOnlyFail = ev.decisive === 'admin_only';
                     return c.json({
                         error: 'forbidden',
-                        reason: 'edit_acl',
-                        message: '이 문서를 편집할 권한이 부족합니다.',
+                        reason: isAdminOnlyFail ? 'admin_only' : 'edit_acl',
+                        message: isAdminOnlyFail
+                            ? '이 문서는 관리자만 편집할 수 있습니다.'
+                            : '이 문서를 편집할 권한이 부족합니다.',
                         edit_acl: pageAcl,
                         min_age_days: minAge,
                     }, 403);
@@ -387,10 +384,6 @@ mcpSubmissionsRoutes.post('/mcp-submissions/:id/approve', requireAuth, async (c)
                 }, 409);
             }
         }
-
-        const finalIsLocked = draft.requested_lock !== null
-            ? (rbac.can(user.role, 'wiki:lock') ? draft.requested_lock : page.is_locked)
-            : page.is_locked;
 
         // 승인 시점에 다시 한 번 라인 diff 계산 — admin-mcp commit_edit 와 동일한 마커.
         const enabledExt = (c.env.ENABLED_EXTENSIONS || '').split(',').map(s => s.trim()).filter(Boolean);
@@ -421,7 +414,6 @@ mcpSubmissionsRoutes.post('/mcp-submissions/:id/approve', requireAuth, async (c)
                 category: draft.category,
                 redirectTo: draft.redirect_to,
                 title: draft.has_title_change ? draft.title : undefined,
-                finalIsLocked,
                 slug,
                 logType: 'page_commit_approved',
                 logMessage: `[mcp-submission] approved draft #${draft.id}: ${slug} (v${page.version + 1})`,
@@ -439,7 +431,6 @@ mcpSubmissionsRoutes.post('/mcp-submissions/:id/approve', requireAuth, async (c)
                 rows: result.rows,
                 characters: result.characters,
                 ...(diffStats ? { lines_added: diffStats.added, lines_removed: diffStats.removed } : {}),
-                is_locked: finalIsLocked === 1,
             });
         } catch (e: any) {
             if (e?.code === 'CONCURRENT_MODIFICATION') {
@@ -490,26 +481,31 @@ mcpSubmissionsRoutes.post('/mcp-submissions/:id/approve', requireAuth, async (c)
                 }, 409);
             }
         }
-        const finalIsLocked = (draft.requested_lock !== null && rbac.can(user.role, 'wiki:lock'))
-            ? draft.requested_lock : 0;
         // 신규 문서 prefix 룰 ACL — /api/w/:slug 및 MCP commit_edit 의 create 분기와 일관되게,
         // 승인 시점에도 가장 긴 일치 prefix 의 edit_acl 을 새 페이지에 그대로 기록한다.
         const prefixAcl = await findPrefixRuleEditAcl(c.env.DB, slug);
         const createEditAclSerialized = (prefixAcl && prefixAcl.flags.length > 0)
             ? serializeEditAcl(prefixAcl) : null;
         // 승인 시점의 user (= 새 페이지 author) 가 prefix 룰 ACL 을 통과하는지 평가.
-        // 관리자는 우회. /api/w/:slug 의 신규 페이지 ACL 검증 및 admin-mcp 의 enforceMcpEditAcl 과 같은 정책.
-        if (prefixAcl && prefixAcl.flags.length > 0 && !rbac.can(user.role, 'admin:access')) {
-            const minAge = await getEditAclMinAgeDays(c.env.DB);
-            const ev = await evaluateEditAcl(c.env.DB, prefixAcl, user, null, minAge);
-            if (!ev.allowed) {
-                return c.json({
-                    error: 'forbidden',
-                    reason: 'edit_acl',
-                    message: '이 슬러그로 시작하는 문서는 ACL 정책상 새로 생성할 수 없습니다.',
-                    edit_acl: prefixAcl,
-                    min_age_days: minAge,
-                }, 403);
+        // admin_only 플래그가 없으면 관리자는 우회.
+        if (prefixAcl && prefixAcl.flags.length > 0) {
+            const isAdminCreate = rbac.can(user.role, 'admin:access');
+            const hasAdminOnly = prefixAcl.flags.includes('admin_only');
+            if (!isAdminCreate || hasAdminOnly) {
+                const minAge = await getEditAclMinAgeDays(c.env.DB);
+                const ev = await evaluateEditAcl(c.env.DB, prefixAcl, user, null, minAge, isAdminCreate);
+                if (!ev.allowed) {
+                    const isAdminOnlyFail = ev.decisive === 'admin_only';
+                    return c.json({
+                        error: 'forbidden',
+                        reason: isAdminOnlyFail ? 'admin_only' : 'edit_acl',
+                        message: isAdminOnlyFail
+                            ? '이 슬러그로 시작하는 문서는 관리자만 새로 생성할 수 있습니다.'
+                            : '이 슬러그로 시작하는 문서는 ACL 정책상 새로 생성할 수 없습니다.',
+                        edit_acl: prefixAcl,
+                        min_age_days: minAge,
+                    }, 403);
+                }
             }
         }
         const createDiffStats = computeLineDiffStats('', draft.content.replace(/\r\n?/g, '\n'));
@@ -521,7 +517,6 @@ mcpSubmissionsRoutes.post('/mcp-submissions/:id/approve', requireAuth, async (c)
                 category: draft.category,
                 redirectTo: draft.redirect_to,
                 title: draft.has_title_change ? draft.title : null,
-                finalIsLocked,
                 editAcl: createEditAclSerialized,
                 logType: 'page_create_commit_approved',
                 logMessage: `[mcp-submission] approved draft #${draft.id} (create): ${slug} (v1)`,
@@ -538,7 +533,6 @@ mcpSubmissionsRoutes.post('/mcp-submissions/:id/approve', requireAuth, async (c)
                 rows: result.rows,
                 characters: result.characters,
                 ...(createDiffStats ? { lines_added: createDiffStats.added, lines_removed: createDiffStats.removed } : {}),
-                is_locked: finalIsLocked === 1,
                 created: true,
             });
         } catch (e: any) {
@@ -561,11 +555,6 @@ mcpSubmissionsRoutes.post('/mcp-submissions/:id/approve', requireAuth, async (c)
  * 사용자가 에디터에서 충돌을 직접 병합해 저장(=새 리비전 생성)한 뒤 호출한다.
  * draft + 관련 알림을 정리하고, /reject 와 구분되는 admin_log 타입('mcp_submission_resolve') 을 남긴다.
  * 새 리비전 생성 자체는 /api/w/:slug PUT 이 처리하므로 본 핸들러는 후처리(정리)만 담당한다.
- *
- * 단, draft.requested_lock 이 설정되어 있고 호출자가 wiki:lock 권한을 가진 경우
- * pages.is_locked 도 함께 갱신한다 — 에디터 폼에서 잠금 체크박스가 제거되었으므로 (권한 관리 모달
- * 로 일원화) 에디터 검토 경로에서는 PUT 본문이 lock 을 운반하지 못한다. /approve 가 직접 적용하는
- * 정책과 동일한 의미를 본 후처리 단계에서 보존한다.
  */
 mcpSubmissionsRoutes.post('/mcp-submissions/:id/resolve', requireAuth, async (c) => {
     const user = c.get('user')!;
@@ -574,42 +563,16 @@ mcpSubmissionsRoutes.post('/mcp-submissions/:id/resolve', requireAuth, async (c)
     const draft = await loadSubmittedDraftForUser(c.env, user, draftId);
     if (!draft) return c.json({ error: 'not found' }, 404);
 
-    let lockApplied: { from: number; to: number } | null = null;
-    if (draft.requested_lock !== null) {
-        const rbac = c.get('rbac') as RBAC;
-        if (rbac.can(user.role, 'wiki:lock')) {
-            const page = await c.env.DB
-                .prepare('SELECT id, is_locked FROM pages WHERE slug = ? AND deleted_at IS NULL')
-                .bind(draft.slug)
-                .first<{ id: number; is_locked: number }>();
-            if (page && page.is_locked !== draft.requested_lock) {
-                await c.env.DB
-                    .prepare('UPDATE pages SET is_locked = ?, updated_at = unixepoch() WHERE id = ?')
-                    .bind(draft.requested_lock, page.id)
-                    .run();
-                lockApplied = { from: page.is_locked, to: draft.requested_lock };
-                // updated_at 이 bump 되었으므로 recent-changes 캐시(updated_at 정렬)도 함께 무효화.
-                c.executionCtx.waitUntil(Promise.allSettled([
-                    invalidatePageCache(c, draft.slug),
-                    refreshRecentChangesCache(c),
-                ]));
-            }
-        }
-    }
-
     await c.env.DB.batch([
         c.env.DB.prepare("DELETE FROM notifications WHERE type = 'mcp_submission' AND ref_id = ?").bind(draft.id),
         c.env.DB.prepare('DELETE FROM mcp_drafts WHERE id = ?').bind(draft.id),
     ]);
-    const logSuffix = lockApplied
-        ? ` (is_locked ${lockApplied.from === 1} → ${lockApplied.to === 1})`
-        : '';
     c.executionCtx.waitUntil(
         c.env.DB.prepare('INSERT INTO admin_log (type, log, user) VALUES (?, ?, ?)')
-            .bind('mcp_submission_resolve', `[mcp-submission] resolved via editor draft #${draft.id}: ${draft.slug}${logSuffix}`, user.id)
+            .bind('mcp_submission_resolve', `[mcp-submission] resolved via editor draft #${draft.id}: ${draft.slug}`, user.id)
             .run().catch(() => {})
     );
-    return c.json({ resolved: true, id: draft.id, slug: draft.slug, lock_applied: lockApplied });
+    return c.json({ resolved: true, id: draft.id, slug: draft.slug });
 });
 
 /**

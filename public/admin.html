@@ -322,23 +322,21 @@
           </div>
 
           <div class="card shadow-sm border-0 mb-4">
-            <div class="card-header py-3">
-              <h5 class="mb-0">관리자 전용 카테고리</h5>
+            <div class="card-header py-3 d-flex justify-content-between align-items-center">
+              <h5 class="mb-0">카테고리 ACL</h5>
+              <button class="btn btn-sm btn-primary" onclick="openCategoryAclModal()">
+                <i class="mdi mdi-shield-account"></i> 관리
+              </button>
             </div>
             <div class="card-body">
-              <div class="d-flex gap-2 mb-3">
-                <input
-                  type="text"
-                  id="newCategoryInput"
-                  class="form-control"
-                  placeholder="새 카테고리 이름"
-                />
-                <button class="btn btn-primary" onclick="addCategory()">
-                  추가
-                </button>
-              </div>
+              <p class="text-muted small mb-3">
+                카테고리에 편집 ACL 템플릿을 매달면, 그 카테고리가 문서에 적용될
+                때 페이지의 <code>edit_acl</code> 이 모드(덮어쓰기/합치기/무시)에 따라
+                갱신됩니다. <b>관리자 전용</b> 플래그를 켜면 비관리자는 해당
+                카테고리를 적용할 수 없습니다 (구 "관리자 전용 카테고리" 와 동일 효과).
+              </p>
               <div
-                id="categoriesList"
+                id="categoryAclSummary"
                 class="list-group list-group-flush border rounded"
               ></div>
             </div>
@@ -373,70 +371,6 @@
                 id="adminNamespacesList"
                 class="list-group list-group-flush border rounded"
               ></div>
-            </div>
-          </div>
-
-          <!-- ── 문서별 편집 허용 명단 (page_edit_allowlist) ── -->
-          <div class="card shadow-sm border-0 mb-4">
-            <div class="card-header py-3">
-              <h5 class="mb-0">문서별 편집 허용 명단</h5>
-            </div>
-            <div class="card-body">
-              <p class="text-muted small mb-3">
-                <code>edit_acl</code> 에 <b>허용 명단 등재</b> 플래그가 켜진 문서에서
-                해당 문서의 편집을 허용할 사용자 명단을 관리합니다. 명단에 등재되어도
-                해당 문서의 <code>edit_acl</code> 에 <b>허용 명단</b> 플래그가 없으면
-                효력이 없습니다.
-              </p>
-              <div class="row g-2 mb-3">
-                <div class="col-md-7">
-                  <input
-                    type="text"
-                    id="allowlistSlugInput"
-                    class="form-control"
-                    placeholder="문서 슬러그 (예: Cloudwiki/메인)"
-                    autocomplete="off"
-                  />
-                </div>
-                <div class="col-md-5">
-                  <button
-                    class="btn btn-wiki w-100"
-                    type="button"
-                    onclick="loadEditAllowlist()"
-                  >
-                    <i class="mdi mdi-magnify"></i> 명단 조회
-                  </button>
-                </div>
-              </div>
-              <div id="editAllowlistPanel" class="border rounded p-3" style="display: none;">
-                <div class="d-flex align-items-center justify-content-between mb-2">
-                  <div class="text-muted small">
-                    슬러그: <code id="editAllowlistSlugLabel"></code>
-                    <span id="editAllowlistAclLabel" class="ms-2"></span>
-                  </div>
-                </div>
-                <div class="row g-2 mb-3">
-                  <div class="col-md-7">
-                    <input
-                      type="number"
-                      id="editAllowlistUserIdInput"
-                      class="form-control"
-                      placeholder="추가할 user_id"
-                      min="1"
-                    />
-                  </div>
-                  <div class="col-md-5">
-                    <button
-                      class="btn btn-primary w-100"
-                      type="button"
-                      onclick="addToEditAllowlist()"
-                    >
-                      <i class="mdi mdi-account-plus"></i> 추가
-                    </button>
-                  </div>
-                </div>
-                <div id="editAllowlistList" class="list-group list-group-flush border rounded"></div>
-              </div>
             </div>
           </div>
 
@@ -1103,8 +1037,9 @@
                   <ul class="mb-2 ps-3">
                     <li>
                       편집 도구는 일반 위키 API 와 동일한 RBAC 정책을 따릅니다.
-                      잠긴 문서 편집/이동에는
-                      <code>wiki:lock</code>, 영구 삭제(hard=true)에는 최고
+                      관리자 전용 ACL (<code>edit_acl.flags</code> 에
+                      <code>admin_only</code>) 이 적용된 문서 편집/이동에는
+                      <code>admin:access</code>, 영구 삭제(hard=true)에는 최고
                       관리자 권한이 필요합니다.
                     </li>
                     <li>
@@ -1438,7 +1373,7 @@
     <script type="module" src="/dist/common.js"></script>
     <script type="module" src="/dist/icon-picker.js"></script>
     <script type="module" src="/dist/admin-palettes.js"></script>
-    <script type="module" src="/dist/admin-edit-allowlist.js"></script>
+    <script type="module" src="/dist/category-acl-modal.js"></script>
     <script>
       // ── 탭 전환 로직 ──
       function showTab(tabId) {
@@ -2149,12 +2084,9 @@
           const html = (data.pages || [])
             .map((p) => {
               const slugAttr = JSON.stringify(p.slug).replace(/"/g, "&quot;");
-              const badges = p.is_locked
-                ? '<span class="badge bg-warning text-dark ms-1">잠금</span>'
-                : "";
               return `<tr>
                 <td>
-                  <div class="fw-bold small">${escapeHtml(p.slug)}${badges}</div>
+                  <div class="fw-bold small">${escapeHtml(p.slug)}</div>
                 </td>
                 <td class="small text-muted">${new Date(p.deleted_at * 1000).toLocaleString()}</td>
                 <td>
@@ -2278,39 +2210,56 @@
         }
       }
 
-      // ── 카테고리 ──
+      // ── 카테고리 ACL ──
+      // 관리 모달은 src/client/permissions/category-acl-modal.ts (window.openCategoryAclModal)
+      // 카드 요약 목록은 /api/admin/category-acl 로 직접 fetch.
       async function loadCategories() {
-        const res = await fetch("/api/admin/categories");
-        const cats = await res.json();
-        document.getElementById("categoriesList").innerHTML =
-          (cats || [])
-            .map(
-              (c) => `
-                <div class="list-group-item d-flex justify-content-between align-items-center py-2">
-                    <span class="small"><i class="mdi mdi-folder-outline me-1"></i>${escapeHtml(c.name)}</span>
-                    <button class="btn btn-xs btn-link text-danger p-0" onclick="deleteCategory(${c.id})"><i class="mdi mdi-delete-outline"></i></button>
-                </div>
-            `,
-            )
-            .join("") ||
-          '<div class="p-3 text-center text-muted small">카테고리 없음</div>';
-      }
-      async function addCategory() {
-        const name = document.getElementById("newCategoryInput").value.trim();
-        if (!name) return;
-        const res = await fetch("/api/admin/categories", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name }),
-        });
-        if (res.ok) {
-          document.getElementById("newCategoryInput").value = "";
-          loadCategories();
+        const container = document.getElementById("categoryAclSummary");
+        try {
+          const res = await fetch("/api/admin/category-acl");
+          if (!res.ok) throw new Error(`(${res.status})`);
+          const data = await res.json();
+          const items = (data && data.items) || [];
+          container.innerHTML =
+            items
+              .map((it) => {
+                const flags = (it.edit_acl && it.edit_acl.flags) || [];
+                const adminOnly = flags.includes("admin_only");
+                const summary = flags.length
+                  ? flags
+                      .map((f) => ({
+                        aged: "가입 N일",
+                        page_editor: "본 문서 편집이력",
+                        any_editor: "임의 편집이력",
+                        admin_only: "관리자 전용",
+                      }[f] || f))
+                      .join(" + ")
+                  : "비활성";
+                return `
+                  <div class="list-group-item d-flex justify-content-between align-items-center py-2">
+                    <div>
+                      <code>${escapeHtml(it.name)}</code>
+                      <span class="badge ${adminOnly ? "bg-danger" : "bg-secondary"} ms-2">${escapeHtml(summary)}</span>
+                      <span class="text-muted small ms-2">${it.page_count}개 문서</span>
+                    </div>
+                    <button class="btn btn-xs btn-link p-0 js-edit-category-acl" data-name="${escapeHtml(it.name)}"><i class="mdi mdi-pencil"></i></button>
+                  </div>
+                `;
+              })
+              .join("") ||
+            '<div class="p-3 text-center text-muted small">등록된 카테고리 ACL 이 없습니다.</div>';
+          container.querySelectorAll(".js-edit-category-acl").forEach((btn) => {
+            btn.addEventListener("click", () => {
+              const name = btn.getAttribute("data-name") || "";
+              if (typeof window.openCategoryAclModal === "function") {
+                window.openCategoryAclModal(name);
+              }
+            });
+          });
+        } catch (e) {
+          container.innerHTML =
+            `<div class="p-3 text-center text-danger small">목록 조회 실패: ${escapeHtml(String(e))}</div>`;
         }
-      }
-      async function deleteCategory(id) {
-        if (await fetch(`/api/admin/categories/${id}`, { method: "DELETE" }))
-          loadCategories();
       }
 
       // ── 관리자 전용 네임스페이스 ──

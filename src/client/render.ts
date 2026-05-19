@@ -1012,7 +1012,7 @@ async function _loadCategorySortedItems(category) {
         // 카테고리 그룹/정렬 기준은 전체 슬러그의 맨 앞 글자.
         // 하위문서 구조(`/` 세그먼트)는 무시한다 — 'docs/가이드' 는 'D' 그룹에 들어간다.
         const g = _wikiCategoryGroupOf(slug);
-        return { slug, is_locked: !!p.is_locked, _gOrder: g.order, _gLabel: g.label };
+        return { slug, _gOrder: g.order, _gLabel: g.label };
     });
     // 1차: 스크립트 그룹 순서 (한글 → 일본어 → 알파벳 → 숫자 → 기타)
     // 2차: 같은 그룹 안에서 전체 슬러그 기준 로케일 사전순.
@@ -1061,8 +1061,7 @@ async function fetchCategoryList(category, page) {
 
         const groupsHtml = groups.map(g => {
             const itemsHtml = g.items.map(it => {
-                const lockIcon = it.is_locked ? ' <i class="bi bi-lock-fill text-danger" title="편집 잠금"></i>' : '';
-                return `<a class="category-item" href="/w/${encodeURIComponent(it.slug)}" title="${escapeHtml(it.slug)}"><span class="category-item-name">${escapeHtml(it.slug)}</span>${lockIcon}</a>`;
+                return `<a class="category-item" href="/w/${encodeURIComponent(it.slug)}" title="${escapeHtml(it.slug)}"><span class="category-item-name">${escapeHtml(it.slug)}</span></a>`;
             }).join('');
             return `<section class="category-group"><h5 class="category-group-label">${escapeHtml(g.label)}</h5><div class="category-grid">${itemsHtml}</div></section>`;
         }).join('');

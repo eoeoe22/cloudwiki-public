@@ -2,18 +2,14 @@
  * 권한 관리 모달 — 문서 도구 드롭다운의 "권한 관리" 항목에서 호출.
  *
  * 한 모달에서 처리하는 것:
- *  1) 현재 문서 단건: 잠금 / 비공개 / 편집 ACL
- *  2) 현재 문서 편집 허용 명단 (목록·추가·삭제)
- *  3) 하위 문서 일괄 적용 (잠금 / 비공개 / 편집 ACL)
- *  4) 기존 자동 규칙 목록·삭제
+ *  1) 현재 문서 단건: 비공개 / 편집 ACL (admin_only 포함)
+ *  2) 하위 문서 일괄 적용 (비공개 / 편집 ACL)
+ *  3) 기존 자동 규칙 목록·삭제
  *
  * 호출 API (모두 관리자 전용 — adminRoutes.use(requireAdmin)):
  *  - GET    /api/admin/pages/:slug/edit-acl
  *  - PUT    /api/admin/pages/:slug/edit-acl
  *  - PATCH  /api/admin/pages/:slug/flags
- *  - GET    /api/admin/pages/:slug/edit-allowlist
- *  - POST   /api/admin/pages/:slug/edit-allowlist
- *  - DELETE /api/admin/pages/:slug/edit-allowlist/:userId
  *  - GET    /api/admin/doc-setting-prefix-rules
  *  - DELETE /api/admin/doc-setting-prefix-rules/:id
  *  - GET    /api/admin/doc-setting-prefix-rules/subpages?prefix=<slug>
@@ -35,13 +31,12 @@ declare global {
 type FlagValue = 0 | 1 | null;
 type FlagAction = 'none' | 'on' | 'off';
 type AclAction = 'none' | 'clear' | 'set';
-type EditAclFlag = 'aged' | 'allowlist' | 'page_editor' | 'any_editor';
-interface EditAcl { mode: 'or' | 'and'; flags: EditAclFlag[]; }
+type EditAclFlag = 'aged' | 'page_editor' | 'any_editor' | 'admin_only';
+interface EditAcl { flags: EditAclFlag[]; }
 
 interface CurrentPage {
     id: number;
     slug: string;
-    is_locked: 0 | 1;
     is_private: 0 | 1;
     edit_acl: EditAcl | null;
 }
@@ -49,7 +44,6 @@ interface CurrentPage {
 interface DocSettingRule {
     id: number;
     prefix: string;
-    is_locked: FlagValue;
     is_private: FlagValue;
     edit_acl: string | null;
     created_at: number;
@@ -60,25 +54,14 @@ interface SubpageItem {
     id: number;
     slug: string;
     depth: number;
-    is_locked: 0 | 1;
     is_private: 0 | 1;
     edit_acl: EditAcl | null;
-}
-
-interface AllowlistItem {
-    user_id: number;
-    name: string;
-    picture: string | null;
-    role: string;
-    added_at: number;
-    added_by_name: string | null;
 }
 
 interface RowState {
     id: number;
     slug: string;
     depth: number;
-    is_locked: 0 | 1;
     is_private: 0 | 1;
     edit_acl: EditAcl | null;
     currentlyChecked: boolean;
@@ -95,19 +78,12 @@ interface ModalState {
 
 const ACL_FLAG_LABELS: Record<EditAclFlag, string> = {
     aged: '가입 N일 이상',
-    allowlist: '허용 명단 등재',
     page_editor: '본 문서 편집 이력',
     any_editor: '임의 문서 편집 이력',
+    admin_only: '관리자 전용',
 };
 
-const ROLE_LABELS: Record<string, string> = {
-    user: '유저',
-    discussion_manager: '토론 관리자',
-    admin: '관리자',
-    super_admin: '최고 관리자',
-    banned: '차단됨',
-    deleted: '탈퇴',
-};
+const ACL_FLAG_ORDER: EditAclFlag[] = ['aged', 'page_editor', 'any_editor', 'admin_only'];
 
 function escapeHtml(s: string): string {
     return String(s)
@@ -124,11 +100,10 @@ function parseEditAclFromRaw(raw: string | null | undefined): EditAcl | null {
         const obj = JSON.parse(raw);
         if (!obj || typeof obj !== 'object' || !Array.isArray(obj.flags)) return null;
         const flags = obj.flags.filter((f: unknown): f is EditAclFlag =>
-            f === 'aged' || f === 'allowlist' || f === 'page_editor' || f === 'any_editor'
+            f === 'aged' || f === 'page_editor' || f === 'any_editor' || f === 'admin_only'
         );
         if (flags.length === 0) return null;
-        const mode: 'or' | 'and' = obj.mode === 'and' ? 'and' : 'or';
-        return { mode, flags };
+        return { flags };
     } catch {
         return null;
     }
@@ -136,14 +111,12 @@ function parseEditAclFromRaw(raw: string | null | undefined): EditAcl | null {
 
 function aclSummary(acl: EditAcl | null): string {
     if (!acl || acl.flags.length === 0) return '비활성';
-    const joiner = acl.mode === 'and' ? ' 그리고 ' : ' 또는 ';
-    return acl.flags.map(f => ACL_FLAG_LABELS[f]).join(joiner);
+    return acl.flags.map(f => ACL_FLAG_LABELS[f]).join(' 그리고 ');
 }
 
 function aclEqual(a: EditAcl | null, b: EditAcl | null): boolean {
     if (a === null && b === null) return true;
     if (a === null || b === null) return false;
-    if (a.mode !== b.mode) return false;
     if (a.flags.length !== b.flags.length) return false;
     const setA = new Set(a.flags);
     for (const f of b.flags) if (!setA.has(f)) return false;
@@ -153,7 +126,7 @@ function aclEqual(a: EditAcl | null, b: EditAcl | null): boolean {
 // ── API 헬퍼 ─────────────────────────────────────────────────────────
 
 async function fetchCurrentPage(slug: string): Promise<CurrentPage | { error: string }> {
-    // GET /api/w/:slug 는 pages 컬럼을 flat 으로 반환 ({ id, slug, is_locked, is_private, edit_acl, ... }).
+    // GET /api/w/:slug 는 pages 컬럼을 flat 으로 반환 ({ id, slug, is_private, edit_acl, ... }).
     // edit_acl 은 raw JSON 문자열 — 호출 후 parseEditAclFromRaw 로 객체화한다.
     // 관리자 권한자만 모달을 열 수 있으므로 비공개 / 삭제 문서 조회도 통과한다.
     // redirect=no 필수: 리다이렉트 페이지에서 모달을 열 때 타겟 페이지 메타가 아닌
@@ -163,13 +136,12 @@ async function fetchCurrentPage(slug: string): Promise<CurrentPage | { error: st
         const err = (await res.json().catch(() => ({}))) as { error?: string };
         return { error: err.error || `문서 조회 실패 (${res.status})` };
     }
-    const data = (await res.json()) as { id?: number; is_locked?: number; is_private?: number; edit_acl?: string | null };
+    const data = (await res.json()) as { id?: number; is_private?: number; edit_acl?: string | null };
     const id = Number(data.id);
     if (!Number.isFinite(id)) return { error: '문서 메타를 읽지 못했습니다.' };
     return {
         id,
         slug,
-        is_locked: (data.is_locked ? 1 : 0) as 0 | 1,
         is_private: (data.is_private ? 1 : 0) as 0 | 1,
         edit_acl: parseEditAclFromRaw(data.edit_acl ?? null),
     };
@@ -182,7 +154,7 @@ async function fetchAclForSlug(slug: string): Promise<EditAcl | null> {
     return data.edit_acl ?? null;
 }
 
-async function patchPageFlags(slug: string, body: { is_locked?: 0 | 1; is_private?: 0 | 1 }): Promise<{ ok: true; data: { is_locked: 0 | 1; is_private: 0 | 1 } } | { ok: false; error: string }> {
+async function patchPageFlags(slug: string, body: { is_private?: 0 | 1 }): Promise<{ ok: true; data: { is_private: 0 | 1 } } | { ok: false; error: string }> {
     const res = await fetch(`/api/admin/pages/${encodeURIComponent(slug)}/flags`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -192,7 +164,7 @@ async function patchPageFlags(slug: string, body: { is_locked?: 0 | 1; is_privat
         const err = (await res.json().catch(() => ({}))) as { error?: string };
         return { ok: false, error: err.error || `오류 (${res.status})` };
     }
-    const data = (await res.json()) as { is_locked: 0 | 1; is_private: 0 | 1 };
+    const data = (await res.json()) as { is_private: 0 | 1 };
     return { ok: true, data };
 }
 
@@ -208,35 +180,6 @@ async function putPageEditAcl(slug: string, acl: EditAcl | null): Promise<{ ok: 
     }
     const data = (await res.json()) as { edit_acl: EditAcl | null };
     return { ok: true, acl: data.edit_acl ?? null };
-}
-
-async function fetchAllowlist(slug: string): Promise<AllowlistItem[]> {
-    const res = await fetch(`/api/admin/pages/${encodeURIComponent(slug)}/edit-allowlist`);
-    if (!res.ok) return [];
-    const data = (await res.json()) as { items: AllowlistItem[] };
-    return Array.isArray(data.items) ? data.items : [];
-}
-
-async function addAllowlistUser(slug: string, userId: number): Promise<{ ok: boolean; error?: string }> {
-    const res = await fetch(`/api/admin/pages/${encodeURIComponent(slug)}/edit-allowlist`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_id: userId }),
-    });
-    if (!res.ok) {
-        const err = (await res.json().catch(() => ({}))) as { error?: string };
-        return { ok: false, error: err.error || `오류 (${res.status})` };
-    }
-    return { ok: true };
-}
-
-async function removeAllowlistUser(slug: string, userId: number): Promise<{ ok: boolean; error?: string }> {
-    const res = await fetch(`/api/admin/pages/${encodeURIComponent(slug)}/edit-allowlist/${userId}`, { method: 'DELETE' });
-    if (!res.ok) {
-        const err = (await res.json().catch(() => ({}))) as { error?: string };
-        return { ok: false, error: err.error || `오류 (${res.status})` };
-    }
-    return { ok: true };
 }
 
 async function fetchRules(): Promise<DocSettingRule[]> {
@@ -262,27 +205,20 @@ async function fetchSubpages(prefix: string): Promise<{ items: SubpageItem[] } |
 
 // ── HTML 빌더 ────────────────────────────────────────────────────────
 
-function flagBadge(flag: 0 | 1, kind: 'lock' | 'private'): string {
+function privateBadge(flag: 0 | 1): string {
     if (!flag) return '<span class="bulkcat-cat-chip" style="opacity: .4;">—</span>';
-    if (kind === 'lock') {
-        return '<span class="bulkcat-cat-chip is-danger" title="편집 잠금"><i class="mdi mdi-lock"></i> 잠금</span>';
-    }
     return '<span class="bulkcat-cat-chip is-danger" title="비공개"><i class="mdi mdi-eye-off"></i> 비공개</span>';
 }
 
 function aclBadge(acl: EditAcl | null): string {
     if (!acl) return '<span class="bulkcat-cat-chip" style="opacity: .4;">—</span>';
-    return `<span class="bulkcat-cat-chip" title="${escapeHtml(JSON.stringify(acl))}"><i class="mdi mdi-shield-account"></i> ${escapeHtml(acl.mode.toUpperCase())} · ${acl.flags.length}</span>`;
+    return `<span class="bulkcat-cat-chip" title="${escapeHtml(JSON.stringify(acl))}"><i class="mdi mdi-shield-account"></i> ${acl.flags.length}</span>`;
 }
 
-function ruleFlagLabel(v: FlagValue, kind: 'lock' | 'private'): string {
+function rulePrivateLabel(v: FlagValue): string {
     if (v === null || v === undefined) return '<span style="opacity: .4;">—</span>';
-    if (v === 1) return kind === 'lock'
-        ? '<i class="mdi mdi-lock"></i> ON'
-        : '<i class="mdi mdi-eye-off"></i> ON';
-    return kind === 'lock'
-        ? '<i class="mdi mdi-lock-open-variant"></i> OFF'
-        : '<i class="mdi mdi-eye-outline"></i> OFF';
+    if (v === 1) return '<i class="mdi mdi-eye-off"></i> ON';
+    return '<i class="mdi mdi-eye-outline"></i> OFF';
 }
 
 function ruleAclLabel(raw: string | null): string {
@@ -298,8 +234,7 @@ function rulesTableHtml(rules: DocSettingRule[]): string {
     const rows = rules.map((r) => `
         <tr data-rule-id="${r.id}">
             <td class="text-break"><code>${escapeHtml(r.prefix)}/**</code></td>
-            <td>${ruleFlagLabel(r.is_locked, 'lock')}</td>
-            <td>${ruleFlagLabel(r.is_private, 'private')}</td>
+            <td>${rulePrivateLabel(r.is_private)}</td>
             <td>${ruleAclLabel(r.edit_acl)}</td>
             <td class="text-end">
                 <button type="button" class="btn btn-sm btn-wiki btn-wiki-danger perm-rule-delete">
@@ -310,28 +245,23 @@ function rulesTableHtml(rules: DocSettingRule[]): string {
     `).join('');
     return `
         <table class="bulkcat-rules-table">
-            <thead><tr><th>접두사</th><th>편집 잠금</th><th>비공개</th><th>편집 ACL</th><th aria-label="삭제"></th></tr></thead>
+            <thead><tr><th>접두사</th><th>비공개</th><th>편집 ACL</th><th aria-label="삭제"></th></tr></thead>
             <tbody>${rows}</tbody>
         </table>
     `;
 }
 
 function aclFieldsetHtml(idPrefix: string, initialAcl: EditAcl | null, initiallyVisible: boolean): string {
-    const mode = initialAcl?.mode ?? 'or';
     const flagSet = new Set(initialAcl?.flags ?? []);
     return `
         <fieldset class="perm-acl-fieldset" id="${idPrefix}Fieldset" style="border: 1px dashed var(--bs-border-color); padding: 8px 12px; border-radius: 6px; ${initiallyVisible ? '' : 'display: none;'}">
-            <legend class="bulkcat-section-title" style="font-size: 0.85em; padding: 0 6px;">ACL 정의</legend>
-            <div style="display: flex; align-items: center; gap: 14px; flex-wrap: wrap;">
-                <label class="form-check-inline mb-0"><input class="form-check-input" type="radio" name="${idPrefix}Mode" value="or"${mode === 'or' ? ' checked' : ''}> <span class="ms-1">조건 중 하나 충족 (OR)</span></label>
-                <label class="form-check-inline mb-0"><input class="form-check-input" type="radio" name="${idPrefix}Mode" value="and"${mode === 'and' ? ' checked' : ''}> <span class="ms-1">모든 조건 충족 (AND)</span></label>
-            </div>
-            <div style="display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 8px;">
-                ${(Object.keys(ACL_FLAG_LABELS) as EditAclFlag[]).map(f => `
+            <legend class="bulkcat-section-title" style="font-size: 0.85em; padding: 0 6px;">ACL 정의 (모든 조건 충족 — AND)</legend>
+            <div style="display: flex; flex-wrap: wrap; gap: 6px 16px;">
+                ${ACL_FLAG_ORDER.map(f => `
                     <label class="form-check-inline mb-0"><input class="form-check-input ${idPrefix}-flag" type="checkbox" value="${f}"${flagSet.has(f) ? ' checked' : ''}> <span class="ms-1">${ACL_FLAG_LABELS[f]}</span></label>
                 `).join('')}
             </div>
-            <small class="text-muted">가입일 임계값(N일)은 관리자 콘솔 &gt; 위키 설정의 <b>편집 ACL 가입 일수</b> 전역 설정을 따릅니다.</small>
+            <small class="text-muted">가입일 임계값(N일)은 관리자 콘솔 &gt; 위키 설정의 <b>편집 ACL 가입 일수</b> 전역 설정을 따릅니다. <b>관리자 전용</b> 플래그는 일반 사용자 편집을 일괄 차단합니다 (구 편집 잠금 대체).</small>
         </fieldset>
     `;
 }
@@ -340,10 +270,6 @@ function buildModalHtml(slug: string, page: CurrentPage | null, pageLoadError: s
     const currentSection = page
         ? `
             <div class="bulk-modal-inline-actions" style="gap: 1rem; margin-bottom: 0.6rem;">
-                <label class="form-check mb-0">
-                    <input class="form-check-input" type="checkbox" id="permCurLock"${page.is_locked ? ' checked' : ''}>
-                    <span class="form-check-label fw-bold text-danger ms-1"><i class="mdi mdi-lock"></i> 편집 잠금</span>
-                </label>
                 <label class="form-check mb-0">
                     <input class="form-check-input" type="checkbox" id="permCurPrivate"${page.is_private ? ' checked' : ''}>
                     <span class="form-check-label fw-bold text-danger ms-1"><i class="mdi mdi-eye-off"></i> 비공개 (관리자만 열람)</span>
@@ -375,22 +301,6 @@ function buildModalHtml(slug: string, page: CurrentPage | null, pageLoadError: s
                 ${currentSection}
             </section>
 
-            <section class="bulkcat-section bulk-modal-section-card">
-                <header class="bulkcat-section-head">
-                    <h6 class="bulkcat-section-title">편집 허용 명단 (이 문서)</h6>
-                    <span id="permAclStatusLabel" class="perm-acl-status is-off">ACL 비활성</span>
-                </header>
-                <div class="bulk-modal-inline-actions" style="gap: 0.4rem;">
-                    <input type="number" min="1" inputmode="numeric" class="form-control form-control-sm" id="permAllowUserIdInput" placeholder="user_id (양의 정수)" style="max-width: 220px;">
-                    <button type="button" class="btn btn-sm btn-wiki" id="permAllowAddBtn">
-                        <i class="mdi mdi-account-plus"></i> 추가
-                    </button>
-                </div>
-                <div class="perm-allow-list" id="permAllowList">
-                    <div class="perm-allow-empty">불러오는 중…</div>
-                </div>
-            </section>
-
             <section class="bulkcat-section bulk-modal-section-card bulk-modal-section-muted">
                 <header class="bulkcat-section-head">
                     <h6 class="bulkcat-section-title">하위 문서 일괄 적용</h6>
@@ -405,12 +315,6 @@ function buildModalHtml(slug: string, page: CurrentPage | null, pageLoadError: s
                 </div>
 
                 <div class="bulkcat-actions-row" style="display: flex; flex-direction: column; gap: 10px; margin-top: 0.5rem;">
-                    <div role="radiogroup" aria-label="편집 잠금" style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
-                        <span style="min-width: 84px; font-weight: 600;"><i class="mdi mdi-lock"></i> 편집 잠금</span>
-                        <label class="form-check-inline mb-0"><input class="form-check-input" type="radio" name="permBulkLockAction" value="none" checked> <span class="ms-1">그대로</span></label>
-                        <label class="form-check-inline mb-0"><input class="form-check-input" type="radio" name="permBulkLockAction" value="on"> <span class="ms-1">잠금</span></label>
-                        <label class="form-check-inline mb-0"><input class="form-check-input" type="radio" name="permBulkLockAction" value="off"> <span class="ms-1">잠금 해제</span></label>
-                    </div>
                     <div role="radiogroup" aria-label="비공개" style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
                         <span style="min-width: 84px; font-weight: 600;"><i class="mdi mdi-eye-off"></i> 비공개</span>
                         <label class="form-check-inline mb-0"><input class="form-check-input" type="radio" name="permBulkPrivateAction" value="none" checked> <span class="ms-1">그대로</span></label>
@@ -453,18 +357,16 @@ function readCurAclAction(): AclAction {
 }
 
 function readAclValueFrom(idPrefix: string): EditAcl | null {
-    const modeEl = document.querySelector<HTMLInputElement>(`input[name="${idPrefix}Mode"]:checked`);
-    const mode: 'or' | 'and' = modeEl?.value === 'and' ? 'and' : 'or';
     const flags: EditAclFlag[] = [];
     document.querySelectorAll<HTMLInputElement>(`.${idPrefix}-flag`).forEach((el) => {
         if (!el.checked) return;
         const v = el.value;
-        if (v === 'aged' || v === 'allowlist' || v === 'page_editor' || v === 'any_editor') {
+        if (v === 'aged' || v === 'page_editor' || v === 'any_editor' || v === 'admin_only') {
             flags.push(v);
         }
     });
     if (flags.length === 0) return null;
-    return { mode, flags };
+    return { flags };
 }
 
 function toggleCurAclFieldset() {
@@ -484,11 +386,9 @@ function setCurSaveStatus(text: string, kind: 'info' | 'ok' | 'err' = 'info') {
 
 async function saveCurrent(state: ModalState): Promise<void> {
     if (!state.page) return;
-    const lockEl = document.getElementById('permCurLock') as HTMLInputElement | null;
     const privEl = document.getElementById('permCurPrivate') as HTMLInputElement | null;
-    if (!lockEl || !privEl) return;
+    if (!privEl) return;
 
-    const nextLock: 0 | 1 = lockEl.checked ? 1 : 0;
     const nextPriv: 0 | 1 = privEl.checked ? 1 : 0;
 
     const aclAction = readCurAclAction();
@@ -502,26 +402,18 @@ async function saveCurrent(state: ModalState): Promise<void> {
         }
     }
 
-    const lockChanged = nextLock !== state.page.is_locked;
     const privChanged = nextPriv !== state.page.is_private;
-    const flagsChanged = lockChanged || privChanged;
     const aclChanged = aclAction !== 'none' && !aclEqual(nextAcl, state.page.edit_acl);
 
-    if (!flagsChanged && !aclChanged) {
+    if (!privChanged && !aclChanged) {
         setCurSaveStatus('변경 사항이 없습니다.', 'info');
         return;
     }
 
     setCurSaveStatus('저장 중…', 'info');
     const tasks: Promise<{ ok: boolean; error?: string }>[] = [];
-    if (flagsChanged) {
-        // PATCH 본문은 실제로 바뀐 키만 포함해, 모달이 열려 있는 동안 다른 관리자가
-        // 동시 갱신한 다른 플래그를 stale snapshot 으로 덮어쓰지 않도록 한다.
-        // 백엔드 (admin.ts PATCH /pages/:slug/flags) 는 누락 키를 그대로 유지한다.
-        const patchBody: { is_locked?: 0 | 1; is_private?: 0 | 1 } = {};
-        if (lockChanged) patchBody.is_locked = nextLock;
-        if (privChanged) patchBody.is_private = nextPriv;
-        tasks.push(patchPageFlags(state.slug, patchBody).then(r => r.ok ? { ok: true } : { ok: false, error: r.error }));
+    if (privChanged) {
+        tasks.push(patchPageFlags(state.slug, { is_private: nextPriv }).then(r => r.ok ? { ok: true } : { ok: false, error: r.error }));
     }
     if (aclChanged) {
         tasks.push(putPageEditAcl(state.slug, nextAcl).then(r => r.ok ? { ok: true } : { ok: false, error: r.error }));
@@ -534,116 +426,17 @@ async function saveCurrent(state: ModalState): Promise<void> {
         return;
     }
 
-    if (lockChanged) state.page.is_locked = nextLock;
     if (privChanged) state.page.is_private = nextPriv;
     if (aclAction !== 'none') state.page.edit_acl = nextAcl;
     setCurSaveStatus('저장됨', 'ok');
-    refreshAclStatusLabel(state.page.edit_acl);
 
     // 토스트 — SweetAlert2
     const swal = window.Swal;
     swal?.fire({ icon: 'success', title: '저장됨', toast: true, position: 'top-end', timer: 1800, showConfirmButton: false });
 }
 
-// ── 섹션 2: 편집 허용 명단 ─────────────────────────────────────────
+// ── 섹션 2: 하위 일괄 적용 ─────────────────────────────────────────
 
-function refreshAclStatusLabel(acl: EditAcl | null): void {
-    const el = document.getElementById('permAclStatusLabel');
-    if (!el) return;
-    if (!acl || acl.flags.length === 0) {
-        el.className = 'perm-acl-status is-off';
-        el.textContent = 'ACL 비활성';
-        return;
-    }
-    const hasAllowlist = acl.flags.includes('allowlist');
-    el.className = hasAllowlist ? 'perm-acl-status is-on' : 'perm-acl-status is-warn';
-    el.title = JSON.stringify(acl);
-    const summary = aclSummary(acl);
-    el.textContent = hasAllowlist ? `ACL: ${summary}` : `ACL: ${summary} (allowlist 비활성)`;
-}
-
-function renderAllowlist(state: ModalState, items: AllowlistItem[]): void {
-    const el = document.getElementById('permAllowList');
-    if (!el) return;
-    if (items.length === 0) {
-        el.innerHTML = '<div class="perm-allow-empty">아직 추가된 사용자가 없습니다.</div>';
-        return;
-    }
-    el.innerHTML = items.map((it) => {
-        const role = ROLE_LABELS[it.role] || it.role;
-        const added = new Date(it.added_at * 1000).toLocaleString();
-        const addedBy = it.added_by_name ? ` · ${escapeHtml(it.added_by_name)}` : '';
-        const avatar = it.picture
-            ? `<img src="${escapeHtml(it.picture)}" alt="" style="width:24px;height:24px;border-radius:50%;object-fit:cover;flex-shrink:0;">`
-            : '<i class="mdi mdi-account-circle" style="font-size: 24px; flex-shrink: 0;"></i>';
-        return `
-            <div class="perm-allow-item" data-user-id="${it.user_id}">
-                ${avatar}
-                <div class="perm-allow-item-meta">
-                    <div class="name">${escapeHtml(it.name)} <small class="text-muted">#${it.user_id}</small></div>
-                    <div class="sub">${escapeHtml(role)} · ${escapeHtml(added)}${addedBy}</div>
-                </div>
-                <button type="button" class="btn btn-sm btn-outline-danger perm-allow-remove" data-user-id="${it.user_id}">
-                    <i class="mdi mdi-trash-can-outline"></i>
-                </button>
-            </div>
-        `;
-    }).join('');
-
-    el.querySelectorAll<HTMLButtonElement>('.perm-allow-remove').forEach((btn) => {
-        btn.addEventListener('click', async () => {
-            const uid = Number(btn.dataset.userId);
-            if (!Number.isInteger(uid) || uid <= 0) return;
-            const swal = window.Swal;
-            const confirm = await swal?.fire({
-                title: '명단에서 삭제',
-                text: `user #${uid} 을(를) 허용 명단에서 제거하시겠습니까?`,
-                icon: 'warning',
-                showCancelButton: true,
-                confirmButtonText: '삭제',
-                cancelButtonText: '취소',
-                confirmButtonColor: '#EF4444',
-            });
-            if (!confirm?.isConfirmed) return;
-            const res = await removeAllowlistUser(state.slug, uid);
-            if (!res.ok) {
-                swal?.fire({ icon: 'error', title: '삭제 실패', text: res.error });
-                return;
-            }
-            await reloadAllowlist(state);
-        });
-    });
-}
-
-async function reloadAllowlist(state: ModalState): Promise<void> {
-    const items = await fetchAllowlist(state.slug);
-    renderAllowlist(state, items);
-}
-
-async function addAllowlist(state: ModalState): Promise<void> {
-    const input = document.getElementById('permAllowUserIdInput') as HTMLInputElement | null;
-    const userId = input ? Number(input.value) : NaN;
-    const swal = window.Swal;
-    if (!Number.isInteger(userId) || userId <= 0) {
-        swal?.fire({ icon: 'warning', title: 'user_id 미입력', text: '양의 정수 user_id 를 입력하세요.' });
-        return;
-    }
-    const res = await addAllowlistUser(state.slug, userId);
-    if (!res.ok) {
-        swal?.fire({ icon: 'error', title: '추가 실패', text: res.error });
-        return;
-    }
-    if (input) input.value = '';
-    await reloadAllowlist(state);
-}
-
-// ── 섹션 3: 하위 일괄 적용 ─────────────────────────────────────────
-
-function readBulkLockAction(): FlagAction {
-    const el = document.querySelector<HTMLInputElement>('input[name="permBulkLockAction"]:checked');
-    const v = el?.value;
-    return v === 'on' || v === 'off' ? v : 'none';
-}
 function readBulkPrivateAction(): FlagAction {
     const el = document.querySelector<HTMLInputElement>('input[name="permBulkPrivateAction"]:checked');
     const v = el?.value;
@@ -696,20 +489,17 @@ function updateBulkCounter(state: ModalState): void {
         if (state.rows.length === 0) {
             counter.textContent = '하위 문서 없음';
         } else {
-            const lockA = readBulkLockAction();
             const privA = readBulkPrivateAction();
             const aclA = readBulkAclAction();
             const aclV = aclA === 'set' ? readAclValueFrom('permBulkAcl') : null;
-            const targetLock = actionToTarget(lockA);
             const targetPriv = actionToTarget(privA);
             const checked = state.rows.filter(r => r.currentlyChecked).length;
             let changeCount = 0;
             for (const r of state.rows) {
                 if (!r.currentlyChecked) continue;
-                const newLock = targetLock === null ? r.is_locked : targetLock;
                 const newPriv = targetPriv === null ? r.is_private : targetPriv;
                 const newAcl = targetAclForRow(r, aclA, aclV);
-                if (newLock !== r.is_locked || newPriv !== r.is_private || !aclEqual(newAcl, r.edit_acl)) changeCount++;
+                if (newPriv !== r.is_private || !aclEqual(newAcl, r.edit_acl)) changeCount++;
             }
             counter.textContent = `체크 ${checked} / ${state.rows.length} (변경 +${changeCount})`;
         }
@@ -734,7 +524,7 @@ function renderBulkSubpages(items: SubpageItem[], prefix: string): string {
     const prefixWithSlash = prefix + '/';
     const rows = items.map((item) => {
         const display = item.slug.startsWith(prefixWithSlash) ? item.slug.slice(prefixWithSlash.length) : item.slug;
-        const flags = `${flagBadge(item.is_locked, 'lock')} ${flagBadge(item.is_private, 'private')} ${aclBadge(item.edit_acl)}`;
+        const flags = `${privateBadge(item.is_private)} ${aclBadge(item.edit_acl)}`;
         return `
             <tr data-page-id="${item.id}" style="--bulkcat-depth: ${item.depth};">
                 <td>
@@ -786,7 +576,6 @@ async function loadBulkTree(state: ModalState): Promise<void> {
             id: item.id,
             slug: item.slug,
             depth: item.depth,
-            is_locked: item.is_locked,
             is_private: item.is_private,
             edit_acl: item.edit_acl,
             currentlyChecked: false,
@@ -803,7 +592,7 @@ async function loadBulkTree(state: ModalState): Promise<void> {
     updateBulkCounter(state);
 }
 
-// ── 섹션 4: 자동 규칙 표 ─────────────────────────────────────────
+// ── 섹션 3: 자동 규칙 표 ─────────────────────────────────────────
 
 function hookRuleDeleteButtons(container: HTMLElement) {
     container.querySelectorAll<HTMLButtonElement>('.perm-rule-delete').forEach((btn) => {
@@ -879,8 +668,6 @@ export async function openPermissionsModal(rawSlug: string): Promise<void> {
         cancelButtonText: '닫기',
         focusConfirm: false,
         didOpen: () => {
-            refreshAclStatusLabel(state.page?.edit_acl ?? null);
-
             // 섹션 1: 현재 문서
             document.querySelectorAll<HTMLInputElement>('input[name="permCurAclAction"]').forEach((el) => {
                 el.addEventListener('change', toggleCurAclFieldset);
@@ -888,17 +675,9 @@ export async function openPermissionsModal(rawSlug: string): Promise<void> {
             toggleCurAclFieldset();
             document.getElementById('permCurSaveBtn')?.addEventListener('click', () => { void saveCurrent(state); });
 
-            // 섹션 2: 명단
-            document.getElementById('permAllowAddBtn')?.addEventListener('click', () => { void addAllowlist(state); });
-            const userIdInput = document.getElementById('permAllowUserIdInput') as HTMLInputElement | null;
-            userIdInput?.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter') { e.preventDefault(); void addAllowlist(state); }
-            });
-            void reloadAllowlist(state);
-
-            // 섹션 3: 일괄
+            // 섹션 2: 일괄
             document.querySelectorAll<HTMLInputElement>(
-                'input[name="permBulkLockAction"], input[name="permBulkPrivateAction"], input[name="permBulkAclAction"], input[name="permBulkAclMode"]'
+                'input[name="permBulkPrivateAction"], input[name="permBulkAclAction"]'
             ).forEach((el) => el.addEventListener('change', () => updateBulkCounter(state)));
             document.querySelectorAll<HTMLInputElement>('input[name="permBulkAclAction"]').forEach((el) => {
                 el.addEventListener('change', toggleBulkAclFieldset);
@@ -909,12 +688,11 @@ export async function openPermissionsModal(rawSlug: string): Promise<void> {
             toggleBulkAclFieldset();
             void loadBulkTree(state);
 
-            // 섹션 4: 규칙 표
+            // 섹션 3: 규칙 표
             const tableEl = document.getElementById('permRulesTable');
             if (tableEl) hookRuleDeleteButtons(tableEl);
         },
         preConfirm: () => {
-            const lockAction = readBulkLockAction();
             const privateAction = readBulkPrivateAction();
             const aclAction = readBulkAclAction();
             const aclValue = aclAction === 'set' ? readAclValueFrom('permBulkAcl') : null;
@@ -926,45 +704,42 @@ export async function openPermissionsModal(rawSlug: string): Promise<void> {
                 return false;
             }
 
-            const targetLock = actionToTarget(lockAction);
             const targetPriv = actionToTarget(privateAction);
             const ids: number[] = [];
             for (const r of state.rows) {
                 if (!r.currentlyChecked) continue;
-                const newLock = targetLock === null ? r.is_locked : targetLock;
                 const newPriv = targetPriv === null ? r.is_private : targetPriv;
                 const newAcl = aclAction === 'none' ? r.edit_acl : aclAction === 'clear' ? null : aclValue;
-                if (newLock !== r.is_locked || newPriv !== r.is_private || !aclEqual(newAcl, r.edit_acl)) ids.push(r.id);
+                if (newPriv !== r.is_private || !aclEqual(newAcl, r.edit_acl)) ids.push(r.id);
             }
 
             const willApply = ids.length > 0;
-            const anyAction = lockAction !== 'none' || privateAction !== 'none' || aclAction !== 'none';
+            const anyAction = privateAction !== 'none' || aclAction !== 'none';
 
             if (!willApply && !persist) {
                 swal.showValidationMessage('적용할 하위 문서를 선택하거나 "자동 규칙으로 저장"을 선택해주세요.');
                 return false;
             }
             if (willApply && !anyAction) {
-                swal.showValidationMessage('편집 잠금/비공개/편집 ACL 중 하나 이상의 액션을 선택해주세요.');
+                swal.showValidationMessage('비공개/편집 ACL 중 하나 이상의 액션을 선택해주세요.');
                 return false;
             }
             if (persist) {
-                const persistHasLock = lockAction !== 'none';
                 const persistHasPriv = privateAction !== 'none';
                 const persistHasAcl = aclAction === 'set';
-                if (!persistHasLock && !persistHasPriv && !persistHasAcl) {
-                    swal.showValidationMessage('자동 규칙을 저장하려면 편집 잠금/비공개/편집 ACL 중 하나 이상을 지정해야 합니다.');
+                if (!persistHasPriv && !persistHasAcl) {
+                    swal.showValidationMessage('자동 규칙을 저장하려면 비공개/편집 ACL 중 하나 이상을 지정해야 합니다.');
                     return false;
                 }
             }
 
-            return { prefix: state.prefix, lockAction, privateAction, aclAction, aclValue, ids, persist, willApply };
+            return { prefix: state.prefix, privateAction, aclAction, aclValue, ids, persist, willApply };
         },
     });
 
     if (!result.isConfirmed || !result.value) return;
-    const { prefix, lockAction, privateAction, aclAction, aclValue, ids, persist, willApply } = result.value as {
-        prefix: string; lockAction: FlagAction; privateAction: FlagAction; aclAction: AclAction;
+    const { prefix, privateAction, aclAction, aclValue, ids, persist, willApply } = result.value as {
+        prefix: string; privateAction: FlagAction; aclAction: AclAction;
         aclValue: EditAcl | null; ids: number[]; persist: boolean; willApply: boolean;
     };
 
@@ -972,7 +747,7 @@ export async function openPermissionsModal(rawSlug: string): Promise<void> {
         const res = await fetch('/api/admin/doc-setting-prefix-rules/bulk-apply', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ prefix, lockAction, privateAction, aclAction, aclValue, ids, persist }),
+            body: JSON.stringify({ prefix, privateAction, aclAction, aclValue, ids, persist }),
         });
         if (!res.ok) {
             const err = (await res.json().catch(() => ({}))) as { error?: string };

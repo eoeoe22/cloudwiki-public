@@ -42,7 +42,6 @@ export interface Page {
     content: string;
     category: string | null;
     redirect_to: string | null;
-    is_locked: number;
     is_private: number;
     last_revision_id: number | null;
     version: number;
@@ -51,7 +50,7 @@ export interface Page {
     deleted_at: number | null;
     rows: number | null;
     characters: number | null;
-    // 일반 유저 편집 ACL (JSON). NULL=비활성. 형식: {"mode":"or"|"and","flags":[...]}
+    // 편집 ACL (JSON). NULL=비활성. 형식: {"flags":["aged"|"page_editor"|"any_editor"|"admin_only"]} (AND 평가)
     edit_acl: string | null;
 }
 

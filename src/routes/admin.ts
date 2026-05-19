@@ -37,7 +37,13 @@ import {
     normalizeEditAcl,
     serializeEditAcl,
     parseEditAcl,
+    type EditAcl,
 } from '../utils/editAcl';
+import {
+    getCategoryAcl,
+    applyCategoryAclToPage,
+    normalizeCategoryAclMode,
+} from '../utils/categoryAcl';
 import { normalizeSlug } from '../utils/slug';
 import type {
     AnnouncementAdminDTO,
@@ -1045,6 +1051,405 @@ adminRoutes.delete('/categories/:id', async (c) => {
 });
 
 
+// ── 카테고리 ACL (category_acl 테이블) ──
+//   카테고리에 매달린 편집 ACL 템플릿.
+//   `admin_only` 플래그가 있으면 구 admin_categories 와 동일 효과 (비관리자 적용 차단).
+//   카테고리 단위 bulk-apply 로 그 카테고리에 속한 페이지들의 edit_acl 을 일괄 갱신할 수 있다.
+
+const CATEGORY_ACL_BULK_MAX = 5000;
+
+/**
+ * 카테고리 ACL 을 "비활성" 상태로 만든다.
+ *  - 레거시 admin_categories 행이 있으면 DELETE 대신 tombstone (edit_acl=NULL) 행을 남긴다.
+ *    그래야 `isAdminOnlyCategory` 의 "category_acl 행 존재 = 단일 소스" 우선순위가 유지되어,
+ *    관리자가 admin_only 체크박스를 해제한 직후에도 카테고리 잠금이 풀린다.
+ *  - 레거시 행이 없으면 단순 DELETE.
+ *
+ * 마이그레이션 흡수 + DROP admin_categories 완료 후 별도 PR 에서 이 분기 제거 가능.
+ */
+async function clearCategoryAclRow(
+    db: D1Database,
+    name: string,
+    currentUserId: number,
+): Promise<void> {
+    let hasLegacy = false;
+    try {
+        const legacy = await db
+            .prepare('SELECT 1 AS ok FROM admin_categories WHERE name = ? LIMIT 1')
+            .bind(name)
+            .first<{ ok: number }>();
+        hasLegacy = !!legacy;
+    } catch {
+        // admin_categories 가 이미 DROP 된 환경: 일반 DELETE 로 진행.
+        hasLegacy = false;
+    }
+    if (hasLegacy) {
+        await db
+            .prepare(
+                `INSERT INTO category_acl (name, edit_acl, created_by)
+                 VALUES (?, NULL, ?)
+                 ON CONFLICT(name) DO UPDATE SET
+                   edit_acl = NULL,
+                   created_by = excluded.created_by,
+                   created_at = unixepoch()`
+            )
+            .bind(name, currentUserId)
+            .run();
+    } else {
+        await db.prepare('DELETE FROM category_acl WHERE name = ?').bind(name).run();
+    }
+}
+
+/**
+ * GET /category-acl
+ * 모든 카테고리 ACL 항목 목록.
+ * 마이그레이션 호환: category_acl 에 행이 없는 레거시 admin_categories 행도 함께 노출 — 새 admin UI 에서 보이지 않으면
+ * admin 이 잠금 해제할 방법이 없으므로. legacy=true 플래그를 응답 항목에 동봉해 UI 가 구분할 수 있게 한다.
+ */
+adminRoutes.get('/category-acl', async (c) => {
+    const db = c.env.DB;
+    const { results } = await db
+        .prepare(
+            `SELECT ca.name AS name,
+                    ca.edit_acl AS edit_acl,
+                    ca.created_at AS created_at,
+                    u.name AS created_by_name,
+                    (SELECT COUNT(*) FROM page_categories pc WHERE pc.category = ca.name) AS page_count,
+                    0 AS legacy
+               FROM category_acl ca
+               LEFT JOIN users u ON ca.created_by = u.id
+             UNION ALL
+             SELECT ac.name AS name,
+                    NULL AS edit_acl,
+                    ac.created_at AS created_at,
+                    NULL AS created_by_name,
+                    (SELECT COUNT(*) FROM page_categories pc WHERE pc.category = ac.name) AS page_count,
+                    1 AS legacy
+               FROM admin_categories ac
+              WHERE NOT EXISTS (SELECT 1 FROM category_acl ca2 WHERE ca2.name = ac.name)
+              ORDER BY name ASC`
+        )
+        .all<{ name: string; edit_acl: string | null; created_at: number; created_by_name: string | null; page_count: number; legacy: number }>();
+    const items = (results || []).map(r => {
+        const isLegacy = !!r.legacy;
+        // 레거시 행은 실제 카테고리 ACL 행이 없지만 enforcement 는 admin_only 와 동일하다.
+        // UI 가 "관리자 전용 (레거시)" 로 표시할 수 있도록 effective ACL 을 합성해 돌려준다.
+        const effectiveAcl = isLegacy ? { flags: ['admin_only' as const] } : parseEditAcl(r.edit_acl);
+        return {
+            name: r.name,
+            edit_acl: effectiveAcl,
+            created_at: r.created_at,
+            created_by_name: r.created_by_name,
+            page_count: r.page_count,
+            legacy: isLegacy,
+        };
+    });
+    return c.json({ items });
+});
+
+/**
+ * GET /category-acl/:name
+ * 단일 카테고리 ACL 조회. category_acl 행이 없고 레거시 admin_categories 행만 있는 경우에도
+ * effective ACL 을 admin_only 로 합성해 돌려준다 (편집 화면이 체크박스를 미리 체크).
+ */
+adminRoutes.get('/category-acl/:name', async (c) => {
+    const db = c.env.DB;
+    const name = c.req.param('name');
+    if (!name) return c.json({ error: 'name 이 비어 있습니다.' }, 400);
+
+    const row = await db
+        .prepare('SELECT name, edit_acl FROM category_acl WHERE name = ?')
+        .bind(name)
+        .first<{ name: string; edit_acl: string | null }>();
+    const pageCountRow = await db
+        .prepare('SELECT COUNT(*) AS n FROM page_categories WHERE category = ?')
+        .bind(name)
+        .first<{ n: number }>();
+
+    let effectiveAcl: { flags: ('aged' | 'page_editor' | 'any_editor' | 'admin_only')[] } | null = null;
+    let isLegacy = false;
+    if (row) {
+        effectiveAcl = parseEditAcl(row.edit_acl);
+    } else {
+        try {
+            const legacy = await db
+                .prepare('SELECT 1 AS ok FROM admin_categories WHERE name = ? LIMIT 1')
+                .bind(name)
+                .first<{ ok: number }>();
+            if (legacy) {
+                effectiveAcl = { flags: ['admin_only'] };
+                isLegacy = true;
+            }
+        } catch {
+            // admin_categories 미존재 — 무시.
+        }
+    }
+
+    return c.json({
+        name,
+        edit_acl: effectiveAcl,
+        exists: !!row || isLegacy,
+        legacy: isLegacy,
+        page_count: pageCountRow?.n ?? 0,
+    });
+});
+
+/**
+ * PUT /category-acl/:name
+ * Body: { edit_acl: EditAcl | null }
+ * ACL 이 null/빈 flags 면 비활성. 레거시 admin_categories 행이 있으면 tombstone (NULL) 으로 남긴다.
+ */
+adminRoutes.put('/category-acl/:name', async (c) => {
+    const db = c.env.DB;
+    const currentUser = c.get('user')!;
+    const name = c.req.param('name');
+    if (!name) return c.json({ error: 'name 이 비어 있습니다.' }, 400);
+    if (!/^[가-힣a-zA-Z0-9\s_.-]+$/.test(name)) {
+        return c.json({ error: '카테고리 이름에 사용할 수 없는 문자가 포함되어 있습니다.' }, 400);
+    }
+
+    const body = await c.req.json<{ edit_acl?: unknown }>().catch(() => ({} as { edit_acl?: unknown }));
+    const norm = normalizeEditAcl(body.edit_acl ?? null);
+    if ('error' in norm) return c.json({ error: norm.error }, 400);
+    const serialized = serializeEditAcl(norm.value);
+
+    if (serialized === null) {
+        await clearCategoryAclRow(db, name, currentUser.id);
+        writeAdminLog(c, 'category_acl_clear', `카테고리 ACL 비활성: ${name}`, currentUser.id);
+        return c.json({ success: true, name, edit_acl: null });
+    }
+
+    await db
+        .prepare(
+            `INSERT INTO category_acl (name, edit_acl, created_by)
+             VALUES (?, ?, ?)
+             ON CONFLICT(name) DO UPDATE SET
+               edit_acl = excluded.edit_acl,
+               created_by = excluded.created_by,
+               created_at = unixepoch()`
+        )
+        .bind(name, serialized, currentUser.id)
+        .run();
+
+    writeAdminLog(c, 'category_acl_set', `카테고리 ACL 변경: ${name} → ${serialized}`, currentUser.id);
+    return c.json({ success: true, name, edit_acl: norm.value, exists: true });
+});
+
+/**
+ * DELETE /category-acl/:name
+ * 카테고리에 부여된 모든 ACL 효과를 제거 — category_acl 행 + 레거시 admin_categories 행 둘 다 삭제.
+ * 페이지들의 edit_acl 은 건드리지 않는다.
+ *
+ * 두 테이블 중 하나라도 행이 있었으면 success. 둘 다 없으면 404.
+ */
+adminRoutes.delete('/category-acl/:name', async (c) => {
+    const db = c.env.DB;
+    const currentUser = c.get('user')!;
+    const name = c.req.param('name');
+    if (!name) return c.json({ error: 'name 이 비어 있습니다.' }, 400);
+
+    const aclResult = await db.prepare('DELETE FROM category_acl WHERE name = ?').bind(name).run();
+    let legacyChanges = 0;
+    try {
+        const legacyResult = await db.prepare('DELETE FROM admin_categories WHERE name = ?').bind(name).run();
+        legacyChanges = legacyResult.meta.changes;
+    } catch {
+        // admin_categories 가 이미 DROP 된 환경 — 무시.
+    }
+    if (aclResult.meta.changes === 0 && legacyChanges === 0) {
+        return c.json({ error: '카테고리 ACL 행이 없습니다.' }, 404);
+    }
+    writeAdminLog(c, 'category_acl_delete', `카테고리 ACL 삭제: ${name} (legacy=${legacyChanges})`, currentUser.id);
+    return c.json({ success: true });
+});
+
+/**
+ * GET /category-acl/:name/pages
+ * 카테고리에 속한 페이지(slug, id, 현재 edit_acl) 목록 — 일괄 적용 UI 의 체크박스 목록용.
+ */
+adminRoutes.get('/category-acl/:name/pages', async (c) => {
+    const db = c.env.DB;
+    const name = c.req.param('name');
+    if (!name) return c.json({ error: 'name 이 비어 있습니다.' }, 400);
+
+    const { results } = await db
+        .prepare(
+            `SELECT p.id, p.slug, p.edit_acl
+               FROM page_categories pc
+               JOIN pages p ON pc.page_id = p.id
+              WHERE pc.category = ? AND p.deleted_at IS NULL
+              ORDER BY p.slug ASC
+              LIMIT ${CATEGORY_ACL_BULK_MAX}`
+        )
+        .bind(name)
+        .all<{ id: number; slug: string; edit_acl: string | null }>();
+    const items = (results || []).map(r => ({
+        id: r.id,
+        slug: r.slug,
+        edit_acl: parseEditAcl(r.edit_acl),
+    }));
+    return c.json({ name, items, total: items.length });
+});
+
+/**
+ * POST /category-acl/:name/bulk-apply
+ * 카테고리 ACL 템플릿을 그 카테고리에 속한 페이지들에 일괄 적용.
+ * Body:
+ *   { mode: 'overwrite' | 'merge' | 'ignore',
+ *     ids: number[],                        // 적용할 페이지 id
+ *     persistTemplate?: boolean,            // true 면 templateAcl 을 category_acl 에 upsert
+ *     templateAcl?: EditAcl | null }        // persistTemplate=true 또는 카테고리 ACL 행이 없을 때 사용할 ACL
+ *
+ * 모드 의미:
+ *   overwrite : 페이지 edit_acl ← 카테고리 템플릿
+ *   merge     : 페이지 edit_acl 의 flag ∪ 템플릿 flag (AND 평가이므로 결과는 더 엄격)
+ *   ignore    : 페이지 edit_acl 변경 안 함 (템플릿만 저장하고 끝낼 때 사용)
+ */
+adminRoutes.post('/category-acl/:name/bulk-apply', async (c) => {
+    const db = c.env.DB;
+    const currentUser = c.get('user')!;
+    const name = c.req.param('name');
+    if (!name) return c.json({ error: 'name 이 비어 있습니다.' }, 400);
+    if (!/^[가-힣a-zA-Z0-9\s_.-]+$/.test(name)) {
+        return c.json({ error: '카테고리 이름에 사용할 수 없는 문자가 포함되어 있습니다.' }, 400);
+    }
+
+    const body = await c.req.json<{
+        mode?: unknown;
+        ids?: unknown;
+        persistTemplate?: unknown;
+        templateAcl?: unknown;
+    }>().catch(() => ({} as any));
+
+    const mode = normalizeCategoryAclMode(body.mode, 'merge');
+    const persistTemplate = body.persistTemplate === true;
+
+    let templateAcl: EditAcl | null = null;
+    if (Object.prototype.hasOwnProperty.call(body, 'templateAcl')) {
+        const norm = normalizeEditAcl(body.templateAcl ?? null);
+        if ('error' in norm) return c.json({ error: norm.error }, 400);
+        templateAcl = norm.value;
+    } else {
+        const existing = await getCategoryAcl(db, name);
+        templateAcl = existing;
+    }
+
+    // ids 검증
+    const sanitizeIds = (raw: unknown): number[] => {
+        if (!Array.isArray(raw)) return [];
+        const out: number[] = [];
+        const seen = new Set<number>();
+        for (const v of raw) {
+            const n = typeof v === 'number' ? v : Number(v);
+            if (!Number.isInteger(n) || n <= 0 || seen.has(n)) continue;
+            seen.add(n);
+            out.push(n);
+        }
+        return out;
+    };
+    const ids = sanitizeIds(body.ids);
+    if (ids.length > CATEGORY_ACL_BULK_MAX) {
+        return c.json({ error: `한 번에 처리할 수 있는 문서는 ${CATEGORY_ACL_BULK_MAX}개까지입니다.` }, 400);
+    }
+
+    // 1) 템플릿 upsert (옵션). serialized=null 이면 비활성 — 레거시 admin_categories 와의
+    // 우선순위 유지를 위해 tombstone 처리.
+    let templateSaved = false;
+    if (persistTemplate) {
+        const serialized = serializeEditAcl(templateAcl);
+        if (serialized === null) {
+            await clearCategoryAclRow(db, name, currentUser.id);
+        } else {
+            await db
+                .prepare(
+                    `INSERT INTO category_acl (name, edit_acl, created_by)
+                     VALUES (?, ?, ?)
+                     ON CONFLICT(name) DO UPDATE SET
+                       edit_acl = excluded.edit_acl,
+                       created_by = excluded.created_by,
+                       created_at = unixepoch()`
+                )
+                .bind(name, serialized, currentUser.id)
+                .run();
+        }
+        templateSaved = true;
+    }
+
+    // 2) 페이지 일괄 적용
+    let scanned = 0;
+    const updates: { id: number; slug: string; newAcl: string | null }[] = [];
+
+    if (mode !== 'ignore' && ids.length > 0) {
+        // 카테고리에 속한 페이지 + ids 교집합만 처리. category 컬럼은 id 기준이 아닌 join 으로 검증.
+        // D1 의 100 bound-parameter 제한을 피하기 위해 ids 를 90개씩 청크로 SELECT 한다.
+        // (1 binding 은 category name 에 사용 → ids 는 99개까지 가능하지만 여유를 두고 90.)
+        const SCAN_CHUNK = 90;
+        const collected: { id: number; slug: string; edit_acl: string | null }[] = [];
+        for (let i = 0; i < ids.length; i += SCAN_CHUNK) {
+            const chunkIds = ids.slice(i, i + SCAN_CHUNK);
+            const placeholders = chunkIds.map(() => '?').join(',');
+            const { results } = await db
+                .prepare(
+                    `SELECT p.id, p.slug, p.edit_acl
+                       FROM page_categories pc
+                       JOIN pages p ON pc.page_id = p.id
+                      WHERE pc.category = ?
+                        AND p.id IN (${placeholders})
+                        AND p.deleted_at IS NULL`
+                )
+                .bind(name, ...chunkIds)
+                .all<{ id: number; slug: string; edit_acl: string | null }>();
+            if (results && results.length > 0) collected.push(...results);
+        }
+        scanned = collected.length;
+
+        for (const r of collected) {
+            const curAcl = parseEditAcl(r.edit_acl);
+            const newAcl = applyCategoryAclToPage(curAcl, templateAcl, mode);
+            const newSerialized = serializeEditAcl(newAcl);
+            const curSerialized = serializeEditAcl(curAcl);
+            if (newSerialized === curSerialized) continue;
+            updates.push({ id: r.id, slug: r.slug, newAcl: newSerialized });
+        }
+
+        if (updates.length > 0) {
+            const stmts: D1PreparedStatement[] = updates.map(u =>
+                db.prepare('UPDATE pages SET edit_acl = ? WHERE id = ?').bind(u.newAcl, u.id)
+            );
+            const chunkSize = 200;
+            for (let i = 0; i < stmts.length; i += chunkSize) {
+                await db.batch(stmts.slice(i, i + chunkSize));
+            }
+        }
+    }
+
+    const changedSlugs = updates.map(u => u.slug);
+    if (changedSlugs.length > 0) {
+        c.executionCtx.waitUntil(
+            Promise.allSettled([
+                ...changedSlugs.map(s => invalidatePageCache(c, s)),
+                refreshRecentChangesCache(c),
+            ])
+        );
+    }
+
+    writeAdminLog(
+        c,
+        'category_acl_bulk_apply',
+        `카테고리 ACL 일괄 적용: ${name} (모드=${mode}, 스캔=${scanned}, 변경=${updates.length}/${ids.length}${templateSaved ? ', 템플릿저장' : ''})`,
+        currentUser.id
+    );
+
+    return c.json({
+        scanned,
+        requested: ids.length,
+        changed: updates.length,
+        mode,
+        templateSaved,
+    });
+});
+
+
 // ── 관리자 전용 네임스페이스 (prefix) 관리 ──
 
 /**
@@ -1648,7 +2053,7 @@ adminRoutes.get('/pages/deleted', async (c) => {
 
     const [pagesResult, countResult] = await Promise.all([
         db.prepare(
-            `SELECT id, slug, is_locked, deleted_at, updated_at
+            `SELECT id, slug, deleted_at, updated_at
              FROM pages${whereClause}
              ORDER BY deleted_at DESC
              LIMIT ? OFFSET ?`
@@ -1699,11 +2104,11 @@ function validateCategoryPrefix(raw: unknown): { prefix: string } | { error: str
 }
 
 type SubpageRow = { id: number; slug: string; category: string | null };
-type LockPrivateRow = { id: number; slug: string; is_locked: number; is_private: number; edit_acl: string | null };
+type LockPrivateRow = { id: number; slug: string; is_private: number; edit_acl: string | null };
 
 // SQL 인젝션 방지: 컬럼 화이트리스트로만 SELECT 절을 구성한다.
 const SCAN_ALLOWED_COLUMNS = new Set([
-    'id', 'slug', 'category', 'is_locked', 'is_private', 'edit_acl',
+    'id', 'slug', 'category', 'is_private', 'edit_acl',
 ]);
 
 /**
@@ -1744,7 +2149,7 @@ async function scanPrefixSubpages<T extends { slug: string }>(
 }
 
 const CATEGORY_SCAN_COLUMNS = ['id', 'slug', 'category'] as const;
-const DOC_SETTING_SCAN_COLUMNS = ['id', 'slug', 'is_locked', 'is_private', 'edit_acl'] as const;
+const DOC_SETTING_SCAN_COLUMNS = ['id', 'slug', 'is_private', 'edit_acl'] as const;
 
 async function scanCategorySubpages(db: D1Database, prefix: string) {
     return scanPrefixSubpages<SubpageRow>(db, prefix, CATEGORY_SCAN_COLUMNS);
@@ -2021,22 +2426,21 @@ adminRoutes.post('/category-prefix-rules/bulk-apply', async (c) => {
     });
 });
 
-// ── 하위 문서 일괄 잠금/비공개 설정 + 자동 규칙 ───────────────────────
+// ── 하위 문서 일괄 비공개/ACL 설정 + 자동 규칙 ───────────────────────
 // 카테고리 prefix 룰과 동일한 구조: prefix 스캔 + 일괄 적용 + 자동 규칙 저장.
-// `is_locked` / `is_private` 두 플래그를 한 모달에서 함께 다룬다.
+// `is_private` 플래그 + edit_acl 두 정책을 한 모달에서 함께 다룬다.
 // 자동 규칙은 신규 문서 생성 시점에만 적용된다 (편집 시에는 강제하지 않음).
 
 type DocSettingRuleRow = {
     id: number;
     prefix: string;
-    is_locked: number | null;
     is_private: number | null;
     edit_acl: string | null;
     created_at: number;
     created_by_name: string | null;
 };
 
-// body.is_locked / body.is_private 가 0/1/null 중 하나인지 엄격 검증.
+// body.is_private 가 0/1/null 중 하나인지 엄격 검증.
 function parseFlag(v: unknown): { value: number | null } | { error: string } {
     if (v === undefined || v === null) return { value: null };
     if (v === 0 || v === 1) return { value: v };
@@ -2059,7 +2463,7 @@ adminRoutes.get('/doc-setting-prefix-rules', async (c) => {
     const db = c.env.DB;
     const { results } = await db
         .prepare(
-            `SELECT r.id, r.prefix, r.is_locked, r.is_private, r.edit_acl, r.created_at, u.name AS created_by_name
+            `SELECT r.id, r.prefix, r.is_private, r.edit_acl, r.created_at, u.name AS created_by_name
              FROM doc_setting_prefix_rules r
              LEFT JOIN users u ON u.id = r.created_by
              ORDER BY r.prefix ASC`
@@ -2077,7 +2481,6 @@ adminRoutes.post('/doc-setting-prefix-rules', async (c) => {
     const currentUser = c.get('user')!;
     const body = await c.req.json<{
         prefix?: string;
-        is_locked?: 0 | 1 | null;
         is_private?: 0 | 1 | null;
         edit_acl?: unknown;
     }>();
@@ -2086,13 +2489,11 @@ adminRoutes.post('/doc-setting-prefix-rules', async (c) => {
     if ('error' in prefixCheck) return c.json({ error: prefixCheck.error }, 400);
     const { prefix } = prefixCheck;
 
-    const lockCheck = parseFlag(body.is_locked);
-    if ('error' in lockCheck) return c.json({ error: lockCheck.error }, 400);
     const privateCheck = parseFlag(body.is_private);
     if ('error' in privateCheck) return c.json({ error: privateCheck.error }, 400);
 
     // edit_acl 키 자체가 body 에 없으면 "변경 없음" 으로 처리 — 기존 행이 있다면 그 값을 유지한다.
-    // (lock/private 만 갱신하는 구 클라이언트가 ACL 을 silent 하게 지워버리는 것을 막는다.)
+    // (private 만 갱신하는 구 클라이언트가 ACL 을 silent 하게 지워버리는 것을 막는다.)
     const editAclProvided = Object.prototype.hasOwnProperty.call(body, 'edit_acl');
     let editAclSerialized: string | null = null;
     if (editAclProvided) {
@@ -2101,54 +2502,47 @@ adminRoutes.post('/doc-setting-prefix-rules', async (c) => {
         editAclSerialized = serializeEditAcl(norm.value);
     }
 
-    // 신규 행을 만드는 경우, 정책이 하나라도 있어야 한다. 기존 행을 갱신하면서 edit_acl 키를
-    // 생략한 경우에는 기존 ACL 이 살아 있을 수 있으므로 이 검증은 적용하지 않는다 (아래 별도 처리).
-    const newRowHasNoPolicy = lockCheck.value === null && privateCheck.value === null && editAclSerialized === null;
+    // 신규 행을 만드는 경우, 정책이 하나라도 있어야 한다.
+    const newRowHasNoPolicy = privateCheck.value === null && editAclSerialized === null;
 
     // upsert: edit_acl 컬럼은 키가 제공된 경우에만 갱신, 아니면 기존 값을 유지.
-    // SQLite ON CONFLICT 의 UPDATE 절에서는 `excluded.edit_acl` 과 기존 `edit_acl` 둘 다 참조 가능.
-    // 1=provided(덮어쓰기), 0=omitted(기존 유지) 를 마지막 바인딩으로 전달.
     const existingRow = await db
         .prepare('SELECT id, edit_acl FROM doc_setting_prefix_rules WHERE prefix = ?')
         .bind(prefix)
         .first<{ id: number; edit_acl: string | null }>();
 
     if (newRowHasNoPolicy && !existingRow) {
-        return c.json({ error: '편집 잠금/비공개/편집 ACL 중 적어도 한 항목은 규칙을 지정해야 합니다.' }, 400);
+        return c.json({ error: '비공개/편집 ACL 중 적어도 한 항목은 규칙을 지정해야 합니다.' }, 400);
     }
-    // 갱신 경로에서, edit_acl 을 유지(생략) 했을 때도 lock/private 모두 null 이고 기존 ACL 도 null 이면
-    // 결과적으로 정책이 없는 규칙이 된다 → 거부.
-    if (existingRow && lockCheck.value === null && privateCheck.value === null) {
+    if (existingRow && privateCheck.value === null) {
         const finalAclAfter = editAclProvided ? editAclSerialized : existingRow.edit_acl;
         if (finalAclAfter === null) {
-            return c.json({ error: '편집 잠금/비공개/편집 ACL 중 적어도 한 항목은 규칙을 지정해야 합니다.' }, 400);
+            return c.json({ error: '비공개/편집 ACL 중 적어도 한 항목은 규칙을 지정해야 합니다.' }, 400);
         }
     }
 
     await db
         .prepare(
-            `INSERT INTO doc_setting_prefix_rules (prefix, is_locked, is_private, edit_acl, created_by)
-             VALUES (?, ?, ?, ?, ?)
+            `INSERT INTO doc_setting_prefix_rules (prefix, is_private, edit_acl, created_by)
+             VALUES (?, ?, ?, ?)
              ON CONFLICT(prefix) DO UPDATE SET
-               is_locked = excluded.is_locked,
                is_private = excluded.is_private,
-               edit_acl = CASE WHEN ?6 = 1 THEN excluded.edit_acl ELSE edit_acl END,
+               edit_acl = CASE WHEN ?5 = 1 THEN excluded.edit_acl ELSE edit_acl END,
                created_by = excluded.created_by,
                created_at = unixepoch()`
         )
-        .bind(prefix, lockCheck.value, privateCheck.value, editAclSerialized, currentUser.id, editAclProvided ? 1 : 0)
+        .bind(prefix, privateCheck.value, editAclSerialized, currentUser.id, editAclProvided ? 1 : 0)
         .run();
 
-    // 응답·로그용 최종 ACL: 제공된 경우 그 값, 생략된 경우 기존 행의 값(없으면 null).
     const finalAclForResponse = editAclProvided ? editAclSerialized : (existingRow?.edit_acl ?? null);
 
     writeAdminLog(
         c,
         'doc_setting_prefix_rule_save',
-        `자동 문서 설정 규칙 저장: ${prefix} → lock=${lockCheck.value ?? '-'}, private=${privateCheck.value ?? '-'}, edit_acl=${finalAclForResponse ?? '-'}`,
+        `자동 문서 설정 규칙 저장: ${prefix} → private=${privateCheck.value ?? '-'}, edit_acl=${finalAclForResponse ?? '-'}`,
         currentUser.id
     );
-    return c.json({ success: true, prefix, is_locked: lockCheck.value, is_private: privateCheck.value, edit_acl: finalAclForResponse });
+    return c.json({ success: true, prefix, is_private: privateCheck.value, edit_acl: finalAclForResponse });
 });
 
 /**
@@ -2182,7 +2576,7 @@ adminRoutes.delete('/doc-setting-prefix-rules/:id', async (c) => {
 
 /**
  * GET /doc-setting-prefix-rules/subpages?prefix=<slug>
- * prefix 하위 문서 트리 + 각 문서의 현재 is_locked / is_private.
+ * prefix 하위 문서 트리 + 각 문서의 현재 is_private / edit_acl.
  */
 adminRoutes.get('/doc-setting-prefix-rules/subpages', async (c) => {
     const db = c.env.DB;
@@ -2204,7 +2598,6 @@ adminRoutes.get('/doc-setting-prefix-rules/subpages', async (c) => {
         id: p.id,
         slug: p.slug,
         depth: p.slug.split('/').length - prefixDepth - 1,
-        is_locked: p.is_locked ? 1 : 0,
         is_private: p.is_private ? 1 : 0,
         edit_acl: parseEditAcl(p.edit_acl),
     }));
@@ -2214,7 +2607,8 @@ adminRoutes.get('/doc-setting-prefix-rules/subpages', async (c) => {
 
 /**
  * POST /doc-setting-prefix-rules/bulk-apply
- * 본문: { prefix, lockAction: 'none'|'on'|'off', privateAction: 'none'|'on'|'off',
+ * 본문: { prefix, privateAction: 'none'|'on'|'off',
+ *         aclAction: 'none'|'clear'|'set', aclValue?,
  *         ids: number[], persist?: boolean }
  * - 'on' = 1로 설정, 'off' = 0으로 설정, 'none' = 변경하지 않음.
  * - 서버는 prefix 스캔 결과와 교집합으로 ids 를 필터링.
@@ -2225,7 +2619,6 @@ adminRoutes.post('/doc-setting-prefix-rules/bulk-apply', async (c) => {
     const currentUser = c.get('user')!;
     const body = await c.req.json<{
         prefix?: string;
-        lockAction?: unknown;
         privateAction?: unknown;
         aclAction?: unknown;
         aclValue?: unknown;
@@ -2237,10 +2630,9 @@ adminRoutes.post('/doc-setting-prefix-rules/bulk-apply', async (c) => {
     if ('error' in prefixCheck) return c.json({ error: prefixCheck.error }, 400);
     const { prefix } = prefixCheck;
 
-    const lockAction = parseAction(body.lockAction);
     const privateAction = parseAction(body.privateAction);
-    if (!lockAction || !privateAction) {
-        return c.json({ error: "lockAction/privateAction 은 'none'|'on'|'off' 중 하나여야 합니다." }, 400);
+    if (!privateAction) {
+        return c.json({ error: "privateAction 은 'none'|'on'|'off' 중 하나여야 합니다." }, 400);
     }
     // ACL 액션: 'none' = 변경 없음, 'clear' = NULL 로 설정, 'set' = aclValue 로 설정.
     const aclAction: 'none' | 'clear' | 'set' =
@@ -2258,7 +2650,7 @@ adminRoutes.post('/doc-setting-prefix-rules/bulk-apply', async (c) => {
     }
     const persist = body.persist === true;
 
-    if (lockAction === 'none' && privateAction === 'none' && aclAction === 'none' && !persist) {
+    if (privateAction === 'none' && aclAction === 'none' && !persist) {
         return c.json({ error: '변경할 설정을 선택하거나 자동 규칙으로 저장 옵션을 켜주세요.' }, 400);
     }
 
@@ -2281,33 +2673,30 @@ adminRoutes.post('/doc-setting-prefix-rules/bulk-apply', async (c) => {
     }
 
     let scanned = 0;
-    const updates: { id: number; slug: string; newLock: number; newPriv: number; newAcl: string | null }[] = [];
+    const updates: { id: number; slug: string; newPriv: number; newAcl: string | null }[] = [];
 
-    if (idsIn.length > 0 && (lockAction !== 'none' || privateAction !== 'none' || aclAction !== 'none')) {
+    if (idsIn.length > 0 && (privateAction !== 'none' || aclAction !== 'none')) {
         const scan = await scanPrefixSubpages<LockPrivateRow>(db, prefix, DOC_SETTING_SCAN_COLUMNS);
         if ('error' in scan) return c.json({ error: scan.error }, 400);
         scanned = scan.pages.length;
         const idToPage = new Map(scan.pages.map(p => [p.id, p]));
-        const targetLock = actionToFlag(lockAction);   // number | null
         const targetPriv = actionToFlag(privateAction);
 
         for (const id of idsIn) {
             const page = idToPage.get(id);
             if (!page) continue;
-            const curLock = page.is_locked ? 1 : 0;
             const curPriv = page.is_private ? 1 : 0;
             const curAcl = page.edit_acl ?? null;
-            const newLock = targetLock === null ? curLock : targetLock;
             const newPriv = targetPriv === null ? curPriv : targetPriv;
             const newAcl = aclAction === 'none' ? curAcl : aclAction === 'clear' ? null : aclSetValue;
-            if (newLock === curLock && newPriv === curPriv && newAcl === curAcl) continue;
-            updates.push({ id: page.id, slug: page.slug, newLock, newPriv, newAcl });
+            if (newPriv === curPriv && newAcl === curAcl) continue;
+            updates.push({ id: page.id, slug: page.slug, newPriv, newAcl });
         }
 
         if (updates.length > 0) {
             const stmts: D1PreparedStatement[] = updates.map(u =>
-                db.prepare('UPDATE pages SET is_locked = ?, is_private = ?, edit_acl = ? WHERE id = ?')
-                    .bind(u.newLock, u.newPriv, u.newAcl, u.id)
+                db.prepare('UPDATE pages SET is_private = ?, edit_acl = ? WHERE id = ?')
+                    .bind(u.newPriv, u.newAcl, u.id)
             );
             const chunkSize = 200;
             for (let i = 0; i < stmts.length; i += chunkSize) {
@@ -2318,25 +2707,23 @@ adminRoutes.post('/doc-setting-prefix-rules/bulk-apply', async (c) => {
 
     let ruleSaved = false;
     if (persist) {
-        const ruleLock = actionToFlag(lockAction);
         const rulePriv = actionToFlag(privateAction);
         // 룰에는 ACL 'clear' 의미가 없다 ('none' = 룰에 ACL 없음, 'set' = ACL 강제). 'clear' 는 신규 문서에 NULL 강제와 동일하므로 ACL 룰 자체를 지정 안 한 것으로 본다.
         const ruleAcl = aclAction === 'set' ? aclSetValue : null;
-        if (ruleLock === null && rulePriv === null && ruleAcl === null) {
-            return c.json({ error: '자동 규칙으로 저장하려면 편집 잠금/비공개/편집 ACL 중 하나 이상을 지정해야 합니다.' }, 400);
+        if (rulePriv === null && ruleAcl === null) {
+            return c.json({ error: '자동 규칙으로 저장하려면 비공개/편집 ACL 중 하나 이상을 지정해야 합니다.' }, 400);
         }
         await db
             .prepare(
-                `INSERT INTO doc_setting_prefix_rules (prefix, is_locked, is_private, edit_acl, created_by)
-                 VALUES (?, ?, ?, ?, ?)
+                `INSERT INTO doc_setting_prefix_rules (prefix, is_private, edit_acl, created_by)
+                 VALUES (?, ?, ?, ?)
                  ON CONFLICT(prefix) DO UPDATE SET
-                   is_locked = excluded.is_locked,
                    is_private = excluded.is_private,
                    edit_acl = excluded.edit_acl,
                    created_by = excluded.created_by,
                    created_at = unixepoch()`
             )
-            .bind(prefix, ruleLock, rulePriv, ruleAcl, currentUser.id)
+            .bind(prefix, rulePriv, ruleAcl, currentUser.id)
             .run();
         ruleSaved = true;
     }
@@ -2354,7 +2741,7 @@ adminRoutes.post('/doc-setting-prefix-rules/bulk-apply', async (c) => {
     writeAdminLog(
         c,
         'doc_setting_bulk_apply',
-        `하위 문서 설정 관리: ${prefix}/** (스캔=${scanned}, 변경=${updates.length}/${idsIn.length}, lock=${lockAction}, private=${privateAction}, acl=${aclAction}${ruleSaved ? ', 규칙저장' : ''})`,
+        `하위 문서 설정 관리: ${prefix}/** (스캔=${scanned}, 변경=${updates.length}/${idsIn.length}, private=${privateAction}, acl=${aclAction}${ruleSaved ? ', 규칙저장' : ''})`,
         currentUser.id
     );
 
@@ -2364,135 +2751,6 @@ adminRoutes.post('/doc-setting-prefix-rules/bulk-apply', async (c) => {
         changed: updates.length,
         ruleSaved,
     });
-});
-
-// ── 문서별 편집 허용 명단 (page_edit_allowlist) ─────────────────────────
-// pages.edit_acl 의 'allowlist' 플래그가 참조한다. requireAdmin 으로 라우터 전체 보호 중.
-
-async function loadPageBySlug(db: D1Database, slug: string): Promise<{ id: number } | null> {
-    return await db
-        .prepare('SELECT id FROM pages WHERE slug = ? AND deleted_at IS NULL')
-        .bind(slug)
-        .first<{ id: number }>();
-}
-
-/**
- * GET /pages/:slug/edit-allowlist
- * 문서의 편집 허용 명단 조회.
- */
-adminRoutes.get('/pages/:slug/edit-allowlist', async (c) => {
-    const db = c.env.DB;
-    const slug = normalizeSlug(c.req.param('slug'));
-    if (!slug) return c.json({ error: 'slug 가 비어 있습니다.' }, 400);
-
-    const page = await loadPageBySlug(db, slug);
-    if (!page) return c.json({ error: '문서를 찾을 수 없습니다.' }, 404);
-
-    const { results } = await db
-        .prepare(
-            `SELECT u.id AS user_id, u.name, u.picture,
-                    ${ROLE_CASE_SQL} AS role,
-                    u.email AS _email,
-                    a.created_at AS added_at,
-                    adder.name AS added_by_name
-             FROM page_edit_allowlist a
-             JOIN users u ON u.id = a.user_id
-             LEFT JOIN users adder ON adder.id = a.added_by
-             WHERE a.page_id = ?
-             ORDER BY a.created_at DESC`
-        )
-        .bind(page.id)
-        .all<{
-            user_id: number;
-            name: string;
-            picture: string | null;
-            role: string;
-            _email: string;
-            added_at: number;
-            added_by_name: string | null;
-        }>();
-
-    enrichRoles(results, 'role', '_email', c.env);
-    return c.json({ slug, items: results });
-});
-
-/**
- * POST /pages/:slug/edit-allowlist
- * Body: { user_id }
- */
-adminRoutes.post('/pages/:slug/edit-allowlist', async (c) => {
-    const db = c.env.DB;
-    const currentUser = c.get('user')!;
-    const slug = normalizeSlug(c.req.param('slug'));
-    if (!slug) return c.json({ error: 'slug 가 비어 있습니다.' }, 400);
-
-    const body = await c.req.json<{ user_id?: unknown }>();
-    const userId = typeof body.user_id === 'number' ? body.user_id : Number(body.user_id);
-    if (!Number.isInteger(userId) || userId <= 0) {
-        return c.json({ error: 'user_id 는 양의 정수여야 합니다.' }, 400);
-    }
-
-    const page = await loadPageBySlug(db, slug);
-    if (!page) return c.json({ error: '문서를 찾을 수 없습니다.' }, 404);
-
-    const target = await db
-        .prepare('SELECT id, name, role FROM users WHERE id = ?')
-        .bind(userId)
-        .first<{ id: number; name: string; role: string }>();
-    if (!target) return c.json({ error: '대상 유저를 찾을 수 없습니다.' }, 404);
-    if (target.role === 'deleted') {
-        return c.json({ error: '탈퇴한 유저는 허용 명단에 추가할 수 없습니다.' }, 400);
-    }
-
-    await db
-        .prepare(
-            `INSERT INTO page_edit_allowlist (page_id, user_id, added_by)
-             VALUES (?, ?, ?)
-             ON CONFLICT(page_id, user_id) DO NOTHING`
-        )
-        .bind(page.id, userId, currentUser.id)
-        .run();
-
-    writeAdminLog(
-        c,
-        'page_edit_allowlist_add',
-        `편집 허용 명단 추가: ${slug} ← user #${userId} (${target.name})`,
-        currentUser.id
-    );
-    return c.json({ success: true });
-});
-
-/**
- * DELETE /pages/:slug/edit-allowlist/:userId
- */
-adminRoutes.delete('/pages/:slug/edit-allowlist/:userId', async (c) => {
-    const db = c.env.DB;
-    const currentUser = c.get('user')!;
-    const slug = normalizeSlug(c.req.param('slug'));
-    const userId = Number(c.req.param('userId'));
-    if (!slug || !Number.isInteger(userId) || userId <= 0) {
-        return c.json({ error: '잘못된 요청입니다.' }, 400);
-    }
-
-    const page = await loadPageBySlug(db, slug);
-    if (!page) return c.json({ error: '문서를 찾을 수 없습니다.' }, 404);
-
-    const result = await db
-        .prepare('DELETE FROM page_edit_allowlist WHERE page_id = ? AND user_id = ?')
-        .bind(page.id, userId)
-        .run();
-
-    if (result.meta.changes === 0) {
-        return c.json({ error: '허용 명단에서 찾을 수 없습니다.' }, 404);
-    }
-
-    writeAdminLog(
-        c,
-        'page_edit_allowlist_remove',
-        `편집 허용 명단 삭제: ${slug} ← user #${userId}`,
-        currentUser.id
-    );
-    return c.json({ success: true });
 });
 
 /**
@@ -2551,9 +2809,10 @@ adminRoutes.put('/pages/:slug/edit-acl', async (c) => {
 
 /**
  * PATCH /pages/:slug/flags
- * Body: { is_locked?: 0|1, is_private?: 0|1 }
- * 본문/리비전 변경 없이 잠금/비공개 플래그만 갱신. 권한 관리 모달 단건 저장 경로.
- * 생략된 키는 그대로 유지하며, 둘 다 생략 시 변경 없이 현재 값을 반환한다.
+ * Body: { is_private?: 0|1 }
+ * 본문/리비전 변경 없이 비공개 플래그만 갱신. 권한 관리 모달 단건 저장 경로.
+ * 키가 생략되거나 현재 값과 같으면 변경 없이 현재 값을 반환한다.
+ * (편집 잠금은 edit_acl 의 admin_only 플래그로 통합되어 별도 PUT /edit-acl 로 처리.)
  */
 adminRoutes.patch('/pages/:slug/flags', async (c) => {
     const db = c.env.DB;
@@ -2562,15 +2821,8 @@ adminRoutes.patch('/pages/:slug/flags', async (c) => {
     if (!slug) return c.json({ error: 'slug 가 비어 있습니다.' }, 400);
 
     const body = await c.req.json<Record<string, unknown>>().catch(() => ({} as Record<string, unknown>));
-    const hasLock = Object.prototype.hasOwnProperty.call(body, 'is_locked');
     const hasPriv = Object.prototype.hasOwnProperty.call(body, 'is_private');
 
-    let nextLock: 0 | 1 | undefined;
-    if (hasLock) {
-        const v = body.is_locked;
-        if (v !== 0 && v !== 1) return c.json({ error: 'is_locked 는 0 또는 1 이어야 합니다.' }, 400);
-        nextLock = v;
-    }
     let nextPriv: 0 | 1 | undefined;
     if (hasPriv) {
         const v = body.is_private;
@@ -2579,48 +2831,41 @@ adminRoutes.patch('/pages/:slug/flags', async (c) => {
     }
 
     const page = await db
-        .prepare('SELECT id, is_locked, is_private FROM pages WHERE slug = ? AND deleted_at IS NULL')
+        .prepare('SELECT id, is_private FROM pages WHERE slug = ? AND deleted_at IS NULL')
         .bind(slug)
-        .first<{ id: number; is_locked: number; is_private: number }>();
+        .first<{ id: number; is_private: number }>();
     if (!page) return c.json({ error: '문서를 찾을 수 없습니다.' }, 404);
 
-    if (nextLock === undefined && nextPriv === undefined) {
-        return c.json({ success: true, slug, is_locked: page.is_locked, is_private: page.is_private });
+    if (nextPriv === undefined) {
+        return c.json({ success: true, slug, is_private: page.is_private });
     }
 
-    const finalLock = nextLock ?? page.is_locked;
-    const finalPriv = nextPriv ?? page.is_private;
+    const privateChanged = nextPriv !== page.is_private;
+    if (!privateChanged) {
+        return c.json({ success: true, slug, is_private: page.is_private });
+    }
 
     await db
-        .prepare('UPDATE pages SET is_locked = ?, is_private = ?, updated_at = unixepoch() WHERE id = ?')
-        .bind(finalLock, finalPriv, page.id)
+        .prepare('UPDATE pages SET is_private = ?, updated_at = unixepoch() WHERE id = ?')
+        .bind(nextPriv, page.id)
         .run();
 
-    const privateChanged = nextPriv !== undefined && nextPriv !== page.is_private;
-
-    // UPDATE 가 updated_at 을 항상 bump 하므로 recent-changes 캐시(updated_at 정렬)도 항상 새로고침.
+    // UPDATE 가 updated_at 을 bump 하므로 recent-changes 캐시(updated_at 정렬)도 새로고침.
     // is_private 변경은 추가로 백링크 캐시(이 문서를 트랜스클루드 한 페이지의 렌더 결과) 에도 영향.
-    // admin-mcp set_page_status 와 동일한 정책.
-    const cacheTasks: Promise<unknown>[] = [
+    c.executionCtx.waitUntil(Promise.allSettled([
         invalidatePageCache(c, slug),
         refreshRecentChangesCache(c),
-    ];
-    if (privateChanged) cacheTasks.push(invalidateBacklinkCaches(c, slug, db));
-    c.executionCtx.waitUntil(Promise.allSettled(cacheTasks));
+        invalidateBacklinkCaches(c, slug, db),
+    ]));
 
-    const changes: string[] = [];
-    if (nextLock !== undefined && nextLock !== page.is_locked) changes.push(`잠금 ${nextLock ? 'ON' : 'OFF'}`);
-    if (privateChanged) changes.push(`비공개 ${nextPriv ? 'ON' : 'OFF'}`);
-    if (changes.length > 0) {
-        writeAdminLog(
-            c,
-            'page_flags_set',
-            `문서 플래그 변경: ${slug} → ${changes.join(', ')}`,
-            currentUser.id
-        );
-    }
+    writeAdminLog(
+        c,
+        'page_flags_set',
+        `문서 플래그 변경: ${slug} → 비공개 ${nextPriv ? 'ON' : 'OFF'}`,
+        currentUser.id
+    );
 
-    return c.json({ success: true, slug, is_locked: finalLock, is_private: finalPriv });
+    return c.json({ success: true, slug, is_private: nextPriv });
 });
 
 // ── 컬러 팔레트 CRUD ────────────────────────────────────────────────

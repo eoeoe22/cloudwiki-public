@@ -62,7 +62,8 @@ import {
 /**
  * MCP 편집 도구용 ACL 게이트.
  *
- * - 관리자(admin:access)는 우회.
+ * - admin_only 플래그가 없는 ACL 은 관리자가 우회.
+ * - admin_only 플래그가 있으면 evaluate 단계에서 isAdmin 으로 판정 (관리자도 평가에 참여).
  * - 기존 페이지면 pages.edit_acl 평가, 신규 생성 케이스(pageId=null)면 prefix 룰 ACL 평가.
  * - 통과면 null, 차단이면 사용자 친화적 에러 문자열을 반환한다.
  */
@@ -73,10 +74,9 @@ async function enforceMcpEditAcl(
     existingPage: { id: number; edit_acl?: string | null } | null,
     slugForCreate: string | null,
 ): Promise<string | null> {
-    if (rbac.can(user.role, 'admin:access')) return null;
+    const isAdmin = rbac.can(user.role, 'admin:access');
     const minAge = await getEditAclMinAgeDays(db);
     if (existingPage) {
-        // pages 행에서 edit_acl 을 별도 조회한 경우만 사용. 호출자가 안 받았으면 직접 fetch.
         let rawAcl: string | null | undefined = existingPage.edit_acl;
         if (rawAcl === undefined) {
             const row = await db
@@ -87,16 +87,26 @@ async function enforceMcpEditAcl(
         }
         const acl = parseEditAcl(rawAcl);
         if (!acl || acl.flags.length === 0) return null;
-        const ev = await evaluateEditAcl(db, acl, user, existingPage.id, minAge);
+        const hasAdminOnly = acl.flags.includes('admin_only');
+        if (isAdmin && !hasAdminOnly) return null;
+        const ev = await evaluateEditAcl(db, acl, user, existingPage.id, minAge, isAdmin);
         if (ev.allowed) return null;
-        return `이 문서를 편집할 권한이 부족합니다 (edit_acl: ${acl.mode}=${acl.flags.join(',')}).`;
+        if (ev.decisive === 'admin_only') {
+            return '이 문서는 관리자만 편집할 수 있습니다.';
+        }
+        return `이 문서를 편집할 권한이 부족합니다 (edit_acl: ${acl.flags.join(',')}).`;
     }
     if (!slugForCreate) return null;
     const acl = await findPrefixRuleEditAcl(db, slugForCreate);
     if (!acl || acl.flags.length === 0) return null;
-    const ev = await evaluateEditAcl(db, acl, user, null, minAge);
+    const hasAdminOnly = acl.flags.includes('admin_only');
+    if (isAdmin && !hasAdminOnly) return null;
+    const ev = await evaluateEditAcl(db, acl, user, null, minAge, isAdmin);
     if (ev.allowed) return null;
-    return `이 슬러그로 시작하는 문서는 ACL 정책에 따라 편집할 수 없습니다 (${acl.mode}=${acl.flags.join(',')}).`;
+    if (ev.decisive === 'admin_only') {
+        return '이 슬러그로 시작하는 문서는 관리자만 새로 생성할 수 있습니다.';
+    }
+    return `이 슬러그로 시작하는 문서는 ACL 정책에 따라 편집할 수 없습니다 (${acl.flags.join(',')}).`;
 }
 
 // ────────────────────────────────────────────────────────────────
@@ -174,7 +184,6 @@ export const USER_EDIT_TOOL_DEFS: McpToolDef[] = [
                 title: { type: 'string', description: '문서 슬러그 (호출/식별자)' },
                 content: { type: 'string', description: '문서 전체 본문 (마크다운/위키 문법)' },
                 category: { type: 'string', description: '쉼표로 구분된 카테고리 (선택, 한글/영숫자/공백/쉼표만 허용)' },
-                is_locked: { type: 'boolean', description: '관리자 전용 잠금 여부 (선택)' },
                 redirect_to: { type: 'string', description: '리다이렉트 대상 슬러그 (선택)' },
                 create_only: { type: 'boolean', description: 'true 시 슬러그가 이미 존재하면 오류 반환 (기본 false)' },
                 display_title: { type: ['string', 'null'], description: '표시 전용 대체 제목 (선택). 슬러그와 달리 모든 특수문자 허용. null/빈 문자열이면 제거. 호출 매칭에는 사용되지 않으며 위키 링크/트랜스클루전/MCP 인자는 항상 슬러그(title 파라미터)를 사용합니다.' }
@@ -337,12 +346,11 @@ export const ADMIN_ONLY_EDIT_TOOL_DEFS: McpToolDef[] = [
     },
     {
         name: 'set_page_status',
-        description: '문서 본문은 건드리지 않고 상태 필드(편집 잠금 / 비공개 / 카테고리)만 변경합니다 (즉시 적용 — draft 모델 미사용, 새 리비전 생성 없음). 본문을 읽거나 수정할 필요 없이 메타데이터만 갱신할 때 사용합니다.\n\n- is_locked: 관리자 전용 편집 잠금. wiki:lock 권한이 필요합니다 (기본 admin 역할 보유).\n- is_private: 관리자 전용 열람(비공개). wiki:private 권한이 필요합니다 (기본 admin 역할 보유).\n- category: 쉼표로 구분된 카테고리 (한글/영숫자/공백/쉼표만 허용). 빈 문자열을 보내면 모든 카테고리가 제거됩니다. 생략하면 변경하지 않습니다.\n\n셋 중 하나 이상은 반드시 지정해야 하며, 지정한 필드만 갱신됩니다. 변경은 admin_log 에 기록되지만 리비전 이력에는 남지 않습니다 (편집 요약/저자 등록 없음).',
+        description: '문서 본문은 건드리지 않고 상태 필드(비공개 / 카테고리)만 변경합니다 (즉시 적용 — draft 모델 미사용, 새 리비전 생성 없음). 본문을 읽거나 수정할 필요 없이 메타데이터만 갱신할 때 사용합니다.\n\n- is_private: 관리자 전용 열람(비공개). wiki:private 권한이 필요합니다 (기본 admin 역할 보유).\n- category: 쉼표로 구분된 카테고리 (한글/영숫자/공백/쉼표만 허용). 빈 문자열을 보내면 모든 카테고리가 제거됩니다. 생략하면 변경하지 않습니다.\n\n둘 중 하나 이상은 반드시 지정해야 하며, 지정한 필드만 갱신됩니다. 변경은 admin_log 에 기록되지만 리비전 이력에는 남지 않습니다 (편집 요약/저자 등록 없음).\n\n편집 잠금/관리자 전용 ACL 은 별도 API (PUT /api/admin/pages/:slug/edit-acl) 또는 권한 관리 모달에서 설정합니다.',
         inputSchema: {
             type: 'object',
             properties: {
                 title: { type: 'string', description: '대상 문서 슬러그' },
-                is_locked: { type: 'boolean', description: '관리자 전용 편집 잠금 여부 (선택, wiki:lock 권한 필요)' },
                 is_private: { type: 'boolean', description: '관리자 전용 열람(비공개) 여부 (선택, wiki:private 권한 필요)' },
                 category: { type: 'string', description: '쉼표로 구분된 카테고리 (선택, 빈 문자열이면 카테고리 모두 제거)' }
             },
@@ -464,12 +472,12 @@ export async function dispatchAdminReadTool(c: Context<Env>, user: User, toolNam
         if (!slug) return asTextResult('Error: title 이 필요합니다.', true);
         const draft = await db.prepare(`
             SELECT id, slug, action, base_revision_id, base_version, content,
-                   category, redirect_to, requested_lock, updated_at, submitted_at, submitted_summary
+                   category, redirect_to, updated_at, submitted_at, submitted_summary
             FROM mcp_drafts WHERE user_id = ? AND slug = ?
         `).bind(user.id, slug).first<{
             id: number; slug: string; action: string; base_revision_id: number | null;
             base_version: number; content: string; category: string | null;
-            redirect_to: string | null; requested_lock: number | null; updated_at: number;
+            redirect_to: string | null; updated_at: number;
             submitted_at: number | null; submitted_summary: string | null;
         }>();
         if (!draft) return asTextResult('Error: 해당 슬러그의 draft 를 찾을 수 없습니다.', true);
@@ -482,7 +490,6 @@ export async function dispatchAdminReadTool(c: Context<Env>, user: User, toolNam
             base_version: draft.base_version,
             category: draft.category,
             redirect_to: draft.redirect_to,
-            requested_lock: draft.requested_lock,
             updated_at: unixToIso(draft.updated_at),
             submitted_at: unixToIso(draft.submitted_at),
             submitted_summary: draft.submitted_summary,
@@ -593,18 +600,17 @@ export async function dispatchAdminReadTool(c: Context<Env>, user: User, toolNam
 
 // 기존 문서를 새 리비전으로 갱신하는 공용 헬퍼.
 // create_or_update_page 의 update 경로, patch_page, revert_page 가 공유한다.
-// 호출자는 페이지 존재/잠금/슬러그 검증을 이미 마쳤다고 가정한다.
+// 호출자는 페이지 존재/슬러그 검증을 이미 마쳤다고 가정한다.
 export async function applyExistingPageUpdate(
     c: Context<Env>,
     user: User,
-    page: { id: number; version: number; is_locked: number; category: string | null; title?: string | null },
+    page: { id: number; version: number; category: string | null; title?: string | null },
     content: string,
     opts: {
         summary: string | null;
         category?: string | null;     // undefined → 기존 유지, null/string → 덮어쓰기
         redirectTo?: string | null;   // undefined → 기존 유지, null/string → 덮어쓰기
         title?: string | null;        // undefined → 기존 유지, null → 제거, string → 설정. 호출자가 사전 충돌 검증을 마쳤다고 가정.
-        finalIsLocked: number;
         slug: string;
         logType?: string;             // admin_log type (예: page_update / page_patch / page_revert) — 생략 시 로그 없음
         logMessage?: string;
@@ -640,8 +646,6 @@ export async function applyExistingPageUpdate(
         setClauses.push('title = ?');
         bindings.push(opts.title);
     }
-    setClauses.push('is_locked = ?');
-    bindings.push(opts.finalIsLocked);
     if (opts.redirectTo !== undefined) {
         setClauses.push('redirect_to = ?');
         bindings.push(opts.redirectTo);
@@ -706,7 +710,6 @@ export async function applyNewPageInsert(
         summary: string | null;
         category: string | null;
         redirectTo: string | null;
-        finalIsLocked: number;
         editAcl?: string | null;       // serialize 된 JSON. 호출자가 prefix 룰을 평가해 주입.
         title?: string | null;        // 호출자가 사전 충돌 검증을 마쳤다고 가정. 누락 시 NULL.
         logType?: string;
@@ -722,8 +725,8 @@ export async function applyNewPageInsert(
     let pageResult;
     try {
         pageResult = await db
-            .prepare('INSERT INTO pages (slug, title, content, category, is_locked, edit_acl, redirect_to, rows, characters) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
-            .bind(slug, opts.title ?? null, contentToStore, opts.category, opts.finalIsLocked, opts.editAcl ?? null, opts.redirectTo, metrics.rows, metrics.characters)
+            .prepare('INSERT INTO pages (slug, title, content, category, edit_acl, redirect_to, rows, characters) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+            .bind(slug, opts.title ?? null, contentToStore, opts.category, opts.editAcl ?? null, opts.redirectTo, metrics.rows, metrics.characters)
             .run();
     } catch (e: any) {
         // UNIQUE race: precheck ~ INSERT 사이에 다른 요청이 같은 slug/title 을 점유.
@@ -803,7 +806,7 @@ async function loadDraftOrSeedFromPage(
     type: 'draft' | 'seeded' | 'not_found' | 'submitted';
     draftId?: number;
     content: string;
-    page?: { id: number; version: number; is_locked: number; last_revision_id: number | null; category: string | null; redirect_to: string | null };
+    page?: { id: number; version: number; last_revision_id: number | null; category: string | null; redirect_to: string | null; edit_acl: string | null };
 }> {
     const db = c.env.DB;
     // action 무관하게 본인의 (slug) draft 가 있으면 그 위에서 편집을 누적한다.
@@ -822,10 +825,11 @@ async function loadDraftOrSeedFromPage(
     }
 
     const page = await db.prepare(
-        'SELECT id, version, is_locked, content, last_revision_id, category, redirect_to FROM pages WHERE slug = ? AND deleted_at IS NULL'
+        'SELECT id, version, content, last_revision_id, category, redirect_to, edit_acl FROM pages WHERE slug = ? AND deleted_at IS NULL'
     ).bind(slug).first<{
-        id: number; version: number; is_locked: number; content: string;
+        id: number; version: number; content: string;
         last_revision_id: number | null; category: string | null; redirect_to: string | null;
+        edit_acl: string | null;
     }>();
     if (!page) return { type: 'not_found', content: '' };
 
@@ -839,7 +843,7 @@ async function loadDraftOrSeedFromPage(
     return {
         type: 'seeded',
         content: body.replace(/\r\n?/g, '\n'),
-        page: { id: page.id, version: page.version, is_locked: page.is_locked, last_revision_id: page.last_revision_id, category: page.category, redirect_to: page.redirect_to },
+        page: { id: page.id, version: page.version, last_revision_id: page.last_revision_id, category: page.category, redirect_to: page.redirect_to, edit_acl: page.edit_acl },
     };
 }
 
@@ -923,7 +927,6 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
         const content = args.content.replace(/\r\n?/g, '\n');
         const category = (args.category && typeof args.category === 'string') ? args.category : null;
         const redirectTo = (args.redirect_to && typeof args.redirect_to === 'string') ? args.redirect_to : null;
-        const requestedLock = typeof args.is_locked === 'boolean' ? (args.is_locked ? 1 : 0) : null;
         const createOnly = args.create_only === true;
 
         // 대체 표시 제목(display_title): args 에 키가 명시되어 있을 때만 변경 의도로 해석. (undefined = 기존 유지)
@@ -944,9 +947,9 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
         }
 
         const existing = await db
-            .prepare('SELECT id, version, is_locked, last_revision_id, category, title FROM pages WHERE slug = ? AND deleted_at IS NULL')
+            .prepare('SELECT id, version, last_revision_id, category, title FROM pages WHERE slug = ? AND deleted_at IS NULL')
             .bind(slug)
-            .first<{ id: number; version: number; is_locked: number; last_revision_id: number | null; category: string | null; title: string | null }>();
+            .first<{ id: number; version: number; last_revision_id: number | null; category: string | null; title: string | null }>();
 
         // 신규 title 이 다른 페이지의 slug 또는 title 과 충돌하면 거부. 소프트 삭제 행도 포함.
         if (hasTitleChange && requestedTitle) {
@@ -989,12 +992,8 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
                 );
             }
         }
-        // 잠긴 문서는 wiki:lock 권한자(=admin 이상)만 draft 를 만들 수 있다.
-        if (existing && existing.is_locked === 1 && !rbac.can(user.role, 'wiki:lock')) {
-            return asTextResult('Error: 잠긴 문서는 wiki:lock 권한이 있어야 편집할 수 있습니다.', true);
-        }
-
-        // edit_acl 검사 — 관리자 우회. 기존 페이지는 page.edit_acl, 신규는 prefix 룰 ACL.
+        // edit_acl 검사 — admin_only 가 없으면 관리자 우회. admin_only 가 있으면 evaluate 단계에서 관리자도 통과/거부 판정.
+        // 기존 페이지는 page.edit_acl, 신규는 prefix 룰 ACL.
         {
             const aclErr = await enforceMcpEditAcl(db, user, rbac, existing ? { id: existing.id } : null, existing ? null : slug);
             if (aclErr) return asTextResult('Error: ' + aclErr, true);
@@ -1027,24 +1026,24 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
             if (hasTitleChange) {
                 await db.prepare(
                     `UPDATE mcp_drafts
-                     SET content = ?, category = ?, redirect_to = ?, requested_lock = ?,
+                     SET content = ?, category = ?, redirect_to = ?,
                          title = ?, has_title_change = ?, updated_at = unixepoch()
                      WHERE id = ?`
-                ).bind(content, category, redirectTo, requestedLock, draftTitleValue, draftHasTitleChange, existingDraft.id).run();
+                ).bind(content, category, redirectTo, draftTitleValue, draftHasTitleChange, existingDraft.id).run();
             } else {
                 // display_title 미지정: 기존 draft 의 title / has_title_change 그대로 유지.
                 await db.prepare(
                     `UPDATE mcp_drafts
-                     SET content = ?, category = ?, redirect_to = ?, requested_lock = ?, updated_at = unixepoch()
+                     SET content = ?, category = ?, redirect_to = ?, updated_at = unixepoch()
                      WHERE id = ?`
-                ).bind(content, category, redirectTo, requestedLock, existingDraft.id).run();
+                ).bind(content, category, redirectTo, existingDraft.id).run();
             }
             draftId = existingDraft.id;
         } else {
             const ins = await db.prepare(
-                `INSERT INTO mcp_drafts (user_id, slug, action, base_revision_id, base_version, content, category, redirect_to, requested_lock, title, has_title_change)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-            ).bind(user.id, slug, action, baseRevisionId, baseVersion, content, category, redirectTo, requestedLock, draftTitleValue, draftHasTitleChange).run();
+                `INSERT INTO mcp_drafts (user_id, slug, action, base_revision_id, base_version, content, category, redirect_to, title, has_title_change)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+            ).bind(user.id, slug, action, baseRevisionId, baseVersion, content, category, redirectTo, draftTitleValue, draftHasTitleChange).run();
             draftId = ins.meta.last_row_id;
         }
 
@@ -1086,10 +1085,6 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
         if (loaded.type === 'submitted') {
             return asTextResult('Error: 이 draft 는 이미 승인 대기로 제출된 상태입니다. 사용자가 mypage 에서 승인/거부할 때까지 수정할 수 없습니다. 폐기하려면 discard_edit 를 사용하세요.', true);
         }
-        if (loaded.type === 'seeded' && loaded.page!.is_locked === 1 && !rbac.can(user.role, 'wiki:lock')) {
-            return asTextResult('Error: 잠긴 문서는 wiki:lock 권한이 있어야 편집할 수 있습니다.', true);
-        }
-
         // edit_acl 검사 — 기존 페이지가 있을 때만. draft 만 있는 케이스도 일치하는 페이지를 다시 조회한다.
         {
             const pageRow = loaded.page
@@ -1154,11 +1149,11 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
         } else {
             // type === 'seeded' — 페이지 메타로부터 draft seed
             const ins = await db.prepare(
-                `INSERT INTO mcp_drafts (user_id, slug, action, base_revision_id, base_version, content, category, redirect_to, requested_lock)
-                 VALUES (?, ?, 'update', ?, ?, ?, ?, ?, ?)`
+                `INSERT INTO mcp_drafts (user_id, slug, action, base_revision_id, base_version, content, category, redirect_to)
+                 VALUES (?, ?, 'update', ?, ?, ?, ?, ?)`
             ).bind(
                 user.id, slug, loaded.page!.last_revision_id, loaded.page!.version,
-                newContent, loaded.page!.category, loaded.page!.redirect_to, null
+                newContent, loaded.page!.category, loaded.page!.redirect_to
             ).run();
             draftId = ins.meta.last_row_id;
             baseRevisionId = loaded.page!.last_revision_id;
@@ -1198,10 +1193,6 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
         if (loaded.type === 'submitted') {
             return asTextResult('Error: 이 draft 는 이미 승인 대기로 제출된 상태입니다. 사용자가 mypage 에서 승인/거부할 때까지 수정할 수 없습니다. 폐기하려면 discard_edit 를 사용하세요.', true);
         }
-        if (loaded.type === 'seeded' && loaded.page!.is_locked === 1 && !rbac.can(user.role, 'wiki:lock')) {
-            return asTextResult('Error: 잠긴 문서는 wiki:lock 권한이 있어야 편집할 수 있습니다.', true);
-        }
-
         // edit_acl 검사 — 기존 페이지가 있을 때만 (draft 만 있는 케이스도 일치 페이지 재조회).
         {
             const pageRow = loaded.page
@@ -1242,11 +1233,11 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
             baseVersion = meta!.base_version;
         } else {
             const ins = await db.prepare(
-                `INSERT INTO mcp_drafts (user_id, slug, action, base_revision_id, base_version, content, category, redirect_to, requested_lock)
-                 VALUES (?, ?, 'update', ?, ?, ?, ?, ?, ?)`
+                `INSERT INTO mcp_drafts (user_id, slug, action, base_revision_id, base_version, content, category, redirect_to)
+                 VALUES (?, ?, 'update', ?, ?, ?, ?, ?)`
             ).bind(
                 user.id, slug, loaded.page!.last_revision_id, loaded.page!.version,
-                newContent, loaded.page!.category, loaded.page!.redirect_to, null
+                newContent, loaded.page!.category, loaded.page!.redirect_to
             ).run();
             draftId = ins.meta.last_row_id;
             baseRevisionId = loaded.page!.last_revision_id;
@@ -1284,12 +1275,12 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
 
         const draft = await db.prepare(
             `SELECT id, user_id, slug, action, base_revision_id, base_version,
-                    content, category, redirect_to, requested_lock, title, has_title_change, submitted_at
+                    content, category, redirect_to, title, has_title_change, submitted_at
              FROM mcp_drafts WHERE id = ?`
         ).bind(draftId).first<{
             id: number; user_id: number; slug: string; action: string;
             base_revision_id: number | null; base_version: number; content: string;
-            category: string | null; redirect_to: string | null; requested_lock: number | null;
+            category: string | null; redirect_to: string | null;
             title: string | null; has_title_change: number;
             submitted_at: number | null;
         }>();
@@ -1308,8 +1299,8 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
 
         if (draft.action === 'update') {
             const page = await db.prepare(
-                'SELECT id, version, is_locked, content, category, last_revision_id, title FROM pages WHERE slug = ? AND deleted_at IS NULL'
-            ).bind(slug).first<{ id: number; version: number; is_locked: number; content: string; category: string | null; last_revision_id: number | null; title: string | null }>();
+                'SELECT id, version, content, category, last_revision_id, title FROM pages WHERE slug = ? AND deleted_at IS NULL'
+            ).bind(slug).first<{ id: number; version: number; content: string; category: string | null; last_revision_id: number | null; title: string | null }>();
             if (!page) {
                 return asTextResult(JSON.stringify({
                     error: 'conflict',
@@ -1328,11 +1319,8 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
                     current_version: page.version,
                 }, null, 2), true);
             }
-            if (page.is_locked === 1 && !rbac.can(user.role, 'wiki:lock')) {
-                return asTextResult('Error: 잠긴 문서는 wiki:lock 권한이 있어야 편집할 수 있습니다.', true);
-            }
 
-            // edit_acl 최종 검사 (commit 시점 — race 안전망).
+            // edit_acl 최종 검사 (commit 시점 — race 안전망, admin_only 포함).
             {
                 const aclErr = await enforceMcpEditAcl(db, user, rbac, { id: page.id }, null);
                 if (aclErr) return asTextResult('Error: ' + aclErr, true);
@@ -1353,10 +1341,6 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
                     );
                 }
             }
-
-            const finalIsLocked = draft.requested_lock !== null
-                ? (rbac.can(user.role, 'wiki:lock') ? draft.requested_lock : page.is_locked)
-                : page.is_locked;
 
             // commit 직후 diff 통계(+추가/-삭제 라인)를 응답에 포함하기 위해 이전 본문을 로드한다.
             // R2 전용 네임스페이스 페이지는 pages.content 가 빈 문자열로 저장되므로, 마지막 리비전을 R2 에서 읽어온다.
@@ -1421,7 +1405,6 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
                     category: draft.category,
                     redirectTo: draft.redirect_to,
                     title: draft.has_title_change ? draft.title : undefined,
-                    finalIsLocked,
                     slug,
                 });
                 await db.prepare('DELETE FROM mcp_drafts WHERE id = ?').bind(draft.id).run();
@@ -1434,7 +1417,6 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
                     // diff 통계 로딩에 실패한 경우 필드를 생략한다 — 0 으로 표시하면
                     // 변경이 없었다는 잘못된 신호를 줄 수 있기 때문.
                     ...(diffStats ? { lines_added: diffStats.added, lines_removed: diffStats.removed } : {}),
-                    is_locked: finalIsLocked === 1,
                     draft_id: draft.id,
                 }, null, 2));
             } catch (e: any) {
@@ -1492,9 +1474,6 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
                 }
             }
 
-            const finalIsLocked = (draft.requested_lock !== null && rbac.can(user.role, 'wiki:lock'))
-                ? draft.requested_lock : 0;
-
             // edit_acl 최종 검사 — 신규 문서: prefix 룰 ACL.
             // 평가 통과한 ACL 은 새 페이지에 그대로 기록해, 생성 이후 편집도 같은 정책을 적용한다.
             // (관리자: enforceMcpEditAcl 가 즉시 통과시키지만, prefix 룰은 관리자 생성 페이지에도
@@ -1540,7 +1519,6 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
                     category: draft.category,
                     redirectTo: draft.redirect_to,
                     title: draft.has_title_change ? draft.title : null,
-                    finalIsLocked,
                     editAcl: createEditAclSerialized,
                 });
                 await db.prepare('DELETE FROM mcp_drafts WHERE id = ?').bind(draft.id).run();
@@ -1551,7 +1529,6 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
                     rows: result.rows,
                     characters: result.characters,
                     ...(createDiffStats ? { lines_added: createDiffStats.added, lines_removed: createDiffStats.removed } : {}),
-                    is_locked: finalIsLocked === 1,
                     created: true,
                     draft_id: draft.id,
                 }, null, 2));
@@ -1612,15 +1589,12 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
         }
 
         const page = await db
-            .prepare('SELECT id, version, is_locked, content, category FROM pages WHERE slug = ? AND deleted_at IS NULL')
+            .prepare('SELECT id, version, content, category FROM pages WHERE slug = ? AND deleted_at IS NULL')
             .bind(slug)
-            .first<{ id: number; version: number; is_locked: number; content: string; category: string | null }>();
+            .first<{ id: number; version: number; content: string; category: string | null }>();
         if (!page) return asTextResult('Error: 문서를 찾을 수 없거나 삭제된 상태입니다.', true);
-        if (page.is_locked === 1 && !rbac.can(user.role, 'wiki:lock')) {
-            return asTextResult('Error: 잠긴 문서는 wiki:lock 권한이 있어야 되돌릴 수 있습니다.', true);
-        }
 
-        // edit_acl 검사 — 되돌리기도 편집의 일종.
+        // edit_acl 검사 — 되돌리기도 편집의 일종. admin_only 가 있으면 비관리자 차단.
         {
             const aclErr = await enforceMcpEditAcl(db, user, rbac, { id: page.id }, null);
             if (aclErr) return asTextResult('Error: ' + aclErr, true);
@@ -1653,7 +1627,6 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
         try {
             const result = await applyExistingPageUpdate(c, user, page, revContent, {
                 summary,
-                finalIsLocked: page.is_locked,
                 slug,
             });
             return asTextResult(JSON.stringify({
@@ -1772,14 +1745,18 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
         const updateBacklinks = args.update_backlinks !== false;
 
         const page = await db
-            .prepare('SELECT id, version, content, category, last_revision_id, is_locked FROM pages WHERE slug = ? AND deleted_at IS NULL')
+            .prepare('SELECT id, version, content, category, last_revision_id, edit_acl FROM pages WHERE slug = ? AND deleted_at IS NULL')
             .bind(oldSlug)
-            .first<{ id: number; version: number; content: string; category: string | null; last_revision_id: number | null; is_locked: number }>();
+            .first<{ id: number; version: number; content: string; category: string | null; last_revision_id: number | null; edit_acl: string | null }>();
         if (!page) return asTextResult('Error: 문서를 찾을 수 없거나 삭제된 상태입니다.', true);
 
-        // 잠긴 문서 이동은 wiki:lock 권한 필요. wiki.ts 의 POST /w/:slug/move 와 동일.
-        if (page.is_locked === 1 && !rbac.can(user.role, 'wiki:lock')) {
-            return asTextResult('Error: 잠긴 문서는 wiki:lock 권한이 있어야 이동할 수 있습니다.', true);
+        // admin_only ACL 문서 이동은 관리자만 가능 (구 wiki:lock 검사 대체).
+        const movePageIsAdmin = rbac.can(user.role, 'admin:access');
+        if (!movePageIsAdmin) {
+            const aclMove = parseEditAcl(page.edit_acl);
+            if (aclMove && aclMove.flags.includes('admin_only')) {
+                return asTextResult('Error: 관리자 전용 문서는 관리자만 이동할 수 있습니다.', true);
+            }
         }
 
         // 새 슬러그가 다른 문서의 slug 또는 title 과 충돌하는지 검사. 소프트 삭제 행도 포함.
@@ -1849,7 +1826,7 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
         if (updateBacklinks) {
             const { results: backlinks } = await db
                 .prepare(`
-                    SELECT DISTINCT p.id, p.slug, p.version, p.content, p.category, p.last_revision_id, p.is_locked
+                    SELECT DISTINCT p.id, p.slug, p.version, p.content, p.category, p.last_revision_id, p.edit_acl
                     FROM page_links pl
                     JOIN pages p ON pl.source_page_id = p.id
                     WHERE pl.blog = 0 AND pl.source_type = 'page'
@@ -1857,15 +1834,16 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
                       AND pl.target_slug = ? AND p.deleted_at IS NULL AND p.id != ?
                 `)
                 .bind(oldSlug, page.id)
-                .all<{ id: number; slug: string; version: number; content: string; category: string | null; last_revision_id: number | null; is_locked: number }>();
+                .all<{ id: number; slug: string; version: number; content: string; category: string | null; last_revision_id: number | null; edit_acl: string | null }>();
 
-            const canEditLocked = rbac.can(user.role, 'wiki:lock');
             for (const bl of backlinks) {
-                // 잠긴 역링크 문서는 wiki:lock 보유자만 재작성 가능. wiki.ts 의
-                // rewriteBacklinksForRename 과 동일한 정책으로, 잠금 우회를 통한 간접 편집을 차단.
-                if (bl.is_locked === 1 && !canEditLocked) {
-                    skippedLockedSlugs.push(bl.slug);
-                    continue;
+                // admin_only ACL 역링크 문서는 관리자만 재작성 가능 (구 wiki:lock 검사 대체).
+                if (!movePageIsAdmin) {
+                    const blAcl = parseEditAcl(bl.edit_acl);
+                    if (blAcl && blAcl.flags.includes('admin_only')) {
+                        skippedLockedSlugs.push(bl.slug);
+                        continue;
+                    }
                 }
                 const blIsR2 = isR2OnlyNamespace(bl.slug, enabledExt);
                 let blContent = bl.content;
@@ -2097,16 +2075,12 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
         const slug = String(args.title || '').trim();
         if (!slug) return asTextResult('Error: title 이 필요합니다.', true);
 
-        const wantsLock = typeof args.is_locked === 'boolean';
         const wantsPrivate = typeof args.is_private === 'boolean';
         const wantsCategory = typeof args.category === 'string';
-        if (!wantsLock && !wantsPrivate && !wantsCategory) {
-            return asTextResult('Error: is_locked / is_private / category 중 하나 이상을 지정해야 합니다.', true);
+        if (!wantsPrivate && !wantsCategory) {
+            return asTextResult('Error: is_private / category 중 하나 이상을 지정해야 합니다.', true);
         }
 
-        if (wantsLock && !rbac.can(user.role, 'wiki:lock')) {
-            return asTextResult('Error: is_locked 변경은 wiki:lock 권한이 필요합니다.', true);
-        }
         if (wantsPrivate && !rbac.can(user.role, 'wiki:private')) {
             return asTextResult('Error: is_private 변경은 wiki:private 권한이 필요합니다.', true);
         }
@@ -2123,29 +2097,28 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
         }
 
         const page = await db
-            .prepare('SELECT id, is_locked, is_private, category FROM pages WHERE slug = ? AND deleted_at IS NULL')
+            .prepare('SELECT id, is_private, category, edit_acl FROM pages WHERE slug = ? AND deleted_at IS NULL')
             .bind(slug)
-            .first<{ id: number; is_locked: number; is_private: number; category: string | null }>();
+            .first<{ id: number; is_private: number; category: string | null; edit_acl: string | null }>();
         if (!page) return asTextResult('Error: 문서를 찾을 수 없거나 삭제된 상태입니다.', true);
 
-        // 이미 잠긴 문서는 wiki:lock 권한자만 다른 메타데이터(category/is_private) 도 변경할 수 있다.
-        // move_page / revert_page 와 동일하게, 잠금을 우회한 간접 메타 수정도 차단한다.
-        if (page.is_locked === 1 && !rbac.can(user.role, 'wiki:lock')) {
-            return asTextResult('Error: 잠긴 문서의 상태는 wiki:lock 권한이 있어야 변경할 수 있습니다.', true);
+        // admin_only ACL 문서의 메타데이터 변경은 관리자만 가능 (구 wiki:lock 검사 대체).
+        if (!rbac.can(user.role, 'admin:access')) {
+            const aclSet = parseEditAcl(page.edit_acl);
+            if (aclSet && aclSet.flags.includes('admin_only')) {
+                return asTextResult('Error: 관리자 전용 문서의 상태는 관리자만 변경할 수 있습니다.', true);
+            }
         }
 
-        const finalIsLocked = wantsLock ? (args.is_locked ? 1 : 0) : page.is_locked;
         const finalIsPrivate = wantsPrivate ? (args.is_private ? 1 : 0) : page.is_private;
         const finalCategory = wantsCategory ? newCategory! /* string|null */ : page.category;
         const categoryChanged = wantsCategory && (finalCategory ?? null) !== (page.category ?? null);
 
-        const lockChanged = wantsLock && finalIsLocked !== page.is_locked;
         const privateChanged = wantsPrivate && finalIsPrivate !== page.is_private;
-        if (!lockChanged && !privateChanged && !categoryChanged) {
+        if (!privateChanged && !categoryChanged) {
             // 요청된 필드만 반향(echo) 한다. 요청하지 않은 컬럼은 동시 변경 가능성이 있어
             // 스냅샷 값을 그대로 알리지 않는다.
             const echo: Record<string, unknown> = { slug, changed: false, note: '요청된 상태가 이미 현재 값과 동일합니다.' };
-            if (wantsLock) echo.is_locked = finalIsLocked === 1;
             if (wantsPrivate) echo.is_private = finalIsPrivate === 1;
             if (wantsCategory) echo.category = finalCategory;
             return asTextResult(JSON.stringify(echo, null, 2));
@@ -2155,7 +2128,6 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
         // 동시 다른 요청이 갱신했을 수 있으므로 스냅샷 값을 다시 쓰면 lost update 가 된다.
         const setClauses: string[] = [];
         const setBindings: unknown[] = [];
-        if (lockChanged) { setClauses.push('is_locked = ?'); setBindings.push(finalIsLocked); }
         if (privateChanged) { setClauses.push('is_private = ?'); setBindings.push(finalIsPrivate); }
         if (categoryChanged) { setClauses.push('category = ?'); setBindings.push(finalCategory); }
         setClauses.push('updated_at = unixepoch()');
@@ -2182,7 +2154,6 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
         await db.batch(txStmts);
 
         const changes: string[] = [];
-        if (lockChanged) changes.push(`is_locked: ${page.is_locked === 1} → ${finalIsLocked === 1}`);
         if (privateChanged) changes.push(`is_private: ${page.is_private === 1} → ${finalIsPrivate === 1}`);
         if (categoryChanged) changes.push(`category: ${page.category ?? '(없음)'} → ${finalCategory ?? '(없음)'}`);
 
@@ -2202,7 +2173,6 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
         // 응답에는 실제로 갱신된 필드만 노출한다. 갱신하지 않은 필드는 동시 다른 요청에
         // 의해 바뀌었을 수 있으므로 스냅샷 값을 보고하면 호출자에게 잘못된 인상을 준다.
         const result: Record<string, unknown> = { slug, changed: true, changes };
-        if (lockChanged) result.is_locked = finalIsLocked === 1;
         if (privateChanged) result.is_private = finalIsPrivate === 1;
         if (categoryChanged) result.category = finalCategory;
         return asTextResult(JSON.stringify(result, null, 2));

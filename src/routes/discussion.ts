@@ -107,11 +107,11 @@ discussionRoutes.post('/discussions/:pageId', requireAuth, requirePermission('co
         return c.json({ error: '토론 내용을 입력해주세요.' }, 400);
     }
 
-    // 문서 존재 확인 (slug + is_locked 도 가져와서 webhook 필터에 사용)
+    // 문서 존재 확인
     const page = await db
-        .prepare('SELECT id, slug, is_locked FROM pages WHERE id = ? AND deleted_at IS NULL')
+        .prepare('SELECT id, slug FROM pages WHERE id = ? AND deleted_at IS NULL')
         .bind(pageId)
-        .first<{ id: number; slug: string; is_locked: number }>();
+        .first<{ id: number; slug: string }>();
     if (!page) {
         return c.json({ error: '문서를 찾을 수 없습니다.' }, 404);
     }
@@ -131,9 +131,9 @@ discussionRoutes.post('/discussions/:pageId', requireAuth, requirePermission('co
     // 본문 이미지를 page_links 에 색인 (미디어 GC 보호)
     await indexCommentImages(db, Number(firstCommentResult.meta.last_row_id), content.trim());
 
-    // Discord community 채널에 신규 토론 알림 (잠금 페이지 / R2 전용 ns 는 제외)
+    // Discord community 채널에 신규 토론 알림 (R2 전용 ns 는 제외)
     const enabledExtensions = (c.env.ENABLED_EXTENSIONS || '').split(',').map(s => s.trim()).filter(Boolean);
-    if (!page.is_locked && !isR2OnlyNamespace(page.slug, enabledExtensions)) {
+    if (!isR2OnlyNamespace(page.slug, enabledExtensions)) {
         dispatchDiscord(c.env, c.executionCtx, discussionCreate({
             page: { slug: page.slug, title: page.slug },
             discussion: { id: Number(discussionId), title: title.trim() },

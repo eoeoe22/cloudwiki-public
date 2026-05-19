@@ -21,6 +21,7 @@ export interface SwalOptions {
     showConfirmButton?: boolean;
     showCancelButton?: boolean;
     showDenyButton?: boolean;
+    showCloseButton?: boolean;
     confirmButtonText?: string;
     cancelButtonText?: string;
     denyButtonText?: string;

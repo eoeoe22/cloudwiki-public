@@ -1286,6 +1286,78 @@ const categoryTagInput = document.getElementById('categoryTagInput') as HTMLInpu
 // edit.js(raw) / edit-summary.ts(ESM) 가 window.categoryTags 로 읽으므로 초기화
 window.categoryTags = [];
 
+// 사용자가 chip 추가 시 카테고리 ACL 템플릿 적용 모드를 선택한 결과.
+// key: 카테고리명, value: 'overwrite' | 'merge' | 'ignore'.
+// 빈 객체로 초기화해 서버가 "모던 클라이언트" 로 인식하도록 만든다 (레거시 클라이언트는 키 누락).
+window.categoryAclChoices = {};
+
+type EditAclFlag = 'aged' | 'page_editor' | 'any_editor' | 'admin_only';
+interface EditAcl { flags: EditAclFlag[]; }
+type CategoryAclMode = 'overwrite' | 'merge' | 'ignore';
+
+const CHECK_CATEGORY_FLAG_LABELS: Record<EditAclFlag, string> = {
+    aged: '가입 N일 이상',
+    page_editor: '본 문서 편집 이력',
+    any_editor: '임의 문서 편집 이력',
+    admin_only: '관리자 전용',
+};
+
+function formatAclFlags(acl: EditAcl): string {
+    return acl.flags.map(f => CHECK_CATEGORY_FLAG_LABELS[f] ?? f).join(' 그리고 ');
+}
+
+async function checkCategoryWithServer(name: string): Promise<{ ok: boolean; reason?: string; edit_acl?: EditAcl | null }> {
+    try {
+        const res = await fetch('/api/w/check-category', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ category: name }),
+        });
+        if (!res.ok) {
+            return { ok: true };
+        }
+        return await res.json() as { ok: boolean; reason?: string; edit_acl?: EditAcl | null };
+    } catch (e) {
+        console.warn('check-category 실패 (네트워크) — 클라이언트 검증으로만 진행:', e);
+        return { ok: true };
+    }
+}
+
+async function promptCategoryAclMode(name: string, acl: EditAcl): Promise<CategoryAclMode | null> {
+    if (!window.Swal) {
+        return 'merge';
+    }
+    const flagsText = formatAclFlags(acl);
+    const html = `
+        <div style="text-align: left; font-size: 0.92em;">
+            <div style="margin-bottom: 8px;">카테고리 <b>${escapeHtml(name)}</b> 에 다음 편집 ACL 템플릿이 설정되어 있습니다.</div>
+            <div style="margin-bottom: 14px; padding: 8px 10px; background: var(--bs-tertiary-bg, #f4f4f6); border-radius: 6px;"><i class="mdi mdi-shield-account"></i> ${escapeHtml(flagsText)} <span class="text-muted">(모두 충족 — AND)</span></div>
+            <div style="margin-bottom: 6px;">이 카테고리를 문서에 적용하면서 카테고리 ACL 을 어떻게 반영할까요?</div>
+            <div style="display: flex; flex-direction: column; gap: 6px;">
+                <label><input type="radio" name="catAclMode" value="merge" checked> 합치기 — 기존 문서 ACL 의 조건과 카테고리 조건을 합쳐 더 엄격하게 적용</label>
+                <label><input type="radio" name="catAclMode" value="overwrite"> 덮어쓰기 — 기존 문서 ACL 을 카테고리 ACL 로 통째 교체</label>
+                <label><input type="radio" name="catAclMode" value="ignore"> 무시 — 문서 ACL 을 그대로 유지 (이번에는 적용하지 않음)</label>
+            </div>
+        </div>
+    `;
+    const result = await window.Swal.fire({
+        title: '카테고리 ACL 적용',
+        html,
+        icon: 'question',
+        focusConfirm: false,
+        showCancelButton: true,
+        confirmButtonText: '적용',
+        cancelButtonText: '취소 (이 카테고리 추가 안 함)',
+        preConfirm: () => {
+            const el = document.querySelector('input[name="catAclMode"]:checked') as HTMLInputElement | null;
+            return (el?.value ?? 'merge') as CategoryAclMode;
+        },
+    });
+    if (!result.isConfirmed) return null;
+    const v = (result.value as CategoryAclMode) ?? 'merge';
+    return v;
+}
+
 const categoryAc = {
     visible: false,
     results: [] as string[],
@@ -1384,15 +1456,13 @@ function renderCategoryTags(): void {
     }
 }
 
-function addCategoryTag(tag: string): void {
+async function addCategoryTag(tag: string): Promise<void> {
     const cleanTag = tag.trim();
     if (!cleanTag) return;
     if (!window.categoryTags) window.categoryTags = [];
+    if (!window.categoryAclChoices) window.categoryAclChoices = {};
 
-    if (!window.categoryTags.includes(cleanTag) && /^[가-힣a-zA-Z0-9\s_.-]+$/.test(cleanTag)) {
-        window.categoryTags.push(cleanTag);
-        renderCategoryTags();
-    } else if (!/^[가-힣a-zA-Z0-9\s_.-]+$/.test(cleanTag)) {
+    if (!/^[가-힣a-zA-Z0-9\s_.-]+$/.test(cleanTag)) {
         window.Swal?.fire({
             icon: 'warning',
             title: '특수문자 제외',
@@ -1402,11 +1472,47 @@ function addCategoryTag(tag: string): void {
             timer: 2000,
             showConfirmButton: false,
         });
+        return;
     }
+
+    if (window.categoryTags.includes(cleanTag)) return;
+
+    // 1) 서버 사전 검증 — admin_only 카테고리 차단 + ACL 템플릿 동봉
+    const check = await checkCategoryWithServer(cleanTag);
+    if (!check.ok) {
+        if (check.reason === 'admin_only') {
+            window.Swal?.fire({
+                icon: 'warning',
+                title: '관리자 전용 카테고리',
+                text: `"${cleanTag}" 카테고리는 관리자만 적용할 수 있습니다.`,
+            });
+        } else {
+            window.Swal?.fire({
+                icon: 'warning',
+                title: '카테고리 사용 불가',
+                text: `"${cleanTag}" 카테고리는 사용할 수 없습니다.`,
+            });
+        }
+        return;
+    }
+
+    // 2) ACL 템플릿이 있으면 사용자에게 모드 선택
+    if (check.edit_acl && check.edit_acl.flags && check.edit_acl.flags.length > 0) {
+        const mode = await promptCategoryAclMode(cleanTag, check.edit_acl);
+        if (mode === null) return; // 사용자가 취소 — chip 추가하지 않음
+        window.categoryAclChoices[cleanTag] = mode;
+    }
+
+    window.categoryTags.push(cleanTag);
+    renderCategoryTags();
 }
 
 function removeCategoryTag(index: number): void {
+    const removed = window.categoryTags?.[index];
     window.categoryTags?.splice(index, 1);
+    if (removed && window.categoryAclChoices && Object.prototype.hasOwnProperty.call(window.categoryAclChoices, removed)) {
+        delete window.categoryAclChoices[removed];
+    }
     renderCategoryTags();
 }
 

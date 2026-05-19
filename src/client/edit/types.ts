@@ -68,13 +68,12 @@ export interface CMView {
     focus(): void;
 }
 
-/** 페이지 메타 (originalPageMeta 상태 — 대체 제목 / 카테고리 / 리다이렉트 / 잠금 변경 비교용) */
+/** 페이지 메타 (originalPageMeta 상태 — 대체 제목 / 카테고리 / 리다이렉트 / 비공개 변경 비교용) */
 export interface PageMeta {
     /** 대체 제목 (display title). null/빈 문자열은 "미설정" 으로 동일 취급한다. */
     title?: string | null;
     category?: string | null;
     redirect_to?: string | null;
-    is_locked?: number | boolean | null;
     is_private?: number | boolean | null;
 }
 
@@ -219,6 +218,12 @@ declare global {
         showConflictModal?: (data: { current_version: number | string | null; content: string }) => void;
         /** edit/autocomplete.ts 가 초기화하는 카테고리 태그 배열 — edit.js (raw) 가 read/write */
         categoryTags?: string[];
+        /**
+         * 사용자가 chip 추가 시 선택한 카테고리 ACL 적용 모드.
+         * 카테고리명 → 'overwrite' | 'merge' | 'ignore'. edit/main.ts 가 저장 body 에 동봉.
+         * 빈 객체로 초기화되어 서버가 "모던 클라이언트" 로 인식하도록 만든다.
+         */
+        categoryAclChoices?: Record<string, 'overwrite' | 'merge' | 'ignore'>;
         /** common.js 의 함수: 미디어 태그 입력 위젯을 컨테이너에 마운트 */
         mountMediaTagInput?: (opts: MediaTagInputOptions) => MediaTagWidget;
         /** CDN/외부 라이브러리 글로벌 — Swal 은 src/client/utils/swal.ts 가 별도 declare */

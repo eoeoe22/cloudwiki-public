@@ -295,7 +295,7 @@ media.get('/api/media/doc/:filename', async (c) => {
  * page_links 테이블(link_type='image', target_slug=r2_key) 기반.
  * 비공개/삭제 문서는 관리자만 열람.
  * 응답 항목 형식:
- *   - 위키 문서: { type: 'page', slug, updated_at, is_locked, is_deleted }
+ *   - 위키 문서: { type: 'page', slug, updated_at, is_deleted }
  *   - 블로그 포스트: { type: 'blog', id, title, updated_at, is_deleted }
  *   - 토론 댓글:  { type: 'discussion_comment', discussion_id, discussion_title, page_slug, updated_at, is_deleted }
  *   - 티켓 댓글:  { type: 'ticket_comment', ticket_id, ticket_title, ticket_type, updated_at, is_deleted }
@@ -322,7 +322,7 @@ media.get('/api/media/doc/:filename/backlinks', async (c) => {
     }
 
     let pageQuery = `
-        SELECT DISTINCT p.slug, p.updated_at, p.is_locked,
+        SELECT DISTINCT p.slug, p.updated_at,
             CASE WHEN p.deleted_at IS NOT NULL THEN 1 ELSE 0 END AS is_deleted
         FROM page_links pl
         JOIN pages p ON pl.source_page_id = p.id
