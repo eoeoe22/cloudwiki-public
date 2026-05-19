@@ -1436,14 +1436,28 @@ function selectCategoryAc(index: number): void {
     categoryTagInput?.focus();
 }
 
+function getAutoCategory(): string | null {
+    const s = window.slug;
+    if (!s) return null;
+    const prefix = '카테고리:';
+    if (!s.startsWith(prefix)) return null;
+    const name = s.slice(prefix.length).trim();
+    return name || null;
+}
+
 function renderCategoryTags(): void {
     if (!categoryTagContainer) return;
     categoryTagContainer.querySelectorAll('.category-tag').forEach(tag => tag.remove());
 
+    const autoCategory = getAutoCategory();
     (window.categoryTags ?? []).forEach((tagText, index) => {
         const tagEl = document.createElement('span');
         tagEl.className = 'category-tag';
-        tagEl.innerHTML = `<span>${escapeHtml(tagText)}</span> <i class="mdi mdi-close" onclick="removeCategoryTag(${index})"></i>`;
+        if (autoCategory && tagText === autoCategory) {
+            tagEl.innerHTML = `<span>${escapeHtml(tagText)}</span> <i class="mdi mdi-lock" title="이 카테고리는 자동 적용되며 제거할 수 없습니다." style="cursor:default;opacity:.6;"></i>`;
+        } else {
+            tagEl.innerHTML = `<span>${escapeHtml(tagText)}</span> <i class="mdi mdi-close" onclick="removeCategoryTag(${index})"></i>`;
+        }
         if (categoryTagInput) {
             categoryTagContainer.insertBefore(tagEl, categoryTagInput);
         } else {
@@ -1509,6 +1523,7 @@ async function addCategoryTag(tag: string): Promise<void> {
 
 function removeCategoryTag(index: number): void {
     const removed = window.categoryTags?.[index];
+    if (removed && removed === getAutoCategory()) return;
     window.categoryTags?.splice(index, 1);
     if (removed && window.categoryAclChoices && Object.prototype.hasOwnProperty.call(window.categoryAclChoices, removed)) {
         delete window.categoryAclChoices[removed];
@@ -1555,6 +1570,8 @@ if (categoryTagInput) {
             }
         } else if (e.key === 'Backspace' && categoryTagInput.value === '') {
             if ((window.categoryTags?.length ?? 0) > 0) {
+                const last = window.categoryTags![window.categoryTags!.length - 1];
+                if (last === getAutoCategory()) return;
                 window.categoryTags!.pop();
                 renderCategoryTags();
             }

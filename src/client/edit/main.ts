@@ -3091,14 +3091,22 @@ document.addEventListener('DOMContentLoaded', async () => {
                 is_private: page.is_private ? 1 : 0
             };
 
-            if (page.category) {
-                document.getElementById('categoryInput').value = page.category;
-                categoryTags = page.category.split(',').map(c => c.trim()).filter(c => c);
-                // window.renderCategoryTags() / 자동 요약은 window.categoryTags 를 읽는다.
-                // 로컬 categoryTags 만 갱신하면 window 측이 빈 배열인 채로 남아 태그 렌더가
-                // 비고 자동 요약이 '문서 생성' 으로 잘못 분류된다 → 즉시 미러링.
-                syncStateToWindow();
-                window.renderCategoryTags();
+            {
+                categoryTags = (page.category || '').split(',').map(c => c.trim()).filter(c => c);
+                // 카테고리 문서(카테고리:이름)는 해당 카테고리를 항상 포함
+                const _autoSlugCat = (() => {
+                    if (!slug?.startsWith('카테고리:')) return null;
+                    const n = slug.slice('카테고리:'.length).trim();
+                    return (n && /^[가-힣a-zA-Z0-9\s]+$/.test(n)) ? n : null;
+                })();
+                if (_autoSlugCat && !categoryTags.includes(_autoSlugCat)) {
+                    categoryTags.unshift(_autoSlugCat);
+                }
+                if (categoryTags.length > 0) {
+                    document.getElementById('categoryInput').value = categoryTags.join(',');
+                    syncStateToWindow();
+                    window.renderCategoryTags();
+                }
             }
             if (page.redirect_to) document.getElementById('redirectInput').value = page.redirect_to;
 
@@ -3253,6 +3261,17 @@ document.addEventListener('DOMContentLoaded', async () => {
             syncStateToWindow();
             originalContent = '';
             document.getElementById('titleInput').value = decodeURIComponent(slug);
+
+            // 카테고리 문서(카테고리:이름)는 신규 생성 시에도 해당 카테고리를 미리 주입
+            if (slug?.startsWith('카테고리:')) {
+                const _autoNewCat = slug.slice('카테고리:'.length).trim();
+                if (_autoNewCat && /^[가-힣a-zA-Z0-9\s]+$/.test(_autoNewCat) && !categoryTags.includes(_autoNewCat)) {
+                    categoryTags.unshift(_autoNewCat);
+                    document.getElementById('categoryInput').value = categoryTags.join(',');
+                    syncStateToWindow();
+                    window.renderCategoryTags?.();
+                }
+            }
 
             // MCP 편집안(create 액션) 적재 모드: 신규 문서 UI 골격은 그대로 두고 본문/메타만
             // 제출안으로 채운다. 적재 성공 시 mcpSubmissionId 를 켜 저장 후 /resolve cleanup 트리거.

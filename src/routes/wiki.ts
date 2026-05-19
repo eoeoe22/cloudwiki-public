@@ -457,6 +457,19 @@ export function splitCategoryString(s: string | null | undefined): string[] {
 }
 
 /**
+ * "카테고리:이름" 슬러그에서 자동 적용할 카테고리명을 반환한다.
+ * 카테고리 패턴(한글·영문·숫자·공백만 허용)에 맞지 않으면 null 반환.
+ */
+function getCategoryDocAutoCategory(slug: string): string | null {
+    const prefix = '카테고리:';
+    if (!slug.startsWith(prefix)) return null;
+    const name = slug.slice(prefix.length).trim();
+    if (!name) return null;
+    if (!/^[가-힣a-zA-Z0-9\s]+$/.test(name)) return null;
+    return name;
+}
+
+/**
  * slug 가 룰의 prefix/... 형태에 매칭되면 해당 룰의 카테고리들을 합집합한다.
  * 반환은 새 category 문자열 (쉼표 구분). 기존 카테고리 순서를 보존한 뒤 신규 카테고리만 뒤에 붙인다.
  */
@@ -1710,6 +1723,21 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
         return c.json({ error: '"이미지:"는 이미지 문서 전용 네임스페이스이므로 일반 문서 제목으로 사용할 수 없습니다.' }, 403);
     }
 
+    // "카테고리:이름" 슬러그는 자동 카테고리를 항상 포함시킨다 (제거 불가).
+    // admin-only 체크보다 먼저 수행해 자동 주입된 카테고리도 동일하게 검증받도록 한다.
+    const _autoCategory = getCategoryDocAutoCategory(slug);
+    if (_autoCategory) {
+        const cats = splitCategoryString(body.category);
+        if (!cats.includes(_autoCategory)) cats.unshift(_autoCategory);
+        body.category = cats.join(',');
+        // 서버가 강제하는 카테고리이므로 클라이언트 값(ignore/배열 등)을 신뢰하지 않고 항상 'merge' 로 덮어쓴다.
+        // 배열 등 비-plain 객체가 들어오면 나중의 ACL 머지 로직이 Array.isArray 로 걸러내므로 교체한다.
+        if (!body.category_acl_choices || typeof body.category_acl_choices !== 'object' || Array.isArray(body.category_acl_choices)) {
+            body.category_acl_choices = {};
+        }
+        body.category_acl_choices[_autoCategory] = 'merge';
+    }
+
     // 관리자 전용 카테고리 검증 — category_acl 의 admin_only 플래그 기준 (구 admin_categories 화이트리스트 대체).
     if (body.category && !isAdmin) {
         const cats = body.category.split(',').map(c => c.trim()).filter(c => c);
@@ -2079,6 +2107,14 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
             effectiveCategory = merged || null;
         } catch (e) {
             console.error('category_prefix_rules lookup failed (create):', e);
+        }
+
+        // "카테고리:이름" 슬러그는 자동 카테고리를 항상 포함시킨다 (제거 불가)
+        const _autoCategory = getCategoryDocAutoCategory(slug);
+        if (_autoCategory) {
+            const cats = splitCategoryString(effectiveCategory);
+            if (!cats.includes(_autoCategory)) cats.unshift(_autoCategory);
+            effectiveCategory = cats.join(',');
         }
 
         // 자동 문서 설정 prefix 룰 (생성 시점에만 적용)
