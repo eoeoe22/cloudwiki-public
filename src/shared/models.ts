@@ -51,6 +51,8 @@ export interface Page {
     deleted_at: number | null;
     rows: number | null;
     characters: number | null;
+    // 일반 유저 편집 ACL (JSON). NULL=비활성. 형식: {"mode":"or"|"and","flags":[...]}
+    edit_acl: string | null;
 }
 
 export interface Revision {
@@ -154,4 +156,6 @@ export interface Settings {
     namechange_ratelimit: number;
     allow_direct_message: number;
     signup_policy: string;
+    // pages.edit_acl 의 'aged' 플래그가 참조하는 전역 임계값(일). 0=비활성.
+    edit_acl_min_age_days: number;
 }

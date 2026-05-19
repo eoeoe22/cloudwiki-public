@@ -795,6 +795,15 @@ async function rewriteBacklinksForRename(
 import { uploadRevisionToR2, getRevisionContent } from '../utils/r2';
 import { loadActiveAnnouncements } from '../utils/announcements';
 import type { AnnouncementDTO } from '../shared/api/announcement';
+import {
+    parseEditAcl,
+    serializeEditAcl,
+    normalizeEditAcl,
+    evaluateEditAcl,
+    getEditAclMinAgeDays,
+    findPrefixRuleEditAcl,
+    type EditAcl,
+} from '../utils/editAcl';
 /**
  * GET /config
  * 동적 설정 (위키 이름 등) 반환
@@ -1371,6 +1380,193 @@ wiki.get('/w/:slug', async (c) => {
  * - 슬러그(URL 파라미터)가 곧 문서의 식별자이자 표시 이름이다.
  *   요청 본문에 별도 title 필드는 없다(있어도 무시).
  */
+/**
+ * GET /w/:slug/edit-permission
+ * 편집 페이지 진입 시점 ACL 사전 검사.
+ *
+ * - 페이지가 존재하면 그 행의 edit_acl, 없으면 doc_setting_prefix_rules 의 prefix 룰 ACL 을 평가.
+ * - 관리자(admin:access) 는 항상 allowed=true.
+ * - 비로그인 사용자는 그대로 401 (편집 진입 자체가 막혀야 하므로 wiki:edit 권한도 함께 검사).
+ *
+ * 응답 형식:
+ *   { allowed, reason?, acl: EditAcl | null, source: 'page'|'prefix_rule'|'none', min_age_days, is_locked, is_private }
+ *
+ * 저장 단계(PUT) 가드는 그대로 유지된다 — 본 엔드포인트는 UX 보조용.
+ */
+wiki.get('/w/:slug/edit-permission', requireAuth, async (c) => {
+    const slug = normalizeSlug(c.req.param('slug'));
+    if (!slug) return c.json({ error: '문서 제목이 비어 있습니다.' }, 400);
+
+    const user = c.get('user')!;
+    const rbac = c.get('rbac') as RBAC;
+    const db = c.env.DB;
+
+    // 기본 권한 — wiki:edit 가 없으면 그 자체로 차단 (관리자 admin:access 는 우회).
+    const isAdmin = rbac.can(user.role, 'admin:access');
+    if (!rbac.can(user.role, 'wiki:edit') && !isAdmin) {
+        return c.json({
+            allowed: false,
+            reason: 'no_permission',
+            acl: null,
+            source: 'none',
+            min_age_days: 0,
+            is_locked: 0,
+            is_private: 0,
+        });
+    }
+
+    // PUT 가드와 동일한 슬러그-수준 차단 (페이지 존재 여부와 무관) — 진입 검사가 통과한 뒤
+    // 저장 단계에서 같은 사유로 거부당해 본문이 날아가는 것을 막는다.
+
+    // 1) 메인 문서는 관리자만 편집 가능.
+    const mainSlug = normalizeSlug(c.env.WIKI_NAME || 'CloudWiki').toLowerCase();
+    if (slug.toLowerCase() === mainSlug && !isAdmin) {
+        return c.json({
+            allowed: false,
+            reason: 'main_page',
+            acl: null,
+            source: 'none',
+            min_age_days: 0,
+            is_locked: 0,
+            is_private: 0,
+        });
+    }
+
+    // 2) "이미지:" 네임스페이스 — 일반 편집 흐름으로 다룰 수 없다.
+    if (slug.startsWith('이미지:')) {
+        return c.json({
+            allowed: false,
+            reason: 'image_namespace',
+            acl: null,
+            source: 'none',
+            min_age_days: 0,
+            is_locked: 0,
+            is_private: 0,
+        });
+    }
+
+    // 3) 관리자 전용 네임스페이스 prefix — 기존/신규 페이지 양쪽에 동일하게 적용.
+    if (!isAdmin) {
+        const adminPrefix = await matchAdminNamespace(db, slug);
+        if (adminPrefix) {
+            return c.json({
+                allowed: false,
+                reason: 'admin_namespace',
+                acl: null,
+                source: 'none',
+                min_age_days: 0,
+                is_locked: 0,
+                is_private: 0,
+                admin_namespace_prefix: adminPrefix,
+            });
+        }
+    }
+
+    const page = await db
+        .prepare('SELECT id, is_locked, is_private, edit_acl, deleted_at FROM pages WHERE slug = ?')
+        .bind(slug)
+        .first<{ id: number; is_locked: number; is_private: number; edit_acl: string | null; deleted_at: number | null }>();
+
+    const minAge = await getEditAclMinAgeDays(db);
+
+    // 소프트 삭제된 페이지는 PUT 경로에서 비관리자에게 410 으로 거부되고, 관리자도 같은 슬러그
+    // INSERT 가 UNIQUE 제약으로 막힌다 (복원은 별도 POST /restore 경로). 신규 생성 케이스로 빠지면
+    // 진입 검사가 통과해 본문 작성 후 저장 단계에서 작업이 날아가므로 명시적으로 거부한다.
+    if (page && page.deleted_at) {
+        return c.json({
+            allowed: false,
+            reason: 'deleted',
+            acl: null,
+            source: 'page',
+            min_age_days: minAge,
+            is_locked: page.is_locked,
+            is_private: page.is_private,
+        });
+    }
+
+    if (page && !page.deleted_at) {
+        if (isAdmin) {
+            return c.json({
+                allowed: true,
+                acl: parseEditAcl(page.edit_acl),
+                source: page.edit_acl ? 'page' : 'none',
+                min_age_days: minAge,
+                is_locked: page.is_locked,
+                is_private: page.is_private,
+            });
+        }
+        if (page.is_locked === 1) {
+            return c.json({
+                allowed: false,
+                reason: 'locked',
+                acl: null,
+                source: 'page',
+                min_age_days: minAge,
+                is_locked: 1,
+                is_private: page.is_private,
+            });
+        }
+        if (page.is_private === 1 && !rbac.can(user.role, 'wiki:private')) {
+            return c.json({
+                allowed: false,
+                reason: 'private',
+                acl: null,
+                source: 'page',
+                min_age_days: minAge,
+                is_locked: page.is_locked,
+                is_private: 1,
+            });
+        }
+        const acl = parseEditAcl(page.edit_acl);
+        if (acl && acl.flags.length > 0) {
+            const ev = await evaluateEditAcl(db, acl, user, page.id, minAge);
+            return c.json({
+                allowed: ev.allowed,
+                reason: ev.allowed ? undefined : 'edit_acl',
+                decisive: ev.decisive,
+                acl,
+                source: 'page',
+                min_age_days: minAge,
+                is_locked: page.is_locked,
+                is_private: page.is_private,
+            });
+        }
+        return c.json({
+            allowed: true,
+            acl: null,
+            source: 'none',
+            min_age_days: minAge,
+            is_locked: page.is_locked,
+            is_private: page.is_private,
+        });
+    }
+
+    // 페이지 미존재 — 신규 생성 케이스. prefix 룰 ACL 평가.
+    const ruleAcl = await findPrefixRuleEditAcl(db, slug);
+    if (!ruleAcl || ruleAcl.flags.length === 0 || isAdmin) {
+        return c.json({
+            allowed: true,
+            acl: ruleAcl,
+            source: ruleAcl ? 'prefix_rule' : 'none',
+            min_age_days: minAge,
+            is_locked: 0,
+            is_private: 0,
+        });
+    }
+    // 신규 문서이므로 page_editor / allowlist 는 항상 false (pageId=null).
+    const ev = await evaluateEditAcl(db, ruleAcl, user, null, minAge);
+    return c.json({
+        allowed: ev.allowed,
+        reason: ev.allowed ? undefined : 'edit_acl',
+        decisive: ev.decisive,
+        acl: ruleAcl,
+        source: 'prefix_rule',
+        min_age_days: minAge,
+        is_locked: 0,
+        is_private: 0,
+    });
+});
+
 wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
     const slug = normalizeSlug(c.req.param('slug'));
 
@@ -1392,6 +1588,7 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
         category?: string;
         is_locked?: number;
         is_private?: number;
+        edit_acl?: unknown;
         redirect_to?: string;
         expected_version?: number;
         turnstileToken?: string;
@@ -1499,9 +1696,19 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
     }
 
     const existing = await db
-        .prepare('SELECT id, version, is_locked, is_private, redirect_to, content, deleted_at, title FROM pages WHERE slug = ?')
+        .prepare('SELECT id, version, is_locked, is_private, edit_acl, redirect_to, content, deleted_at, title FROM pages WHERE slug = ?')
         .bind(slug)
-        .first<{ id: number; version: number; is_locked: number; is_private: number; redirect_to: string | null; content: string; deleted_at: number | null; title: string | null }>();
+        .first<{ id: number; version: number; is_locked: number; is_private: number; edit_acl: string | null; redirect_to: string | null; content: string; deleted_at: number | null; title: string | null }>();
+
+    // edit_acl body 입력 검증 (관리자만 반영). 비관리자는 기존 값 마스킹.
+    let requestedEditAcl: { provided: boolean; value: EditAcl | null } = { provided: false, value: null };
+    if (Object.prototype.hasOwnProperty.call(body, 'edit_acl')) {
+        const norm = normalizeEditAcl(body.edit_acl);
+        if ('error' in norm) {
+            return c.json({ error: norm.error }, 400);
+        }
+        requestedEditAcl = { provided: true, value: norm.value };
+    }
 
     // 신규 title 이 다른 페이지의 slug 또는 title 과 충돌하면 거부.
     // (자기 자신의 slug 와 같은 값을 title 로 적는 것도 의미가 없으므로 차단된다 — 그 경우 그냥 title 을 비우면 동일 표시.)
@@ -1537,6 +1744,7 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
 
     let finalIsLocked = 0;
     let finalIsPrivate = 0;
+    let finalEditAcl: string | null = null;
 
     if (existing && !existing.deleted_at) {
         // expected_version === 0 은 "신규 생성 전용" 시멘틱이다. 기존 문서가 존재하면
@@ -1559,9 +1767,30 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
             return c.json({ error: '비공개 문서는 편집할 수 없습니다.', is_private: true }, 403);
         }
 
+        // edit_acl 평가 — 관리자는 우회. is_locked / is_private 단계를 통과한 뒤 검사한다.
+        if (!isAdmin) {
+            const aclParsed = parseEditAcl(existing.edit_acl);
+            if (aclParsed && aclParsed.flags.length > 0) {
+                const minAge = await getEditAclMinAgeDays(db);
+                const ev = await evaluateEditAcl(db, aclParsed, user, existing.id, minAge);
+                if (!ev.allowed) {
+                    return c.json({
+                        error: '이 문서를 편집할 권한이 부족합니다.',
+                        edit_acl: aclParsed,
+                        min_age_days: minAge,
+                    }, 403);
+                }
+            }
+        }
+
         // 권한에 따른 잠금 상태 결정
         finalIsLocked = rbac.can(user.role, 'wiki:lock') ? (body.is_locked ?? existing.is_locked) : existing.is_locked;
         finalIsPrivate = rbac.can(user.role, 'wiki:private') ? (body.is_private ?? existing.is_private) : existing.is_private;
+        // edit_acl 은 관리자(admin:access)만 변경 가능, 그리고 body 에 명시적으로 보낸 경우에만 갱신한다.
+        // 평범한 본문 저장이 request 시작 시점에 읽은 stale 값을 UPDATE 절에서 다시 써버려 admin 의 ACL 갱신을
+        // silent 하게 되돌리는 race 를 방지. 변경 의도가 없는 경우 column 자체를 UPDATE 에서 제외한다.
+        const willUpdateEditAcl = isAdmin && requestedEditAcl.provided;
+        finalEditAcl = willUpdateEditAcl ? serializeEditAcl(requestedEditAcl.value) : existing.edit_acl;
 
         // ── 기존 문서 수정 ──
         // Optimistic Locking 체크
@@ -1648,15 +1877,23 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
         // 명시된 경우 NULL 로 저장돼 슬러그가 다시 표시 이름으로 노출된다.
         const finalTitle = hasTitleInBody ? requestedTitle ?? null : existing.title;
         try {
-            await db
-                .prepare(
-                    `UPDATE pages
-             SET content = ?, title = ?, category = ?, is_locked = ?, is_private = ?, redirect_to = ?, last_revision_id = ?,
+            // edit_acl 은 admin 이 명시적으로 변경 요청한 경우에만 UPDATE 절에 포함한다.
+            // (그 외 케이스는 column 을 손대지 않아 admin 의 별도 ACL 갱신 race 를 회피.)
+            const updateSql = willUpdateEditAcl
+                ? `UPDATE pages
+             SET content = ?, title = ?, category = ?, is_locked = ?, is_private = ?, edit_acl = ?, redirect_to = ?, last_revision_id = ?,
                  version = ?, rows = ?, characters = ?, updated_at = unixepoch()
              WHERE id = ?`
-                )
-                .bind(contentToStore, finalTitle, body.category || null, finalIsLocked, finalIsPrivate, body.redirect_to || null, revisionId, newVersion, metrics.rows, metrics.characters, existing.id)
-                .run();
+                : `UPDATE pages
+             SET content = ?, title = ?, category = ?, is_locked = ?, is_private = ?, redirect_to = ?, last_revision_id = ?,
+                 version = ?, rows = ?, characters = ?, updated_at = unixepoch()
+             WHERE id = ?`;
+            const baseBinds: (string | number | null)[] = [contentToStore, finalTitle, body.category || null, finalIsLocked, finalIsPrivate];
+            const tailBinds: (string | number | null)[] = [body.redirect_to || null, revisionId, newVersion, metrics.rows, metrics.characters, existing.id];
+            const updateBinds = willUpdateEditAcl
+                ? [...baseBinds, finalEditAcl, ...tailBinds]
+                : [...baseBinds, ...tailBinds];
+            await db.prepare(updateSql).bind(...updateBinds).run();
         } catch (e: any) {
             // UPDATE 실패 시 (예: title 의 idx_pages_title_unique race) 막 만든 리비전 / R2 객체를 정리해
             // 고아 본문이 남지 않게 한다. UNIQUE 위반(SQLITE_CONSTRAINT) 은 409 로 매핑, 그 외는 500.
@@ -1735,6 +1972,10 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
     } else {
         finalIsLocked = rbac.can(user.role, 'wiki:lock') ? (body.is_locked ?? 0) : 0;
         finalIsPrivate = rbac.can(user.role, 'wiki:private') ? (body.is_private ?? 0) : 0;
+        // edit_acl 은 관리자만 직접 지정 가능. 비관리자가 만든 신규 문서는 NULL 로 시작(아래 prefix 룰이 덮어쓸 수 있음).
+        finalEditAcl = isAdmin
+            ? (requestedEditAcl.provided ? serializeEditAcl(requestedEditAcl.value) : null)
+            : null;
 
         // ── 새 문서 생성 ──
         const enabledExtensionsCreate = (c.env.ENABLED_EXTENSIONS || '').split(',').map((s: string) => s.trim()).filter(Boolean);
@@ -1759,23 +2000,51 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
         // body.is_private 입력은 위에서 이미 0 으로 마스크된 상태이므로 추가 처리 불필요.
         try {
             const ruleRows = await db
-                .prepare('SELECT prefix, is_locked, is_private FROM doc_setting_prefix_rules')
-                .all<{ prefix: string; is_locked: number | null; is_private: number | null }>();
+                .prepare('SELECT prefix, is_locked, is_private, edit_acl FROM doc_setting_prefix_rules')
+                .all<{ prefix: string; is_locked: number | null; is_private: number | null; edit_acl: string | null }>();
             let bestLen = -1;
             let lockOverride: number | null = null;
             let privateOverride: number | null = null;
+            let aclOverride: string | null = null;
             for (const r of ruleRows.results || []) {
                 if (!slug.startsWith(r.prefix + '/')) continue;
                 if (r.prefix.length > bestLen) {
                     bestLen = r.prefix.length;
                     lockOverride = r.is_locked;
                     privateOverride = r.is_private;
+                    aclOverride = r.edit_acl;
                 }
             }
             if (lockOverride !== null) finalIsLocked = lockOverride;
             if (privateOverride !== null) finalIsPrivate = privateOverride;
+            // ACL 은 관리자가 body 에 edit_acl 키를 명시했으면 그 값을 우선한다 — 명시적으로 null 을 보내
+            // ACL 을 끄려는 요청을 "미지정" 과 구분해야 prefix 룰이 그 의도를 덮어쓰지 않는다.
+            // requestedEditAcl.provided=false (키 자체 미전송) 이고 현재 finalEditAcl===null 인 경우에만 prefix 룰 적용.
+            const adminExplicitlySetEditAcl = isAdmin && requestedEditAcl.provided;
+            if (aclOverride !== null && finalEditAcl === null && !adminExplicitlySetEditAcl) {
+                finalEditAcl = serializeEditAcl(parseEditAcl(aclOverride));
+            }
         } catch (e) {
             console.error('doc_setting_prefix_rules lookup failed (create):', e);
+        }
+
+        // 새 ACL 이 적용된 신규 페이지를 생성하기 전에, 생성자(비관리자)가 그 ACL 을 통과하는지 검증한다.
+        // 신규 페이지이므로 page_editor / allowlist 플래그는 항상 false 로 평가 (pageId=null).
+        // 관리자(admin:access)는 우회 — admin:access 는 자기 자신이 직접 작성한 ACL 도 만족하지 못할 수 있으므로
+        // 관리자 우회가 없으면 신규 ACL 자체를 만들 수 없게 된다.
+        if (!isAdmin && finalEditAcl) {
+            const aclForCreate = parseEditAcl(finalEditAcl);
+            if (aclForCreate && aclForCreate.flags.length > 0) {
+                const minAge = await getEditAclMinAgeDays(db);
+                const ev = await evaluateEditAcl(db, aclForCreate, user, null, minAge);
+                if (!ev.allowed) {
+                    return c.json({
+                        error: '이 슬러그로 시작하는 문서는 ACL 정책상 새로 생성할 수 없습니다.',
+                        edit_acl: aclForCreate,
+                        min_age_days: minAge,
+                    }, 403);
+                }
+            }
         }
 
         const metrics = computePageMetricsTracked(body.content, isR2Only);
@@ -1784,9 +2053,9 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
         try {
             pageResult = await db
                 .prepare(
-                    'INSERT INTO pages (slug, title, content, category, is_locked, is_private, redirect_to, rows, characters) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+                    'INSERT INTO pages (slug, title, content, category, is_locked, is_private, edit_acl, redirect_to, rows, characters) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
                 )
-                .bind(slug, newDocTitle, contentToStore, effectiveCategory, finalIsLocked, finalIsPrivate, body.redirect_to || null, metrics.rows, metrics.characters)
+                .bind(slug, newDocTitle, contentToStore, effectiveCategory, finalIsLocked, finalIsPrivate, finalEditAcl, body.redirect_to || null, metrics.rows, metrics.characters)
                 .run();
         } catch (e: any) {
             // UNIQUE race (slug 의 UNIQUE 또는 idx_pages_title_unique) — precheck 와 INSERT 사이에

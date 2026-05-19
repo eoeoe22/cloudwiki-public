@@ -22,7 +22,7 @@
  */
 import './types';
 import { escapeHtml } from '../utils/html';
-import { normalizeSlug } from '../utils/slug';
+import { normalizeSlug, hasSlugForbiddenChars } from '../utils/slug';
 import { snapshotPreviewState, restorePreviewState } from './preview-state';
 import type { CMEditor, CMSelection, PageMeta, SectionRange } from './types';
 
@@ -584,6 +584,99 @@ document.addEventListener('DOMContentLoaded', async () => {
             window.location.href = '/';
         });
         return;
+    }
+
+    // 슬러그 금지 문자 사전 차단 — 서버 PUT /w/:slug 가 SLUG_FORBIDDEN_CHARS 로 거부하는
+    // 입력을 에디터 진입 직후에 미리 잡아내, 사용자가 본문을 작성한 뒤 저장 시점에야
+    // 거부당하는 회귀를 막는다. BLOG_MODE 는 더미 슬러그(`__blog__`)를 쓰므로 제외.
+    if (!BLOG_MODE && slug && hasSlugForbiddenChars(slug)) {
+        // 초기 로딩 오버레이(#initLoadingOverlay, z-index:9999) 위로 SweetAlert 컨테이너를
+        // 끌어올려, 사용자가 확인 버튼을 눌러 홈으로 돌아갈 수 있도록 한다.
+        window.Swal.fire({
+            icon: 'error',
+            title: '오류',
+            text: '제목에 사용할 수 없는 특수문자가 포함되어 있습니다.',
+            didOpen: (el: HTMLElement) => {
+                const container = el.closest('.swal2-container') as HTMLElement | null;
+                if (container) container.style.zIndex = '10000';
+            },
+        }).then(() => {
+            window.location.href = '/';
+        });
+        return;
+    }
+
+    // ── 편집 권한 사전 검사 (BLOG_MODE 제외) ──
+    // 자동 prefix 룰로 ACL 이 적용된 신규 문서를 본문 작성 후에 저장 단계에서 거부당하면 작업이 날아간다.
+    // 진입 시점에 GET /api/wiki/w/:slug/edit-permission 으로 미리 평가해 본문 입력 UI 가 뜨기 전에 차단한다.
+    // 저장 단계(PUT)의 가드는 그대로 유지되므로 race 가 발생해도 안전망이 남는다.
+    if (slug && !BLOG_MODE) {
+        try {
+            const res = await fetch(`/api/w/${encodeURIComponent(slug)}/edit-permission`);
+            if (res.ok) {
+                const ep = await res.json() as {
+                    allowed: boolean;
+                    reason?: string;
+                    decisive?: string;
+                    acl?: { mode: 'or' | 'and'; flags: string[] } | null;
+                    source?: 'page' | 'prefix_rule' | 'none';
+                    min_age_days?: number;
+                    is_locked?: number;
+                    is_private?: number;
+                    admin_namespace_prefix?: string;
+                };
+                if (!ep.allowed) {
+                    const reason = ep.reason || 'unknown';
+                    const labelMap: Record<string, string> = {
+                        aged: '가입 N일 이상',
+                        allowlist: '관리자가 지정한 허용 명단',
+                        page_editor: '본 문서 편집 이력',
+                        any_editor: '임의 문서 편집 이력',
+                    };
+                    const aclSummary = (() => {
+                        if (!ep.acl || !Array.isArray(ep.acl.flags) || ep.acl.flags.length === 0) return null;
+                        const joiner = ep.acl.mode === 'and' ? ' 그리고 ' : ' 또는 ';
+                        return ep.acl.flags.map((f: string) => labelMap[f] || f).join(joiner);
+                    })();
+                    let title = '편집 권한이 없습니다';
+                    let html = '';
+                    if (reason === 'locked') {
+                        html = '이 문서는 관리자에 의해 잠겨 있어 편집할 수 없습니다.';
+                    } else if (reason === 'private') {
+                        html = '이 문서는 비공개로 설정되어 있어 편집할 수 없습니다.';
+                    } else if (reason === 'deleted') {
+                        title = '삭제된 문서';
+                        html = '이 문서는 삭제된 상태입니다. 관리자가 복원해야 다시 편집할 수 있습니다.';
+                    } else if (reason === 'main_page') {
+                        html = '메인 문서는 관리자만 편집할 수 있습니다.';
+                    } else if (reason === 'image_namespace') {
+                        html = '"이미지:" 네임스페이스의 문서는 미디어 업로드 페이지로 관리됩니다.';
+                    } else if (reason === 'admin_namespace') {
+                        html = `<code>${ep.admin_namespace_prefix || ''}</code> 로 시작하는 문서는 관리자만 편집할 수 있습니다.`;
+                    } else if (reason === 'no_permission') {
+                        html = '편집 권한이 없는 계정입니다.';
+                    } else if (reason === 'edit_acl' && aclSummary) {
+                        const sourceLabel = ep.source === 'prefix_rule' ? '하위 문서 자동 규칙' : '문서 설정';
+                        const minAge = typeof ep.min_age_days === 'number' ? ep.min_age_days : 0;
+                        const renderedSummary = aclSummary.replace(/N일/g, `${minAge}일`);
+                        html = `이 문서는 다음 조건을 만족하는 사용자만 편집할 수 있습니다 (${sourceLabel}):<br><b>${renderedSummary}</b>`;
+                    } else {
+                        html = '편집 권한이 부족합니다.';
+                    }
+                    await window.Swal.fire({
+                        icon: 'warning',
+                        title,
+                        html,
+                        confirmButtonText: '확인',
+                    });
+                    window.location.href = slug ? `/w/${encodeURIComponent(slug)}` : '/';
+                    return;
+                }
+            }
+        } catch (e) {
+            console.warn('edit-permission preflight failed', e);
+            // 사전 검사 실패는 치명적이지 않다 — 저장 단계 가드에 맡긴다.
+        }
     }
 
     // 익스텐션 데이터 문서 감지 (freq: 등)
@@ -3610,7 +3703,7 @@ async function openSplitToSubdocModal(): Promise<void> {
                 return false;
             }
             // 서버 SLUG_FORBIDDEN_CHARS 와 동일하게 클라에서도 1차 차단.
-            if (/[\[\]{}()#%|<>^\x00-\x1F\x7F]/.test(normalized)) {
+            if (hasSlugForbiddenChars(normalized)) {
                 Swal.showValidationMessage('제목에 사용할 수 없는 특수문자가 포함되어 있습니다.');
                 return false;
             }

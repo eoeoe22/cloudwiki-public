@@ -376,6 +376,70 @@
             </div>
           </div>
 
+          <!-- ── 문서별 편집 허용 명단 (page_edit_allowlist) ── -->
+          <div class="card shadow-sm border-0 mb-4">
+            <div class="card-header py-3">
+              <h5 class="mb-0">문서별 편집 허용 명단</h5>
+            </div>
+            <div class="card-body">
+              <p class="text-muted small mb-3">
+                <code>edit_acl</code> 에 <b>허용 명단 등재</b> 플래그가 켜진 문서에서
+                해당 문서의 편집을 허용할 사용자 명단을 관리합니다. 명단에 등재되어도
+                해당 문서의 <code>edit_acl</code> 에 <b>허용 명단</b> 플래그가 없으면
+                효력이 없습니다.
+              </p>
+              <div class="row g-2 mb-3">
+                <div class="col-md-7">
+                  <input
+                    type="text"
+                    id="allowlistSlugInput"
+                    class="form-control"
+                    placeholder="문서 슬러그 (예: Cloudwiki/메인)"
+                    autocomplete="off"
+                  />
+                </div>
+                <div class="col-md-5">
+                  <button
+                    class="btn btn-wiki w-100"
+                    type="button"
+                    onclick="loadEditAllowlist()"
+                  >
+                    <i class="mdi mdi-magnify"></i> 명단 조회
+                  </button>
+                </div>
+              </div>
+              <div id="editAllowlistPanel" class="border rounded p-3" style="display: none;">
+                <div class="d-flex align-items-center justify-content-between mb-2">
+                  <div class="text-muted small">
+                    슬러그: <code id="editAllowlistSlugLabel"></code>
+                    <span id="editAllowlistAclLabel" class="ms-2"></span>
+                  </div>
+                </div>
+                <div class="row g-2 mb-3">
+                  <div class="col-md-7">
+                    <input
+                      type="number"
+                      id="editAllowlistUserIdInput"
+                      class="form-control"
+                      placeholder="추가할 user_id"
+                      min="1"
+                    />
+                  </div>
+                  <div class="col-md-5">
+                    <button
+                      class="btn btn-primary w-100"
+                      type="button"
+                      onclick="addToEditAllowlist()"
+                    >
+                      <i class="mdi mdi-account-plus"></i> 추가
+                    </button>
+                  </div>
+                </div>
+                <div id="editAllowlistList" class="list-group list-group-flush border rounded"></div>
+              </div>
+            </div>
+          </div>
+
           <!-- ── 컬러 팔레트 관리 ── -->
           <div class="card shadow-sm border-0 mb-4" id="paletteManagementSection">
             <div class="card-header py-3">
@@ -896,6 +960,28 @@
                 </div>
               </div>
 
+              <hr />
+              <h6 class="fw-bold mb-3">편집 ACL 전역 설정</h6>
+              <div class="mb-4">
+                <label for="editAclMinAgeInput" class="form-label">
+                  편집 ACL <b>가입 N일 이상</b> 임계값
+                </label>
+                <div class="input-group" style="max-width: 220px">
+                  <input
+                    type="number"
+                    class="form-control"
+                    id="editAclMinAgeInput"
+                    min="0"
+                    max="36500"
+                    value="0"
+                  />
+                  <span class="input-group-text">일</span>
+                </div>
+                <small class="text-muted d-block mt-1">
+                  pages.edit_acl 의 <code>aged</code> 플래그가 참조하는 전역 임계값. 0이면 가입 즉시 통과(=비활성).
+                </small>
+              </div>
+
               <button
                 class="btn btn-wiki w-100 mb-4"
                 onclick="saveWikiSettings()"
@@ -1352,6 +1438,7 @@
     <script type="module" src="/dist/common.js"></script>
     <script type="module" src="/dist/icon-picker.js"></script>
     <script type="module" src="/dist/admin-palettes.js"></script>
+    <script type="module" src="/dist/admin-edit-allowlist.js"></script>
     <script>
       // ── 탭 전환 로직 ──
       function showTab(tabId) {
@@ -1575,6 +1662,14 @@
                 ? "Blocked"
                 : "Open";
           document.getElementById("signupPolicy" + policyId).checked = true;
+
+          // 편집 ACL 가입일 임계값
+          const minAgeEl = document.getElementById("editAclMinAgeInput");
+          if (minAgeEl) {
+            const v = typeof s.edit_acl_min_age_days === "number"
+              ? s.edit_acl_min_age_days : 0;
+            minAgeEl.value = String(v);
+          }
 
           // MCP 설정 로드
           const mcp = s.mcp_mode || "disabled";
@@ -1918,6 +2013,8 @@
           p === "custom"
             ? parseInt(document.getElementById("cooldownDaysInput").value)
             : parseInt(p);
+        const minAgeRaw = document.getElementById("editAclMinAgeInput");
+        const minAgeVal = minAgeRaw ? parseInt(minAgeRaw.value, 10) : 0;
         const body = {
           namechange_ratelimit: rl,
           allow_direct_message: document.getElementById("allowDmSwitch").checked
@@ -1926,6 +2023,7 @@
           signup_policy: document.querySelector(
             'input[name="signupPolicy"]:checked',
           ).value,
+          edit_acl_min_age_days: Number.isFinite(minAgeVal) && minAgeVal >= 0 ? minAgeVal : 0,
         };
         const res = await fetch("/api/admin/settings", {
           method: "PUT",

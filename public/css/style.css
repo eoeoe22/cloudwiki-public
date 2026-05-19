@@ -213,7 +213,7 @@ div:where(.swal2-container) .swal2-html-container {
   background: var(--wiki-glass-bg) !important;
   backdrop-filter: var(--wiki-glass-blur);
   -webkit-backdrop-filter: var(--wiki-glass-blur);
-  border-bottom: 1px solid var(--wiki-glass-border);
+  border-bottom: 1px solid var(--wiki-border);
   box-shadow: var(--wiki-shadow-sm);
   padding: 0.8rem 1.5rem 0.6rem;
   margin-bottom: 2rem;

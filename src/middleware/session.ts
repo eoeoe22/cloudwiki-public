@@ -5,11 +5,13 @@ import { RBAC } from '../utils/role';
 import type { Env, User } from '../types';
 
 /**
- * RBAC 인스턴스를 초기화하여 Context에 주입하는 미들웨어
+ * RBAC 인스턴스를 초기화하여 Context에 주입하는 미들웨어.
+ *
+ * 권한 정의는 RBAC.getDefaultPermissions() 단일 소스에서 가져온다.
+ * ROLE_PERMISSIONS_JSON 환경변수 오버라이드는 폐기됨.
  */
 export const rbacMiddleware = createMiddleware<Env>(async (c, next) => {
-    const json = c.env.ROLE_PERMISSIONS_JSON || JSON.stringify(RBAC.getDefaultPermissions());
-    c.set('rbac', new RBAC(json));
+    c.set('rbac', new RBAC());
     await next();
 });
 

@@ -994,12 +994,6 @@ function _renderCategoryPagination(category, page, totalPages) {
 const _wikiCategorySortedCache = new Map();
 const _WIKI_CATEGORY_CACHE_TTL_MS = 30 * 1000;
 
-function _wikiCategoryLeafName(slug) {
-    const s = String(slug || '');
-    const segs = s.split('/');
-    return segs[segs.length - 1] || s;
-}
-
 function _wikiCategoryInvalidate(category) {
     if (category) _wikiCategorySortedCache.delete(category);
     else _wikiCategorySortedCache.clear();
@@ -1015,20 +1009,16 @@ async function _loadCategorySortedItems(category) {
     const raw = Array.isArray(data.pages) ? data.pages : [];
     const items = raw.map(p => {
         const slug = String(p.slug || '');
-        // 카테고리 그룹/정렬 기준은 "문서 이름" (슬러그 마지막 세그먼트).
-        // 표시 자체는 전체 슬러그를 유지하지만 'docs/가이드' 가 D 그룹으로 분류되면 안 됨.
-        const leaf = _wikiCategoryLeafName(slug);
-        const g = _wikiCategoryGroupOf(leaf);
-        return { slug, leaf, is_locked: !!p.is_locked, _gOrder: g.order, _gLabel: g.label };
+        // 카테고리 그룹/정렬 기준은 전체 슬러그의 맨 앞 글자.
+        // 하위문서 구조(`/` 세그먼트)는 무시한다 — 'docs/가이드' 는 'D' 그룹에 들어간다.
+        const g = _wikiCategoryGroupOf(slug);
+        return { slug, is_locked: !!p.is_locked, _gOrder: g.order, _gLabel: g.label };
     });
     // 1차: 스크립트 그룹 순서 (한글 → 일본어 → 알파벳 → 숫자 → 기타)
-    // 2차: 같은 그룹 안에서 leaf 이름 기준 로케일 사전순 (전체 슬러그 대신)
+    // 2차: 같은 그룹 안에서 전체 슬러그 기준 로케일 사전순.
     const collator = new Intl.Collator(['ko', 'ja', 'en'], { sensitivity: 'base', numeric: true });
     items.sort((a, b) => {
         if (a._gOrder !== b._gOrder) return a._gOrder < b._gOrder ? -1 : 1;
-        const leafCmp = collator.compare(a.leaf, b.leaf);
-        if (leafCmp !== 0) return leafCmp;
-        // leaf 동률이면 전체 슬러그로 안정 정렬 (예: a/이름 vs b/이름)
         return collator.compare(a.slug, b.slug);
     });
     _wikiCategorySortedCache.set(category, { items, t: now });

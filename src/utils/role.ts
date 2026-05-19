@@ -2,30 +2,17 @@ import { isSuperAdmin } from './auth';
 import type { Env, RolePermissions } from '../types';
 
 /**
- * RBAC (역할 기반 접근 제어) 관리 클래스
+ * RBAC (역할 기반 접근 제어) 관리 클래스.
+ *
+ * 권한 정의는 getDefaultPermissions() 단일 소스로 고정한다.
+ * 과거에는 wrangler.toml 의 ROLE_PERMISSIONS_JSON 환경변수로 오버라이드했으나,
+ * 운영 중 손볼 일이 거의 없고 잘못 수정하면 전 사이트 권한이 망가지므로 폐기했다.
  */
 export class RBAC {
     private permissions: RolePermissions;
 
-    constructor(json?: string) {
-        if (json) {
-            try {
-                const parsed = JSON.parse(json);
-                // roles가 null이 아닌 plain object인지 확인, 아니면 빈 객체로 정규화
-                const roles = parsed !== null &&
-                    typeof parsed.roles === 'object' &&
-                    parsed.roles !== null &&
-                    !Array.isArray(parsed.roles)
-                    ? parsed.roles
-                    : {};
-                this.permissions = { roles };
-            } catch (e) {
-                console.error('Failed to parse RBAC JSON:', e);
-                this.permissions = { roles: {} };
-            }
-        } else {
-            this.permissions = { roles: {} };
-        }
+    constructor() {
+        this.permissions = RBAC.getDefaultPermissions();
     }
 
     /**

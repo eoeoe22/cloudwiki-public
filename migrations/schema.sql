@@ -46,7 +46,11 @@ CREATE TABLE IF NOT EXISTS pages (
   is_private        INTEGER DEFAULT 0,
   redirect_to       TEXT,
   rows              INTEGER,
-  characters        INTEGER
+  characters        INTEGER,
+  -- 일반 유저 편집 ACL 정의 (JSON). NULL 또는 flags=[] 면 ACL 비활성, requirePermission('wiki:edit') 만 검사.
+  -- 형식: {"mode":"or"|"and","flags":["aged","allowlist","page_editor","any_editor"]}
+  -- 관리자(admin:access)는 ACL 우회. is_locked = 1 (관리자 전용) 은 ACL 위에 우선.
+  edit_acl          TEXT
 );
 
 
@@ -190,7 +194,10 @@ CREATE TABLE IF NOT EXISTS settings (
   -- 각 항목 스키마: { id, title, announcedTime, url|null, postId|null, icon|null }
   announcements           TEXT DEFAULT '[]',
   -- 마지막 발급된 공지 id + 1. 순서가 바뀌어도 안정적인 식별자를 보장.
-  announcement_next_id    INTEGER DEFAULT 1
+  announcement_next_id    INTEGER DEFAULT 1,
+  -- pages.edit_acl 의 'aged' 플래그가 참조하는 전역 임계값(일).
+  -- 0 이면 가입 즉시 통과 (사실상 'aged' 플래그 비활성).
+  edit_acl_min_age_days   INTEGER DEFAULT 0
 );
 
 -- 설정 초기 데이터 (이미 있는 경우 무시)
@@ -458,10 +465,56 @@ CREATE TABLE IF NOT EXISTS doc_setting_prefix_rules (
     prefix     TEXT NOT NULL UNIQUE,
     is_locked  INTEGER,                          -- NULL=규칙 없음, 0/1=신규 생성 시 강제값
     is_private INTEGER,                          -- NULL=규칙 없음, 0/1=신규 생성 시 강제값
+    edit_acl   TEXT,                             -- NULL=규칙 없음, JSON=신규 생성 시 강제값 (pages.edit_acl 와 동일 스키마)
     created_at INTEGER DEFAULT (unixepoch()),
     created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
-    CHECK (is_locked IS NOT NULL OR is_private IS NOT NULL)
+    CHECK (is_locked IS NOT NULL OR is_private IS NOT NULL OR edit_acl IS NOT NULL)
 );
+
+-- 문서별 편집 허용 명단 (pages.edit_acl 의 'allowlist' 플래그가 참조).
+-- 관리자가 추가/삭제. ACL flags 에 'allowlist' 가 포함된 문서에서만 의미.
+CREATE TABLE IF NOT EXISTS page_edit_allowlist (
+    page_id    INTEGER NOT NULL,
+    user_id    INTEGER NOT NULL,
+    added_by   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at INTEGER DEFAULT (unixepoch()),
+    PRIMARY KEY (page_id, user_id),
+    FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS idx_page_edit_allowlist_user ON page_edit_allowlist(user_id);
+
+-- D1 콘솔 1회 수동 마이그레이션 (배포된 DB):
+--   ALTER TABLE pages ADD COLUMN edit_acl TEXT;
+--   ALTER TABLE settings ADD COLUMN edit_acl_min_age_days INTEGER DEFAULT 0;
+--   ALTER TABLE doc_setting_prefix_rules ADD COLUMN edit_acl TEXT;
+--   CREATE TABLE IF NOT EXISTS page_edit_allowlist (
+--       page_id    INTEGER NOT NULL,
+--       user_id    INTEGER NOT NULL,
+--       added_by   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+--       created_at INTEGER DEFAULT (unixepoch()),
+--       PRIMARY KEY (page_id, user_id),
+--       FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE,
+--       FOREIGN KEY (user_id) REFERENCES users(id)
+--   );
+--   CREATE INDEX IF NOT EXISTS idx_page_edit_allowlist_user ON page_edit_allowlist(user_id);
+--
+--   -- doc_setting_prefix_rules 의 CHECK 갱신 (edit_acl 단독 룰 허용).
+--   -- SQLite 는 CHECK 를 in-place 로 ALTER 할 수 없으므로 테이블을 재생성한다.
+--   ALTER TABLE doc_setting_prefix_rules RENAME TO doc_setting_prefix_rules_old;
+--   CREATE TABLE doc_setting_prefix_rules (
+--       id         INTEGER PRIMARY KEY AUTOINCREMENT,
+--       prefix     TEXT NOT NULL UNIQUE,
+--       is_locked  INTEGER,
+--       is_private INTEGER,
+--       edit_acl   TEXT,
+--       created_at INTEGER DEFAULT (unixepoch()),
+--       created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+--       CHECK (is_locked IS NOT NULL OR is_private IS NOT NULL OR edit_acl IS NOT NULL)
+--   );
+--   INSERT INTO doc_setting_prefix_rules (id, prefix, is_locked, is_private, edit_acl, created_at, created_by)
+--     SELECT id, prefix, is_locked, is_private, edit_acl, created_at, created_by FROM doc_setting_prefix_rules_old;
+--   DROP TABLE doc_setting_prefix_rules_old;
 
 -- 커스텀 컬러 팔레트
 -- {palette:이름} 위키 문법에서 사용. 하드코딩 프리셋(primary/secondary/success/info/warning/danger/muted) 위에 머지된다.

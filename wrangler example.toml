@@ -100,12 +100,10 @@ FOOTER = """
 
 """
 
-# ROLE_PERMISSIONS_JSON: 역할 기반 권한 제어 설정
-# 기본값 설정 사용을 권장합니다.
-# 수정이 필요하다면 https://vialinks.xyz/role-json-builder 에서 제작후 붙여넣기. minify 옵션 사용을 권장합니다.
-ROLE_PERMISSIONS_JSON = """
-{"roles":{"user":{"permissions":["wiki:read","wiki:edit","comment:create","ticket:create","media:upload"],"inherits":[]},"discussion_manager":{"permissions":["discussion:manage"],"inherits":["user"]},"admin":{"permissions":["admin:access","wiki:delete","wiki:lock","wiki:private","user:manage","ticket:manage"],"inherits":["discussion_manager"]},"super_admin":{"permissions":["*"],"inherits":["admin"]},"banned":{"permissions":[],"inherits":[]},"deleted":{"permissions":[],"inherits":[]}}}
-"""
+# RBAC 권한 정의는 src/utils/role.ts 의 RBAC.getDefaultPermissions() 단일 소스에 고정.
+# 과거 ROLE_PERMISSIONS_JSON 환경변수 오버라이드는 폐기됨 — 운영 중 손볼 일이 거의 없고
+# 잘못 수정하면 전 사이트 권한이 망가지기 때문. 일반 유저의 문서별 편집 권한은
+# pages.edit_acl 컬럼 + page_edit_allowlist 테이블 + settings.edit_acl_min_age_days 로 세분화.
 
 # 컬러 팔레트는 D1 `palettes` 테이블에서 관리합니다. 관리자 콘솔에서 추가/삭제.
 # 하드코딩 프리셋(primary/secondary/success/info/warning/danger/muted)은 코드에 내장돼 있고

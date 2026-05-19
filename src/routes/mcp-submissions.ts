@@ -32,6 +32,13 @@ import {
     validateMcpSummaryLength,
 } from './admin-mcp';
 import { findConflictingPage } from './wiki';
+import {
+    findPrefixRuleEditAcl,
+    serializeEditAcl,
+    parseEditAcl,
+    evaluateEditAcl,
+    getEditAclMinAgeDays,
+} from '../utils/editAcl';
 
 const mcpSubmissionsRoutes = new Hono<Env>();
 
@@ -342,6 +349,29 @@ mcpSubmissionsRoutes.post('/mcp-submissions/:id/approve', requireAuth, async (c)
             return c.json({ error: 'locked', message: '잠긴 문서는 wiki:lock 권한이 있어야 승인할 수 있습니다.' }, 403);
         }
 
+        // 페이지의 edit_acl 평가 — 제출 시점에는 통과했더라도 승인 시점 (= 실제 author) 기준으로 재검증.
+        // 관리자는 우회. admin-mcp commit_edit 의 enforceMcpEditAcl 와 같은 정책.
+        if (!rbac.can(user.role, 'admin:access')) {
+            const pageAclRow = await c.env.DB
+                .prepare('SELECT edit_acl FROM pages WHERE id = ?')
+                .bind(page.id)
+                .first<{ edit_acl: string | null }>();
+            const pageAcl = parseEditAcl(pageAclRow?.edit_acl ?? null);
+            if (pageAcl && pageAcl.flags.length > 0) {
+                const minAge = await getEditAclMinAgeDays(c.env.DB);
+                const ev = await evaluateEditAcl(c.env.DB, pageAcl, user, page.id, minAge);
+                if (!ev.allowed) {
+                    return c.json({
+                        error: 'forbidden',
+                        reason: 'edit_acl',
+                        message: '이 문서를 편집할 권한이 부족합니다.',
+                        edit_acl: pageAcl,
+                        min_age_days: minAge,
+                    }, 403);
+                }
+            }
+        }
+
         // draft 가 title 변경을 요청한 경우, 승인 시점에 다른 페이지가 같은 문자열을 slug/title 로
         // 가져갔는지 재검증한다 (idx_pages_title_unique 충돌로 인한 UNIQUE 위반 → applyExistingPageUpdate
         // catch 가 비특정 'apply_failed' 로 떨어지는 것을 방지).
@@ -462,6 +492,26 @@ mcpSubmissionsRoutes.post('/mcp-submissions/:id/approve', requireAuth, async (c)
         }
         const finalIsLocked = (draft.requested_lock !== null && rbac.can(user.role, 'wiki:lock'))
             ? draft.requested_lock : 0;
+        // 신규 문서 prefix 룰 ACL — /api/w/:slug 및 MCP commit_edit 의 create 분기와 일관되게,
+        // 승인 시점에도 가장 긴 일치 prefix 의 edit_acl 을 새 페이지에 그대로 기록한다.
+        const prefixAcl = await findPrefixRuleEditAcl(c.env.DB, slug);
+        const createEditAclSerialized = (prefixAcl && prefixAcl.flags.length > 0)
+            ? serializeEditAcl(prefixAcl) : null;
+        // 승인 시점의 user (= 새 페이지 author) 가 prefix 룰 ACL 을 통과하는지 평가.
+        // 관리자는 우회. /api/w/:slug 의 신규 페이지 ACL 검증 및 admin-mcp 의 enforceMcpEditAcl 과 같은 정책.
+        if (prefixAcl && prefixAcl.flags.length > 0 && !rbac.can(user.role, 'admin:access')) {
+            const minAge = await getEditAclMinAgeDays(c.env.DB);
+            const ev = await evaluateEditAcl(c.env.DB, prefixAcl, user, null, minAge);
+            if (!ev.allowed) {
+                return c.json({
+                    error: 'forbidden',
+                    reason: 'edit_acl',
+                    message: '이 슬러그로 시작하는 문서는 ACL 정책상 새로 생성할 수 없습니다.',
+                    edit_acl: prefixAcl,
+                    min_age_days: minAge,
+                }, 403);
+            }
+        }
         const createDiffStats = computeLineDiffStats('', draft.content.replace(/\r\n?/g, '\n'));
         const createSummaryWithDiff = createDiffStats ? buildCommitSummary(finalSummary, createDiffStats) : finalSummary;
 
@@ -472,6 +522,7 @@ mcpSubmissionsRoutes.post('/mcp-submissions/:id/approve', requireAuth, async (c)
                 redirectTo: draft.redirect_to,
                 title: draft.has_title_change ? draft.title : null,
                 finalIsLocked,
+                editAcl: createEditAclSerialized,
                 logType: 'page_create_commit_approved',
                 logMessage: `[mcp-submission] approved draft #${draft.id} (create): ${slug} (v1)`,
             });
