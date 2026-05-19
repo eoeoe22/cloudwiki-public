@@ -365,9 +365,11 @@ function buildModalHtml(slug: string, page: CurrentPage | null, pageLoadError: s
                         <label class="form-check-inline mb-0"><input class="form-check-input" type="radio" name="permBulkCatAction" value="clear"> <span class="ms-1">비움</span></label>
                     </div>
                     <fieldset class="perm-acl-fieldset" id="permBulkCatFieldset" style="border: 1px dashed var(--bs-border-color); padding: 8px 12px; border-radius: 6px; display: none;">
-                        <legend class="bulkcat-section-title" style="font-size: 0.85em; padding: 0 6px;">카테고리 (쉼표로 구분)</legend>
-                        <input type="text" class="form-control form-control-sm" id="permBulkCatInput" placeholder="예: 기술, API">
-                        <small class="text-muted">한글/영문/숫자/공백/쉼표만 입력 가능. 자동 규칙으로 저장 시, 이후 이 문서 하위에 새로 생성되는 문서에 자동 부여됩니다.</small>
+                        <legend class="bulkcat-section-title" style="font-size: 0.85em; padding: 0 6px;">카테고리</legend>
+                        <div class="category-tag-container" id="permBulkCatContainer" onclick="document.getElementById('permBulkCatInput')?.focus()">
+                            <input type="text" class="category-tag-input" id="permBulkCatInput" placeholder="카테고리 입력 후 엔터나 쉼표 (예: 기술, API)">
+                        </div>
+                        <small class="text-muted d-block mt-1">한글/영문/숫자/공백/언더바/하이픈/마침표/쉼표만 입력 가능. 자동 규칙으로 저장 시, 이후 이 문서 하위에 새로 생성되는 문서에 자동 부여됩니다.</small>
                     </fieldset>
                 </div>
                 <p class="bulkcat-section-hint">
@@ -499,10 +501,28 @@ function readBulkCatAction(): CategoriesAction {
     const v = el?.value;
     return v === 'add' || v === 'set' || v === 'clear' ? v : 'none';
 }
+
+let currentBulkCategoryTags: string[] = [];
+
 function readBulkCatInput(): string {
-    const el = document.getElementById('permBulkCatInput') as HTMLInputElement | null;
-    return el?.value ?? '';
+    return currentBulkCategoryTags.join(',');
 }
+
+function renderBulkCategoryTags(): void {
+    const container = document.getElementById('permBulkCatContainer');
+    const input = document.getElementById('permBulkCatInput') as HTMLInputElement | null;
+    if (!container || !input) return;
+
+    container.querySelectorAll('.category-tag').forEach(el => el.remove());
+
+    currentBulkCategoryTags.forEach((tag, index) => {
+        const tagEl = document.createElement('span');
+        tagEl.className = 'category-tag';
+        tagEl.innerHTML = `<span>${escapeHtml(tag)}</span> <i class="mdi mdi-close" data-index="${index}" style="cursor:pointer;"></i>`;
+        container.insertBefore(tagEl, input);
+    });
+}
+
 function toggleBulkCatFieldset() {
     const fs = document.getElementById('permBulkCatFieldset') as HTMLFieldSetElement | null;
     if (!fs) return;
@@ -777,7 +797,81 @@ export async function openPermissionsModal(rawSlug: string): Promise<void> {
             document.querySelectorAll<HTMLInputElement>('.permBulkAcl-flag').forEach((el) => {
                 el.addEventListener('change', () => updateBulkCounter(state));
             });
-            document.getElementById('permBulkCatInput')?.addEventListener('input', () => updateBulkCounter(state));
+
+            currentBulkCategoryTags = [];
+            const catContainer = document.getElementById('permBulkCatContainer');
+            const catInput = document.getElementById('permBulkCatInput') as HTMLInputElement | null;
+
+            if (catContainer && catInput) {
+                const addTag = (tag: string) => {
+                    const cleanTag = tag.trim();
+                    if (!cleanTag) return;
+                    if (!/^[가-힣a-zA-Z0-9\s_.-]+$/.test(cleanTag)) {
+                        swal.fire({
+                            icon: 'warning',
+                            title: '특수문자 제외',
+                            text: '특수문자를 제외한 카테고리 이름을 입력해 주세요.',
+                            toast: true,
+                            position: 'top-end',
+                            timer: 2000,
+                            showConfirmButton: false,
+                        });
+                        return;
+                    }
+                    if (currentBulkCategoryTags.includes(cleanTag)) return;
+                    currentBulkCategoryTags.push(cleanTag);
+                    renderBulkCategoryTags();
+                    updateBulkCounter(state);
+                };
+
+                catContainer.addEventListener('click', (e) => {
+                    const target = e.target as HTMLElement;
+                    if (target.matches('.mdi-close')) {
+                        const index = parseInt(target.getAttribute('data-index') || '-1', 10);
+                        if (index >= 0) {
+                            currentBulkCategoryTags.splice(index, 1);
+                            renderBulkCategoryTags();
+                            updateBulkCounter(state);
+                        }
+                    }
+                });
+
+                catInput.addEventListener('keydown', (e) => {
+                    if (e.isComposing) return;
+                    if (e.key === 'Enter' || e.key === ',') {
+                        e.preventDefault();
+                        if (catInput.value.trim()) {
+                            catInput.value.split(',').forEach(addTag);
+                            catInput.value = '';
+                        }
+                    } else if (e.key === 'Backspace' && catInput.value === '') {
+                        if (currentBulkCategoryTags.length > 0) {
+                            currentBulkCategoryTags.pop();
+                            renderBulkCategoryTags();
+                            updateBulkCounter(state);
+                        }
+                    }
+                });
+
+                catInput.addEventListener('blur', () => {
+                    setTimeout(() => {
+                        if (catInput.value.trim()) {
+                            catInput.value.split(',').forEach(addTag);
+                            catInput.value = '';
+                        }
+                    }, 150);
+                });
+
+                catInput.addEventListener('input', () => {
+                    if (catInput.value.includes(',')) {
+                        const parts = catInput.value.split(',');
+                        const lastFragment = parts.pop() ?? '';
+                        parts.forEach(addTag);
+                        catInput.value = lastFragment;
+                    }
+                });
+            }
+
             toggleBulkAclFieldset();
             toggleBulkCatFieldset();
             void loadBulkTree(state);
@@ -802,13 +896,13 @@ export async function openPermissionsModal(rawSlug: string): Promise<void> {
                 return false;
             }
             if ((categoriesAction === 'add' || categoriesAction === 'set') && categoriesList.length === 0) {
-                swal.showValidationMessage('카테고리 액션에 입력값이 비어 있습니다. 한글/영문/숫자만 쉼표로 구분해 입력해주세요.');
+                swal.showValidationMessage('카테고리 액션에 입력값이 비어 있습니다. 카테고리를 추가해 주세요.');
                 return false;
             }
             if (categoriesAction === 'add' || categoriesAction === 'set') {
                 const raw = readBulkCatInput();
-                if (!/^[가-힣a-zA-Z0-9\s,]+$/.test(raw)) {
-                    swal.showValidationMessage('카테고리에는 한글/영문/숫자/공백/쉼표만 사용할 수 있습니다.');
+                if (!/^[가-힣a-zA-Z0-9\s_.,-]+$/.test(raw)) {
+                    swal.showValidationMessage('카테고리에는 지정된 문자만 사용할 수 있습니다.');
                     return false;
                 }
             }
