@@ -1,6 +1,6 @@
 // MCP 편집 승인 대기 (mcp-submission) 사용자 워크플로우.
 //
-// AI 가 /api/mcp 의 commit_edit(submit_for_approval=true) 로 제출한 draft 는
+// AI 가 /api/mcp 의 commit_edit 로 제출한 draft 는
 // 즉시 새 리비전이 되지 않고 mcp_drafts.submitted_at 에 타임스탬프가 찍힌다.
 // 본 라우트는 그 제출안을 OAuth 토큰 소유자(=user_id) 가 검토하고 승인 또는 거부하는
 // HTTP 인터페이스를 제공한다. 모든 라우트는 본인의 제출안만 보고 조작할 수 있다 —
@@ -15,7 +15,7 @@
 //
 // 승인 시점에 페이지가 잠겼거나, 다른 사용자가 그 사이 페이지를 수정해 base_revision_id 가
 // 변했거나, 페이지가 삭제되었으면 409 Conflict 와 함께 거부한다 — 같은 정책을 admin-mcp 의
-// commit_edit 가 즉시 적용 분기에서 쓴다.
+// commit_edit 의 충돌 검증과 동일한 정책을 승인 시점에도 적용한다.
 
 import { Hono } from 'hono';
 import type { Env, User } from '../types';

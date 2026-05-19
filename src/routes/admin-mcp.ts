@@ -219,13 +219,12 @@ export const USER_EDIT_TOOL_DEFS: McpToolDef[] = [
     },
     {
         name: 'commit_edit',
-        description: 'draft 에 누적된 편집을 1개 리비전으로 커밋합니다. base_revision_id 가 그 사이 변경되었으면(=다른 사용자가 페이지를 수정) 거부합니다 — 그 경우 discard_edit 후 read_document 로 최신 상태를 다시 읽고 편집을 재구성해야 합니다. 신규 페이지 draft 인데 commit 시점에 이미 같은 슬러그가 존재하면 같은 사유로 거부합니다. summary 는 새 리비전의 편집 요약입니다 (선택, 최대 255자). 저장 시 자동으로 `[MCP] [+N줄 -M줄] ` 접두가 붙어 사람 편집과 구분되며 변경 규모를 한눈에 보여줍니다 (예: `[MCP] [+5줄 -2줄] 오타 수정`).\n\n응답에도 이전 본문 대비 라인 단위 변경량(`lines_added` / `lines_removed`)이 포함됩니다 — git diff --stat 의 +N/-M 와 동일한 의미입니다 (CRLF 정규화 후 LCS 기반으로 산출).\n\n**기본 동작은 승인 대기 제출**입니다 (`submit_for_approval=true`). draft 는 즉시 리비전이 되지 않고 OAuth 토큰 소유자(=이 MCP 를 연결한 본인) 에게 승인 대기로 제출됩니다. 본인이 마이페이지 / 알림 / 문서 배너에서 검토 후 승인해야 비로소 리비전이 만들어집니다. 거부 시 draft 는 폐기됩니다.\n\n신뢰할 수 있는 단순 편집이라 사람의 검토 없이 바로 적용하고 싶다면 `submit_for_approval=false` 를 명시적으로 넘기세요 — 그 경우 즉시 리비전이 생성됩니다.',
+        description: 'draft 에 누적된 편집을 승인 대기로 제출합니다. base_revision_id 가 그 사이 변경되었으면(=다른 사용자가 페이지를 수정) 거부합니다 — 그 경우 discard_edit 후 read_document 로 최신 상태를 다시 읽고 편집을 재구성해야 합니다. 신규 페이지 draft 인데 commit 시점에 이미 같은 슬러그가 존재하면 같은 사유로 거부합니다. summary 는 새 리비전의 편집 요약입니다 (선택, 최대 255자). 저장 시 자동으로 `[MCP] [+N줄 -M줄] ` 접두가 붙어 사람 편집과 구분되며 변경 규모를 한눈에 보여줍니다 (예: `[MCP] [+5줄 -2줄] 오타 수정`).\n\n응답에도 이전 본문 대비 라인 단위 변경량(`lines_added` / `lines_removed`)이 포함됩니다 — git diff --stat 의 +N/-M 와 동일한 의미입니다 (CRLF 정규화 후 LCS 기반으로 산출).\n\n**항상 승인 대기로 제출**됩니다. draft 는 즉시 리비전이 되지 않고 OAuth 토큰 소유자(=이 MCP 를 연결한 본인) 에게 승인 대기로 제출됩니다. 본인이 마이페이지 / 알림 / 문서 배너에서 검토 후 승인해야 비로소 리비전이 만들어집니다. 거부 시 draft 는 폐기됩니다.',
         inputSchema: {
             type: 'object',
             properties: {
                 draft_id: { type: 'number', description: '커밋할 draft 의 id (편집 도구 응답에서 받은 값)' },
                 summary: { type: 'string', description: '편집 요약 (선택, 최대 255자, 저장 시 [MCP] 접두 자동 부여)' },
-                submit_for_approval: { type: 'boolean', description: '기본 true — OAuth 토큰 소유자에게 승인 대기로 제출. false 면 즉시 새 리비전을 만든다.' }
             },
             required: ['draft_id']
         }
@@ -450,7 +449,7 @@ export async function dispatchAdminReadTool(c: Context<Env>, user: User, toolNam
             draft_id: r.id,
             slug: r.slug,
             action: r.action,
-            // 'pending_approval' = commit_edit(submit_for_approval=true) 로 제출됨, 유저 검토 대기.
+            // 'pending_approval' = commit_edit 로 제출됨, 유저 검토 대기.
             // 'draft' = AI 가 계속 편집 가능한 작성 중 상태 (기본).
             status: r.submitted_at !== null ? 'pending_approval' : 'draft',
             base_revision_id: r.base_revision_id,
@@ -1267,11 +1266,6 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
         if (summaryLengthError) {
             return asTextResult(summaryLengthError, true);
         }
-        // 기본 동작은 승인 대기 제출 (사람 검토 없이 본문이 바로 바뀌는 위험을 줄이기 위함).
-        // 호출자가 명시적으로 submit_for_approval: false 를 넘긴 경우에만 즉시 커밋한다.
-        // 값이 undefined / null / 누락이면 기본 true.
-        const submitForApproval = args.submit_for_approval !== false;
-
         const draft = await db.prepare(
             `SELECT id, user_id, slug, action, base_revision_id, base_version,
                     content, category, redirect_to, title, has_title_change, submitted_at
@@ -1366,72 +1360,26 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
                 console.error('admin-mcp commit_edit diff stats failed (commit will proceed without marker):', e);
                 diffStats = null;
             }
-            // 리비전 summary 앞에 자동으로 "[+N줄 -M줄]" 마커를 끼워넣는다.
-            // applyExistingPageUpdate 가 추가로 [MCP] 접두를 붙이므로 최종 형태는
-            // "[MCP] [+N줄 -M줄] {user_summary}" 가 된다. diffStats 로딩 실패 시 마커 없이 사용자 summary 만 전달한다.
-            const summaryWithDiff: string | null = diffStats ? buildCommitSummary(summary, diffStats) : summary;
-
-            if (submitForApproval) {
-                // 즉시 리비전을 만들지 않고 본인(OAuth 토큰 소유자) 의 승인 대기로 제출한다.
-                // 잠금/충돌 검증은 이미 통과한 상태이므로 같은 정책으로 mypage 에서 다시 확인된다.
-                const submittedAtRow = await markDraftSubmittedAndNotify(c, draft.id, slug, summary);
-                if (!submittedAtRow) {
-                    return asTextResult(
-                        'Error: 이 draft 는 이미 승인 대기로 제출된 상태입니다 (동시 호출 race).',
-                        true
-                    );
-                }
-                return asTextResult(JSON.stringify({
-                    slug,
-                    submitted: true,
-                    submitted_at: submittedAtRow.iso,
-                    draft_id: draft.id,
-                    action: 'update',
-                    base_revision_id: draft.base_revision_id,
-                    base_version: draft.base_version,
-                    ...(diffStats ? { lines_added: diffStats.added, lines_removed: diffStats.removed } : {}),
-                    notice: '승인 대기로 제출되었습니다. /mypage#mcp-submissions 에서 검토 후 승인하면 비로소 리비전이 생성됩니다.',
-                }, null, 2));
+            // 즉시 리비전을 만들지 않고 본인(OAuth 토큰 소유자) 의 승인 대기로 제출한다.
+            // 잠금/충돌 검증은 이미 통과한 상태이므로 같은 정책으로 mypage 에서 다시 확인된다.
+            const submittedAtRow = await markDraftSubmittedAndNotify(c, draft.id, slug, summary);
+            if (!submittedAtRow) {
+                return asTextResult(
+                    'Error: 이 draft 는 이미 승인 대기로 제출된 상태입니다 (동시 호출 race).',
+                    true
+                );
             }
-
-            // draft.has_title_change=1 일 때만 title 변경 의도 — 그 외에는 undefined 로 둬 기존 값 유지.
-            // 제출 시점에 검증한 충돌 검사는 draft 시점이라 commit 직전에 다른 페이지가 같은 title 을 가져갔을
-            // 가능성이 있다 — 그 경우 D1 의 idx_pages_title_unique 부분 인덱스가 UNIQUE 위반을 던지며
-            // applyExistingPageUpdate 의 catch (CONCURRENT_MODIFICATION 외 경로) 가 실패로 표면화한다.
-            try {
-                const result = await applyExistingPageUpdate(c, user, page, draft.content, {
-                    summary: summaryWithDiff,
-                    category: draft.category,
-                    redirectTo: draft.redirect_to,
-                    title: draft.has_title_change ? draft.title : undefined,
-                    slug,
-                });
-                await db.prepare('DELETE FROM mcp_drafts WHERE id = ?').bind(draft.id).run();
-                return asTextResult(JSON.stringify({
-                    slug,
-                    version: result.new_version,
-                    revision_id: result.revision_id,
-                    rows: result.rows,
-                    characters: result.characters,
-                    // diff 통계 로딩에 실패한 경우 필드를 생략한다 — 0 으로 표시하면
-                    // 변경이 없었다는 잘못된 신호를 줄 수 있기 때문.
-                    ...(diffStats ? { lines_added: diffStats.added, lines_removed: diffStats.removed } : {}),
-                    draft_id: draft.id,
-                }, null, 2));
-            } catch (e: any) {
-                // SELECT 직후 ~ UPDATE 사이의 race 로 CAS 가 실패한 경우. draft 는 보존해두므로
-                // 재시도(또는 discard 후 새 draft 시작) 가 가능하다.
-                if (e?.code === 'CONCURRENT_MODIFICATION') {
-                    return asTextResult(JSON.stringify({
-                        error: 'conflict',
-                        reason: 'concurrent_modification',
-                        message: 'commit 도중 다른 사용자가 페이지를 수정했습니다. discard_edit 후 read_document 로 최신 상태를 다시 읽고 편집을 재구성하세요.',
-                        base_revision_id: draft.base_revision_id,
-                        base_version: draft.base_version,
-                    }, null, 2), true);
-                }
-                return asTextResult(`Error: 리비전 저장 실패 (${e?.message || e})`, true);
-            }
+            return asTextResult(JSON.stringify({
+                slug,
+                submitted: true,
+                submitted_at: submittedAtRow.iso,
+                draft_id: draft.id,
+                action: 'update',
+                base_revision_id: draft.base_revision_id,
+                base_version: draft.base_version,
+                ...(diffStats ? { lines_added: diffStats.added, lines_removed: diffStats.removed } : {}),
+                notice: '승인 대기로 제출되었습니다. /mypage#mcp-submissions 에서 검토 후 승인하면 비로소 리비전이 생성됩니다.',
+            }, null, 2));
         }
 
         if (draft.action === 'create') {
@@ -1491,64 +1439,23 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
             // 빈 본문 입력에서는 computeLineDiffStats 가 DP 를 거치지 않고 즉시 반환하지만,
             // 시그니처상 null 가능성이 있으므로 동일하게 fallback 처리한다.
             const createDiffStats = computeLineDiffStats('', draft.content.replace(/\r\n?/g, '\n'));
-            const createSummaryWithDiff = createDiffStats ? buildCommitSummary(summary, createDiffStats) : summary;
 
-            if (submitForApproval) {
-                const submittedAtRow = await markDraftSubmittedAndNotify(c, draft.id, slug, summary);
-                if (!submittedAtRow) {
-                    return asTextResult(
-                        'Error: 이 draft 는 이미 승인 대기로 제출된 상태입니다 (동시 호출 race).',
-                        true
-                    );
-                }
-                return asTextResult(JSON.stringify({
-                    slug,
-                    submitted: true,
-                    submitted_at: submittedAtRow.iso,
-                    draft_id: draft.id,
-                    action: 'create',
-                    ...(createDiffStats ? { lines_added: createDiffStats.added, lines_removed: createDiffStats.removed } : {}),
-                    notice: '승인 대기로 제출되었습니다. /mypage#mcp-submissions 에서 검토 후 승인하면 비로소 새 페이지가 생성됩니다.',
-                }, null, 2));
+            const submittedAtRow = await markDraftSubmittedAndNotify(c, draft.id, slug, summary);
+            if (!submittedAtRow) {
+                return asTextResult(
+                    'Error: 이 draft 는 이미 승인 대기로 제출된 상태입니다 (동시 호출 race).',
+                    true
+                );
             }
-
-            try {
-                const result = await applyNewPageInsert(c, user, slug, draft.content, {
-                    summary: createSummaryWithDiff,
-                    category: draft.category,
-                    redirectTo: draft.redirect_to,
-                    title: draft.has_title_change ? draft.title : null,
-                    editAcl: createEditAclSerialized,
-                });
-                await db.prepare('DELETE FROM mcp_drafts WHERE id = ?').bind(draft.id).run();
-                return asTextResult(JSON.stringify({
-                    slug,
-                    version: 1,
-                    revision_id: result.revision_id,
-                    rows: result.rows,
-                    characters: result.characters,
-                    ...(createDiffStats ? { lines_added: createDiffStats.added, lines_removed: createDiffStats.removed } : {}),
-                    created: true,
-                    draft_id: draft.id,
-                }, null, 2));
-            } catch (e: any) {
-                // precheck 와 INSERT 사이의 UNIQUE race 를 명시적 conflict 로 매핑.
-                if (e?.code === 'SLUG_TAKEN') {
-                    return asTextResult(JSON.stringify({
-                        error: 'conflict',
-                        reason: 'slug_taken',
-                        message: '동일 슬러그의 문서가 동시에 생성되었습니다. discard_edit 후 read_document 로 확인하세요.',
-                    }, null, 2), true);
-                }
-                if (e?.code === 'TITLE_TAKEN') {
-                    return asTextResult(JSON.stringify({
-                        error: 'conflict',
-                        reason: 'title_taken',
-                        message: '같은 대체 제목이 동시에 다른 문서에 등록되었습니다. 다시 시도하세요.',
-                    }, null, 2), true);
-                }
-                return asTextResult(`Error: 신규 페이지 저장 실패 (${e?.message || e})`, true);
-            }
+            return asTextResult(JSON.stringify({
+                slug,
+                submitted: true,
+                submitted_at: submittedAtRow.iso,
+                draft_id: draft.id,
+                action: 'create',
+                ...(createDiffStats ? { lines_added: createDiffStats.added, lines_removed: createDiffStats.removed } : {}),
+                notice: '승인 대기로 제출되었습니다. /mypage#mcp-submissions 에서 검토 후 승인하면 비로소 새 페이지가 생성됩니다.',
+            }, null, 2));
         }
 
         return asTextResult(`Error: 알 수 없는 draft action: ${draft.action}`, true);
@@ -2167,14 +2074,13 @@ export function buildUserEditInformationSuffix(userName: string): string {
     const editIntro = `\n\n## 편집 도구\n\n` +
         `**stateful draft 모델**: create_or_update_page / patch_page / edit_section 은 즉시 저장하지 않고 \`mcp_drafts\` 에 누적합니다 ` +
         `(같은 슬러그에 대해 사용자별 1개). 응답으로 \`draft_id\` 를 받고, 편집이 끝나면 commit_edit(draft_id, summary) 를 호출해 ` +
-        `1개 리비전으로 저장합니다. 시작 시점 이후 다른 사용자가 페이지를 수정했으면 commit_edit 가 충돌로 거부합니다 ` +
+        `승인 대기로 제출합니다 — 사용자가 /mypage#mcp-submissions 에서 승인해야 비로소 리비전이 생성됩니다. 시작 시점 이후 다른 사용자가 페이지를 수정했으면 commit_edit 가 충돌로 거부합니다 ` +
         `(이 경우 discard_edit 후 read_document 로 최신 상태를 다시 읽고 편집을 재구성). draft 는 마지막 활동 이후 12시간이 지나면 자동 삭제됩니다.\n\n` +
         `**⚠️ 헤딩 작성 규칙**: 위키는 헤딩(##, ###, ...)에 자동으로 계층 번호("1.", "1.1." 등)를 부여합니다. ` +
         `헤딩 텍스트에 번호를 직접 적지 마세요 (예: \`## 1. 개요\` ❌ → \`## 개요\` ✅). 직접 적으면 렌더링 시 "1. 1. 개요" 처럼 중복 번호가 표시됩니다. ` +
         `목차 내 다른 섹션을 참조할 때는 \`[[문서#s-1.2]]\` 형식의 섹션 앵커를 사용하세요.\n\n` +
-        `**승인 대기가 기본**: commit_edit 의 \`submit_for_approval\` 기본값은 \`true\` 입니다 — draft 는 즉시 리비전이 되지 않고 OAuth 토큰 소유자(=이 MCP 를 연결한 본인) 에게 승인 대기로 제출됩니다. ` +
+        `**항상 승인 대기로 제출**: commit_edit 를 호출하면 draft 는 즉시 리비전이 되지 않고 OAuth 토큰 소유자(=이 MCP 를 연결한 본인) 에게 승인 대기로 제출됩니다. ` +
         `본인이 마이페이지 / 알림 / 문서 배너에서 검토 후 승인해야 비로소 리비전이 만들어집니다. 거부 시 draft 는 폐기됩니다. ` +
-        `신뢰할 수 있는 단순 편집이라 즉시 적용을 원하면 \`submit_for_approval=false\` 를 명시적으로 넘기세요. ` +
         `승인 대기 상태 draft 는 list_drafts / read_draft 의 \`status\` 필드가 \`pending_approval\` 로 표시되며, AI 측에서는 더 이상 수정할 수 없습니다 (discard_edit 로 폐기만 가능).\n\n` +
         `**즉시 적용** (draft 모델 미사용): revert_page.\n\n` +
         USER_EDIT_TOOL_DEFS.map(t => `- ${t.name}`).join('\n') +
