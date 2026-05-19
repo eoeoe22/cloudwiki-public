@@ -324,9 +324,12 @@
           <div class="card shadow-sm border-0 mb-4">
             <div class="card-header py-3 d-flex justify-content-between align-items-center">
               <h5 class="mb-0">카테고리 ACL</h5>
-              <button class="btn btn-sm btn-primary" onclick="openCategoryAclModal()">
-                <i class="mdi mdi-shield-account"></i> 관리
-              </button>
+              <select id="categoryAclSort" class="form-select form-select-sm" style="width: auto;">
+                <option value="name_asc">이름 ↑</option>
+                <option value="name_desc">이름 ↓</option>
+                <option value="pages_desc">문서 수 많은순</option>
+                <option value="created_desc">최근 등록순</option>
+              </select>
             </div>
             <div class="card-body">
               <p class="text-muted small mb-3">
@@ -334,11 +337,17 @@
                 때 페이지의 <code>edit_acl</code> 이 모드(덮어쓰기/합치기/무시)에 따라
                 갱신됩니다. <b>관리자 전용</b> 플래그를 켜면 비관리자는 해당
                 카테고리를 적용할 수 없습니다 (구 "관리자 전용 카테고리" 와 동일 효과).
+                카테고리를 클릭하면 해당 카테고리 문서로 이동합니다.
               </p>
               <div
                 id="categoryAclSummary"
                 class="list-group list-group-flush border rounded"
               ></div>
+              <nav
+                id="categoryAclPagination"
+                class="mt-2"
+                aria-label="카테고리 ACL 페이지 이동"
+              ></nav>
             </div>
           </div>
 
@@ -1354,7 +1363,6 @@
     <script type="module" src="/dist/common.js"></script>
     <script type="module" src="/dist/icon-picker.js"></script>
     <script type="module" src="/dist/admin-palettes.js"></script>
-    <script type="module" src="/dist/category-acl-modal.js"></script>
     <script>
       // ── 탭 전환 로직 ──
       function showTab(tabId) {
@@ -1398,6 +1406,10 @@
         }
 
         loadCategories();
+        document.getElementById("categoryAclSort")?.addEventListener("change", () => {
+          catAclPage = 1;
+          renderCatAclList();
+        });
         loadWikiSettings();
         loadSignupPolicy();
         loadDashStats();
@@ -2191,54 +2203,92 @@
       }
 
       // ── 카테고리 ACL ──
-      // 관리 모달은 src/client/permissions/category-acl-modal.ts (window.openCategoryAclModal)
-      // 카드 요약 목록은 /api/admin/category-acl 로 직접 fetch.
+      const CAT_ACL_PAGE_SIZE = 20;
+      const CAT_ACL_FLAG_LABELS = { aged: "가입 N일", page_editor: "본 문서 편집이력", any_editor: "임의 편집이력", admin_only: "관리자 전용" };
+      let catAclAllItems = [];
+      let catAclPage = 1;
+
+      function getCatAclSort() {
+        return document.getElementById("categoryAclSort")?.value || "name_asc";
+      }
+
+      function sortedCatAclItems() {
+        const sort = getCatAclSort();
+        const arr = [...catAclAllItems];
+        if (sort === "name_asc") arr.sort((a, b) => a.name.localeCompare(b.name, "ko"));
+        else if (sort === "name_desc") arr.sort((a, b) => b.name.localeCompare(a.name, "ko"));
+        else if (sort === "pages_desc") arr.sort((a, b) => (b.page_count - a.page_count) || a.name.localeCompare(b.name, "ko"));
+        else if (sort === "created_desc") arr.sort((a, b) => (b.created_at - a.created_at) || a.name.localeCompare(b.name, "ko"));
+        return arr;
+      }
+
+      function renderCatAclPagination(totalPages) {
+        const nav = document.getElementById("categoryAclPagination");
+        if (totalPages <= 1) { nav.innerHTML = ""; return; }
+        const cur = catAclPage;
+        const pages = [];
+        for (let p = 1; p <= totalPages; p++) {
+          if (p === 1 || p === totalPages || (p >= cur - 2 && p <= cur + 2)) {
+            pages.push(p);
+          } else if (pages[pages.length - 1] !== "…") {
+            pages.push("…");
+          }
+        }
+        nav.innerHTML = `<ul class="pagination pagination-sm justify-content-center mb-0">${
+          pages.map(p =>
+            p === "…"
+              ? `<li class="page-item disabled"><span class="page-link">…</span></li>`
+              : `<li class="page-item ${p === cur ? "active" : ""}"><button type="button" class="page-link cat-acl-page-btn" data-page="${p}">${p}</button></li>`
+          ).join("")
+        }</ul>`;
+        nav.querySelectorAll(".cat-acl-page-btn").forEach(btn => {
+          btn.addEventListener("click", () => {
+            catAclPage = parseInt(btn.getAttribute("data-page"));
+            renderCatAclList();
+          });
+        });
+      }
+
+      function renderCatAclList() {
+        const container = document.getElementById("categoryAclSummary");
+        const sorted = sortedCatAclItems();
+        const totalPages = Math.max(1, Math.ceil(sorted.length / CAT_ACL_PAGE_SIZE));
+        catAclPage = Math.min(catAclPage, totalPages);
+        const slice = sorted.slice((catAclPage - 1) * CAT_ACL_PAGE_SIZE, catAclPage * CAT_ACL_PAGE_SIZE);
+
+        if (slice.length === 0) {
+          container.innerHTML = '<div class="p-3 text-center text-muted small">등록된 카테고리 ACL 이 없습니다.</div>';
+        } else {
+          container.innerHTML = slice.map(it => {
+            const flags = (it.edit_acl && it.edit_acl.flags) || [];
+            const adminOnly = flags.includes("admin_only");
+            const summary = flags.length
+              ? flags.map(f => CAT_ACL_FLAG_LABELS[f] || f).join(" + ")
+              : "비활성";
+            const href = "/w/" + encodeURIComponent("카테고리:" + it.name);
+            return `<a href="${href}" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center py-2">
+              <div>
+                <code>${escapeHtml(it.name)}</code>
+                <span class="badge ${adminOnly ? "bg-danger" : "bg-secondary"} ms-2">${escapeHtml(summary)}</span>
+              </div>
+              <span class="text-muted small">${it.page_count}개 문서</span>
+            </a>`;
+          }).join("");
+        }
+        renderCatAclPagination(totalPages);
+      }
+
       async function loadCategories() {
         const container = document.getElementById("categoryAclSummary");
         try {
           const res = await fetch("/api/admin/category-acl");
           if (!res.ok) throw new Error(`(${res.status})`);
           const data = await res.json();
-          const items = (data && data.items) || [];
-          container.innerHTML =
-            items
-              .map((it) => {
-                const flags = (it.edit_acl && it.edit_acl.flags) || [];
-                const adminOnly = flags.includes("admin_only");
-                const summary = flags.length
-                  ? flags
-                      .map((f) => ({
-                        aged: "가입 N일",
-                        page_editor: "본 문서 편집이력",
-                        any_editor: "임의 편집이력",
-                        admin_only: "관리자 전용",
-                      }[f] || f))
-                      .join(" + ")
-                  : "비활성";
-                return `
-                  <div class="list-group-item d-flex justify-content-between align-items-center py-2">
-                    <div>
-                      <code>${escapeHtml(it.name)}</code>
-                      <span class="badge ${adminOnly ? "bg-danger" : "bg-secondary"} ms-2">${escapeHtml(summary)}</span>
-                      <span class="text-muted small ms-2">${it.page_count}개 문서</span>
-                    </div>
-                    <button class="btn btn-xs btn-link p-0 js-edit-category-acl" data-name="${escapeHtml(it.name)}"><i class="mdi mdi-pencil"></i></button>
-                  </div>
-                `;
-              })
-              .join("") ||
-            '<div class="p-3 text-center text-muted small">등록된 카테고리 ACL 이 없습니다.</div>';
-          container.querySelectorAll(".js-edit-category-acl").forEach((btn) => {
-            btn.addEventListener("click", () => {
-              const name = btn.getAttribute("data-name") || "";
-              if (typeof window.openCategoryAclModal === "function") {
-                window.openCategoryAclModal(name);
-              }
-            });
-          });
+          catAclAllItems = (data && data.items) || [];
+          catAclPage = 1;
+          renderCatAclList();
         } catch (e) {
-          container.innerHTML =
-            `<div class="p-3 text-center text-danger small">목록 조회 실패: ${escapeHtml(String(e))}</div>`;
+          container.innerHTML = `<div class="p-3 text-center text-danger small">목록 조회 실패: ${escapeHtml(String(e))}</div>`;
         }
       }
 

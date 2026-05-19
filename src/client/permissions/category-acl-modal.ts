@@ -1,38 +1,27 @@
 /**
- * 카테고리 ACL 관리 모달 — 관리자 콘솔에서 카테고리 단위 편집 ACL 을 설정하고,
- * 선택된 카테고리에 속한 페이지들에 ACL 을 일괄 적용한다.
+ * 카테고리 ACL 편집 모달 — 카테고리 문서의 "문서 도구 > 권한 관리" 항목에서 호출된다.
+ * 관리자 콘솔 카드의 목록/탐색은 admin.html 인라인 스크립트가 직접 처리한다.
  *
  * 호출 API (모두 관리자 전용 — adminRoutes.use(requireAdmin)):
- *   GET    /api/admin/category-acl            — 전체 목록 (테이블)
  *   GET    /api/admin/category-acl/:name      — 단건 조회
  *   PUT    /api/admin/category-acl/:name      — ACL upsert (null/빈 flags → DELETE)
- *   DELETE /api/admin/category-acl/:name      — 행 삭제
  *   GET    /api/admin/category-acl/:name/pages — 카테고리에 속한 페이지 목록
  *   POST   /api/admin/category-acl/:name/bulk-apply
  *
- * window.openCategoryAclModal(name?) — name 주면 그 카테고리의 편집 폼으로, 없으면 목록 화면.
+ * window.openCategoryAclModal(name) — 카테고리 ACL 편집 폼을 연다.
  */
 
 import '../utils/swal';
 
 declare global {
     interface Window {
-        openCategoryAclModal?: (name?: string) => Promise<void>;
-        loadCategoryAclList?: () => Promise<void>;
+        openCategoryAclModal?: (name: string) => Promise<void>;
     }
 }
 
 type EditAclFlag = 'aged' | 'page_editor' | 'any_editor' | 'admin_only';
 interface EditAcl { flags: EditAclFlag[]; }
 type BulkMode = 'overwrite' | 'merge' | 'ignore';
-
-interface CategoryAclItem {
-    name: string;
-    edit_acl: EditAcl | null;
-    created_at: number;
-    created_by_name: string | null;
-    page_count: number;
-}
 
 interface PageItem {
     id: number;
@@ -83,26 +72,11 @@ function readCheckedFlags(scope: HTMLElement, selector: string): EditAclFlag[] {
 
 // ── API ──────────────────────────────────────────────────────────────
 
-async function apiFetchList(): Promise<CategoryAclItem[]> {
-    const res = await fetch('/api/admin/category-acl');
-    if (!res.ok) throw new Error(`목록 조회 실패 (${res.status})`);
-    const data = (await res.json()) as { items?: CategoryAclItem[] };
-    return data.items || [];
-}
-
 async function apiFetchPages(name: string): Promise<PageItem[]> {
     const res = await fetch(`/api/admin/category-acl/${encodeURIComponent(name)}/pages`);
     if (!res.ok) throw new Error(`페이지 조회 실패 (${res.status})`);
     const data = (await res.json()) as { items?: PageItem[] };
     return data.items || [];
-}
-
-async function apiDelete(name: string): Promise<void> {
-    const res = await fetch(`/api/admin/category-acl/${encodeURIComponent(name)}`, { method: 'DELETE' });
-    if (!res.ok) {
-        const err = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(err.error || `삭제 실패 (${res.status})`);
-    }
 }
 
 async function apiBulkApply(name: string, payload: {
@@ -124,29 +98,6 @@ async function apiBulkApply(name: string, payload: {
 }
 
 // ── HTML 빌더 ─────────────────────────────────────────────────────────
-
-function buildListHtml(items: CategoryAclItem[]): string {
-    if (items.length === 0) {
-        return `<div class="bulkcat-empty">저장된 카테고리 ACL 이 없습니다. 아래에서 새 카테고리 이름을 입력해 추가하세요.</div>`;
-    }
-    const rows = items.map(it => `
-        <tr data-cat-name="${escapeHtml(it.name)}">
-            <td class="text-break"><code>${escapeHtml(it.name)}</code></td>
-            <td>${escapeHtml(aclSummary(it.edit_acl))}</td>
-            <td class="text-end">${it.page_count}</td>
-            <td class="text-end" style="white-space: nowrap;">
-                <button type="button" class="btn btn-sm btn-wiki cat-acl-edit"><i class="mdi mdi-pencil"></i> 편집</button>
-                <button type="button" class="btn btn-sm btn-wiki btn-wiki-danger cat-acl-delete"><i class="mdi mdi-trash-can-outline"></i></button>
-            </td>
-        </tr>
-    `).join('');
-    return `
-        <table class="bulkcat-rules-table">
-            <thead><tr><th>카테고리</th><th>편집 ACL</th><th class="text-end">문서 수</th><th aria-label="action"></th></tr></thead>
-            <tbody>${rows}</tbody>
-        </table>
-    `;
-}
 
 function aclFieldsetHtml(idPrefix: string, initialAcl: EditAcl | null): string {
     const flagSet = new Set(initialAcl?.flags ?? []);
@@ -246,18 +197,14 @@ function buildEditorHtml(name: string, initialAcl: EditAcl | null, pageCount: nu
 
 // ── 인터랙션 ─────────────────────────────────────────────────────────
 
-let lastInitialAcl: EditAcl | null = null;
-
 async function showCategoryEditor(name: string): Promise<void> {
     if (!window.Swal) return;
-    // 단건 조회 (행이 없으면 edit_acl=null, exists=false)
     const res = await fetch(`/api/admin/category-acl/${encodeURIComponent(name)}`);
     if (!res.ok) {
         await window.Swal.fire({ icon: 'error', title: '조회 실패', text: `(${res.status})` });
         return;
     }
     const data = (await res.json()) as { name: string; edit_acl: EditAcl | null; exists: boolean; page_count: number };
-    lastInitialAcl = data.edit_acl;
 
     const result = await window.Swal.fire({
         title: '카테고리 ACL 편집',
@@ -269,7 +216,6 @@ async function showCategoryEditor(name: string): Promise<void> {
             const pagesPanel = modal.querySelector('#catAclPagesPanel') as HTMLElement;
             const pagesCounter = modal.querySelector('#catAclPagesCounter') as HTMLElement;
 
-            // 페이지 목록 비동기 로드
             const rowStates: PageRowState[] = [];
             try {
                 const pages = await apiFetchPages(name);
@@ -334,7 +280,6 @@ async function showCategoryEditor(name: string): Promise<void> {
                 pagesPanel.innerHTML = `<div class="bulkcat-warning">${escapeHtml(String(e))}</div>`;
             }
 
-            // 템플릿만 저장
             modal.querySelector('#catAclSaveTemplateBtn')?.addEventListener('click', async () => {
                 const flags = readCheckedFlags(modal, '.catAcl-flag');
                 const acl: EditAcl | null = flags.length > 0 ? { flags } : null;
@@ -355,7 +300,6 @@ async function showCategoryEditor(name: string): Promise<void> {
                 }
             });
 
-            // 일괄 적용
             modal.querySelector('#catAclBulkApplyBtn')?.addEventListener('click', async () => {
                 const flags = readCheckedFlags(modal, '.catAcl-flag');
                 const templateAcl: EditAcl | null = flags.length > 0 ? { flags } : null;
@@ -400,7 +344,6 @@ async function showCategoryEditor(name: string): Promise<void> {
                         html: `스캔: ${result.scanned} / 변경: ${result.changed} / 요청: ${result.requested}`,
                     });
                     window.Swal!.close();
-                    await window.loadCategoryAclList?.();
                 } catch (e: any) {
                     await window.Swal!.fire({ icon: 'error', title: '실패', text: e?.message || String(e) });
                 }
@@ -408,104 +351,9 @@ async function showCategoryEditor(name: string): Promise<void> {
         },
     });
 
-    // 모달 닫힘 후 별도 동작 없음 (저장 시점이 명시적)
     void result;
 }
 
-async function showCategoryList(): Promise<void> {
-    if (!window.Swal) return;
-    let items: CategoryAclItem[] = [];
-    try {
-        items = await apiFetchList();
-    } catch (e: any) {
-        await window.Swal.fire({ icon: 'error', title: '목록 조회 실패', text: e?.message || String(e) });
-        return;
-    }
-
-    const html = `
-        <div class="bulkcat-modal">
-            <section class="bulkcat-section bulk-modal-section-card">
-                <header class="bulkcat-section-head">
-                    <h6 class="bulkcat-section-title">카테고리 ACL 목록</h6>
-                    <span class="bulkcat-counter">${items.length}개</span>
-                </header>
-                <div id="catAclListPanel">${buildListHtml(items)}</div>
-            </section>
-            <section class="bulkcat-section bulk-modal-section-card bulk-modal-section-muted">
-                <header class="bulkcat-section-head">
-                    <h6 class="bulkcat-section-title">새 카테고리 ACL 추가</h6>
-                </header>
-                <div class="bulkcat-prefix-line">
-                    <input type="text" class="form-control" id="catAclNewName" placeholder="카테고리 이름 (예: 스포일러)">
-                    <button type="button" class="btn btn-sm btn-wiki btn-wiki-primary" id="catAclNewBtn">편집</button>
-                </div>
-                <small class="text-muted">기존 항목이면 편집 화면을, 없으면 새 ACL 을 만들 수 있습니다.</small>
-            </section>
-        </div>
-    `;
-
-    await window.Swal.fire({
-        title: '카테고리 ACL',
-        html,
-        width: 720,
-        showConfirmButton: false,
-        showCloseButton: true,
-        didOpen: (modal: HTMLElement) => {
-            modal.querySelectorAll<HTMLButtonElement>('.cat-acl-edit').forEach(btn => {
-                btn.addEventListener('click', async () => {
-                    const tr = btn.closest('tr');
-                    const name = tr?.getAttribute('data-cat-name');
-                    if (!name) return;
-                    window.Swal!.close();
-                    await showCategoryEditor(name);
-                });
-            });
-            modal.querySelectorAll<HTMLButtonElement>('.cat-acl-delete').forEach(btn => {
-                btn.addEventListener('click', async () => {
-                    const tr = btn.closest('tr');
-                    const name = tr?.getAttribute('data-cat-name');
-                    if (!name) return;
-                    const ok = await window.Swal!.fire({
-                        icon: 'warning',
-                        title: `삭제: ${name}`,
-                        text: '카테고리 ACL 행을 삭제합니다. 문서들의 edit_acl 은 변경되지 않습니다.',
-                        showCancelButton: true,
-                        confirmButtonText: '삭제',
-                        cancelButtonText: '취소',
-                    });
-                    if (!ok.isConfirmed) return;
-                    try {
-                        await apiDelete(name);
-                        window.Swal!.close();
-                        await showCategoryList();
-                    } catch (e: any) {
-                        await window.Swal!.fire({ icon: 'error', title: '삭제 실패', text: e?.message || String(e) });
-                    }
-                });
-            });
-            const newBtn = modal.querySelector<HTMLButtonElement>('#catAclNewBtn');
-            const newInput = modal.querySelector<HTMLInputElement>('#catAclNewName');
-            newBtn?.addEventListener('click', async () => {
-                const v = (newInput?.value ?? '').trim();
-                if (!v) return;
-                if (!/^[가-힣a-zA-Z0-9\s_.-]+$/.test(v)) {
-                    await window.Swal!.fire({ icon: 'warning', title: '특수문자 제외', text: '카테고리 이름에 특수문자는 사용할 수 없습니다.' });
-                    return;
-                }
-                window.Swal!.close();
-                await showCategoryEditor(v);
-            });
-        },
-    });
-}
-
-window.openCategoryAclModal = async (name?: string) => {
-    if (name) {
-        await showCategoryEditor(name);
-    } else {
-        await showCategoryList();
-    }
-};
-window.loadCategoryAclList = async () => {
-    await showCategoryList();
+window.openCategoryAclModal = async (name: string) => {
+    await showCategoryEditor(name);
 };
