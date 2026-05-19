@@ -198,12 +198,12 @@ function drawSV(canvasId: string, state: ColorState) {
     const cx = state.saturation * w;
     const cy = (1 - state.brightness) * h;
     ctx.beginPath();
-    ctx.arc(cx, cy, 6, 0, Math.PI * 2);
+    ctx.arc(cx, cy, 8, 0, Math.PI * 2);
     ctx.strokeStyle = '#fff';
     ctx.lineWidth = 2;
     ctx.stroke();
     ctx.beginPath();
-    ctx.arc(cx, cy, 7, 0, Math.PI * 2);
+    ctx.arc(cx, cy, 9, 0, Math.PI * 2);
     ctx.strokeStyle = '#000';
     ctx.lineWidth = 1;
     ctx.stroke();
@@ -216,7 +216,9 @@ function drawHue(canvasId: string, state: ColorState) {
     if (!ctx) return;
     // Sync internal resolution to CSS display size to prevent stretching distortion.
     const dw = canvas.offsetWidth;
+    const dh = canvas.offsetHeight;
     if (dw > 0) canvas.width = dw;
+    if (dh > 0) canvas.height = dh;
     const w = canvas.width, h = canvas.height;
     const gradient = ctx.createLinearGradient(0, 0, w, 0);
     for (let i = 0; i <= 6; i++) gradient.addColorStop(i / 6, hsvToHex(i * 60, 1, 1));
@@ -224,12 +226,12 @@ function drawHue(canvasId: string, state: ColorState) {
     ctx.fillRect(0, 0, w, h);
     const cx = (state.hue / 360) * w;
     ctx.beginPath();
-    ctx.rect(cx - 3, 0, 6, h);
+    ctx.rect(cx - 5, 0, 10, h);
     ctx.strokeStyle = '#fff';
     ctx.lineWidth = 2;
     ctx.stroke();
     ctx.beginPath();
-    ctx.rect(cx - 4, -1, 8, h + 2);
+    ctx.rect(cx - 6, -1, 12, h + 2);
     ctx.strokeStyle = '#000';
     ctx.lineWidth = 1;
     ctx.stroke();
@@ -798,6 +800,9 @@ function bindChannel(key: ChannelKey) {
         state.dragging = null;
     });
     document.addEventListener('touchend', () => {
+        state.dragging = null;
+    });
+    document.addEventListener('touchcancel', () => {
         state.dragging = null;
     });
 
