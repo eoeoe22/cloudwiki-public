@@ -81,16 +81,20 @@ CloudWiki는 Cloudflare Workers 환경에서 동작하는 서버리스 위키 �
 * Database: [Cloudflare D1](https://developers.cloudflare.com/d1/) (SQLite 기반)
 * Object Storage: [Cloudflare R2](https://developers.cloudflare.com/r2/) (미디어 업로드)
 * Key-Value Storage: [Cloudflare KV](https://developers.cloudflare.com/kv/) (사이드바 설정 저장 및 동시편집 충돌 감지)
+* Security & APIs: [Cloudflare Turnstile](https://developers.cloudflare.com/turnstile/) (캡챠), Web Push API (`@block65/webcrypto-web-push`)
 * Language: {mdi:language-typescript} TypeScript 
-* Frontend UI: 
+* Frontend UI (CDN을 통해 불러옴):
   * {mdi:language-html5} HTML5
   * {mdi:language-css3} CSS
   * {mdi:language-javascript} JavaScript
-  * {mdi:bootstrap} Bootstrap 5
+  * {mdi:bootstrap} Bootstrap 5 & Bootstrap Icons
   * {mdi:vector-square} Material Design Icons
-  * DOMpurify
-  * CodeMirror 6
-  * Sweetalert 2
+  * Marked.js (마크다운 파싱)
+  * DOMPurify (XSS 방어)
+  * CodeMirror 6 (편집기)
+  * PrismJS (코드 하이라이팅)
+  * jsdiff (문서 리비전 비교)
+  * SweetAlert2 (알림 모달)
   * Chart.js [* freq 확장 기능 전용]
 
 ## 디렉토리 구조

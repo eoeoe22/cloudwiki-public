@@ -29,10 +29,12 @@ This project utilizes several third-party libraries and resources. Below are the
 #### Backend Framework & Platform
 - **Hono** (https://hono.dev/)
   - License: MIT License
-- **Cloudflare Workers / D1 / R2 / KV / Analytics Engine**
+- **@block65/webcrypto-web-push** (https://github.com/block65/webcrypto-web-push)
+  - License: MIT License
+- **Cloudflare Workers / D1 / R2 / KV / Analytics Engine / Turnstile**
   - Subject to Cloudflare Terms of Service.
 
-#### Frontend Libraries & Tools
+#### Frontend Libraries & Tools (Loaded via CDN)
 - **Bootstrap 5.3.3** (https://getbootstrap.com/)
   - License: MIT License
 - **Bootstrap Icons 1.13.1** (https://icons.getbootstrap.com/)
@@ -47,11 +49,15 @@ This project utilizes several third-party libraries and resources. Below are the
   - License: Apache License 2.0 or MIT License
 - **CodeMirror 6** (https://codemirror.net/)
   - License: MIT License
+- **PrismJS** (https://prismjs.com/)
+  - License: MIT License
+- **jsdiff** (https://github.com/kpdecker/jsdiff)
+  - License: BSD 3-Clause License
 - **Chart.js** (https://www.chartjs.org/) - *Used in 'freq' extension*
   - License: MIT License
 
 #### Fonts
-- **Inter, Outfit, Noto Sans KR** (Google Fonts)
+- **Inter, Outfit, Noto Sans KR, JetBrains Mono, Nanum Gothic Coding** (Google Fonts)
   - License: SIL Open Font License 1.1
 
 #### Development Tools
@@ -59,3 +65,5 @@ This project utilizes several third-party libraries and resources. Below are the
   - License: Apache License 2.0
 - **Wrangler (Cloudflare CLI)**
   - License: MIT or Apache License 2.0
+- **Vite** (https://vitejs.dev/)
+  - License: MIT License

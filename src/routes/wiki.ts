@@ -7,6 +7,10 @@ import { ROLE_CASE_SQL, enrichRoles, RBAC } from '../utils/role';
 import { fetchMediaTags } from '../utils/mediaTags';
 import { createNotifications } from '../utils/notification';
 import { loadAllPalettes, loadPalettesForPage } from '../utils/palettes';
+import {
+    cleanupUnauthorizedSubscriptions,
+    cleanupOrphanDiscussionMutes,
+} from '../utils/pageAccessCleanup';
 
 const wiki = new Hono<Env>();
 
@@ -2707,6 +2711,9 @@ wiki.delete('/w/:slug', requireAuth, async (c) => {
                 "DELETE FROM page_links WHERE source_page_id = ? AND source_type = 'page' AND blog = 0"
             ).bind(page.id),
             db.prepare('DELETE FROM page_categories WHERE page_id = ?').bind(page.id),
+            // discussions 자체는 hard delete 가 정리하지 않으므로 discussion_mutes 의
+            // orphan row 를 명시적으로 정리. page_watches 는 FK ON DELETE CASCADE 로 자동.
+            cleanupOrphanDiscussionMutes(db, page.id),
             db.prepare('DELETE FROM revisions WHERE page_id = ?').bind(page.id),
             db.prepare('DELETE FROM pages WHERE id = ?').bind(page.id)
         ];
@@ -2738,6 +2745,10 @@ wiki.delete('/w/:slug', requireAuth, async (c) => {
         await db.prepare('UPDATE pages SET deleted_at = unixepoch() WHERE id = ?')
             .bind(page.id)
             .run();
+
+        // 소프트삭제 후 권한 없는 유저의 stale 주시·토론 mute 정리.
+        // 'deleted' 모드는 admin:access 권한 보유자만 유지한다.
+        await cleanupUnauthorizedSubscriptions(db, c.env, rbac, page.id, 'deleted');
 
         // 캐시 무효화 (API + SSR) + 최근 변경 즉시 갱신
         // 틀: 등 콜론 포함 문서인 경우 역링크 문서 캐시도 함께 무효화

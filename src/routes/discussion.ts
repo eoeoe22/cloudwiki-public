@@ -8,6 +8,7 @@ import { discussionCreate } from '../utils/webhook/events/discussion';
 import { isR2OnlyNamespace } from '../utils/slug';
 import { createNotifications } from '../utils/notification';
 import { extractImageLinks } from '../utils/extractImageLinks';
+import { filterAuthorizedUserIds } from '../utils/pageAccessCleanup';
 
 /** 토론 댓글 본문에서 이미지 r2 키를 추출해 page_links 에 INSERT.
  *  관리자 미디어 GC 가 토론에서만 쓰이는 이미지를 미사용으로 오인 삭제하지 않도록 보호한다.
@@ -257,10 +258,15 @@ discussionRoutes.post('/discussions/thread/:id/comments', requireAuth, requirePe
     // 토론 참여자에게 알림 생성 (작성자 본인 제외)
     try {
         const discussionInfo = await db.prepare(
-            'SELECT d.title, d.page_id, p.slug FROM discussions d LEFT JOIN pages p ON d.page_id = p.id WHERE d.id = ?'
-        ).bind(discussionId).first<{ title: string; page_id: number; slug: string }>();
+            `SELECT d.title, d.page_id, p.slug, p.is_private, p.deleted_at
+             FROM discussions d LEFT JOIN pages p ON d.page_id = p.id WHERE d.id = ?`
+        ).bind(discussionId).first<{ title: string; page_id: number; slug: string | null; is_private: number | null; deleted_at: number | null }>();
 
-        if (discussionInfo) {
+        // pages 가 hard-delete 되어 LEFT JOIN 결과의 slug 가 NULL 인 orphan discussion 은
+        // 권한 판단·링크 합성이 불가능하므로 알림 발송 자체를 생략한다.
+        // (hard-delete batch 에서 discussion_mutes 도 함께 정리되었기 때문에, 이 가드가 없으면
+        //  muted 유저가 알림을 받는 회귀가 발생한다.)
+        if (discussionInfo && discussionInfo.slug !== null) {
             // 이 토론에 댓글을 달았던 모든 유저 (작성자 + 댓글 작성자, 중복 제거, 본인 제외, 개별 토론 뮤트 유저 제외)
             const { results: participants } = await db.prepare(`
                 SELECT DISTINCT p.author_id FROM (
@@ -272,11 +278,21 @@ discussionRoutes.post('/discussions/thread/:id/comments', requireAuth, requirePe
                   AND p.author_id NOT IN (SELECT user_id FROM discussion_mutes WHERE discussion_id = ?)
             `).bind(discussionId, discussionId, user.id, discussionId).all<{ author_id: number }>();
 
+            // 비공개 또는 소프트삭제된 페이지의 토론은 권한 없는 수신자를 제외한다.
+            // 권한 누설 방지: 알림 제목/내용/링크에 비공개 문서의 슬러그·토론 제목이 노출되지 않도록 한다.
+            let recipientIds = participants.map(p => p.author_id);
+            const isProtected = discussionInfo.is_private === 1 || discussionInfo.deleted_at !== null;
+            if (isProtected && recipientIds.length > 0) {
+                const rbac = c.get('rbac') as RBAC;
+                const permission = discussionInfo.deleted_at !== null ? 'admin:access' : 'wiki:private';
+                recipientIds = await filterAuthorizedUserIds(db, c.env, rbac, recipientIds, permission);
+            }
+
             const link = `/w/${encodeURIComponent(discussionInfo.slug)}?mode=discussions&id=${discussionId}`;
             const notifContent = `'${discussionInfo.title}' 토론에 새 댓글이 달렸습니다.`;
 
-            await createNotifications(c.env, c.executionCtx, participants.map(p => ({
-                userId: p.author_id,
+            await createNotifications(c.env, c.executionCtx, recipientIds.map(userId => ({
+                userId,
                 type: 'discussion_comment',
                 content: notifContent,
                 link,

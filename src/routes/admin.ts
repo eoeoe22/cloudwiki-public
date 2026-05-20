@@ -45,6 +45,7 @@ import {
     normalizeCategoryAclMode,
 } from '../utils/categoryAcl';
 import { ensureDocSettingPrefixRulesMigration } from '../utils/docSettingPrefixRulesMigration';
+import { cleanupUnauthorizedSubscriptions } from '../utils/pageAccessCleanup';
 import { normalizeSlug } from '../utils/slug';
 import type {
     AnnouncementAdminDTO,
@@ -2848,6 +2849,7 @@ adminRoutes.put('/pages/:slug/edit-acl', async (c) => {
 adminRoutes.patch('/pages/:slug/flags', async (c) => {
     const db = c.env.DB;
     const currentUser = c.get('user')!;
+    const rbac = c.get('rbac') as RBAC;
     const slug = normalizeSlug(c.req.param('slug'));
     if (!slug) return c.json({ error: 'slug 가 비어 있습니다.' }, 400);
 
@@ -2880,6 +2882,12 @@ adminRoutes.patch('/pages/:slug/flags', async (c) => {
         .prepare('UPDATE pages SET is_private = ?, updated_at = unixepoch() WHERE id = ?')
         .bind(nextPriv, page.id)
         .run();
+
+    // 비공개 전환(0→1) 시 권한 없는 유저의 stale 주시·토론 mute 정리.
+    // 정리는 단방향이므로 비공개 해제(1→0) 에서는 복구하지 않는다.
+    if (nextPriv === 1) {
+        await cleanupUnauthorizedSubscriptions(db, c.env, rbac, page.id, 'private');
+    }
 
     // UPDATE 가 updated_at 을 bump 하므로 recent-changes 캐시(updated_at 정렬)도 새로고침.
     // is_private 변경은 추가로 백링크 캐시(이 문서를 트랜스클루드 한 페이지의 렌더 결과) 에도 영향.
