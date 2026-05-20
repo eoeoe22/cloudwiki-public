@@ -14,22 +14,22 @@
 /* ── 3-컬럼 레이아웃 ── */
 .admin-layout {
   display: flex;
-  max-width: 1440px;
+  max-width: 100%;
   margin: 0 auto;
-  padding: 0 1rem;
-  gap: 1.5rem;
+  padding: 0 2rem;
+  gap: 2rem;
   margin-bottom: 3rem;
 }
 
 /* 관리 메뉴 사이드바 — DOM 순서상 .wiki-container 다음에 위치해
    사이트 다른 페이지(.wiki-sidebar) 와 동일하게 오른쪽 정렬된다. */
 .admin-sidebar {
-  width: 240px;
+  width: 260px;
   flex-shrink: 0;
   position: sticky;
-  top: 1.25rem;
+  top: 1.5rem;
   align-self: flex-start;
-  z-index: 1020;
+  z-index: 1030;
 }
 
 .admin-sidebar-nav {
@@ -269,7 +269,7 @@
 .admin-container .btn-primary {
   background-color: var(--wiki-primary);
   border-color: var(--wiki-primary);
-  color: #fff;
+  color: var(--wiki-btn-text);
   box-shadow: var(--wiki-shadow-sm);
 }
 
@@ -277,7 +277,7 @@
 .admin-container .btn-primary:hover {
   background-color: var(--wiki-primary-hover);
   border-color: var(--wiki-primary-hover);
-  color: #fff;
+  color: var(--wiki-btn-text);
   box-shadow: var(--wiki-shadow);
   transform: translateY(-1px);
 }
@@ -286,6 +286,7 @@
 .admin-container .btn-primary:disabled {
   background-color: var(--wiki-primary);
   border-color: var(--wiki-primary);
+  color: var(--wiki-btn-text);
   opacity: 0.55;
 }
 
@@ -481,7 +482,7 @@
 .admin-container .pagination .page-item.active .page-link {
   background-color: var(--wiki-primary);
   border-color: var(--wiki-primary);
-  color: #fff;
+  color: var(--wiki-btn-text);
 }
 
 .admin-layout .pagination .page-item.disabled .page-link,
@@ -651,6 +652,16 @@
 
 .dash-stat-box .text-muted {
   color: var(--wiki-text-muted) !important;
+}
+
+/* ── 테마 대응 성능 지표 박스 (Bootstrap bg-light 대체) ── */
+.admin-metric-card {
+  background: var(--wiki-bg);
+  border: 1px solid var(--wiki-border);
+  border-radius: 6px;
+  padding: 0.5rem;
+  text-align: center;
+  flex: 1;
 }
 
 /* ── 대시보드 "빠른 링크" 큰 액션 버튼 (정사각형 배너 톤) ── */

@@ -2461,16 +2461,15 @@
           perfContainer.innerHTML =
             '<span class="text-muted">데이터 없음</span>';
         } else {
-          perfContainer.innerHTML = `
-                    <div class="p-2 bg-light rounded text-center" style="flex:1;">
+          perfContainer.innerHTML = `                    <div class="admin-metric-card">
                         <div class="text-muted mb-1">평균 (Avg)</div>
                         <div class="fw-bold">${Math.round(perf.summary.avg_response_ms || 0)} ms</div>
                     </div>
-                    <div class="p-2 bg-light rounded text-center" style="flex:1;">
+                    <div class="admin-metric-card">
                         <div class="text-muted mb-1">p95</div>
                         <div class="fw-bold">${Math.round(perf.summary.p95_response_ms || 0)} ms</div>
                     </div>
-                    <div class="p-2 bg-light rounded text-center" style="flex:1;">
+                    <div class="admin-metric-card">
                         <div class="text-muted mb-1">p99</div>
                         <div class="fw-bold">${Math.round(perf.summary.p99_response_ms || 0)} ms</div>
                     </div>
