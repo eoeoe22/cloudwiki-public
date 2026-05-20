@@ -1,4 +1,5 @@
 -- Cloudflare D1 Database Schema
+-- Sqlite 기반, 차이 있음
 
 
 -- 사용자 테이블
