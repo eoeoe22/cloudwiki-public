@@ -860,6 +860,15 @@
   width: 100%;
 }
 
+/* 관리 활동 로그: 셀 줄바꿈 금지 → 가로 스크롤로 처리 */
+.admin-log-table-wrap {
+  min-width: 0;
+}
+.admin-log-table th,
+.admin-log-table td {
+  white-space: nowrap;
+}
+
 /* ── 반응형 ── */
 @media (max-width: 1200px) {
   .admin-layout {
@@ -914,7 +923,7 @@
 
   .admin-container .card {
     max-width: 100%;
-    overflow: hidden;
+    overflow: visible;
   }
 }
 
@@ -1031,6 +1040,8 @@
   cursor: crosshair;
   touch-action: none;
   display: block;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .palette-hue-canvas {
@@ -1041,6 +1052,8 @@
   cursor: pointer;
   touch-action: none;
   display: block;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .palette-color-block.is-disabled .palette-sv-canvas,
@@ -1131,6 +1144,11 @@
     margin-left: 0;
   }
 
+  .palette-sv-canvas {
+    aspect-ratio: 220 / 160;
+    min-height: 160px;
+  }
+
   .palette-hue-canvas {
     height: 40px;
     border-radius: 10px;
@@ -1139,4 +1157,113 @@
   .palette-swatch-cell {
     min-height: 44px;
   }
+}
+
+/* ── 관리 메뉴 사이드바 내 본문 카드 스타일 패딩 보정 ── */
+.admin-sidebar .wiki-article {
+  padding: 1.25rem;
+}
+
+/* ── 왼쪽 사이드바 레이아웃 보강 ── */
+.admin-layout .wiki-container {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ── 프로필 카드 및 가입 신청 대기 배지 스타일 ── */
+.admin-sidebar-profile-card {
+  padding: 1rem;
+  border-radius: 8px;
+  background: var(--wiki-bg);
+  border: 1px solid var(--wiki-border);
+  transition: all 0.25s var(--wiki-ease);
+}
+
+.admin-sidebar-profile-card:hover {
+  border-color: var(--wiki-primary);
+  box-shadow: var(--wiki-shadow-sm);
+}
+
+.sidebar-signup-badge {
+  background-color: var(--wiki-danger) !important;
+  color: #fff !important;
+  font-size: 0.7rem !important;
+  font-weight: 700;
+  padding: 0.15rem 0.4rem !important;
+  border-radius: 10px;
+  line-height: 1;
+}
+
+/* ── 4열 메트릭 카드 추가 및 그리드 ── */
+.dash-metric-card {
+  background: var(--wiki-card-bg);
+  border: 1px solid var(--wiki-border);
+  border-radius: 8px;
+  padding: 1.25rem;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  box-shadow: var(--wiki-shadow-sm);
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.dash-metric-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--wiki-shadow);
+  border-color: var(--wiki-primary);
+}
+
+.dash-metric-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.5rem;
+  background-color: color-mix(in srgb, var(--wiki-primary) 12%, transparent);
+  color: var(--wiki-primary);
+}
+
+.dash-metric-icon.views {
+  background-color: color-mix(in srgb, var(--wiki-primary) 12%, transparent);
+  color: var(--wiki-primary);
+}
+
+.dash-metric-icon.countries {
+  background-color: color-mix(in srgb, var(--wiki-info) 12%, transparent);
+  color: var(--wiki-info);
+}
+
+.dash-metric-icon.requests {
+  background-color: color-mix(in srgb, var(--wiki-danger) 12%, transparent);
+  color: var(--wiki-danger);
+}
+
+.dash-metric-icon.links {
+  background-color: color-mix(in srgb, var(--wiki-success) 12%, transparent);
+  color: var(--wiki-success);
+}
+
+.dash-metric-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.dash-metric-value {
+  font-size: 1.35rem;
+  font-weight: 800;
+  line-height: 1.2;
+  color: var(--wiki-text);
+}
+
+/* ── 3열 통계 카드 콤팩트 디자인 ── */
+#tab-stats .card-body .row.g-3 .card {
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+#tab-stats .card-body .row.g-3 .card:hover {
+  transform: translateY(-2px);
+  border-color: var(--wiki-primary) !important;
+  box-shadow: var(--wiki-shadow) !important;
 }

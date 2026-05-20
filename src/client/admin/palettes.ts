@@ -198,12 +198,12 @@ function drawSV(canvasId: string, state: ColorState) {
     const cx = state.saturation * w;
     const cy = (1 - state.brightness) * h;
     ctx.beginPath();
-    ctx.arc(cx, cy, 8, 0, Math.PI * 2);
+    ctx.arc(cx, cy, 4, 0, Math.PI * 2);
     ctx.strokeStyle = '#fff';
-    ctx.lineWidth = 2;
+    ctx.lineWidth = 1.5;
     ctx.stroke();
     ctx.beginPath();
-    ctx.arc(cx, cy, 9, 0, Math.PI * 2);
+    ctx.arc(cx, cy, 5, 0, Math.PI * 2);
     ctx.strokeStyle = '#000';
     ctx.lineWidth = 1;
     ctx.stroke();
@@ -226,12 +226,12 @@ function drawHue(canvasId: string, state: ColorState) {
     ctx.fillRect(0, 0, w, h);
     const cx = (state.hue / 360) * w;
     ctx.beginPath();
-    ctx.rect(cx - 5, 0, 10, h);
+    ctx.rect(cx - 2, 0, 4, h);
     ctx.strokeStyle = '#fff';
-    ctx.lineWidth = 2;
+    ctx.lineWidth = 1.5;
     ctx.stroke();
     ctx.beginPath();
-    ctx.rect(cx - 6, -1, 12, h + 2);
+    ctx.rect(cx - 3, -1, 6, h + 2);
     ctx.strokeStyle = '#000';
     ctx.lineWidth = 1;
     ctx.stroke();
@@ -683,6 +683,9 @@ function getCanvasPos(canvas: HTMLCanvasElement, e: MouseEvent | TouchEvent) {
     if (te.touches && te.touches.length > 0) {
         cx = te.touches[0].clientX;
         cy = te.touches[0].clientY;
+    } else if (te.changedTouches && te.changedTouches.length > 0) {
+        cx = te.changedTouches[0].clientX;
+        cy = te.changedTouches[0].clientY;
     } else {
         const me = e as MouseEvent;
         cx = me.clientX;

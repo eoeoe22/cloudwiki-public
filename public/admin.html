@@ -44,6 +44,69 @@
     <div id="app-header-placeholder"></div>
 
     <div class="admin-layout">
+      <!-- ── 왼쪽 사이드바 (관리 메뉴) ── -->
+      <aside class="admin-sidebar">
+        <!-- 프로필 카드 -->
+        <div class="admin-sidebar-profile-card mb-3" id="adminProfileCard" style="display: none;">
+          <div class="d-flex align-items-center gap-2 mb-2">
+            <div id="adminAvatarSlot" class="d-flex align-items-center justify-content-center bg-light rounded-circle" style="width: 32px; height: 32px; overflow: hidden;">
+              <i class="mdi mdi-account fs-4 text-muted"></i>
+            </div>
+            <div class="min-w-0 flex-grow-1">
+              <div id="adminNameSlot" class="fw-bold text-truncate small" style="line-height: 1.2;">관리자</div>
+              <div id="adminRoleSlot" class="small text-muted" style="font-size: 0.75rem;">-</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="wiki-article">
+          <h6 class="sidebar-title">
+            <i class="bi bi-gear-fill"></i> 관리 메뉴
+          </h6>
+          <div class="admin-sidebar-nav">
+            <a
+              href="javascript:void(0)"
+              class="admin-nav-item active"
+              onclick="showTab('tab-dashboard')"
+            >
+              <i class="mdi mdi-view-dashboard-outline"></i>
+              <span>대시보드</span>
+            </a>
+            <a
+              href="javascript:void(0)"
+              class="admin-nav-item"
+              onclick="showTab('tab-users')"
+            >
+              <i class="mdi mdi-account-group-outline"></i>
+              <span>회원 관리</span>
+              <span id="sidebarSignupBadge" class="badge sidebar-signup-badge ms-auto" style="display: none;">0</span>
+            </a>
+            <a
+              href="javascript:void(0)"
+              class="admin-nav-item"
+              onclick="showTab('tab-content')"
+            >
+              <i class="mdi mdi-file-document-edit-outline"></i>
+              <span>콘텐츠 관리</span>
+            </a>
+            <a
+              href="javascript:void(0)"
+              class="admin-nav-item"
+              onclick="showTab('tab-settings')"
+            >
+              <i class="mdi mdi-cog-outline"></i> <span>시스템 설정</span>
+            </a>
+            <a
+              href="javascript:void(0)"
+              class="admin-nav-item"
+              onclick="showTab('tab-stats')"
+            >
+              <i class="mdi mdi-chart-line"></i> <span>통계 및 로그</span>
+            </a>
+          </div>
+        </div>
+      </aside>
+
       <!-- ── 메인 콘텐츠 영역 ── -->
       <div class="wiki-container">
         <div
@@ -1081,30 +1144,42 @@
                     class="mb-4"
                     style="overflow-x: auto"
                   ></div>
-                  <div class="row g-4">
-                    <div class="col-md-6">
-                      <h6>인기 문서</h6>
-                      <div id="topPagesContainer" class="small"></div>
+                  <div class="row g-3">
+                    <div class="col-md-6 col-lg-4">
+                      <div class="card h-100 border-0 bg-light-subtle shadow-sm p-3">
+                        <h6 class="fw-bold border-bottom pb-2 mb-2"><i class="mdi mdi-trending-up text-primary"></i> 인기 문서</h6>
+                        <div id="topPagesContainer" class="small"></div>
+                      </div>
                     </div>
-                    <div class="col-md-6">
-                      <h6>트렌딩 (24h)</h6>
-                      <div id="trendingContainer" class="small"></div>
+                    <div class="col-md-6 col-lg-4">
+                      <div class="card h-100 border-0 bg-light-subtle shadow-sm p-3">
+                        <h6 class="fw-bold border-bottom pb-2 mb-2"><i class="mdi mdi-fire text-danger"></i> 트렌딩 (24h)</h6>
+                        <div id="trendingContainer" class="small"></div>
+                      </div>
                     </div>
-                    <div class="col-md-6">
-                      <h6>유입 경로</h6>
-                      <div id="referrersContainer" class="small"></div>
+                    <div class="col-md-6 col-lg-4">
+                      <div class="card h-100 border-0 bg-light-subtle shadow-sm p-3">
+                        <h6 class="fw-bold border-bottom pb-2 mb-2"><i class="mdi mdi-link-variant text-success"></i> 유입 경로</h6>
+                        <div id="referrersContainer" class="small"></div>
+                      </div>
                     </div>
-                    <div class="col-md-6">
-                      <h6>접속 국가</h6>
-                      <div id="countriesContainer" class="small"></div>
+                    <div class="col-md-6 col-lg-4">
+                      <div class="card h-100 border-0 bg-light-subtle shadow-sm p-3">
+                        <h6 class="fw-bold border-bottom pb-2 mb-2"><i class="mdi mdi-earth text-info"></i> 접속 국가</h6>
+                        <div id="countriesContainer" class="small"></div>
+                      </div>
                     </div>
-                    <div class="col-md-6">
-                      <h6>기기 및 브라우저</h6>
-                      <div id="devicesContainer" class="small"></div>
+                    <div class="col-md-6 col-lg-4">
+                      <div class="card h-100 border-0 bg-light-subtle shadow-sm p-3">
+                        <h6 class="fw-bold border-bottom pb-2 mb-2"><i class="mdi mdi-cellphone-link text-warning"></i> 기기 및 브라우저</h6>
+                        <div id="devicesContainer" class="small"></div>
+                      </div>
                     </div>
-                    <div class="col-md-6">
-                      <h6>검색어</h6>
-                      <div id="searchesContainer" class="small"></div>
+                    <div class="col-md-6 col-lg-4">
+                      <div class="card h-100 border-0 bg-light-subtle shadow-sm p-3">
+                        <h6 class="fw-bold border-bottom pb-2 mb-2"><i class="mdi mdi-magnify text-secondary"></i> 검색어</h6>
+                        <div id="searchesContainer" class="small"></div>
+                      </div>
                     </div>
                     <div class="col-12 mt-3">
                       <h6>최근 에러 (HTTP 오류)</h6>
@@ -1185,8 +1260,8 @@
                   </select>
                 </div>
               </div>
-              <div class="table-responsive">
-                <table class="table table-hover table-sm">
+              <div class="table-responsive admin-log-table-wrap">
+                <table class="table table-hover table-sm admin-log-table">
                   <thead class="table-light">
                     <tr>
                       <th>시간</th>
@@ -1212,57 +1287,7 @@
         </div>
       </div>
       <!-- wiki-container end -->
-
-      <!-- ── 오른쪽 사이드바 (관리 메뉴 — 사이트의 .wiki-sidebar 와 동일한
-           우측 정렬 패턴) ── -->
-      <aside class="admin-sidebar">
-        <div class="sidebar-section">
-          <h6 class="sidebar-title">
-            <i class="bi bi-gear-fill"></i> 관리 메뉴
-          </h6>
-          <div class="admin-sidebar-nav">
-            <a
-              href="javascript:void(0)"
-              class="admin-nav-item active"
-              onclick="showTab('tab-dashboard')"
-            >
-              <i class="mdi mdi-view-dashboard-outline"></i>
-              <span>대시보드</span>
-            </a>
-            <a
-              href="javascript:void(0)"
-              class="admin-nav-item"
-              onclick="showTab('tab-users')"
-            >
-              <i class="mdi mdi-account-group-outline"></i>
-              <span>회원 관리</span>
-            </a>
-            <a
-              href="javascript:void(0)"
-              class="admin-nav-item"
-              onclick="showTab('tab-content')"
-            >
-              <i class="mdi mdi-file-document-edit-outline"></i>
-              <span>콘텐츠 관리</span>
-            </a>
-            <a
-              href="javascript:void(0)"
-              class="admin-nav-item"
-              onclick="showTab('tab-settings')"
-            >
-              <i class="mdi mdi-cog-outline"></i> <span>시스템 설정</span>
-            </a>
-            <a
-              href="javascript:void(0)"
-              class="admin-nav-item"
-              onclick="showTab('tab-stats')"
-            >
-              <i class="mdi mdi-chart-line"></i> <span>통계 및 로그</span>
-            </a>
-          </div>
-        </div>
-      </aside>
-    </div>
+      </div>
     <!-- admin-layout end -->
 
     <!-- 아이콘 피커 모달 (iconPicker.ts 모듈이 사용) — body 레벨에 두어
@@ -1405,6 +1430,35 @@
           return;
         }
 
+        // 프로필 정보 동적 바인딩
+        const profileCard = document.getElementById("adminProfileCard");
+        const avatarSlot = document.getElementById("adminAvatarSlot");
+        const nameSlot = document.getElementById("adminNameSlot");
+        const roleSlot = document.getElementById("adminRoleSlot");
+        if (profileCard && currentUser) {
+          profileCard.style.display = "";
+          if (currentUser.picture) {
+            const img = document.createElement("img");
+            img.src = currentUser.picture;
+            img.className = "rounded-circle";
+            img.width = 32;
+            img.height = 32;
+            avatarSlot.innerHTML = "";
+            avatarSlot.appendChild(img);
+          }
+          nameSlot.textContent = currentUser.name;
+          let roleBadge = '<span class="badge bg-secondary">User</span>';
+          if (currentUser.role === 'super_admin') {
+            roleBadge = '<span class="badge bg-dark">최고 관리자</span>';
+          } else if (currentUser.role === 'admin') {
+            roleBadge = '<span class="badge bg-primary">관리자</span>';
+          }
+          roleSlot.innerHTML = roleBadge;
+        }
+
+        // 실시간 가입 대기 배지 및 메트릭 업데이트 (관리자 권한 확인 성공 후에만 실행)
+        updateSidebarSignupBadge();
+
         loadCategories();
         document.getElementById("categoryAclSort")?.addEventListener("change", () => {
           catAclPage = 1;
@@ -1433,6 +1487,8 @@
             ).toLocaleString();
             renderMiniChart("dashDailyChart", data.daily || []);
           }
+          // 대시보드 로드 시 배지 갱신
+          updateSidebarSignupBadge();
         } catch (e) {}
       }
 
@@ -1967,12 +2023,48 @@
       }
 
       // ── 가입 신청 ──
+      
+      // ── 실시간 가입 대기 배지 및 대시보드 메트릭 업데이트 ──
+      async function updateSidebarSignupBadge() {
+        try {
+          const res = await fetch("/api/admin/signup-requests?status=pending&limit=1");
+          if (res.ok) {
+            const data = await res.json();
+            const count = data.total || 0;
+            const badge = document.getElementById("sidebarSignupBadge");
+            const dashBadge = document.getElementById("dashSignupRequests");
+            if (badge) {
+              if (count > 0) {
+                badge.textContent = count;
+                badge.style.display = "";
+              } else {
+                badge.style.display = "none";
+              }
+            }
+            if (dashBadge) {
+              dashBadge.textContent = count;
+            }
+          }
+        } catch (e) {
+          console.error("Failed to load signup request count for sidebar badge", e);
+        }
+      }
+
       async function loadSignupPolicy() {
         const res = await fetch("/api/auth/signup-policy");
         const data = await res.json();
         if (data.policy === "approval") {
           document.getElementById("signupRequestsCard").style.display = "";
+          document.getElementById("dashSignupCard")?.removeAttribute("style");
           loadSignupRequests();
+        } else {
+          const dashSignupCard = document.getElementById("dashSignupCard");
+          if (dashSignupCard) dashSignupCard.style.display = "none";
+          // 가입 승인 대기 카드를 숨겼으므로 나머지 3개 카드가 공간을 꽉 채우도록 col-lg-4 로 조정한다.
+          document.querySelectorAll(".dash-metric-card-wrapper").forEach(el => {
+            el.classList.remove("col-lg-3");
+            el.classList.add("col-lg-4");
+          });
         }
       }
       var signupRequestsOffset = 0;
@@ -2020,6 +2112,7 @@
           });
           if (res.ok) {
             loadSignupRequests();
+            updateSidebarSignupBadge();
           } else {
             const data = await res.json().catch(() => ({}));
             Swal.fire(
@@ -2039,6 +2132,7 @@
           });
           if (res.ok) {
             loadSignupRequests();
+            updateSidebarSignupBadge();
           } else {
             const data = await res.json().catch(() => ({}));
             Swal.fire(

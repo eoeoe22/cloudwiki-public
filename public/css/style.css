@@ -2176,7 +2176,7 @@ html[data-theme="dark"] .push-status-on {
   width: 2.25rem;
   height: 2.25rem;
   border-radius: 8px;
-  border: 1px solid var(--wiki-glass-border);
+  border: 1px solid var(--wiki-border);
   background: var(--wiki-glass-bg);
   backdrop-filter: var(--wiki-glass-blur);
   -webkit-backdrop-filter: var(--wiki-glass-blur);
