@@ -447,7 +447,7 @@
         const subdocs = data.subdocs || [];
 
         if (subdocs.length === 0) {
-          Swal.fire('하위 문서', '하위 문서가 없습니다.', 'info');
+          Swal.fire('문서 구조', '하위 문서가 없습니다.', 'info');
           return;
         }
 
@@ -573,7 +573,7 @@
           </div>`;
 
         Swal.fire({
-          title: '하위 문서',
+          title: '문서 구조',
           html: `${buttonsHtml}<div class="text-start">${treeHtml}</div>`,
           width: 600,
           confirmButtonText: '닫기',
@@ -907,7 +907,7 @@
           </button></li>
           <li><hr class="dropdown-divider"></li>
           <li><button class="dropdown-item${_hasColon ? ' disabled' : ''}" ${_hasColon ? 'disabled' : `data-slug="${escapeHtml(actionSlug)}" onclick="showSubdocs(this.dataset.slug); return false;"`}>
-            <i class="bi bi-diagram-3"></i> 하위 문서 보기
+            <i class="bi bi-diagram-3"></i> 문서 구조 보기
           </button></li>
         `;
 
