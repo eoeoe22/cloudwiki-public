@@ -824,7 +824,7 @@
           const _popoverContent = '<ul class="mb-0 ps-3">'
             + _validAclFlags.map(f => `<li>${escapeHtml(_ACL_FLAG_LABELS[f])}</li>`).join('')
             + '</ul>';
-          badgesHtml += `<span class="badge bg-danger ms-2 edit-lock-badge" tabindex="0" data-bs-toggle="popover" data-bs-trigger="hover focus" data-bs-placement="top" data-bs-html="true" data-bs-title="편집 요구 권한 (모두 충족)" data-bs-content="${escapeHtml(_popoverContent)}" style="cursor:help;"><i class="bi bi-lock-fill"></i> 편집 잠금</span>`;
+          badgesHtml += `<span class="badge bg-danger ms-2 edit-lock-badge" tabindex="0" data-bs-toggle="popover" data-bs-trigger="hover focus" data-bs-placement="top" data-bs-html="true" data-bs-title="편집 요구 권한" data-bs-content="${escapeHtml(_popoverContent)}" style="cursor:help;"><i class="bi bi-lock-fill"></i> 편집 잠금</span>`;
         }
         if (page.is_private) {
           badgesHtml += `<span class="badge bg-danger ms-2"><i class="bi bi-eye-slash-fill"></i> 비공개 문서</span>`;
