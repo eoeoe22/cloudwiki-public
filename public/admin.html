@@ -117,7 +117,7 @@
               <i class="mdi mdi-shield-account text-primary"></i> 관리자 콘솔
             </h2>
             <p class="text-muted mb-0 small">
-              위키 운영에 필요한 모든 설정을 관리합니다.
+              위키 설정을 관리합니다.
             </p>
           </div>
           <button class="btn btn-wiki-outline btn-sm" onclick="history.back()">
@@ -138,11 +138,11 @@
                   <div class="d-grid gap-2">
                     <a href="/tickets" class="admin-quick-action">
                       <i class="mdi mdi-ticket-confirmation-outline"></i>
-                      <span>티켓 문의 관리</span>
+                      <span>티켓 문의</span>
                     </a>
                     <a href="/admin-media" class="admin-quick-action">
                       <i class="mdi mdi-image-multiple-outline"></i>
-                      <span>이미지(미디어) 관리 도구</span>
+                      <span>이미지 관리 도구</span>
                     </a>
                   </div>
                 </div>
@@ -153,7 +153,7 @@
                 <div
                   class="card-body text-center d-flex flex-column justify-content-center"
                 >
-                  <h6 class="text-muted mb-2">실시간 통계 확인</h6>
+                  <h6 class="text-muted mb-2">통계 확인</h6>
                   <button
                     class="btn btn-wiki btn-lg"
                     onclick="
@@ -964,7 +964,7 @@
               </button>
 
               <hr />
-              <h6 class="fw-bold mb-3">MCP (Model Context Protocol) 설정</h6>
+              <h6 class="fw-bold mb-3">MCP 서버 설정</h6>
               <div class="mb-3">
                 <div class="d-flex align-items-center gap-2 mb-2">
                   <span id="mcpModeDisplay" class="badge bg-secondary"
@@ -980,14 +980,7 @@
                   style="display: none"
                 >
                   <div class="fw-bold mb-2">
-                    MCP 서버 주소 (Claude Custom Connector 입력용)
-                  </div>
-                  <div class="text-muted mb-2">
-                    위키 문서 탐색 · 블로그 포스트 · 편집 · 관리 도구를 모두
-                    포함하는 <strong>단일 엔드포인트</strong>입니다. 호출자의
-                    로그인 / OAuth 인증 상태에 따라 도구 가시성이
-                    <strong>자동으로 분기</strong>됩니다 — 별도의 관리자 전용
-                    엔드포인트는 없습니다.
+                    MCP 서버 주소
                   </div>
                   <div class="input-group input-group-sm mb-3">
                     <input
@@ -1003,111 +996,6 @@
                       <i class="mdi mdi-content-copy"></i> 복사
                     </button>
                   </div>
-
-                  <div class="fw-bold mb-1">
-                    권한 계층 (호출 시점 자동 분기)
-                  </div>
-                  <ul class="mb-3 ps-3">
-                    <li>
-                      <strong>게스트</strong> (인증 없음): 읽기 도구만 노출 —
-                      <code>search_title</code>, <code>search_fts</code>,
-                      <code>get_toc</code>, <code>read_document</code>,
-                      <code>read_section</code>, <code>get_tree</code>,
-                      <code>search_category</code>,
-                      <code>get_category_info</code>,
-                      <code>get_document_category</code>,
-                      <code>get_backlinks</code>,
-                      <code>get_recent_changes</code>,
-                      <code>list_discussions</code>,
-                      <code>read_discussion</code>, <code>view_image</code> 등.
-                      <br />
-                      <small class="text-muted">
-                        WIKI_VISIBILITY=closed 환경에서는 게스트 진입이 401 로
-                        차단되어 OAuth 흐름이 트리거됩니다.
-                      </small>
-                    </li>
-                    <li>
-                      <strong>일반 사용자</strong> (<code>wiki:edit</code>
-                      권한): 위의 읽기 도구 + 편집 도구 (draft 모델) —
-                      <code>create_or_update_page</code>,
-                      <code>patch_page</code>, <code>edit_section</code> →
-                      <code>commit_edit</code> / <code>discard_edit</code>,
-                      <code>list_drafts</code>, <code>read_draft</code>,
-                      <code>read_revision</code>, <code>revert_page</code>.
-                      <br />
-                      <small class="text-muted">
-                        편집 도구 호출 시 즉시 저장하지 않고 사용자별 draft 에
-                        누적되며, <code>commit_edit(draft_id, summary)</code>
-                        호출 시 1개 리비전으로 저장됩니다. 시작 시점 이후 다른
-                        사용자가 페이지를 수정했으면 commit 시 충돌로 거부.
-                        draft 는 12시간 무활동 시 자동 삭제 (자정 cron).
-                      </small>
-                    </li>
-                    <li>
-                      <strong>관리자</strong> (<code>admin:access</code> 권한):
-                      위의 도구 + 관리 전용 도구 — <code>delete_page</code>,
-                      <code>restore_page</code>, <code>move_page</code>,
-                      <code>list_deleted_pages</code>.
-                    </li>
-                  </ul>
-
-                  <div class="fw-bold mb-1">
-                    연결 절차 (Claude Custom Connector)
-                  </div>
-                  <ol class="mb-3 ps-3">
-                    <li>
-                      Claude → Settings → Connectors → "Add custom connector"
-                    </li>
-                    <li>위 URL 을 그대로 붙여넣기</li>
-                    <li>
-                      "OAuth Client ID/Secret" 두 입력란은 비워두세요 (DCR 로
-                      자동 발급됨)
-                    </li>
-                    <li>
-                      Connect 클릭 → 위키 도메인의 동의 화면이 열리면 사용하려는
-                      권한 등급의 계정으로 로그인된 상태에서 "승인" 클릭
-                    </li>
-                    <li>
-                      Claude 채팅에서 도구 목록이 표시되면 연결 완료. 토큰이
-                      만료(1시간)되어도 refresh 토큰으로 자동 갱신됩니다.
-                    </li>
-                  </ol>
-
-                  <div class="fw-bold mb-1">주의 사항</div>
-                  <ul class="mb-2 ps-3">
-                    <li>
-                      편집 도구는 일반 위키 API 와 동일한 RBAC 정책을 따릅니다.
-                      관리자 전용 ACL (<code>edit_acl.flags</code> 에
-                      <code>admin_only</code>) 이 적용된 문서 편집/이동에는
-                      <code>admin:access</code>, 영구 삭제(hard=true)에는 최고
-                      관리자 권한이 필요합니다.
-                    </li>
-                    <li>
-                      관리자 도구 호출은
-                      <code>admin_log</code> 에 <code>[admin-mcp]</code> 접두로
-                      기록됩니다.
-                    </li>
-                    <li>
-                      토큰을 폐기하려면
-                      <code>oauth_tokens.revoked_at</code> 에
-                      <code>unixepoch()</code> 을 설정하세요 (특정 토큰만
-                      폐기하려면 해당 행, 한 사용자/클라이언트의 모든 토큰을
-                      폐기하려면 <code>WHERE user_id = ?</code> 또는
-                      <code>WHERE client_id = ?</code>). 등록된 클라이언트
-                      자체를 제거하려면 <code>oauth_clients</code> 행을 직접
-                      <code>DELETE</code> 하세요 — 해당 테이블에는 revoked_at
-                      컬럼이 없습니다.
-                    </li>
-                  </ul>
-
-                  <details class="mt-2">
-                    <summary class="text-muted">
-                      OAuth Discovery 엔드포인트 (디버깅용)
-                    </summary>
-                    <div class="mt-2 ps-2 font-monospace small">
-                      <div id="mcpDiscoveryUrls"></div>
-                    </div>
-                  </details>
                 </div>
               </div>
             </div>
@@ -1120,7 +1008,7 @@
             <div
               class="card-header py-3 d-flex justify-content-between align-items-center"
             >
-              <h5 class="mb-0">실시간 트래픽 통계</h5>
+              <h5 class="mb-0">트래픽 통계</h5>
               <button
                 class="btn btn-sm btn-outline-secondary"
                 onclick="refreshAnalytics()"
@@ -1669,49 +1557,6 @@
               window.location.origin + "/api/mcp";
           } else {
             document.getElementById("mcpServerUrlBox").style.display = "none";
-          }
-
-          const discoveryBox = document.getElementById("mcpDiscoveryUrls");
-          if (discoveryBox) {
-            const o = window.location.origin;
-            // GET 가능한 메타데이터 엔드포인트만 클릭 가능한 링크로 렌더링.
-            // POST-only 엔드포인트(register/token/revoke)는 브라우저 GET 으로
-            // 호출하면 405 를 반환하므로 평문 + [POST] 배지로 표기하고,
-            // /oauth/authorize 도 PKCE 파라미터 없이 호출하면 400 이므로 평문 처리.
-            const entries = [
-              {
-                label: "Protected Resource",
-                path: "/.well-known/oauth-protected-resource",
-                method: "GET",
-              },
-              {
-                label: "Authorization Server",
-                path: "/.well-known/oauth-authorization-server",
-                method: "GET",
-              },
-              {
-                label: "Dynamic Client Registration",
-                path: "/oauth/register",
-                method: "POST",
-              },
-              {
-                label: "Authorize",
-                path: "/oauth/authorize",
-                method: "GET (요청 파라미터 필요)",
-              },
-              { label: "Token", path: "/oauth/token", method: "POST" },
-              { label: "Revoke", path: "/oauth/revoke", method: "POST" },
-            ];
-            discoveryBox.innerHTML = entries
-              .map(({ label, path, method }) => {
-                const url = o + path;
-                const target =
-                  method === "GET"
-                    ? `<a href="${url}" target="_blank" rel="noopener">${url}</a>`
-                    : url;
-                return `<div>${label} <span class="badge bg-secondary">${method}</span>: ${target}</div>`;
-              })
-              .join("");
           }
 
           // 공지 목록 로드는 별도 호출
