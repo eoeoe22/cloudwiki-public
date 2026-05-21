@@ -805,20 +805,45 @@
             badgesHtml += `<a href="#" data-cat="${escapeHtml(cat)}" onclick="showCategory(this.dataset.cat); return false;" class="badge bg-secondary text-decoration-none ms-2"><i class="bi bi-folder"></i> ${escapeHtml(cat)}</a>`;
           });
         }
-        // edit_acl 에 admin_only 플래그가 있으면 관리자 전용 편집 문서. 구 is_locked 대체.
-        let _aclAdminOnly = false;
+        // edit_acl 에 플래그가 있으면 "편집 잠금" 배지 표시. 구 is_locked / 관리자 전용 배지 대체.
+        // 호버 시 부트스트랩 popover 로 요구 권한 목록을 노출한다.
+        let _aclFlags = [];
         try {
           const _acl = page.edit_acl ? JSON.parse(page.edit_acl) : null;
-          _aclAdminOnly = !!(_acl && Array.isArray(_acl.flags) && _acl.flags.includes('admin_only'));
+          if (_acl && Array.isArray(_acl.flags)) _aclFlags = _acl.flags;
         } catch { /* ignore */ }
-        if (_aclAdminOnly) {
-          badgesHtml += `<span class="badge bg-danger ms-2"><i class="bi bi-lock-fill"></i> 관리자 전용</span>`;
+        const _ACL_FLAG_LABELS = {
+          aged: '가입 N일 이상',
+          page_editor: '본 문서 편집 이력',
+          any_editor: '임의 문서 편집 이력',
+          admin_only: '관리자 전용',
+        };
+        const _ACL_FLAG_ORDER = ['aged', 'page_editor', 'any_editor', 'admin_only'];
+        const _validAclFlags = _ACL_FLAG_ORDER.filter(f => _aclFlags.includes(f));
+        if (_validAclFlags.length > 0) {
+          const _popoverContent = '<ul class="mb-0 ps-3">'
+            + _validAclFlags.map(f => `<li>${escapeHtml(_ACL_FLAG_LABELS[f])}</li>`).join('')
+            + '</ul>';
+          badgesHtml += `<span class="badge bg-danger ms-2 edit-lock-badge" tabindex="0" data-bs-toggle="popover" data-bs-trigger="hover focus" data-bs-placement="top" data-bs-html="true" data-bs-title="편집 요구 권한 (모두 충족)" data-bs-content="${escapeHtml(_popoverContent)}" style="cursor:help;"><i class="bi bi-lock-fill"></i> 편집 잠금</span>`;
         }
         if (page.is_private) {
           badgesHtml += `<span class="badge bg-danger ms-2"><i class="bi bi-eye-slash-fill"></i> 비공개 문서</span>`;
         }
         if (page.deleted_at) {
           badgesHtml += `<span class="badge bg-danger ms-2"><i class="bi bi-trash"></i> 삭제됨</span>`;
+        }
+
+        // SPA 네비게이션으로 articleMeta 가 통째로 갈리기 전, 직전 렌더에서 띄운
+        // 편집 잠금 popover 인스턴스를 정리한다. dispose 를 건너뛰면 트리거 요소가
+        // 사라진 뒤에도 body 에 orphan popover 가 남을 수 있다 (Bootstrap 경고).
+        const _prevMeta = document.getElementById('articleMeta');
+        if (_prevMeta && typeof bootstrap !== 'undefined') {
+          _prevMeta.querySelectorAll('.edit-lock-badge[data-bs-toggle="popover"]').forEach(el => {
+            if (el._lockPopover) {
+              try { el._lockPopover.dispose(); } catch { /* ignore */ }
+              el._lockPopover = null;
+            }
+          });
         }
 
         document.getElementById('articleMeta').innerHTML = `
@@ -830,6 +855,20 @@
         <i class="bi bi-book" aria-hidden="true"></i><span class="reading-mode-toggle-label d-none d-sm-inline"> 읽기 모드</span>
       </button>
     `;
+
+        // 편집 잠금 배지 popover 초기화 — 마우스 오버/포커스 시 요구 권한 표시.
+        if (typeof bootstrap !== 'undefined') {
+          document.querySelectorAll('#articleMeta .edit-lock-badge[data-bs-toggle="popover"]').forEach(el => {
+            if (!el._lockPopover) {
+              el._lockPopover = new bootstrap.Popover(el, {
+                trigger: 'hover focus',
+                container: 'body',
+                animation: false,
+                html: true,
+              });
+            }
+          });
+        }
 
         // MCP 편집 승인 대기 배너 — 로그인 유저 본인이 이 문서에 제출한 MCP 편집안이
         // 있을 때만 노출. (사용자×문서당 최대 1건 제약 — mcp_drafts UNIQUE(user_id, slug).)
