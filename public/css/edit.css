@@ -2492,6 +2492,19 @@ html[data-theme="dark"] .img-editor-canvas-wrap {
     color: var(--cm-highlight-fg) !important;
 }
 
+/* {color:..}/{bg:..} 선행 토큰이 붙은 ==text== 는 yellow 배경 대신
+ * 인라인 style 의 색/배경이 우선 적용되도록 한다 (!important 미사용). */
+.cm-highlight-styled {
+    border-radius: 2px;
+}
+
+/* 마크다운 인라인 서식: 강조/기울임/밑줄/취소선
+ * lang-markdown 의 tag 기반 스타일이 닿지 않는 케이스를 직접 클래스로 처리. */
+.cm-md-strong { font-weight: 700; }
+.cm-md-emphasis { font-style: italic; }
+.cm-md-underline { text-decoration: underline; }
+.cm-md-strikethrough { text-decoration: line-through; }
+
 .cm-time-marker {
     color: var(--cm-time-marker) !important;
 }
@@ -2535,6 +2548,11 @@ html[data-theme="dark"] .img-editor-canvas-wrap {
 .cm-inline-code.cm-color-badge,
 .cm-inline-code.cm-palette-badge,
 .cm-inline-code.cm-highlight,
+.cm-inline-code.cm-highlight-styled,
+.cm-inline-code.cm-md-strong,
+.cm-inline-code.cm-md-emphasis,
+.cm-inline-code.cm-md-underline,
+.cm-inline-code.cm-md-strikethrough,
 .cm-inline-code.cm-time-marker,
 .cm-inline-code.cm-quote-marker,
 .cm-inline-code.cm-list-marker,
@@ -2547,6 +2565,11 @@ html[data-theme="dark"] .img-editor-canvas-wrap {
 .cm-code-block .cm-color-badge,
 .cm-code-block .cm-palette-badge,
 .cm-code-block .cm-highlight,
+.cm-code-block .cm-highlight-styled,
+.cm-code-block .cm-md-strong,
+.cm-code-block .cm-md-emphasis,
+.cm-code-block .cm-md-underline,
+.cm-code-block .cm-md-strikethrough,
 .cm-code-block .cm-time-marker,
 .cm-code-block .cm-quote-marker,
 .cm-code-block .cm-list-marker,
@@ -2554,6 +2577,8 @@ html[data-theme="dark"] .img-editor-canvas-wrap {
     color: inherit !important;
     background-color: transparent !important;
     font-weight: normal !important;
+    font-style: normal !important;
+    text-decoration: none !important;
     border: none !important;
     padding: 0 !important;
 }
@@ -2594,6 +2619,8 @@ html[data-theme="dark"] .cm-fold-block {
 .cm-editor .cm-fold-block *::selection,
 .cm-editor .cm-highlight::selection,
 .cm-editor span.cm-highlight::selection,
+.cm-editor .cm-highlight-styled::selection,
+.cm-editor span.cm-highlight-styled::selection,
 .cm-editor .cm-inline-code::selection,
 .cm-editor span.cm-inline-code::selection {
     background-color: #3574f0 !important;
@@ -2607,6 +2634,8 @@ html[data-theme="dark"] .cm-fold-block {
     html:not([data-theme="light"]) .cm-editor .cm-fold-block *::selection,
     html:not([data-theme="light"]) .cm-editor .cm-highlight::selection,
     html:not([data-theme="light"]) .cm-editor span.cm-highlight::selection,
+    html:not([data-theme="light"]) .cm-editor .cm-highlight-styled::selection,
+    html:not([data-theme="light"]) .cm-editor span.cm-highlight-styled::selection,
     html:not([data-theme="light"]) .cm-editor .cm-inline-code::selection,
     html:not([data-theme="light"]) .cm-editor span.cm-inline-code::selection {
         background-color: #4a9eff !important;
@@ -2619,6 +2648,8 @@ html[data-theme="dark"] .cm-editor .cm-fold-block::selection,
 html[data-theme="dark"] .cm-editor .cm-fold-block *::selection,
 html[data-theme="dark"] .cm-editor .cm-highlight::selection,
 html[data-theme="dark"] .cm-editor span.cm-highlight::selection,
+html[data-theme="dark"] .cm-editor .cm-highlight-styled::selection,
+html[data-theme="dark"] .cm-editor span.cm-highlight-styled::selection,
 html[data-theme="dark"] .cm-editor .cm-inline-code::selection,
 html[data-theme="dark"] .cm-editor span.cm-inline-code::selection {
     background-color: #4a9eff !important;

@@ -1173,14 +1173,107 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
         const paramTokenPlugin = makePlugin(paramTokenMatcher);
 
+        // ==text== 형광펜 — {color:..} / {bg:..} / {palette:..} 선행 토큰을 0개 이상 흡수하고
+        // render.ts 와 동일하게 (뒤 토큰이 우선) 색을 풀어 본문에만 데코를 적용한다.
+        // 선행 토큰 자체는 colorBadgePlugin / paletteBadgePlugin 이 별도 처리.
+        // {palette:NAME} 은 현재 다크모드에 맞춰 등록 팔레트의 bg/color 를 풀어 그 자리에 삽입한 뒤
+        // bg/color 토큰을 순서대로 스캔한다 (render.ts 의 _resolvePaletteTokens 와 동일 의미).
+        const resolvePalettePrefix = (raw) => {
+            if (!raw || raw.indexOf('{palette:') === -1) return raw;
+            const merged = (typeof window.getMergedWikiPalettes === 'function') ? window.getMergedWikiPalettes() : {};
+            return raw.replace(/\{palette:\s*([^}\s][^}]*?)\s*\}/g, (m, nameRaw) => {
+                const name = (nameRaw || '').trim();
+                const entry = merged[name];
+                if (!entry) return m;
+                const variant = isDarkMode ? (entry.dark || entry.light) : (entry.light || entry.dark);
+                if (!variant) return m;
+                let out = '';
+                if (variant.bg) out += `{bg:${variant.bg}}`;
+                if (variant.color) out += `{color:${variant.color}}`;
+                return out || m;
+            });
+        };
         const highlightMatcher = new MatchDecorator({
-            regexp: /==([^=]+)==/g,
-            decoration: (match, view, pos) => {
-                if (isInInlineCode(view.state, pos)) return null;
-                return Decoration.mark({ class: "cm-highlight" });
+            regexp: /((?:\{(?:palette|bg|color):[^}]+\})*)==([^=\n]+)==/g,
+            decorate: (add, from, to, match, view) => {
+                if (isInInlineCode(view.state, from)) return;
+                const prefix = match[1] || '';
+                const innerStart = from + prefix.length;
+                const innerEnd = to;
+                const expanded = resolvePalettePrefix(prefix);
+                let color = '';
+                let bg = '';
+                const colorRe = /\{color:\s*([^}]+)\}/g;
+                const bgRe = /\{bg:\s*([^}]+)\}/g;
+                let pm;
+                while ((pm = colorRe.exec(expanded)) !== null) color = pm[1].trim();
+                while ((pm = bgRe.exec(expanded)) !== null) bg = pm[1].trim();
+                const isSafe = (typeof window._isSafeCssColor === 'function') ? window._isSafeCssColor : () => false;
+                const safeColor = color && isSafe(color) ? color : '';
+                const safeBg = bg && isSafe(bg) ? bg : '';
+                if (!safeColor && !safeBg) {
+                    add(innerStart, innerEnd, Decoration.mark({ class: 'cm-highlight' }));
+                    return;
+                }
+                let style = '';
+                if (safeColor && !safeBg) {
+                    style = `color: ${safeColor};`;
+                } else {
+                    if (safeBg) style += `background-color: ${safeBg};`;
+                    if (safeColor) style += `color: ${safeColor};`;
+                }
+                add(innerStart, innerEnd, Decoration.mark({
+                    class: 'cm-highlight-styled',
+                    attributes: { style }
+                }));
             }
         });
         const highlightPlugin = makePlugin(highlightMatcher);
+
+        // **강조** — 마크다운 strong. lang-markdown 의 tag 기반 스타일이
+        // 일관되게 적용되지 않는 케이스가 있어 명시적 데코를 둔다.
+        // 백슬래시 이스케이프(`\*\*`)는 매칭하지 않도록 여는/닫는 `**` 직전에 `\` 가드.
+        const strongMatcher = new MatchDecorator({
+            regexp: /(?<!\\)\*\*([^*\n]+?)(?<!\\)\*\*/g,
+            decoration: (match, view, pos) => {
+                if (isInInlineCode(view.state, pos)) return null;
+                return Decoration.mark({ class: "cm-md-strong" });
+            }
+        });
+        const strongPlugin = makePlugin(strongMatcher);
+
+        // *기울임* — 마크다운 emphasis. 인접 `*` 은 강조(`**`) 가 흡수하므로 lookaround 로 제외.
+        // 여는 `*` 뒤 / 닫는 `*` 앞에 공백을 두지 않도록 강제해 `* item` 리스트 마커와 충돌하지 않게 한다.
+        // 백슬래시 이스케이프(`\*foo\*`) 는 매칭하지 않는다.
+        const emphasisMatcher = new MatchDecorator({
+            regexp: /(?<!\\)(?<!\*)\*(?!\*|\s)([^*\n]+?)(?<!\s)(?<!\\)\*(?!\*)/g,
+            decoration: (match, view, pos) => {
+                if (isInInlineCode(view.state, pos)) return null;
+                return Decoration.mark({ class: "cm-md-emphasis" });
+            }
+        });
+        const emphasisPlugin = makePlugin(emphasisMatcher);
+
+        // __밑줄__ — 위키 커스텀 underline (render.ts 의 underline 익스텐션과 동일 패턴).
+        // 백슬래시 이스케이프(`\_\_`)는 매칭하지 않는다.
+        const underlineMatcher = new MatchDecorator({
+            regexp: /(?<!\\)__([^_\n]+(?:_[^_\n]+)*)(?<!\\)__/g,
+            decoration: (match, view, pos) => {
+                if (isInInlineCode(view.state, pos)) return null;
+                return Decoration.mark({ class: "cm-md-underline" });
+            }
+        });
+        const underlinePlugin = makePlugin(underlineMatcher);
+
+        // ~~취소선~~ — GFM strikethrough. 백슬래시 이스케이프(`\~\~`)는 매칭하지 않는다.
+        const strikethroughMatcher = new MatchDecorator({
+            regexp: /(?<!\\)~~([^~\n]+?)(?<!\\)~~/g,
+            decoration: (match, view, pos) => {
+                if (isInInlineCode(view.state, pos)) return null;
+                return Decoration.mark({ class: "cm-md-strikethrough" });
+            }
+        });
+        const strikethroughPlugin = makePlugin(strikethroughMatcher);
 
         const timeMatcher = new MatchDecorator({
             regexp: /\{(time|timer|age|dday|calendar):[^}]+\}/g,
@@ -1451,6 +1544,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             alignPlugin,
             iconMarkerPlugin,
             highlightPlugin,
+            strongPlugin,
+            emphasisPlugin,
+            underlinePlugin,
+            strikethroughPlugin,
             timePlugin,
             inlineCodePlugin,
             quoteListPlugin,
