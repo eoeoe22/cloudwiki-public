@@ -1251,6 +1251,37 @@ html[data-theme="dark"] .toc-floating-body a.toc-active {
 }
 
 /* ── Reading Mode ── */
+.view-count-toggle {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: transparent;
+  border: 1px solid var(--wiki-border);
+  color: var(--wiki-text-muted);
+  border-radius: 6px;
+  padding: 0.25rem 0.6rem;
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.view-count-toggle:hover {
+  background: var(--wiki-bg);
+  color: var(--wiki-primary);
+  border-color: var(--wiki-primary);
+}
+
+.view-count-toggle:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.view-count-toggle + .reading-mode-toggle {
+  margin-left: 8px;
+}
+
 .reading-mode-toggle {
   margin-left: auto;
   display: inline-flex;
