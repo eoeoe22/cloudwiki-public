@@ -846,8 +846,9 @@
           });
         }
 
+        const isAdmin = currentUser && (currentUser.role === 'admin' || currentUser.role === 'super_admin');
         let viewCountBtnHtml = '';
-        if (!page.is_private) {
+        if (!page.is_private && isAdmin) {
           viewCountBtnHtml = `
             <button type="button" class="view-count-toggle" data-slug="${escapeHtml(page.slug)}" onclick="loadPageViewCount(this)" title="조회수 확인" aria-label="조회수 확인">
               <i class="bi bi-eye" aria-hidden="true"></i><span class="view-count-label"> 조회수</span>
@@ -909,7 +910,7 @@
         const _hasColon = actionSlug.includes(':');
 
         // 편집 권한 확인
-        const isAdmin = currentUser && (currentUser.role === 'admin' || currentUser.role === 'super_admin');
+        const _aclAdminOnly = _aclFlags.includes('admin_only');
         const canEdit = currentUser && (isAdmin || !_aclAdminOnly);
 
         // 메인 액션 (편집, 이력, 토론)

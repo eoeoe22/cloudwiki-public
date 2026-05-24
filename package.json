@@ -9,7 +9,8 @@
     "build": "vite build",
     "build:watch": "vite build --watch",
     "typecheck": "tsc --noEmit",
-    "typecheck:client": "tsc --noEmit -p tsconfig.client.json"
+    "typecheck:client": "tsc --noEmit -p tsconfig.client.json",
+    "generate:rules": "node scripts/generate-rules.mjs"
   },
   "dependencies": {
     "@block65/webcrypto-web-push": "^1.0.2",

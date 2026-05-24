@@ -2229,17 +2229,41 @@ function _processInlineLayoutTokens(html) {
     }
 
     // 인라인 컴포넌트({button:}, {badge:}, {tag:}, {stat:}) 앞에 놓인
-    // 스타일/아이콘 토큰({palette|bg|color|mdi|bi|icon}:...)을 흡수해 컴포넌트 내부에 렌더링.
+    // 스타일/아이콘 토큰({palette|bg|color|mdi|bi|icon|img}:...)을 흡수해 컴포넌트 내부에 렌더링.
     // 순서 무관하게 혼용 가능. 아이콘 토큰은 최대 1개만 소비.
     // 프리픽스는 컴포넌트 매치 후 역방향 결정적 스캔으로 수집하여
     // 탐욕적 반복 정규식의 백트래킹을 회피한다.
-    const COMPONENT_TOKEN_RE = /^\{(?:palette|bg|color|mdi|bi|icon):[^}]+\}$/;
-    const ICON_TOKEN_RE = /^\{(mdi|bi|icon):\s*([^}]+?)\s*\}$/;
+    //
+    // ![alt](url){size:icon} 문법: marked가 먼저 <img data-size="icon"> HTML로 변환하므로
+    // {img:src} 토큰으로 정규화한 뒤 기존 프리픽스 시스템으로 처리한다.
+    // 대상 컴포넌트는 extractIconHtml 을 호출하는 것들만 포함(kbd 제외 — 아이콘을 렌더하지 않으므로
+    // 변환 시 이미지가 silently drop 됨).
+    html = html.replace(
+        /<img\b([^>]*)>(?=\s*\{(?:stat|badge|tag|button|progress):[^}]*\})/g,
+        (m, attrs) => {
+            if (!/data-size="icon"/.test(attrs)) return m;
+            const srcMatch = attrs.match(/src="([^"]*)"/);
+            if (!srcMatch) return m;
+            // marked customImage 렌더러가 src 에 escapeHtml 을 적용한 상태이므로 원복.
+            // 그대로 두면 extractIconHtml 의 escapeHtml 이 한 번 더 적용되어 &amp;amp; 등
+            // 이중 인코딩으로 인해 query string URL 이 깨진다(&amp; → &amp;amp;).
+            const rawSrc = srcMatch[1]
+                .replace(/&lt;/g, '<')
+                .replace(/&gt;/g, '>')
+                .replace(/&quot;/g, '"')
+                .replace(/&#0?39;/g, "'")
+                .replace(/&amp;/g, '&');
+            return `{img:${rawSrc}}`;
+        }
+    );
+
+    const COMPONENT_TOKEN_RE = /^\{(?:palette|bg|color|mdi|bi|icon|img):[^}]+\}$/;
+    const ICON_TOKEN_RE = /^\{(mdi|bi|icon|img):\s*([^}]+?)\s*\}$/;
     const CLASS_NAME_RE = /^[a-zA-Z0-9\-_]+$/;
 
     function extractIconHtml(prefix) {
         let iconHtml = '';
-        const tokenRe = /\{(?:palette|bg|color|mdi|bi|icon):[^}]+\}/g;
+        const tokenRe = /\{(?:palette|bg|color|mdi|bi|icon|img):[^}]+\}/g;
         let tm;
         while ((tm = tokenRe.exec(prefix)) !== null) {
             const im = tm[0].match(ICON_TOKEN_RE);
@@ -2271,6 +2295,11 @@ function _processInlineLayoutTokens(html) {
                         // 알 수 없는 아이콘 클래스 → 제네릭 span으로 렌더링
                         iconHtml = `<span class="${escapeHtml(name)}" aria-hidden="true"></span>`;
                     }
+                }
+            } else if (type === 'img') {
+                // ![alt](url){size:icon} 전처리 결과. http/https 및 동일 오리진 상대경로만 허용.
+                if (isSafeUrl(name)) {
+                    iconHtml = `<img src="${escapeHtml(name)}" class="wiki-icon-img" alt="" aria-hidden="true">`;
                 }
             }
             if (iconHtml) break;

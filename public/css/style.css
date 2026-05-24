@@ -44,6 +44,7 @@
 
   /* Motion */
   --wiki-ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --wiki-ease-elastic: cubic-bezier(0.34, 1.56, 0.64, 1);
 
   /* Focus ring (사이트 전역 공통) */
   --wiki-focus-ring-color: rgba(14, 165, 233, 0.15);
@@ -57,6 +58,9 @@
 
   /* 컴포넌트 radius (.category-tag-container 등에서 참조) */
   --wiki-radius: 4px;
+  
+  /* 시맨틱 뮤트 보더 */
+  --wiki-border-muted: light-dark(rgba(0, 0, 0, 0.05), rgba(255, 255, 255, 0.04));
 }
 
 /* ── 강제 라이트/다크 테마 ── */
@@ -66,10 +70,18 @@ html[data-theme="dark"] { color-scheme: dark; }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --wiki-primary-rgb: 56, 189, 248;
+    --wiki-glass-bg: rgba(10, 10, 10, 0.6);
+    --wiki-glass-border: rgba(255, 255, 255, 0.08);
+    --wiki-shadow-lg: 0 20px 25px -5px rgba(0, 0, 0, 0.7), 
+                      0 8px 10px -6px rgba(56, 189, 248, 0.15);
   }
 }
 html[data-theme="dark"] {
   --wiki-primary-rgb: 56, 189, 248;
+  --wiki-glass-bg: rgba(10, 10, 10, 0.6);
+  --wiki-glass-border: rgba(255, 255, 255, 0.08);
+  --wiki-shadow-lg: 0 20px 25px -5px rgba(0, 0, 0, 0.7), 
+                    0 8px 10px -6px rgba(56, 189, 248, 0.15);
 }
 
 * {
@@ -363,7 +375,7 @@ div:where(.swal2-container) .swal2-html-container {
   font-weight: 700;
   font-size: 0.95rem;
   box-shadow: var(--wiki-shadow-sm);
-  transition: all 0.2s var(--wiki-ease);
+  transition: all 0.3s var(--wiki-ease-elastic);
 }
 
 .btn-new-page:hover {
@@ -374,7 +386,8 @@ div:where(.swal2-container) .swal2-html-container {
 }
 
 .btn-new-page:active {
-  transform: translateY(0);
+  transform: scale(0.97) translateY(0);
+  transition: transform 0.1s ease;
 }
 
 /* ── Offcanvas Sidebar Styling ── */
@@ -528,11 +541,11 @@ div:where(.swal2-container) .swal2-html-container {
 
 @media (prefers-color-scheme: dark) {
   html:not([data-theme="light"]) .user-dropdown-toggle {
-    border-color: rgba(48, 54, 61, 0.4) !important;
+    border-color: var(--wiki-border-muted) !important;
   }
 }
 html[data-theme="dark"] .user-dropdown-toggle {
-  border-color: rgba(48, 54, 61, 0.4) !important;
+  border-color: var(--wiki-border-muted) !important;
 }
 
 /* ── 검색바 스타일 ── */
@@ -737,12 +750,17 @@ html[data-theme="dark"] .user-dropdown-toggle {
   border-radius: 8px;
   text-decoration: none !important;
   color: var(--wiki-text);
-  transition: background 0.15s ease;
+  transition: background 0.15s ease, transform 0.3s var(--wiki-ease-elastic);
 }
 
 .recent-change-item:hover {
   background: var(--wiki-bg);
   color: var(--wiki-text);
+}
+
+.recent-change-item:active {
+  transform: scale(0.97);
+  transition: transform 0.1s ease;
 }
 
 .rc-title {
@@ -906,7 +924,7 @@ html[data-theme="dark"] .user-dropdown-toggle {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease, transform 0.3s var(--wiki-ease-elastic);
 }
 
 #articleMainActions .btn:hover,
@@ -918,6 +936,13 @@ html[data-theme="dark"] .user-dropdown-toggle {
   z-index: 2;
   /* Ensure border is visible in group */
   box-shadow: none !important;
+}
+
+#articleMainActions .btn:active,
+#shareDropdown:active,
+#docToolsDropdown:active {
+  transform: scale(0.97);
+  transition: transform 0.1s ease;
 }
 
 /* 마우스 포커스 / 드롭다운 열림(.show) 에서는 Bootstrap 기본 포커스 그림자만 차단 */
@@ -969,14 +994,15 @@ html[data-theme="dark"] .user-dropdown-toggle {
   font-weight: 600;
   font-size: 0.9rem;
   box-shadow: var(--wiki-shadow-sm);
-  transition: all 0.2s var(--wiki-ease);
+  transition: all 0.3s var(--wiki-ease-elastic);
   display: inline-flex;
   align-items: center;
   gap: 6px;
 }
 
 .btn-wiki:active {
-  transform: scale(0.98);
+  transform: scale(0.97) translateY(0);
+  transition: transform 0.1s ease;
 }
 
 .btn-wiki:hover {
@@ -1335,7 +1361,7 @@ html[data-theme="dark"] .btn-close {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  transition: all 0.2s var(--wiki-ease);
+  transition: all 0.3s var(--wiki-ease-elastic);
   background-color: var(--wiki-card-bg);
   border: 1px solid var(--wiki-border);
   color: var(--wiki-text);
@@ -1355,7 +1381,8 @@ html[data-theme="dark"] .btn-close {
 }
 
 .btn-rev-action:active {
-  transform: translateY(0);
+  transform: scale(0.97) translateY(0);
+  transition: transform 0.1s ease;
 }
 
 /* 보기 버튼 - Blue Icon on Hover */

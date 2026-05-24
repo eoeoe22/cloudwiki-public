@@ -3,7 +3,7 @@ import robotsTxtBase from './robots-txt';
 import { csrf } from 'hono/csrf';
 import { secureHeaders } from 'hono/secure-headers';
 import type { Env, Page } from './types';
-import { sessionMiddleware, rbacMiddleware } from './middleware/session';
+import { sessionMiddleware, rbacMiddleware, requireAdmin } from './middleware/session';
 import { RBAC } from './utils/role';
 import { applyPageSSR, extractMetaDescription } from './middleware/ssr';
 import { safeJSON } from './utils/json';
@@ -197,7 +197,7 @@ app.get('/api/analytics/trending', async (c) => {
     }
 });
 
-app.get('/api/analytics/page-views/:slug', async (c) => {
+app.get('/api/analytics/page-views/:slug', requireAdmin, async (c) => {
     const accountId = c.env.CF_ACCOUNT_ID;
     const apiToken = c.env.CF_API_TOKEN;
     if (!accountId || !apiToken) return c.json({ total: 0, recent: 0 });
