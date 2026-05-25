@@ -146,8 +146,10 @@
 
           <!-- 목차 아코디언 -->
           <div class="accordion mb-4" id="wikiAccordion">
-            <!-- 목차 -->
-            <div class="accordion-item">
+            <!-- 목차: 본문 상단 인라인 카드(.wiki-toc-card)로 대체되어 영구 숨김.
+                 #tocNav 는 플로팅 패널 / 스크롤 스파이 / FAB / 인라인 카드 클론의
+                 데이터 소스로 계속 사용되므로 DOM 에는 유지한다. -->
+            <div class="accordion-item d-none">
               <h2 class="accordion-header" id="headingTOC">
                 <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse"
                   data-bs-target="#collapseTOC" aria-expanded="false" aria-controls="collapseTOC">
@@ -1091,6 +1093,7 @@
             showCategory: true,
             tocContainerId: 'tocContainer',
             tocNavId: 'tocNav',
+            inlineTocLayout: true,
             collapsibleSections: true,
             enableSectionEdit: true,
             canEdit: canEdit,

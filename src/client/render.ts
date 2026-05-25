@@ -1179,6 +1179,11 @@ function generateTOC(contentEl, tocContainerId, tocNavId) {
 
     if (headings.length < 1) {
         tocContainer.classList.add('d-none');
+        // #tocNav 는 SPA 전환 간 공유되는 전역 소스다. 헤딩 없는 페이지에서 비우지 않으면
+        // 이전 페이지의 목차가 남아 인라인 카드 / 플로팅 패널 / FAB 가 stale 콘텐츠를
+        // 렌더할 수 있으므로 반드시 초기화한다.
+        const staleNav = document.getElementById(tocNavId);
+        if (staleNav) staleNav.innerHTML = '';
         return;
     }
 
@@ -1224,6 +1229,104 @@ function generateTOC(contentEl, tocContainerId, tocNavId) {
 
     tocNav.innerHTML = html;
     tocContainer.classList.remove('d-none');
+}
+
+// ── 본문 상단 인라인 목차 카드 (도입부와 2단 배치) ──
+// 숨겨진 데이터 소스(#tocNav, 본문 밖 영속 요소)를 클론하여, 첫 헤딩 이전 "도입부"
+// 노드와 나란히 .wiki-lead 2단 레이아웃으로 배치한다. 도입부가 없으면 카드만 상단에
+// 두고, 헤딩이 없으면(목차 없음) 인라인 카드를 만들지 않는다. 데이터 소스(#tocNav)는
+// SPA 재렌더와 무관하게 유지되며, 플로팅 패널 / 스크롤 스파이 / FAB 는 계속 이를 참조한다.
+function _buildInlineTocLayout(containerEl, navSourceId) {
+    if (!containerEl) return;
+    const sourceNav = document.getElementById(navSourceId);
+    const sourceOl = sourceNav ? sourceNav.querySelector('ol') : null;
+
+    // 헤딩이 없으면(목차 없음) 인라인 카드를 만들지 않는다.
+    if (!sourceOl || !sourceOl.children.length) return;
+
+    // 첫 헤딩(h1~h4, 각주/아코디언 헤더 제외) 이전의 "도입부" 노드 수집
+    const leadNodes = [];
+    for (const node of Array.from(containerEl.childNodes)) {
+        if (node.nodeType === 1 &&
+            /^H[1-4]$/.test(node.nodeName) &&
+            !node.classList.contains('accordion-header')) break;
+        leadNodes.push(node);
+    }
+
+    const lead = document.createElement('div');
+    lead.className = 'wiki-lead';
+
+    // 도입부 본문: 의미 있는 노드(요소 또는 비공백 텍스트)가 있을 때만 만든다.
+    const hasMeaningfulLead = leadNodes.some(
+        n => n.nodeType === 1 || (n.nodeType === 3 && (n.textContent || '').trim())
+    );
+    let leadBody = null;
+    if (hasMeaningfulLead) {
+        leadBody = document.createElement('div');
+        leadBody.className = 'wiki-lead-body';
+        leadNodes.forEach(n => leadBody.appendChild(n));
+    } else {
+        // 공백 노드만 있으면 제거하고 카드만 배치
+        leadNodes.forEach(n => n.parentNode && n.parentNode.removeChild(n));
+        lead.classList.add('wiki-lead-no-body');
+    }
+
+    // 목차 카드
+    const card = document.createElement('aside');
+    card.className = 'wiki-toc-card';
+    const head = document.createElement('div');
+    head.className = 'wiki-toc-card-head';
+    const label = document.createElement('span');
+    label.className = 'wiki-toc-card-title';
+    label.innerHTML = '<i class="bi bi-list-columns-reverse"></i> 목차';
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'wiki-toc-card-toggle';
+    toggle.setAttribute('aria-label', '목차 접기/펼치기');
+    toggle.setAttribute('aria-expanded', 'true');
+    toggle.innerHTML = '<i class="bi bi-chevron-up"></i>';
+    head.appendChild(label);
+    head.appendChild(toggle);
+
+    // 애니메이션 래퍼(.wiki-toc-card-body)가 grid-template-rows 전환으로 접기/펼치기.
+    const body = document.createElement('div');
+    body.className = 'wiki-toc-card-body';
+    const nav = document.createElement('nav');
+    nav.className = 'wiki-toc-card-nav';
+    nav.innerHTML = sourceOl.outerHTML;
+    body.appendChild(nav);
+
+    card.appendChild(head);
+    card.appendChild(body);
+    // 목차 카드를 항상 좌측에, 도입부를 우측에 배치한다(DOM 순서 = flex 배치 순서).
+    lead.appendChild(card);
+    if (leadBody) lead.appendChild(leadBody);
+
+    // 카드 접기/펼치기
+    toggle.addEventListener('click', () => {
+        const collapsed = card.classList.toggle('wiki-toc-card-collapsed');
+        toggle.setAttribute('aria-expanded', String(!collapsed));
+        const icon = toggle.querySelector('i');
+        if (icon) icon.className = collapsed ? 'bi bi-chevron-down' : 'bi bi-chevron-up';
+    });
+
+    // 목차 링크 클릭: 접힌 섹션을 펼친 뒤 스크롤 (render.ts 자체 헬퍼 사용)
+    nav.addEventListener('click', (e: Event) => {
+        const tgt = e.target;
+        const a = tgt instanceof Element ? tgt.closest('a[href^="#"]') : null;
+        if (!a) return;
+        const hash = a.getAttribute('href');
+        if (!hash || hash.length < 2) return;
+        let id;
+        try { id = decodeURIComponent(hash.slice(1)); } catch (_) { id = hash.slice(1); }
+        const target = id ? document.getElementById(id) : null;
+        if (!target) return;
+        e.preventDefault();
+        try { history.pushState(null, '', hash); } catch (_) { /* ignore */ }
+        _scrollToElementWithAncestors(target, { behavior: 'smooth', block: 'start' });
+    });
+
+    containerEl.insertBefore(lead, containerEl.firstChild);
 }
 
 // numberHeadings()는 헤딩별로 항상 `s-{N.N}` 형태의 앵커를 보장한다.
@@ -3540,6 +3643,11 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
 
         if (options.tocContainerId && options.tocNavId) {
             generateTOC(containerEl, options.tocContainerId, options.tocNavId);
+            // 본문 상단 인라인 목차 카드(도입부와 2단 배치). makeCollapsibleSections 전에
+            // 실행해 도입부 래핑이 섹션 래핑보다 먼저 일어나도록 한다.
+            if (options.inlineTocLayout) {
+                _buildInlineTocLayout(containerEl, options.tocNavId);
+            }
         }
 
         // 문서 원본(마크다운) 기준 통계(줄수/자수/단어수)를 TOC 아래에 표시

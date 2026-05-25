@@ -9,6 +9,149 @@
   margin-bottom: 2rem;
 }
 
+/* ── 본문 상단 인라인 목차 카드 (도입부와 2단 배치) ── */
+.wiki-lead {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: flex-start;
+  gap: 1.25rem;
+  margin-bottom: 1.75rem;
+}
+
+.wiki-lead-body {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+/* 도입부 본문 첫/마지막 요소의 수직 여백 정리 (카드와 상단 정렬) */
+.wiki-lead-body > :first-child {
+  margin-top: 0;
+}
+
+.wiki-lead-body > :last-child {
+  margin-bottom: 0;
+}
+
+.wiki-toc-card {
+  flex: 0 0 clamp(220px, 30%, 340px);
+  align-self: flex-start;
+  background: var(--wiki-card-bg);
+  border: 1px solid var(--wiki-border);
+  border-radius: 8px;
+  box-shadow: var(--wiki-shadow-sm);
+  overflow: hidden;
+}
+
+/* 도입부가 없으면 카드만 자연 너비로 좌측 배치 */
+.wiki-lead-no-body .wiki-toc-card {
+  flex: 0 1 auto;
+  max-width: 360px;
+}
+
+.wiki-toc-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.6rem 0.85rem;
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: var(--wiki-text);
+  border-bottom: 1px solid var(--wiki-border);
+}
+
+.wiki-toc-card-title i {
+  color: var(--wiki-primary);
+}
+
+.wiki-toc-card-toggle {
+  background: none;
+  border: none;
+  color: var(--wiki-text-muted);
+  cursor: pointer;
+  padding: 0;
+  font-size: 0.85rem;
+  line-height: 1;
+  transition: color 0.15s;
+}
+
+.wiki-toc-card-toggle:hover {
+  color: var(--wiki-text);
+}
+
+/* 펼치기/접기 애니메이션: grid-template-rows 0fr↔1fr (섹션 접기와 동일 패턴) */
+.wiki-toc-card-body {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows 0.3s ease;
+}
+
+.wiki-toc-card-collapsed .wiki-toc-card-body {
+  grid-template-rows: 0fr;
+}
+
+.wiki-toc-card-collapsed .wiki-toc-card-head {
+  border-bottom: none;
+}
+
+.wiki-toc-card-nav {
+  overflow: hidden;
+  min-height: 0;
+  padding: 0 0.85rem;
+  font-size: 0.8rem;
+}
+
+.wiki-toc-card-nav ol,
+.wiki-toc-card-nav ul {
+  list-style: none;
+  padding-left: 0;
+  margin: 0;
+  text-align: left;
+}
+
+/* 최상위 목록에만 상하 여백 — 접힘 시 grid 0fr 로 완전히 가려지도록 nav 패딩은 0 */
+.wiki-toc-card-nav > ol {
+  margin-block: 0.5rem;
+}
+
+.wiki-toc-card-nav ol ol,
+.wiki-toc-card-nav ul ul {
+  padding-left: 0.9rem;
+}
+
+.wiki-toc-card-nav li {
+  margin: 0.15rem 0;
+}
+
+.wiki-toc-card-nav a {
+  color: var(--wiki-text);
+  text-decoration: none;
+  display: block;
+  padding: 0.2rem 0.35rem;
+  border-radius: 6px;
+  transition: background 0.15s, color 0.15s;
+}
+
+.wiki-toc-card-nav a:hover {
+  background: var(--wiki-toc-bg);
+  color: var(--wiki-primary);
+}
+
+/* 모바일: 세로 스택 (도입부 위, 목차 아래) — 가로 스크롤 금지 */
+@media (max-width: 768px) {
+  .wiki-lead {
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .wiki-toc-card,
+  .wiki-lead-no-body .wiki-toc-card {
+    flex: 1 1 auto;
+    width: 100%;
+    max-width: none;
+  }
+}
+
 /* Accordion Override (Premium UI) */
 .accordion-item {
   background-color: var(--wiki-bg);
