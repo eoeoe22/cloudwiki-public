@@ -478,7 +478,10 @@ search.get('/search/suggest', async (c) => {
     const user = c.get('user');
     const rbac = c.get('rbac') as RBAC;
     const isAdmin = user && rbac.can(user.role, 'admin:access');
-    const canSeePrivate = rbac.can(user?.role ?? 'guest', 'wiki:private');
+    // public_only=1 → 열람 권한과 무관하게 비공개 문서를 항상 제외한다.
+    // (예: 에디터의 "하위 문서 구조 삽입" 루트 문서 선택은 공개 문서만 허용)
+    const publicOnly = c.req.query('public_only') === '1';
+    const canSeePrivate = !publicOnly && rbac.can(user?.role ?? 'guest', 'wiki:private');
     const trimmed = query.trim();
     const likePattern = `%${trimmed}%`;
     const startPattern = `${trimmed}%`;

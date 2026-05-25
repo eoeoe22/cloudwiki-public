@@ -2229,7 +2229,7 @@ async function openSubdocInsertModal(): Promise<void> {
 
             async function fetchSubdocSuggestions(q: string) {
                 try {
-                    const res = await fetch('/api/search/suggest?q=' + encodeURIComponent(q));
+                    const res = await fetch('/api/search/suggest?public_only=1&q=' + encodeURIComponent(q));
                     if (!res.ok) return;
                     const data = await res.json() as { suggestions?: SubdocSuggestion[] };
                     renderSubdocSuggestions(data.suggestions || []);
@@ -2296,7 +2296,7 @@ async function openSubdocInsertModal(): Promise<void> {
 
             async function loadSubdocPreview(slug: string) {
                 try {
-                    const res = await fetch('/api/w/' + encodeURIComponent(slug) + '/subdocs');
+                    const res = await fetch('/api/w/' + encodeURIComponent(slug) + '/subdocs?public_only=1');
                     const data = await res.json() as { subdocs?: SubdocItem[] };
                     const subdocs = data.subdocs || [];
 

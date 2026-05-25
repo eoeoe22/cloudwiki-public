@@ -2566,10 +2566,13 @@ wiki.get('/w/:slug/revisions/:id/diff', async (c) => {
 wiki.get('/w/:slug/subdocs', async (c) => {
     const slug = c.req.param('slug');
     const immediate = c.req.query('immediate') === '1';
+    // public_only=1 → 열람 권한과 무관하게 비공개 문서를 항상 제외한다.
+    // (예: 에디터의 "하위 문서 구조 삽입"은 결과 링크가 모든 독자에게 노출되므로 공개 문서만 삽입)
+    const publicOnly = c.req.query('public_only') === '1';
     const db = c.env.DB;
     const user = c.get('user');
     const rbac = c.get('rbac') as RBAC;
-    const canSeePrivate = rbac.can(user?.role ?? 'guest', 'wiki:private');
+    const canSeePrivate = !publicOnly && rbac.can(user?.role ?? 'guest', 'wiki:private');
     const privateFilter = canSeePrivate ? '' : ' AND is_private = 0';
 
     if (immediate) {
