@@ -27,6 +27,28 @@
     flex-wrap: wrap;
 }
 
+/* 라디오/체크박스 옵션 행 — 좁아지면 줄바꿈한다. */
+.bulkcat-option-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+.bulkcat-option-row .form-check-inline {
+    margin-right: 0;
+}
+.bulkcat-option-label {
+    min-width: 84px;
+    font-weight: 600;
+}
+
+/* ACL 플래그 체크박스 묶음 — 좁아지면 줄바꿈한다. */
+.bulkcat-flag-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 16px;
+}
+
 .bulkcat-modal {
     text-align: left;
     color: var(--wiki-text);
@@ -102,6 +124,8 @@
 .bulkcat-subpages-panel {
     max-height: 340px;
     overflow-y: auto;
+    /* 좁은 폭에서 행이 줄바꿈되지 않고 패널 내부에서 가로 스크롤되도록 한다. */
+    overflow-x: auto;
     border: 1px solid var(--wiki-border);
     border-radius: 8px;
     background: var(--wiki-card-bg);
@@ -173,6 +197,8 @@
 .bulkcat-subpages-table td {
     padding: 0.4rem 0.875rem;
     vertical-align: middle;
+    /* 슬러그·칩이 줄바꿈하지 않고 패널 가로 스크롤로 확장되도록 한다. */
+    white-space: nowrap;
 }
 .bulkcat-subpages-table tr[data-page-id] > td:first-child {
     padding-left: calc(var(--bulkcat-depth, 0) * 1.25em + 0.875rem);
@@ -197,11 +223,11 @@
 
 .bulkcat-row-cats-cell {
     text-align: right;
-    white-space: normal;
+    white-space: nowrap;
 }
 .bulkcat-row-categories {
     display: inline-flex;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     gap: 0.25rem;
     justify-content: flex-end;
 }

@@ -9,21 +9,31 @@
   margin-bottom: 2rem;
 }
 
-/* ── 본문 상단 인라인 목차 카드 (도입부와 2단 배치) ── */
-.wiki-lead {
-  display: flex;
-  flex-wrap: nowrap;
-  align-items: flex-start;
-  gap: 1.25rem;
-  margin-bottom: 1.75rem;
+/* ── 본문 상단 인라인 목차 카드 (좌측 플로팅, 도입부·본문이 우측·하단을 감쌈) ── */
+/* #articleContent 가 플로팅 카드를 포함하도록 BFC 를 형성한다(카드 active 시에만 적용) */
+.wiki-content.wiki-has-inline-toc {
+  display: flow-root;
 }
 
+.wiki-toc-card {
+  float: left;
+  width: clamp(220px, 28%, 320px);
+  margin: 0 1.25rem 1rem 0;
+  background: var(--wiki-card-bg);
+  border: 1px solid var(--wiki-border);
+  border-radius: 8px;
+  box-shadow: var(--wiki-shadow-sm);
+  overflow: hidden;
+}
+
+/* 도입부 컬럼: BFC(flow-root)로 float 와 겹치지 않게 해 목차가 접히거나 짧아도
+   카드 아래로 흘러들지 않고 우측 컬럼을 유지한다. */
 .wiki-lead-body {
-  flex: 1 1 0;
+  display: flow-root;
   min-width: 0;
 }
 
-/* 도입부 본문 첫/마지막 요소의 수직 여백 정리 (카드와 상단 정렬) */
+/* 도입부 첫/마지막 요소의 수직 여백 정리 — :::card 등 첫 블록을 카드 상단과 정렬 */
 .wiki-lead-body > :first-child {
   margin-top: 0;
 }
@@ -32,20 +42,9 @@
   margin-bottom: 0;
 }
 
-.wiki-toc-card {
-  flex: 0 0 clamp(220px, 30%, 340px);
-  align-self: flex-start;
-  background: var(--wiki-card-bg);
-  border: 1px solid var(--wiki-border);
-  border-radius: 8px;
-  box-shadow: var(--wiki-shadow-sm);
-  overflow: hidden;
-}
-
-/* 도입부가 없으면 카드만 자연 너비로 좌측 배치 */
-.wiki-lead-no-body .wiki-toc-card {
-  flex: 0 1 auto;
-  max-width: 360px;
+/* 첫 헤딩 직전에 삽입되어 도입부 이후 본문이 float 를 해제하고 전체 폭을 쓰게 한다 */
+.wiki-toc-clear {
+  clear: both;
 }
 
 .wiki-toc-card-head {
@@ -137,18 +136,18 @@
   color: var(--wiki-primary);
 }
 
-/* 모바일: 세로 스택 (도입부 위, 목차 아래) — 가로 스크롤 금지 */
-@media (max-width: 768px) {
-  .wiki-lead {
-    flex-direction: column;
-    gap: 1rem;
-  }
+/* 본문 헤딩과 동일한 계층 번호 prefix */
+.wiki-toc-card-nav .wiki-toc-num {
+  color: var(--wiki-text-muted);
+  margin-right: 0.15rem;
+}
 
-  .wiki-toc-card,
-  .wiki-lead-no-body .wiki-toc-card {
-    flex: 1 1 auto;
+/* 모바일: 플로팅 해제, 카드 전체 폭(목차 위 → 본문 아래로 스택) */
+@media (max-width: 768px) {
+  .wiki-toc-card {
+    float: none;
     width: 100%;
-    max-width: none;
+    margin: 0 0 1rem 0;
   }
 }
 

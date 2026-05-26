@@ -1697,16 +1697,39 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
         if (!token) {
             return c.json({ error: 'Turnstile 검증이 필요합니다.' }, 403);
         }
-        const formData = new FormData();
-        formData.append('secret', c.env.TURNSTILE_SECRET_KEY);
-        formData.append('response', token);
-        formData.append('remoteip', c.req.header('cf-connecting-ip') || '');
-        const tsRes = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
-            method: 'POST',
-            body: formData,
-        });
-        const tsData = await tsRes.json<{ success: boolean }>();
-        if (!tsData.success) {
+        // idempotency_key 를 양쪽 시도에 동일하게 전달해 첫 요청이 Cloudflare에 도달 후
+        // 응답이 손실된 경우에도 재시도가 캐시된 성공 결과를 받을 수 있도록 한다.
+        const idempotencyKey = crypto.randomUUID();
+        const makeTsFormData = () => {
+            const fd = new FormData();
+            fd.append('secret', c.env.TURNSTILE_SECRET_KEY!);
+            fd.append('response', token);
+            fd.append('remoteip', c.req.header('cf-connecting-ip') || '');
+            fd.append('idempotency_key', idempotencyKey);
+            return fd;
+        };
+        // siteverify 는 간헐적 네트워크 오류가 발생할 수 있으므로 fetch 실패 시 1회 재시도.
+        // success: false 는 토큰 소비 후 실패일 수 있어 재시도하지 않는다.
+        let tsData: { success: boolean };
+        try {
+            const tsRes = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+                method: 'POST',
+                body: makeTsFormData(),
+            });
+            tsData = await tsRes.json<{ success: boolean }>();
+        } catch {
+            // 네트워크 오류 시 1회 재시도
+            try {
+                const tsRes2 = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+                    method: 'POST',
+                    body: makeTsFormData(),
+                });
+                tsData = await tsRes2.json<{ success: boolean }>();
+            } catch {
+                return c.json({ error: 'Turnstile 검증에 실패했습니다. 다시 시도해주세요.' }, 403);
+            }
+        }
+        if (!tsData!.success) {
             return c.json({ error: 'Turnstile 검증에 실패했습니다. 다시 시도해주세요.' }, 403);
         }
     }

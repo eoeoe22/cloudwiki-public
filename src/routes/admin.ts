@@ -2019,6 +2019,31 @@ function escapeLike(s: string): string {
 }
 
 /**
+ * 자동 규칙 prefix 가 주어진 문서 slug 와 "관련"있는지 판정한다.
+ * 관련 = 두 prefix 의 하위 트리(`prefix/**`)가 교집합을 가지는 경우로, 다음 중 하나면 true:
+ *   - 정확히 같은 prefix
+ *   - 규칙 prefix 가 slug 의 상위(예: slug=`a/b/c`, rule=`a` → 현재 문서 트리 전체에 적용)
+ *   - 규칙 prefix 가 slug 의 하위(예: slug=`a`, rule=`a/b` → 현재 트리의 일부에 적용)
+ * 비교는 slug 정체성 규칙에 맞춰 대소문자를 구분한다.
+ */
+function isRulePrefixRelated(rulePrefix: string, slug: string): boolean {
+    if (rulePrefix === slug) return true;
+    if (slug.startsWith(rulePrefix + '/')) return true;
+    if (rulePrefix.startsWith(slug + '/')) return true;
+    return false;
+}
+
+/**
+ * `relatedTo` 쿼리(현재 문서 slug)가 주어지면 그와 관련된 규칙만 남긴다.
+ * 값이 비어 있으면 전체를 그대로 반환한다.
+ */
+function filterRulesByRelatedTo<T extends { prefix: string }>(rules: T[], relatedTo: string | undefined): T[] {
+    const slug = (relatedTo ?? '').trim().replace(/^\/+/, '').replace(/\/+$/, '');
+    if (!slug) return rules;
+    return rules.filter(r => isRulePrefixRelated(r.prefix, slug));
+}
+
+/**
  * prefix 검증: trim, 1~200자, 제어문자 금지.
  * 정상이면 정규화된 prefix 를, 에러면 { error } 를 반환.
  */
@@ -2099,8 +2124,8 @@ adminRoutes.get('/category-prefix-rules', async (c) => {
              LEFT JOIN users u ON u.id = r.created_by
              ORDER BY r.prefix ASC`
         )
-        .all();
-    return c.json(results);
+        .all<{ prefix: string }>();
+    return c.json(filterRulesByRelatedTo(results, c.req.query('relatedTo')));
 });
 
 /**
@@ -2399,7 +2424,7 @@ adminRoutes.get('/doc-setting-prefix-rules', async (c) => {
              ORDER BY r.prefix ASC`
         )
         .all<DocSettingRuleRow>();
-    return c.json(results);
+    return c.json(filterRulesByRelatedTo(results, c.req.query('relatedTo')));
 });
 
 /**

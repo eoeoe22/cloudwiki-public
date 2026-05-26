@@ -1171,24 +1171,14 @@ function numberHeadings(contentEl) {
     });
 }
 
-function generateTOC(contentEl, tocContainerId, tocNavId) {
-    if (!contentEl) return;
+// 컨테이너 내부 헤딩으로 중첩 <ol> 목차 HTML 을 생성한다(외부 의존 없음).
+// generateTOC(외부 #tocNav 패널)와 인라인 목차 카드가 공유한다. 헤딩이 없으면 ''.
+// includeNumbers=true 이면 본문 헤딩 번호(.wiki-heading-num)를 링크 앞에 붙여 본문과
+// 동일한 계층 번호를 표시한다(목차 카드 전용 — 외부 패널은 번호 없이 유지).
+function _buildTocOlHtml(contentEl, includeNumbers = false) {
+    if (!contentEl) return '';
     const headings = contentEl.querySelectorAll('h1:not(.accordion-header), h2:not(.accordion-header), h3:not(.accordion-header), h4:not(.accordion-header)');
-    const tocContainer = document.getElementById(tocContainerId);
-    if (!tocContainer) return;
-
-    if (headings.length < 1) {
-        tocContainer.classList.add('d-none');
-        // #tocNav 는 SPA 전환 간 공유되는 전역 소스다. 헤딩 없는 페이지에서 비우지 않으면
-        // 이전 페이지의 목차가 남아 인라인 카드 / 플로팅 패널 / FAB 가 stale 콘텐츠를
-        // 렌더할 수 있으므로 반드시 초기화한다.
-        const staleNav = document.getElementById(tocNavId);
-        if (staleNav) staleNav.innerHTML = '';
-        return;
-    }
-
-    const tocNav = document.getElementById(tocNavId);
-    if (!tocNav) return;
+    if (headings.length < 1) return '';
 
     const headingArray = Array.from(headings);
     const regularHeadingLevels = headingArray
@@ -1208,7 +1198,7 @@ function generateTOC(contentEl, tocContainerId, tocNavId) {
         const rawLevel = isFootnoteHeading ? minLevel : parseInt(h.tagName[1], 10);
         const level = rawLevel - minLevel + 1;
         const id = h.id || `heading-${i}`;
-        // .wiki-heading-num을 제외한 순수 텍스트만 사용 (번호는 <ol>이 자동 생성)
+        // .wiki-heading-num(번호 prefix)을 제외한 순수 제목 텍스트
         const numSpan = h.querySelector('.wiki-heading-num');
         let text = '';
         h.childNodes.forEach(n => {
@@ -1221,54 +1211,65 @@ function generateTOC(contentEl, tocContainerId, tocNavId) {
             for (let j = level; j < prevLevel; j++) html += '</ol>';
         }
 
-        html += `<li><a href="#${id}">${escapeHtml(text.trim())}</a></li>`;
+        // 본문과 정확히 일치하도록 헤딩 번호 prefix(예: "1.2.")를 그대로 사용한다.
+        let label = escapeHtml(text.trim());
+        if (includeNumbers && numSpan) {
+            const num = (numSpan.textContent || '').trim();
+            if (num) label = `<span class="wiki-toc-num">${escapeHtml(num)}</span> ${label}`;
+        }
+        html += `<li><a href="#${id}">${label}</a></li>`;
         prevLevel = level;
     });
 
     for (let j = 0; j < prevLevel; j++) html += '</ol>';
+    return html;
+}
+
+function generateTOC(contentEl, tocContainerId, tocNavId) {
+    if (!contentEl) return;
+    const tocContainer = document.getElementById(tocContainerId);
+    if (!tocContainer) return;
+
+    const html = _buildTocOlHtml(contentEl);
+    if (!html) {
+        tocContainer.classList.add('d-none');
+        // #tocNav 는 SPA 전환 간 공유되는 전역 소스다. 헤딩 없는 페이지에서 비우지 않으면
+        // 이전 페이지의 목차가 남아 플로팅 패널 / FAB 가 stale 콘텐츠를 렌더할 수 있으므로
+        // 반드시 초기화한다.
+        const staleNav = document.getElementById(tocNavId);
+        if (staleNav) staleNav.innerHTML = '';
+        return;
+    }
+
+    const tocNav = document.getElementById(tocNavId);
+    if (!tocNav) return;
 
     tocNav.innerHTML = html;
     tocContainer.classList.remove('d-none');
 }
 
-// ── 본문 상단 인라인 목차 카드 (도입부와 2단 배치) ──
-// 숨겨진 데이터 소스(#tocNav, 본문 밖 영속 요소)를 클론하여, 첫 헤딩 이전 "도입부"
-// 노드와 나란히 .wiki-lead 2단 레이아웃으로 배치한다. 도입부가 없으면 카드만 상단에
-// 두고, 헤딩이 없으면(목차 없음) 인라인 카드를 만들지 않는다. 데이터 소스(#tocNav)는
-// SPA 재렌더와 무관하게 유지되며, 플로팅 패널 / 스크롤 스파이 / FAB 는 계속 이를 참조한다.
-function _buildInlineTocLayout(containerEl, navSourceId) {
+// ── 본문 상단 인라인 목차 카드 (좌측 플로팅) ──
+// 컨테이너 내부 헤딩으로 목차를 자체 생성한 카드를 본문 최상단에 float:left 로 삽입한다
+// (외부 #tocNav 의존 없음 → 프리뷰 등 어떤 렌더 컨텍스트에서도 동작). 도입부(첫 헤딩
+// 이전)는 BFC 컬럼(.wiki-lead-body)으로 감싸 카드 우측에 두어 목차가 접히거나 짧아도
+// 카드 아래로 흘러들지 않게 하고, 첫 헤딩부터는 clear 센티넬로 전체 폭에 배치한다.
+// 헤딩이 없으면(목차 없음) 카드를 만들지 않는다.
+function _buildInlineTocLayout(containerEl) {
     if (!containerEl) return;
-    const sourceNav = document.getElementById(navSourceId);
-    const sourceOl = sourceNav ? sourceNav.querySelector('ol') : null;
+    // 이전 렌더의 BFC 클래스를 초기화(헤딩 없는 페이지로 전환 시 잔존 방지).
+    containerEl.classList.remove('wiki-has-inline-toc');
 
+    const olHtml = _buildTocOlHtml(containerEl, true);
     // 헤딩이 없으면(목차 없음) 인라인 카드를 만들지 않는다.
-    if (!sourceOl || !sourceOl.children.length) return;
+    if (!olHtml) return;
 
-    // 첫 헤딩(h1~h4, 각주/아코디언 헤더 제외) 이전의 "도입부" 노드 수집
+    // 첫 최상위 헤딩(h1~h4, 아코디언 헤더 제외) 이전의 "도입부" 노드 수집
+    const isTopHeading = (n) =>
+        n.nodeType === 1 && /^H[1-4]$/.test(n.nodeName) && !n.classList.contains('accordion-header');
     const leadNodes = [];
     for (const node of Array.from(containerEl.childNodes)) {
-        if (node.nodeType === 1 &&
-            /^H[1-4]$/.test(node.nodeName) &&
-            !node.classList.contains('accordion-header')) break;
+        if (isTopHeading(node)) break;
         leadNodes.push(node);
-    }
-
-    const lead = document.createElement('div');
-    lead.className = 'wiki-lead';
-
-    // 도입부 본문: 의미 있는 노드(요소 또는 비공백 텍스트)가 있을 때만 만든다.
-    const hasMeaningfulLead = leadNodes.some(
-        n => n.nodeType === 1 || (n.nodeType === 3 && (n.textContent || '').trim())
-    );
-    let leadBody = null;
-    if (hasMeaningfulLead) {
-        leadBody = document.createElement('div');
-        leadBody.className = 'wiki-lead-body';
-        leadNodes.forEach(n => leadBody.appendChild(n));
-    } else {
-        // 공백 노드만 있으면 제거하고 카드만 배치
-        leadNodes.forEach(n => n.parentNode && n.parentNode.removeChild(n));
-        lead.classList.add('wiki-lead-no-body');
     }
 
     // 목차 카드
@@ -1293,14 +1294,11 @@ function _buildInlineTocLayout(containerEl, navSourceId) {
     body.className = 'wiki-toc-card-body';
     const nav = document.createElement('nav');
     nav.className = 'wiki-toc-card-nav';
-    nav.innerHTML = sourceOl.outerHTML;
+    nav.innerHTML = olHtml;
     body.appendChild(nav);
 
     card.appendChild(head);
     card.appendChild(body);
-    // 목차 카드를 항상 좌측에, 도입부를 우측에 배치한다(DOM 순서 = flex 배치 순서).
-    lead.appendChild(card);
-    if (leadBody) lead.appendChild(leadBody);
 
     // 카드 접기/펼치기
     toggle.addEventListener('click', () => {
@@ -1326,7 +1324,30 @@ function _buildInlineTocLayout(containerEl, navSourceId) {
         _scrollToElementWithAncestors(target, { behavior: 'smooth', block: 'start' });
     });
 
-    containerEl.insertBefore(lead, containerEl.firstChild);
+    // 카드를 본문 최상단에 float:left 로 삽입.
+    containerEl.insertBefore(card, containerEl.firstChild);
+    containerEl.classList.add('wiki-has-inline-toc');
+
+    // 도입부를 BFC 컬럼으로 감싸 카드 우측에 고정한다. BFC 박스는 float 와 겹치지 않으므로
+    // 목차가 접히거나 짧아도 도입부가 카드 아래로 흘러들지 않고 우측 컬럼을 유지한다.
+    const hasMeaningfulLead = leadNodes.some(
+        n => n.nodeType === 1 || (n.nodeType === 3 && (n.textContent || '').trim())
+    );
+    if (hasMeaningfulLead) {
+        const leadBody = document.createElement('div');
+        leadBody.className = 'wiki-lead-body';
+        leadNodes.forEach(n => leadBody.appendChild(n));
+        containerEl.insertBefore(leadBody, card.nextSibling);
+    }
+
+    // 첫 최상위 헤딩 앞에 clear 센티넬을 넣어, 그 이후 본문 섹션은 float 를 해제하고
+    // 전체 폭으로 배치한다(도입부만 카드 옆을 차지).
+    const firstHeading = Array.from(containerEl.children).find(isTopHeading);
+    if (firstHeading) {
+        const clearEl = document.createElement('div');
+        clearEl.className = 'wiki-toc-clear';
+        containerEl.insertBefore(clearEl, firstHeading);
+    }
 }
 
 // numberHeadings()는 헤딩별로 항상 `s-{N.N}` 형태의 앵커를 보장한다.
@@ -3641,13 +3662,15 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
         // 각주 섹션 헤딩(<h4>각주</h4>)에는 문단 번호 prefix 를 부여하지 않는다.
         containerEl.querySelectorAll('.wiki-footnotes .wiki-heading-num').forEach(el => el.remove());
 
+        // 외부 목차 패널(#tocNav/#tocContainer)은 해당 옵션이 있을 때만 갱신한다.
         if (options.tocContainerId && options.tocNavId) {
             generateTOC(containerEl, options.tocContainerId, options.tocNavId);
-            // 본문 상단 인라인 목차 카드(도입부와 2단 배치). makeCollapsibleSections 전에
-            // 실행해 도입부 래핑이 섹션 래핑보다 먼저 일어나도록 한다.
-            if (options.inlineTocLayout) {
-                _buildInlineTocLayout(containerEl, options.tocNavId);
-            }
+        }
+        // 본문 상단 인라인 목차 카드는 컨테이너 헤딩으로 자체 생성하므로 외부 패널과 무관하게
+        // 동작한다(프리뷰 등). makeCollapsibleSections 전에 실행해 도입부/clear 래핑이 섹션
+        // 래핑보다 먼저 일어나도록 한다.
+        if (options.inlineTocLayout) {
+            _buildInlineTocLayout(containerEl);
         }
 
         // 문서 원본(마크다운) 기준 통계(줄수/자수/단어수)를 TOC 아래에 표시

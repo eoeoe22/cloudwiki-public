@@ -186,8 +186,8 @@ async function putPageEditAcl(slug: string, acl: EditAcl | null): Promise<{ ok: 
     return { ok: true, acl: data.edit_acl ?? null };
 }
 
-async function fetchRules(): Promise<DocSettingRule[]> {
-    const res = await fetch('/api/admin/doc-setting-prefix-rules');
+async function fetchRules(relatedTo: string): Promise<DocSettingRule[]> {
+    const res = await fetch(`/api/admin/doc-setting-prefix-rules?relatedTo=${encodeURIComponent(relatedTo)}`);
     if (!res.ok) return [];
     const data = (await res.json()) as unknown;
     return Array.isArray(data) ? (data as DocSettingRule[]) : [];
@@ -257,7 +257,7 @@ function ruleCategoriesLabel(raw: string | null): string {
 
 function rulesTableHtml(rules: DocSettingRule[]): string {
     if (rules.length === 0) {
-        return '<div class="bulkcat-rules-empty">저장된 자동 규칙이 없습니다.</div>';
+        return '<div class="bulkcat-rules-empty">이 문서와 관련된 자동 규칙이 없습니다.</div>';
     }
     const rows = rules.map((r) => `
         <tr data-rule-id="${r.id}">
@@ -285,7 +285,7 @@ function aclFieldsetHtml(idPrefix: string, initialAcl: EditAcl | null, initially
     return `
         <fieldset class="perm-acl-fieldset" id="${idPrefix}Fieldset" style="border: 1px dashed var(--bs-border-color); padding: 8px 12px; border-radius: 6px; ${initiallyVisible ? '' : 'display: none;'}">
             <legend class="bulkcat-section-title" style="font-size: 0.85em; padding: 0 6px;">권한</legend>
-            <div style="display: flex; flex-wrap: wrap; gap: 6px 16px;">
+            <div class="bulkcat-flag-row">
                 ${ACL_FLAG_ORDER.map(f => `
                     <label class="form-check-inline mb-0"><input class="form-check-input ${idPrefix}-flag" type="checkbox" value="${f}"${flagSet.has(f) ? ' checked' : ''}> <span class="ms-1">${ACL_FLAG_LABELS[f]}</span></label>
                 `).join('')}
@@ -304,8 +304,8 @@ function buildModalHtml(slug: string, page: CurrentPage | null, pageLoadError: s
                     <span class="form-check-label fw-bold text-danger ms-1"><i class="mdi mdi-eye-off"></i> 비공개 (관리자만 열람)</span>
                 </label>
             </div>
-            <div role="radiogroup" aria-label="편집 ACL" style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 0.4rem;">
-                <span style="min-width: 84px; font-weight: 600;"><i class="mdi mdi-shield-account"></i> 편집 ACL</span>
+            <div role="radiogroup" aria-label="편집 ACL" class="bulkcat-option-row" style="margin-bottom: 0.4rem;">
+                <span class="bulkcat-option-label"><i class="mdi mdi-shield-account"></i> 편집 ACL</span>
                 <label class="form-check-inline mb-0"><input class="form-check-input" type="radio" name="permCurAclAction" value="none"${page.edit_acl ? '' : ' checked'}> <span class="ms-1">그대로</span></label>
                 <label class="form-check-inline mb-0"><input class="form-check-input" type="radio" name="permCurAclAction" value="clear"> <span class="ms-1">비활성화</span></label>
                 <label class="form-check-inline mb-0"><input class="form-check-input" type="radio" name="permCurAclAction" value="set"${page.edit_acl ? ' checked' : ''}> <span class="ms-1">아래 ACL 적용</span></label>
@@ -344,21 +344,21 @@ function buildModalHtml(slug: string, page: CurrentPage | null, pageLoadError: s
                 </div>
 
                 <div class="bulkcat-actions-row" style="display: flex; flex-direction: column; gap: 10px; margin-top: 0.5rem;">
-                    <div role="radiogroup" aria-label="비공개" style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
-                        <span style="min-width: 84px; font-weight: 600;"><i class="mdi mdi-eye-off"></i> 비공개</span>
+                    <div role="radiogroup" aria-label="비공개" class="bulkcat-option-row">
+                        <span class="bulkcat-option-label"><i class="mdi mdi-eye-off"></i> 비공개</span>
                         <label class="form-check-inline mb-0"><input class="form-check-input" type="radio" name="permBulkPrivateAction" value="none" checked> <span class="ms-1">그대로</span></label>
                         <label class="form-check-inline mb-0"><input class="form-check-input" type="radio" name="permBulkPrivateAction" value="on"> <span class="ms-1">비공개</span></label>
                         <label class="form-check-inline mb-0"><input class="form-check-input" type="radio" name="permBulkPrivateAction" value="off"> <span class="ms-1">공개</span></label>
                     </div>
-                    <div role="radiogroup" aria-label="편집 ACL" style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
-                        <span style="min-width: 84px; font-weight: 600;"><i class="mdi mdi-shield-account"></i> 편집 ACL</span>
+                    <div role="radiogroup" aria-label="편집 ACL" class="bulkcat-option-row">
+                        <span class="bulkcat-option-label"><i class="mdi mdi-shield-account"></i> 편집 ACL</span>
                         <label class="form-check-inline mb-0"><input class="form-check-input" type="radio" name="permBulkAclAction" value="none" checked> <span class="ms-1">그대로</span></label>
                         <label class="form-check-inline mb-0"><input class="form-check-input" type="radio" name="permBulkAclAction" value="clear"> <span class="ms-1">비활성화</span></label>
                         <label class="form-check-inline mb-0"><input class="form-check-input" type="radio" name="permBulkAclAction" value="set"> <span class="ms-1">아래 ACL 적용</span></label>
                     </div>
                     ${aclFieldsetHtml('permBulkAcl', null, false)}
-                    <div role="radiogroup" aria-label="카테고리" style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
-                        <span style="min-width: 84px; font-weight: 600;"><i class="mdi mdi-tag-multiple-outline"></i> 카테고리</span>
+                    <div role="radiogroup" aria-label="카테고리" class="bulkcat-option-row">
+                        <span class="bulkcat-option-label"><i class="mdi mdi-tag-multiple-outline"></i> 카테고리</span>
                         <label class="form-check-inline mb-0"><input class="form-check-input" type="radio" name="permBulkCatAction" value="none" checked> <span class="ms-1">그대로</span></label>
                         <label class="form-check-inline mb-0"><input class="form-check-input" type="radio" name="permBulkCatAction" value="add"> <span class="ms-1">아래 카테고리 추가</span></label>
                         <label class="form-check-inline mb-0"><input class="form-check-input" type="radio" name="permBulkCatAction" value="set"> <span class="ms-1">아래로 교체</span></label>
@@ -383,7 +383,7 @@ function buildModalHtml(slug: string, page: CurrentPage | null, pageLoadError: s
 
             <section class="bulkcat-section bulk-modal-section-card">
                 <header class="bulkcat-section-head">
-                    <h6 class="bulkcat-section-title">기존 자동 규칙</h6>
+                    <h6 class="bulkcat-section-title">관련 자동 규칙</h6>
                 </header>
                 <div class="bulkcat-rules-wrap" id="permRulesTable">${rulesTableHtml(rules)}</div>
             </section>
@@ -703,7 +703,7 @@ async function loadBulkTree(state: ModalState): Promise<void> {
 
 // ── 섹션 3: 자동 규칙 표 ─────────────────────────────────────────
 
-function hookRuleDeleteButtons(container: HTMLElement) {
+function hookRuleDeleteButtons(container: HTMLElement, relatedTo: string) {
     container.querySelectorAll<HTMLButtonElement>('.perm-rule-delete').forEach((btn) => {
         btn.addEventListener('click', async () => {
             const row = btn.closest<HTMLTableRowElement>('tr[data-rule-id]');
@@ -726,9 +726,9 @@ function hookRuleDeleteButtons(container: HTMLElement) {
                 swal?.fire({ icon: 'error', title: '삭제 실패', toast: true, position: 'top-end', timer: 2500, showConfirmButton: false });
                 return;
             }
-            const rules = await fetchRules();
+            const rules = await fetchRules(relatedTo);
             container.innerHTML = rulesTableHtml(rules);
-            hookRuleDeleteButtons(container);
+            hookRuleDeleteButtons(container, relatedTo);
         });
     });
 }
@@ -746,7 +746,7 @@ export async function openPermissionsModal(rawSlug: string): Promise<void> {
 
     const [pageRes, rules] = await Promise.all([
         fetchCurrentPage(slug),
-        fetchRules().catch(() => [] as DocSettingRule[]),
+        fetchRules(slug).catch(() => [] as DocSettingRule[]),
     ]);
 
     let page: CurrentPage | null = null;
@@ -878,7 +878,7 @@ export async function openPermissionsModal(rawSlug: string): Promise<void> {
 
             // 섹션 3: 규칙 표
             const tableEl = document.getElementById('permRulesTable');
-            if (tableEl) hookRuleDeleteButtons(tableEl);
+            if (tableEl) hookRuleDeleteButtons(tableEl, slug);
         },
         preConfirm: () => {
             const privateAction = readBulkPrivateAction();

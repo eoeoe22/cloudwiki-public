@@ -422,7 +422,9 @@ async function updateCustomPreview() {
         // 일치하는 iframe 은 캐시 노드로 in-place 치환한다.
         const previewSnap = snapshotPreviewState(customPreview);
         try {
-            await window.renderWikiContent(md, slug, 'custom-wiki-preview');
+            await window.renderWikiContent(md, slug, 'custom-wiki-preview', {
+                inlineTocLayout: true
+            });
         } finally {
             restorePreviewState(customPreview, previewSnap);
         }

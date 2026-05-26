@@ -66,8 +66,8 @@ function getCurrentSlug(): string {
     return raw ? normalizeSlug(raw) : '';
 }
 
-async function fetchRules(): Promise<PrefixRule[]> {
-    const res = await fetch('/api/admin/category-prefix-rules');
+async function fetchRules(relatedTo: string): Promise<PrefixRule[]> {
+    const res = await fetch(`/api/admin/category-prefix-rules?relatedTo=${encodeURIComponent(relatedTo)}`);
     if (!res.ok) return [];
     const data = (await res.json()) as unknown;
     return Array.isArray(data) ? (data as PrefixRule[]) : [];
@@ -84,7 +84,7 @@ async function fetchSubpages(prefix: string): Promise<SubpagesResponse | { error
 
 function rulesTableHtml(rules: PrefixRule[]): string {
     if (rules.length === 0) {
-        return '<div class="bulkcat-rules-empty">저장된 자동 규칙이 없습니다.</div>';
+        return '<div class="bulkcat-rules-empty">이 문서와 관련된 자동 규칙이 없습니다.</div>';
     }
     const rows = rules
         .map(
@@ -149,7 +149,7 @@ function buildModalHtml(currentSlug: string, rules: PrefixRule[]): string {
 
             <section class="bulkcat-section">
                 <header class="bulkcat-section-head">
-                    <h6 class="bulkcat-section-title">기존 자동 규칙</h6>
+                    <h6 class="bulkcat-section-title">관련 자동 규칙</h6>
                 </header>
                 <div class="bulkcat-rules-wrap" id="bulkCatRulesTable">${rulesTableHtml(rules)}</div>
             </section>
@@ -162,13 +162,13 @@ async function deleteRule(id: number): Promise<boolean> {
     return res.ok;
 }
 
-async function refreshRulesTable(container: HTMLElement) {
-    const rules = await fetchRules();
+async function refreshRulesTable(container: HTMLElement, relatedTo: string) {
+    const rules = await fetchRules(relatedTo);
     container.innerHTML = rulesTableHtml(rules);
-    hookRuleDeleteButtons(container);
+    hookRuleDeleteButtons(container, relatedTo);
 }
 
-function hookRuleDeleteButtons(container: HTMLElement) {
+function hookRuleDeleteButtons(container: HTMLElement, relatedTo: string) {
     container.querySelectorAll<HTMLButtonElement>('.bulkcat-rule-delete').forEach((btn) => {
         btn.addEventListener('click', async () => {
             const row = btn.closest<HTMLTableRowElement>('tr[data-rule-id]');
@@ -191,7 +191,7 @@ function hookRuleDeleteButtons(container: HTMLElement) {
                 swal?.fire({ icon: 'error', title: '삭제 실패', toast: true, position: 'top-end', timer: 2500, showConfirmButton: false });
                 return;
             }
-            await refreshRulesTable(container);
+            await refreshRulesTable(container, relatedTo);
         });
     });
 }
@@ -658,7 +658,7 @@ async function openBulkCategoryModal() {
 
     let rules: PrefixRule[] = [];
     try {
-        rules = await fetchRules();
+        rules = await fetchRules(currentSlug);
     } catch (e) {
         console.warn('Failed to load prefix rules', e);
     }
@@ -680,7 +680,7 @@ async function openBulkCategoryModal() {
         focusConfirm: false,
         didOpen: () => {
             const tableEl = document.getElementById('bulkCatRulesTable');
-            if (tableEl) hookRuleDeleteButtons(tableEl);
+            if (tableEl) hookRuleDeleteButtons(tableEl, currentSlug);
 
             tagUI = installBulkCategoryTagUI({
                 onTagsChanged: () => recomputePreChecks(state),

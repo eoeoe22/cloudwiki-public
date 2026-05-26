@@ -103,7 +103,7 @@ function aclFieldsetHtml(idPrefix: string, initialAcl: EditAcl | null): string {
     const flagSet = new Set(initialAcl?.flags ?? []);
     return `
         <fieldset class="perm-acl-fieldset" style="border: 1px dashed var(--bs-border-color); padding: 8px 12px; border-radius: 6px;">
-            <div style="display: flex; flex-wrap: wrap; gap: 6px 16px;">
+            <div class="bulkcat-flag-row">
                 ${ACL_FLAG_ORDER.map(f => `
                     <label class="form-check-inline mb-0"><input class="form-check-input ${idPrefix}-flag" type="checkbox" value="${f}"${flagSet.has(f) ? ' checked' : ''}> <span class="ms-1">${ACL_FLAG_LABELS[f]}</span></label>
                 `).join('')}
@@ -175,8 +175,8 @@ function buildEditorHtml(name: string, initialAcl: EditAcl | null, pageCount: nu
                     <div class="bulkcat-empty">불러오는 중…</div>
                 </div>
                 <div class="bulkcat-actions-row" style="display: flex; flex-direction: column; gap: 10px; margin-top: 0.5rem;">
-                    <div role="radiogroup" aria-label="모드" style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
-                        <span style="min-width: 84px; font-weight: 600;"><i class="mdi mdi-merge"></i> 모드</span>
+                    <div role="radiogroup" aria-label="모드" class="bulkcat-option-row">
+                        <span class="bulkcat-option-label"><i class="mdi mdi-merge"></i> 모드</span>
                         <label class="form-check-inline mb-0"><input class="form-check-input" type="radio" name="catAclBulkMode" value="merge" checked> <span class="ms-1">합치기</span></label>
                         <label class="form-check-inline mb-0"><input class="form-check-input" type="radio" name="catAclBulkMode" value="overwrite"> <span class="ms-1">덮어쓰기</span></label>
                         <label class="form-check-inline mb-0"><input class="form-check-input" type="radio" name="catAclBulkMode" value="ignore"> <span class="ms-1">무시 (페이지 변경 없음)</span></label>

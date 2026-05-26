@@ -869,6 +869,29 @@
   white-space: nowrap;
 }
 
+/* ── 콘텐츠 관리 탭: 자동 줄바꿈 금지 → 레이아웃 내부에서 가로 스크롤 ── */
+/* 삭제된 문서 테이블: 셀 줄바꿈 금지 (.table-responsive 가 가로 스크롤 제공) */
+#tab-content .table-responsive th,
+#tab-content .table-responsive td {
+  white-space: nowrap;
+}
+
+/* 카테고리 ACL · 컬러 팔레트 목록: 컨테이너 자체에 가로 스크롤 부여 */
+#tab-content #categoryAclSummary,
+#tab-content #paletteList {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* 목록 항목은 줄바꿈 없이 내용만큼 확장하고, 컨테이너가 가로 스크롤 처리 */
+#tab-content #categoryAclSummary .list-group-item,
+#tab-content #paletteList .palette-row {
+  white-space: nowrap;
+  flex-wrap: nowrap;
+  width: max-content;
+  min-width: 100%;
+}
+
 /* ── 반응형 ── */
 @media (max-width: 1200px) {
   .admin-layout {
