@@ -146,7 +146,7 @@ function makeToolbar(view: any, EditorView: any): HTMLElement {
 
     const fileInput = document.createElement('input');
     fileInput.type = 'file';
-    fileInput.accept = 'image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm,video/ogg';
+    fileInput.accept = 'image/jpeg,image/png,image/gif,image/webp,image/svg+xml,video/mp4,video/webm,video/ogg';
     fileInput.style.display = 'none';
     imgMenu.appendChild(fileInput);
 

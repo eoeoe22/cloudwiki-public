@@ -13,10 +13,28 @@ const ALLOWED_TYPES = new Set([
     'image/png',
     'image/gif',
     'image/webp',
+    'image/svg+xml',
     'video/mp4',
     'video/webm',
     'video/ogg',
 ]);
+
+/**
+ * SVG XSS 벡터 거부 패턴.
+ * 클라이언트는 업로드 전 DOMPurify로 SVG를 정제하지만, media:upload 권한자가
+ * 브라우저 UI를 우회해 POST /api/media 를 직접 호출할 수 있으므로 서버에서도
+ * 스크립트 실행으로 이어지는 마크업이 포함된 SVG는 저장하지 않고 거부한다.
+ * (서빙 시 default-src 'none' CSP 와 함께 이중 방어를 구성한다.)
+ */
+const SVG_FORBIDDEN_PATTERNS: { re: RegExp; label: string }[] = [
+    { re: /<script[\s/>]/i, label: '<script>' },
+    { re: /<foreignObject[\s/>]/i, label: '<foreignObject>' },
+    { re: /<!DOCTYPE/i, label: '<!DOCTYPE>' },
+    { re: /<!ENTITY/i, label: '<!ENTITY>' },
+    // 속성 경계(공백/따옴표/슬래시/태그 시작) 다음에 오는 on* 이벤트 핸들러
+    { re: /[\s"'/<]on[a-z]+\s*=/i, label: 'on* 이벤트 핸들러' },
+    { re: /javascript:/i, label: 'javascript: URL' },
+];
 
 /**
  * 문서 제목 슬러그에서 금지되는 문자와 동일한 규칙을 기본으로 사용하고,
@@ -90,6 +108,20 @@ media.post('/api/media', requireAuth, requirePermission('media:upload'), async (
         return c.json({ error: `파일 크기는 ${maxSizeMb}MB 이하만 허용됩니다.` }, 400);
     }
 
+    // SVG 보안 검증: 클라이언트 정제(DOMPurify)를 우회한 직접 호출에 대비해
+    // 서버에서도 XSS 벡터가 포함된 SVG는 거부한다. (검증을 위해 본문을 먼저 읽어둔다)
+    let svgBody: string | null = null;
+    if (file.type === 'image/svg+xml') {
+        svgBody = await file.text();
+        const hit = SVG_FORBIDDEN_PATTERNS.find((p) => p.re.test(svgBody!));
+        if (hit) {
+            return c.json(
+                { error: `보안상 허용되지 않는 SVG입니다. (${hit.label} 포함)` },
+                400
+            );
+        }
+    }
+
     // 확장자 결정
     const ext = getExtension(file.name, file.type);
 
@@ -115,8 +147,8 @@ media.post('/api/media', requireAuth, requirePermission('media:upload'), async (
         }
     }
 
-    // R2 업로드
-    await c.env.MEDIA.put(r2Key, file.stream(), {
+    // R2 업로드 (SVG는 위에서 읽어 검증한 본문을, 그 외는 원본 스트림을 저장)
+    await c.env.MEDIA.put(r2Key, svgBody !== null ? svgBody : file.stream(), {
         httpMetadata: { contentType: file.type },
     });
 
@@ -551,6 +583,11 @@ media.get('/media/*', async (c) => {
         headers.set('Content-Disposition', 'attachment');
     }
     headers.set('Cache-Control', 'public, max-age=31536000, immutable');
+    // SVG는 클라이언트 업로드 전 DOMPurify로 정제되지만, 우회 공격 방어를 위해
+    // 서빙 시에도 스크립트 실행을 CSP로 차단한다.
+    if (contentType === 'image/svg+xml') {
+        headers.set('Content-Security-Policy', "default-src 'none'");
+    }
 
     return new Response(object.body, { headers });
 });
@@ -564,6 +601,7 @@ function getExtension(filename: string, mimeType: string): string {
         'image/png': 'png',
         'image/gif': 'gif',
         'image/webp': 'webp',
+        'image/svg+xml': 'svg',
         'video/mp4': 'mp4',
         'video/webm': 'webm',
         'video/ogg': 'ogg',

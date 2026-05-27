@@ -334,8 +334,21 @@ async function handleImageUpload(
     let selectedSize = 'full';
     let workingBlob: File | Blob = blob;
 
-    // 이미지인 경우 편집기를 먼저 실행 (동영상은 바로 업로드)
-    if (workingBlob.type && !workingBlob.type.startsWith('video/')) {
+    if (workingBlob.type === 'image/svg+xml') {
+        // SVG: 캔버스 편집기 건너뜀. DOMPurify로 XSS 유발 요소 제거 후 업로드.
+        const DOMPurify = (window as any).DOMPurify as
+            | { sanitize(dirty: string, cfg?: Record<string, unknown>): string }
+            | undefined;
+        if (!DOMPurify || typeof DOMPurify.sanitize !== 'function') {
+            Swal?.fire('오류', 'SVG 보안 정제 라이브러리를 로드할 수 없습니다. 페이지를 새로고침 후 다시 시도해주세요.', 'error');
+            return;
+        }
+        const svgText = await (workingBlob as File).text();
+        const sanitized = DOMPurify.sanitize(svgText, { USE_PROFILES: { svg: true, svgFilters: true } });
+        const origName = (workingBlob as File).name || 'image.svg';
+        workingBlob = new File([sanitized], origName, { type: 'image/svg+xml' });
+    } else if (workingBlob.type && !workingBlob.type.startsWith('video/')) {
+        // 비SVG 이미지: 편집기 실행 (크롭 + 회전)
         const editResult = await ImageEditor.open(workingBlob);
         if (!editResult) return; // 편집 취소
         const fileName = (workingBlob as File).name || 'image';

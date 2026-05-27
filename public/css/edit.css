@@ -296,6 +296,14 @@
         border-right: none;
     }
 
+    /* #custom-wiki-preview 는 프리뷰 패널이면서 렌더 컨테이너(.wiki-content)이기도 하다.
+       인라인 목차가 켜지면 render.css 의 .wiki-content.wiki-has-inline-toc{display:flow-root}
+       (specificity 0,2,0)가 위 .wiki-preview-pane{display:none}(0,1,0)을 눌러, 에디터 탭에서도
+       프리뷰가 노출되는 회귀가 있었다. ID 선택자로 우선순위를 확보해 비활성 탭에서 확실히 숨긴다. */
+    #custom-wiki-preview:not(.cm-tab-active) {
+        display: none;
+    }
+
     .wiki-editor-pane.cm-tab-active {
         display: flex;
         flex-direction: column;
