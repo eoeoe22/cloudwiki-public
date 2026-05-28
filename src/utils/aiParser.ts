@@ -410,6 +410,12 @@ export async function renderForAI(content: string, db: D1Database, depth = 0, cu
     });
     processed = processed.replace(/^:::[ \t]*$/gm, '');
 
+    // {br} 토큰을 placeholder 로 미리 보호. 아래 컴포넌트 regex 들이 [^}|]+ /
+    // [^}]+ 패턴이라 {badge:foo{br}bar} 같은 입력에서 inner {br} 의 } 를 outer
+    // 종결로 잘못 매치해 content 가 truncate 되는 문제를 방지. 모든 토큰 처리가
+    // 끝난 후 catch-all 다음 단계에서 실제 개행으로 복원한다.
+    processed = processed.replace(/\{br\}/g, 'WIKIBRPHEND');
+
     // 인라인 레이아웃 토큰: 텍스트 내용은 보존 (AI 컨텍스트에 의미 있음)
     processed = processed.replace(/\{badge:([^}|]+)\}/g, (_, t) => `[${t.trim()}]`);
     processed = processed.replace(/\{tag:([^}|]+)\}/g, (_, t) => `[${t.trim()}]`);
@@ -447,6 +453,9 @@ export async function renderForAI(content: string, db: D1Database, depth = 0, cu
 
     // {#fff}, {mdi mdi-icon} 등 남은 표 색상/아이콘/기타 싱글 중괄호 토큰 제거 (내용물 포함)
     processed = processed.replace(/\{[^{}]*\}/g, '');
+
+    // 모든 중괄호 토큰 처리가 끝났으므로 {br} placeholder 를 실제 개행으로 복원
+    processed = processed.replace(/WIKIBRPHEND/g, '\n');
 
     // [[문서간 링크]]는 그대로 유지 (변환하지 않음)
 

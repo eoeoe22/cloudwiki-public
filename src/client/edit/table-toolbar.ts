@@ -28,6 +28,7 @@ type EditorView = any;
 declare global {
     interface Window {
         setupTableToolbar?: () => TableToolbarHandle;
+        findTableContext?: (view: EditorView) => TableContext | null;
     }
 }
 
@@ -474,3 +475,4 @@ export function setupTableToolbar(): TableToolbarHandle {
 }
 
 window.setupTableToolbar = setupTableToolbar;
+window.findTableContext = findTableContext;

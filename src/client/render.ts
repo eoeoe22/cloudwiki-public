@@ -2880,11 +2880,21 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
         const renderExtensionData = _wikiExtensionData.slice();
 
         const codeBlocksForFold = [];
-        let foldInput = resolvedContent.replace(/^(`{3,})[^\n]*\n[\s\S]*?\n\1[ \t]*$|`[^`\n]+`/gm, (m) => {
+        // 백틱(```) · 틸드(~~~) fenced block 과 인라인 백틱 코드 모두 보호한다.
+        // 틸드 fence 도 마크다운 표준이므로 보호 대상에 포함해야 다음 단계의
+        // {br} → placeholder 치환이 코드 본문 내부까지 침범하지 않는다.
+        let foldInput = resolvedContent.replace(/^([`~]{3,})[^\n]*\n[\s\S]*?\n\1[ \t]*$|`[^`\n]+`/gm, (m) => {
             const idx = codeBlocksForFold.length;
             codeBlocksForFold.push(m);
             return `WIKICODEFPH${idx}XEND`;
         });
+
+        // {br} 인라인 줄바꿈 토큰을 안전한 placeholder 로 치환. marked 의 로컬 renderer.html
+        // 가 raw HTML 을 escape 하므로 직접 <br> 를 넣으면 &lt;br&gt; 로 새어 나간다.
+        // placeholder 는 모든 sanitize·토큰 처리 종료 후 innerHTML 직전에 <br> 로 복원한다.
+        // 코드 블록·인라인 코드는 위에서 이미 플레이스홀더로 보호된 상태이므로 코드 본문
+        // 안의 {br} 은 그대로 보존된다.
+        foldInput = foldInput.replace(/\{br\}/g, 'WIKIBRPHEND');
 
         foldInput = foldInput.replace(/^[\u200B\uFEFF]+(\[[-+])/gm, '$1');
 
@@ -3031,6 +3041,11 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
 
         // 타임스탬프 문법 처리
         html = _processTimestampsInHtml(html);
+
+        // {br} placeholder 복원. 모든 sanitize·토큰 처리가 끝난 뒤에만 수행해
+        // marked.renderer.html 의 HTML escape 와 무관하게 <br> 가 살아남도록 한다.
+        // 코드 블록 안의 {br} 은 placeholder 단계 전에 보호되었기 때문에 영향이 없다.
+        html = html.replace(/WIKIBRPHEND/g, '<br>');
 
         containerEl.innerHTML = html;
 

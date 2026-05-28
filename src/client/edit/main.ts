@@ -1580,6 +1580,42 @@ document.addEventListener('DOMContentLoaded', async () => {
                     history(),
                     cmKeymap.of([
                         { key: "Mod-f", run: () => { if (typeof openFindPanel === 'function') { openFindPanel(); } return true; }, preventDefault: true },
+                        {
+                            key: "Shift-Enter",
+                            run: (view) => {
+                                // 표 셀 안에서 Shift+Enter → {br} 토큰 삽입. 표 밖 / 구분선 위 /
+                                // 셀 경계 밖 (leading | 앞, trailing | 뒤) / table-toolbar 번들
+                                // 미로드 시 / wikiSyntaxAutocompleteEnabled === false 일 때는
+                                // false 를 반환해 defaultKeymap 으로 폴백. autocomplete 토글은
+                                // table-toolbar 와 동일한 옵트아웃 정책을 따른다.
+                                if (window.wikiSyntaxAutocompleteEnabled === false) return false;
+                                const finder = (window as unknown as { findTableContext?: (v: unknown) => { rowIndex: number; separatorRowIndex: number } | null }).findTableContext;
+                                if (typeof finder !== 'function') return false;
+                                const ctx = finder(view);
+                                if (!ctx) return false;
+                                if (ctx.rowIndex === ctx.separatorRowIndex) return false;
+                                // 커서가 실제 셀 내부인지 확인.
+                                // (1) 좌측에 escape 되지 않은 | 가 반드시 존재해야 셀 시작 이후.
+                                // (2) trailing pipe 가 실제로 있는 경우 (GFM 은 optional) cursor 가
+                                //     그 뒤로 가면 셀 밖. trailing pipe 없는 row 의 마지막 셀에서는
+                                //     line 끝까지 셀 내부로 인정한다.
+                                const sel = view.state.selection.main;
+                                const line = view.state.doc.lineAt(sel.from);
+                                const col = sel.from - line.from;
+                                if (!/(?<!\\)\|/.test(line.text.slice(0, col))) return false;
+                                const trailingPipe = line.text.match(/(?<!\\)\|(?=[ \t]*$)/);
+                                if (trailingPipe && col > (trailingPipe.index ?? -1)) return false;
+                                const pos = sel.from;
+                                view.dispatch({
+                                    changes: { from: pos, insert: '{br}' },
+                                    selection: { anchor: pos + 4 }
+                                });
+                                return true;
+                            }
+                            // preventDefault 미설정: false 반환 시 defaultKeymap (insertNewline) 으로
+                            // 그대로 fall-through. preventDefault: true 를 두면 false 반환 시에도
+                            // browser default 가 막혀 셀 밖 Shift+Enter 가 무력화된다.
+                        },
                         ...defaultKeymap,
                         ...historyKeymap,
                         indentWithTab
