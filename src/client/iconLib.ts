@@ -3,6 +3,8 @@
 // 지연 로딩 + 모듈 내부 캐시: 한 번 가져오면 페이지가 살아있는 동안 재사용한다.
 // 외부 CDN 응답을 그대로 파싱해서 BI/MDI 아이콘 이름 배열을 만든다.
 
+import { CDN_URLS } from '../shared/cdn';
+
 let biIconList: string[] | null = null;
 let mdiIconList: string[] | null = null;
 let selectedIconsList: string[] | null = null;
@@ -10,7 +12,7 @@ let selectedIconsList: string[] | null = null;
 export async function loadBiIcons(): Promise<string[]> {
     if (biIconList) return biIconList;
     try {
-        const res = await fetch('https://cdn.jsdelivr.net/npm/bootstrap-icons@1.13.1/font/bootstrap-icons.json');
+        const res = await fetch(CDN_URLS.bootstrapIconsJson);
         const data = await res.json() as Record<string, unknown>;
         biIconList = Object.keys(data).sort();
     } catch (e) {
@@ -23,7 +25,7 @@ export async function loadBiIcons(): Promise<string[]> {
 export async function loadMdiIcons(): Promise<string[]> {
     if (mdiIconList) return mdiIconList;
     try {
-        const res = await fetch('https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css');
+        const res = await fetch(CDN_URLS.mdiCss);
         const css = await res.text();
         const matches = [...css.matchAll(/\.mdi-([\w-]+)::before/g)];
         mdiIconList = [...new Set(matches.map(m => m[1]))].sort();

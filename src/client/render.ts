@@ -20,6 +20,7 @@
  */
 import { escapeHtml } from './utils/html';
 import { isSafeUrl } from './utils/url';
+import { CDN_URLS, FONTS } from '../shared/cdn';
 
 // ── Marked 설정 및 렌더링 코어 로직 ──
 // ── Marked 설정 (1회 초기화) ──
@@ -2423,7 +2424,7 @@ function _processInlineLayoutTokens(html) {
             } else if (type === 'img') {
                 // ![alt](url){size:icon} 전처리 결과. http/https 및 동일 오리진 상대경로만 허용.
                 if (isSafeUrl(name)) {
-                    iconHtml = `<img src="${escapeHtml(name)}" class="wiki-icon-img" alt="" aria-hidden="true">`;
+                    iconHtml = `<img src="${escapeHtml(name)}" class="wiki-icon-img" data-size="icon" alt="" aria-hidden="true">`;
                 }
             }
             if (iconHtml) break;
@@ -3620,7 +3621,7 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
                 const codeFont = document.createElement('link');
                 codeFont.id = 'wiki-code-font-link';
                 codeFont.rel = 'stylesheet';
-                codeFont.href = 'https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Nanum+Gothic+Coding:wght@400;700&display=swap';
+                codeFont.href = FONTS.code;
                 document.head.appendChild(codeFont);
             }
 
@@ -3628,13 +3629,13 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
                 if (!document.getElementById('prism-core-script')) {
                     const prismCore = document.createElement('script');
                     prismCore.id = 'prism-core-script';
-                    prismCore.src = 'https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js';
+                    prismCore.src = CDN_URLS.prismCore;
                     prismCore.onload = () => {
                         const prismAutoloader = document.createElement('script');
                         prismAutoloader.id = 'prism-autoloader-script';
-                        prismAutoloader.src = 'https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js';
+                        prismAutoloader.src = CDN_URLS.prismAutoloader;
                         prismAutoloader.onload = () => {
-                            Prism.plugins.autoloader.languages_path = 'https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/';
+                            Prism.plugins.autoloader.languages_path = CDN_URLS.prismComponentsBase;
                             document.querySelectorAll('pre code[class*="language-"]').forEach(el => Prism.highlightElement(el));
                         };
                         document.body.appendChild(prismAutoloader);

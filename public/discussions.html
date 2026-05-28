@@ -6,15 +6,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title class="app-wiki-name">토론 - CloudWiki</title>
   <link rel="icon" id="wiki-favicon" href="/favicon.ico">
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.13.1/font/bootstrap-icons.min.css" rel="stylesheet">
-  <link href="https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css" rel="stylesheet">
-  <link href="https://cdn.jsdelivr.net/npm/sweetalert2@11.26.24/dist/sweetalert2.min.css" rel="stylesheet">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link
-    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Outfit:wght@500;600;700;800;900&family=Inter:wght@400;500;700;800&display=swap"
-    rel="stylesheet">
   <link rel="stylesheet" href="/css/style.css">
   <link rel="stylesheet" href="/render.css">
   <link rel="stylesheet" href="/css/mini-editor.css">
@@ -22,20 +13,6 @@
   <link rel="stylesheet" href="/css/image-picker.css">
   <!-- 테마 FOUC 방지: CSS 로드 후 즉시 테마 적용 -->
   <script>try{var t=localStorage.getItem('themeMode');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
-  <!-- CodeMirror 6 Import Map (미니 에디터용) -->
-  <script type="importmap">
-  {
-    "imports": {
-      "@codemirror/state": "https://esm.sh/@codemirror/state@6.6.0",
-      "@codemirror/view": "https://esm.sh/@codemirror/view@6.41.1",
-      "@codemirror/commands": "https://esm.sh/@codemirror/commands@6.10.3",
-      "@codemirror/language": "https://esm.sh/@codemirror/language@6.12.3",
-      "@codemirror/lang-markdown": "https://esm.sh/@codemirror/lang-markdown@6.5.0",
-      "@codemirror/language-data": "https://esm.sh/@codemirror/language-data@6.5.2",
-      "@codemirror/theme-one-dark": "https://esm.sh/@codemirror/theme-one-dark@6.1.3"
-    }
-  }
-  </script>
   <style>
     /* 모바일에서 햄버거 메뉴 숨김 */
     .navbar-toggler[data-bs-target="#mobileSidebar"] {
@@ -190,11 +167,6 @@
   <div id="app-footer-placeholder"></div>
 
   <!-- ── Scripts ── -->
-  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11.26.24"></script>
-  <!-- 위키 문법 렌더링 (marked + DOMPurify + render.js) -->
-  <script src="https://cdn.jsdelivr.net/npm/marked@18.0.3/lib/marked.umd.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.4.2/dist/purify.min.js"></script>
   <script type="module" src="/dist/common.js"></script>
   <script type="module" src="/dist/render.js"></script>
   <script type="module" src="/dist/edit-image.js"></script>

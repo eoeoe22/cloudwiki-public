@@ -1837,6 +1837,15 @@ a.wiki-button > .wiki-button-label {
   object-fit: contain;
 }
 
+img[data-size="icon"] {
+  height: 1.2em;
+  width: auto;
+  max-width: 4em;
+  display: inline-block;
+  vertical-align: middle;
+  margin: 0 2px;
+}
+
 /* 카드 내부에서 제목·리스트 여백 조정 */
 .wiki-card-body > h1:first-child,
 .wiki-card-body > h2:first-child,

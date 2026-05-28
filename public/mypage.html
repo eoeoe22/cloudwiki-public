@@ -6,15 +6,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title class="app-wiki-name">내 프로필 - CloudWiki</title>
     <link rel="icon" id="wiki-favicon" href="/favicon.ico">
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.13.1/font/bootstrap-icons.min.css" rel="stylesheet">
-    <link href="https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css" rel="stylesheet">
-    <link href="https://cdn.jsdelivr.net/npm/sweetalert2@11.26.24/dist/sweetalert2.min.css" rel="stylesheet">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link
-        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Outfit:wght@500;600;700;800;900&family=Inter:wght@400;500;700;800&display=swap"
-        rel="stylesheet">
     <link rel="stylesheet" href="/css/style.css">
     <!-- MCP 편집 승인 모달의 rendered diff 가 위키 본문을 비교 렌더링하므로
          revisions.html 과 같은 위키 렌더 스타일/diff 스타일을 함께 로드한다. -->
@@ -588,14 +579,6 @@
 
     <!-- ── 푸터 Placeholder ── -->
     <div id="app-footer-placeholder"></div>
-
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11.26.24"></script>
-    <!-- MCP 편집 승인 모달의 rendered diff 가 marked + DOMPurify 폴백 경로
-         (위키 렌더가 없을 때) 를 쓸 수 있도록 함께 로드. render.js 가 정상 로드되면
-         이 CDN 스크립트들은 자동 폴백 후보로만 사용된다. -->
-    <script src="https://cdn.jsdelivr.net/npm/marked@18.0.3/lib/marked.umd.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.4.2/dist/purify.min.js"></script>
 
     <script type="module" src="/dist/common.js"></script>
     <script type="module" src="/dist/render.js"></script>

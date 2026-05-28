@@ -1,6 +1,7 @@
 import { Context, Next } from 'hono';
 import { Env } from '../types';
 import { escapeHtml } from '../utils/html';
+import { BundleName, renderHeadTags, renderBodyScripts } from '../shared/cdn';
 
 /**
  * 위키 문서 내용에서 SEO 메타 설명을 추출합니다.
@@ -145,7 +146,7 @@ export const ssrMiddleware = async (c: Context<Env>, next: Next) => {
  * index.html의 <script id="ssr-data"> 에 JSON으로 주입하여
  * 클라이언트에서 추가 API 호출 없이 즉시 렌더링 가능
  */
-export function applyPageSSR(response: Response, pageData: Record<string, any>, env: { WIKI_NAME?: string; WIKI_LOGO_URL?: string; WIKI_FAVICON_URL?: string; CUSTOM_HEADER?: string }, headerHtml: string = '', sidebarHtml: string = '', footerHtml: string = ''): Response {
+export function applyPageSSR(response: Response, pageData: Record<string, any>, env: { WIKI_NAME?: string; WIKI_LOGO_URL?: string; WIKI_FAVICON_URL?: string; CUSTOM_HEADER?: string }, headerHtml: string = '', sidebarHtml: string = '', footerHtml: string = '', bundles: BundleName[] = []): Response {
     const wikiName = env.WIKI_NAME || 'CloudWiki';
     const wikiLogoUrl = env.WIKI_LOGO_URL || '';
     const wikiFaviconUrl = env.WIKI_FAVICON_URL || '/favicon.ico';
@@ -157,6 +158,9 @@ export function applyPageSSR(response: Response, pageData: Record<string, any>, 
         .replace(/>/g, '\\u003e')
         .replace(/\u2028/g, '\\u2028')
         .replace(/\u2029/g, '\\u2029');
+
+    const headTags = renderHeadTags(bundles);
+    const bodyScripts = renderBodyScripts(bundles);
 
     const rewriter = new HTMLRewriter()
         .on('.app-wiki-name', {
@@ -214,13 +218,18 @@ export function applyPageSSR(response: Response, pageData: Record<string, any>, 
         })
         .on('head', {
             element(element) {
-                // SSR 데이터를 head 끝에 주입
+                // CSS/폰트는 로컬 스타일시트보다 먼저 와야 캐스케이드 순서가 유지됨 → head 맨 앞
+                if (headTags.prepend) element.prepend(headTags.prepend, { html: true });
+                // importmap/Turnstile 스크립트는 head 끝에 추가. Turnstile api.js는
+                // onTurnstileLoad stub 인라인 스크립트 뒤에 와야 콜백 레이스를 피함.
+                if (headTags.append) element.append(headTags.append, { html: true });
                 element.append(`<script id="ssr-data" type="application/json">${jsonStr}</script>`, { html: true });
             }
         })
         .on('body', {
             element(element) {
-                // 커스텀 헤더 주입 (body 끝에 삽입하여 페이지 라이브러리 사용 가능)
+                // CDN 스크립트(bootstrap JS, swal, marked 등) 주입 후 커스텀 헤더 추가
+                if (bodyScripts) element.append(bodyScripts, { html: true });
                 if (customHeader) {
                     element.append(customHeader, { html: true });
                 }

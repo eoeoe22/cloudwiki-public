@@ -6,6 +6,7 @@ import type { Env, Page } from './types';
 import { sessionMiddleware, rbacMiddleware, requireAdmin } from './middleware/session';
 import { RBAC } from './utils/role';
 import { applyPageSSR, extractMetaDescription } from './middleware/ssr';
+import { PAGE_BUNDLES, BundleName } from './shared/cdn';
 import { safeJSON } from './utils/json';
 import { escapeHtml, sanitizeUrl } from './utils/html';
 import { fetchMediaTags } from './utils/mediaTags';
@@ -469,12 +470,16 @@ async function renderHtml(c: Context<Env>, targetHtmlPath: string, pageData: Rec
     // CUSTOM_HEADER는 /w/* (문서 열람, 리비전, 토론), /blog/* 페이지에 삽입
     const shouldInjectCustomHeader = c.req.path.startsWith('/w/') || c.req.path.startsWith('/blog');
 
+    // '/' 는 ASSETS 가 index.html 로 서빙하므로 번들 조회 키도 '/index.html' 로 정규화
+    const bundleKey = targetHtmlPath === '/' ? '/index.html' : targetHtmlPath;
+    const bundles: BundleName[] = PAGE_BUNDLES[bundleKey] ?? ['base'];
+
     return applyPageSSR(htmlResponse, pageData, {
         WIKI_NAME: wikiName,
         WIKI_LOGO_URL: wikiLogoUrl,
         WIKI_FAVICON_URL: wikiFaviconUrl,
         CUSTOM_HEADER: shouldInjectCustomHeader ? (c.env.CUSTOM_HEADER || '') : '',
-    }, headerHtml, sidebarHtml, footerHtml);
+    }, headerHtml, sidebarHtml, footerHtml, bundles);
 }
 
 // ── 프론트엔드 라우팅 ──

@@ -23,6 +23,7 @@
 import './types';
 import { escapeHtml } from '../utils/html';
 import { normalizeSlug, hasSlugForbiddenChars } from '../utils/slug';
+import { CDN_URLS } from '../../shared/cdn';
 import { snapshotPreviewState, restorePreviewState } from './preview-state';
 import type { CMEditor, CMSelection, PageMeta, SectionRange } from './types';
 
@@ -239,7 +240,7 @@ function reloadTurnstile() {
         const oldScript = document.querySelector('script[src*="challenges.cloudflare.com/turnstile"]');
         if (oldScript) oldScript.remove();
         const script = document.createElement('script');
-        script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?onload=onTurnstileLoad';
+        script.src = CDN_URLS.turnstileJs;
         script.async = true;
         script.defer = true;
         document.head.appendChild(script);
