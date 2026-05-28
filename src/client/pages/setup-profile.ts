@@ -1,9 +1,9 @@
 // setup-profile 페이지 보조 모듈.
-// 인라인 raw script 가 폼 제출과 UI 분기를 담당하고, 본 모듈은 Web Push 옵트인 헬퍼만 노출한다.
+// setup-profile-form 모듈이 폼 제출과 UI 분기를 담당하고, 본 모듈은 Web Push 옵트인 헬퍼만 노출한다.
 //
 // 라이프사이클:
 //  - DOMContentLoaded 시점에 푸시 가용성을 확인해 #pushOptInGroup 토글
-//  - 인라인 스크립트가 가입 신청 성공 시 window.subscribeForSignupRequest(requestId) 호출
+//  - setup-profile-form 모듈이 가입 신청 성공 시 window.subscribeForSignupRequest(requestId) 호출
 
 import { checkPushAvailability, prepareSignupPushSubscription, registerSignupPushSubscription, subscribeForUser } from '../push';
 
