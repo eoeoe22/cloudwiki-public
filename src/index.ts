@@ -26,9 +26,10 @@ import oauthRoutes from './routes/oauth';
 import analyticsRoutes from './routes/analytics';
 import blogRoutes from './routes/blog';
 import { trackPageView, trackError, queryAnalytics } from './utils/analytics';
-import { isR2OnlyNamespace, normalizeSlug } from './utils/slug';
+import { isR2OnlyNamespace, isMapNamespace, normalizeSlug } from './utils/slug';
 import { getRevisionContent } from './utils/r2';
 import { renderForAI } from './utils/aiParser';
+import { buildMapDocument, MAP_CACHE_MAX_AGE_SECONDS } from './utils/mapDocument';
 import { ensureMcpDraftsMigration } from './utils/mcpDraftsMigration';
 
 const app = new Hono<Env>();
@@ -584,12 +585,59 @@ app.get('/w/*', async (c) => {
     const ssrCacheKey = new Request(ssrCacheUrl.toString(), { method: 'GET' });
     const canUseCache = !isAdmin && !isCrawler && redirectParam !== 'no';
 
-    if (canUseCache) {
+    // 일반 문서 캐시 매치 (map: 슬러그는 권한 차이에 따라 트리가 달라지므로 글로벌 매치를 건너뛰고
+    // 아래 map: 분기 안에서 `!user` 조건으로만 매치한다 — 권한자가 anonymous 캐시에 갇히지 않도록.)
+    if (canUseCache && !isMapNamespace(slug)) {
         const cached = await cache.match(ssrCacheKey);
         if (cached) {
             trackPageView(c, slug, Date.now() - startTime);
             return new Response(cached.body, cached);
         }
+    }
+
+    // "map:<base>" 슬러그는 실제 문서가 아니라 <base> 를 루트로 한 하위 문서 트리 뷰를
+    // 합성해 보여주는 가상 페이지다. DB 조회 전에 가로채 트리 마크다운을 만들고 SSR 한다.
+    if (isMapNamespace(slug)) {
+        // 비로그인 요청에 한해 글로벌 캐시 매치 (anonymous 응답만 캐시에 들어가므로 안전).
+        if (!user && canUseCache) {
+            const cached = await cache.match(ssrCacheKey);
+            if (cached) {
+                trackPageView(c, slug, Date.now() - startTime);
+                return new Response(cached.body, cached);
+            }
+        }
+        const baseSlug = slug.substring('map:'.length);
+        const canSeePrivate = rbac.can(user?.role ?? 'guest', 'wiki:private');
+        const mapResult = await buildMapDocument({ db, baseSlug, canSeePrivate });
+        const titleStr = `${slug} - ${wikiName}`;
+        const description = `${baseSlug || '(루트)'} 의 하위 문서 구조`;
+        const ssrData: Record<string, any> = {
+            _ssrSlug: slug,
+            _ssrNotFound: false,
+            is_map_doc: true,
+            slug,
+            title: slug,
+            content: mapResult.markdown,
+            created_at: 0,
+            updated_at: 0,
+            _ssrTitle: titleStr,
+            _ssrDescription: description,
+        };
+        const response = await renderHtml(c, '/', ssrData);
+        // 권한자 응답(비공개 자식 포함 가능) 또는 로그인 사용자는 캐시 우회.
+        // 비로그인 + 비공개 자식이 없는 트리만 공유 캐시 허용.
+        const safeForSharedCache = !user && !mapResult.hasPrivateChildren;
+        if (safeForSharedCache && canUseCache) {
+            const cachedResponse = new Response(response.body, response);
+            // map: 캐시는 자식 mutation 시 자동 무효화되지 않으므로 staleness 윈도우를 짧게 유지.
+            cachedResponse.headers.set('Cache-Control', `public, max-age=${MAP_CACHE_MAX_AGE_SECONDS}`);
+            if (crawlEnabled) cachedResponse.headers.set('Vary', 'User-Agent');
+            c.executionCtx.waitUntil(cache.put(ssrCacheKey, cachedResponse.clone()));
+            return cachedResponse;
+        }
+        response.headers.set('Cache-Control', 'private, no-store');
+        if (crawlEnabled) response.headers.set('Vary', 'User-Agent');
+        return response;
     }
 
     // "이미지:파일명" 슬러그는 media 테이블을 먼저 조회해 이미지 문서로 렌더링한다.

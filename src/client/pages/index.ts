@@ -511,6 +511,13 @@
           return;
         }
 
+        // map: 가상 문서 분기: 서버가 합성한 트리 마크다운을 일반 렌더 파이프라인으로 표시하되,
+        // 편집/이력/토론 등 모든 액션은 비활성화한다 (실제 페이지가 아님).
+        if (page && page.is_map_doc) {
+          await showMapDocument(slug, page);
+          return;
+        }
+
         currentPage = page;
         applyShareAiVisibility(page);
 
@@ -1192,6 +1199,68 @@
       // 이미지 문서는 일반 문서와 달리 역링크를 자동으로 로드한다
       // (일반 문서는 역링크 버튼 클릭 시 로드)
       loadImageBacklinks(filename);
+    }
+
+    // ── map: 가상 문서 (하위 트리 + TOC) ──
+    // 서버가 합성한 트리 마크다운(<div class="wiki-map-tree">...) 을 일반 위키 렌더 파이프라인으로
+    // 표시한다. 본문에 헤딩이 없어 자동 TOC 패널은 비어있고, 모든 편집 액션은 비활성화한다.
+    async function showMapDocument(slug, page) {
+      currentPage = page;
+      applyShareAiVisibility(page);
+      document.title = `${page.slug} - ${window.appConfig.wikiName}`;
+
+      document.getElementById('articleTitle').textContent = page.slug;
+      renderSlugLabel(null);
+      document.getElementById('redirectMessage').innerHTML = '';
+
+      const _bannerEl = document.getElementById('discussionBanner');
+      const _bannerLinkEl = document.getElementById('discussionBannerLink');
+      if (_bannerEl) _bannerEl.classList.add('d-none');
+      if (_bannerLinkEl) _bannerLinkEl.removeAttribute('href');
+      // 일반 문서에서 노출된 MCP 편집 승인 대기 배너 잔존 방지 (SPA 전이 시).
+      const _mcpBannerEl = document.getElementById('mcpSubmissionBanner');
+      if (_mcpBannerEl) _mcpBannerEl.style.display = 'none';
+
+      const baseSlug = page.slug.replace(/^map:/, '');
+      document.getElementById('articleMeta').innerHTML = `
+        <span class="meta-item"><i class="bi bi-diagram-3"></i> 지도 뷰</span>
+        <span class="meta-item">루트: ${window.escapeHtml(baseSlug || '(전체)')}</span>
+      `;
+
+      // 액션 버튼: 편집/이력 등은 모두 비활성화. 루트 문서로 이동하는 바로가기만 노출한다.
+      const rootHref = baseSlug ? `/w/${encodeURIComponent(baseSlug)}` : '/';
+      document.getElementById('articleMainActions').innerHTML = baseSlug
+        ? `<a href="${window.escapeHtml(rootHref)}" class="btn btn-outline-secondary" onclick="navigateTo(this.getAttribute('href')); return false;">
+             <i class="bi bi-box-arrow-up-right"></i><span class="d-none d-sm-inline"> 루트 문서로 이동</span>
+           </a>`
+        : '';
+      document.getElementById('articleMoreActions').innerHTML = '';
+
+      // 목차/부모 문서/역링크 영역 모두 숨김 (가상 문서)
+      document.getElementById('wikiAccordion').classList.add('d-none');
+      const tocFab = document.getElementById('tocFabBtn');
+      if (tocFab) tocFab.classList.add('d-none');
+      document.getElementById('parentDocsNav').classList.add('d-none');
+      closeParentDocsSiblings();
+      document.getElementById('parentDocsNavDivider').classList.add('d-none');
+      document.getElementById('backlinksSection').classList.add('d-none');
+      document.getElementById('backlinksList').innerHTML = '';
+
+      const rawEl = document.getElementById('articleRawContent');
+      if (rawEl) rawEl.textContent = page.content || '';
+
+      // 본문은 일반 위키 렌더러로 처리한다. wiki-map-tree div 안의 [[...]] 위키 링크가
+      // render.ts 의 parseWikiLinks 에 의해 자동으로 anchor 로 치환된다.
+      await window.renderWikiContent(page.content || '', slug, 'articleContent', {
+        showCategory: false,
+        canEdit: false,
+        enableSectionEdit: false,
+        collapsibleSections: false,
+      });
+
+      hideAllPages();
+      document.getElementById('articlePage').classList.remove('d-none');
+      if (typeof window.__sidebarLayoutUpdate === 'function') window.__sidebarLayoutUpdate();
     }
 
     // 이미지 문서 본문 하단 태그 뱃지 HTML 생성

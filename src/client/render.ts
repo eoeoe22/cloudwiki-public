@@ -1252,9 +1252,9 @@ function generateTOC(contentEl, tocContainerId, tocNavId) {
 // ── 본문 상단 인라인 목차 카드 (좌측 플로팅) ──
 // 컨테이너 내부 헤딩으로 목차를 자체 생성한 카드를 본문 최상단에 float:left 로 삽입한다
 // (외부 #tocNav 의존 없음 → 프리뷰 등 어떤 렌더 컨텍스트에서도 동작). 도입부(첫 헤딩
-// 이전)는 BFC 컬럼(.wiki-lead-body)으로 감싸 카드 우측에 두어 목차가 접히거나 짧아도
-// 카드 아래로 흘러들지 않게 하고, 첫 헤딩부터는 clear 센티넬로 전체 폭에 배치한다.
-// 헤딩이 없으면(목차 없음) 카드를 만들지 않는다.
+// 이전)는 일반 블록 래퍼(.wiki-lead-body)로 감싸 카드 옆을 자연스럽게 감싸 흐르도록 하고,
+// 도입부가 카드보다 길면 카드 아래에서 자동으로 전체 폭을 사용한다. 첫 헤딩부터는 clear
+// 센티넬로 float 를 해제하여 전체 폭에 배치한다. 헤딩이 없으면(목차 없음) 카드를 만들지 않는다.
 function _buildInlineTocLayout(containerEl) {
     if (!containerEl) return;
     // 이전 렌더의 BFC 클래스를 초기화(헤딩 없는 페이지로 전환 시 잔존 방지).
@@ -1329,8 +1329,8 @@ function _buildInlineTocLayout(containerEl) {
     containerEl.insertBefore(card, containerEl.firstChild);
     containerEl.classList.add('wiki-has-inline-toc');
 
-    // 도입부를 BFC 컬럼으로 감싸 카드 우측에 고정한다. BFC 박스는 float 와 겹치지 않으므로
-    // 목차가 접히거나 짧아도 도입부가 카드 아래로 흘러들지 않고 우측 컬럼을 유지한다.
+    // 도입부를 일반 블록 래퍼로 감싸 카드 옆을 텍스트가 자연스럽게 흐르게 한다. 도입부가
+    // 카드보다 길어지면 카드 아래에서부터는 전체 폭을 사용한다(기본 float 흐름 동작).
     const hasMeaningfulLead = leadNodes.some(
         n => n.nodeType === 1 || (n.nodeType === 3 && (n.textContent || '').trim())
     );

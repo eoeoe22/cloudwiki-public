@@ -1,7 +1,8 @@
 import { Hono } from 'hono';
 import type { Env, Page, Revision } from '../types';
 import { requireAuth, requireAdmin, requirePermission } from '../middleware/session';
-import { normalizeSlug, isR2OnlyNamespace } from '../utils/slug';
+import { normalizeSlug, isR2OnlyNamespace, isMapNamespace } from '../utils/slug';
+import { buildMapDocument, MAP_CACHE_MAX_AGE_SECONDS } from '../utils/mapDocument';
 import { safeJSON } from '../utils/json';
 import { ROLE_CASE_SQL, enrichRoles, RBAC } from '../utils/role';
 import { fetchMediaTags } from '../utils/mediaTags';
@@ -1321,7 +1322,37 @@ wiki.get('/w/:slug', async (c) => {
     const cacheKey = c.req.url;
     const nocache = c.req.query('nocache') === 'true';
 
-    // 캐시 확인
+    // "map:<base>" 슬러그는 실제 문서가 아니라 가상 트리 뷰. 권한자에게는 비공개 자식이 보이지만
+    // 비로그인 응답이 글로벌 캐시에 들어가 있을 수 있어, map: 슬러그의 cache.match 는 비로그인 요청
+    // (`!user`) 에서만 수행한다. 그래야 권한자가 anonymous 캐시에 갇히지 않는다.
+    if (isMapNamespace(slug)) {
+        if (!user && !nocache) {
+            const cached = await cache.match(cacheKey);
+            if (cached) return new Response(cached.body, cached);
+        }
+        const rbac = c.get('rbac') as RBAC;
+        const canSeePrivate = rbac.can(user?.role ?? 'guest', 'wiki:private');
+        const baseSlug = slug.substring('map:'.length);
+        const mapResult = await buildMapDocument({ db, baseSlug, canSeePrivate });
+        const mapDoc = {
+            slug,
+            title: slug,
+            is_map_doc: true,
+            content: mapResult.markdown,
+            created_at: 0,
+            updated_at: 0,
+        };
+        const safeForSharedCache = !user && !mapResult.hasPrivateChildren;
+        if (safeForSharedCache && !nocache) {
+            // map: 캐시는 자식 mutation 시 자동 무효화되지 않으므로 staleness 윈도우를 짧게 유지.
+            const fresh = c.json(mapDoc, 200, { 'Cache-Control': `public, max-age=${MAP_CACHE_MAX_AGE_SECONDS}` });
+            c.executionCtx.waitUntil(cache.put(cacheKey, fresh.clone()));
+            return fresh;
+        }
+        return c.json(mapDoc, 200, { 'Cache-Control': 'private, no-store' });
+    }
+
+    // 캐시 확인 (map: 분기는 위에서 자체적으로 처리했으므로 이 시점에는 일반 슬러그만 남는다)
     let response = await cache.match(cacheKey);
     if (response && !nocache) {
         // 캐시된 응답은 불변(immutable)이므로, 전역 미들웨어가 헤더를 수정할 수 있도록 복제하여 반환
@@ -1550,6 +1581,18 @@ wiki.get('/w/:slug/edit-permission', requireAuth, async (c) => {
         });
     }
 
+    // 3) "map:" 네임스페이스 — 가상 트리 뷰 전용이므로 일반 편집 흐름으로 다룰 수 없다.
+    if (slug.startsWith('map:')) {
+        return c.json({
+            allowed: false,
+            reason: 'map_namespace',
+            acl: null,
+            source: 'none',
+            min_age_days: 0,
+            is_private: 0,
+        });
+    }
+
     const page = await db
         .prepare('SELECT id, is_private, edit_acl, deleted_at FROM pages WHERE slug = ?')
         .bind(slug)
@@ -1749,6 +1792,12 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
     // content 수정은 /api/media/doc/:filename 엔드포인트로만 가능하다.
     if (slug.startsWith('이미지:')) {
         return c.json({ error: '"이미지:"는 이미지 문서 전용 네임스페이스이므로 일반 문서 제목으로 사용할 수 없습니다.' }, 403);
+    }
+
+    // "map:" 접두사 문서는 하위 문서 트리를 합성해 보여주는 가상 뷰 전용이므로
+    // 일반 문서로 생성/수정할 수 없다.
+    if (slug.startsWith('map:')) {
+        return c.json({ error: '"map:"은 지도 뷰 전용 네임스페이스이므로 일반 문서 제목으로 사용할 수 없습니다.' }, 403);
     }
 
     // "카테고리:이름" 슬러그는 자동 카테고리를 항상 포함시킨다 (제거 불가).
@@ -2810,6 +2859,15 @@ wiki.post('/w/:slug/restore', requireAuth, async (c) => {
         return c.json({ error: '권한이 없습니다.' }, 403);
     }
 
+    // "이미지:" / "map:" 예약 네임스페이스는 일반 페이지로 복원될 수 없다.
+    // 복원되면 가상 뷰 로직과 충돌해 접근 불가 페이지가 네임스페이스를 점유한다.
+    if (slug.startsWith('이미지:')) {
+        return c.json({ error: '"이미지:" 네임스페이스는 일반 문서로 복원할 수 없습니다.' }, 400);
+    }
+    if (slug.startsWith('map:')) {
+        return c.json({ error: '"map:" 네임스페이스는 가상 트리 뷰 전용이므로 복원할 수 없습니다.' }, 400);
+    }
+
     const page = await db.prepare('SELECT id, deleted_at FROM pages WHERE slug = ?').bind(slug).first<{ id: number; deleted_at: number | null }>();
 
     if (!page) {
@@ -2880,6 +2938,11 @@ wiki.post('/w/:slug/move', requireAdmin, async (c) => {
     // "이미지:" 네임스페이스는 media 테이블 기반 이미지 문서 전용이므로 이동 대상/출처가 될 수 없다
     if (currentSlug.startsWith('이미지:') || trimmedNewSlug.startsWith('이미지:')) {
         return c.json({ error: '"이미지:" 네임스페이스는 이미지 문서 전용이며, 일반 문서 이동 대상이 될 수 없습니다.' }, 400);
+    }
+
+    // "map:" 네임스페이스는 가상 트리 뷰 전용이므로 이동 대상/출처가 될 수 없다
+    if (currentSlug.startsWith('map:') || trimmedNewSlug.startsWith('map:')) {
+        return c.json({ error: '"map:" 네임스페이스는 가상 트리 뷰 전용이며, 일반 문서 이동 대상이 될 수 없습니다.' }, 400);
     }
 
     // 네임스페이스 이동 제한: 콜론이 포함된 문서는 다른 네임스페이스로 이동 불가

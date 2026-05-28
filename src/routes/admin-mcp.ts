@@ -915,6 +915,7 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
         if (!slug) return asTextResult('Error: title 이 필요합니다.', true);
         if (SLUG_FORBIDDEN_CHARS.test(slug)) return asTextResult('Error: 슬러그에 사용할 수 없는 특수문자가 포함되어 있습니다.', true);
         if (slug.startsWith('이미지:')) return asTextResult('Error: "이미지:" 네임스페이스는 admin-mcp 로 편집할 수 없습니다 (이미지 문서 전용).', true);
+        if (slug.startsWith('map:')) return asTextResult('Error: "map:" 네임스페이스는 가상 트리 뷰 전용이므로 편집할 수 없습니다.', true);
         if (typeof args.content !== 'string') return asTextResult('Error: content 는 문자열이어야 합니다.', true);
         if (args.category && typeof args.category === 'string') {
             if (!/^[가-힣a-zA-Z0-9\s,]+$/.test(args.category)) {
@@ -1064,6 +1065,7 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
         const slug = String(args.title || '').trim();
         if (!slug) return asTextResult('Error: title 이 필요합니다.', true);
         if (slug.startsWith('이미지:')) return asTextResult('Error: "이미지:" 네임스페이스는 admin-mcp 로 편집할 수 없습니다.', true);
+        if (slug.startsWith('map:')) return asTextResult('Error: "map:" 네임스페이스는 가상 트리 뷰 전용이므로 편집할 수 없습니다.', true);
         if (typeof args.old_string !== 'string' || args.old_string.length === 0) {
             return asTextResult('Error: old_string 은 비어있지 않은 문자열이어야 합니다.', true);
         }
@@ -1176,6 +1178,7 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
         const slug = String(args.title || '').trim();
         if (!slug) return asTextResult('Error: title 이 필요합니다.', true);
         if (slug.startsWith('이미지:')) return asTextResult('Error: "이미지:" 네임스페이스는 admin-mcp 로 편집할 수 없습니다.', true);
+        if (slug.startsWith('map:')) return asTextResult('Error: "map:" 네임스페이스는 가상 트리 뷰 전용이므로 편집할 수 없습니다.', true);
         const sectionNumber = String(args.section_number || '').trim();
         if (!sectionNumber) return asTextResult('Error: section_number 가 필요합니다.', true);
         if (typeof args.new_content !== 'string') {
@@ -1608,6 +1611,8 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
         const slug = String(args.title || '').trim();
         if (!slug) return asTextResult('Error: title 이 필요합니다.', true);
         if (!rbac.can(user.role, 'wiki:delete')) return asTextResult('Error: 복원 권한이 없습니다.', true);
+        if (slug.startsWith('이미지:')) return asTextResult('Error: "이미지:" 네임스페이스는 일반 문서로 복원할 수 없습니다.', true);
+        if (slug.startsWith('map:')) return asTextResult('Error: "map:" 네임스페이스는 가상 트리 뷰 전용이므로 복원할 수 없습니다.', true);
 
         const page = await db.prepare('SELECT id, deleted_at FROM pages WHERE slug = ?').bind(slug).first<{ id: number; deleted_at: number | null }>();
         if (!page) return asTextResult('Error: 문서를 찾을 수 없습니다.', true);
@@ -1635,6 +1640,9 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
         if (SLUG_FORBIDDEN_CHARS.test(newSlug)) return asTextResult('Error: 새 슬러그에 사용할 수 없는 특수문자가 포함되어 있습니다.', true);
         if (oldSlug.startsWith('이미지:') || newSlug.startsWith('이미지:')) {
             return asTextResult('Error: "이미지:" 네임스페이스는 이동 대상이 될 수 없습니다.', true);
+        }
+        if (oldSlug.startsWith('map:') || newSlug.startsWith('map:')) {
+            return asTextResult('Error: "map:" 네임스페이스는 가상 트리 뷰 전용이므로 이동 대상이 될 수 없습니다.', true);
         }
 
         // 네임스페이스 이동 제한: 콜론이 포함된 문서(틀:, template:, 카테고리: 등)는
@@ -1988,6 +1996,10 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
         // 이미지 네임스페이스는 별도 미디어 문서이므로 admin-mcp 메타 변경에서도 제외한다.
         if (slug.startsWith('이미지:')) {
             return asTextResult('Error: "이미지:" 네임스페이스는 admin-mcp 로 상태를 변경할 수 없습니다.', true);
+        }
+        // map 네임스페이스는 가상 트리 뷰 전용이므로 메타 변경 대상이 아니다.
+        if (slug.startsWith('map:')) {
+            return asTextResult('Error: "map:" 네임스페이스는 가상 트리 뷰 전용이므로 상태를 변경할 수 없습니다.', true);
         }
 
         const trimmedCategory = (args.category as string).trim();

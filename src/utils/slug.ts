@@ -23,6 +23,15 @@ export function isR2OnlyNamespace(slug: string, enabledExtensions: string[]): bo
     return enabledExtensions.includes(namespace);
 }
 
+/**
+ * `map:` 예약 네임스페이스 여부.
+ * `map:` 슬러그는 실제 문서가 아니라 하위 문서 트리 + TOC 를 합성해 보여주는
+ * 가상 뷰 전용이므로, 일반 문서 생성/수정/이동의 출발지·도착지로 사용할 수 없다.
+ */
+export function isMapNamespace(slug: string): boolean {
+    return slug.startsWith('map:');
+}
+
 /** MCP raw 읽기 허용 네임스페이스 목록 */
 const MCP_READABLE_NAMESPACES = ['틀', '템플릿', '유저'];
 
