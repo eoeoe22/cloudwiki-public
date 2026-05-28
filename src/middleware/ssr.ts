@@ -101,8 +101,14 @@ export const ssrMiddleware = async (c: Context<Env>, next: Next) => {
         const wikiName = c.env?.WIKI_NAME || 'CloudWiki';
         const wikiLogoUrl = c.env?.WIKI_LOGO_URL || '';
         const wikiFaviconUrl = c.env?.WIKI_FAVICON_URL || '/favicon.ico';
+        const sidebarMode = c.env?.SIDEBAR_MODE === 'left-toc' ? 'left-toc' : 'default';
 
         const rewriter = new HTMLRewriter()
+            .on('body', {
+                element(element) {
+                    element.setAttribute('data-sidebar-mode', sidebarMode);
+                }
+            })
             .on('.app-wiki-name', {
                 text(text) {
                     // 내부 텍스트에 CloudWiki 또는 Cloudwiki가 포함되어 있으면 환경변수로 교체
@@ -146,11 +152,12 @@ export const ssrMiddleware = async (c: Context<Env>, next: Next) => {
  * index.html의 <script id="ssr-data"> 에 JSON으로 주입하여
  * 클라이언트에서 추가 API 호출 없이 즉시 렌더링 가능
  */
-export function applyPageSSR(response: Response, pageData: Record<string, any>, env: { WIKI_NAME?: string; WIKI_LOGO_URL?: string; WIKI_FAVICON_URL?: string; CUSTOM_HEADER?: string }, headerHtml: string = '', sidebarHtml: string = '', footerHtml: string = '', bundles: BundleName[] = []): Response {
+export function applyPageSSR(response: Response, pageData: Record<string, any>, env: { WIKI_NAME?: string; WIKI_LOGO_URL?: string; WIKI_FAVICON_URL?: string; CUSTOM_HEADER?: string; SIDEBAR_MODE?: string }, headerHtml: string = '', sidebarHtml: string = '', footerHtml: string = '', bundles: BundleName[] = []): Response {
     const wikiName = env.WIKI_NAME || 'CloudWiki';
     const wikiLogoUrl = env.WIKI_LOGO_URL || '';
     const wikiFaviconUrl = env.WIKI_FAVICON_URL || '/favicon.ico';
     const customHeader = env.CUSTOM_HEADER || '';
+    const sidebarMode = env.SIDEBAR_MODE === 'left-toc' ? 'left-toc' : 'default';
 
     // JSON을 HTML 내에 안전하게 삽입 (script 태그 내 특수문자 및 줄바꿈 이스케이프)
     const jsonStr = JSON.stringify(pageData)
@@ -228,6 +235,8 @@ export function applyPageSSR(response: Response, pageData: Record<string, any>, 
         })
         .on('body', {
             element(element) {
+                // 사이드바 모드(default | left-toc) 를 body data-attr 로 표시해 CSS 가 페인트 전에 분기.
+                element.setAttribute('data-sidebar-mode', sidebarMode);
                 // CDN 스크립트(bootstrap JS, swal, marked 등) 주입 후 커스텀 헤더 추가
                 if (bodyScripts) element.append(bodyScripts, { html: true });
                 if (customHeader) {

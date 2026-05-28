@@ -56,6 +56,9 @@
 
       route();
       _initialLoadDone = true;
+      // left-toc 모드: 우측 사이드바의 트렌딩/최근 변경 섹션을 본문 하단으로 이동.
+      // (loadTrending/loadRecentChanges 는 ID 로 자식 요소만 채우므로 부모 이동과 무관)
+      relocateRightSidebarForLeftToc();
       window.loadTrending();
       window.loadRecentChanges();
 
@@ -132,6 +135,55 @@
       document.getElementById('deletedPage').classList.add('d-none');
       document.getElementById('privatePage').classList.add('d-none');
       document.getElementById('categoryPage').classList.add('d-none');
+      // 좌측 목차 사이드바는 #articlePage 한정. 페이지 전환 시 일단 숨기고, 문서 렌더 후
+      // syncLeftTocSidebar() 에서 헤딩 유무에 따라 다시 노출 여부 결정.
+      const leftTocSidebar = document.getElementById('wikiTocSidebar');
+      if (leftTocSidebar) leftTocSidebar.classList.add('d-none');
+    }
+
+    // left-toc 모드일 때 우측 사이드바(#wikiSidebar) 의 트렌딩/최근 변경 섹션 두 블록을
+    // 본문 #articlePage > .wiki-article 다음 형제로 옮긴다. 한 번만 실행되면 충분.
+    // (loadTrending/loadRecentChanges 는 자식 ID 로만 채우므로 부모 이동과 무관)
+    let _rightSidebarRelocated = false;
+    function relocateRightSidebarForLeftToc() {
+      if (_rightSidebarRelocated) return;
+      if (window.appConfig?.sidebarMode !== 'left-toc') return;
+      const sidebar = document.getElementById('wikiSidebar');
+      const articlePage = document.getElementById('articlePage');
+      if (!sidebar || !articlePage) return;
+      const wikiArticle = articlePage.querySelector('.wiki-article');
+      if (!wikiArticle) return;
+      const trendingParent = document.getElementById('trendingListPc')?.closest('.mb-4');
+      const recentParent = document.getElementById('recentChangesListPc')?.closest('.mb-4');
+      if (!trendingParent && !recentParent) return;
+      const container = document.createElement('div');
+      container.className = 'wiki-sidebar-bottom-relocated';
+      if (trendingParent) container.appendChild(trendingParent);
+      if (recentParent) container.appendChild(recentParent);
+      wikiArticle.insertAdjacentElement('afterend', container);
+      _rightSidebarRelocated = true;
+    }
+
+    // 문서 렌더 후 #tocNav 내용을 좌측 사이드바에 복제하고 노출 여부를 결정.
+    // (left-toc 모드 + 헤딩이 있는 문서에서만 노출)
+    function syncLeftTocSidebar() {
+      const leftTocSidebar = document.getElementById('wikiTocSidebar');
+      const leftTocNav = document.getElementById('wikiTocSidebarNav');
+      if (!leftTocSidebar || !leftTocNav) return;
+      if (window.appConfig?.sidebarMode !== 'left-toc') {
+        leftTocSidebar.classList.add('d-none');
+        leftTocNav.innerHTML = '';
+        return;
+      }
+      const src = document.getElementById('tocNav');
+      const html = src ? src.innerHTML.trim() : '';
+      if (!html) {
+        leftTocSidebar.classList.add('d-none');
+        leftTocNav.innerHTML = '';
+        return;
+      }
+      leftTocNav.innerHTML = html;
+      leftTocSidebar.classList.remove('d-none');
     }
 
     function showLoading() {
@@ -777,6 +829,11 @@
           document.getElementById('wikiAccordion').classList.add('d-none');
           const tocFabBtn = document.getElementById('tocFabBtn');
           if (tocFabBtn) tocFabBtn.classList.add('d-none');
+          // 익스텐션 문서는 renderWikiContent 를 거치지 않아 generateTOC() 의 #tocNav 비움
+          // 처리가 일어나지 않는다. 이전 문서의 TOC 가 남아 있으면 left-toc 모드의
+          // syncLeftTocSidebar() 가 stale 한 목차를 좌측 사이드바에 복제하므로 직접 비운다.
+          const _staleTocNav = document.getElementById('tocNav');
+          if (_staleTocNav) _staleTocNav.innerHTML = '';
 
           // 공유하기 드롭다운에서 텍스트/마크다운 복사 및 인쇄 버튼 숨기기
           ['shareItemCopyText', 'shareItemCopyMarkdown', 'shareItemPrint'].forEach(id => {
@@ -832,11 +889,12 @@
           }
           _tryRenderExtDoc(15);
         } else {
+          const leftTocMode = window.appConfig?.sidebarMode === 'left-toc';
           await window.renderWikiContent(page.content || '', slug, 'articleContent', {
             showCategory: true,
             tocContainerId: 'tocContainer',
             tocNavId: 'tocNav',
-            inlineTocLayout: true,
+            inlineTocLayout: !leftTocMode,
             collapsibleSections: true,
             enableSectionEdit: true,
             canEdit: canEdit,
@@ -923,6 +981,9 @@
 
         hideAllPages();
         document.getElementById('articlePage').classList.remove('d-none');
+        // 좌측 목차 사이드바 동기화는 hideAllPages 이후에 수행해야 한다 — hideAllPages 가
+        // #wikiTocSidebar 에 d-none 을 다시 부여하므로 그 전에 sync 해도 즉시 덮어써진다.
+        syncLeftTocSidebar();
         if (typeof window.__sidebarLayoutUpdate === 'function') window.__sidebarLayoutUpdate();
 
         // 페이지가 d-none을 벗어난 다음 프레임에 해시 스크롤 수행 (초기 진입 시 hideAllPages
@@ -2328,7 +2389,7 @@
       if (currentId === _tocSpyLastId) return;
       _tocSpyLastId = currentId;
 
-      ['tocNav', 'tocFloatingNav'].forEach(navId => {
+      ['tocNav', 'tocFloatingNav', 'wikiTocSidebarNav'].forEach(navId => {
         const nav = document.getElementById(navId);
         if (!nav) return;
         nav.querySelectorAll('a.toc-active').forEach(a => a.classList.remove('toc-active'));
@@ -2431,6 +2492,7 @@
     function _attachTocLinkInterceptors() {
       const tocNav = document.getElementById('tocNav');
       const floatingNav = document.getElementById('tocFloatingNav');
+      const sidebarNav = document.getElementById('wikiTocSidebarNav');
       if (tocNav && !tocNav._tocLinkIntercepted) {
         tocNav.addEventListener('click', _interceptTocLinkClick);
         tocNav._tocLinkIntercepted = true;
@@ -2438,6 +2500,10 @@
       if (floatingNav && !floatingNav._tocLinkIntercepted) {
         floatingNav.addEventListener('click', _interceptTocLinkClick);
         floatingNav._tocLinkIntercepted = true;
+      }
+      if (sidebarNav && !sidebarNav._tocLinkIntercepted) {
+        sidebarNav.addEventListener('click', _interceptTocLinkClick);
+        sidebarNav._tocLinkIntercepted = true;
       }
     }
 

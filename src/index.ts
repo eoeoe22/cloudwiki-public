@@ -480,6 +480,7 @@ async function renderHtml(c: Context<Env>, targetHtmlPath: string, pageData: Rec
         WIKI_LOGO_URL: wikiLogoUrl,
         WIKI_FAVICON_URL: wikiFaviconUrl,
         CUSTOM_HEADER: shouldInjectCustomHeader ? (c.env.CUSTOM_HEADER || '') : '',
+        SIDEBAR_MODE: c.env.SIDEBAR_MODE,
     }, headerHtml, sidebarHtml, footerHtml, bundles);
 }
 

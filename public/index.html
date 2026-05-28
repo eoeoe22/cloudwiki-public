@@ -30,7 +30,14 @@
   <div id="app-header-placeholder"></div>
 
   <!-- ── 메인 레이아웃 ── -->
-  <div class="wiki-layout">
+  <div class="wiki-layout wiki-layout-doc">
+    <!-- 좌측 목차 사이드바 (SIDEBAR_MODE="left-toc" 에서만 노출, 문서 조회 페이지 한정) -->
+    <aside class="wiki-toc-sidebar d-none" id="wikiTocSidebar" aria-label="문서 목차">
+      <div class="wiki-toc-sidebar-inner">
+        <div class="wiki-toc-sidebar-title"><i class="bi bi-list-columns-reverse"></i> 목차</div>
+        <nav class="wiki-toc-sidebar-nav" id="wikiTocSidebarNav"></nav>
+      </div>
+    </aside>
     <!-- 메인 콘텐츠 -->
     <div class="wiki-container">
       <!-- 초기 로딩 (페이지 새로고침/최초 방문) -->

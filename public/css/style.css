@@ -817,6 +817,115 @@ html[data-theme="dark"] .user-dropdown-toggle {
   animation: fadeIn 0.4s ease-out forwards;
 }
 
+/* ── 좌측 목차 사이드바 (SIDEBAR_MODE="left-toc") ──
+   기본은 .d-none 으로 숨김. left-toc 모드 + 헤딩이 있는 문서에서만 JS 가 d-none 을 제거. */
+.wiki-toc-sidebar {
+  width: 240px;
+  flex-shrink: 0;
+  position: sticky;
+  top: 1.5rem;
+  align-self: flex-start;
+  max-height: calc(100vh - 3rem);
+  overflow-y: auto;
+  z-index: 1030;
+}
+
+.wiki-toc-sidebar-inner {
+  background: var(--wiki-card-bg);
+  border: 1px solid var(--wiki-border);
+  border-radius: 8px;
+  padding: 1rem 0.85rem;
+  box-shadow: var(--wiki-shadow-sm);
+}
+
+.wiki-toc-sidebar-title {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--wiki-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 0.6rem;
+  padding-bottom: 0.45rem;
+  border-bottom: 1px solid var(--wiki-border);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.wiki-toc-sidebar-title i {
+  color: var(--wiki-primary);
+}
+
+.wiki-toc-sidebar-nav ol,
+.wiki-toc-sidebar-nav ul {
+  list-style: none;
+  padding-left: 0.85rem;
+  margin: 0;
+}
+
+.wiki-toc-sidebar-nav > ol {
+  padding-left: 0;
+}
+
+.wiki-toc-sidebar-nav li {
+  margin: 0.2rem 0;
+  font-size: 0.85rem;
+  line-height: 1.35;
+}
+
+.wiki-toc-sidebar-nav a {
+  color: var(--wiki-text);
+  text-decoration: none;
+  display: inline-block;
+  padding: 1px 2px;
+  border-radius: 3px;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.wiki-toc-sidebar-nav a:hover {
+  color: var(--wiki-primary);
+  background: var(--wiki-bg);
+}
+
+.wiki-toc-sidebar-nav .wiki-toc-num {
+  color: var(--wiki-text-muted);
+  margin-right: 0.25rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* === SIDEBAR_MODE="left-toc" 분기 ===
+   우측 사이드바를 숨기고, 본문 하단으로 옮겨진 트렌딩/최근 변경 컨테이너를 가로 그리드로 표시.
+   좌측 목차 사이드바는 헤딩이 있는 문서에서 JS 가 d-none 을 제거할 때 노출.
+   `.wiki-layout-doc` 마커로 위키 문서 조회 페이지(index.html) 에만 한정한다 — 검색/리비전/
+   블로그 등 다른 페이지의 `.wiki-sidebar` 까지 숨겨버리지 않도록.
+   데스크탑(≥992px) 폭에서만 우측 사이드바를 숨긴다 — 모바일에서는 #wikiSidebar 안의
+   `#app-sidebar-placeholder` 가 `components/sidebar.html` 의 `#mobileSidebar` 오프캔버스
+   (모바일 햄버거 메뉴 소스)를 담고 있어 ancestor 가 display:none 이 되면 메뉴를 열 수 없다. */
+@media (min-width: 992px) {
+  body[data-sidebar-mode="left-toc"] .wiki-layout-doc > .wiki-sidebar {
+    display: none;
+  }
+}
+
+.wiki-sidebar-bottom-relocated {
+  margin: 2rem 0 1rem;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.25rem;
+}
+
+@media (max-width: 768px) {
+  .wiki-toc-sidebar {
+    position: static;
+    width: 100%;
+    max-height: none;
+    margin-bottom: 1rem;
+  }
+  .wiki-sidebar-bottom-relocated {
+    grid-template-columns: 1fr;
+  }
+}
+
 @keyframes fadeIn {
   from {
     opacity: 0;

@@ -873,6 +873,7 @@ wiki.get('/config', async (c) => {
         wikiLogoUrl: c.env.WIKI_LOGO_URL || '',
         wikiFaviconUrl: c.env.WIKI_FAVICON_URL || '',
         wikiVisibility: c.env.WIKI_VISIBILITY === 'closed' ? 'closed' : 'open',
+        sidebarMode: c.env.SIDEBAR_MODE === 'left-toc' ? 'left-toc' : 'default',
         selectedIconsOnly: c.env.SELECTED_ICONS_ONLY === 'true',
         enableConcurrentEditDetection: c.env.ENABLE_CONCURRENT_EDIT_DETECTION !== 'false',
         turnstileSiteKey: c.env.TURNSTILE_SITE_KEY || '',
