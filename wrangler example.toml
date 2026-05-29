@@ -39,7 +39,7 @@ head_sampling_rate = 1.0
 WIKI_HOME_PAGE = "" #위키 홈페이지로 쓸 문서 제목
 
 # 활성화할 공급자를 쉼표로 구분하여 나열 (예: "google,discord")
-# ⚠️ 주의: 이미 사용자가 가입시 이용한 공급자를 목록에서 제거하면 오류가 발생합니다.
+# 주의: 이미 사용자가 가입시 이용한 공급자를 목록에서 제거하면 오류가 발생합니다.
 AUTH_PROVIDERS = "google,discord"
 # Google OAuth
 GOOGLE_CLIENT_ID = ""
@@ -92,7 +92,7 @@ CUSTOM_HEADER = """
 
 # 사이드바 / 푸터 내용 커스터마이징
 # 아래 링크에서 제작 후 나온 결과물 json을 붙여넣으세요
-# https://vialinks.xyz/components-json-builder#
+# https://vialinks.xyz/components-json-builder
 
 SIDEBAR = """
 
@@ -100,15 +100,6 @@ SIDEBAR = """
 FOOTER = """
 
 """
-
-# RBAC 권한 정의는 src/utils/role.ts 의 RBAC.getDefaultPermissions() 단일 소스에 고정.
-# 과거 ROLE_PERMISSIONS_JSON 환경변수 오버라이드는 폐기됨 — 운영 중 손볼 일이 거의 없고
-# 잘못 수정하면 전 사이트 권한이 망가지기 때문. 일반 유저의 문서별 편집 권한은
-# pages.edit_acl 컬럼 + page_edit_allowlist 테이블 + settings.edit_acl_min_age_days 로 세분화.
-
-# 컬러 팔레트는 D1 `palettes` 테이블에서 관리합니다. 관리자 콘솔에서 추가/삭제.
-# 하드코딩 프리셋(primary/secondary/success/info/warning/danger/muted)은 코드에 내장돼 있고
-# 추가 설정 없이 사용 가능합니다.
 
 # === Discord Webhook ===
 # DISCORD_COMMUNITY_WEBHOOK_URL, DISCORD_ADMIN_WEBHOOK_URL 은 Workers 대시보드에서 시크릿으로 설정
