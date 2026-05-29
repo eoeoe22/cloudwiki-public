@@ -893,6 +893,15 @@ html[data-theme="dark"] .user-dropdown-toggle {
   font-variant-numeric: tabular-nums;
 }
 
+/* 좌측 목차 사이드바 스크롤스파이 강조 — PC(≥992px) 한정. 모바일에선 좌측 사이드바를
+   숨기고 인라인 목차 카드를 쓰므로 강조가 필요 없다. */
+@media (min-width: 992px) {
+  .wiki-toc-sidebar-nav a.toc-active {
+    color: var(--wiki-primary);
+    font-weight: 600;
+  }
+}
+
 /* === SIDEBAR_MODE="left-toc" 분기 ===
    우측 사이드바를 숨기고, 본문 하단으로 옮겨진 트렌딩/최근 변경 컨테이너를 가로 그리드로 표시.
    좌측 목차 사이드바는 헤딩이 있는 문서에서 JS 가 d-none 을 제거할 때 노출.
@@ -905,24 +914,46 @@ html[data-theme="dark"] .user-dropdown-toggle {
   body[data-sidebar-mode="left-toc"] .wiki-layout-doc > .wiki-sidebar {
     display: none;
   }
+  /* PC left-toc: 좌측 목차 사이드바를 쓰므로 본문 상단 인라인 목차 카드는 숨긴다.
+     `.wiki-layout-doc` 로 위키 문서 조회 페이지에만 한정 — edit 프리뷰 등 다른 페이지의
+     인라인 목차 카드(좌측 사이드바 대체물이 없음)까지 숨겨버리지 않도록. */
+  body[data-sidebar-mode="left-toc"] .wiki-layout-doc .wiki-toc-card {
+    display: none;
+  }
 }
 
+/* 모바일(<992px) left-toc: 좌측 목차 사이드바를 숨기고 인라인 목차 카드를 쓴다
+   (기본 모드와 동일). 인라인 카드의 모바일 풀폭 동작은 render.css 가 처리. */
+@media (max-width: 991px) {
+  body[data-sidebar-mode="left-toc"] .wiki-toc-sidebar {
+    display: none !important;
+  }
+}
+
+/* 본문 하단으로 옮긴 트렌딩/최근 변경/커스텀 사이드바 — 본문 폭 전체로 확장(단일 컬럼). */
 .wiki-sidebar-bottom-relocated {
   margin: 2rem 0 1rem;
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
   gap: 1.25rem;
 }
 
-@media (max-width: 768px) {
-  .wiki-toc-sidebar {
-    position: static;
-    width: 100%;
-    max-height: none;
-    margin-bottom: 1rem;
-  }
-  .wiki-sidebar-bottom-relocated {
-    grid-template-columns: 1fr;
+/* 하단 커스텀 사이드바 복제본 — PC 전용 노출. 모바일은 햄버거 오프캔버스로 접근. */
+.wiki-sidebar-bottom-custom {
+  background: var(--wiki-card-bg);
+  border: 1px solid var(--wiki-border);
+  border-radius: 8px;
+  padding: 0.75rem 0.5rem;
+  box-shadow: var(--wiki-shadow-sm);
+}
+
+.wiki-sidebar-bottom-custom .navbar-nav {
+  flex-direction: column;
+}
+
+@media (max-width: 991px) {
+  .wiki-sidebar-bottom-custom {
+    display: none;
   }
 }
 

@@ -1,0 +1,140 @@
+---
+// 프로필 설정(가입 후) 페이지 정적 셸. 기존 public/setup-profile.html 과 동일한 마커/구조를 유지한다.
+// login 과 동일한 독립 중앙정렬 카드 — header/sidebar/footer 컴포넌트를 쓰지 않는다.
+// 인라인 <style> 은 전역 셀렉터(body 중앙정렬 등)이므로 is:inline 으로 위치/내용 그대로 보존.
+// base CDN 은 인라인하지 않음 — PAGE_BUNDLES['/setup-profile.html']=['base']가 런타임 주입.
+// #setupTitle/#nameInput/#submitBtn 등은 /dist/setup-profile.js·setup-profile-form.js 가 채운다.
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+<BaseLayout title="프로필 설정 - CloudWiki">
+    <Fragment slot="head">
+        <link rel="icon" id="wiki-favicon" href="/favicon.ico" />
+        <!-- 테마 FOUC 방지: CSS 로드 후 즉시 테마 적용 -->
+        <script is:inline>try{var t=localStorage.getItem('themeMode');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
+        <style is:inline>
+            body {
+                background-color: var(--wiki-bg);
+                min-height: 100vh;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                margin: 0;
+                padding: 20px;
+            }
+
+            .setup-container {
+                width: 100%;
+                max-width: 480px;
+                background: var(--wiki-card-bg);
+                border-radius: 20px;
+                box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+                padding: 3rem 2rem;
+                text-align: center;
+                border: 1px solid var(--wiki-border);
+            }
+
+            .setup-icon {
+                font-size: 4rem;
+                color: var(--wiki-primary);
+                margin-bottom: 1rem;
+            }
+
+            .setup-title {
+                font-weight: 800;
+                margin-bottom: 0.5rem;
+                color: var(--wiki-text);
+            }
+
+            .setup-subtitle {
+                color: var(--wiki-text-muted);
+                margin-bottom: 2rem;
+            }
+
+            .form-group {
+                text-align: left;
+                margin-bottom: 1.5rem;
+            }
+
+            .name-input {
+                width: 100%;
+                padding: 1rem;
+                font-size: 1.1rem;
+                border: 2px solid var(--wiki-border);
+                border-radius: 12px;
+                transition: all 0.3s ease;
+                background: var(--wiki-toc-bg);
+                color: var(--wiki-text);
+            }
+
+            .name-input:focus {
+                outline: none;
+                border-color: var(--wiki-primary);
+                box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.1);
+            }
+
+            .submit-btn {
+                width: 100%;
+                padding: 1rem;
+                font-size: 1.1rem;
+                font-weight: 700;
+                border-radius: 12px;
+                background: var(--wiki-primary);
+                color: #ffffff;
+                border: none;
+                transition: all 0.2s ease;
+            }
+
+            .submit-btn:hover {
+                opacity: 0.9;
+                transform: translateY(-2px);
+            }
+
+            .submit-btn:active {
+                transform: translateY(0);
+            }
+
+            .warning-text {
+                font-size: 0.9rem;
+                margin-top: 0.5rem;
+                color: var(--wiki-text-muted);
+            }
+        </style>
+    </Fragment>
+
+    <div class="setup-container">
+        <i class="mdi mdi-account-cog-outline setup-icon" id="setupIcon"></i>
+        <h2 class="setup-title" id="setupTitle">환영합니다!</h2>
+        <p class="setup-subtitle" id="setupSubtitle">CloudWiki에서 사용할 표시명을 설정해주세요.</p>
+
+        <div class="form-group">
+            <input type="text" id="nameInput" class="name-input" placeholder="새 표시 이름" autocomplete="off"
+                maxlength="20">
+            <div id="statusMessage" class="warning-text"></div>
+        </div>
+
+        <!-- 승인제 모드: 가입 메시지 입력 -->
+        <div class="form-group" id="signupMessageGroup" style="display: none;">
+            <label for="signupMessage" class="form-label fw-bold" style="color: var(--wiki-text);">가입 신청 메시지 <span
+                    class="text-muted fw-normal">(선택사항)</span></label>
+            <textarea id="signupMessage" class="name-input" rows="3" placeholder="관리자에게 전달할 메시지를 입력해주세요."
+                style="resize: vertical; font-size: 1rem; padding: 0.8rem;"></textarea>
+        </div>
+
+        <!-- 승인제 모드: 결과 푸시 옵트인 (브라우저 지원 + 서버 활성 시에만 표시) -->
+        <div class="form-group" id="pushOptInGroup" style="display: none;">
+            <label class="form-label" style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                <input type="checkbox" id="pushOptIn" checked style="width: 1.1rem; height: 1.1rem;">
+                <span style="color: var(--wiki-text);">승인 / 거절 결과를 브라우저 푸시로 받기</span>
+            </label>
+            <div class="warning-text"><i class="mdi mdi-information-outline"></i> 브라우저 알림 권한을 허용하면 결과를 즉시 알려드립니다.</div>
+        </div>
+
+        <button class="submit-btn" id="submitBtn" onclick="saveProfile()">시작하기</button>
+    </div>
+
+    <Fragment slot="scripts">
+        <script type="module" src="/dist/common.js" is:inline></script>
+        <script type="module" src="/dist/setup-profile.js" is:inline></script>
+        <script type="module" src="/dist/setup-profile-form.js" is:inline></script>
+    </Fragment>
+</BaseLayout>

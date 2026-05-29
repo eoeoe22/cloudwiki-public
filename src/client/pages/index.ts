@@ -158,8 +158,28 @@
       if (!trendingParent && !recentParent) return;
       const container = document.createElement('div');
       container.className = 'wiki-sidebar-bottom-relocated';
+
+      // 커스텀 사이드바는 모바일 오프캔버스 메뉴(#mobileSidebar)의 소스이므로 옮기지 않고
+      // 복제해 본문 하단에 추가한다(PC 전용 노출, CSS 로 모바일 숨김). SSR 단계에서
+      // #custom-sidebar-content placeholder 는 <li> 항목들로 치환되어 사라지므로(ssr.ts),
+      // 안정적인 부모 컨테이너 #sidebar-nav-list 의 내용을 복제 소스로 쓴다.
+      // 실제 커스텀 항목(<li>)이 있을 때만 복제한다 — SSR 미주입 폴백 경로에서 #sidebar-nav-list
+      // 가 빈 placeholder 만 담고 있는 경우 빈 카드가 생기지 않도록.
+      // 하단 배치 순서: 커스텀 사이드바 → 트렌딩 → 최근 변경.
+      const customSrc = document.getElementById('sidebar-nav-list');
+      if (customSrc && customSrc.querySelector('li')) {
+        const customBlock = document.createElement('div');
+        customBlock.className = 'wiki-sidebar-bottom-custom';
+        const ul = document.createElement('ul');
+        ul.className = 'navbar-nav';
+        ul.innerHTML = customSrc.innerHTML;
+        customBlock.appendChild(ul);
+        container.appendChild(customBlock);
+      }
+
       if (trendingParent) container.appendChild(trendingParent);
       if (recentParent) container.appendChild(recentParent);
+
       wikiArticle.insertAdjacentElement('afterend', container);
       _rightSidebarRelocated = true;
     }
@@ -175,8 +195,17 @@
         leftTocNav.innerHTML = '';
         return;
       }
-      const src = document.getElementById('tocNav');
-      const html = src ? src.innerHTML.trim() : '';
+      // 좌측 목차 사이드바는 헤딩 번호를 포함해 생성한다(#tocNav 는 번호가 없으므로 복제하지
+      // 않는다). 렌더된 본문(articleContent)의 .wiki-heading-num 스팬을 읽어 번호 prefix 를 붙인다.
+      const contentEl = document.getElementById('articleContent');
+      let html = (contentEl && typeof window.buildTocOlHtml === 'function')
+        ? window.buildTocOlHtml(contentEl, true)
+        : '';
+      if (!html) {
+        // 헬퍼 미가용 등 예외 상황에서는 번호 없는 #tocNav 복제로 폴백.
+        const src = document.getElementById('tocNav');
+        html = src ? src.innerHTML.trim() : '';
+      }
       if (!html) {
         leftTocSidebar.classList.add('d-none');
         leftTocNav.innerHTML = '';
@@ -889,12 +918,14 @@
           }
           _tryRenderExtDoc(15);
         } else {
-          const leftTocMode = window.appConfig?.sidebarMode === 'left-toc';
           await window.renderWikiContent(page.content || '', slug, 'articleContent', {
             showCategory: true,
             tocContainerId: 'tocContainer',
             tocNavId: 'tocNav',
-            inlineTocLayout: !leftTocMode,
+            // 인라인 목차 카드는 항상 생성한다. left-toc 모드에선 좌측 사이드바와 함께
+            // 둘 다 렌더하고 CSS(viewport)로 택일한다 — PC 는 좌측 사이드바, 모바일은
+            // 인라인 카드(기본 모드와 동일).
+            inlineTocLayout: true,
             collapsibleSections: true,
             enableSectionEdit: true,
             canEdit: canEdit,

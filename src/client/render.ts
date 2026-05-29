@@ -4188,6 +4188,8 @@ window.fetchCategoryList = fetchCategoryList;
 window._wikiCategoryInvalidate = _wikiCategoryInvalidate;
 window.numberHeadings = numberHeadings;
 window.generateTOC = generateTOC;
+// 좌측 목차 사이드바(left-toc 모드)가 번호 포함 목차를 직접 생성하기 위해 노출.
+window.buildTocOlHtml = _buildTocOlHtml;
 window.makeCollapsibleSections = makeCollapsibleSections;
 window.processWikiLinks = processWikiLinks;
 window.processFootnotes = processFootnotes;

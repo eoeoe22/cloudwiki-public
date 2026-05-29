@@ -1,0 +1,206 @@
+---
+// 사용자 프로필(타인 조회) 페이지 셸. 기존 public/user-profile.html 과 동일한 마커/구조를 유지하되,
+// header/sidebar/footer 를 빌드 타임에 컴포넌트로 인라인한다(런타임 placeholder 주입 불필요).
+// base CDN 은 인라인하지 않음 — PAGE_BUNDLES['/user-profile.html']=['base']가 런타임 주입.
+// 인라인 <style>(profile-* 스타일)은 is:inline 으로 원문 그대로 보존.
+import BaseLayout from '../layouts/BaseLayout.astro';
+import Header from '../components/Header.astro';
+import Sidebar from '../components/Sidebar.astro';
+import Footer from '../components/Footer.astro';
+---
+<BaseLayout title="사용자 프로필 - CloudWiki">
+    <Fragment slot="head">
+        <link rel="icon" id="wiki-favicon" href="/favicon.ico" />
+        <!-- 테마 FOUC 방지: CSS 로드 후 즉시 테마 적용 -->
+        <script is:inline>try{var t=localStorage.getItem('themeMode');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
+        <style is:inline>
+            .profile-container {
+                max-width: 800px;
+                margin: 40px auto;
+                padding: 0 20px;
+            }
+
+            .profile-header {
+                display: flex;
+                align-items: center;
+                gap: 1.5rem;
+                padding: 2rem;
+                background: var(--wiki-card-bg);
+                border-radius: 16px;
+                box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+                border: 1px solid var(--wiki-border);
+                margin-bottom: 1.5rem;
+            }
+
+            .profile-avatar {
+                width: 80px;
+                height: 80px;
+                border-radius: 50%;
+                border: 3px solid var(--wiki-primary);
+                object-fit: cover;
+            }
+
+            .profile-avatar-placeholder {
+                width: 80px;
+                height: 80px;
+                border-radius: 50%;
+                background: linear-gradient(135deg, var(--wiki-primary), var(--wiki-accent));
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                color: #fff;
+                font-size: 2rem;
+                font-weight: 700;
+            }
+
+            .profile-info h2 {
+                font-weight: 800;
+                margin-bottom: 0.25rem;
+            }
+
+            .profile-section {
+                background: var(--wiki-card-bg);
+                border-radius: 16px;
+                padding: 1.5rem 2rem;
+                box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+                border: 1px solid var(--wiki-border);
+                margin-bottom: 1.5rem;
+            }
+
+            .profile-section h4 {
+                font-weight: 700;
+                margin-bottom: 1rem;
+                padding-bottom: 0.5rem;
+                border-bottom: 2px solid var(--wiki-border);
+            }
+
+            .profile-section h4 i {
+                color: var(--wiki-primary);
+            }
+
+            .contribution-item {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                padding: 0.6rem 0;
+                border-bottom: 1px solid var(--wiki-border);
+                transition: background 0.15s;
+            }
+
+            .contribution-item:last-child {
+                border-bottom: none;
+            }
+
+            .contribution-item:hover {
+                background: rgba(37, 99, 235, 0.03);
+                margin: 0 -0.5rem;
+                padding-left: 0.5rem;
+                padding-right: 0.5rem;
+                border-radius: 8px;
+            }
+
+            .contribution-item a {
+                color: var(--wiki-primary);
+                text-decoration: none;
+                font-weight: 600;
+            }
+
+            .contribution-item a:hover {
+                text-decoration: underline;
+            }
+
+            .contribution-item .meta {
+                font-size: 0.8rem;
+                color: var(--wiki-text-muted);
+            }
+
+            .contribution-item .summary {
+                font-size: 0.85rem;
+                color: var(--wiki-text-muted);
+                margin-left: 0.5rem;
+            }
+
+            .stat-cards {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+                gap: 1rem;
+                margin-bottom: 1rem;
+            }
+
+            .stat-card {
+                background: var(--wiki-toc-bg);
+                border-radius: 12px;
+                padding: 1rem;
+                text-align: center;
+                border: 1px solid var(--wiki-border);
+            }
+
+            .stat-card .stat-value {
+                font-size: 1.5rem;
+                font-weight: 800;
+                color: var(--wiki-primary);
+            }
+
+            .stat-card .stat-label {
+                font-size: 0.8rem;
+                color: var(--wiki-text-muted);
+                font-weight: 500;
+            }
+
+            .contributions-pagination {
+                margin-top: 1rem;
+            }
+        </style>
+    </Fragment>
+
+    <!-- ── 네비게이션 바 ── -->
+    <Header />
+
+    <div class="wiki-layout justify-content-center">
+        <div class="wiki-container">
+            <div class="profile-container">
+
+                <!-- 프로필 헤더 -->
+                <div class="profile-header" id="profileHeader">
+                    <div class="wiki-loading">
+                        <div class="spinner-border text-primary" role="status"></div>
+                        <span>프로필 불러오는 중...</span>
+                    </div>
+                </div>
+
+                <!-- 관리자 제어 -->
+                <div class="profile-section" id="adminControlsSection" style="display:none;">
+                    <h4><i class="mdi mdi-shield-account"></i> 관리자 제어</h4>
+                    <div id="adminControlsContent"></div>
+                </div>
+
+                <!-- 통계 -->
+                <div class="profile-section" id="statsSection" style="display:none;">
+                    <h4><i class="mdi mdi-chart-bar"></i> 활동 통계</h4>
+                    <div class="stat-cards" id="statCards"></div>
+                </div>
+
+                <!-- 최근 편집 내역 -->
+                <div class="profile-section" id="contributionsSection" style="display:none;">
+                    <h4><i class="mdi mdi-pencil-box-multiple"></i> 최근 편집 내역</h4>
+                    <div id="contributionsList">
+                        <div class="text-center text-muted py-3">불러오는 중...</div>
+                    </div>
+                    <nav class="contributions-pagination" id="contributionsPagination" aria-label="편집 내역 페이지"></nav>
+                </div>
+            </div>
+        </div>
+
+        <aside class="wiki-sidebar" id="wikiSidebar">
+            <Sidebar />
+        </aside>
+    </div>
+
+    <!-- ── 푸터 ── -->
+    <Footer />
+
+    <Fragment slot="scripts">
+        <script type="module" src="/dist/common.js" is:inline></script>
+        <script type="module" src="/dist/user-profile.js" is:inline></script>
+    </Fragment>
+</BaseLayout>

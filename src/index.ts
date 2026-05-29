@@ -328,7 +328,7 @@ const COMPONENT_CACHE_TTL = 60_000; // 1분
 // Astro 빌드로 셸이 자체 완결된(컴포넌트가 이미 인라인된) 페이지.
 // 이 페이지들은 런타임 컴포넌트 fetch/주입을 건너뛰고, 인라인 마커(.app-wiki-name,
 // .wiki-logo-container, #custom-sidebar-content, #custom-footer-content)를 applyPageSSR가 처리한다.
-const ASTRO_SHELL_PAGES = new Set(['/error.html', '/login.html', '/search.html']);
+const ASTRO_SHELL_PAGES = new Set(['/error.html', '/login.html', '/search.html', '/recent-changes.html', '/revisions.html', '/user-profile.html', '/setup-profile.html']);
 
 // ── 헬퍼: 사이드바/푸터 커스텀 HTML 생성 ──
 function buildCustomSidebarHtml(configStr: string | null): string {
