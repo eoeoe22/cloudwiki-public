@@ -152,7 +152,7 @@ export const ssrMiddleware = async (c: Context<Env>, next: Next) => {
  * index.html의 <script id="ssr-data"> 에 JSON으로 주입하여
  * 클라이언트에서 추가 API 호출 없이 즉시 렌더링 가능
  */
-export function applyPageSSR(response: Response, pageData: Record<string, any>, env: { WIKI_NAME?: string; WIKI_LOGO_URL?: string; WIKI_FAVICON_URL?: string; CUSTOM_HEADER?: string; SIDEBAR_MODE?: string }, headerHtml: string = '', sidebarHtml: string = '', footerHtml: string = '', bundles: BundleName[] = []): Response {
+export function applyPageSSR(response: Response, pageData: Record<string, any>, env: { WIKI_NAME?: string; WIKI_LOGO_URL?: string; WIKI_FAVICON_URL?: string; CUSTOM_HEADER?: string; SIDEBAR_MODE?: string }, headerHtml: string = '', sidebarHtml: string = '', footerHtml: string = '', bundles: BundleName[] = [], customSidebarHtml: string = '', customFooterHtml: string = ''): Response {
     const wikiName = env.WIKI_NAME || 'CloudWiki';
     const wikiLogoUrl = env.WIKI_LOGO_URL || '';
     const wikiFaviconUrl = env.WIKI_FAVICON_URL || '/favicon.ico';
@@ -190,6 +190,27 @@ export function applyPageSSR(response: Response, pageData: Record<string, any>, 
             element(element) {
                 if (wikiLogoUrl) {
                     element.setInnerContent(`<img src="${escapeHtml(wikiLogoUrl)}" alt="Logo" class="brand-logo" style="height: 32px; vertical-align: middle; margin-right: 8px;">`, { html: true });
+                }
+            }
+        })
+        // Astro 셸 페이지에서 인라인된 컴포넌트의 커스텀 사이드바/푸터 콘텐츠(env SIDEBAR/FOOTER) 처리.
+        // 비-Astro 페이지의 셸에는 이 마커가 없고(주입되는 컴포넌트는 renderHtml이 미리 채움) HTMLRewriter는
+        // 주입 콘텐츠를 재스캔하지 않으므로 이 핸들러들은 인라인 마커에만 반응한다.
+        .on('#custom-sidebar-content', {
+            element(element) {
+                if (customSidebarHtml) {
+                    element.replace(customSidebarHtml, { html: true });
+                } else {
+                    element.remove();
+                }
+            }
+        })
+        .on('#custom-footer-content', {
+            element(element) {
+                if (customFooterHtml) {
+                    element.setInnerContent(customFooterHtml, { html: true });
+                } else {
+                    element.remove();
                 }
             }
         })

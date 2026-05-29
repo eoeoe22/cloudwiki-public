@@ -325,6 +325,11 @@ async function fetchAssetHtml(c: any, htmlPath: string): Promise<Response> {
 let componentCache: { header: string; sidebar: string; footer: string; timestamp: number } | null = null;
 const COMPONENT_CACHE_TTL = 60_000; // 1분
 
+// Astro 빌드로 셸이 자체 완결된(컴포넌트가 이미 인라인된) 페이지.
+// 이 페이지들은 런타임 컴포넌트 fetch/주입을 건너뛰고, 인라인 마커(.app-wiki-name,
+// .wiki-logo-container, #custom-sidebar-content, #custom-footer-content)를 applyPageSSR가 처리한다.
+const ASTRO_SHELL_PAGES = new Set(['/error.html', '/login.html', '/search.html']);
+
 // ── 헬퍼: 사이드바/푸터 커스텀 HTML 생성 ──
 function buildCustomSidebarHtml(configStr: string | null): string {
     if (!configStr) return '';
@@ -441,31 +446,37 @@ async function renderHtml(c: Context<Env>, targetHtmlPath: string, pageData: Rec
     let sidebarHtml = '';
     let footerHtml = '';
 
-    if (cacheValid) {
-        // 캐시된 컴포넌트 HTML 사용
-        headerHtml = componentCache!.header;
-        sidebarHtml = componentCache!.sidebar;
-        footerHtml = componentCache!.footer;
-    } else {
-        // 3개 컴포넌트를 병렬로 로드 및 브랜딩 적용
-        const [headerRes, sidebarRes, footerRes] = await Promise.all([
-            fetchAssetHtml(c, '/components/header.html').catch(() => null),
-            fetchAssetHtml(c, '/components/sidebar.html').catch(() => null),
-            fetchAssetHtml(c, '/components/footer.html').catch(() => null),
-        ]);
+    // Astro 셸 페이지는 header/sidebar/footer가 빌드 타임에 이미 인라인되어 있으므로
+    // 런타임 컴포넌트 fetch/주입을 건너뛴다. (브랜딩/커스텀 콘텐츠는 applyPageSSR가 인라인 마커에 적용)
+    const isAstroShell = ASTRO_SHELL_PAGES.has(targetHtmlPath);
 
-        const [h, s, f] = await Promise.all([
-            headerRes?.ok ? getRewriter().transform(headerRes).text() : Promise.resolve(''),
-            sidebarRes?.ok ? getRewriter().transform(sidebarRes).text() : Promise.resolve(''),
-            footerRes?.ok ? getRewriter().transform(footerRes).text() : Promise.resolve(''),
-        ]);
+    if (!isAstroShell) {
+        if (cacheValid) {
+            // 캐시된 컴포넌트 HTML 사용
+            headerHtml = componentCache!.header;
+            sidebarHtml = componentCache!.sidebar;
+            footerHtml = componentCache!.footer;
+        } else {
+            // 3개 컴포넌트를 병렬로 로드 및 브랜딩 적용
+            const [headerRes, sidebarRes, footerRes] = await Promise.all([
+                fetchAssetHtml(c, '/components/header.html').catch(() => null),
+                fetchAssetHtml(c, '/components/sidebar.html').catch(() => null),
+                fetchAssetHtml(c, '/components/footer.html').catch(() => null),
+            ]);
 
-        headerHtml = h;
-        sidebarHtml = s;
-        footerHtml = f;
+            const [h, s, f] = await Promise.all([
+                headerRes?.ok ? getRewriter().transform(headerRes).text() : Promise.resolve(''),
+                sidebarRes?.ok ? getRewriter().transform(sidebarRes).text() : Promise.resolve(''),
+                footerRes?.ok ? getRewriter().transform(footerRes).text() : Promise.resolve(''),
+            ]);
 
-        // 메모리 캐시 업데이트
-        componentCache = { header: headerHtml, sidebar: sidebarHtml, footer: footerHtml, timestamp: now };
+            headerHtml = h;
+            sidebarHtml = s;
+            footerHtml = f;
+
+            // 메모리 캐시 업데이트
+            componentCache = { header: headerHtml, sidebar: sidebarHtml, footer: footerHtml, timestamp: now };
+        }
     }
 
     // CUSTOM_HEADER는 /w/* (문서 열람, 리비전, 토론), /blog/* 페이지에 삽입
@@ -481,7 +492,7 @@ async function renderHtml(c: Context<Env>, targetHtmlPath: string, pageData: Rec
         WIKI_FAVICON_URL: wikiFaviconUrl,
         CUSTOM_HEADER: shouldInjectCustomHeader ? (c.env.CUSTOM_HEADER || '') : '',
         SIDEBAR_MODE: c.env.SIDEBAR_MODE,
-    }, headerHtml, sidebarHtml, footerHtml, bundles);
+    }, headerHtml, sidebarHtml, footerHtml, bundles, customSidebarHtml, customFooterHtml);
 }
 
 // ── 프론트엔드 라우팅 ──

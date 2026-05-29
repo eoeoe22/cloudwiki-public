@@ -1,0 +1,30 @@
+---
+// 정적 셸 공유 레이아웃 (PoC: error / login).
+// 두 페이지가 공통으로 갖는 <!DOCTYPE>/charset/viewport/style.css/공통 body style 을 모은다.
+// base CDN(Bootstrap/SweetAlert2/폰트)은 이 레이아웃에 인라인하지 않는다 — PAGE_BUNDLES 가
+// 런타임 renderHeadTags/renderBodyScripts 로 주입하므로 인라인 시 이중 로드된다.
+// 브랜딩 마커(<title class="app-wiki-name">)는 런타임 HTMLRewriter(ssrMiddleware/applyPageSSR)가
+// 치환하므로 그대로 보존한다.
+interface Props {
+    title: string;
+    lang?: string;
+}
+const { title, lang = 'ko' } = Astro.props;
+---
+<!DOCTYPE html>
+<html lang={lang}>
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title class="app-wiki-name">{title}</title>
+    <link rel="stylesheet" href="/css/style.css" />
+    <slot name="head" />
+</head>
+
+<body style="-webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;">
+    <slot />
+    <slot name="scripts" />
+</body>
+
+</html>

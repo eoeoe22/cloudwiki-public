@@ -1,20 +1,21 @@
-<!DOCTYPE html>
-<html lang="ko">
+---
+// 검색 결과 페이지 셸. 기존 public/search.html 과 동일한 마커/구조를 유지하되,
+// header/sidebar/footer 를 빌드 타임에 컴포넌트로 인라인한다(런타임 placeholder 주입 불필요).
+// base CDN(Bootstrap 등)은 인라인하지 않음 — PAGE_BUNDLES['/search.html']=['base']가 런타임 주입.
+import BaseLayout from '../layouts/BaseLayout.astro';
+import Header from '../components/Header.astro';
+import Sidebar from '../components/Sidebar.astro';
+import Footer from '../components/Footer.astro';
+---
+<BaseLayout title="검색 결과 - CloudWiki">
+    <Fragment slot="head">
+        <link rel="icon" id="wiki-favicon" href="/favicon.ico" />
+        <!-- 테마 FOUC 방지: CSS 로드 후 즉시 테마 적용 -->
+        <script is:inline>try{var t=localStorage.getItem('themeMode');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
+    </Fragment>
 
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title class="app-wiki-name">검색 결과 - CloudWiki</title>
-    <link rel="icon" id="wiki-favicon" href="/favicon.ico">
-    <link rel="stylesheet" href="/css/style.css">
-  <!-- 테마 FOUC 방지: CSS 로드 후 즉시 테마 적용 -->
-  <script>try{var t=localStorage.getItem('themeMode');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
-</head>
-
-<body style="-webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;">
-
-    <!-- ── 네비게이션 바 Placeholder ── -->
-    <div id="app-header-placeholder"></div>
+    <!-- ── 네비게이션 바 ── -->
+    <Header />
 
     <div class="wiki-layout">
         <div class="wiki-container">
@@ -66,16 +67,15 @@
 
         <!-- 오른쪽 사이드바 (PC 전용 오프캔버스 컨테이너) -->
         <aside class="wiki-sidebar" id="wikiSidebar">
-            <div id="app-sidebar-placeholder"></div>
+            <Sidebar />
         </aside>
     </div>
 
-    <!-- ── 푸터 Placeholder ── -->
-    <div id="app-footer-placeholder"></div>
+    <!-- ── 푸터 ── -->
+    <Footer />
 
-    <script type="module" src="/dist/common.js"></script>
-    <script type="module" src="/dist/search.js"></script>
-
-</body>
-
-</html>
+    <Fragment slot="scripts">
+        <script type="module" src="/dist/common.js" is:inline></script>
+        <script type="module" src="/dist/search.js" is:inline></script>
+    </Fragment>
+</BaseLayout>
