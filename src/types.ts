@@ -36,7 +36,7 @@ export type Env = {
         MCP_MODE: 'disabled' | 'open';
         ALLOW_CRAWL: string;
         WIKI_VISIBILITY: 'open' | 'closed';
-        SIDEBAR_MODE: 'default' | 'left-toc';
+        LAYOUT_MODE: 'default' | 'left-toc' | 'right-toc' | 'docs';
         LOGIN_MESSAGE: string;
         TURNSTILE_SITE_KEY: string;
         TURNSTILE_SECRET_KEY: string;

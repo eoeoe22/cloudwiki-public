@@ -1,15 +1,28 @@
 ---
-// 정적 셸 공유 레이아웃 (PoC: error / login).
-// 두 페이지가 공통으로 갖는 <!DOCTYPE>/charset/viewport/style.css/공통 body style 을 모은다.
-// base CDN(Bootstrap/SweetAlert2/폰트)은 이 레이아웃에 인라인하지 않는다 — PAGE_BUNDLES 가
-// 런타임 renderHeadTags/renderBodyScripts 로 주입하므로 인라인 시 이중 로드된다.
-// 브랜딩 마커(<title class="app-wiki-name">)는 런타임 HTMLRewriter(ssrMiddleware/applyPageSSR)가
-// 치환하므로 그대로 보존한다.
+// 정적 셸 공유 레이아웃.
+// 브랜딩·CDN 번들·파비콘·레이아웃 모드를 빌드 타임에 wrangler.toml 값으로 인라인(베이킹)한다.
+// 그 결과 Astro 셸은 런타임 HTMLRewriter(브랜딩 치환·번들 주입) 개입 없이 ASSETS 가 즉시 서빙한다.
+//  - headTags.prepend(폰트/Bootstrap CSS)는 /css/style.css 보다 먼저 와야 로컬 CSS 가 정상 덮어쓴다.
+//  - headTags.append(importmap/Turnstile)는 head 끝, bodyScripts(Bootstrap JS 등)는 body 끝(슬롯 스크립트 뒤).
+//  - CUSTOM_HEADER 는 /w/ 하위(revisions·discussions)에서만 인라인(injectCustomHeader) — 런타임 동작과 동일.
+import { PAGE_BUNDLES, renderHeadTags, renderBodyScripts } from '../../shared/cdn';
+import type { BundleName } from '../../shared/cdn';
+import { readBranding } from '../../../scripts/branding.mjs';
+
 interface Props {
     title: string;
     lang?: string;
+    pagePath: string;             // PAGE_BUNDLES 조회 키 (예: '/search.html')
+    injectCustomHeader?: boolean; // CUSTOM_HEADER 를 body 끝에 인라인할지
 }
-const { title, lang = 'ko' } = Astro.props;
+const { title, lang = 'ko', pagePath, injectCustomHeader = false } = Astro.props;
+
+const branding = readBranding();
+const bundles: BundleName[] = PAGE_BUNDLES[pagePath] ?? ['base'];
+const headTags = renderHeadTags(bundles);
+const bodyScripts = renderBodyScripts(bundles);
+const bakedTitle = title.replace(/CloudWiki/g, branding.wikiName).replace(/Cloudwiki/g, branding.wikiName);
+const customHeader = injectCustomHeader ? branding.customHeader : '';
 ---
 <!DOCTYPE html>
 <html lang={lang}>
@@ -17,14 +30,19 @@ const { title, lang = 'ko' } = Astro.props;
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title class="app-wiki-name">{title}</title>
+    <Fragment set:html={headTags.prepend} />
+    <title class="app-wiki-name">{bakedTitle}</title>
+    <link rel="icon" id="wiki-favicon" href={branding.wikiFaviconUrl} />
     <link rel="stylesheet" href="/css/style.css" />
     <slot name="head" />
+    <Fragment set:html={headTags.append} />
 </head>
 
-<body style="-webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;">
+<body data-layout-mode={branding.layoutMode} style="-webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;">
     <slot />
     <slot name="scripts" />
+    <Fragment set:html={bodyScripts} />
+    {customHeader && <Fragment set:html={customHeader} />}
 </body>
 
 </html>

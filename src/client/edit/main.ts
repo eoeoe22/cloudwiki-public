@@ -423,8 +423,13 @@ async function updateCustomPreview() {
         // 일치하는 iframe 은 캐시 노드로 in-place 치환한다.
         const previewSnap = snapshotPreviewState(customPreview);
         try {
+            // 목차 카드는 전체 편집 모드에서만 프리뷰에 삽입한다(섹션 편집은 문서 일부만 다루므로 제외).
+            // left-toc/docs 레이아웃에서의 데스크탑(≥992px) 숨김은 조회 화면과 동일하게 CSS 가
+            // 담당한다(style.css #custom-wiki-preview .wiki-toc-card). 모바일에서는 사이드바가
+            // 숨겨지므로 카드를 그대로 노출해 실제 조회 화면과 일치시킨다.
+            const showInlineToc = !sectionMode;
             await window.renderWikiContent(md, slug, 'custom-wiki-preview', {
-                inlineTocLayout: true
+                inlineTocLayout: showInlineToc
             });
         } finally {
             restorePreviewState(customPreview, previewSnap);

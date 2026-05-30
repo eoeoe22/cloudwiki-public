@@ -1,0 +1,121 @@
+---
+// 이미지 관리(관리자) 페이지 셸. 기존 public/admin-media.html 과 동일한 마커/구조를 유지하되,
+// header/sidebar/footer 를 빌드 타임에 컴포넌트로 인라인한다(런타임 placeholder 주입 불필요).
+// base CDN 은 BaseLayout 이 빌드 타임에 인라인(베이킹) — PAGE_BUNDLES['/admin-media.html']=['base']기준으로 베이킹.
+// admin.css 는 관리자 전용 스타일로 head 슬롯에서 직접 로드.
+import BaseLayout from '../layouts/BaseLayout.astro';
+import Header from '../components/Header.astro';
+import Sidebar from '../components/Sidebar.astro';
+import Footer from '../components/Footer.astro';
+---
+<BaseLayout pagePath="/admin-media.html" title="관리자 콘솔 - 이미지 관리 - CloudWiki">
+    <Fragment slot="head">
+        <link rel="stylesheet" href="/css/admin.css" />
+        <!-- 테마 FOUC 방지: CSS 로드 후 즉시 테마 적용 -->
+        <script is:inline>try{var t=localStorage.getItem('themeMode');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
+    </Fragment>
+
+    <!-- ── 네비게이션 바 ── -->
+    <Header />
+
+    <div class="wiki-layout justify-content-center">
+        <div class="wiki-container">
+            <div class="admin-container">
+                <div class="mb-4">
+                    <a href="/admin" class="btn btn-wiki-outline btn-sm"><i class="mdi mdi-arrow-left"></i> 관리자 콘솔로 돌아가기</a>
+                </div>
+
+                <h2 class="mb-4">
+                    <i class="mdi mdi-image-multiple"></i> 이미지 관리
+                </h2>
+                <p class="text-muted mb-3">
+                    업로드된 이미지를 검색하고 관리할 수 있습니다.
+                </p>
+
+                <!-- 쓰레기 수집기 카드 -->
+                <div class="card shadow-sm border-0 mb-4">
+                    <div class="card-header py-3">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <h5 class="mb-0">
+                                <i class="mdi mdi-delete-sweep"></i> 쓰레기 수집기
+                            </h5>
+                            <button class="btn btn-wiki btn-sm" onclick="runGarbageCollector()" id="gcRunBtn">
+                                <i class="mdi mdi-magnify-scan"></i> 미사용 이미지 검색
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body" id="gcBody" style="display: none">
+                        <div id="gcStatus" class="text-muted text-center py-3"></div>
+                        <div class="media-list-scroll">
+                            <div id="gcList"></div>
+                        </div>
+                        <div id="gcActions" class="text-center mt-3" style="display: none">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div>
+                                    <button class="btn btn-sm btn-outline-secondary" onclick="gcSelectAll()">
+                                        전체 선택
+                                    </button>
+                                    <button class="btn btn-sm btn-outline-secondary" onclick="gcDeselectAll()">
+                                        전체 해제
+                                    </button>
+                                </div>
+                                <button class="btn btn-wiki-danger btn-sm" onclick="gcDeleteSelected()" id="gcDeleteBtn">
+                                    <i class="mdi mdi-delete-forever"></i> 선택 항목 삭제
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card shadow-sm border-0 mb-4">
+                    <div class="card-header py-3">
+                        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+                            <h5 class="mb-0">이미지 목록</h5>
+                            <div class="d-flex gap-2 flex-wrap">
+                                <select id="mediaSortSelect" class="form-select form-select-sm" style="width: auto" onchange="changeMediaSort()">
+                                    <option value="date_desc">업로드 최신순</option>
+                                    <option value="date_asc">업로드 오래된순</option>
+                                    <option value="name_asc">파일명 A-Z</option>
+                                    <option value="name_desc">파일명 Z-A</option>
+                                    <option value="size_desc">파일 크기 큰순</option>
+                                    <option value="size_asc">파일 크기 작은순</option>
+                                </select>
+                                <input type="text" id="mediaSearchInput" class="form-control form-control-sm" placeholder="파일명 검색..." style="width: 250px" />
+                                <button class="btn btn-wiki btn-sm" onclick="searchMedia()">
+                                    검색
+                                </button>
+                            </div>
+                        </div>
+                        <div class="media-tag-filter">
+                            <label for="mediaTagInput"><i class="mdi mdi-tag-multiple-outline"></i> 태그 검색</label>
+                            <div class="category-tag-container" id="mediaTagContainer">
+                                <input type="text" id="mediaTagInput" class="category-tag-input" placeholder="(엔터/쉼표로 추가, 모두 포함하는 이미지 표시)" />
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="media-list-scroll">
+                            <div id="mediaList">
+                                <div class="text-center text-muted py-3">불러오는 중...</div>
+                            </div>
+                        </div>
+                        <nav id="mediaPagination" class="mt-3" aria-label="이미지 페이지네이션"></nav>
+                        <div id="mediaTotalInfo" class="text-muted small text-center mt-2"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <aside class="wiki-sidebar d-none" id="wikiSidebar">
+            <Sidebar />
+        </aside>
+    </div>
+
+    <!-- ── 푸터 ── -->
+    <Footer />
+
+    <Fragment slot="scripts">
+        <script type="module" src="/dist/common.js" is:inline></script>
+        <script type="module" src="/dist/admin-media.js" is:inline></script>
+    </Fragment>
+</BaseLayout>

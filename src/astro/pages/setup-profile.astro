@@ -2,13 +2,12 @@
 // 프로필 설정(가입 후) 페이지 정적 셸. 기존 public/setup-profile.html 과 동일한 마커/구조를 유지한다.
 // login 과 동일한 독립 중앙정렬 카드 — header/sidebar/footer 컴포넌트를 쓰지 않는다.
 // 인라인 <style> 은 전역 셀렉터(body 중앙정렬 등)이므로 is:inline 으로 위치/내용 그대로 보존.
-// base CDN 은 인라인하지 않음 — PAGE_BUNDLES['/setup-profile.html']=['base']가 런타임 주입.
+// base CDN 은 BaseLayout 이 빌드 타임에 인라인(베이킹) — PAGE_BUNDLES['/setup-profile.html']=['base']기준으로 베이킹.
 // #setupTitle/#nameInput/#submitBtn 등은 /dist/setup-profile.js·setup-profile-form.js 가 채운다.
 import BaseLayout from '../layouts/BaseLayout.astro';
 ---
-<BaseLayout title="프로필 설정 - CloudWiki">
+<BaseLayout pagePath="/setup-profile.html" title="프로필 설정 - CloudWiki">
     <Fragment slot="head">
-        <link rel="icon" id="wiki-favicon" href="/favicon.ico" />
         <!-- 테마 FOUC 방지: CSS 로드 후 즉시 테마 적용 -->
         <script is:inline>try{var t=localStorage.getItem('themeMode');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
         <style is:inline>

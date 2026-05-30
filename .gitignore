@@ -22,6 +22,15 @@
 /public/revisions.html
 /public/user-profile.html
 /public/setup-profile.html
+/public/admin-media.html
+/public/discussions.html
+/public/tickets.html
+/public/mypage.html
+/public/index.html
+/public/edit.html
+/public/blog.html
+/public/admin.html
+/public/blog-edit.html
 
 # wrangler / cloudflare
 .wrangler

@@ -1,12 +1,11 @@
 ---
 // 오류 페이지 정적 셸. 본문/카드 마크업/id(#error-reason)는 기존 public/error.html 과 동일하게 유지.
 // #error-reason 텍스트는 런타임에 /dist/404.js 가 ssr-data(_ssrReason)로 채운다.
-// #wiki-favicon 의 href 는 런타임 HTMLRewriter 가 WIKI_FAVICON_URL 로 치환한다.
+// 파비콘(#wiki-favicon)은 BaseLayout 이 WIKI_FAVICON_URL 로 빌드 타임에 인라인한다.
 import BaseLayout from '../layouts/BaseLayout.astro';
 ---
-<BaseLayout title="문제가 발생했어요">
+<BaseLayout pagePath="/error.html" title="문제가 발생했어요">
     <link slot="head" rel="stylesheet" href="/css/404.css" />
-    <link slot="head" rel="icon" id="wiki-favicon" href="/favicon.jpg" />
 
     <!-- partial:index.partial.html -->
     <div class="container">

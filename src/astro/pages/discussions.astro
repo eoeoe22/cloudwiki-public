@@ -1,0 +1,230 @@
+---
+// 문서별 토론 페이지 셸. 기존 public/discussions.html 과 동일한 마커/구조를 유지하되,
+// header/sidebar/footer 를 빌드 타임에 컴포넌트로 인라인한다(런타임 placeholder 주입 불필요).
+// base CDN 은 BaseLayout 이 빌드 타임에 인라인(베이킹) — PAGE_BUNDLES['/discussions.html']=['base','markdown','editor']기준으로 베이킹.
+// render.css/mini-editor.css/image-editor.css/image-picker.css 는 본문 렌더링·미니 에디터·이미지 편집용으로 head 슬롯에서 직접 로드.
+import BaseLayout from '../layouts/BaseLayout.astro';
+import Header from '../components/Header.astro';
+import Sidebar from '../components/Sidebar.astro';
+import Footer from '../components/Footer.astro';
+---
+<BaseLayout pagePath="/discussions.html" injectCustomHeader title="토론 - CloudWiki">
+    <Fragment slot="head">
+        <link rel="stylesheet" href="/render.css" />
+        <link rel="stylesheet" href="/css/mini-editor.css" />
+        <link rel="stylesheet" href="/css/image-editor.css" />
+        <link rel="stylesheet" href="/css/image-picker.css" />
+        <!-- 테마 FOUC 방지: CSS 로드 후 즉시 테마 적용 -->
+        <script is:inline>try{var t=localStorage.getItem('themeMode');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
+        <style is:inline>
+            /* 모바일에서 햄버거 메뉴 숨김 */
+            .navbar-toggler[data-bs-target="#mobileSidebar"] {
+                display: none !important;
+            }
+            /* 댓글 본문 (.wiki-content) 의 마진/여백을 토론 댓글 카드용으로 조이기 */
+            .discussion-comment-body.wiki-content > :first-child { margin-top: 0; }
+            .discussion-comment-body.wiki-content > :last-child { margin-bottom: 0; }
+            .discussion-comment-body.wiki-content p { margin-bottom: 0.5rem; }
+            .discussion-comment-body.wiki-content h1,
+            .discussion-comment-body.wiki-content h2,
+            .discussion-comment-body.wiki-content h3,
+            .discussion-comment-body.wiki-content h4,
+            .discussion-comment-body.wiki-content h5,
+            .discussion-comment-body.wiki-content h6 {
+                font-size: 1.05rem; margin-top: 0.75rem; margin-bottom: 0.4rem;
+            }
+        </style>
+    </Fragment>
+
+    <!-- ── 네비게이션 바 ── -->
+    <Header />
+
+    <!-- ── 메인 레이아웃 ── -->
+    <div class="wiki-layout">
+        <div class="wiki-container">
+            <!-- 로딩 -->
+            <div id="loading" class="wiki-loading">
+                <div class="spinner-border text-primary" role="status"></div>
+                <span>불러오는 중...</span>
+            </div>
+
+            <!-- 토론 목록 페이지 -->
+            <div id="discussionListPage" class="d-none">
+                <div class="wiki-article">
+                    <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
+                        <h2 class="m-0 fw-bold d-flex align-items-center gap-2"
+                            style="font-size: 1.8rem; word-break: keep-all; overflow-wrap: anywhere;">
+                            <i class="bi bi-chat-dots text-primary"></i>
+                            <span id="discussionPageTitle"></span>
+                            <span>토론</span>
+                        </h2>
+                        <div class="d-flex gap-2 flex-shrink-0 w-100 w-sm-auto justify-content-end mt-2 mt-sm-0">
+                            <a id="discussionBackLink" href="#"
+                                class="btn btn-outline-secondary btn-sm px-3 flex-grow-1 flex-sm-grow-0">
+                                <i class="bi bi-arrow-left"></i> 문서로
+                            </a>
+                            <button class="btn btn-primary btn-sm d-none px-3 flex-grow-1 flex-sm-grow-0" id="newDiscussionBtn"
+                                onclick="showNewDiscussionForm()">
+                                <i class="bi bi-plus-lg"></i> 새 토론
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- 상태 필터 -->
+                    <div class="d-flex mb-4 overflow-auto pb-1">
+                        <div class="btn-group btn-group-sm flex-shrink-0" role="group shadow-sm">
+                            <button type="button" class="btn btn-outline-secondary active px-3" onclick="filterDiscussions(this, '')">
+                                전체
+                            </button>
+                            <button type="button" class="btn btn-outline-success px-3" onclick="filterDiscussions(this, 'open')">
+                                <i class="bi bi-circle-fill text-success" style="font-size:0.5em; vertical-align: middle;"></i> 열림
+                            </button>
+                            <button type="button" class="btn btn-outline-secondary px-3" onclick="filterDiscussions(this, 'closed')">
+                                <i class="bi bi-circle-fill text-secondary" style="font-size:0.5em; vertical-align: middle;"></i> 닫힘
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- 새 토론 폼 -->
+                    <div id="newDiscussionForm" class="d-none mb-4">
+                        <div class="card">
+                            <div class="card-body">
+                                <h5 class="card-title">새 토론 시작</h5>
+                                <div class="mb-3">
+                                    <input type="text" class="form-control" id="newDiscussionTitle" placeholder="토론 제목">
+                                </div>
+                                <div class="mb-3">
+                                    <div id="newDiscussionContent"></div>
+                                    <!-- 미니 에디터(CM6) 로드 실패 시 fallback. 미니 에디터 마운트 성공 시 숨겨진다. -->
+                                    <textarea class="form-control" id="newDiscussionContentFallback" rows="4"
+                                        placeholder="토론 내용을 입력하세요"></textarea>
+                                </div>
+                                <div class="d-flex gap-2">
+                                    <button class="btn btn-wiki btn-sm" onclick="submitNewDiscussion()">작성</button>
+                                    <button class="btn btn-secondary btn-sm"
+                                        onclick="document.getElementById('newDiscussionForm').classList.add('d-none')">취소</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="discussionsList"></div>
+                </div>
+            </div>
+
+            <!-- 토론 스레드 상세 페이지 -->
+            <div id="discussionThreadPage" class="d-none">
+                <div class="wiki-article">
+                    <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-3">
+                        <h2 id="threadTitle" class="m-0 fw-bold flex-grow-1"
+                            style="font-size: 1.6rem; line-height: 1.4; word-break: keep-all; overflow-wrap: anywhere;"></h2>
+                        <div class="d-flex gap-2 flex-shrink-0 w-100 w-sm-auto justify-content-end mt-2 mt-sm-0">
+                            <a id="threadBackLink" href="#" class="btn btn-outline-secondary btn-sm px-3 flex-grow-1 flex-sm-grow-0">
+                                <i class="bi bi-arrow-left"></i> 목록
+                            </a>
+                        </div>
+                    </div>
+                    <div
+                        class="d-flex flex-column flex-md-row align-items-start align-items-md-center gap-3 mb-3 p-3 bg-light rounded border shadow-sm w-100"
+                        id="threadMeta"
+                        style="background-color: var(--wiki-card-bg) !important; border-color: var(--wiki-border) !important;">
+                    </div>
+                    <div class="d-flex flex-wrap gap-2 mb-4 w-100" id="threadActions"></div>
+
+                    <div id="commentsList"></div>
+
+                    <!-- 댓글 작성 폼 -->
+                    <div id="commentForm" class="mt-4">
+                        <div class="card">
+                            <div class="card-body">
+                                <h6 class="card-title">댓글 작성</h6>
+                                <div id="replyQuote" class="d-none mb-2"></div>
+                                <input type="hidden" id="replyParentId" value="">
+                                <div class="mb-2">
+                                    <div id="commentContent"></div>
+                                    <!-- 미니 에디터 로드 실패 시 fallback -->
+                                    <textarea class="form-control" id="commentContentFallback" rows="3"
+                                        placeholder="댓글을 입력하세요"></textarea>
+                                </div>
+                                <div class="d-flex gap-2">
+                                    <button class="btn btn-wiki btn-sm" onclick="submitComment()">작성</button>
+                                    <button class="btn btn-secondary btn-sm d-none" id="cancelReplyBtn" onclick="cancelReply()">답글
+                                        취소</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 오른쪽 사이드바 (PC 전용 오프캔버스 컨테이너) -->
+        <aside class="wiki-sidebar d-none" id="wikiSidebar">
+            <Sidebar />
+        </aside>
+    </div>
+
+    <!-- ── 푸터 ── -->
+    <Footer />
+
+    <!-- ── 이미지 편집 모달 (handleImageUpload 가 사용) ── -->
+    <div class="modal fade" id="imageEditorModal" tabindex="-1" aria-hidden="true" data-bs-backdrop="static">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h6 class="modal-title"><i class="bi bi-crop"></i> 이미지 편집</h6>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="닫기"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="img-editor-canvas-wrap" id="imgEditorCanvasWrap">
+                        <canvas id="imgEditorCanvas"></canvas>
+                        <div class="crop-overlay" id="cropOverlay" style="display:none;">
+                            <div class="crop-box" id="cropBox">
+                                <div class="crop-handle tl" data-handle="tl"></div>
+                                <div class="crop-handle tr" data-handle="tr"></div>
+                                <div class="crop-handle bl" data-handle="bl"></div>
+                                <div class="crop-handle br" data-handle="br"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="img-editor-toolbar">
+                        <button type="button" id="btnCropToggle" title="크롭 모드 전환"><i class="bi bi-crop"></i></button>
+                        <button type="button" id="btnCropApply" style="display:none;" title="크롭 적용"><i class="bi bi-check-lg"></i></button>
+                        <div class="separator"></div>
+                        <button type="button" id="btnRotateLeft" title="왼쪽 90도 회전"><i class="bi bi-arrow-counterclockwise"></i></button>
+                        <button type="button" id="btnRotateRight" title="오른쪽 90도 회전"><i class="bi bi-arrow-clockwise"></i></button>
+                        <div class="separator"></div>
+                        <button type="button" id="btnImgReset" title="원본 복원"><i class="bi bi-arrow-repeat"></i> 초기화</button>
+                    </div>
+                    <div class="img-editor-info" id="imgEditorInfo"></div>
+                </div>
+                <div class="modal-footer d-flex justify-content-between align-items-center w-100">
+                    <div class="dropdown">
+                        <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button"
+                            id="btnImgEditorSizeToggle" data-bs-toggle="dropdown" aria-expanded="false">
+                            <i class="mdi mdi-arrow-expand-all me-1"></i>크게(기본)
+                        </button>
+                        <ul class="dropdown-menu" id="imgEditorSizeDropdown" aria-labelledby="btnImgEditorSizeToggle">
+                            <li><a class="dropdown-item" href="#" data-size="icon"><i class="mdi mdi-square-medium-outline me-2"></i>아이콘</a></li>
+                            <li><a class="dropdown-item" href="#" data-size="small"><i class="mdi mdi-arrow-collapse me-2"></i>작게</a></li>
+                            <li><a class="dropdown-item" href="#" data-size="medium"><i class="mdi mdi-square-outline me-2"></i>중간</a></li>
+                            <li><a class="dropdown-item" href="#" data-size="full"><i class="mdi mdi-arrow-expand-all me-2"></i>크게(기본)</a></li>
+                        </ul>
+                    </div>
+                    <div>
+                        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">취소</button>
+                        <button type="button" class="btn btn-primary btn-sm" id="btnImgEditorDone"><i class="bi bi-check-lg"></i> 편집 완료</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <Fragment slot="scripts">
+        <script type="module" src="/dist/common.js" is:inline></script>
+        <script type="module" src="/dist/render.js" is:inline></script>
+        <script type="module" src="/dist/edit-image.js" is:inline></script>
+        <script type="module" src="/dist/discussion-edit.js" is:inline></script>
+        <script type="module" src="/dist/discussions.js" is:inline></script>
+    </Fragment>
+</BaseLayout>

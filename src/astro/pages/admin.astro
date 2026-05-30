@@ -1,25 +1,21 @@
-<!doctype html>
-<html lang="ko">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title class="app-wiki-name">관리자 콘솔 - CloudWiki</title>
-    <link rel="icon" id="wiki-favicon" href="/favicon.ico" />
-    <link rel="stylesheet" href="/css/style.css" />
-    <link rel="stylesheet" href="/css/admin.css" />
-    <!-- 테마 FOUC 방지: CSS 로드 후 즉시 테마 적용 -->
-    <script>
-      try {
-        var t = localStorage.getItem("themeMode");
-        if (t === "light" || t === "dark")
-          document.documentElement.setAttribute("data-theme", t);
-      } catch (e) {}
-    </script>
-  </head>
+---
+// 관리자 콘솔 셸. 기존 public/admin.html 과 동일한 마커/구조를 유지하되,
+// header/footer 를 빌드 타임에 컴포넌트로 인라인한다(런타임 placeholder 주입 불필요).
+// 요청별 데이터가 없어(라우트에서 권한 게이트만 수행) fetchAssetHtml 로 순수 정적 서빙된다.
+// base CDN 은 BaseLayout 이 PAGE_BUNDLES['/admin.html']=['base'] 기준으로 빌드 타임에 인라인(베이킹).
+import BaseLayout from '../layouts/BaseLayout.astro';
+import Header from '../components/Header.astro';
+import Footer from '../components/Footer.astro';
+---
+<BaseLayout pagePath="/admin.html" title="관리자 콘솔 - CloudWiki">
+    <Fragment slot="head">
+        <link rel="stylesheet" href="/css/admin.css" />
+        <!-- 테마 FOUC 방지: CSS 로드 후 즉시 테마 적용 -->
+        <script is:inline>try{var t=localStorage.getItem('themeMode');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
+    </Fragment>
 
-  <body>
-    <!-- ── 네비게이션 바 Placeholder ── -->
-    <div id="app-header-placeholder"></div>
+    <!-- ── 네비게이션 바 ── -->
+    <Header />
 
     <div class="admin-layout">
       <!-- ── 왼쪽 사이드바 (관리 메뉴) ── -->
@@ -399,7 +395,7 @@
             </div>
             <div class="card-body">
               <p class="text-muted small mb-3">
-                본문에서 <code>{palette:이름}</code> 로 사용할 수 있는
+                본문에서 <code>{'{palette:이름}'}</code> 로 사용할 수 있는
                 커스텀 컬러 팔레트를 관리합니다. 배경색을 지정하면 휘도에 따라
                 글씨색이 자동 계산되며(수동 변경 가능), 다크모드에서 다른 색을
                 쓰려면 별도 색상 토글을 켜세요. 기본 색상인 프리셋
@@ -1245,13 +1241,13 @@
       </div>
     </div>
 
-    <!-- ── 푸터 Placeholder ── -->
-    <div id="app-footer-placeholder"></div>
+    <!-- ── 푸터 ── -->
+    <Footer />
 
-
-    <script type="module" src="/dist/common.js"></script>
-    <script type="module" src="/dist/icon-picker.js"></script>
-    <script type="module" src="/dist/admin-palettes.js"></script>
-    <script type="module" src="/dist/admin.js"></script>
-  </body>
-</html>
+    <Fragment slot="scripts">
+        <script type="module" src="/dist/common.js" is:inline></script>
+        <script type="module" src="/dist/icon-picker.js" is:inline></script>
+        <script type="module" src="/dist/admin-palettes.js" is:inline></script>
+        <script type="module" src="/dist/admin.js" is:inline></script>
+    </Fragment>
+</BaseLayout>

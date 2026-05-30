@@ -8,7 +8,7 @@ import { RBAC } from './utils/role';
 import { applyPageSSR, extractMetaDescription } from './middleware/ssr';
 import { PAGE_BUNDLES, BundleName } from './shared/cdn';
 import { safeJSON } from './utils/json';
-import { escapeHtml, sanitizeUrl } from './utils/html';
+import { escapeHtml } from './utils/html';
 import { fetchMediaTags } from './utils/mediaTags';
 import { loadPalettesForPage, loadPalettesForBlogPost } from './utils/palettes';
 import authRoutes from './routes/auth/index';
@@ -321,69 +321,22 @@ async function fetchAssetHtml(c: any, htmlPath: string): Promise<Response> {
     return new Response(fallbackResponse.body, fallbackResponse);
 }
 
-// ── 컴포넌트 HTML 메모리 캐시 (Worker 인스턴스 수명 동안 유지) ──
-let componentCache: { header: string; sidebar: string; footer: string; timestamp: number } | null = null;
-const COMPONENT_CACHE_TTL = 60_000; // 1분
+// Astro 빌드로 셸이 자체 완결된(컴포넌트·브랜딩·CDN 번들이 모두 빌드 타임에 인라인된) 페이지.
+// 모든 페이지 셸이 Astro 화되어 런타임 컴포넌트 주입은 더 이상 쓰이지 않는다.
+// 대부분의 셸(search·recent-changes·revisions·discussions·tickets·mypage·user-profile·
+// setup-profile·admin-media·admin·edit·blog-edit)은 요청별 가변값이 없어 라우트에서
+// fetchAssetHtml 로 정적 서빙하며 renderHtml 을 거치지 않는다.
+// error/login/index/blog 만 요청별 데이터(_ssrReason·로그인 메시지/약관·문서별 _ssrTitle/og/
+// _usedPalettes·CUSTOM_HEADER)를 #ssr-data·메타로 주입해야 하므로 renderHtml→applyPageSSR 을
+// 거치되, 컴포넌트와 CDN 번들은 이미 빌드 타임에 베이킹됐으므로 런타임 주입을 건너뛴다(bundles=[]).
+// '/' 는 ASSETS 가 index.html 로 서빙하므로 '/index.html' 로 정규화한 뒤 이 집합과 대조한다.
+const ASTRO_SHELL_PAGES = new Set(['/error.html', '/login.html', '/index.html', '/blog.html']);
 
-// Astro 빌드로 셸이 자체 완결된(컴포넌트가 이미 인라인된) 페이지.
-// 이 페이지들은 런타임 컴포넌트 fetch/주입을 건너뛰고, 인라인 마커(.app-wiki-name,
-// .wiki-logo-container, #custom-sidebar-content, #custom-footer-content)를 applyPageSSR가 처리한다.
-const ASTRO_SHELL_PAGES = new Set(['/error.html', '/login.html', '/search.html', '/recent-changes.html', '/revisions.html', '/user-profile.html', '/setup-profile.html']);
-
-// ── 헬퍼: 사이드바/푸터 커스텀 HTML 생성 ──
-function buildCustomSidebarHtml(configStr: string | null): string {
-    if (!configStr) return '';
-    try {
-        const config = JSON.parse(configStr);
-        if (!Array.isArray(config)) return '';
-        let html = '';
-        for (const item of config) {
-            if (item.type === 'header') {
-                html += `<li class="nav-item mt-3 mb-1 px-3 fw-bold text-muted small">${escapeHtml(item.text)}</li>`;
-            } else if (item.type === 'link') {
-                const iconHtml = item.icon ? `<i class="${escapeHtml(item.icon)} me-2"></i>` : '';
-                const safeUrl = sanitizeUrl(item.url);
-                const target = item.url?.startsWith('/') ? '' : ' target="_blank" rel="noopener noreferrer"';
-                html += `<li class="nav-item mb-1"><a class="nav-link px-3 py-2 rounded text-body" href="${safeUrl}"${target}>${iconHtml}${escapeHtml(item.text)}</a></li>`;
-            } else if (item.type === 'text') {
-                const iconHtml = item.icon ? `<i class="${escapeHtml(item.icon)} me-2"></i>` : '';
-                html += `<li class="nav-item mb-1 px-3 py-2 text-body small">${iconHtml}${escapeHtml(item.text)}</li>`;
-            } else if (item.type === 'divider') {
-                html += `<li><hr class="w-100 my-2" style="border-color: var(--wiki-border); opacity: 1;"></li>`;
-            }
-        }
-        return html;
-    } catch {
-        return '';
-    }
-}
-
-function buildCustomFooterHtml(configStr: string | null): string {
-    if (!configStr) return '';
-    try {
-        const config = JSON.parse(configStr);
-        if (!Array.isArray(config)) return '';
-        let html = '';
-        for (const item of config) {
-            if (item.type === 'link') {
-                const iconHtml = item.icon ? `<i class="${escapeHtml(item.icon)} me-1"></i>` : '';
-                const safeUrl = sanitizeUrl(item.url);
-                const target = item.url?.startsWith('/') ? '' : ' target="_blank" rel="noopener noreferrer"';
-                html += `<a class="footer-link" href="${safeUrl}"${target}>${iconHtml}${escapeHtml(item.text)}</a>`;
-            } else if (item.type === 'text') {
-                const iconHtml = item.icon ? `<i class="${escapeHtml(item.icon)} me-1"></i>` : '';
-                html += `<span class="footer-text">${iconHtml}${escapeHtml(item.text)}</span>`;
-            } else if (item.type === 'divider') {
-                html += `<span class="footer-divider">|</span>`;
-            }
-        }
-        return html;
-    } catch {
-        return '';
-    }
-}
-
-// ── 헬퍼: 공통 컴포넌트를 주입하여 HTML 렌더링 ──
+// ── 헬퍼: 요청별 SSR 데이터/브랜딩을 주입하여 HTML 렌더링 ──
+// 모든 페이지 셸이 Astro 화되어 header/sidebar/footer 컴포넌트와 CDN 번들은 빌드 타임에
+// 인라인(베이킹)된다. 따라서 런타임 컴포넌트 fetch/주입은 더 이상 하지 않으며, renderHtml 을
+// 거치는 페이지(error/login/index/blog)는 전부 ASTRO_SHELL_PAGES 라 bundles=[] 로 호출한다.
+// applyPageSSR 는 여전히 #ssr-data·문서별 _ssrTitle/og·CUSTOM_HEADER 같은 요청별 값을 주입한다.
 async function renderHtml(c: Context<Env>, targetHtmlPath: string, pageData: Record<string, any> = {}): Promise<Response> {
     const htmlResponse = await fetchAssetHtml(c, targetHtmlPath);
 
@@ -391,108 +344,22 @@ async function renderHtml(c: Context<Env>, targetHtmlPath: string, pageData: Rec
     const wikiLogoUrl = c.env.WIKI_LOGO_URL || '';
     const wikiFaviconUrl = c.env.WIKI_FAVICON_URL || '/favicon.ico';
 
-    // 사이드바/푸터 커스텀 HTML 및 컴포넌트를 병렬로 로드
-    const now = Date.now();
-    const cacheValid = componentCache && (now - componentCache.timestamp < COMPONENT_CACHE_TTL);
-
-    // wrangler.toml vars에서 커스텀 사이드바/푸터 설정을 로드
-    const customSidebarHtml = buildCustomSidebarHtml(c.env.SIDEBAR || null);
-    const customFooterHtml = buildCustomFooterHtml(c.env.FOOTER || null);
-
-    const getRewriter = () => new HTMLRewriter()
-        .on('.app-wiki-name', {
-            text(text) {
-                if (text.text.includes('CloudWiki')) {
-                    text.replace(text.text.replace('CloudWiki', wikiName));
-                } else if (text.text.includes('Cloudwiki')) {
-                    text.replace(text.text.replace('Cloudwiki', wikiName));
-                }
-            }
-        })
-        .on('.wiki-logo-container', {
-            element(element) {
-                if (wikiLogoUrl) {
-                    element.setInnerContent(`<img src="${escapeHtml(wikiLogoUrl)}" alt="Logo" class="brand-logo" style="height: 32px; vertical-align: middle; margin-right: 8px;">`, { html: true });
-                }
-            }
-        })
-        .on('#custom-sidebar-content', {
-            element(element) {
-                if (customSidebarHtml) {
-                    element.replace(customSidebarHtml, { html: true });
-                } else {
-                    element.remove();
-                }
-            }
-        })
-        .on('#custom-footer-content', {
-            element(element) {
-                if (customFooterHtml) {
-                    element.setInnerContent(customFooterHtml, { html: true });
-                } else {
-                    element.remove();
-                }
-            }
-        })
-        .on('#error-reason', {
-            element(element) {
-                if (pageData._ssrReason) {
-                    element.setInnerContent(pageData._ssrReason, { html: false });
-                }
-            }
-        });
-
-    let headerHtml = '';
-    let sidebarHtml = '';
-    let footerHtml = '';
-
-    // Astro 셸 페이지는 header/sidebar/footer가 빌드 타임에 이미 인라인되어 있으므로
-    // 런타임 컴포넌트 fetch/주입을 건너뛴다. (브랜딩/커스텀 콘텐츠는 applyPageSSR가 인라인 마커에 적용)
-    const isAstroShell = ASTRO_SHELL_PAGES.has(targetHtmlPath);
-
-    if (!isAstroShell) {
-        if (cacheValid) {
-            // 캐시된 컴포넌트 HTML 사용
-            headerHtml = componentCache!.header;
-            sidebarHtml = componentCache!.sidebar;
-            footerHtml = componentCache!.footer;
-        } else {
-            // 3개 컴포넌트를 병렬로 로드 및 브랜딩 적용
-            const [headerRes, sidebarRes, footerRes] = await Promise.all([
-                fetchAssetHtml(c, '/components/header.html').catch(() => null),
-                fetchAssetHtml(c, '/components/sidebar.html').catch(() => null),
-                fetchAssetHtml(c, '/components/footer.html').catch(() => null),
-            ]);
-
-            const [h, s, f] = await Promise.all([
-                headerRes?.ok ? getRewriter().transform(headerRes).text() : Promise.resolve(''),
-                sidebarRes?.ok ? getRewriter().transform(sidebarRes).text() : Promise.resolve(''),
-                footerRes?.ok ? getRewriter().transform(footerRes).text() : Promise.resolve(''),
-            ]);
-
-            headerHtml = h;
-            sidebarHtml = s;
-            footerHtml = f;
-
-            // 메모리 캐시 업데이트
-            componentCache = { header: headerHtml, sidebar: sidebarHtml, footer: footerHtml, timestamp: now };
-        }
-    }
+    // '/' 는 ASSETS 가 index.html 로 서빙하므로 셸 판정/번들 조회 키를 '/index.html' 로 정규화.
+    const normalizedPath = targetHtmlPath === '/' ? '/index.html' : targetHtmlPath;
 
     // CUSTOM_HEADER는 /w/* (문서 열람, 리비전, 토론), /blog/* 페이지에 삽입
     const shouldInjectCustomHeader = c.req.path.startsWith('/w/') || c.req.path.startsWith('/blog');
 
-    // '/' 는 ASSETS 가 index.html 로 서빙하므로 번들 조회 키도 '/index.html' 로 정규화
-    const bundleKey = targetHtmlPath === '/' ? '/index.html' : targetHtmlPath;
-    const bundles: BundleName[] = PAGE_BUNDLES[bundleKey] ?? ['base'];
+    // Astro 셸은 CDN 번들이 이미 빌드 타임에 인라인됐으므로 런타임 주입을 건너뛴다(이중 로드 방지).
+    const bundles: BundleName[] = ASTRO_SHELL_PAGES.has(normalizedPath) ? [] : (PAGE_BUNDLES[normalizedPath] ?? ['base']);
 
     return applyPageSSR(htmlResponse, pageData, {
         WIKI_NAME: wikiName,
         WIKI_LOGO_URL: wikiLogoUrl,
         WIKI_FAVICON_URL: wikiFaviconUrl,
         CUSTOM_HEADER: shouldInjectCustomHeader ? (c.env.CUSTOM_HEADER || '') : '',
-        SIDEBAR_MODE: c.env.SIDEBAR_MODE,
-    }, headerHtml, sidebarHtml, footerHtml, bundles, customSidebarHtml, customFooterHtml);
+        LAYOUT_MODE: c.env.LAYOUT_MODE,
+    }, bundles);
 }
 
 // ── 프론트엔드 라우팅 ──
@@ -506,12 +373,12 @@ app.get('/wiki/*', async (c) => {
 
 // /tickets/:id → tickets.html 서빙 (SSR 브랜딩 적용)
 app.get('/tickets/:id', async (c) => {
-    return renderHtml(c, '/tickets.html');
+    return fetchAssetHtml(c, '/tickets.html');
 });
 
 // /tickets → tickets.html 서빙 (SSR 브랜딩 적용)
 app.get('/tickets', async (c) => {
-    return renderHtml(c, '/tickets.html');
+    return fetchAssetHtml(c, '/tickets.html');
 });
 
 // 레거시 리다이렉트: /w/:slug/revisions → /w/:slug?mode=revisions (하위 호환)
@@ -546,7 +413,7 @@ app.get('/recent-changes', async (c) => {
     if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) {
         return c.redirect('/login');
     }
-    return renderHtml(c, '/recent-changes.html');
+    return fetchAssetHtml(c, '/recent-changes.html');
 });
 
 // /w/* → 와일드카드 라우트: 슬래시 포함 슬러그를 지원하기 위해 경로 전체를 슬러그로 처리
@@ -560,12 +427,12 @@ app.get('/w/*', async (c) => {
 
     // mode=revisions → revisions.html 서빙
     if (mode === 'revisions') {
-        return renderHtml(c, '/revisions.html');
+        return fetchAssetHtml(c, '/revisions.html');
     }
 
     // mode=discussions → discussions.html 서빙
     if (mode === 'discussions') {
-        return renderHtml(c, '/discussions.html');
+        return fetchAssetHtml(c, '/discussions.html');
     }
 
     // 슬러그 추출: /w/ 이후 경로 전체를 슬러그로 사용
@@ -1021,17 +888,18 @@ app.get('/search', async (c) => {
     if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) {
         return c.redirect('/login');
     }
-    return renderHtml(c, '/search.html');
+    return fetchAssetHtml(c, '/search.html');
 });
 
 // /admin 접근 시 서버사이드 권한 체크 후 admin.html 서빙
+// (Astro 셸로 브랜딩·컴포넌트·CDN 번들이 빌드 타임에 베이킹돼 요청별 데이터가 없으므로 정적 서빙)
 app.get('/admin', async (c) => {
     const user = c.get('user');
     const rbac = c.get('rbac') as RBAC;
     if (!user || !rbac.can(user.role, 'admin:access')) {
         return c.redirect('/');
     }
-    return renderHtml(c, '/admin.html');
+    return fetchAssetHtml(c, '/admin.html');
 });
 
 // /admin-media 접근 시 서버사이드 권한 체크 후 admin-media.html 서빙
@@ -1041,22 +909,23 @@ app.get('/admin-media', async (c) => {
     if (!user || !rbac.can(user.role, 'admin:access')) {
         return c.redirect('/');
     }
-    return renderHtml(c, '/admin-media.html');
+    return fetchAssetHtml(c, '/admin-media.html');
 });
 
 // /mypage 접근 시 mypage.html 서빙 (SSR 브랜딩)
 app.get('/mypage', async (c) => {
-    return renderHtml(c, '/mypage.html');
+    return fetchAssetHtml(c, '/mypage.html');
 });
 
 // /blog-edit → blog-edit.html 서빙 (관리자 전용)
+// (Astro 셸로 베이킹돼 요청별 데이터가 없으므로(BLOG_MODE 인라인 플래그만) 정적 서빙)
 app.get('/blog-edit', async (c) => {
     const user = c.get('user');
     const rbac = c.get('rbac') as RBAC;
     if (!user || !rbac.can(user.role, 'admin:access')) {
         return c.redirect('/');
     }
-    return renderHtml(c, '/blog-edit.html');
+    return fetchAssetHtml(c, '/blog-edit.html');
 });
 
 // /blog/:id → blog.html 서빙 (공개, closed wiki는 로그인 필요)
@@ -1100,25 +969,26 @@ app.get('/blog', async (c) => {
     return renderHtml(c, '/blog.html');
 });
 
-// /edit/:slug → edit.html 서빙 (SSR 브랜딩)
+// /edit/:slug → edit.html 서빙
+// (Astro 셸로 베이킹: _wikiSyntax 는 빌드 타임에 #ssr-data 로 인라인되므로 런타임 주입 불필요 → 정적 서빙)
 app.get('/edit/:slug', async (c) => {
     if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) {
         return c.redirect('/login');
     }
-    return renderHtml(c, '/edit.html', { _wikiSyntax: c.env.WIKI_SYNTAX || '' });
+    return fetchAssetHtml(c, '/edit.html');
 });
 
-// /edit → edit.html 서빙 (SSR 브랜딩)
+// /edit → edit.html 서빙 (Astro 셸 정적 서빙)
 app.get('/edit', async (c) => {
     if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) {
         return c.redirect('/login');
     }
-    return renderHtml(c, '/edit.html', { _wikiSyntax: c.env.WIKI_SYNTAX || '' });
+    return fetchAssetHtml(c, '/edit.html');
 });
 
 // /setup-profile 접근 시 서빙
 app.get('/setup-profile', async (c) => {
-    return renderHtml(c, '/setup-profile.html');
+    return fetchAssetHtml(c, '/setup-profile.html');
 });
 
 // /error 접근 시 error.html 서빙 (SSR 브랜딩 + reason 쿼리 파라미터 주입)
@@ -1133,7 +1003,7 @@ app.get('/error', async (c) => {
 
 // /profile/:id 접근 시 user-profile.html 서빙 (SSR 브랜딩)
 app.get('/profile/:id', async (c) => {
-    return renderHtml(c, '/user-profile.html');
+    return fetchAssetHtml(c, '/user-profile.html');
 });
 
 // ── 사이트맵 ──

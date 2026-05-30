@@ -1,12 +1,12 @@
 ---
 // 로그인 페이지 정적 셸. 기존 public/login.html 과 동일한 마커/구조를 유지한다.
-// - .wiki-logo-container#logoContainer: 런타임 HTMLRewriter 가 WIKI_LOGO_URL 로 로고 주입.
-// - .app-wiki-name: 런타임에 WIKI_NAME 으로 치환.
+// - .wiki-logo-container#logoContainer: BaseLayout/컴포넌트 베이킹이 WIKI_LOGO_URL 로 로고 인라인.
+// - .app-wiki-name: 빌드 타임에 WIKI_NAME 으로 베이킹.
 // - #loginMessage / #auth-providers-container / #btnTerms / #btnPrivacy: /dist/login.js 가 채움.
 // 인라인 <style> 은 전역 셀렉터(body 등)이므로 is:inline 으로 위치/내용 그대로 보존(스코프/번들 금지).
 import BaseLayout from '../layouts/BaseLayout.astro';
 ---
-<BaseLayout title="CloudWiki - 로그인">
+<BaseLayout pagePath="/login.html" title="CloudWiki - 로그인">
     <style slot="head" is:inline>
         body {
             display: flex;

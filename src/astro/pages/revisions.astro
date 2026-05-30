@@ -1,16 +1,15 @@
 ---
 // 편집 이력(리비전) 페이지 셸. 기존 public/revisions.html 과 동일한 마커/구조를 유지하되,
 // header/sidebar/footer 를 빌드 타임에 컴포넌트로 인라인한다(런타임 placeholder 주입 불필요).
-// base CDN 은 인라인하지 않음 — PAGE_BUNDLES['/revisions.html']=['base','markdown']가 런타임 주입.
+// base CDN 은 BaseLayout 이 빌드 타임에 인라인(베이킹) — PAGE_BUNDLES['/revisions.html']=['base','markdown']기준으로 베이킹.
 // render.css/diff.css 는 위키 본문/diff 렌더링용으로 head 슬롯에서 직접 로드.
 import BaseLayout from '../layouts/BaseLayout.astro';
 import Header from '../components/Header.astro';
 import Sidebar from '../components/Sidebar.astro';
 import Footer from '../components/Footer.astro';
 ---
-<BaseLayout title="편집 이력 - CloudWiki">
+<BaseLayout pagePath="/revisions.html" injectCustomHeader title="편집 이력 - CloudWiki">
     <Fragment slot="head">
-        <link rel="icon" id="wiki-favicon" href="/favicon.ico" />
         <!-- 테마 FOUC 방지: CSS 로드 후 즉시 테마 적용 -->
         <script is:inline>try{var t=localStorage.getItem('themeMode');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
         <link rel="stylesheet" href="/render.css" />

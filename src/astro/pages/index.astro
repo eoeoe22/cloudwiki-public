@@ -1,37 +1,48 @@
-<!DOCTYPE html>
-<html lang="ko">
-
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="CloudWiki">
-  <meta property="og:title" content="CloudWiki">
-  <meta property="og:description" content="CloudWiki">
-  <meta property="og:site_name" content="CloudWiki">
-  <meta property="og:type" content="website">
-  <title class="app-wiki-name">CloudWiki</title>
-  <!-- 커스텀 스타일 -->
-  <link rel="stylesheet" href="/css/style.css">
-  <!-- 테마 FOUC 방지: CSS 로드 후 즉시 테마 적용 -->
-  <script>try{var t=localStorage.getItem('themeMode');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
-  <link rel="stylesheet" href="/render.css">
-  <link rel="stylesheet" href="/css/wiki-nav.css">
-  <link rel="stylesheet" href="/css/bulk-modal.css">
-</head>
-
-<body style="-webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;">
+---
+// 위키 문서 조회 및 메인 랜딩 셸. 기존 public/index.html 과 동일한 마커/구조를 유지하되,
+// header/sidebar/footer 를 빌드 타임에 컴포넌트로 인라인한다(런타임 placeholder 주입 불필요).
+// 단, 이 셸은 요청별 데이터(문서별 _ssrTitle/og/_usedPalettes/#ssr-data, CUSTOM_HEADER)가 있어
+// src/index.ts 의 renderHtml→applyPageSSR(ASTRO_SHELL_PAGES) 경로로 런타임 주입된다.
+// 따라서 head 의 og/description 메타와 본문 H1 의 .app-wiki-name 은 런타임 치환을 위한
+// 리터럴 placeholder("CloudWiki")로 둔다. (베이킹하면 applyPageSSR 의 부분문자열 치환이
+// 이미 베이킹된 값에 다시 적용돼 'My CloudWiki' 같은 이름에서 'My My CloudWiki' 로 중복됨.)
+// CDN 번들(base/markdown)은 BaseLayout 이 PAGE_BUNDLES['/index.html'] 기준으로 베이킹.
+import BaseLayout from '../layouts/BaseLayout.astro';
+import Header from '../components/Header.astro';
+import Sidebar from '../components/Sidebar.astro';
+import Footer from '../components/Footer.astro';
+---
+<BaseLayout pagePath="/index.html" title="CloudWiki">
+    <Fragment slot="head">
+        <meta name="description" content="CloudWiki" />
+        <meta property="og:title" content="CloudWiki" />
+        <meta property="og:description" content="CloudWiki" />
+        <meta property="og:site_name" content="CloudWiki" />
+        <meta property="og:type" content="website" />
+        <link rel="stylesheet" href="/render.css" />
+        <link rel="stylesheet" href="/css/wiki-nav.css" />
+        <link rel="stylesheet" href="/css/bulk-modal.css" />
+        <!-- 테마 FOUC 방지: CSS 로드 후 즉시 테마 적용 -->
+        <script is:inline>try{var t=localStorage.getItem('themeMode');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
+    </Fragment>
 
   <!-- SPA 네비게이션 프로그레스 바 -->
   <div id="spaProgressBar" class="spa-progress-bar d-none">
     <div class="spa-progress-bar-inner"></div>
   </div>
 
-  <!-- ── 네비게이션 바 Placeholder ── -->
-  <div id="app-header-placeholder"></div>
+  <!-- ── 네비게이션 바 ── -->
+  <Header />
 
   <!-- ── 메인 레이아웃 ── -->
   <div class="wiki-layout wiki-layout-doc">
-    <!-- 좌측 목차 사이드바 (SIDEBAR_MODE="left-toc" 에서만 노출, 문서 조회 페이지 한정) -->
+    <!-- 좌측 그룹 문서 트리 (LAYOUT_MODE="docs" 에서만 노출, 문서 조회 페이지 한정) -->
+    <aside class="wiki-nav-sidebar d-none" id="wikiNavSidebar" aria-label="문서 그룹 탐색">
+      <div class="wiki-toc-sidebar-inner">
+        <nav class="wiki-toc-sidebar-nav wiki-nav-sidebar-tree" id="wikiNavSidebarTree"></nav>
+      </div>
+    </aside>
+    <!-- 좌측 목차 사이드바 (LAYOUT_MODE="left-toc" 에서만 노출, 문서 조회 페이지 한정) -->
     <aside class="wiki-toc-sidebar d-none" id="wikiTocSidebar" aria-label="문서 목차">
       <div class="wiki-toc-sidebar-inner">
         <div class="wiki-toc-sidebar-title"><i class="bi bi-list-columns-reverse"></i> 목차</div>
@@ -219,10 +230,18 @@
 
     </div> <!-- wiki-container end -->
 
+    <!-- 우측 문서내 목차 사이드바 (LAYOUT_MODE="docs" 또는 "right-toc" 에서 노출, 문서 조회 페이지 한정) -->
+    <aside class="wiki-toc-sidebar wiki-toc-sidebar-right d-none" id="wikiTocSidebarRight" aria-label="문서 목차">
+      <div class="wiki-toc-sidebar-inner">
+        <div class="wiki-toc-sidebar-title"><i class="bi bi-list-columns-reverse"></i> 목차</div>
+        <nav class="wiki-toc-sidebar-nav" id="wikiTocSidebarRightNav"></nav>
+      </div>
+    </aside>
+
     <!-- 오른쪽 사이드바 (PC 전용 오프캔버스 컨테이너 및 최근 변경) -->
     <aside class="wiki-sidebar" id="wikiSidebar">
       <!-- 사이드바 네비게이션 (모바일 오프캔버스 렌더링 영역 공유) -->
-      <div id="app-sidebar-placeholder"></div>
+      <Sidebar />
 
       <!-- 실시간 트렌딩 -->
       <div class="mb-4">
@@ -260,15 +279,8 @@
     </aside>
   </div> <!-- wiki-layout end -->
 
-  <!-- ── 푸터 Placeholder ── -->
-  <div id="app-footer-placeholder"></div>
-
-  <!-- ── Scripts ── -->
-  <script type="module" src="/dist/common.js"></script>
-  <script type="module" src="/dist/render.js"></script>
-  <script type="module" src="/dist/permissions-modal.js"></script>
-  <script type="module" src="/dist/category-acl-modal.js"></script>
-  <script type="module" src="/dist/index.js"></script>
+  <!-- ── 푸터 ── -->
+  <Footer />
 
   <!-- 플로팅 목차 패널 -->
   <div class="toc-floating-panel" id="tocFloatingPanel">
@@ -303,6 +315,11 @@
     </button>
   </div>
 
-</body>
-
-</html>
+    <Fragment slot="scripts">
+        <script type="module" src="/dist/common.js" is:inline></script>
+        <script type="module" src="/dist/render.js" is:inline></script>
+        <script type="module" src="/dist/permissions-modal.js" is:inline></script>
+        <script type="module" src="/dist/category-acl-modal.js" is:inline></script>
+        <script type="module" src="/dist/index.js" is:inline></script>
+    </Fragment>
+</BaseLayout>

@@ -1,5 +1,3 @@
-import { Context, Next } from 'hono';
-import { Env } from '../types';
 import { escapeHtml } from '../utils/html';
 import { BundleName, renderHeadTags, renderBodyScripts } from '../shared/cdn';
 
@@ -88,76 +86,16 @@ export function extractMetaDescription(content: string, maxLength = 160): string
 }
 
 /**
- * SSR 미들웨어: HTML 응답에 위키 브랜딩(이름, 로고, 파비콘) 치환
- */
-export const ssrMiddleware = async (c: Context<Env>, next: Next) => {
-    await next();
-
-    const res = c.res;
-    const contentType = res.headers.get('Content-Type') || '';
-
-    // HTML 응답에만 SSR(브랜딩 치환) 적용
-    if (contentType.includes('text/html')) {
-        const wikiName = c.env?.WIKI_NAME || 'CloudWiki';
-        const wikiLogoUrl = c.env?.WIKI_LOGO_URL || '';
-        const wikiFaviconUrl = c.env?.WIKI_FAVICON_URL || '/favicon.ico';
-        const sidebarMode = c.env?.SIDEBAR_MODE === 'left-toc' ? 'left-toc' : 'default';
-
-        const rewriter = new HTMLRewriter()
-            .on('body', {
-                element(element) {
-                    element.setAttribute('data-sidebar-mode', sidebarMode);
-                }
-            })
-            .on('.app-wiki-name', {
-                text(text) {
-                    // 내부 텍스트에 CloudWiki 또는 Cloudwiki가 포함되어 있으면 환경변수로 교체
-                    if (text.text.includes('CloudWiki')) {
-                        text.replace(text.text.replace('CloudWiki', wikiName));
-                    } else if (text.text.includes('Cloudwiki')) {
-                        text.replace(text.text.replace('Cloudwiki', wikiName));
-                    }
-                }
-            })
-            .on('#wiki-favicon', {
-                element(element) {
-                    if (wikiFaviconUrl) {
-                        element.setAttribute('href', wikiFaviconUrl);
-                    }
-                }
-            })
-            .on('.wiki-logo-container', {
-                element(element) {
-                    if (wikiLogoUrl) {
-                        element.setInnerContent(`<img src="${escapeHtml(wikiLogoUrl)}" alt="Logo" class="brand-logo" style="height: 32px; vertical-align: middle; margin-right: 8px;">`, { html: true });
-                    }
-                }
-            });
-
-        if (c.env?.CUSTOM_HEADER) {
-            rewriter.on('body', {
-                element(element) {
-                    element.append(c.env.CUSTOM_HEADER as string, { html: true });
-                }
-            });
-        }
-
-        // HTMLRewriter.transform()은 기존 헤더(Set-Cookie 등)를 유지하는 새 Response 객체를 반환함
-        c.res = rewriter.transform(res);
-    }
-};
-
-/**
  * 위키 문서 페이지 전용 SSR: 문서 데이터를 HTML에 인라인 주입
  * index.html의 <script id="ssr-data"> 에 JSON으로 주입하여
  * 클라이언트에서 추가 API 호출 없이 즉시 렌더링 가능
  */
-export function applyPageSSR(response: Response, pageData: Record<string, any>, env: { WIKI_NAME?: string; WIKI_LOGO_URL?: string; WIKI_FAVICON_URL?: string; CUSTOM_HEADER?: string; SIDEBAR_MODE?: string }, headerHtml: string = '', sidebarHtml: string = '', footerHtml: string = '', bundles: BundleName[] = [], customSidebarHtml: string = '', customFooterHtml: string = ''): Response {
+export function applyPageSSR(response: Response, pageData: Record<string, any>, env: { WIKI_NAME?: string; WIKI_LOGO_URL?: string; WIKI_FAVICON_URL?: string; CUSTOM_HEADER?: string; LAYOUT_MODE?: string }, bundles: BundleName[] = []): Response {
     const wikiName = env.WIKI_NAME || 'CloudWiki';
     const wikiLogoUrl = env.WIKI_LOGO_URL || '';
     const wikiFaviconUrl = env.WIKI_FAVICON_URL || '/favicon.ico';
     const customHeader = env.CUSTOM_HEADER || '';
-    const sidebarMode = env.SIDEBAR_MODE === 'left-toc' ? 'left-toc' : 'default';
+    const layoutMode = (env.LAYOUT_MODE === 'left-toc' || env.LAYOUT_MODE === 'right-toc' || env.LAYOUT_MODE === 'docs') ? env.LAYOUT_MODE : 'default';
 
     // JSON을 HTML 내에 안전하게 삽입 (script 태그 내 특수문자 및 줄바꿈 이스케이프)
     const jsonStr = JSON.stringify(pageData)
@@ -190,27 +128,6 @@ export function applyPageSSR(response: Response, pageData: Record<string, any>, 
             element(element) {
                 if (wikiLogoUrl) {
                     element.setInnerContent(`<img src="${escapeHtml(wikiLogoUrl)}" alt="Logo" class="brand-logo" style="height: 32px; vertical-align: middle; margin-right: 8px;">`, { html: true });
-                }
-            }
-        })
-        // Astro 셸 페이지에서 인라인된 컴포넌트의 커스텀 사이드바/푸터 콘텐츠(env SIDEBAR/FOOTER) 처리.
-        // 비-Astro 페이지의 셸에는 이 마커가 없고(주입되는 컴포넌트는 renderHtml이 미리 채움) HTMLRewriter는
-        // 주입 콘텐츠를 재스캔하지 않으므로 이 핸들러들은 인라인 마커에만 반응한다.
-        .on('#custom-sidebar-content', {
-            element(element) {
-                if (customSidebarHtml) {
-                    element.replace(customSidebarHtml, { html: true });
-                } else {
-                    element.remove();
-                }
-            }
-        })
-        .on('#custom-footer-content', {
-            element(element) {
-                if (customFooterHtml) {
-                    element.setInnerContent(customFooterHtml, { html: true });
-                } else {
-                    element.remove();
                 }
             }
         })
@@ -256,33 +173,12 @@ export function applyPageSSR(response: Response, pageData: Record<string, any>, 
         })
         .on('body', {
             element(element) {
-                // 사이드바 모드(default | left-toc) 를 body data-attr 로 표시해 CSS 가 페인트 전에 분기.
-                element.setAttribute('data-sidebar-mode', sidebarMode);
+                // 레이아웃 모드(default | left-toc) 를 body data-attr 로 표시해 CSS 가 페인트 전에 분기.
+                element.setAttribute('data-layout-mode', layoutMode);
                 // CDN 스크립트(bootstrap JS, swal, marked 등) 주입 후 커스텀 헤더 추가
                 if (bodyScripts) element.append(bodyScripts, { html: true });
                 if (customHeader) {
                     element.append(customHeader, { html: true });
-                }
-            }
-        })
-        .on('#app-header-placeholder', {
-            element(element) {
-                if (headerHtml) {
-                    element.replace(headerHtml, { html: true });
-                }
-            }
-        })
-        .on('#app-sidebar-placeholder', {
-            element(element) {
-                if (sidebarHtml) {
-                    element.replace(sidebarHtml, { html: true });
-                }
-            }
-        })
-        .on('#app-footer-placeholder', {
-            element(element) {
-                if (footerHtml) {
-                    element.replace(footerHtml, { html: true });
                 }
             }
         });

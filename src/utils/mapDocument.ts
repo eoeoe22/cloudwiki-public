@@ -39,6 +39,23 @@ export interface MapDocumentResult {
     hasPrivateChildren: boolean;
 }
 
+/** 그룹 nav 트리용 직렬화 노드 (docs 레이아웃 좌측 사이드바). 마크다운 트리와 동일 구조를 JSON 으로 노출. */
+export interface GroupTreeNode {
+    /** 마지막 경로 세그먼트 (표시용 이름) */
+    name: string;
+    /** 전체 슬러그 (식별/링크용 — 항상 slug 기준) */
+    slug: string;
+    /** 실제 문서 행이 존재하는 노드인지 (false 면 경로상 중간 노드라 링크 없음) */
+    hasDoc: boolean;
+    children: GroupTreeNode[];
+}
+
+export interface BuildGroupTreeResult {
+    root: GroupTreeNode;
+    hasPrivateChildren: boolean;
+    truncated: boolean;
+}
+
 /**
  * 위키 링크의 표시 라벨로 안전한 텍스트로 정제한다.
  * `[` `]` `|` 는 `[[…]]` 토큰 경계와 충돌하므로 제거하고, marked 가 raw HTML 로 해석할 수 있는
@@ -135,7 +152,18 @@ type ChildLine =
     | { kind: 'toc'; num: string; title: string }
     | { kind: 'doc'; node: TreeNode };
 
-export async function buildMapDocument(opts: BuildMapDocumentOptions): Promise<MapDocumentResult> {
+interface BuildTreeNodesResult {
+    root: TreeNode;
+    hasPrivateChildren: boolean;
+    truncated: boolean;
+}
+
+/**
+ * base 슬러그와 모든 하위 슬러그(`base/...`)를 한 번에 조회해 in-memory `TreeNode` 트리를 구성한다.
+ * `buildMapDocument`(마크다운 트리)와 `buildGroupTree`(JSON nav 트리)가 공유하는 코어.
+ * 정렬·descendant 카운트까지 끝낸 트리를 반환한다.
+ */
+async function buildTreeNodes(opts: BuildMapDocumentOptions): Promise<BuildTreeNodesResult> {
     const { db, baseSlug, canSeePrivate } = opts;
     const privateFilter = canSeePrivate ? '' : ' AND is_private = 0';
 
@@ -208,13 +236,23 @@ export async function buildMapDocument(opts: BuildMapDocumentOptions): Promise<M
     }
     countDescendants(root);
 
-    // 정렬: descendant 수 오름차순 → 이름 알파벳순 (renderMarkdown 과 동일).
-    function sortedChildren(node: TreeNode): TreeNode[] {
-        return Array.from(node.children.values()).sort((a, b) => {
-            if (a.descendants !== b.descendants) return a.descendants - b.descendants;
-            return a.name.localeCompare(b.name);
-        });
-    }
+    return { root, hasPrivateChildren, truncated };
+}
+
+/** 정렬: descendant 수 오름차순 → 이름 알파벳순 (renderMarkdown 과 동일). buildMapDocument·buildGroupTree 공유. */
+function sortedChildren(node: TreeNode): TreeNode[] {
+    return Array.from(node.children.values()).sort((a, b) => {
+        if (a.descendants !== b.descendants) return a.descendants - b.descendants;
+        return a.name.localeCompare(b.name);
+    });
+}
+
+/**
+ * `map:<base>` 가상 문서용 트리 마크다운 생성기. (트리 구성은 buildTreeNodes 공유)
+ */
+export async function buildMapDocument(opts: BuildMapDocumentOptions): Promise<MapDocumentResult> {
+    const { baseSlug } = opts;
+    const { root, hasPrivateChildren, truncated } = await buildTreeNodes(opts);
 
     /** 한 노드의 자식 라인 모음 (TOC 항목 + 하위 문서 노드). 마지막 라인 `└──` 처리를 위해 합쳐서 관리. */
     function gatherChildLines(node: TreeNode): ChildLine[] {
@@ -280,4 +318,25 @@ export async function buildMapDocument(opts: BuildMapDocumentOptions): Promise<M
     }
 
     return { markdown: lines.join('\n'), hasPrivateChildren };
+}
+
+/**
+ * docs 레이아웃 좌측 그룹 nav 사이드바용 구조화 트리(JSON) 생성기.
+ * buildMapDocument 와 동일한 트리 구성(buildTreeNodes)을 공유하되, ASCII 마크다운 대신
+ * 직렬화 가능한 `GroupTreeNode` 로 변환해 반환한다. TOC 항목은 포함하지 않는다(문서 노드만).
+ * 현재 문서 표시(isCurrent)는 캐시 공유를 위해 서버에서 계산하지 않고 클라이언트가 slug 매칭으로 처리.
+ */
+export async function buildGroupTree(opts: BuildMapDocumentOptions): Promise<BuildGroupTreeResult> {
+    const { root, hasPrivateChildren, truncated } = await buildTreeNodes(opts);
+
+    function serialize(node: TreeNode): GroupTreeNode {
+        return {
+            name: node.name,
+            slug: node.slug,
+            hasDoc: node.row != null,
+            children: sortedChildren(node).map(serialize),
+        };
+    }
+
+    return { root: serialize(root), hasPrivateChildren, truncated };
 }

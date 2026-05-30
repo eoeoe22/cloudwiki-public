@@ -30,7 +30,7 @@ export default defineConfig({
         emptyOutDir: true,
         target: 'es2022',
         minify: true,
-        sourcemap: true,
+        sourcemap: false,
         rollupOptions: {
             input: {
                 '404': resolve(__dirname, 'src/client/404.ts'),

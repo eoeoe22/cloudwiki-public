@@ -1,25 +1,29 @@
-<!DOCTYPE html>
-<html lang="ko">
+---
+// 블로그 목록/포스트 열람 셸. 기존 public/blog.html 과 동일한 마커/구조를 유지하되,
+// header/sidebar/footer 를 빌드 타임에 컴포넌트로 인라인한다(런타임 placeholder 주입 불필요).
+// 단, 이 셸은 요청별 데이터(_usedPalettes, 포스트별 og, CUSTOM_HEADER)가 있어
+// src/index.ts 의 renderHtml→applyPageSSR(ASTRO_SHELL_PAGES) 경로로 런타임 주입된다.
+// 따라서 head 의 og/description 메타는 런타임 치환을 위한 리터럴 placeholder 로 둔다.
+// CDN 번들(base/markdown)은 BaseLayout 이 PAGE_BUNDLES['/blog.html'] 기준으로 베이킹.
+import BaseLayout from '../layouts/BaseLayout.astro';
+import Header from '../components/Header.astro';
+import Sidebar from '../components/Sidebar.astro';
+import Footer from '../components/Footer.astro';
+---
+<BaseLayout pagePath="/blog.html" title="블로그 - CloudWiki">
+    <Fragment slot="head">
+        <meta name="description" content="CloudWiki" />
+        <meta property="og:title" content="CloudWiki" />
+        <meta property="og:description" content="CloudWiki" />
+        <meta property="og:site_name" content="CloudWiki" />
+        <meta property="og:type" content="website" />
+        <link rel="stylesheet" href="/render.css" />
+        <!-- 테마 FOUC 방지: CSS 로드 후 즉시 테마 적용 -->
+        <script is:inline>try{var t=localStorage.getItem('themeMode');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
+    </Fragment>
 
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="CloudWiki">
-  <meta property="og:title" content="CloudWiki">
-  <meta property="og:description" content="CloudWiki">
-  <meta property="og:site_name" content="CloudWiki">
-  <meta property="og:type" content="website">
-  <title class="app-wiki-name">블로그 - CloudWiki</title>
-  <link rel="icon" class="app-wiki-favicon" href="/favicon.ico">
-  <link rel="stylesheet" href="/css/style.css">
-  <script>try{var t=localStorage.getItem('themeMode');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
-  <link rel="stylesheet" href="/render.css">
-</head>
-
-<body style="-webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;">
-
-  <!-- ── 네비게이션 바 Placeholder ── -->
-  <div id="app-header-placeholder"></div>
+  <!-- ── 네비게이션 바 ── -->
+  <Header />
 
   <!-- ── 메인 레이아웃 ── -->
   <div class="wiki-layout">
@@ -133,7 +137,7 @@
     <!-- 오른쪽 사이드바 (PC 전용 오프캔버스 컨테이너 및 최근 변경) -->
     <aside class="wiki-sidebar" id="wikiSidebar">
       <!-- 사이드바 네비게이션 (모바일 오프캔버스 렌더링 영역 공유) -->
-      <div id="app-sidebar-placeholder"></div>
+      <Sidebar />
 
       <!-- 실시간 트렌딩 -->
       <div class="mb-4">
@@ -169,8 +173,8 @@
     </aside>
   </div>
 
-  <!-- ── 푸터 Placeholder ── -->
-  <div id="app-footer-placeholder"></div>
+  <!-- ── 푸터 ── -->
+  <Footer />
 
   <!-- 아이콘 피커 모달 (공지 발행 시 아이콘 선택) -->
   <div class="modal fade" id="iconPickerModal" tabindex="-1" aria-hidden="true">
@@ -212,10 +216,10 @@
     </div>
   </div>
 
-  <!-- Scripts -->
-  <script type="module" src="/dist/common.js"></script>
-  <script type="module" src="/dist/render.js"></script>
-  <script type="module" src="/dist/icon-picker.js"></script>
-  <script type="module" src="/dist/blog.js"></script>
-</body>
-</html>
+    <Fragment slot="scripts">
+        <script type="module" src="/dist/common.js" is:inline></script>
+        <script type="module" src="/dist/render.js" is:inline></script>
+        <script type="module" src="/dist/icon-picker.js" is:inline></script>
+        <script type="module" src="/dist/blog.js" is:inline></script>
+    </Fragment>
+</BaseLayout>

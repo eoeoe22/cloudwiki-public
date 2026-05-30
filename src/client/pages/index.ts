@@ -56,9 +56,9 @@
 
       route();
       _initialLoadDone = true;
-      // left-toc 모드: 우측 사이드바의 트렌딩/최근 변경 섹션을 본문 하단으로 이동.
+      // left-toc/docs 모드: 우측 사이드바의 트렌딩/최근 변경 섹션을 본문 하단으로 이동.
       // (loadTrending/loadRecentChanges 는 ID 로 자식 요소만 채우므로 부모 이동과 무관)
-      relocateRightSidebarForLeftToc();
+      relocateRightSidebarBelowArticle();
       window.loadTrending();
       window.loadRecentChanges();
 
@@ -126,6 +126,12 @@
     let _lastPath = window.location.pathname;
     let _lastSearch = window.location.search;
 
+    // docs 레이아웃 좌측 그룹 nav 상태:
+    // 같은 그룹 내 SPA 이동 시 refetch 를 피하기 위한 모듈 캐시. 현재 문서 강조는 매번 다시 계산.
+    let _groupNavCache: { groupRoot: string | null; root: any; truncated: boolean } = { groupRoot: null, root: null, truncated: false };
+    // SPA 네비게이션 경합 시 오래된 응답이 최신 트리를 덮어쓰지 않도록 하는 요청 시퀀스. hideAllPages 가 증가시킨다.
+    let __groupNavReqSeq = 0;
+
     function hideAllPages() {
       document.getElementById('loading').classList.add('d-none');
       document.getElementById('spaProgressBar').classList.add('d-none');
@@ -135,19 +141,27 @@
       document.getElementById('deletedPage').classList.add('d-none');
       document.getElementById('privatePage').classList.add('d-none');
       document.getElementById('categoryPage').classList.add('d-none');
-      // 좌측 목차 사이드바는 #articlePage 한정. 페이지 전환 시 일단 숨기고, 문서 렌더 후
-      // syncLeftTocSidebar() 에서 헤딩 유무에 따라 다시 노출 여부 결정.
-      const leftTocSidebar = document.getElementById('wikiTocSidebar');
-      if (leftTocSidebar) leftTocSidebar.classList.add('d-none');
+      // 레이아웃 사이드바(left-toc 좌측 목차 / docs 좌측 그룹 트리·우측 목차)는 #articlePage 한정.
+      // 페이지 전환 시 일단 모두 숨기고, 문서 렌더 후 syncSidebarsForLayout() 에서 다시 노출 여부 결정.
+      ['wikiTocSidebar', 'wikiNavSidebar', 'wikiTocSidebarRight'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.classList.add('d-none');
+      });
+      // 진행 중인 그룹 nav 요청을 무효화한다. 모든 페이지 전환(article/home/404/map/image)이
+      // hideAllPages 를 거치므로, 느린 /nav-tree 응답이 전환 후 도착해 숨긴 사이드바를 다시
+      // 노출(paintGroupNav)하는 race 를 막는다.
+      __groupNavReqSeq++;
     }
 
-    // left-toc 모드일 때 우측 사이드바(#wikiSidebar) 의 트렌딩/최근 변경 섹션 두 블록을
+    // left-toc/docs 모드일 때 우측 사이드바(#wikiSidebar) 의 트렌딩/최근 변경 섹션 두 블록을
     // 본문 #articlePage > .wiki-article 다음 형제로 옮긴다. 한 번만 실행되면 충분.
     // (loadTrending/loadRecentChanges 는 자식 ID 로만 채우므로 부모 이동과 무관)
+    // docs 모드도 우측 사이드바를 CSS 로 숨기므로, 동일하게 본문 하단으로 옮겨 노출한다.
     let _rightSidebarRelocated = false;
-    function relocateRightSidebarForLeftToc() {
+    function relocateRightSidebarBelowArticle() {
       if (_rightSidebarRelocated) return;
-      if (window.appConfig?.sidebarMode !== 'left-toc') return;
+      const mode = window.appConfig?.layoutMode;
+      if (mode !== 'left-toc' && mode !== 'right-toc' && mode !== 'docs') return;
       const sidebar = document.getElementById('wikiSidebar');
       const articlePage = document.getElementById('articlePage');
       if (!sidebar || !articlePage) return;
@@ -184,20 +198,28 @@
       _rightSidebarRelocated = true;
     }
 
-    // 문서 렌더 후 #tocNav 내용을 좌측 사이드바에 복제하고 노출 여부를 결정.
-    // (left-toc 모드 + 헤딩이 있는 문서에서만 노출)
-    function syncLeftTocSidebar() {
-      const leftTocSidebar = document.getElementById('wikiTocSidebar');
-      const leftTocNav = document.getElementById('wikiTocSidebarNav');
-      if (!leftTocSidebar || !leftTocNav) return;
-      if (window.appConfig?.sidebarMode !== 'left-toc') {
-        leftTocSidebar.classList.add('d-none');
-        leftTocNav.innerHTML = '';
-        return;
-      }
-      // 좌측 목차 사이드바는 헤딩 번호를 포함해 생성한다(#tocNav 는 번호가 없으므로 복제하지
-      // 않는다). 렌더된 본문(articleContent)의 .wiki-heading-num 스팬을 읽어 번호 prefix 를 붙인다.
+    // 렌더된 본문(#articleContent)의 헤딩 번호를 포함한 목차 HTML 을 지정한 목차 사이드바에 채운다.
+    // 헤딩이 없으면 사이드바를 숨기고 false 반환. (left-toc 좌측 사이드바·docs 우측 사이드바 공용)
+    function populateTocSidebar(sidebarId: string, navId: string): boolean {
+      const sidebar = document.getElementById(sidebarId);
+      const nav = document.getElementById(navId);
+      if (!sidebar || !nav) return false;
+      // 목차 사이드바는 헤딩 번호를 포함해 생성한다(#tocNav 는 번호가 없으므로 복제하지 않는다).
+      // 렌더된 본문(articleContent)의 .wiki-heading-num 스팬을 읽어 번호 prefix 를 붙인다.
       const contentEl = document.getElementById('articleContent');
+      // 각주 섹션 헤딩(<h4>각주</h4>, .wiki-footnotes 내부)은 자동 생성되는 것이므로 실제 목차
+      // 항목으로 치지 않는다. 각주 헤딩만 있고 다른 헤딩이 없으면 목차 없음으로 간주해 사이드바를 숨긴다.
+      // (buildTocOlHtml 와 동일하게 .accordion-header 도 제외하고 h1~h4 만 센다.)
+      const realHeadings = contentEl
+        ? Array.from(contentEl.querySelectorAll(
+            'h1:not(.accordion-header), h2:not(.accordion-header), h3:not(.accordion-header), h4:not(.accordion-header)'))
+            .filter(h => !h.closest('.wiki-footnotes'))
+        : [];
+      if (!realHeadings.length) {
+        sidebar.classList.add('d-none');
+        nav.innerHTML = '';
+        return false;
+      }
       let html = (contentEl && typeof window.buildTocOlHtml === 'function')
         ? window.buildTocOlHtml(contentEl, true)
         : '';
@@ -207,12 +229,126 @@
         html = src ? src.innerHTML.trim() : '';
       }
       if (!html) {
-        leftTocSidebar.classList.add('d-none');
-        leftTocNav.innerHTML = '';
+        sidebar.classList.add('d-none');
+        nav.innerHTML = '';
+        return false;
+      }
+      nav.innerHTML = html;
+      sidebar.classList.remove('d-none');
+      return true;
+    }
+
+    // 문서 렌더 후 #tocNav 내용을 좌측 사이드바에 복제하고 노출 여부를 결정.
+    // (left-toc 모드 + 헤딩이 있는 문서에서만 노출)
+    function syncLeftTocSidebar() {
+      if (window.appConfig?.layoutMode !== 'left-toc') {
+        const leftTocSidebar = document.getElementById('wikiTocSidebar');
+        const leftTocNav = document.getElementById('wikiTocSidebarNav');
+        if (leftTocSidebar) leftTocSidebar.classList.add('d-none');
+        if (leftTocNav) leftTocNav.innerHTML = '';
         return;
       }
-      leftTocNav.innerHTML = html;
-      leftTocSidebar.classList.remove('d-none');
+      populateTocSidebar('wikiTocSidebar', 'wikiTocSidebarNav');
+    }
+
+    // ── docs 레이아웃: 좌측 그룹 문서 트리 + 우측 문서내 목차 ──
+    function renderGroupTreeNode(node: any, currentSlug: string): string {
+      const isCurrent = node.slug === currentSlug;
+      const label = node.hasDoc
+        ? `<a href="/w/${encodeURIComponent(node.slug)}" class="wiki-spa-link${isCurrent ? ' nav-current' : ''}"${isCurrent ? ' aria-current="page"' : ''} title="${window.escapeHtml(node.slug)}">${window.escapeHtml(node.name)}</a>`
+        : `<span class="nav-nodoc">${window.escapeHtml(node.name)}</span>`;
+      let childrenHtml = '';
+      if (node.children && node.children.length) {
+        childrenHtml = '<ul>' + node.children.map((c: any) => renderGroupTreeNode(c, currentSlug)).join('') + '</ul>';
+      }
+      return `<li>${label}${childrenHtml}</li>`;
+    }
+
+    function paintGroupNav(root: any, groupRoot: string, truncated: boolean, currentSlug: string) {
+      const sidebar = document.getElementById('wikiNavSidebar');
+      const nav = document.getElementById('wikiNavSidebarTree');
+      if (!sidebar || !nav) return;
+      if (!root) {
+        sidebar.classList.add('d-none');
+        nav.innerHTML = '';
+        return;
+      }
+      const groupLabel = document.getElementById('wikiNavSidebarGroup');
+      if (groupLabel) groupLabel.textContent = groupRoot || '문서';
+      let html = '<ul>' + renderGroupTreeNode(root, currentSlug) + '</ul>';
+      if (truncated) html += `<div class="nav-truncated">... (하위 문서가 많아 일부 생략됨)</div>`;
+      nav.innerHTML = html;
+      nav.querySelectorAll('.wiki-spa-link').forEach(link => {
+        link.addEventListener('click', function (this: HTMLAnchorElement, event) {
+          event.preventDefault();
+          navigateTo(this.getAttribute('href'));
+        });
+      });
+      sidebar.classList.remove('d-none');
+    }
+
+    // 그룹 루트(슬러그 첫 세그먼트)의 하위 문서 트리를 좌측 사이드바에 렌더. 현재 문서를 강조한다.
+    async function renderGroupNav(currentSlug: string) {
+      const sidebar = document.getElementById('wikiNavSidebar');
+      const nav = document.getElementById('wikiNavSidebarTree');
+      if (!sidebar || !nav) return;
+      // map: 가상 문서·이미지 문서·빈 슬러그는 자체 트리/표지가 있거나 그룹이 무의미하므로 nav 를 숨긴다.
+      if (!currentSlug || (currentPage && (currentPage.is_map_doc || currentPage.is_image_doc))) {
+        sidebar.classList.add('d-none');
+        nav.innerHTML = '';
+        return;
+      }
+      const groupRoot = currentSlug.split('/')[0];
+      // 같은 그룹이면 refetch 없이 현재 문서 강조만 다시 칠한다.
+      if (_groupNavCache.groupRoot === groupRoot && _groupNavCache.root) {
+        paintGroupNav(_groupNavCache.root, groupRoot, _groupNavCache.truncated, currentSlug);
+        return;
+      }
+      const reqId = ++__groupNavReqSeq;
+      try {
+        const res = await fetch(`/api/w/${encodeURIComponent(groupRoot)}/nav-tree`);
+        if (reqId !== __groupNavReqSeq) return; // 더 최신 네비게이션이 진행 중 → 폐기
+        if (!res.ok) throw new Error('failed');
+        const data = await res.json();
+        if (reqId !== __groupNavReqSeq) return;
+        if (!data || !data.root) {
+          sidebar.classList.add('d-none');
+          nav.innerHTML = '';
+          return;
+        }
+        _groupNavCache = { groupRoot, root: data.root, truncated: !!data.truncated };
+        paintGroupNav(data.root, groupRoot, !!data.truncated, currentSlug);
+      } catch (err) {
+        if (reqId !== __groupNavReqSeq) return;
+        console.error(err);
+        sidebar.classList.add('d-none');
+        nav.innerHTML = '';
+      }
+    }
+
+    // docs 모드: 우측 문서내 목차 + 좌측 그룹 트리 동기화.
+    function syncDocsLayout() {
+      populateTocSidebar('wikiTocSidebarRight', 'wikiTocSidebarRightNav');
+      const slug = currentPage && currentPage.slug ? currentPage.slug : '';
+      renderGroupNav(slug);
+    }
+
+    // right-toc 모드: left-toc 와 동일하되 목차를 우측 사이드바(#wikiTocSidebarRight)에 채운다.
+    // 좌측 그룹 트리는 없으므로 docs 와 달리 renderGroupNav 는 호출하지 않는다.
+    function syncRightTocSidebar() {
+      populateTocSidebar('wikiTocSidebarRight', 'wikiTocSidebarRightNav');
+    }
+
+    // 레이아웃 모드별 사이드바 동기화 디스패처. (default 는 무동작)
+    function syncSidebarsForLayout() {
+      const mode = window.appConfig?.layoutMode;
+      if (mode === 'left-toc') {
+        syncLeftTocSidebar();
+      } else if (mode === 'right-toc') {
+        syncRightTocSidebar();
+      } else if (mode === 'docs') {
+        syncDocsLayout();
+      }
     }
 
     function showLoading() {
@@ -1012,9 +1148,9 @@
 
         hideAllPages();
         document.getElementById('articlePage').classList.remove('d-none');
-        // 좌측 목차 사이드바 동기화는 hideAllPages 이후에 수행해야 한다 — hideAllPages 가
-        // #wikiTocSidebar 에 d-none 을 다시 부여하므로 그 전에 sync 해도 즉시 덮어써진다.
-        syncLeftTocSidebar();
+        // 사이드바 동기화는 hideAllPages 이후에 수행해야 한다 — hideAllPages 가 레이아웃 사이드바에
+        // d-none 을 다시 부여하므로 그 전에 sync 해도 즉시 덮어써진다.
+        syncSidebarsForLayout();
         if (typeof window.__sidebarLayoutUpdate === 'function') window.__sidebarLayoutUpdate();
 
         // 페이지가 d-none을 벗어난 다음 프레임에 해시 스크롤 수행 (초기 진입 시 hideAllPages
@@ -2420,7 +2556,7 @@
       if (currentId === _tocSpyLastId) return;
       _tocSpyLastId = currentId;
 
-      ['tocNav', 'tocFloatingNav', 'wikiTocSidebarNav'].forEach(navId => {
+      ['tocNav', 'tocFloatingNav', 'wikiTocSidebarNav', 'wikiTocSidebarRightNav'].forEach(navId => {
         const nav = document.getElementById(navId);
         if (!nav) return;
         nav.querySelectorAll('a.toc-active').forEach(a => a.classList.remove('toc-active'));

@@ -243,29 +243,57 @@ function renderSearchResponse(q, requestedPage, data) {
             && result.slug.trim().toLowerCase() === normalizedQuery
         );
     const hasExactMatch = !!data.exact_match || hasUnicodeExactMatchInResults;
-    const isImageNamespaceQuery = q.trim().startsWith('이미지:');
+    const queryTrimmed = q.trim();
+    const isImageNamespaceQuery = queryTrimmed.startsWith('이미지:');
+    // "map:" 은 하위 문서 트리 + TOC 를 합성해 보여주는 예약 가상 뷰라 실제 문서로 생성할 수 없다.
+    // 따라서 "새 문서 만들기" CTA 대신 해당 가상 뷰(/w/map:<base>)로 이동하는 버튼만 노출한다.
+    // (가상 뷰는 하위 문서가 있으면 트리가 그려지므로 문서 존재 여부와 무관하게 이동 버튼을 제공)
+    const isMapNamespaceQuery = queryTrimmed.startsWith('map:');
+    // 이동 대상은 위키 링크 [[...]] 와 동일하게 slug 기준의 문서 조회 경로(/w/<slug>)다.
+    const gotoUrl = `/w/${encodeURIComponent(queryTrimmed)}`;
     // category_mode 응답일 때는 카테고리 가상 문서가 결과에 노출되므로 "새 문서 만들기" CTA 를 숨긴다.
     // "카테고리:" prefix 인데 page_categories 매치가 없어 일반 검색으로 폴스루된 경우에는
     // 사용자가 카테고리 설명 문서를 직접 생성하도록 CTA 를 허용한다.
     const canCreate = window.currentUser && window.currentUser.role !== 'banned'
         && !data.image_mode && !data.category_mode && !isImageNamespaceQuery;
-    let newDocumentButtonHtml = '';
-    if (q.trim() !== '' && canCreate && currentPage === 1 && !hasExactMatch) {
-        newDocumentButtonHtml = `
+
+    let ctaHtml = '';
+    if (queryTrimmed !== '' && currentPage === 1) {
+        if (isMapNamespaceQuery) {
+            // map: 가상 뷰는 생성 불가 — 이동 버튼만 노출(존재 여부와 무관, 일반 검색 폴스루 시에도 동일).
+            ctaHtml = `
         <div class="mb-4">
-            <div class="alert alert-light border d-flex justify-content-between align-items-center">
-                <span><strong>"${window.escapeHtml(q)}"</strong> 문서가 아직 존재하지 않습니다.</span>
-                <button class="btn btn-wiki" onclick="window.location.href='/edit?slug=${encodeURIComponent(q).replace(/'/g, "%27")}'">
-                    <i class="bi bi-pencil-square"></i> 새 문서 만들기
-                </button>
+            <div class="alert alert-light border d-flex justify-content-between align-items-center gap-2">
+                <span><strong>"${window.escapeHtml(queryTrimmed)}"</strong> 문서 구조 보기로 이동할 수 있습니다.</span>
+                <a class="btn btn-wiki" href="${gotoUrl}">
+                    <i class="bi bi-diagram-3"></i> 해당 문서로 이동
+                </a>
             </div>
         </div>`;
+        } else if (!hasExactMatch && !data.image_mode && !data.category_mode && !isImageNamespaceQuery) {
+            // 정확 일치 문서가 없을 때: 위키 링크 [[...]] 로 바로 이동 + (권한 있으면) 새 문서 만들기 동시 노출.
+            const gotoBtn = `<a class="btn btn-wiki-outline" href="${gotoUrl}">
+                    <i class="bi bi-box-arrow-up-right"></i> [[${window.escapeHtml(queryTrimmed)}]]로 이동
+                </a>`;
+            const createBtn = canCreate
+                ? `<button class="btn btn-wiki" onclick="window.location.href='/edit?slug=${encodeURIComponent(queryTrimmed).replace(/'/g, "%27")}'">
+                    <i class="bi bi-pencil-square"></i> 새 문서 만들기
+                </button>`
+                : '';
+            ctaHtml = `
+        <div class="mb-4">
+            <div class="alert alert-light border d-flex justify-content-between align-items-center gap-2">
+                <span><strong>"${window.escapeHtml(queryTrimmed)}"</strong> 문서가 아직 존재하지 않습니다.</span>
+                <div class="d-flex gap-2 flex-shrink-0">${gotoBtn}${createBtn}</div>
+            </div>
+        </div>`;
+        }
     }
 
     if (!data.results || data.results.length === 0) {
         setNoResultsState('검색 결과가 없습니다', '다른 키워드로 검색해 보세요.');
         noResultsEl.classList.remove('d-none');
-        listEl.innerHTML = newDocumentButtonHtml;
+        listEl.innerHTML = ctaHtml;
         document.getElementById('searchTitle').innerHTML =
             `<i class="mdi mdi-magnify"></i> 검색 결과`;
         return;
@@ -362,7 +390,7 @@ function renderSearchResponse(q, requestedPage, data) {
     }
 
     const paginationHtml = renderPagination(currentPage, totalPages);
-    listEl.innerHTML = newDocumentButtonHtml + itemsHtml + paginationHtml;
+    listEl.innerHTML = ctaHtml + itemsHtml + paginationHtml;
 
     document.getElementById('searchTitle').innerHTML =
         `<i class="mdi mdi-magnify"></i> 검색 결과 (${total}건)`;

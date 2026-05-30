@@ -1,36 +1,35 @@
-<!DOCTYPE html>
-<html lang="ko">
-
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title class="app-wiki-name">블로그 편집 - CloudWiki</title>
-    <link rel="icon" class="app-wiki-favicon" href="/favicon.ico">
-    <link rel="stylesheet" href="/css/style.css">
-    <script>try { var t = localStorage.getItem('themeMode'); if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t); } catch (e) { }</script>
-    <link rel="stylesheet" href="/render.css">
-    <link rel="stylesheet" href="/css/edit.css">
-
-    <!-- BLOG_MODE 플래그: edit.js 로드 전에 설정 -->
-    <script>window.BLOG_MODE = true;</script>
-
-    <!-- Turnstile pre-bootstrap stub: 같은 페이지의 deferred ESM 모듈 (edit-main.js)
-         이 평가되기 전에 Turnstile API 가 ?onload=onTurnstileLoad 를 호출할 수 있다.
-         이 inline 스크립트가 stub 을 등록해 모듈 평가 시점까지 fire 를 기록하고,
-         모듈이 실제 핸들러를 등록하면 큐된 fire 를 즉시 replay 한다. -->
-    <script>
-      window.__turnstileEarlyFire = false;
-      window.onTurnstileLoad = function () {
-        if (typeof window.__turnstileLoadHandler === 'function') {
-          window.__turnstileLoadHandler();
-        } else {
-          window.__turnstileEarlyFire = true;
-        }
-      };
-    </script>
-</head>
-
-<body style="-webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;">
+---
+// 블로그 편집 셸. 기존 public/blog-edit.html 과 동일한 마커/구조를 유지하되,
+// header/footer 를 빌드 타임에 컴포넌트로 인라인한다(런타임 placeholder 주입 불필요).
+// 요청별 데이터가 없어(BLOG_MODE 인라인 플래그만) fetchAssetHtml 로 순수 정적 서빙된다.
+// CDN 번들(base/markdown/editor/turnstile)은 BaseLayout 이 PAGE_BUNDLES['/blog-edit.html'] 기준으로 베이킹.
+import BaseLayout from '../layouts/BaseLayout.astro';
+import Header from '../components/Header.astro';
+import Footer from '../components/Footer.astro';
+---
+<BaseLayout pagePath="/blog-edit.html" title="블로그 편집 - CloudWiki">
+    <Fragment slot="head">
+        <link rel="stylesheet" href="/render.css" />
+        <link rel="stylesheet" href="/css/edit.css" />
+        <!-- 테마 FOUC 방지: CSS 로드 후 즉시 테마 적용 -->
+        <script is:inline>try { var t = localStorage.getItem('themeMode'); if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t); } catch (e) { }</script>
+        <!-- BLOG_MODE 플래그: edit.js 로드 전에 설정 -->
+        <script is:inline>window.BLOG_MODE = true;</script>
+        <!-- Turnstile pre-bootstrap stub: 같은 페이지의 deferred ESM 모듈 (edit-main.js)
+             이 평가되기 전에 Turnstile API 가 ?onload=onTurnstileLoad 를 호출할 수 있다.
+             이 inline 스크립트가 stub 을 등록해 모듈 평가 시점까지 fire 를 기록하고,
+             모듈이 실제 핸들러를 등록하면 큐된 fire 를 즉시 replay 한다. -->
+        <script is:inline>
+          window.__turnstileEarlyFire = false;
+          window.onTurnstileLoad = function () {
+            if (typeof window.__turnstileLoadHandler === 'function') {
+              window.__turnstileLoadHandler();
+            } else {
+              window.__turnstileEarlyFire = true;
+            }
+          };
+        </script>
+    </Fragment>
 
     <!-- 초기 로딩 오버레이 -->
     <div id="initLoadingOverlay">
@@ -159,8 +158,8 @@
         </div>
     </div>
 
-    <!-- ── 네비게이션 바 Placeholder ── -->
-    <div id="app-header-placeholder"></div>
+    <!-- ── 네비게이션 바 ── -->
+    <Header />
 
     <div class="wiki-container" id="main-editor-container">
         <div class="wiki-article">
@@ -268,22 +267,21 @@
         </div>
     </div>
 
-    <script type="module" src="/dist/common.js"></script>
-    <script type="module" src="/dist/render.js"></script>
-    <script type="module" src="/dist/edit-utils.js"></script>
-    <script type="module" src="/dist/edit-autocomplete.js"></script>
-    <script type="module" src="/dist/edit-modals.js"></script>
-    <script type="module" src="/dist/edit-image.js"></script>
-    <!-- edit-conflict.js 미포함: 블로그는 리비전/충돌 관리 없음 -->
-    <!-- edit-summary.js 미포함: 블로그에는 #summaryInput 이 없어 자동 요약이
-         의미를 갖지 않는다. edit.js 의 refreshAutoSummary 참조는 모두
-         typeof 가드로 보호되므로 ReferenceError 가 발생하지 않는다. -->
-    <script type="module" src="/dist/edit-table-toolbar.js"></script>
-    <script type="module" src="/dist/edit-main.js"></script>
+    <!-- ── 푸터 ── -->
+    <Footer />
 
-    <!-- ── 푸터 Placeholder ── -->
-    <div id="app-footer-placeholder"></div>
-
-</body>
-
-</html>
+    <Fragment slot="scripts">
+        <script type="module" src="/dist/common.js" is:inline></script>
+        <script type="module" src="/dist/render.js" is:inline></script>
+        <script type="module" src="/dist/edit-utils.js" is:inline></script>
+        <script type="module" src="/dist/edit-autocomplete.js" is:inline></script>
+        <script type="module" src="/dist/edit-modals.js" is:inline></script>
+        <script type="module" src="/dist/edit-image.js" is:inline></script>
+        <!-- edit-conflict.js 미포함: 블로그는 리비전/충돌 관리 없음 -->
+        <!-- edit-summary.js 미포함: 블로그에는 #summaryInput 이 없어 자동 요약이
+             의미를 갖지 않는다. edit.js 의 refreshAutoSummary 참조는 모두
+             typeof 가드로 보호되므로 ReferenceError 가 발생하지 않는다. -->
+        <script type="module" src="/dist/edit-table-toolbar.js" is:inline></script>
+        <script type="module" src="/dist/edit-main.js" is:inline></script>
+    </Fragment>
+</BaseLayout>

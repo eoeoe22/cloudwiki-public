@@ -817,7 +817,7 @@ html[data-theme="dark"] .user-dropdown-toggle {
   animation: fadeIn 0.4s ease-out forwards;
 }
 
-/* ── 좌측 목차 사이드바 (SIDEBAR_MODE="left-toc") ──
+/* ── 좌측 목차 사이드바 (LAYOUT_MODE="left-toc") ──
    기본은 .d-none 으로 숨김. left-toc 모드 + 헤딩이 있는 문서에서만 JS 가 d-none 을 제거. */
 .wiki-toc-sidebar {
   width: 240px;
@@ -828,9 +828,28 @@ html[data-theme="dark"] .user-dropdown-toggle {
   max-height: calc(100vh - 3rem);
   overflow-y: auto;
   z-index: 1030;
+  /* 목차가 길어 스크롤바가 생길 때: 스크롤바를 좌측에 배치(direction: rtl)하고
+     내용은 .wiki-toc-sidebar-inner 에서 ltr 로 되돌린다. 스크롤바는 얇게(thin). */
+  direction: rtl;
+  scrollbar-width: thin;
+  scrollbar-color: var(--wiki-border) transparent;
+}
+
+.wiki-toc-sidebar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.wiki-toc-sidebar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.wiki-toc-sidebar::-webkit-scrollbar-thumb {
+  background: var(--wiki-border);
+  border-radius: 3px;
 }
 
 .wiki-toc-sidebar-inner {
+  direction: ltr;
   background: var(--wiki-card-bg);
   border: 1px solid var(--wiki-border);
   border-radius: 8px;
@@ -902,7 +921,7 @@ html[data-theme="dark"] .user-dropdown-toggle {
   }
 }
 
-/* === SIDEBAR_MODE="left-toc" 분기 ===
+/* === LAYOUT_MODE="left-toc" 분기 ===
    우측 사이드바를 숨기고, 본문 하단으로 옮겨진 트렌딩/최근 변경 컨테이너를 가로 그리드로 표시.
    좌측 목차 사이드바는 헤딩이 있는 문서에서 JS 가 d-none 을 제거할 때 노출.
    `.wiki-layout-doc` 마커로 위키 문서 조회 페이지(index.html) 에만 한정한다 — 검색/리비전/
@@ -911,13 +930,13 @@ html[data-theme="dark"] .user-dropdown-toggle {
    `#app-sidebar-placeholder` 가 `components/sidebar.html` 의 `#mobileSidebar` 오프캔버스
    (모바일 햄버거 메뉴 소스)를 담고 있어 ancestor 가 display:none 이 되면 메뉴를 열 수 없다. */
 @media (min-width: 992px) {
-  body[data-sidebar-mode="left-toc"] .wiki-layout-doc > .wiki-sidebar {
+  body[data-layout-mode="left-toc"] .wiki-layout-doc > .wiki-sidebar {
     display: none;
   }
   /* PC left-toc: 좌측 목차 사이드바를 쓰므로 본문 상단 인라인 목차 카드는 숨긴다.
      `.wiki-layout-doc` 로 위키 문서 조회 페이지에만 한정 — edit 프리뷰 등 다른 페이지의
      인라인 목차 카드(좌측 사이드바 대체물이 없음)까지 숨겨버리지 않도록. */
-  body[data-sidebar-mode="left-toc"] .wiki-layout-doc .wiki-toc-card {
+  body[data-layout-mode="left-toc"] .wiki-layout-doc .wiki-toc-card {
     display: none;
   }
 }
@@ -925,9 +944,141 @@ html[data-theme="dark"] .user-dropdown-toggle {
 /* 모바일(<992px) left-toc: 좌측 목차 사이드바를 숨기고 인라인 목차 카드를 쓴다
    (기본 모드와 동일). 인라인 카드의 모바일 풀폭 동작은 render.css 가 처리. */
 @media (max-width: 991px) {
-  body[data-sidebar-mode="left-toc"] .wiki-toc-sidebar {
+  body[data-layout-mode="left-toc"] .wiki-toc-sidebar {
     display: none !important;
   }
+}
+
+/* ── 좌측 그룹 문서 트리 사이드바 (LAYOUT_MODE="docs") ──
+   `.wiki-toc-sidebar` 의 sticky/스크롤바 동작을 그대로 따르되 살짝 더 넓게(그룹 트리 슬러그 표시용).
+   내부(.wiki-toc-sidebar-inner)·링크(.wiki-toc-sidebar-nav) 스타일은 공유 클래스로 재사용된다. */
+.wiki-nav-sidebar {
+  width: 260px;
+  flex-shrink: 0;
+  position: sticky;
+  top: 1.5rem;
+  align-self: flex-start;
+  max-height: calc(100vh - 3rem);
+  overflow-y: auto;
+  z-index: 1030;
+  scrollbar-width: thin;
+  scrollbar-color: var(--wiki-border) transparent;
+}
+
+.wiki-nav-sidebar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.wiki-nav-sidebar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.wiki-nav-sidebar::-webkit-scrollbar-thumb {
+  background: var(--wiki-border);
+  border-radius: 3px;
+}
+
+/* 그룹 트리는 문서간 링크 목록이므로 좌측 들여쓰기를 살짝 넉넉히 준다. */
+.wiki-nav-sidebar-tree ul {
+  list-style: none;
+  padding-left: 0.8rem;
+  margin: 0;
+}
+
+.wiki-nav-sidebar-tree > ul {
+  padding-left: 0;
+}
+
+.wiki-nav-sidebar-tree li {
+  margin: 0.18rem 0;
+  font-size: 0.85rem;
+  line-height: 1.35;
+}
+
+/* 문서가 없는 중간 경로 노드(링크 없음)는 muted 텍스트로 구분. */
+.wiki-nav-sidebar-tree .nav-nodoc {
+  color: var(--wiki-text-muted);
+  display: inline-block;
+  padding: 1px 2px;
+}
+
+.wiki-nav-sidebar-tree .nav-truncated {
+  color: var(--wiki-text-muted);
+  font-style: italic;
+  font-size: 0.8rem;
+  margin-top: 0.4rem;
+}
+
+/* === LAYOUT_MODE="docs" 분기 (Astro 문서 스타일: 좌측 그룹 트리 + 우측 문서내 목차) ===
+   `.wiki-layout-doc` 마커로 위키 문서 조회 페이지에만 한정. 데스크탑에서만 우측 트렌딩
+   사이드바와 인라인 목차 카드를 숨기고, 좌측 그룹 nav 와 우측 목차 사이드바를 노출한다.
+   트렌딩/최근 변경/커스텀 사이드바 블록은 left-toc 와 동일하게 JS(relocateRightSidebarBelowArticle)
+   로 본문(.wiki-article) 하단(.wiki-sidebar-bottom-relocated)으로 옮겨 본문 폭에 맞춰 노출한다.
+   #wikiSidebar 를 숨기는 규칙을 ≥992px 로만 한정하는 이유는 left-toc 와 동일
+   (모바일 오프캔버스 #mobileSidebar 소스이므로). */
+@media (min-width: 992px) {
+  body[data-layout-mode="docs"] .wiki-layout-doc > .wiki-sidebar {
+    display: none;
+  }
+  body[data-layout-mode="docs"] .wiki-layout-doc .wiki-toc-card {
+    display: none;
+  }
+}
+
+/* 모바일(<992px) docs: 좌·우 사이드바를 모두 숨기고 인라인 목차 카드로 폴백한다
+   (기본 모드와 동일). */
+@media (max-width: 991px) {
+  body[data-layout-mode="docs"] #wikiNavSidebar,
+  body[data-layout-mode="docs"] #wikiTocSidebarRight {
+    display: none !important;
+  }
+}
+
+/* 현재 문서 강조 (그룹 nav 트리). PC/모바일 공통. */
+.wiki-nav-sidebar-tree a.nav-current {
+  color: var(--wiki-primary);
+  font-weight: 600;
+}
+
+/* 에디터 프리뷰(#custom-wiki-preview)는 .wiki-layout-doc 밖이라 위의 본문 인라인 목차 카드
+   숨김 규칙이 닿지 않는다. 조회 화면과 동일하게, left-toc/docs 레이아웃에서는 데스크탑(≥992px)
+   에서만 프리뷰의 인라인 목차 카드를 숨겨 사이드바 목차와 중복을 피하고, 모바일에서는
+   (사이드바가 숨겨지므로) 카드를 그대로 노출해 실제 조회 화면과 일치시킨다.
+   (default 레이아웃은 어느 폭에서도 숨기지 않아 카드가 항상 노출된다.) */
+@media (min-width: 992px) {
+  body[data-layout-mode="left-toc"] #custom-wiki-preview .wiki-toc-card,
+  body[data-layout-mode="right-toc"] #custom-wiki-preview .wiki-toc-card,
+  body[data-layout-mode="docs"] #custom-wiki-preview .wiki-toc-card {
+    display: none;
+  }
+}
+
+/* === LAYOUT_MODE="right-toc" 분기: left-toc 와 동일하되 현재 문서 목차를 우측에 배치 ===
+   우측 목차 사이드바(#wikiTocSidebarRight)는 docs 모드와 동일 요소를 공유한다(JS 가 d-none 제거).
+   좌측 사이드바는 없다(JS 가 left-toc/docs 좌측 사이드바를 노출하지 않음).
+   #wikiSidebar(트렌딩/최근 변경)는 본문 하단으로 JS(relocateRightSidebarBelowArticle)가 옮기므로
+   데스크탑(≥992px)에서만 원위치를 숨긴다 — 모바일에선 #mobileSidebar 오프캔버스 소스이므로 숨기지 않는다
+   (left-toc/docs 와 동일). */
+@media (min-width: 992px) {
+  body[data-layout-mode="right-toc"] .wiki-layout-doc > .wiki-sidebar {
+    display: none;
+  }
+  body[data-layout-mode="right-toc"] .wiki-layout-doc .wiki-toc-card {
+    display: none;
+  }
+}
+
+/* 모바일(<992px) right-toc: 우측 목차 사이드바를 숨기고 인라인 목차 카드로 폴백한다(기본 모드와 동일). */
+@media (max-width: 991px) {
+  body[data-layout-mode="right-toc"] #wikiTocSidebarRight {
+    display: none !important;
+  }
+}
+
+/* 우측 목차 사이드바는 좌측(.wiki-toc-sidebar 의 direction:rtl 스크롤바)과 달리 스크롤바를
+   자연스럽게 오른쪽에 둔다. */
+.wiki-toc-sidebar-right {
+  direction: ltr;
 }
 
 /* 본문 하단으로 옮긴 트렌딩/최근 변경/커스텀 사이드바 — 본문 폭 전체로 확장(단일 컬럼). */

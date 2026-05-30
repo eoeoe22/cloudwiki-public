@@ -1475,7 +1475,16 @@ html[data-theme="dark"] .toc-floating-body a.toc-active {
   }
 }
 
-body.reading-mode .wiki-sidebar {
+/* 읽기 모드: 모든 레이아웃 모드에서 양쪽 사이드바와 본문 하단 카드를 숨겨 본문만 남긴다.
+   - .wiki-sidebar: 기본/우측 사이드바(트렌딩·최근 변경·커스텀 사이드바)
+   - .wiki-toc-sidebar(좌측 목차, left-toc)·.wiki-nav-sidebar(좌측 그룹 트리, docs)·
+     #wikiTocSidebarRight(우측 목차, docs)
+   - .wiki-sidebar-bottom-relocated: left-toc/docs 에서 본문 하단으로 옮긴 카드 묶음 */
+body.reading-mode .wiki-sidebar,
+body.reading-mode .wiki-toc-sidebar,
+body.reading-mode .wiki-nav-sidebar,
+body.reading-mode #wikiTocSidebarRight,
+body.reading-mode .wiki-sidebar-bottom-relocated {
   display: none !important;
 }
 

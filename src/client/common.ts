@@ -483,36 +483,10 @@ async function loadConfig() {
             // 를 읽으므로 fetch 결과를 즉시 노출해야 한다.
             window.appConfig = appConfig;
 
-            // 위키 이름 적용
-            document.querySelectorAll('.app-wiki-name').forEach(el => {
-                if (el.tagName === 'TITLE') {
-                    // 타이틀에는 기존 접두사를 유지
-                    const prefix = el.textContent.split(' - ').slice(0, -1).join(' - ');
-                    el.textContent = prefix ? prefix + ' - ' + appConfig.wikiName : appConfig.wikiName;
-                } else {
-                    el.textContent = appConfig.wikiName;
-                }
-            });
-
-            // 파비콘 적용
-            if (isSafeUrl(appConfig.wikiFaviconUrl)) {
-                const favicon = document.getElementById('wiki-favicon');
-                if (favicon) favicon.href = appConfig.wikiFaviconUrl;
-            }
-
-            // 로고 적용
-            document.querySelectorAll('.wiki-logo-container').forEach(logoContainer => {
-                if (isSafeUrl(appConfig.wikiLogoUrl)) {
-                    const img = document.createElement('img');
-                    img.src = appConfig.wikiLogoUrl;
-                    img.alt = 'Logo';
-                    img.className = 'brand-logo';
-                    img.style.cssText = 'height: 32px; vertical-align: middle; margin-right: 8px;';
-                    img.loading = 'lazy';
-                    logoContainer.innerHTML = '';
-                    logoContainer.appendChild(img);
-                }
-            });
+            // 브랜딩(위키 이름/파비콘/로고)은 더 이상 클라이언트에서 덮어쓰지 않는다.
+            // - Astro 정적 셸: 빌드 타임에 wrangler.toml 값으로 베이킹됨.
+            // - 요청별 SSR 셸(index/blog): 서버 applyPageSSR 이 문서별 메타/브랜딩 마커를 주입.
+            // appConfig.wikiName 은 각 페이지가 document.title 을 동적 생성할 때 계속 사용한다.
 
             // 익스텐션 동적 로드 (JS/CSS)
             //
@@ -589,55 +563,11 @@ async function loadConfig() {
     // 헤더가 SSR로 이미 주입돼 있는 경우를 대비해 한 번 시도
     applyAnnouncementBanner();
 
-    // 레이아웃 컴포넌트(헤더/사이드바)가 비어있으면 클라이언트에서 로드 시도 (SSR 누락 대비)
-    await ensureLayoutComponents();
-
-    // 테마 토글 UI 업데이트 (헤더 주입 후)
+    // 테마 토글 UI 업데이트 (헤더는 Astro 빌드 타임에 인라인됨)
     updateThemeToggleUI();
 
     // 전역 인증 상태 동기화 (레이아웃 주입 여부와 상관없이 항상 수행)
     await checkAuth();
-}
-
-/**
- * SSR이 누락된 경우를 대비한 클라이언트 사이드 레이아웃 주입
- */
-async function ensureLayoutComponents() {
-    const header = document.getElementById('app-header-placeholder');
-    const sidebar = document.getElementById('app-sidebar-placeholder');
-    const footer = document.getElementById('app-footer-placeholder');
-
-    const headerEmpty = header && header.innerHTML.trim() === '';
-    const sidebarEmpty = sidebar && sidebar.innerHTML.trim() === '';
-    const footerEmpty = footer && footer.innerHTML.trim() === '';
-
-    if (headerEmpty || sidebarEmpty || footerEmpty) {
-        try {
-            const [h, s, f] = await Promise.all([
-                headerEmpty ? fetch('/components/header.html').then(r => r.ok ? r.text() : null) : Promise.resolve(null),
-                sidebarEmpty ? fetch('/components/sidebar.html').then(r => r.ok ? r.text() : null) : Promise.resolve(null),
-                footerEmpty ? fetch('/components/footer.html').then(r => r.ok ? r.text() : null) : Promise.resolve(null)
-            ]);
-
-            if (h && header) header.innerHTML = h;
-            if (s && sidebar) sidebar.innerHTML = s;
-            if (f && footer) footer.innerHTML = f;
-
-            // 컴포넌트 로드 후 브랜딩 및 인증 재적용
-            if (h || s || f) {
-                // 무한 루프 방지를 위해 ensureLayoutComponents 제외하고 재호출
-                document.querySelectorAll('.app-wiki-name').forEach(el => {
-                    if (el.tagName !== 'TITLE') el.textContent = appConfig.wikiName;
-                });
-                await checkAuth();
-                if (window.__sidebarLayoutUpdate) window.__sidebarLayoutUpdate();
-                // 헤더가 클라이언트에서 새로 주입된 경우 배너도 다시 적용
-                if (h) applyAnnouncementBanner();
-            }
-        } catch (e) {
-            console.error('Layout component load failed:', e);
-        }
-    }
 }
 
 // ── 인증 확인 + 네비바 UI 업데이트 ──
@@ -1518,7 +1448,6 @@ window.updateThemeToggleUI = updateThemeToggleUI;
 window.goRandomPage = goRandomPage;
 window.applyAnnouncementBanner = applyAnnouncementBanner;
 window.loadConfig = loadConfig;
-window.ensureLayoutComponents = ensureLayoutComponents;
 window.checkAuth = checkAuth;
 window.startNotifPolling = startNotifPolling;
 window.stopNotifPolling = stopNotifPolling;

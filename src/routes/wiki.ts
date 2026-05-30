@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import type { Env, Page, Revision } from '../types';
 import { requireAuth, requireAdmin, requirePermission } from '../middleware/session';
 import { normalizeSlug, isR2OnlyNamespace, isMapNamespace } from '../utils/slug';
-import { buildMapDocument, MAP_CACHE_MAX_AGE_SECONDS } from '../utils/mapDocument';
+import { buildMapDocument, buildGroupTree, MAP_CACHE_MAX_AGE_SECONDS } from '../utils/mapDocument';
 import { safeJSON } from '../utils/json';
 import { ROLE_CASE_SQL, enrichRoles, RBAC } from '../utils/role';
 import { fetchMediaTags } from '../utils/mediaTags';
@@ -873,7 +873,7 @@ wiki.get('/config', async (c) => {
         wikiLogoUrl: c.env.WIKI_LOGO_URL || '',
         wikiFaviconUrl: c.env.WIKI_FAVICON_URL || '',
         wikiVisibility: c.env.WIKI_VISIBILITY === 'closed' ? 'closed' : 'open',
-        sidebarMode: c.env.SIDEBAR_MODE === 'left-toc' ? 'left-toc' : 'default',
+        layoutMode: (c.env.LAYOUT_MODE === 'left-toc' || c.env.LAYOUT_MODE === 'right-toc' || c.env.LAYOUT_MODE === 'docs') ? c.env.LAYOUT_MODE : 'default',
         selectedIconsOnly: c.env.SELECTED_ICONS_ONLY === 'true',
         enableConcurrentEditDetection: c.env.ENABLE_CONCURRENT_EDIT_DETECTION !== 'false',
         turnstileSiteKey: c.env.TURNSTILE_SITE_KEY || '',
@@ -2680,6 +2680,54 @@ wiki.get('/w/:slug/subdocs', async (c) => {
         .all();
 
     return c.json(safeJSON({ subdocs: results }));
+});
+
+/**
+ * GET /w/:slug/nav-tree
+ * docs 레이아웃 좌측 그룹 nav 사이드바용 트리. 그룹 루트는 슬러그 첫 세그먼트(`slug.split('/')[0]`).
+ * - 콜론 네임스페이스(`틀:`/`이미지:`)는 '/' 로 끊기지 않아 그대로 그룹 루트에 포함된다.
+ * - `map:` 가상 슬러그는 빈 트리를 반환해 클라이언트가 nav 를 숨기도록 한다.
+ * - 응답에 isCurrent 는 포함하지 않는다 — 같은 그룹의 문서들이 캐시를 공유하도록, 현재 문서
+ *   하이라이트는 클라이언트가 slug 매칭으로 처리한다. (캐시/권한 정책은 map: 분기와 동일)
+ */
+wiki.get('/w/:slug/nav-tree', async (c) => {
+    // 비공개 위키(WIKI_VISIBILITY=closed)에서는 비로그인 사용자가 그룹 트리로 슬러그 구조를
+    // 열람·열거할 수 없도록 캐시/DB 접근 전에 차단한다 (/api/w/:slug 등 다른 읽기 API 와 동일).
+    if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) {
+        return c.json({ error: '로그인이 필요합니다.' }, 401);
+    }
+    const slug = c.req.param('slug');
+    const db = c.env.DB;
+    const user = c.get('user');
+    const cache = caches.default;
+    const cacheKey = c.req.url;
+
+    // map: 가상 문서는 그 자체가 트리 뷰이므로 그룹 nav 를 만들지 않는다.
+    if (isMapNamespace(slug)) {
+        return c.json(safeJSON({ groupRoot: null, truncated: false, root: null }), 200, { 'Cache-Control': 'private, no-store' });
+    }
+
+    const groupRoot = slug.split('/')[0];
+
+    // map: 분기와 동일하게, 비로그인 요청에서만 글로벌 캐시를 조회한다(권한자가 anonymous 캐시에 갇히지 않도록).
+    if (!user) {
+        const cached = await cache.match(cacheKey);
+        if (cached) return new Response(cached.body, cached);
+    }
+
+    const rbac = c.get('rbac') as RBAC;
+    const canSeePrivate = rbac.can(user?.role ?? 'guest', 'wiki:private');
+    const result = await buildGroupTree({ db, baseSlug: groupRoot, canSeePrivate });
+    const payload = safeJSON({ groupRoot, truncated: result.truncated, root: result.root });
+
+    const safeForSharedCache = !user && !result.hasPrivateChildren;
+    if (safeForSharedCache) {
+        // 자식 mutation 시 자동 무효화되지 않으므로 staleness 윈도우를 짧게 유지 (map: 와 동일).
+        const fresh = c.json(payload, 200, { 'Cache-Control': `public, max-age=${MAP_CACHE_MAX_AGE_SECONDS}` });
+        c.executionCtx.waitUntil(cache.put(cacheKey, fresh.clone()));
+        return fresh;
+    }
+    return c.json(payload, 200, { 'Cache-Control': 'private, no-store' });
 });
 
 /**

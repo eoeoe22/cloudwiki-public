@@ -1,7 +1,9 @@
 ---
 // 공통 사이드바 컴포넌트. public/components/sidebar.html 을 단일 소스로 ?raw import 하여 인라인.
-// 런타임 마커(.app-wiki-name, .wiki-logo-container, #custom-sidebar-content)는 set:html 로 보존되며,
-// #custom-sidebar-content 는 런타임 applyPageSSR 가 env SIDEBAR 기반으로 채우거나 제거한다.
+// 브랜딩 마커(.app-wiki-name, .wiki-logo-container)와 #custom-sidebar-content(env SIDEBAR 기반)는
+// 빌드 타임에 bakeComponentBranding 으로 박아넣는다 — Astro 셸은 런타임 주입 없이 즉시 서빙된다.
 import raw from '../../../public/components/sidebar.html?raw';
+import { readBranding, bakeComponentBranding } from '../../../scripts/branding.mjs';
+const baked = bakeComponentBranding(raw, readBranding());
 ---
-<Fragment set:html={raw} />
+<Fragment set:html={baked} />

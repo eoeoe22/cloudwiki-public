@@ -1,36 +1,48 @@
-<!DOCTYPE html>
-<html lang="ko">
+---
+// 문서 편집 셸. 기존 public/edit.html 과 동일한 마커/구조를 유지하되,
+// header/footer 를 빌드 타임에 컴포넌트로 인라인한다(런타임 placeholder 주입 불필요).
+// 요청별 데이터가 없고(_wikiSyntax 는 배포타임 고정 env 값) fetchAssetHtml 로 순수 정적 서빙된다.
+// 따라서 런타임 applyPageSSR 대신 #ssr-data 의 _wikiSyntax 를 빌드 타임에 베이킹한다.
+// CDN 번들(base/markdown/editor/turnstile/diff)은 BaseLayout 이 PAGE_BUNDLES['/edit.html'] 기준으로 베이킹.
+import BaseLayout from '../layouts/BaseLayout.astro';
+import Header from '../components/Header.astro';
+import Footer from '../components/Footer.astro';
+import { readBranding } from '../../../scripts/branding.mjs';
 
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title class="app-wiki-name">문서 편집 - CloudWiki</title>
-    <link rel="icon" class="app-wiki-favicon" href="/favicon.ico">
-    <link rel="stylesheet" href="/css/style.css">
-    <!-- 테마 FOUC 방지: CSS 로드 후 즉시 테마 적용 -->
-    <script>try { var t = localStorage.getItem('themeMode'); if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t); } catch (e) { }</script>
-    <link rel="stylesheet" href="/render.css">
-    <link rel="stylesheet" href="/css/diff.css">
-    <link rel="stylesheet" href="/css/edit.css">
-    <link rel="stylesheet" href="/css/bulk-modal.css">
-
-    <!-- Turnstile pre-bootstrap stub: 같은 페이지의 deferred ESM 모듈 (edit-main.js)
-         이 평가되기 전에 Turnstile API 가 ?onload=onTurnstileLoad 를 호출할 수 있다.
-         이 inline 스크립트가 stub 을 등록해 모듈 평가 시점까지 fire 를 기록하고,
-         모듈이 실제 핸들러를 등록하면 큐된 fire 를 즉시 replay 한다. -->
-    <script>
-      window.__turnstileEarlyFire = false;
-      window.onTurnstileLoad = function () {
-        if (typeof window.__turnstileLoadHandler === 'function') {
-          window.__turnstileLoadHandler();
-        } else {
-          window.__turnstileEarlyFire = true;
-        }
-      };
-    </script>
-</head>
-
-<body style="-webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;">
+const branding = readBranding();
+// client(src/client/edit/page.ts)가 #ssr-data 에서 _wikiSyntax(문법 가이드 슬러그)를 읽는다.
+// 런타임 applyPageSSR 과 동일하게 </script> 탈출/줄구분자를 이스케이프한 JSON 으로 인라인.
+const ssrJson = JSON.stringify({ _wikiSyntax: branding.wikiSyntax })
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
+---
+<BaseLayout pagePath="/edit.html" title="문서 편집 - CloudWiki">
+    <Fragment slot="head">
+        <link rel="stylesheet" href="/render.css" />
+        <link rel="stylesheet" href="/css/diff.css" />
+        <link rel="stylesheet" href="/css/edit.css" />
+        <link rel="stylesheet" href="/css/bulk-modal.css" />
+        <!-- 테마 FOUC 방지: CSS 로드 후 즉시 테마 적용 -->
+        <script is:inline>try { var t = localStorage.getItem('themeMode'); if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t); } catch (e) { }</script>
+        <!-- 문법 가이드 슬러그를 빌드 타임에 베이킹한 SSR 데이터 -->
+        <script id="ssr-data" type="application/json" set:html={ssrJson}></script>
+        <!-- Turnstile pre-bootstrap stub: 같은 페이지의 deferred ESM 모듈 (edit-main.js)
+             이 평가되기 전에 Turnstile API 가 ?onload=onTurnstileLoad 를 호출할 수 있다.
+             이 inline 스크립트가 stub 을 등록해 모듈 평가 시점까지 fire 를 기록하고,
+             모듈이 실제 핸들러를 등록하면 큐된 fire 를 즉시 replay 한다. -->
+        <script is:inline>
+          window.__turnstileEarlyFire = false;
+          window.onTurnstileLoad = function () {
+            if (typeof window.__turnstileLoadHandler === 'function') {
+              window.__turnstileLoadHandler();
+            } else {
+              window.__turnstileEarlyFire = true;
+            }
+          };
+        </script>
+    </Fragment>
 
     <!-- 초기 로딩 오버레이 -->
     <div id="initLoadingOverlay">
@@ -178,8 +190,8 @@
         </div>
     </div>
 
-    <!-- ── 네비게이션 바 Placeholder ── -->
-    <div id="app-header-placeholder"></div>
+    <!-- ── 네비게이션 바 ── -->
+    <Header />
 
     <!-- 편집 충돌 해결 UI -->
     <div id="conflict-ui" class="container mt-4" style="display: none;">
@@ -401,17 +413,6 @@
         </div>
     </div>
 
-    <script type="module" src="/dist/common.js"></script>
-    <script type="module" src="/dist/render.js"></script>
-    <script type="module" src="/dist/edit-utils.js"></script>
-    <script type="module" src="/dist/edit-autocomplete.js"></script>
-    <script type="module" src="/dist/edit-modals.js"></script>
-    <script type="module" src="/dist/edit-image.js"></script>
-    <script type="module" src="/dist/edit-conflict.js"></script>
-    <script type="module" src="/dist/edit-summary.js"></script>
-    <script type="module" src="/dist/edit-table-toolbar.js"></script>
-    <script type="module" src="/dist/edit-main.js"></script>
-    <script type="module" src="/dist/edit-bulk-category.js"></script>
     <!-- ── 이미지 편집 모달 ── -->
     <div class="modal fade" id="imageEditorModal" tabindex="-1" aria-hidden="true" data-bs-backdrop="static">
         <div class="modal-dialog modal-dialog-centered">
@@ -481,11 +482,21 @@
         </div>
     </div>
 
-    <script type="module" src="/dist/edit-page.js"></script>
+    <!-- ── 푸터 ── -->
+    <Footer />
 
-    <!-- ── 푸터 Placeholder ── -->
-    <div id="app-footer-placeholder"></div>
-
-</body>
-
-</html>
+    <Fragment slot="scripts">
+        <script type="module" src="/dist/common.js" is:inline></script>
+        <script type="module" src="/dist/render.js" is:inline></script>
+        <script type="module" src="/dist/edit-utils.js" is:inline></script>
+        <script type="module" src="/dist/edit-autocomplete.js" is:inline></script>
+        <script type="module" src="/dist/edit-modals.js" is:inline></script>
+        <script type="module" src="/dist/edit-image.js" is:inline></script>
+        <script type="module" src="/dist/edit-conflict.js" is:inline></script>
+        <script type="module" src="/dist/edit-summary.js" is:inline></script>
+        <script type="module" src="/dist/edit-table-toolbar.js" is:inline></script>
+        <script type="module" src="/dist/edit-main.js" is:inline></script>
+        <script type="module" src="/dist/edit-bulk-category.js" is:inline></script>
+        <script type="module" src="/dist/edit-page.js" is:inline></script>
+    </Fragment>
+</BaseLayout>
