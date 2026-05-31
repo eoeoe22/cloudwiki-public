@@ -273,7 +273,7 @@ function renderSearchResponse(q, requestedPage, data) {
         } else if (!hasExactMatch && !data.image_mode && !data.category_mode && !isImageNamespaceQuery) {
             // 정확 일치 문서가 없을 때: 위키 링크 [[...]] 로 바로 이동 + (권한 있으면) 새 문서 만들기 동시 노출.
             const gotoBtn = `<a class="btn btn-wiki-outline" href="${gotoUrl}">
-                    <i class="bi bi-box-arrow-up-right"></i> [[${window.escapeHtml(queryTrimmed)}]]로 이동
+                    <i class="bi bi-box-arrow-up-right"></i> ${window.escapeHtml(queryTrimmed)}로 이동
                 </a>`;
             const createBtn = canCreate
                 ? `<button class="btn btn-wiki" onclick="window.location.href='/edit?slug=${encodeURIComponent(queryTrimmed).replace(/'/g, "%27")}'">
