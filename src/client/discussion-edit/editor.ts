@@ -146,7 +146,7 @@ function makeToolbar(view: any, EditorView: any): HTMLElement {
 
     const fileInput = document.createElement('input');
     fileInput.type = 'file';
-    fileInput.accept = 'image/jpeg,image/png,image/gif,image/webp,image/svg+xml,video/mp4,video/webm,video/ogg';
+    fileInput.accept = 'image/jpeg,image/png,image/gif,image/webp,image/svg+xml';
     fileInput.style.display = 'none';
     imgMenu.appendChild(fileInput);
 
@@ -255,7 +255,7 @@ export async function createMiniEditor(
                     const files = event.dataTransfer?.files;
                     if (!files || files.length === 0) return false;
                     const file = files[0];
-                    if (!/^image\//.test(file.type) && !/^video\//.test(file.type)) return false;
+                    if (!/^image\//.test(file.type)) return false;
                     event.preventDefault();
                     if (!window.handleImageUpload) return true;
                     window.handleImageUpload(file, (url, alt, size) => {

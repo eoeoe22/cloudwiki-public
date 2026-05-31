@@ -219,7 +219,7 @@ function renderMedia() {
                     <div class="media-item" id="media-item-${m.id}">
                         ${preview}
                         <div class="media-item-info">
-                            <div class="filename">${window.escapeHtml(m.filename)}</div>
+                            <a class="filename" href="/w/${encodeURIComponent(`이미지:${m.filename}`)}" title="${window.escapeHtml(m.filename)} 문서로 이동">${window.escapeHtml(m.filename)}</a>
                             <div class="meta">${sizeStr} · ${uploadDate} · 업로더: ${uploaderName}</div>
                             ${tagsHtml}
                         </div>
@@ -339,7 +339,7 @@ async function runGarbageCollector() {
                                 <input type="checkbox" class="form-check-input gc-check" data-id="${m.id}" checked style="flex-shrink:0;">
                                 ${preview}
                                 <div class="media-item-info">
-                                    <div class="filename">${window.escapeHtml(m.filename)}</div>
+                                    <a class="filename" href="/w/${encodeURIComponent(`이미지:${m.filename}`)}" title="${window.escapeHtml(m.filename)} 문서로 이동">${window.escapeHtml(m.filename)}</a>
                                     <div class="meta">${sizeStr} · ${uploadDate} · 업로더: ${uploaderName}</div>
                                 </div>
                                 <button class="btn btn-sm btn-outline-info" onclick="trackBacklinks(${m.id}, '${window.escapeHtml(m.filename)}')" title="역링크 확인">

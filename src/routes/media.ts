@@ -7,16 +7,13 @@ import { safeJSON } from '../utils/json';
 
 const media = new Hono<Env>();
 
-// 허용 MIME 타입
+// 허용 MIME 타입 (이미지 전용 — 동영상 업로드는 더 이상 허용하지 않는다)
 const ALLOWED_TYPES = new Set([
     'image/jpeg',
     'image/png',
     'image/gif',
     'image/webp',
     'image/svg+xml',
-    'video/mp4',
-    'video/webm',
-    'video/ogg',
 ]);
 
 /**
@@ -602,9 +599,6 @@ function getExtension(filename: string, mimeType: string): string {
         'image/gif': 'gif',
         'image/webp': 'webp',
         'image/svg+xml': 'svg',
-        'video/mp4': 'mp4',
-        'video/webm': 'webm',
-        'video/ogg': 'ogg',
     };
     return mimeMap[mimeType] || 'bin';
 }

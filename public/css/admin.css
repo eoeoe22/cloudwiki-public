@@ -791,9 +791,15 @@
 }
 
 .media-item-info .filename {
+  display: inline-block;
   font-weight: 600;
   word-break: break-all;
-  color: var(--wiki-text);
+  color: var(--wiki-link);
+  text-decoration: none;
+}
+
+.media-item-info a.filename:hover {
+  text-decoration: underline;
 }
 
 .media-item-info .meta {

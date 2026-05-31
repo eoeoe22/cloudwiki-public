@@ -347,7 +347,7 @@ async function handleImageUpload(
         const sanitized = DOMPurify.sanitize(svgText, { USE_PROFILES: { svg: true, svgFilters: true } });
         const origName = (workingBlob as File).name || 'image.svg';
         workingBlob = new File([sanitized], origName, { type: 'image/svg+xml' });
-    } else if (workingBlob.type && !workingBlob.type.startsWith('video/')) {
+    } else if (workingBlob.type) {
         // 비SVG 이미지: 편집기 실행 (크롭 + 회전)
         const editResult = await ImageEditor.open(workingBlob);
         if (!editResult) return; // 편집 취소

@@ -1885,7 +1885,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
         const imgFileInput = document.createElement('input');
         imgFileInput.type = 'file';
-        imgFileInput.accept = 'image/jpeg,image/png,image/gif,image/webp,image/svg+xml,video/mp4,video/webm,video/ogg';
+        imgFileInput.accept = 'image/jpeg,image/png,image/gif,image/webp,image/svg+xml';
         imgFileInput.style.display = 'none';
         imgUploadPopup.appendChild(imgFileInput);
 
@@ -1947,8 +1947,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             const files = e.dataTransfer.files;
             if (!files || files.length === 0) return;
             const file = files[0];
-            const acceptTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml',
-                'video/mp4', 'video/webm', 'video/ogg'];
+            const acceptTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml'];
             if (!acceptTypes.includes(file.type)) {
                 window.Swal.fire('오류', '지원하지 않는 파일 형식입니다.', 'warning');
                 return;

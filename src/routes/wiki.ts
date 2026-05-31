@@ -422,6 +422,31 @@ export function buildLinkAndCategoryStatements(
 }
 
 /**
+ * page_links 만 갱신하는 D1 배치 문 생성 (page_categories 는 건드리지 않음).
+ * 리비전 되돌리기처럼 본문은 교체되지만 카테고리(별도 테이블)는 유지해야 하는
+ * 경로에서 역링크 추적을 본문과 일치시키기 위해 사용된다.
+ */
+export function buildLinksOnlyStatements(
+    db: D1Database,
+    pageId: number,
+    content: string
+): D1PreparedStatement[] {
+    const stmts: D1PreparedStatement[] = [];
+    stmts.push(db.prepare(
+        "DELETE FROM page_links WHERE source_page_id = ? AND source_type = 'page' AND blog = 0"
+    ).bind(pageId));
+    const links = extractLinks(content);
+    for (const link of links) {
+        stmts.push(
+            db.prepare(
+                "INSERT INTO page_links (source_page_id, target_slug, link_type, blog, source_type) VALUES (?, ?, ?, 0, 'page')"
+            ).bind(pageId, link.target_slug, link.link_type)
+        );
+    }
+    return stmts;
+}
+
+/**
  * page_categories 만 갱신하는 D1 배치 문 생성 (page_links 는 건드리지 않음).
  * 카테고리 일괄 적용 / 자동 prefix 룰 hook 에서 사용된다.
  */
@@ -3230,8 +3255,13 @@ wiki.post('/w/:slug/revert', requireAuth, async (c) => {
         .bind(contentToStore, newRevId, newVersion, revertMetrics.rows, revertMetrics.characters, page.id)
         .run();
 
+    // page_links 재구성: 되돌린 본문 기준으로 역링크 추적을 동기화한다.
+    // (카테고리는 별도 테이블이며 리비전 본문에 포함되지 않으므로 건드리지 않는다.)
+    const revertLinkStmts = buildLinksOnlyStatements(db, page.id, revertContent);
+
     // 캐시 무효화 (API + SSR) + 최근 변경 즉시 갱신
     c.executionCtx.waitUntil(Promise.allSettled([
+        db.batch(revertLinkStmts).catch(e => console.error('Failed to update links on revert:', e)),
         invalidatePageCache(c, slug),
         refreshRecentChangesCache(c),
     ]));
