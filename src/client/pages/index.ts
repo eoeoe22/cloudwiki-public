@@ -1179,8 +1179,12 @@
 
         // 페이지가 d-none을 벗어난 다음 프레임에 해시 스크롤 수행 (초기 진입 시 hideAllPages
         // 이후 articlePage가 노출되기 전이라 scrollIntoView가 no-op이 되는 문제 방지)
+        // 해시(섹션 앵커)가 우선. 해시가 없고 검색 결과에서 진입(?highlight=)한 경우엔
+        // 매칭 단어로 스크롤·하이라이트한다.
         if (window.location.hash) {
           requestAnimationFrame(() => scrollToHash());
+        } else {
+          requestAnimationFrame(() => highlightSearchMatch());
         }
 
       } catch (err) {
@@ -2163,6 +2167,77 @@
           el.scrollIntoView({ behavior: 'instant', block: 'start' });
         }
       }
+    }
+
+    // 검색 결과(/search)에서 ?highlight=<검색어> 로 진입한 경우, 본문에서 해당 단어의
+    // 첫 매칭 위치를 찾아 <mark class="search-hit"> 로 감싸고 그 위치로 스크롤한다.
+    // 일회성 동작이므로 처리 후 URL 에서 highlight 파라미터를 제거한다(새로고침/공유 시 깔끔).
+    function highlightSearchMatch() {
+      const params = new URLSearchParams(window.location.search);
+      const rawTerm = params.get('highlight');
+
+      // 파라미터가 있으면 항상 URL 에서 제거한다(매치 실패 시에도 일회성 유지).
+      if (rawTerm !== null) {
+        params.delete('highlight');
+        const qs = params.toString();
+        const cleanUrl = window.location.pathname + (qs ? `?${qs}` : '') + window.location.hash;
+        history.replaceState(null, '', cleanUrl);
+        _lastSearch = qs ? `?${qs}` : '';
+      }
+
+      const term = (rawTerm || '').trim();
+      if (!term) return;
+
+      const container = document.getElementById('articleContent');
+      if (!container) return;
+
+      const mark = _markFirstTextMatch(container, term);
+      if (!mark) return;
+
+      if (typeof window._scrollToElementWithAncestors === 'function') {
+        window._scrollToElementWithAncestors(mark, { behavior: 'instant', block: 'center' });
+      } else {
+        mark.scrollIntoView({ behavior: 'instant', block: 'center' });
+      }
+    }
+
+    // 컨테이너 내부 텍스트 노드를 순회하며 term(대소문자 무시)의 첫 매칭을 찾아
+    // <mark class="search-hit"> 로 감싼 뒤 그 요소를 반환한다. 매치가 없으면 null.
+    function _markFirstTextMatch(container, term) {
+      const lowerTerm = term.toLowerCase();
+      const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, {
+        acceptNode(node) {
+          const value = node.nodeValue;
+          if (!value || !value.trim()) return NodeFilter.FILTER_REJECT;
+          const parent = node.parentElement;
+          if (!parent) return NodeFilter.FILTER_REJECT;
+          // 목차/스크립트/스타일/섹션 편집 버튼 등 본문이 아닌 영역은 제외한다.
+          if (parent.closest('.wiki-toc, .toc, script, style, .wiki-section-edit-btn, .wiki-anchor')) {
+            return NodeFilter.FILTER_REJECT;
+          }
+          return value.toLowerCase().includes(lowerTerm)
+            ? NodeFilter.FILTER_ACCEPT
+            : NodeFilter.FILTER_SKIP;
+        }
+      });
+
+      const textNode = walker.nextNode();
+      if (!textNode) return null;
+      const idx = textNode.nodeValue.toLowerCase().indexOf(lowerTerm);
+      if (idx < 0) return null;
+
+      // 단일 텍스트 노드 범위라 surroundContents 가 안전하게 동작한다(요소 경계 미포함).
+      const range = document.createRange();
+      range.setStart(textNode, idx);
+      range.setEnd(textNode, idx + term.length);
+      const mark = document.createElement('mark');
+      mark.className = 'search-hit';
+      try {
+        range.surroundContents(mark);
+      } catch (_) {
+        return null;
+      }
+      return mark;
     }
 
 

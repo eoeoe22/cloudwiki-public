@@ -2186,3 +2186,20 @@ html[data-theme="dark"] .wiki-callout-note    { --callout-bg-tint: rgba(161, 161
 .wiki-accordion-empty,
 .wiki-steps-empty { display: none; }
 
+/* 검색 결과(?highlight=)에서 진입했을 때 본문에 동적으로 삽입되는 매칭 단어 하이라이트.
+   기본 <mark>(브라우저 노랑)와 구분되도록 위키 강조색 배경 + 진입 시 잠깐 펄스 애니메이션. */
+mark.search-hit {
+  background: var(--wiki-primary, #ffe066);
+  color: #fff;
+  border-radius: 3px;
+  padding: 0 2px;
+  scroll-margin-top: 80px;
+  animation: wiki-search-hit-pulse 1.6s ease-out 1;
+}
+
+@keyframes wiki-search-hit-pulse {
+  0%   { box-shadow: 0 0 0 0 var(--wiki-primary, #ffe066); }
+  30%  { box-shadow: 0 0 0 6px rgba(0, 0, 0, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(0, 0, 0, 0); }
+}
+

@@ -333,7 +333,14 @@ search.get('/search', async (c) => {
     }
 
     // FTS5 Trigram 검색 (3글자 이상)
-    // 보안을 위해 <mark> 대신 임시 문자열을 사용하고 나중에 치환
+    //
+    // 하이라이트 스니펫은 FTS5 의 snippet() 보조함수를 쓰지 않고 본문에서 직접 만든다.
+    // pages_fts 는 trigram 토크나이저 + 외부 콘텐츠(content=pages) 테이블이라, snippet()
+    // 이 계산하는 <mark> 오프셋이 멀티바이트(한글) 본문에서 토큰 경계와 어긋나 "전혀 다른
+    // 부분"을 하이라이트하는 경우가 있었다. 따옴표로 감싼 phrase MATCH 는 사실상 substring
+    // 매칭이므로, 매치된 행의 본문에는 검색어가 그대로 존재한다 → buildLikeSnippet 으로
+    // 리터럴 substring 위치에 정확히 <mark> 를 단다(다른 fallback 경로와 동일한 방식).
+    // FTS5 는 행 선별/랭킹용으로만 사용한다.
     try {
         const visibility = (isAdmin ? '' : ' AND p.deleted_at IS NULL') + (canSeePrivate ? '' : ' AND p.is_private = 0');
 
@@ -364,18 +371,13 @@ search.get('/search', async (c) => {
         const { page, offset } = clampPage(total);
 
         // 슬러그/title LIKE 매치를 FTS rank 보다 우선해 정렬한다.
-        // snippet 컬럼 번호는 pages_fts(slug, title, content) 중 content (=index 2) 를 가리킨다.
-        // title-only 매치(FTS 미스)의 경우 fts.snippet 이 NULL — 본문/슬러그에서 buildLikeSnippet 으로
-        // 대체 스니펫을 만들거나, 매치가 없으면 빈 문자열을 사용한다(표시명은 title 이 노출됨).
+        // FTS 는 행 선별/랭킹용으로만 사용하고, 스니펫(<mark>)은 아래에서 본문 기준으로 직접 만든다.
         const sql = `
            SELECT p.slug, p.title, p.content, p.deleted_at,
-                  fts.snippet as snippet,
                   fts.rank as rank
            FROM pages p
            LEFT JOIN (
-               SELECT rowid,
-                      snippet(pages_fts, 2, '__MARK_START__', '__MARK_END__', '...', 40) as snippet,
-                      rank
+               SELECT rowid, rank
                FROM pages_fts
                WHERE pages_fts MATCH ?
            ) AS fts ON fts.rowid = p.id
@@ -391,34 +393,18 @@ search.get('/search', async (c) => {
         const results = await db
             .prepare(sql)
             .bind(safeMatchQuery, likePattern, likePattern, likePattern, PAGE_SIZE, offset)
-            .all<{ slug: string; title: string | null; content: string; deleted_at: number | null; snippet: string | null; rank: number | null }>();
+            .all<{ slug: string; title: string | null; content: string; deleted_at: number | null; rank: number | null }>();
 
-        // XSS 방지를 위해 스니펫의 HTML 특수문자를 이스케이프 처리한 뒤 임시 문자열을 <mark> 태그로 치환.
-        // FTS 매치가 없고 title 로만 매치한 경우 fts.snippet 이 NULL 이므로 본문/슬러그 기반으로 직접 만든다.
-        const safeResults = results.results.map((r) => {
-            let snippet = '';
-            if (typeof r.snippet === 'string') {
-                let safeSnippet = r.snippet
-                    .replace(/&/g, '&amp;')
-                    .replace(/</g, '&lt;')
-                    .replace(/>/g, '&gt;')
-                    .replace(/"/g, '&quot;')
-                    .replace(/'/g, '&#039;');
-
-                snippet = safeSnippet
-                    .replace(/__MARK_START__/g, '<mark>')
-                    .replace(/__MARK_END__/g, '</mark>');
-            } else {
-                snippet = buildLikeSnippet(r.slug, r.content || '', trimmedQuery);
-            }
-            return {
-                slug: r.slug,
-                title: r.title,
-                deleted_at: r.deleted_at,
-                isDeleted: !!r.deleted_at,
-                snippet,
-            };
-        });
+        // 스니펫은 본문에서 리터럴 substring 위치를 찾아 직접 <mark> 를 단다(escape 포함).
+        // title 로만 매치된 행은 본문에 검색어가 없을 수 있으나, buildLikeSnippet 이 본문→슬러그
+        // 순으로 탐색해 매치가 없으면 빈 문자열을 반환한다(표시명은 title 이 노출됨).
+        const safeResults = results.results.map((r) => ({
+            slug: r.slug,
+            title: r.title,
+            deleted_at: r.deleted_at,
+            isDeleted: !!r.deleted_at,
+            snippet: buildLikeSnippet(r.slug, r.content || '', trimmedQuery),
+        }));
 
         if (shouldTrack) trackSearch(c, trimmedQuery, total, Date.now() - searchStartTime);
         return c.json({ results: safeResults, total, page, pageSize: PAGE_SIZE, exact_match: exactMatch });

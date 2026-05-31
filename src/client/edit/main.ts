@@ -394,12 +394,43 @@ function ensureTurnstileVerified(): Promise<boolean> {
 // ── 커스텀 프리뷰 렌더링 (render.js의 window.renderWikiContent 모듈 사용) ──
 let previewDebounce;
 let saveInProgress = false;
+// 렌더 diff(buildRichDiffHtml)는 비동기라 빠른 연속 편집 시 stale 결과가 최신 결과를
+// 덮어쓰지 않도록 호출 토큰으로 가드한다.
+let _previewDiffSeq = 0;
+
+// 변경 사항 미리보기 모드: 'off'(일반 렌더) | 'text'(텍스트 diff) | 'rendered'(렌더 diff)
+// "변경사항 미리 보기" 체크박스가 켜지면 text, 추가로 "렌더링 미리 보기"가 켜지면 rendered.
+function getDiffPreviewMode() {
+    const toggle = document.getElementById('diffPreviewToggle');
+    if (!toggle || !toggle.checked) return 'off';
+    const rendered = document.getElementById('diffPreviewRenderedToggle');
+    return (rendered && rendered.checked) ? 'rendered' : 'text';
+}
 
 async function updateCustomPreview() {
     if (!editor) return;
 
     let customPreview = document.getElementById('custom-wiki-preview');
     if (!customPreview) return;
+
+    // 변경 사항 미리보기 모드가 켜진 경우 프리뷰 패널을 텍스트/렌더 diff 로 대체한다.
+    const diffMode = getDiffPreviewMode();
+    if (diffMode !== 'off') {
+        await renderPreviewDiff(customPreview, diffMode);
+        // 일반 렌더 경로와 동일하게 스크롤 동기화 가이드 캐시를 무효화하고 레이아웃 관찰을
+        // 재설정한다. diff DOM 에는 헤딩 마커(data-raw-line)가 없으므로 캐시는 빈 상태로
+        // 재구축되어 스크롤 동기화가 stale 오프셋으로 패널을 움직이지 않고 no-op 된다.
+        if (typeof window._invalidateScrollSyncGuides === 'function') {
+            window._invalidateScrollSyncGuides();
+        }
+        if (typeof window._observePreviewLayoutShifts === 'function') {
+            window._observePreviewLayoutShifts();
+        }
+        return;
+    }
+
+    // 일반 렌더 모드로 복귀: diff 모드 잔재 클래스 제거
+    customPreview.classList.remove('preview-diff-text', 'preview-diff-rendered', 'wrap-mode');
 
     // wiki-content 클래스 보장
     if (!customPreview.classList.contains('wiki-content')) {
@@ -442,6 +473,40 @@ async function updateCustomPreview() {
     if (typeof window._observePreviewLayoutShifts === 'function') {
         window._observePreviewLayoutShifts();
     }
+}
+
+// ── 변경 사항 미리보기: 프리뷰 패널을 텍스트/렌더 diff 로 표시 ──
+// diffMode === 'text'     → 인라인 텍스트 diff (conflict.ts 의 buildLocalDiffHtml)
+// diffMode === 'rendered' → 렌더 결과 diff (diff.ts 의 buildRichDiffHtml, 리비전 비교와 동일)
+async function renderPreviewDiff(customPreview, diffMode) {
+    const originalContent = typeof window.originalContent === 'string' ? window.originalContent : '';
+    const currentContent = editor.getMarkdown();
+
+    if (diffMode === 'rendered') {
+        // wiki-content 는 내부 rich-diff-container 에 부여한다(리비전 비교 모달과 동일 마크업).
+        customPreview.classList.remove('preview-diff-text', 'wrap-mode', 'wiki-content');
+        customPreview.classList.add('preview-diff-rendered');
+        if (typeof window.buildRichDiffHtml !== 'function') {
+            customPreview.innerHTML = '<div class="diff-empty">렌더 비교 모듈을 불러오지 못했습니다.</div>';
+            return;
+        }
+        const token = ++_previewDiffSeq;
+        const html = await window.buildRichDiffHtml(originalContent, currentContent, slug || '');
+        // 렌더 도중 더 최신 호출이 시작됐거나 사용자가 모드를 바꿨으면 stale 결과 폐기
+        if (token !== _previewDiffSeq || getDiffPreviewMode() !== 'rendered') return;
+        customPreview.innerHTML = `<div class="rich-diff-container wiki-content">${html}</div>`;
+        return;
+    }
+
+    // 텍스트 diff
+    ++_previewDiffSeq; // 진행 중인 렌더 diff 가 있으면 무효화
+    customPreview.classList.remove('preview-diff-rendered', 'wiki-content');
+    customPreview.classList.add('preview-diff-text');
+    const wrap = localStorage.getItem('editor_word_wrap') !== 'false';
+    customPreview.classList.toggle('wrap-mode', wrap);
+    customPreview.innerHTML = (typeof window.buildLocalDiffHtml === 'function')
+        ? window.buildLocalDiffHtml()
+        : '';
 }
 
 // ── 문서 하단으로 스크롤 (에디터 + 프리뷰) ──
@@ -2519,10 +2584,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                             editorSettings.wordWrap ? EditorView.lineWrapping : []
                         )
                     });
-                    const diffPreview = document.getElementById('diffPreviewContainer');
-                    if (diffPreview) {
-                        diffPreview.classList.toggle('wrap-mode', editorSettings.wordWrap);
-                    }
+                    // 텍스트 diff 미리보기가 활성화돼 있으면 줄바꿈 변경을 즉시 반영
+                    if (getDiffPreviewMode() === 'text') updateCustomPreview();
                 }
             });
         });
@@ -3330,7 +3393,12 @@ document.addEventListener('DOMContentLoaded', async () => {
                         ? `<i class="mdi mdi-robot-outline"></i> MCP 편집안 편집: ${escapeHtml(page.slug)}`
                         : `<i class="mdi mdi-pencil-box-multiple"></i> 편집: ${escapeHtml(page.slug)}`;
             document.title = `편집: ${page.slug} - ${window.appConfig.wikiName}`;
-            document.getElementById('diffPreviewSection').style.display = 'block'; // 편집일 때만 노출
+            // 변경 사항 미리보기 토글: 기존 문서 편집일 때만 노출.
+            // 익스텐션 데이터는 프리뷰 패널 자체가 없으므로(원시 textarea 편집) 숨긴다.
+            {
+                const _diffSection = document.getElementById('diffPreviewSection');
+                if (_diffSection) _diffSection.style.display = isExtensionData ? 'none' : 'block';
+            }
 
             // MCP 편집안 적재 모드: 페이지의 정상 본문 로드를 마쳤지만, 본문을 제출안으로
             // 덮어쓴다. 동시 편집 충돌이 있으면 추가로 3-way merge 모달까지 띄운다.
@@ -3389,7 +3457,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             // 기존 문서 로드 완료 — 로컬 originalContent / originalPageMeta /
             // pageVersion / sectionRange / fullOriginalContent 를 window.* 로 미러링.
             // (summary.ts 는 window.originalPageMeta 로 신규/기존 문서를 분기하고,
-            //  conflict.ts 의 renderLocalDiff 는 window.originalContent 를 base 로
+            //  conflict.ts 의 buildLocalDiffHtml 은 window.originalContent 를 base 로
             //  사용하므로, 동기화가 빠지면 미수정 상태가 '문서 생성' / 전체 신규로
             //  잘못 표시된다.)
             syncStateToWindow();
@@ -3466,27 +3534,36 @@ document.addEventListener('DOMContentLoaded', async () => {
         window.refreshAutoSummary();
     }
 
-    // 변경 사항 미리보기 이벤트 연동
-    const diffDetails = document.getElementById('diffPreviewDetails');
-    if (diffDetails) {
-        diffDetails.addEventListener('toggle', () => {
-            // 익스텐션 데이터는 conflict.ts:renderLocalDiff 가 jsdiff 우회 요약 카드를
-            // 즉시 반환하므로 별도 경고 prompt 가 필요하지 않다.
-            if (diffDetails.open) renderLocalDiff();
-        });
+    // 변경 사항 미리보기 모드 토글 (체크박스 2개)
+    //  - "변경사항 미리 보기"  : 프리뷰 패널을 텍스트 diff 로 표시
+    //  - "렌더링 미리 보기"    : (상위 토글에 종속) 렌더 결과 diff 로 표시
+    // 실시간 재렌더는 에디터 change 핸들러(updateCustomPreview)가 diff 모드를 인식해 담당한다.
+    const diffToggle = document.getElementById('diffPreviewToggle');
+    const diffRenderedToggle = document.getElementById('diffPreviewRenderedToggle');
+    const diffRenderedRow = document.getElementById('diffPreviewRenderedRow');
 
-        // 펼쳐진 상태에서 에디터 변경 시 실시간 재렌더 (디바운스)
-        let diffPreviewDebounce = null;
-        if (editor && typeof editor.on === 'function') {
-            editor.on('change', () => {
-                if (!diffDetails.open) return;
-                clearTimeout(diffPreviewDebounce);
-                diffPreviewDebounce = setTimeout(() => {
-                    if (diffDetails.open) renderLocalDiff();
-                }, 300);
-            });
-        }
+    function syncDiffRenderedAvailability() {
+        if (!diffRenderedToggle) return;
+        const enabled = !!(diffToggle && diffToggle.checked);
+        diffRenderedToggle.disabled = !enabled;
+        if (diffRenderedRow) diffRenderedRow.classList.toggle('is-disabled', !enabled);
+        // 상위 토글이 꺼지면 종속 토글도 강제 해제(단독 활성 불가)
+        if (!enabled && diffRenderedToggle.checked) diffRenderedToggle.checked = false;
     }
+
+    if (diffToggle) {
+        diffToggle.addEventListener('change', () => {
+            syncDiffRenderedAvailability();
+            updateCustomPreview();
+        });
+    }
+    if (diffRenderedToggle) {
+        diffRenderedToggle.addEventListener('change', () => {
+            if (diffRenderedToggle.disabled) { diffRenderedToggle.checked = false; return; }
+            updateCustomPreview();
+        });
+    }
+    syncDiffRenderedAvailability();
 
     // 본문 헤딩(목차) 변화 실시간 감지 → 자동 편집 요약 갱신.
     // 별도 디바운스로 미리보기/diff 와 독립 동작하며, 헤딩 추가/삭제/이름변경 시

@@ -372,15 +372,22 @@ function renderSearchResponse(q, requestedPage, data) {
         `).join('');
     } else {
         // 슬러그+본문 검색 결과. r.title 이 있으면 표시 이름으로 사용하고 슬러그를 보조 라벨로.
+        // 클릭해 문서로 들어가면 매칭된 단어로 자동 스크롤·하이라이트하도록 ?highlight= 를 붙인다.
+        // (삭제된 문서는 본문이 렌더되지 않으므로 파라미터를 생략한다.)
+        const highlightTerm = (q || '').trim();
+        const highlightQS = highlightTerm
+            ? `?highlight=${encodeURIComponent(highlightTerm)}`
+            : '';
         itemsHtml = data.results.map(r => {
             const displayName = r.title || r.slug;
             const slugSubLabel = r.title
                 ? `<div class="small text-muted mt-1"><code>${window.escapeHtml(r.slug)}</code></div>`
                 : '';
+            const href = `/w/${encodeURIComponent(r.slug)}${r.isDeleted ? '' : highlightQS}`;
             return `
             <div class="search-result-item mb-4 pb-3 border-bottom">
                 <h4 class="mb-2 fs-5">
-                    <a class="text-decoration-none text-primary fw-semibold" href="/w/${encodeURIComponent(r.slug)}">${window.escapeHtml(displayName)}</a>
+                    <a class="text-decoration-none text-primary fw-semibold" href="${href}">${window.escapeHtml(displayName)}</a>
                     ${r.isDeleted ? '<span class="badge bg-danger ms-2">삭제됨</span>' : ''}
                 </h4>
                 ${slugSubLabel}
