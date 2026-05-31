@@ -79,6 +79,12 @@ import Footer from '../components/Footer.astro';
           </a>
         </div>
 
+        <!-- 정책 문서(이용약관/개인정보처리방침) 안내 배너 -->
+        <div id="policyDocBanner"
+          class="d-none alert alert-info py-2 px-3 mb-3 d-flex align-items-center">
+          <span><i class="bi bi-info-circle-fill me-2"></i><span id="policyDocBannerText"></span></span>
+        </div>
+
         <div class="wiki-article">
           <h1 class="wiki-article-title" id="articleTitle"></h1>
           <!-- 대체 title 이 설정된 경우만 노출 — 좌측 정렬, muted 작은 글씨로 실제 슬러그 + 복사 버튼 표시 -->

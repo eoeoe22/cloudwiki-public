@@ -870,6 +870,8 @@ wiki.get('/config', async (c) => {
 
     return c.json({
         wikiName: c.env.WIKI_NAME || 'CloudWiki',
+        termsOfServiceSlug: normalizeSlug(c.env.TERMS_OF_SERVICE || ''),
+        privacyPolicySlug: normalizeSlug(c.env.PRIVACY_POLICY || ''),
         wikiLogoUrl: c.env.WIKI_LOGO_URL || '',
         wikiFaviconUrl: c.env.WIKI_FAVICON_URL || '',
         wikiVisibility: c.env.WIKI_VISIBILITY === 'closed' ? 'closed' : 'open',

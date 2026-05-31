@@ -562,6 +562,27 @@
 
     // 대체 title 이 설정된 문서에서 h1 아래에 표시되는 실제 슬러그 라벨.
     // slug=null 이면 라벨을 숨긴다 (title 미설정 문서 또는 비-문서 페이지에서 호출).
+    // 정책 문서(이용약관/개인정보처리방침) 안내 배너 토글.
+    // slug 가 wrangler.toml 의 TERMS_OF_SERVICE/PRIVACY_POLICY 와 일치하면 안내 문구를 노출,
+    // 아니면 숨긴다. config 슬러그는 /api/config 에서 서버측 normalizeSlug 로 정규화되어 오므로
+    // 여기서도 동일 정책(앞뒤 공백 + 앞뒤 슬래시 제거)으로 정규화해 비교한다(대소문자 구분).
+    function renderPolicyDocBanner(slug) {
+      const bannerEl = document.getElementById('policyDocBanner');
+      const textEl = document.getElementById('policyDocBannerText');
+      if (!bannerEl || !textEl) return;
+      bannerEl.classList.add('d-none');
+      const cfg = window.appConfig || {};
+      const curSlug = (slug || '').trim().replace(/^\/+/, '').replace(/\/+$/, '');
+      if (!curSlug) return;
+      let policyLabel = '';
+      if (cfg.termsOfServiceSlug && curSlug === cfg.termsOfServiceSlug) policyLabel = '이용약관';
+      else if (cfg.privacyPolicySlug && curSlug === cfg.privacyPolicySlug) policyLabel = '개인정보처리방침';
+      if (!policyLabel) return;
+      const wikiName = cfg.wikiName || 'CloudWiki';
+      textEl.textContent = `이 문서는 ${wikiName}의 ${policyLabel} 문서입니다.`;
+      bannerEl.classList.remove('d-none');
+    }
+
     function renderSlugLabel(slug) {
       const el = document.getElementById('articleSlugLabel');
       if (!el) return;
@@ -1101,6 +1122,9 @@
           // 배너 로딩 실패는 조용히 무시
         }
 
+        // 정책 문서 안내 배너: 현재 문서가 이용약관/개인정보처리방침이면 표시
+        renderPolicyDocBanner(page.slug);
+
         // 문서 구조 네비게이션 (최상위 문서 포함, 하위 문서 생성 버튼 노출)
         const parentDocsEl = document.getElementById('parentDocsNav');
         closeParentDocsSiblings();
@@ -1348,6 +1372,8 @@
       const _imgBannerLinkEl = document.getElementById('discussionBannerLink');
       if (_imgBannerEl) _imgBannerEl.classList.add('d-none');
       if (_imgBannerLinkEl) _imgBannerLinkEl.removeAttribute('href');
+      // 정책 문서 안내 배너도 잔존 방지를 위해 함께 초기화(이미지 문서는 정책 문서가 아님).
+      renderPolicyDocBanner(page.slug);
 
       const media = page.media || {};
       const sizeStr = (media.size || 0) < 1024 ? `${media.size} B`
@@ -1445,6 +1471,8 @@
       const _bannerLinkEl = document.getElementById('discussionBannerLink');
       if (_bannerEl) _bannerEl.classList.add('d-none');
       if (_bannerLinkEl) _bannerLinkEl.removeAttribute('href');
+      // 정책 문서 안내 배너도 잔존 방지를 위해 함께 초기화(map 가상 문서는 정책 문서가 아님).
+      renderPolicyDocBanner(page.slug);
       // 일반 문서에서 노출된 MCP 편집 승인 대기 배너 잔존 방지 (SPA 전이 시).
       const _mcpBannerEl = document.getElementById('mcpSubmissionBanner');
       if (_mcpBannerEl) _mcpBannerEl.style.display = 'none';

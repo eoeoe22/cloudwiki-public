@@ -156,6 +156,8 @@ export interface ServerViewer {
 /** common.js 의 appConfig — 일부 필드만 명시. 신규 필드는 자유롭게 read 가능. */
 export interface AppConfig {
     wikiName?: string;
+    termsOfServiceSlug?: string;
+    privacyPolicySlug?: string;
     enableConcurrentEditDetection?: boolean;
     selectedIconsOnly?: boolean;
     palettes?: Record<string, PaletteDefinition>;
