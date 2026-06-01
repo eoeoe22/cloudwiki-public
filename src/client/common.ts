@@ -706,6 +706,24 @@ async function handleNotificationClick(event, id, type, refId, link) {
     if (isMessage && refId) {
         viewMessage(refId);
     } else if (link && link !== 'null' && isSafeUrl(link)) {
+        // 링크가 현재 페이지를 가리키면 SPA 라우터가 no-op 이므로 새로고침으로 대응
+        let sameLocation = false;
+        try {
+            const target = new URL(link, window.location.origin);
+            sameLocation = target.origin === window.location.origin
+                && target.pathname === window.location.pathname
+                && target.search === window.location.search;
+            if (sameLocation) {
+                toggleNotificationPanel();
+                if (target.hash && target.hash !== window.location.hash) {
+                    window.location.hash = target.hash;
+                }
+                window.location.reload();
+                return;
+            }
+        } catch (_) {
+            // URL 파싱 실패 시 기본 분기로 폴백
+        }
         if (typeof navigateTo === 'function') {
             navigateTo(link);
             toggleNotificationPanel(); // 알림 패널 닫기 (SPA 이동 시)
