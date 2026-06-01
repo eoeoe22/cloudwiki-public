@@ -363,8 +363,8 @@
       const sidebar = document.getElementById('wikiNavSidebar');
       const nav = document.getElementById('wikiNavSidebarTree');
       if (!sidebar || !nav) return;
-      // map: 가상 문서·이미지 문서·빈 슬러그는 자체 트리/표지가 있거나 그룹이 무의미하므로 nav 를 숨긴다.
-      if (!currentSlug || (currentPage && (currentPage.is_map_doc || currentPage.is_image_doc))) {
+      // map:/graph: 가상 문서·이미지 문서·빈 슬러그는 자체 트리/표지가 있거나 그룹이 무의미하므로 nav 를 숨긴다.
+      if (!currentSlug || (currentPage && (currentPage.is_map_doc || currentPage.is_graph_doc || currentPage.is_image_doc))) {
         sidebar.classList.add('d-none');
         nav.innerHTML = '';
         paintDocNavFooter(null, '');
@@ -830,6 +830,13 @@
           return;
         }
 
+        // graph: 가상 문서 분기: 서버가 #ssr-data 로 실어 보낸 에고 그래프 JSON 을
+        // 지연 로드 시각화 모듈로 그린다 (실제 페이지가 아니므로 편집/이력 등은 비활성화).
+        if (page && page.is_graph_doc) {
+          await showGraphDocument(slug, page);
+          return;
+        }
+
         currentPage = page;
         applyShareAiVisibility(page);
 
@@ -1000,6 +1007,9 @@
           <li><button class="dropdown-item${_hasColon ? ' disabled' : ''}" ${_hasColon ? 'disabled' : `data-slug="${window.escapeHtml(actionSlug)}" onclick="showSubdocs(this.dataset.slug); return false;"`}>
             <i class="bi bi-diagram-3"></i> 문서 구조 보기
           </button></li>
+          <li><a class="dropdown-item" href="/w/${encodeURIComponent('graph:' + actionSlug)}" onclick="navigateTo(this.getAttribute('href')); return false;">
+            <i class="bi bi-diagram-2"></i> 그래프 보기
+          </a></li>
         `;
 
         if (window.currentUser) {
@@ -1638,6 +1648,116 @@
         enableSectionEdit: false,
         collapsibleSections: false,
       });
+
+      hideAllPages();
+      document.getElementById('articlePage').classList.remove('d-none');
+      if (typeof window.__sidebarLayoutUpdate === 'function') window.__sidebarLayoutUpdate();
+    }
+
+    // 직전 그래프 인스턴스 정리 콜백 (SPA 전이 시 ResizeObserver/이벤트 해제용)
+    let _graphCleanup = null;
+
+    // ── graph: 가상 문서 (에고 그래프) ──
+    // 서버가 #ssr-data(또는 /api/w/graph:... JSON)로 실어 보낸 그래프 데이터를 지연 로드
+    // 시각화 모듈(graph-view.ts)로 그린다. 모든 편집 액션은 비활성화한다(실제 문서가 아님).
+    async function showGraphDocument(slug, page) {
+      if (typeof _graphCleanup === 'function') { try { _graphCleanup(); } catch (_) { } _graphCleanup = null; }
+      currentPage = page;
+      applyShareAiVisibility(page);
+      document.title = `${page.slug} - ${window.appConfig.wikiName}`;
+
+      document.getElementById('articleTitle').textContent = page.slug;
+      renderSlugLabel(null);
+      document.getElementById('redirectMessage').innerHTML = '';
+
+      const _bannerEl = document.getElementById('discussionBanner');
+      const _bannerLinkEl = document.getElementById('discussionBannerLink');
+      if (_bannerEl) _bannerEl.classList.add('d-none');
+      if (_bannerLinkEl) _bannerLinkEl.removeAttribute('href');
+      renderPolicyDocBanner(page.slug);
+      const _mcpBannerEl = document.getElementById('mcpSubmissionBanner');
+      if (_mcpBannerEl) _mcpBannerEl.style.display = 'none';
+
+      const baseSlug = page.slug.replace(/^graph:/, '');
+      const data = (page._graphData) || { center: baseSlug, centerExists: false, depth: 1, nodes: [], edges: [], truncated: false, hasPrivate: false };
+      const depth = page._graphDepth || data.depth || 1;
+      const globalUnsupported = !!page._graphGlobalUnsupported;
+
+      // 메타: 그래프 뷰 정보 + 홉(1/2) 토글
+      document.getElementById('articleMeta').innerHTML = `
+        <span class="meta-item"><i class="bi bi-diagram-2"></i> 그래프 뷰</span>
+        <span class="meta-item">중심: ${window.escapeHtml(baseSlug || '(전체)')}</span>
+        <span class="meta-item">노드 ${data.nodes.length}개 · 연결 ${data.edges.length}개</span>
+        ${globalUnsupported ? '' : `<span class="meta-item btn-group btn-group-sm" role="group" aria-label="홉">
+          <button type="button" class="btn btn-outline-secondary${depth === 1 ? ' active' : ''}" data-graph-depth="1">1홉</button>
+          <button type="button" class="btn btn-outline-secondary${depth === 2 ? ' active' : ''}" data-graph-depth="2">2홉</button>
+        </span>`}
+      `;
+      document.querySelectorAll('#articleMeta [data-graph-depth]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const next = btn.getAttribute('data-graph-depth');
+          const url = new URL(window.location.href);
+          if (next === '2') url.searchParams.set('depth', '2');
+          else url.searchParams.delete('depth');
+          navigateTo(url.pathname + url.search);
+        });
+      });
+
+      // 액션 버튼: 루트 문서로 이동 + 지도(map:) 뷰 바로가기
+      const rootHref = baseSlug ? `/w/${encodeURIComponent(baseSlug)}` : '/';
+      document.getElementById('articleMainActions').innerHTML = baseSlug
+        ? `<a href="${window.escapeHtml(rootHref)}" class="btn btn-outline-secondary" onclick="navigateTo(this.getAttribute('href')); return false;">
+             <i class="bi bi-box-arrow-up-right"></i><span class="d-none d-sm-inline"> 루트 문서로 이동</span>
+           </a>
+           <a href="/w/${encodeURIComponent('map:' + baseSlug)}" class="btn btn-outline-secondary" onclick="navigateTo(this.getAttribute('href')); return false;">
+             <i class="bi bi-diagram-3"></i><span class="d-none d-sm-inline"> 지도 뷰</span>
+           </a>`
+        : '';
+      document.getElementById('articleMoreActions').innerHTML = '';
+
+      // 목차/부모 문서/역링크 영역 모두 숨김 (가상 문서)
+      document.getElementById('wikiAccordion').classList.add('d-none');
+      const tocFab = document.getElementById('tocFabBtn');
+      if (tocFab) tocFab.classList.add('d-none');
+      document.getElementById('parentDocsNav').classList.add('d-none');
+      closeParentDocsSiblings();
+      document.getElementById('parentDocsNavDivider').classList.add('d-none');
+      document.getElementById('backlinksSection').classList.add('d-none');
+      document.getElementById('backlinksList').innerHTML = '';
+
+      const rawEl = document.getElementById('articleRawContent');
+      if (rawEl) rawEl.textContent = '';
+
+      const contentEl = document.getElementById('articleContent');
+      if (globalUnsupported) {
+        contentEl.innerHTML = `<div class="alert alert-info">
+          <i class="bi bi-info-circle"></i> 전역 그래프는 부하 문제로 제공하지 않습니다.
+          특정 문서를 중심으로 한 <code>graph:&lt;문서명&gt;</code> 에고 그래프만 지원합니다.
+        </div>`;
+      } else {
+        // 잘림/안내 배너
+        let notice = '';
+        if (data.truncated) {
+          notice = `<div class="alert alert-warning py-1 px-2 mb-2 small"><i class="bi bi-exclamation-triangle"></i> 노드가 많아 가까운 이웃 위주로 일부만 표시했습니다.</div>`;
+        }
+        contentEl.innerHTML = `${notice}<div id="graphViewMount"></div>
+          <p class="text-muted small mt-2 mb-0"><i class="bi bi-info-circle"></i>
+            노드 클릭 = 문서 이동, 더블클릭 = 그 문서 중심으로 재탐색. 실선=위키링크, 점선=틀, 굵은 선=상호 링크.</p>`;
+        const mount = document.getElementById('graphViewMount');
+        try {
+          const mod = await import('./graph-view');
+          _graphCleanup = mod.renderEgoGraph({
+            container: mount,
+            data,
+            onNavigate: (s) => navigateTo(`/w/${encodeURIComponent(s)}`),
+            onRecenter: (s) => {
+              navigateTo(`/w/${encodeURIComponent('graph:' + s)}${depth === 2 ? '?depth=2' : ''}`);
+            },
+          });
+        } catch (e) {
+          mount.innerHTML = `<div class="alert alert-danger">그래프를 불러오지 못했습니다.</div>`;
+        }
+      }
 
       hideAllPages();
       document.getElementById('articlePage').classList.remove('d-none');

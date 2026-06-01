@@ -26,10 +26,11 @@ import oauthRoutes from './routes/oauth';
 import analyticsRoutes from './routes/analytics';
 import blogRoutes from './routes/blog';
 import { trackPageView, trackError, queryAnalytics } from './utils/analytics';
-import { isR2OnlyNamespace, isMapNamespace, normalizeSlug } from './utils/slug';
+import { isR2OnlyNamespace, isMapNamespace, isGraphNamespace, normalizeSlug } from './utils/slug';
 import { getRevisionContent } from './utils/r2';
 import { renderForAI } from './utils/aiParser';
 import { buildMapDocument, MAP_CACHE_MAX_AGE_SECONDS } from './utils/mapDocument';
+import { buildGraphData, GRAPH_CACHE_MAX_AGE_SECONDS } from './utils/graphDocument';
 import { ensureMcpDraftsMigration } from './utils/mcpDraftsMigration';
 import { ensureNotificationsMigration } from './utils/notificationsMigration';
 
@@ -467,7 +468,7 @@ app.get('/w/*', async (c) => {
 
     // 일반 문서 캐시 매치 (map: 슬러그는 권한 차이에 따라 트리가 달라지므로 글로벌 매치를 건너뛰고
     // 아래 map: 분기 안에서 `!user` 조건으로만 매치한다 — 권한자가 anonymous 캐시에 갇히지 않도록.)
-    if (canUseCache && !isMapNamespace(slug)) {
+    if (canUseCache && !isMapNamespace(slug) && !isGraphNamespace(slug)) {
         const cached = await cache.match(ssrCacheKey);
         if (cached) {
             trackPageView(c, slug, Date.now() - startTime);
@@ -516,6 +517,63 @@ app.get('/w/*', async (c) => {
             const cachedResponse = new Response(response.body, response);
             // map: 캐시는 자식 mutation 시 자동 무효화되지 않으므로 staleness 윈도우를 짧게 유지.
             cachedResponse.headers.set('Cache-Control', `public, max-age=${MAP_CACHE_MAX_AGE_SECONDS}`);
+            if (crawlEnabled) cachedResponse.headers.set('Vary', 'User-Agent');
+            c.executionCtx.waitUntil(cache.put(ssrCacheKey, cachedResponse.clone()));
+            return cachedResponse;
+        }
+        response.headers.set('Cache-Control', 'private, no-store');
+        if (crawlEnabled) response.headers.set('Vary', 'User-Agent');
+        return response;
+    }
+
+    // "graph:<base>" 슬러그는 <base> 문서를 중심으로 한 직접 참조(위키링크/틀) 에고 그래프를
+    // 합성해 보여주는 가상 페이지다. map: 패턴을 복제하되 본문 대신 그래프 JSON 을 #ssr-data 로
+    // 실어 보내고, 클라이언트의 지연 로드 시각화 모듈이 force-directed 로 그린다.
+    if (isGraphNamespace(slug)) {
+        const baseSlug = slug.substring('graph:'.length);
+        // ?depth=2 면 2홉, 그 외(기본)는 1홉. depth 쿼리가 붙으면 글로벌 캐시 키(쿼리 제거)와
+        // 충돌하므로 perms 처리와 동일하게 기본 1홉 응답만 공유 캐시한다.
+        const depthRaw = c.req.query('depth');
+        const depth = depthRaw === '2' ? 2 : 1;
+
+        if (!user && canUseCache && depthRaw == null) {
+            const cached = await cache.match(ssrCacheKey);
+            if (cached) {
+                trackPageView(c, slug, Date.now() - startTime);
+                return new Response(cached.body, cached);
+            }
+        }
+
+        const canSeePrivate = rbac.can(user?.role ?? 'guest', 'wiki:private');
+        // 전역 그래프(graph: 빈 슬러그)는 부하 문제로 미구현 — 에고 그래프만 지원한다.
+        const globalUnsupported = baseSlug.length === 0;
+        const graphData = globalUnsupported
+            ? { center: '', centerExists: false, depth, nodes: [], edges: [], truncated: false, hasPrivate: false }
+            : await buildGraphData({ db, baseSlug, depth, canSeePrivate });
+
+        const titleStr = `${slug} - ${wikiName}`;
+        const description = `${baseSlug || '(전체)'} 의 직접 연결 그래프`;
+        const ssrData: Record<string, any> = {
+            _ssrSlug: slug,
+            _ssrNotFound: false,
+            is_graph_doc: true,
+            slug,
+            title: slug,
+            content: '',
+            created_at: 0,
+            updated_at: 0,
+            _ssrTitle: titleStr,
+            _ssrDescription: description,
+            _graphData: graphData,
+            _graphGlobalUnsupported: globalUnsupported,
+            _graphDepth: depth,
+        };
+        const response = await renderHtml(c, '/', ssrData);
+        // 비로그인 + 비공개 노드 없음 + 기본 홉(쿼리 없음)인 경우만 공유 캐시. (map: 정책 동일)
+        const safeForSharedCache = !user && !graphData.hasPrivate && depthRaw == null;
+        if (safeForSharedCache && canUseCache) {
+            const cachedResponse = new Response(response.body, response);
+            cachedResponse.headers.set('Cache-Control', `public, max-age=${GRAPH_CACHE_MAX_AGE_SECONDS}`);
             if (crawlEnabled) cachedResponse.headers.set('Vary', 'User-Agent');
             c.executionCtx.waitUntil(cache.put(ssrCacheKey, cachedResponse.clone()));
             return cachedResponse;

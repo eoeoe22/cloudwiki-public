@@ -32,6 +32,16 @@ export function isMapNamespace(slug: string): boolean {
     return slug.startsWith('map:');
 }
 
+/**
+ * `graph:` 예약 네임스페이스 여부.
+ * `graph:<slug>` 슬러그는 실제 문서가 아니라 특정 문서를 중심으로 한 직접 참조(위키링크/틀)
+ * 에고 그래프를 합성해 보여주는 가상 뷰 전용이므로, 일반 문서 생성/수정/이동의 출발지·도착지로
+ * 사용할 수 없다. 전역 그래프(`graph:` 빈 슬러그)는 부하 문제로 미구현이며, 호출 측이 안내한다.
+ */
+export function isGraphNamespace(slug: string): boolean {
+    return slug.startsWith('graph:');
+}
+
 /** MCP raw 읽기 허용 네임스페이스 목록 */
 const MCP_READABLE_NAMESPACES = ['틀', '템플릿', '유저'];
 

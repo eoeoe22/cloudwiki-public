@@ -1,8 +1,9 @@
 import { Hono } from 'hono';
 import type { Env, Page, Revision } from '../types';
 import { requireAuth, requireAdmin, requirePermission } from '../middleware/session';
-import { normalizeSlug, isR2OnlyNamespace, isMapNamespace } from '../utils/slug';
+import { normalizeSlug, isR2OnlyNamespace, isMapNamespace, isGraphNamespace } from '../utils/slug';
 import { buildMapDocument, buildGroupTree, MAP_CACHE_MAX_AGE_SECONDS } from '../utils/mapDocument';
+import { buildGraphData, GRAPH_CACHE_MAX_AGE_SECONDS } from '../utils/graphDocument';
 import { safeJSON } from '../utils/json';
 import { ROLE_CASE_SQL, enrichRoles, RBAC } from '../utils/role';
 import { fetchMediaTags } from '../utils/mediaTags';
@@ -1521,6 +1522,43 @@ wiki.get('/w/:slug', async (c) => {
         return c.json(mapDoc, 200, { 'Cache-Control': 'private, no-store' });
     }
 
+    // "graph:<base>" 슬러그는 <base> 중심 에고 그래프(직접 참조망) JSON 을 반환하는 가상 뷰.
+    // SPA 라우터가 SSR 분기와 동일한 데이터를 받도록 한다. cacheKey 가 full URL(쿼리 포함)이므로
+    // depth=1/2 는 자연히 다른 캐시 키를 갖는다. 비공개 노드 포함 시 공유 캐시 금지(map: 정책 동일).
+    if (isGraphNamespace(slug)) {
+        const rbac = c.get('rbac') as RBAC;
+        const depthRaw = c.req.query('depth');
+        const depth = depthRaw === '2' ? 2 : 1;
+        if (!user && !nocache) {
+            const cached = await cache.match(cacheKey);
+            if (cached) return new Response(cached.body, cached);
+        }
+        const canSeePrivate = rbac.can(user?.role ?? 'guest', 'wiki:private');
+        const baseSlug = slug.substring('graph:'.length);
+        const globalUnsupported = baseSlug.length === 0;
+        const graphData = globalUnsupported
+            ? { center: '', centerExists: false, depth, nodes: [], edges: [], truncated: false, hasPrivate: false }
+            : await buildGraphData({ db, baseSlug, depth, canSeePrivate });
+        const graphDoc = {
+            slug,
+            title: slug,
+            is_graph_doc: true,
+            content: '',
+            created_at: 0,
+            updated_at: 0,
+            _graphData: graphData,
+            _graphGlobalUnsupported: globalUnsupported,
+            _graphDepth: depth,
+        };
+        const safeForSharedCache = !user && !graphData.hasPrivate;
+        if (safeForSharedCache && !nocache) {
+            const fresh = c.json(graphDoc, 200, { 'Cache-Control': `public, max-age=${GRAPH_CACHE_MAX_AGE_SECONDS}` });
+            c.executionCtx.waitUntil(cache.put(cacheKey, fresh.clone()));
+            return fresh;
+        }
+        return c.json(graphDoc, 200, { 'Cache-Control': 'private, no-store' });
+    }
+
     // 캐시 확인 (map: 분기는 위에서 자체적으로 처리했으므로 이 시점에는 일반 슬러그만 남는다)
     let response = await cache.match(cacheKey);
     if (response && !nocache) {
@@ -1750,11 +1788,11 @@ wiki.get('/w/:slug/edit-permission', requireAuth, async (c) => {
         });
     }
 
-    // 3) "map:" 네임스페이스 — 가상 트리 뷰 전용이므로 일반 편집 흐름으로 다룰 수 없다.
-    if (slug.startsWith('map:')) {
+    // 3) "map:"/"graph:" 네임스페이스 — 가상 뷰 전용이므로 일반 편집 흐름으로 다룰 수 없다.
+    if (slug.startsWith('map:') || slug.startsWith('graph:')) {
         return c.json({
             allowed: false,
-            reason: 'map_namespace',
+            reason: slug.startsWith('graph:') ? 'graph_namespace' : 'map_namespace',
             acl: null,
             source: 'none',
             min_age_days: 0,
@@ -1989,6 +2027,12 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
     // 일반 문서로 생성/수정할 수 없다.
     if (slug.startsWith('map:')) {
         return c.json({ error: '"map:"은 지도 뷰 전용 네임스페이스이므로 일반 문서 제목으로 사용할 수 없습니다.' }, 403);
+    }
+
+    // "graph:" 접두사 문서는 에고 그래프를 합성해 보여주는 가상 뷰 전용이므로
+    // 일반 문서로 생성/수정할 수 없다.
+    if (slug.startsWith('graph:')) {
+        return c.json({ error: '"graph:"는 그래프 뷰 전용 네임스페이스이므로 일반 문서 제목으로 사용할 수 없습니다.' }, 403);
     }
 
     // "카테고리:이름" 슬러그는 자동 카테고리를 항상 포함시킨다 (제거 불가).
@@ -2799,8 +2843,8 @@ wiki.get('/w/:slug/nav-tree', async (c) => {
     const cache = caches.default;
     const cacheKey = c.req.url;
 
-    // map: 가상 문서는 그 자체가 트리 뷰이므로 그룹 nav 를 만들지 않는다.
-    if (isMapNamespace(slug)) {
+    // map:/graph: 가상 문서는 그 자체가 트리/그래프 뷰이므로 그룹 nav 를 만들지 않는다.
+    if (isMapNamespace(slug) || isGraphNamespace(slug)) {
         return c.json(safeJSON({ groupRoot: null, truncated: false, root: null }), 200, { 'Cache-Control': 'private, no-store' });
     }
 
@@ -3013,6 +3057,9 @@ wiki.post('/w/:slug/restore', requireAuth, async (c) => {
     if (slug.startsWith('map:')) {
         return c.json({ error: '"map:" 네임스페이스는 가상 트리 뷰 전용이므로 복원할 수 없습니다.' }, 400);
     }
+    if (slug.startsWith('graph:')) {
+        return c.json({ error: '"graph:" 네임스페이스는 가상 그래프 뷰 전용이므로 복원할 수 없습니다.' }, 400);
+    }
 
     const page = await db.prepare('SELECT id, deleted_at FROM pages WHERE slug = ?').bind(slug).first<{ id: number; deleted_at: number | null }>();
 
@@ -3089,6 +3136,11 @@ wiki.post('/w/:slug/move', requireAdmin, async (c) => {
     // "map:" 네임스페이스는 가상 트리 뷰 전용이므로 이동 대상/출처가 될 수 없다
     if (currentSlug.startsWith('map:') || trimmedNewSlug.startsWith('map:')) {
         return c.json({ error: '"map:" 네임스페이스는 가상 트리 뷰 전용이며, 일반 문서 이동 대상이 될 수 없습니다.' }, 400);
+    }
+
+    // "graph:" 네임스페이스는 가상 에고 그래프 뷰 전용이므로 이동 대상/출처가 될 수 없다
+    if (currentSlug.startsWith('graph:') || trimmedNewSlug.startsWith('graph:')) {
+        return c.json({ error: '"graph:" 네임스페이스는 가상 그래프 뷰 전용이며, 일반 문서 이동 대상이 될 수 없습니다.' }, 400);
     }
 
     // 네임스페이스 이동 제한: 콜론이 포함된 문서는 다른 네임스페이스로 이동 불가
