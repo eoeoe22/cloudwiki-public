@@ -31,6 +31,7 @@ import { getRevisionContent } from './utils/r2';
 import { renderForAI } from './utils/aiParser';
 import { buildMapDocument, MAP_CACHE_MAX_AGE_SECONDS } from './utils/mapDocument';
 import { ensureMcpDraftsMigration } from './utils/mcpDraftsMigration';
+import { ensureNotificationsMigration } from './utils/notificationsMigration';
 
 const app = new Hono<Env>();
 
@@ -1181,6 +1182,16 @@ export default {
                     'DELETE FROM mcp_drafts WHERE submitted_at IS NOT NULL AND submitted_at < ?'
                 ).bind(submissionTtl),
             ]);
+        })());
+        // 알림 보존 정책: 읽음 여부와 무관하게 생성 후 90일(7776000초)이 지난 알림을 정리.
+        // 읽음·보관 모델에서 알림은 클릭 시 삭제 대신 읽음 처리되어 보관함(마이페이지)에
+        // 쌓이므로, 무한 누적을 막기 위한 상한선으로 90일 TTL 을 둔다.
+        // 크론 주기(매일 자정) 때문에 실제 만료 시점은 약간 늦어질 수 있다.
+        ctx.waitUntil((async () => {
+            await ensureNotificationsMigration(env.DB);
+            await env.DB.prepare(
+                'DELETE FROM notifications WHERE created_at < ?'
+            ).bind(now - 7776000).run();
         })());
         // OAuth 인가 코드: TTL 60초이므로 1시간(3600초) 이상 지난 코드는 모두 만료 상태.
         ctx.waitUntil(

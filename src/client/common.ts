@@ -702,11 +702,14 @@ async function handleNotificationClick(event, id, type, refId, link) {
         event.preventDefault();
     }
 
-    // 삭제 API 호출 (백그라운드 처리)
-    fetch(`/api/notifications/${id}`, { method: 'DELETE' }).then(() => {
-        // 알림 카운트 업데이트
+    // 읽음 처리 API 호출 (백그라운드). 90일 보존 모델: 삭제 대신 읽음 처리해 보관함에 남긴다.
+    fetch(`/api/notifications/${id}/read`, { method: 'POST' }).then(() => {
+        // 알림 카운트(미읽음) 업데이트
         loadNotificationCount();
     }).catch(console.error);
+    // 패널 상에서도 즉시 읽음 표시 반영
+    const itemEl = document.querySelector(`.notification-item[data-notif-id="${id}"]`);
+    if (itemEl) itemEl.classList.remove('unread');
 
     // 즉시 이동 또는 팝업 표시
     const isMessage = type === 'message';
@@ -777,8 +780,9 @@ async function loadNotifications(append = false) {
             };
             const icon = iconMap[n.type] || 'mdi mdi-bell';
             const timeAgo = _formatTimeAgo(n.created_at);
+            const unreadCls = n.read_at ? '' : ' unread';
 
-            return `<div class="notification-item" data-notif-id="${escapeHtml(String(n.id))}" data-notif-type="${escapeHtml(n.type)}" data-notif-ref="${escapeHtml(String(n.ref_id || ''))}" data-notif-link="${escapeHtml(n.link || '')}">
+            return `<div class="notification-item${unreadCls}" data-notif-id="${escapeHtml(String(n.id))}" data-notif-type="${escapeHtml(n.type)}" data-notif-ref="${escapeHtml(String(n.ref_id || ''))}" data-notif-link="${escapeHtml(n.link || '')}">
                 <i class="notif-icon ${icon} type-${escapeHtml(n.type)}"></i>
                 <div class="notif-content">
                     <div class="notif-text">${escapeHtml(n.content)}</div>
@@ -904,6 +908,20 @@ async function deleteNotification(id) {
         }
     }
 }
+
+async function markAllNotificationsRead() {
+    try {
+        const res = await fetch('/api/notifications/read-all', { method: 'POST' });
+        if (!res.ok) throw new Error();
+        loadNotifications();
+        loadNotificationCount();
+    } catch (e) {
+        if (typeof Swal !== 'undefined') {
+            Swal.fire('오류', '알림 읽음 처리에 실패했습니다.', 'error');
+        }
+    }
+}
+window.markAllNotificationsRead = markAllNotificationsRead;
 
 async function deleteAllNotifications() {
     if (typeof Swal === 'undefined') return;

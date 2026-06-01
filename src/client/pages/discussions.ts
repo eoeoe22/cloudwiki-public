@@ -356,13 +356,13 @@
         document.getElementById('discussionThreadPage').classList.remove('d-none');
         document.title = `${discussion.title} - 토론 - ${window.appConfig.wikiName}`;
 
-        // 해당 토론 관련 알림 일괄 삭제 (로그인 유저만, 백그라운드 처리)
+        // 해당 토론 관련 알림 일괄 읽음 처리 (로그인 유저만, 백그라운드 처리)
         if (window.currentUser) {
           const newFormatLink = `/w/${encodeURIComponent(slug)}?mode=discussions&id=${threadId}`;
           const legacyFormatLink = `/w/${encodeURIComponent(slug)}/discussions/${threadId}`;
           for (const notifLink of [newFormatLink, legacyFormatLink]) {
-            fetch('/api/notifications/by-link', {
-              method: 'DELETE',
+            fetch('/api/notifications/read/by-link', {
+              method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ link: notifLink })
             }).then(res => {

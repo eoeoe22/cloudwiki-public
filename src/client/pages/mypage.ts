@@ -24,6 +24,7 @@
             renderProfile();
             loadContributions();
             loadWatches();
+            loadNotificationsArchive();
             loadMessages();
             loadSentMessages();
             loadMyDiscussions();
@@ -37,10 +38,15 @@
             // URL hash #mcp-submissions 가 있으면 섹션이 렌더된 뒤 스크롤.
             // 제출안이 없으면 섹션은 끝까지 hidden 으로 남으므로 무한 retry 가 되지 않게 횟수를 제한한다.
             // 약 30 회 × 150ms = 4.5초 — loadMcpSubmissions 의 fetch 가 정상 종료될 시간으로 충분.
-            if (window.location.hash === '#mcp-submissions') {
+            const hashScrollTargets = {
+                '#mcp-submissions': 'mcpSubmissionsSection',
+                '#notifications': 'notificationsArchiveSection',
+            };
+            const scrollSectionId = hashScrollTargets[window.location.hash];
+            if (scrollSectionId) {
                 let scrollRetries = 30;
                 const tryScroll = () => {
-                    const el = document.getElementById('mcpSubmissionsSection');
+                    const el = document.getElementById(scrollSectionId);
                     if (el && el.style.display !== 'none') {
                         el.scrollIntoView({ behavior: 'smooth', block: 'start' });
                         return;
@@ -795,6 +801,197 @@
             btn.innerHTML = '더보기 <i class="mdi mdi-chevron-down"></i>';
         }
 
+        // ── 알림 보관함 (마이페이지) ──
+        const NOTIF_ARCHIVE_LIMIT = 20;
+        let currentNotifArchiveOffset = 0;
+        let notifArchiveDelegated = false;
+
+        const NOTIF_ICON_MAP = {
+            'discussion_comment': 'mdi mdi-comment-text-outline',
+            'banned': 'mdi mdi-block-helper',
+            'message': 'mdi mdi-email-outline',
+            'ticket_created': 'mdi mdi-ticket-outline',
+            'ticket_comment': 'mdi mdi-ticket-confirmation-outline',
+        };
+
+        async function loadNotificationsArchive(isLoadMore = false) {
+            if (!isLoadMore) currentNotifArchiveOffset = 0;
+            const section = document.getElementById('notificationsArchiveSection');
+            const listEl = document.getElementById('notificationsArchiveList');
+            const loadMoreBtn = document.getElementById('loadMoreNotifArchiveBtn');
+            const unreadBadge = document.getElementById('notifArchiveUnreadBadge');
+            if (!section || !listEl) return;
+
+            try {
+                const res = await fetch(`/api/notifications?offset=${currentNotifArchiveOffset}&limit=${NOTIF_ARCHIVE_LIMIT}`);
+                if (!res.ok) throw new Error();
+                const data = await res.json();
+                const notifs = data.notifications || [];
+                section.style.display = '';
+
+                if (!isLoadMore && notifs.length === 0) {
+                    listEl.innerHTML = window.uiEmptyState({ compact: true, icon: 'mdi mdi-inbox-outline', title: '보관된 알림이 없습니다' });
+                    loadMoreBtn?.classList.add('d-none');
+                    if (unreadBadge) unreadBadge.classList.add('d-none');
+                    return;
+                }
+
+                if (!isLoadMore) listEl.innerHTML = '';
+
+                listEl.insertAdjacentHTML('beforeend', notifs.map(n => {
+                    const icon = NOTIF_ICON_MAP[n.type] || 'mdi mdi-bell';
+                    const date = new Date(n.created_at * 1000).toLocaleString('ko-KR');
+                    const unreadCls = n.read_at ? '' : ' unread';
+                    return `
+                        <div class="contribution-item notif-archive-item${unreadCls}" style="cursor:pointer;"
+                             data-notif-id="${window.escapeHtml(String(n.id))}"
+                             data-notif-type="${window.escapeHtml(n.type)}"
+                             data-notif-ref="${window.escapeHtml(String(n.ref_id || ''))}"
+                             data-notif-link="${window.escapeHtml(n.link || '')}">
+                            <i class="${icon} text-muted me-1"></i>
+                            <div class="flex-grow-1 text-truncate">
+                                <span class="notif-archive-text">${window.escapeHtml(n.content)}</span>
+                            </div>
+                            <div class="d-flex align-items-center gap-3 flex-shrink-0">
+                                <span class="meta">${date}</span>
+                                <button class="btn btn-sm btn-outline-danger border-0 p-1" data-notif-delete="${window.escapeHtml(String(n.id))}" title="삭제">
+                                    <i class="mdi mdi-delete"></i>
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                }).join(''));
+
+                currentNotifArchiveOffset += notifs.length;
+                if (data.has_more) loadMoreBtn?.classList.remove('d-none');
+                else loadMoreBtn?.classList.add('d-none');
+
+                // 안 읽은 알림 배지 동기화
+                if (unreadBadge) {
+                    try {
+                        const cntRes = await fetch('/api/notifications/count');
+                        const cntData = cntRes.ok ? await cntRes.json() : { count: 0 };
+                        const cnt = Number(cntData.count) || 0;
+                        if (cnt > 0) {
+                            unreadBadge.textContent = cnt > 99 ? '99+' : String(cnt);
+                            unreadBadge.classList.remove('d-none');
+                        } else {
+                            unreadBadge.classList.add('d-none');
+                        }
+                    } catch (_) { /* 무시 */ }
+                }
+
+                if (!notifArchiveDelegated) {
+                    notifArchiveDelegated = true;
+                    listEl.addEventListener('click', (e) => {
+                        const delBtn = e.target.closest('[data-notif-delete]');
+                        if (delBtn) {
+                            e.stopPropagation();
+                            deleteNotificationArchiveItem(parseInt(delBtn.dataset.notifDelete, 10));
+                            return;
+                        }
+                        const item = e.target.closest('[data-notif-id]');
+                        if (item) openNotificationArchiveItem(item);
+                    });
+                }
+            } catch (e) {
+                section.style.display = '';
+                if (!isLoadMore) {
+                    listEl.innerHTML = window.uiEmptyState({ compact: true, icon: 'bi bi-exclamation-triangle', title: '알림을 불러오지 못했습니다' });
+                }
+            }
+        }
+
+        function openNotificationArchiveItem(item) {
+            const id = parseInt(item.dataset.notifId, 10);
+            const type = item.dataset.notifType;
+            const refId = item.dataset.notifRef ? parseInt(item.dataset.notifRef, 10) : null;
+            const link = item.dataset.notifLink || null;
+
+            // 읽음 처리 (백그라운드)
+            if (item.classList.contains('unread')) {
+                fetch(`/api/notifications/${id}/read`, { method: 'POST' }).then(() => {
+                    item.classList.remove('unread');
+                    if (typeof window.loadNotificationCount === 'function') window.loadNotificationCount();
+                    syncNotifArchiveUnreadBadge();
+                }).catch(() => { /* 무시 */ });
+            }
+
+            if (type === 'message' && refId) {
+                window.viewMessage(refId);
+            } else if (link && link !== 'null' && window.isSafeUrl(link)) {
+                window.location.href = link;
+            }
+        }
+
+        async function syncNotifArchiveUnreadBadge() {
+            const unreadBadge = document.getElementById('notifArchiveUnreadBadge');
+            if (!unreadBadge) return;
+            try {
+                const res = await fetch('/api/notifications/count');
+                const data = res.ok ? await res.json() : { count: 0 };
+                const cnt = Number(data.count) || 0;
+                if (cnt > 0) {
+                    unreadBadge.textContent = cnt > 99 ? '99+' : String(cnt);
+                    unreadBadge.classList.remove('d-none');
+                } else {
+                    unreadBadge.classList.add('d-none');
+                }
+            } catch (_) { /* 무시 */ }
+        }
+
+        async function loadMoreNotificationsArchive() {
+            const btn = document.getElementById('loadMoreNotifArchiveBtn');
+            if (btn) { btn.disabled = true; btn.innerHTML = window.uiInlineLoading(); }
+            await loadNotificationsArchive(true);
+            if (btn) { btn.disabled = false; btn.innerHTML = '더보기 <i class="mdi mdi-chevron-down"></i>'; }
+        }
+
+        async function deleteNotificationArchiveItem(id) {
+            const numId = parseInt(id, 10);
+            if (isNaN(numId)) return;
+            try {
+                const res = await fetch(`/api/notifications/${numId}`, { method: 'DELETE' });
+                if (!res.ok) throw new Error();
+                await loadNotificationsArchive();
+                if (typeof window.loadNotificationCount === 'function') window.loadNotificationCount();
+            } catch (e) {
+                Swal.fire('오류', '알림 삭제에 실패했습니다.', 'error');
+            }
+        }
+
+        async function markAllNotificationsReadArchive() {
+            try {
+                const res = await fetch('/api/notifications/read-all', { method: 'POST' });
+                if (!res.ok) throw new Error();
+                await loadNotificationsArchive();
+                if (typeof window.loadNotificationCount === 'function') window.loadNotificationCount();
+            } catch (e) {
+                Swal.fire('오류', '알림 읽음 처리에 실패했습니다.', 'error');
+            }
+        }
+
+        async function deleteAllNotificationsArchive() {
+            const result = await Swal.fire({
+                title: '알림 전체 삭제',
+                text: '보관된 모든 알림을 삭제합니다. 이 작업은 되돌릴 수 없습니다.',
+                icon: 'warning',
+                showCancelButton: true,
+                confirmButtonColor: '#dc3545',
+                confirmButtonText: '전체 삭제',
+                cancelButtonText: '취소',
+            });
+            if (!result.isConfirmed) return;
+            try {
+                const res = await fetch('/api/notifications', { method: 'DELETE' });
+                if (!res.ok) throw new Error();
+                await loadNotificationsArchive();
+                if (typeof window.loadNotificationCount === 'function') window.loadNotificationCount();
+            } catch (e) {
+                Swal.fire('오류', '알림 삭제에 실패했습니다.', 'error');
+            }
+        }
+
         async function deleteAccount() {
             const result = await Swal.fire({
                 title: '회원탈퇴',
@@ -1370,3 +1567,6 @@ window.refreshProfilePicture = refreshProfilePicture;
 window.deleteDirectMessage = deleteDirectMessage;
 window.revokeSession = revokeSession;
 window.viewSentMessage = viewSentMessage;
+window.loadMoreNotificationsArchive = loadMoreNotificationsArchive;
+window.markAllNotificationsReadArchive = markAllNotificationsReadArchive;
+window.deleteAllNotificationsArchive = deleteAllNotificationsArchive;

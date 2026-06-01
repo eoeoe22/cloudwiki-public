@@ -402,11 +402,11 @@
         document.getElementById('ticketDetailPage').classList.remove('d-none');
         document.title = `#${ticket.id} ${ticket.title} - 티켓 - ${window.appConfig.wikiName}`;
 
-        // 해당 티켓 관련 알림 일괄 삭제
+        // 해당 티켓 관련 알림 일괄 읽음 처리
         if (window.currentUser) {
           const notifLink = `/tickets/${ticketId}`;
-          fetch('/api/notifications/by-link', {
-            method: 'DELETE',
+          fetch('/api/notifications/read/by-link', {
+            method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ link: notifLink })
           }).then(res => {

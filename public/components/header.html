@@ -32,13 +32,19 @@
             <div class="notification-panel d-none" id="notificationPanel">
                 <div class="notification-panel-header">
                     <strong><i class="mdi mdi-inbox"></i> 알림</strong>
-                    <button class="btn btn-sm btn-link text-danger p-0 ms-auto" id="notifDeleteAllBtn" onclick="deleteAllNotifications()" title="전체 삭제" style="font-size:0.8rem;">
+                    <button class="btn btn-sm btn-link text-decoration-none p-0 ms-auto" id="notifMarkAllReadBtn" onclick="markAllNotificationsRead()" title="모두 읽음" style="font-size:0.8rem;">
+                        <i class="mdi mdi-email-open-outline"></i> 모두 읽음
+                    </button>
+                    <button class="btn btn-sm btn-link text-danger p-0 ms-3" id="notifDeleteAllBtn" onclick="deleteAllNotifications()" title="전체 삭제" style="font-size:0.8rem;">
                         <i class="mdi mdi-delete-sweep-outline"></i> 전체 삭제
                     </button>
                 </div>
                 <div class="notification-panel-body" id="notificationPanelBody">
                     <div class="text-center text-muted py-4">불러오는 중...</div>
                 </div>
+                <a class="notification-panel-archive-link" href="/mypage#notifications">
+                    <i class="mdi mdi-archive-outline"></i> 알림 보관함 전체 보기
+                </a>
                 <div class="notification-panel-footer d-none" id="notificationPanelFooter">
                     <div class="push-toggle-status d-flex align-items-center justify-content-between mb-2" id="pushToggleStatus">
                         <span class="push-toggle-status-label">

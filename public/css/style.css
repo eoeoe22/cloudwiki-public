@@ -2378,6 +2378,25 @@ html[data-theme="dark"] .btn-close {
   color: var(--wiki-text);
 }
 
+/* 안 읽은 알림: 좌측 강조 바 + 살짝 강조된 배경 + 굵은 본문 */
+.notification-item.unread {
+  background: var(--wiki-toc-bg);
+  box-shadow: inset 3px 0 0 var(--wiki-primary);
+}
+
+.notification-item.unread .notif-text {
+  font-weight: 600;
+}
+
+/* 마이페이지 알림 보관함의 안 읽은 항목 강조 */
+.notif-archive-item.unread {
+  box-shadow: inset 3px 0 0 var(--wiki-primary);
+}
+
+.notif-archive-item.unread .notif-archive-text {
+  font-weight: 600;
+}
+
 .notification-item:last-child {
   border-bottom: none;
 }
@@ -2439,6 +2458,24 @@ html[data-theme="dark"] .btn-close {
   text-align: center;
   color: var(--wiki-text-muted);
   font-size: 0.85rem;
+}
+
+.notification-panel-archive-link {
+  display: block;
+  padding: 9px 12px;
+  border-top: 1px solid var(--wiki-border);
+  background: var(--wiki-card-bg);
+  color: var(--wiki-text-muted);
+  font-size: 0.8rem;
+  text-align: center;
+  text-decoration: none;
+  flex: 0 0 auto;
+  transition: background 0.15s, color 0.15s;
+}
+
+.notification-panel-archive-link:hover {
+  background: var(--wiki-toc-bg);
+  color: var(--wiki-primary);
 }
 
 .notification-panel-footer {

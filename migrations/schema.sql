@@ -217,10 +217,15 @@ CREATE TABLE IF NOT EXISTS notifications (
   content     TEXT NOT NULL,
   link        TEXT,
   ref_id      INTEGER,
+  read_at     INTEGER,
   created_at  INTEGER DEFAULT (unixepoch()),
   FOREIGN KEY (user_id) REFERENCES users(id)
 );
 CREATE INDEX IF NOT EXISTS idx_notifications_user_created ON notifications(user_id, created_at DESC);
+-- 안 읽은 알림 배지 카운트용 부분 인덱스 (read_at IS NULL 행만 색인)
+CREATE INDEX IF NOT EXISTS idx_notifications_user_unread ON notifications(user_id) WHERE read_at IS NULL;
+-- 90일 보존 정책 일괄 정리(DELETE ... WHERE created_at < ?)용 인덱스
+CREATE INDEX IF NOT EXISTS idx_notifications_created ON notifications(created_at);
 
 -- 쪽지 테이블
 CREATE TABLE IF NOT EXISTS messages (

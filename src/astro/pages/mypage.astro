@@ -445,6 +445,32 @@ import Footer from '../components/Footer.astro';
                     </div>
                 </div>
 
+                <!-- 알림 보관함 (최근 90일) -->
+                <div class="profile-section" id="notificationsArchiveSection" style="display:none;">
+                    <div class="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2">
+                        <h4 class="mb-0">
+                            <i class="mdi mdi-archive-outline"></i> 알림 보관함
+                            <span class="badge bg-primary ms-1 d-none" id="notifArchiveUnreadBadge">0</span>
+                        </h4>
+                        <div class="d-flex gap-2">
+                            <button class="btn btn-sm btn-outline-secondary" id="notifArchiveReadAllBtn" onclick="markAllNotificationsReadArchive()">
+                                <i class="mdi mdi-email-open-outline"></i> 모두 읽음
+                            </button>
+                            <button class="btn btn-sm btn-outline-danger" id="notifArchiveDeleteAllBtn" onclick="deleteAllNotificationsArchive()">
+                                <i class="mdi mdi-delete-sweep-outline"></i> 전체 삭제
+                            </button>
+                        </div>
+                    </div>
+                    <small class="text-muted d-block mb-3">알림은 생성 후 90일간 보관되며, 이후 자동으로 정리됩니다.</small>
+                    <div id="notificationsArchiveList">
+                        <div class="text-center text-muted py-3">불러오는 중...</div>
+                    </div>
+                    <button class="btn btn-sm btn-outline-secondary w-100 mt-2 d-none" id="loadMoreNotifArchiveBtn"
+                        onclick="loadMoreNotificationsArchive()">
+                        더보기 <i class="mdi mdi-chevron-down"></i>
+                    </button>
+                </div>
+
                 <!-- 받은 쪽지함 -->
                 <div class="profile-section" id="messagesSection" style="display:none;">
                     <h4><i class="mdi mdi-email-receive"></i> 받은 쪽지함</h4>

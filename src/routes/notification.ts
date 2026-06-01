@@ -5,6 +5,7 @@ import { safeJSON } from '../utils/json';
 import { isSuperAdmin } from '../utils/auth';
 import { RBAC } from '../utils/role';
 import { createNotification } from '../utils/notification';
+import { ensureNotificationsMigration } from '../utils/notificationsMigration';
 
 const notificationRoutes = new Hono<Env>();
 
@@ -16,6 +17,7 @@ const notificationRoutes = new Hono<Env>();
 notificationRoutes.get('/notifications', requireAuthAllowBanned, async (c) => {
     const user = c.get('user')!;
     const db = c.env.DB;
+    await ensureNotificationsMigration(db);
     const offset = Number(c.req.query('offset')) || 0;
     const limit = Number(c.req.query('limit')) || 10;
 
@@ -37,17 +39,20 @@ notificationRoutes.get('/notifications', requireAuthAllowBanned, async (c) => {
 
 /**
  * GET /api/notifications/count
- * 읽지 않은(삭제되지 않은) 알림 수
+ * 읽지 않은(read_at IS NULL) 알림 수 — 배지 표시용
+ * 쪽지 알림은 deleted=0인 것만 카운트
  */
 notificationRoutes.get('/notifications/count', requireAuthAllowBanned, async (c) => {
     const user = c.get('user')!;
     const db = c.env.DB;
+    await ensureNotificationsMigration(db);
 
     const row = await db.prepare(`
         SELECT COUNT(*) as count
         FROM notifications n
         LEFT JOIN messages m ON n.type = 'message' AND n.ref_id = m.id
         WHERE n.user_id = ?
+          AND n.read_at IS NULL
           AND (n.type != 'message' OR (m.id IS NOT NULL AND m.deleted = 0))
     `).bind(user.id).first<{ count: number }>();
 
@@ -55,24 +60,61 @@ notificationRoutes.get('/notifications/count', requireAuthAllowBanned, async (c)
 });
 
 /**
- * DELETE /api/notifications/by-link
- * 특정 link와 일치하는 알림 일괄 삭제 (쪽지 제외)
- * 토론 페이지 접속 시 해당 토론 관련 알림을 모두 정리하기 위해 사용
+ * POST /api/notifications/read-all
+ * 현재 유저의 안 읽은 알림을 모두 읽음 처리
  */
-notificationRoutes.delete('/notifications/by-link', requireAuthAllowBanned, async (c) => {
+notificationRoutes.post('/notifications/read-all', requireAuthAllowBanned, async (c) => {
     const user = c.get('user')!;
     const db = c.env.DB;
+    await ensureNotificationsMigration(db);
+    const now = Math.floor(Date.now() / 1000);
+    const result = await db.prepare(
+        'UPDATE notifications SET read_at = ? WHERE user_id = ? AND read_at IS NULL'
+    ).bind(now, user.id).run();
+    return c.json({ success: true, updated: result.meta.changes });
+});
+
+/**
+ * POST /api/notifications/read/by-link
+ * 특정 link와 일치하는 알림을 일괄 읽음 처리 (쪽지 제외)
+ * 토론/티켓 페이지 접속 시 해당 문서 관련 알림을 모두 읽음 처리하기 위해 사용.
+ * 90일 보존 모델에서는 삭제 대신 읽음 처리해 보관함에 기록을 남긴다.
+ */
+notificationRoutes.post('/notifications/read/by-link', requireAuthAllowBanned, async (c) => {
+    const user = c.get('user')!;
+    const db = c.env.DB;
+    await ensureNotificationsMigration(db);
     const { link } = await c.req.json<{ link: string }>();
 
     if (!link || !link.trim()) {
         return c.json({ error: 'link 파라미터가 필요합니다.' }, 400);
     }
 
+    const now = Math.floor(Date.now() / 1000);
     const result = await db.prepare(
-        "DELETE FROM notifications WHERE user_id = ? AND link = ? AND type != 'message'"
-    ).bind(user.id, link.trim()).run();
+        "UPDATE notifications SET read_at = ? WHERE user_id = ? AND link = ? AND type != 'message' AND read_at IS NULL"
+    ).bind(now, user.id, link.trim()).run();
 
-    return c.json({ success: true, deleted: result.meta.changes });
+    return c.json({ success: true, updated: result.meta.changes });
+});
+
+/**
+ * POST /api/notifications/:id/read
+ * 단일 알림 읽음 처리 (이미 읽은 경우 무해)
+ */
+notificationRoutes.post('/notifications/:id/read', requireAuthAllowBanned, async (c) => {
+    const user = c.get('user')!;
+    const db = c.env.DB;
+    await ensureNotificationsMigration(db);
+    const notifId = Number(c.req.param('id'));
+    if (!Number.isInteger(notifId)) {
+        return c.json({ error: '잘못된 알림 ID 입니다.' }, 400);
+    }
+    const now = Math.floor(Date.now() / 1000);
+    const result = await db.prepare(
+        'UPDATE notifications SET read_at = ? WHERE id = ? AND user_id = ? AND read_at IS NULL'
+    ).bind(now, notifId, user.id).run();
+    return c.json({ success: true, updated: result.meta.changes });
 });
 
 /**
