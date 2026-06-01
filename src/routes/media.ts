@@ -4,6 +4,7 @@ import { requireAuth, requirePermission } from '../middleware/session';
 import { fetchMediaTagMap, replaceMediaTags, sanitizeTags } from '../utils/mediaTags';
 import { RBAC } from '../utils/role';
 import { safeJSON } from '../utils/json';
+import { invalidatePageCache } from '../utils/cacheInvalidation';
 
 const media = new Hono<Env>();
 
@@ -529,20 +530,7 @@ media.put('/api/media/doc/:filename', requireAuth, requirePermission('wiki:edit'
     }
 
     // /w/이미지:파일명 SSR 캐시 및 /api/w/이미지:파일명 API 캐시 무효화
-    const cache = caches.default;
-    const origin = new URL(c.req.url).origin;
-    const slug = `이미지:${filename}`;
-    // 브라우저는 URL 경로의 ':'를 인코딩하지 않는 경우도 있으므로 두 변형(%3A / ':')을 모두 삭제
-    const encodedSlug = encodeURIComponent(slug);
-    const decodedSlug = encodedSlug.replace(/%3A/g, ':');
-    c.executionCtx.waitUntil(Promise.allSettled([
-        cache.delete(`${origin}/w/${encodedSlug}`),
-        cache.delete(`${origin}/api/w/${encodedSlug}`),
-        cache.delete(`${origin}/api/w/${encodedSlug}?redirect=no`),
-        cache.delete(`${origin}/w/${decodedSlug}`),
-        cache.delete(`${origin}/api/w/${decodedSlug}`),
-        cache.delete(`${origin}/api/w/${decodedSlug}?redirect=no`),
-    ]));
+    c.executionCtx.waitUntil(invalidatePageCache(c, `이미지:${filename}`));
 
     return c.json({ success: true });
 });

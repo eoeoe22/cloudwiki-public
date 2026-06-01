@@ -1,13 +1,16 @@
 import { Hono } from 'hono';
 import {
     buildCategoryOnlyStatements,
-    invalidatePageCache,
-    invalidateBacklinkCaches,
     mergeCategoriesFromRules,
-    refreshRecentChangesCache,
     splitCategoryString,
     subtractCategoryString,
 } from './wiki';
+import {
+    invalidatePageCache,
+    invalidateBacklinkCaches,
+    refreshRecentChangesCache,
+    invalidatePaletteUsers,
+} from '../utils/cacheInvalidation';
 import { requireAdmin } from '../middleware/session';
 import { isSuperAdmin, getSuperAdmins } from '../utils/auth';
 import { RBAC, ROLE_CASE_SQL, enrichRoles } from '../utils/role';
@@ -59,38 +62,6 @@ const adminRoutes = new Hono<Env>();
 
 adminRoutes.use('*', requireAdmin);
 
-/**
- * 모든 문서의 HTML 캐시를 무효화합니다.
- * 사이드바, 푸터 등의 전역 UI가 변경될 때 사용합니다.
- */
-async function invalidateAllPagesCache(c: any) {
-    const db = c.env.DB;
-    const origin = new URL(c.req.url).origin;
-    const cache = caches.default;
-
-    try {
-        const { results } = await db.prepare(`
-            SELECT slug FROM pages WHERE deleted_at IS NULL
-        `).all();
-
-        // 너무 많은 프로미스가 동시에 실행되지 않도록 배치 처리
-        for (let i = 0; i < results.length; i += 50) {
-            const batch = results.slice(i, i + 50);
-            // 브라우저는 URL 경로의 ':'를 인코딩하지 않는 경우도 있으므로 두 변형을 모두 삭제
-            const deletions = batch.flatMap((row: any) => {
-                const encoded = encodeURIComponent(row.slug);
-                const paths = row.slug.includes(':')
-                    ? [encoded, encoded.replace(/%3A/g, ':')]
-                    : [encoded];
-                return paths.map(path => cache.delete(`${origin}/w/${path}`));
-            });
-            await Promise.allSettled(deletions);
-        }
-    } catch (e) {
-        console.error('Failed to invalidate all pages cache:', e);
-    }
-}
-
 // ── 관리 로그 기록 헬퍼 ──
 export function writeAdminLog(c: any, type: string, log: string, userId: number) {
     const db = c.env.DB;
@@ -100,26 +71,6 @@ export function writeAdminLog(c: any, type: string, log: string, userId: number)
             .run()
             .catch((e: any) => console.error('Failed to write admin log:', e))
     );
-}
-
-/**
- * 이미지 문서(/w/이미지:파일명) SSR/API 캐시 키를 무효화한다.
- * media.ts의 PUT /api/media/doc/:filename과 동일한 키 집합을 사용한다.
- */
-async function invalidateImageDocCache(c: any, filename: string) {
-    const cache = caches.default;
-    const origin = new URL(c.req.url).origin;
-    // 브라우저는 URL 경로의 ':'를 인코딩하지 않는 경우도 있으므로 두 변형(%3A / ':')을 모두 삭제
-    const encodedSlug = encodeURIComponent(`이미지:${filename}`);
-    const decodedSlug = encodedSlug.replace(/%3A/g, ':');
-    await Promise.allSettled([
-        cache.delete(`${origin}/w/${encodedSlug}`),
-        cache.delete(`${origin}/api/w/${encodedSlug}`),
-        cache.delete(`${origin}/api/w/${encodedSlug}?redirect=no`),
-        cache.delete(`${origin}/w/${decodedSlug}`),
-        cache.delete(`${origin}/api/w/${decodedSlug}`),
-        cache.delete(`${origin}/api/w/${decodedSlug}?redirect=no`),
-    ]);
 }
 
 adminRoutes.get('/users', async (c) => {
@@ -1745,7 +1696,7 @@ adminRoutes.post('/media/gc', async (c) => {
         writeAdminLog(c, 'media_gc', `쓰레기 수집: ${deleted.length}개 미사용 이미지 삭제`, user.id);
         // 각 이미지 문서(/w/이미지:파일명) 캐시 무효화
         c.executionCtx.waitUntil(
-            Promise.allSettled(deletedFilenames.map(fn => invalidateImageDocCache(c, fn)))
+            Promise.allSettled(deletedFilenames.map(fn => invalidatePageCache(c, `이미지:${fn}`)))
         );
     }
 
@@ -1912,7 +1863,7 @@ adminRoutes.delete('/media/:id', async (c) => {
     await db.prepare('DELETE FROM media WHERE id = ?').bind(id).run();
 
     // 이미지 문서 캐시 무효화 (/w/이미지:파일명, /api/w/...)
-    c.executionCtx.waitUntil(invalidateImageDocCache(c, mediaItem.filename));
+    c.executionCtx.waitUntil(invalidatePageCache(c, `이미지:${mediaItem.filename}`));
 
     writeAdminLog(c, 'media_delete', `미디어 삭제: ${mediaItem.r2_key}`, c.get('user')!.id);
     return c.json({ success: true });
@@ -3047,61 +2998,6 @@ function normalizePaletteBody(body: any): {
 adminRoutes.get('/palettes', async (c) => {
     return c.json({ palettes: await loadAllPaletteRows(c.env.DB) });
 });
-
-/**
- * 팔레트 변경/삭제 후, 해당 팔레트를 참조하는 페이지/블로그의 캐시를 무효화.
- *   1) 본문에서 직접 {palette:NAME} 참조 (page_links link_type='palette')
- *   2) 그런 팔레트를 사용하는 틀을 트랜스클루전한 페이지 (link_type='template' → 1단계)
- * /api/w/:slug 응답이 used_palettes 를 본문에 포함해 max-age 86400 캐시되므로,
- * 색상 변경 후 사용자가 다시 열어도 stale 색상이 보일 수 있어 능동적으로 비운다.
- * 깊은 트랜스클루전 체인은 잡지 않는다 — 일반 위키 사용에서 1단계 폴백으로 충분.
- */
-async function invalidatePaletteUsers(c: any, name: string): Promise<void> {
-    const db = c.env.DB as D1Database;
-    try {
-        // template_users CTE: 팔레트를 본문에서 직접 참조하는 틀(t1) 의 slug,
-        //   그리고 t1 로 redirect 되는 다른 틀(tr) 의 slug 까지 포함. loadPalettesForPage 가
-        //   redirect_to 1단계를 따라 팔레트를 수집하므로, 색상 변경 시 redirect 시작
-        //   슬러그를 트랜스클루전한 페이지의 캐시도 함께 비워야 stale 색상이 남지 않는다.
-        const { results } = await db
-            .prepare(`
-                WITH template_users AS (
-                    SELECT pt.slug AS slug
-                    FROM page_links plp
-                    JOIN pages pt ON pt.id = plp.source_page_id
-                    WHERE plp.source_type = 'page'
-                      AND plp.link_type = 'palette'
-                      AND plp.target_slug = ?1
-                    UNION
-                    SELECT tr.slug AS slug
-                    FROM pages tr
-                    JOIN pages t1 ON t1.slug = tr.redirect_to
-                    JOIN page_links plp ON plp.source_page_id = t1.id
-                    WHERE plp.source_type = 'page'
-                      AND plp.link_type = 'palette'
-                      AND plp.target_slug = ?1
-                )
-                SELECT DISTINCT p.slug FROM pages p
-                JOIN page_links pl ON pl.source_page_id = p.id
-                WHERE pl.source_type = 'page'
-                  AND (
-                    (pl.link_type = 'palette' AND pl.target_slug = ?1)
-                    OR (pl.link_type = 'template' AND pl.target_slug IN (SELECT slug FROM template_users))
-                  )
-            `)
-            .bind(name)
-            .all();
-
-        const slugs = ((results ?? []) as Array<{ slug: string }>).map(r => r.slug);
-        if (slugs.length > 0) {
-            c.executionCtx.waitUntil(
-                Promise.allSettled(slugs.map((s: string) => invalidatePageCache(c, s)))
-            );
-        }
-    } catch (e) {
-        console.error('invalidatePaletteUsers failed:', e);
-    }
-}
 
 /**
  * POST /api/admin/palettes

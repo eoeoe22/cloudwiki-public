@@ -318,17 +318,75 @@ function cycleTheme() {
 }
 
 function updateThemeToggleUI(mode) {
+    // 헤더의 단독 테마 토글 버튼은 개인 설정 모달로 이관되어 제거됐다. 잔존 셀렉터(있으면)만
+    // 갱신하는 무해한 no-op 으로 남겨 둔다(외부 호환). 실제 테마 적용은 setTheme 이 담당.
     if (!mode) mode = getCurrentTheme();
     var icons = { auto: 'mdi-theme-light-dark', light: 'mdi-white-balance-sunny', dark: 'mdi-moon-waning-crescent' };
-    var labels = { auto: '테마: 자동 (클릭 시 라이트)', light: '테마: 라이트 (클릭 시 다크)', dark: '테마: 다크 (클릭 시 자동)' };
     document.querySelectorAll('#navThemeIcon').forEach(function (el) {
         el.classList.remove('mdi-theme-light-dark', 'mdi-white-balance-sunny', 'mdi-moon-waning-crescent');
         el.classList.add(icons[mode] || icons.auto);
     });
-    document.querySelectorAll('#navThemeToggle').forEach(function (el) {
-        el.setAttribute('title', labels[mode] || labels.auto);
-        el.setAttribute('aria-label', labels[mode] || labels.auto);
-    });
+}
+
+// ── 레이아웃 모드 사용자 오버라이드 (클라이언트 전용, localStorage) ──
+// 사이트 전역 LAYOUT_MODE(wrangler.toml → BaseLayout 베이킹 → /api/config.layoutMode) 위에
+// 사용자가 자신의 브라우저에서만 적용되는 레이아웃을 덮어쓴다.
+// - CSS 는 body[data-layout-mode] 를, index.ts 의 사이드바 동기화는 window.appConfig.layoutMode 를
+//   읽으므로 두 경로 모두 갱신한다.
+// - FOUC 방지를 위한 조기 적용은 BaseLayout.astro 의 <body> 인라인 스크립트가 담당하며,
+//   본 헬퍼는 loadConfig 시점에 appConfig 까지 일관되게 맞추는 역할.
+var LAYOUT_OVERRIDE_KEY = 'layoutModeOverride';
+var VALID_LAYOUT_OVERRIDES = ['default', 'left-toc', 'right-toc', 'docs', 'wide'];
+
+function getLayoutOverride() {
+    try {
+        var v = localStorage.getItem(LAYOUT_OVERRIDE_KEY);
+        return (v && VALID_LAYOUT_OVERRIDES.indexOf(v) >= 0) ? v : null;
+    } catch (e) { return null; }
+}
+
+function applyLayoutOverride() {
+    var v = getLayoutOverride();
+    if (!v) return;
+    try { document.body.setAttribute('data-layout-mode', v); } catch (e) { /* ignore */ }
+    if (appConfig) appConfig.layoutMode = v;
+    if (window.appConfig) window.appConfig.layoutMode = v;
+}
+
+// ── 개인 설정 모달 ──
+function openSettingsModal() {
+    var modalEl = document.getElementById('settingsModal');
+    if (!modalEl || typeof bootstrap === 'undefined' || !bootstrap.Modal) return;
+    var themeSel = document.getElementById('settingTheme');
+    if (themeSel) themeSel.value = getCurrentTheme();
+    var layoutSel = document.getElementById('settingLayoutMode');
+    if (layoutSel) layoutSel.value = getLayoutOverride() || 'site';
+    bootstrap.Modal.getOrCreateInstance(modalEl).show();
+}
+
+function setupSettingsModal() {
+    var themeSel = document.getElementById('settingTheme');
+    if (themeSel && !themeSel.dataset.bound) {
+        themeSel.dataset.bound = '1';
+        // 테마는 즉시 라이브 적용(리로드 불필요).
+        themeSel.addEventListener('change', function () { setTheme(this.value); });
+    }
+    var layoutSel = document.getElementById('settingLayoutMode');
+    if (layoutSel && !layoutSel.dataset.bound) {
+        layoutSel.dataset.bound = '1';
+        layoutSel.addEventListener('change', function () {
+            var prev = getLayoutOverride();
+            var next = this.value === 'site' ? null : this.value;
+            if ((prev || null) === (next || null)) return; // 변경 없음
+            try {
+                if (next) localStorage.setItem(LAYOUT_OVERRIDE_KEY, next);
+                else localStorage.removeItem(LAYOUT_OVERRIDE_KEY);
+            } catch (e) { /* ignore */ }
+            // 사이드바 재배치 1회 가드(_rightSidebarRelocated)·그룹 nav fetch 때문에
+            // 깨끗한 재초기화를 위해 새로고침한다.
+            location.reload();
+        });
+    }
 }
 
 // ── 랜덤 문서 ──
@@ -490,6 +548,10 @@ async function loadConfig() {
             // 를 읽으므로 fetch 결과를 즉시 노출해야 한다.
             window.appConfig = appConfig;
 
+            // 사용자 레이아웃 오버라이드를 사이트 기본값 위에 덮어쓴다(index.ts 의 사이드바
+            // 동기화가 window.appConfig.layoutMode 를 읽으므로 fetch 직후 적용).
+            applyLayoutOverride();
+
             // 브랜딩(위키 이름/파비콘/로고)은 더 이상 클라이언트에서 덮어쓰지 않는다.
             // - Astro 정적 셸: 빌드 타임에 wrangler.toml 값으로 베이킹됨.
             // - 요청별 SSR 셸(index/blog): 서버 applyPageSSR 이 문서별 메타/브랜딩 마커를 주입.
@@ -597,6 +659,8 @@ async function checkAuth() {
             // 를 읽어 인증 UI / 권한 분기를 처리하므로 즉시 노출해야 한다.
             window.currentUser = currentUser;
             document.querySelectorAll('#navLogin').forEach(el => el.classList.add('d-none'));
+            // 로그아웃용 개인 설정 톱니 버튼 숨김 — 로그인 사용자는 드롭다운의 "개인 설정" 항목 사용.
+            document.querySelectorAll('#navSettings').forEach(el => el.classList.add('d-none'));
             document.querySelectorAll('#navUser').forEach(el => el.classList.remove('d-none'));
 
             document.querySelectorAll('#userAvatar').forEach(el => el.src = isSafeUrl(currentUser.picture) ? currentUser.picture : '');
@@ -1283,6 +1347,15 @@ async function sendMessage(receiverId, receiverName) {
     }
 })();
 
+// ── 개인 설정 모달 이벤트 바인딩 ──
+(function () {
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', setupSettingsModal);
+    } else {
+        setupSettingsModal();
+    }
+})();
+
 // ── 상대 시간 변환 ──
 function getRelativeTime(unixTs) {
     const now = Math.floor(Date.now() / 1000);
@@ -1493,6 +1566,7 @@ window.setTheme = setTheme;
 window.getCurrentTheme = getCurrentTheme;
 window.cycleTheme = cycleTheme;
 window.updateThemeToggleUI = updateThemeToggleUI;
+window.openSettingsModal = openSettingsModal;
 window.goRandomPage = goRandomPage;
 window.applyAnnouncementBanner = applyAnnouncementBanner;
 window.loadConfig = loadConfig;

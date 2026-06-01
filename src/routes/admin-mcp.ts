@@ -45,10 +45,12 @@ import {
     computePageMetricsTracked,
     buildLinkAndCategoryStatements,
     rewriteContentForRename,
+} from './wiki';
+import {
     invalidatePageCache,
     refreshRecentChangesCache,
     invalidateBacklinkCaches,
-} from './wiki';
+} from '../utils/cacheInvalidation';
 import { extractFirstThumbnail, rebuildBlogImageLinks } from './blog';
 import { removeAnnouncementByPostId } from '../utils/announcements';
 import {

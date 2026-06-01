@@ -39,6 +39,8 @@ const customHeader = injectCustomHeader ? branding.customHeader : '';
 </head>
 
 <body data-layout-mode={branding.layoutMode} style="-webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;">
+    <!-- 레이아웃 모드 사용자 오버라이드 FOUC 방지: 파싱 중 즉시 적용(common.ts applyLayoutOverride 와 동일 키). -->
+    <script is:inline>try{var m=localStorage.getItem('layoutModeOverride');if(m&&['default','left-toc','right-toc','docs','wide'].indexOf(m)>=0)document.body.setAttribute('data-layout-mode',m);}catch(e){}</script>
     <slot />
     <slot name="scripts" />
     <Fragment set:html={bodyScripts} />

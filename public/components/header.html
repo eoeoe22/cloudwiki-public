@@ -22,6 +22,7 @@
             <ul class="dropdown-menu dropdown-menu-end shadow-sm position-absolute">
                 <li><h6 class="dropdown-header text-truncate" id="userName"></h6></li>
                 <li><a class="dropdown-item d-flex align-items-center" href="#" onclick="document.querySelector('#navUser > a').click(); toggleNotificationPanel(); event.stopPropagation(); return false;"><i class="mdi mdi-inbox me-2"></i><span class="me-auto">알림</span><span class="notification-menu-badge d-none" id="notificationMenuBadge"></span></a></li>
+                <li><a class="dropdown-item" href="#" onclick="openSettingsModal(); event.preventDefault(); return false;"><i class="mdi mdi-cog-outline me-2"></i> 개인 설정</a></li>
                 <li><a class="dropdown-item" href="/mypage"><i class="mdi mdi-account-circle me-2"></i> 마이페이지</a></li>
                 <li id="navAdminConsole" class="d-none"><a class="dropdown-item" href="/admin"><i class="mdi mdi-shield-account me-2"></i> 관리자 콘솔</a></li>
                 <li><hr class="dropdown-divider"></li>
@@ -63,9 +64,9 @@
             <!-- js 호환성을 위한 안보이는 래퍼 유지 -->
             <div id="notificationBtnWrapper" class="d-none"></div>
         </div>
-        <!-- 테마 토글 버튼 (클릭 시 자동 → 라이트 → 다크 순환) -->
-        <button class="btn border-0 px-1 ms-2 theme-toggle-btn" type="button" id="navThemeToggle" onclick="cycleTheme()" title="테마 변경" aria-label="테마 변경">
-            <i class="mdi mdi-theme-light-dark text-body" id="navThemeIcon"></i>
+        <!-- 개인 설정 버튼 (로그아웃 상태에서만 노출 — 로그인 시 checkAuth 가 숨기고 드롭다운 항목으로 대체) -->
+        <button class="btn border-0 px-1 ms-2" type="button" id="navSettings" onclick="openSettingsModal()" title="개인 설정" aria-label="개인 설정">
+            <i class="mdi mdi-cog-outline text-body"></i>
         </button>
         <a class="btn border-0 px-1 ms-2" id="navLogin" href="/login" title="로그인"><i class="mdi mdi-login text-body"></i></a>
 
@@ -200,3 +201,41 @@
         </script>
     </div>
 </nav>
+
+<!-- ── 개인 설정 모달 (클라이언트 전용 설정: 테마 · 레이아웃 모드 오버라이드) ── -->
+<!-- src/client/common.ts 가 openSettingsModal() 로 열고, select 변경을 처리한다. -->
+<div class="modal fade" id="settingsModal" tabindex="-1" aria-labelledby="settingsModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="settingsModalLabel"><i class="mdi mdi-cog-outline me-1"></i> 개인 설정</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="닫기"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label" for="settingTheme">테마</label>
+                    <select class="form-select" id="settingTheme">
+                        <option value="auto">자동 (시스템 설정)</option>
+                        <option value="light">라이트</option>
+                        <option value="dark">다크</option>
+                    </select>
+                </div>
+                <div class="mb-2">
+                    <label class="form-label" for="settingLayoutMode">레이아웃 모드</label>
+                    <select class="form-select" id="settingLayoutMode">
+                        <option value="site">사이트 기본값</option>
+                        <option value="default">기본 (사이드바 없음)</option>
+                        <option value="left-toc">좌측 목차</option>
+                        <option value="right-toc">우측 목차</option>
+                        <option value="docs">문서 (좌측 그룹 트리 + 우측 목차)</option>
+                        <option value="wide">넓게 (사이드바 숨김)</option>
+                    </select>
+                </div>
+                <p class="text-muted small mb-0"><i class="mdi mdi-information-outline me-1"></i>설정은 이 브라우저에만 저장됩니다. 레이아웃 변경 시 페이지가 새로고침됩니다.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">닫기</button>
+            </div>
+        </div>
+    </div>
+</div>

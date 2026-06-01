@@ -5,6 +5,12 @@ import { normalizeSlug, isR2OnlyNamespace, isMapNamespace, isGraphNamespace } fr
 import { buildMapDocument, buildGroupTree, MAP_CACHE_MAX_AGE_SECONDS } from '../utils/mapDocument';
 import { buildGraphData, GRAPH_CACHE_MAX_AGE_SECONDS } from '../utils/graphDocument';
 import { safeJSON } from '../utils/json';
+import {
+    invalidatePageCache,
+    invalidateBacklinkCaches,
+    refreshRecentChangesCache,
+    invalidateRevisionContentCache,
+} from '../utils/cacheInvalidation';
 import { ROLE_CASE_SQL, enrichRoles, RBAC } from '../utils/role';
 import { fetchMediaTags } from '../utils/mediaTags';
 import { createNotifications } from '../utils/notification';
@@ -71,100 +77,6 @@ export async function findConflictingPage(
         .bind(candidate, excludePageId)
         .first<{ slug: string; matched: 'slug' | 'title'; deleted_at: number | null }>();
     return row ? { slug: row.slug, matchedColumn: row.matched, isDeleted: !!row.deleted_at } : null;
-}
-
-/**
- * 최근 변경 캐시를 즉시 새 데이터로 갱신
- * (delete 후 재요청 대기 대신, 직접 put하여 즉시 반영)
- */
-export async function refreshRecentChangesCache(c: any) {
-    const db = c.env.DB;
-    const origin = new URL(c.req.url).origin;
-    const cacheUrl = `${origin}/api/w/recent-changes`;
-    const cache = caches.default;
-
-    // 캐시는 비공개 페이지 열람 권한이 없는 익명/일반 응답에만 저장된다.
-    const { results } = await db.prepare(`
-        SELECT p.slug, p.updated_at, u.name as author_name
-        FROM pages p
-        LEFT JOIN revisions r ON p.last_revision_id = r.id
-        LEFT JOIN users u ON r.author_id = u.id
-        WHERE p.deleted_at IS NULL AND p.is_private = 0
-        ORDER BY p.updated_at DESC LIMIT 10
-    `).all();
-
-    const body = JSON.stringify(safeJSON({ changes: results }));
-    const response = new Response(body, {
-        status: 200,
-        headers: {
-            'Content-Type': 'application/json; charset=UTF-8',
-            'Cache-Control': 'public, max-age=60',
-        },
-    });
-    await cache.put(cacheUrl, response);
-}
-
-/**
- * 문서의 캐시를 무효화하는 유틸리티 함수
- */
-export function invalidatePageCache(c: any, slug: string) {
-    const origin = new URL(c.req.url).origin;
-    const cache = caches.default;
-    // encodeURIComponent는 ':'를 %3A로 인코딩하지만 브라우저는 URL 경로의 ':'를 인코딩하지 않는 경우도 있다.
-    // 두 변형(%3A 인코딩 / ':' 그대로)을 모두 삭제해 어느 쪽으로 캐시됐더라도 확실히 무효화한다.
-    const encodedPath = encodeURIComponent(slug);
-    const paths = slug.includes(':')
-        ? [encodedPath, encodedPath.replace(/%3A/g, ':')]
-        : [encodedPath];
-
-    return Promise.allSettled(
-        paths.flatMap(path => [
-            cache.delete(`${origin}/api/w/${path}`),
-            cache.delete(`${origin}/api/w/${path}?redirect=no`),
-            cache.delete(`${origin}/w/${path}`)
-        ])
-    );
-}
-
-/**
- * 콜론이 포함된 문서(틀, 익스텐션 등)가 변경될 때
- * 해당 문서를 참조하는 모든 문서의 캐시를 무효화
- */
-export async function invalidateBacklinkCaches(c: any, slug: string, db: D1Database): Promise<void> {
-    if (!slug.includes(':')) return;
-
-    const targetSlugs: string[] = [slug];
-    const templatePrefixes = ['틀:', 'template:', '템플릿:'];
-    const matchedPrefix = templatePrefixes.find(p => slug.startsWith(p));
-    if (matchedPrefix) {
-        // extractLinks()는 {{Foo}}를 항상 '틀:Foo'로 저장하므로,
-        // template:Foo / 템플릿:Foo 문서 편집 시에도 '틀:Foo' 변형을 포함해야 함 (반대도 동일)
-        const baseName = slug.substring(matchedPrefix.length);
-        for (const prefix of templatePrefixes) {
-            const variant = prefix + baseName;
-            if (!targetSlugs.includes(variant)) targetSlugs.push(variant);
-        }
-        // 접두사 없는 이름({{Foo}} 방식으로 저장된 경우)도 포함
-        if (!targetSlugs.includes(baseName)) targetSlugs.push(baseName);
-    }
-
-    const placeholders = targetSlugs.map(() => '?').join(', ');
-    const { results } = await db
-        .prepare(`
-            SELECT DISTINCT p.slug
-            FROM page_links pl
-            JOIN pages p ON pl.source_page_id = p.id
-            WHERE p.deleted_at IS NULL
-              AND pl.blog = 0
-              AND pl.source_type = 'page'
-              AND pl.link_type IN ('wikilink', 'template', 'extension')
-              AND pl.target_slug IN (${placeholders})
-        `)
-        .bind(...targetSlugs)
-        .all<{ slug: string }>();
-
-    if (results.length === 0) return;
-    await Promise.allSettled(results.map((row: { slug: string }) => invalidatePageCache(c, row.slug)));
 }
 
 /**
@@ -3541,9 +3453,7 @@ wiki.delete('/w/:slug/revisions/:id', requireAuth, async (c) => {
             console.error('R2 hard delete failed:', revision.r2_key, e);
             return c.json({ error: 'R2 본문 삭제에 실패했습니다. 잠시 후 다시 시도하세요.' }, 502);
         }
-        const origin = new URL(c.req.url).origin;
-        const cacheKey = `${origin}/__r2_revision__/${revision.r2_key}`;
-        await (caches as any).default.delete(cacheKey).catch(() => {});
+        await invalidateRevisionContentCache(c, revision.r2_key).catch(() => {});
     }
 
     try {
