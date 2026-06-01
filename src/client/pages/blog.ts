@@ -38,8 +38,11 @@ function showView(id) {
 
 // ── 블로그 목록 로드 ──
 async function loadBlogList(offset) {
-  showView('blogLoading');
   blogCurrentOffset = offset || 0;
+  // 목록 로드는 전용 로딩 뷰 대신 카드 스켈레톤을 목록 자리에 표시해 레이아웃 점프를 줄인다.
+  document.getElementById('blogPostsList').innerHTML = window.uiSkeletonCards(4);
+  document.getElementById('blogPagination').innerHTML = '';
+  showView('blogList');
   try {
     const res = await fetch(`/api/blog?limit=${BLOG_LIST_LIMIT}&offset=${blogCurrentOffset}`);
     if (!res.ok) throw new Error('목록 로드 실패');
@@ -48,7 +51,7 @@ async function loadBlogList(offset) {
 
     const listEl = document.getElementById('blogPostsList');
     if (!data.posts || data.posts.length === 0) {
-      listEl.innerHTML = '<p class="text-muted">포스트가 없습니다.</p>';
+      listEl.innerHTML = window.uiEmptyState({ icon: 'bi bi-journal-text', title: '포스트가 없습니다', text: '아직 발행된 블로그 글이 없습니다.' });
     } else {
       listEl.innerHTML = data.posts.map(post => `
         <div class="border-bottom pb-3 mb-3 d-flex gap-3 align-items-start ${post.deleted_at ? 'opacity-50' : ''}">

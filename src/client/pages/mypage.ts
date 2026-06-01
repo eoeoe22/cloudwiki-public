@@ -178,7 +178,7 @@
                 const listEl = document.getElementById('contributionsList');
 
                 if (contributions.length === 0) {
-                    listEl.innerHTML = '<div class="text-center text-muted py-3">아직 편집한 문서가 없습니다.</div>';
+                    listEl.innerHTML = window.uiEmptyState({ compact: true, icon: 'bi bi-pencil-square', title: '아직 편집한 문서가 없습니다' });
                     return;
                 }
 
@@ -200,7 +200,7 @@
 
             } catch (e) {
                 document.getElementById('contributionsList').innerHTML =
-                    '<div class="text-center text-muted py-3">불러오기 실패</div>';
+                    window.uiEmptyState({ compact: true, icon: 'bi bi-exclamation-triangle', title: '불러오기 실패' });
             }
         }
 
@@ -221,8 +221,8 @@
             } catch (e) {
                 pagesSection.style.display = '';
                 catsSection.style.display = '';
-                pagesList.innerHTML = '<div class="text-center text-muted py-3">불러오기 실패</div>';
-                catsList.innerHTML = '<div class="text-center text-muted py-3">불러오기 실패</div>';
+                pagesList.innerHTML = window.uiEmptyState({ compact: true, icon: 'bi bi-exclamation-triangle', title: '불러오기 실패' });
+                catsList.innerHTML = window.uiEmptyState({ compact: true, icon: 'bi bi-exclamation-triangle', title: '불러오기 실패' });
                 document.getElementById('watchedPagesCount').textContent = '0';
                 document.getElementById('watchedCategoriesCount').textContent = '0';
             }
@@ -233,7 +233,7 @@
             document.getElementById('watchedPagesCount').textContent = String(items.length);
 
             if (items.length === 0) {
-                listEl.innerHTML = '<div class="text-center text-muted py-3">주시 중인 문서가 없습니다.</div>';
+                listEl.innerHTML = window.uiEmptyState({ compact: true, icon: 'bi bi-eye', title: '주시 중인 문서가 없습니다' });
                 return;
             }
 
@@ -286,7 +286,7 @@
             document.getElementById('watchedCategoriesCount').textContent = String(items.length);
 
             if (items.length === 0) {
-                listEl.innerHTML = '<div class="text-center text-muted py-3">주시 중인 카테고리가 없습니다.</div>';
+                listEl.innerHTML = window.uiEmptyState({ compact: true, icon: 'bi bi-folder', title: '주시 중인 카테고리가 없습니다' });
                 return;
             }
 
@@ -417,7 +417,7 @@
                 }
             } catch (e) {
                 section.style.display = '';
-                listEl.innerHTML = '<div class="text-center text-muted py-3">불러오기 실패</div>';
+                listEl.innerHTML = window.uiEmptyState({ compact: true, icon: 'bi bi-exclamation-triangle', title: '불러오기 실패' });
             }
         }
 
@@ -740,7 +740,7 @@
                 const loadMoreBtn = document.getElementById('loadMoreMessagesBtn');
 
                 if (!isLoadMore && messages.length === 0) {
-                    listEl.innerHTML = '<div class="text-center text-muted py-3">받은 쪽지가 없습니다.</div>';
+                    listEl.innerHTML = window.uiEmptyState({ compact: true, icon: 'mdi mdi-inbox-outline', title: '받은 쪽지가 없습니다' });
                     loadMoreBtn.classList.add('d-none');
                     return;
                 }
@@ -781,7 +781,7 @@
 
             } catch (e) {
                 if (!isLoadMore) {
-                    document.getElementById('messagesList').innerHTML = '<div class="text-center text-danger py-3">쪽지를 불러오지 못했습니다.</div>';
+                    document.getElementById('messagesList').innerHTML = window.uiEmptyState({ compact: true, icon: 'bi bi-exclamation-triangle', title: '쪽지를 불러오지 못했습니다' });
                 }
             }
         }
@@ -789,7 +789,7 @@
         async function loadMoreMessages() {
             const btn = document.getElementById('loadMoreMessagesBtn');
             btn.disabled = true;
-            btn.innerHTML = '<div class="spinner-border spinner-border-sm"></div> 불러오는 중...';
+            btn.innerHTML = window.uiInlineLoading();
             await loadMessages(true);
             btn.disabled = false;
             btn.innerHTML = '더보기 <i class="mdi mdi-chevron-down"></i>';
@@ -871,7 +871,7 @@
                 section.style.display = '';
 
                 if (sessions.length === 0) {
-                    listEl.innerHTML = '<div class="text-center text-muted py-3">활성 세션이 없습니다.</div>';
+                    listEl.innerHTML = window.uiEmptyState({ compact: true, icon: 'bi bi-shield-lock', title: '활성 세션이 없습니다' });
                     return;
                 }
 
@@ -914,7 +914,7 @@
                 }).join('');
             } catch (e) {
                 section.style.display = '';
-                listEl.innerHTML = '<div class="text-center text-danger py-3">세션 목록을 불러오지 못했습니다.</div>';
+                listEl.innerHTML = window.uiEmptyState({ compact: true, icon: 'bi bi-exclamation-triangle', title: '세션 목록을 불러오지 못했습니다' });
             }
         }
 
@@ -1001,7 +1001,7 @@
                 section.style.display = '';
 
                 if (clients.length === 0) {
-                    listEl.innerHTML = '<div class="text-center text-muted py-3">연결된 MCP 클라이언트가 없습니다.</div>';
+                    listEl.innerHTML = window.uiEmptyState({ compact: true, icon: 'bi bi-plug', title: '연결된 MCP 클라이언트가 없습니다' });
                     document.getElementById('revokeAllMcpClientsBtn').disabled = true;
                     return;
                 }
@@ -1059,7 +1059,7 @@
                 });
             } catch (e) {
                 section.style.display = '';
-                listEl.innerHTML = '<div class="text-center text-danger py-3">MCP 클라이언트 목록을 불러오지 못했습니다.</div>';
+                listEl.innerHTML = window.uiEmptyState({ compact: true, icon: 'bi bi-exclamation-triangle', title: 'MCP 클라이언트 목록을 불러오지 못했습니다' });
             }
         }
 
@@ -1167,7 +1167,7 @@
                 const loadMoreBtn = document.getElementById('loadMoreSentMessagesBtn');
 
                 if (!isLoadMore && messages.length === 0) {
-                    listEl.innerHTML = '<div class="text-center text-muted py-3">보낸 쪽지가 없습니다.</div>';
+                    listEl.innerHTML = window.uiEmptyState({ compact: true, icon: 'bi bi-send', title: '보낸 쪽지가 없습니다' });
                     loadMoreBtn.classList.add('d-none');
                     return;
                 }
@@ -1194,7 +1194,7 @@
             } catch (e) {
                 if (!isLoadMore) {
                     document.getElementById('sentMessagesSection').style.display = '';
-                    document.getElementById('sentMessagesList').innerHTML = '<div class="text-center text-danger py-3">불러오기 실패</div>';
+                    document.getElementById('sentMessagesList').innerHTML = window.uiEmptyState({ compact: true, icon: 'bi bi-exclamation-triangle', title: '불러오기 실패' });
                 }
             }
         }
@@ -1202,7 +1202,7 @@
         async function loadMoreSentMessages() {
             const btn = document.getElementById('loadMoreSentMessagesBtn');
             btn.disabled = true;
-            btn.innerHTML = '<div class="spinner-border spinner-border-sm"></div> 불러오는 중...';
+            btn.innerHTML = window.uiInlineLoading();
             await loadSentMessages(true);
             btn.disabled = false;
             btn.innerHTML = '더보기 <i class="mdi mdi-chevron-down"></i>';
@@ -1263,7 +1263,7 @@
                 const loadMoreBtn = document.getElementById('loadMoreDiscussionsBtn');
 
                 if (!isLoadMore && discussions.length === 0) {
-                    listEl.innerHTML = '<div class="text-center text-muted py-3">작성한 토론이 없습니다.</div>';
+                    listEl.innerHTML = window.uiEmptyState({ compact: true, icon: 'bi bi-chat-left-text', title: '작성한 토론이 없습니다' });
                     loadMoreBtn.classList.add('d-none');
                     return;
                 }
@@ -1302,7 +1302,7 @@
             } catch (e) {
                 if (!isLoadMore) {
                     document.getElementById('myDiscussionsSection').style.display = '';
-                    document.getElementById('myDiscussionsList').innerHTML = '<div class="text-center text-danger py-3">불러오기 실패</div>';
+                    document.getElementById('myDiscussionsList').innerHTML = window.uiEmptyState({ compact: true, icon: 'bi bi-exclamation-triangle', title: '불러오기 실패' });
                 }
             }
         }
@@ -1310,7 +1310,7 @@
         async function loadMoreMyDiscussions() {
             const btn = document.getElementById('loadMoreDiscussionsBtn');
             btn.disabled = true;
-            btn.innerHTML = '<div class="spinner-border spinner-border-sm"></div> 불러오는 중...';
+            btn.innerHTML = window.uiInlineLoading();
             await loadMyDiscussions(true);
             btn.disabled = false;
             btn.innerHTML = '더보기 <i class="mdi mdi-chevron-down"></i>';
@@ -1331,7 +1331,7 @@
                 section.style.display = '';
 
                 if (tickets.length === 0) {
-                    listEl.innerHTML = '<div class="text-center text-muted py-3">문의한 티켓이 없습니다.</div>';
+                    listEl.innerHTML = window.uiEmptyState({ compact: true, icon: 'bi bi-ticket-perforated', title: '문의한 티켓이 없습니다' });
                     return;
                 }
 
@@ -1353,7 +1353,7 @@
                 }).join('');
             } catch (e) {
                 section.style.display = '';
-                listEl.innerHTML = '<div class="text-center text-danger py-3">불러오기 실패</div>';
+                listEl.innerHTML = window.uiEmptyState({ compact: true, icon: 'bi bi-exclamation-triangle', title: '불러오기 실패' });
             }
         }
 

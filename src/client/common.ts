@@ -19,6 +19,13 @@
  */
 
 import * as PushClient from './push';
+import {
+    emptyState,
+    inlineLoading,
+    skeletonLines,
+    skeletonList,
+    skeletonCards,
+} from './utils/ui-state';
 
 // ── 테마 초기화 (body 내 fallback, head의 인라인 스크립트가 먼저 실행됨) ──
 // data-theme: 위키 자체 다크모드 변수 (--wiki-card-bg 등)
@@ -739,11 +746,11 @@ async function loadNotifications(append = false) {
 
     if (!append) {
         _notifOffset = 0;
-        body.innerHTML = '<div class="text-center text-muted py-4"><div class="spinner-border spinner-border-sm"></div></div>';
+        body.innerHTML = inlineLoading({ block: true, text: '' });
     } else {
         const loadMoreBtn = document.getElementById('notifLoadMoreBtn');
         if (loadMoreBtn) {
-            loadMoreBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 로딩 중...';
+            loadMoreBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 불러오는 중...';
             loadMoreBtn.disabled = true;
         }
     }
@@ -756,7 +763,7 @@ async function loadNotifications(append = false) {
         const has_more = data.has_more || false;
 
         if (notifs.length === 0 && !append) {
-            body.innerHTML = '<div class="notification-empty"><i class="mdi mdi-inbox-outline fs-1 d-block mb-2"></i>알림이 없습니다.</div>';
+            body.innerHTML = emptyState({ compact: true, icon: 'mdi mdi-inbox-outline', title: '알림이 없습니다' });
             return;
         }
 
@@ -1290,7 +1297,7 @@ async function loadRecentChanges() {
             `;
         }).join('');
 
-        const emptyMsg = '<div class="text-muted small p-2">변경 내역이 없습니다.</div>';
+        const emptyMsg = emptyState({ compact: true, icon: 'bi bi-inbox', title: '변경 내역이 없습니다' });
         const content = data.changes.length > 0 ? html : emptyMsg;
 
         document.querySelectorAll('.recent-changes-container').forEach(el => {
@@ -1346,7 +1353,7 @@ async function loadTrending() {
             `;
         }).join('');
 
-        const emptyMsg = '<div class="text-muted small p-2">트렌딩 데이터가 없습니다.</div>';
+        const emptyMsg = emptyState({ compact: true, icon: 'bi bi-graph-up', title: '트렌딩 데이터가 없습니다' });
         const content = data.trending && data.trending.length > 0 ? html : emptyMsg;
 
         document.querySelectorAll('.trending-container').forEach(el => {
@@ -1455,6 +1462,11 @@ window.appConfig = appConfig;
 window.currentUser = currentUser;
 window.isSafeUrl = isSafeUrl;
 window.escapeHtml = escapeHtml;
+window.uiEmptyState = emptyState;
+window.uiInlineLoading = inlineLoading;
+window.uiSkeletonLines = skeletonLines;
+window.uiSkeletonList = skeletonList;
+window.uiSkeletonCards = skeletonCards;
 window.mountMediaTagInput = mountMediaTagInput;
 window.doSearch = doSearch;
 window.applyThemeClass = applyThemeClass;

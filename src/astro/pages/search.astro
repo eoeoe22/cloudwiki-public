@@ -45,9 +45,13 @@ import Footer from '../components/Footer.astro';
                 </div>
 
                 <!-- 결과 없음 -->
-                <div id="noResults" class="d-none text-center py-5">
-                    <h4 class="text-muted">검색 결과가 없습니다</h4>
-                    <p class="text-muted">다른 키워드로 검색해 보세요.</p>
+                <!-- 내용은 search.ts 의 setNoResultsState() 가 표준 빈 상태(.empty-state)로 채운다 -->
+                <div id="noResults" class="d-none">
+                    <div class="empty-state">
+                        <i class="empty-state-icon bi bi-search" aria-hidden="true"></i>
+                        <p class="empty-state-title">검색 결과가 없습니다</p>
+                        <p class="empty-state-text">다른 키워드로 검색해 보세요.</p>
+                    </div>
                 </div>
 
                 <!-- 결과 목록 -->

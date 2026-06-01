@@ -210,7 +210,7 @@
         else
           tbody.innerHTML =
             html ||
-            '<tr><td colspan="6" class="text-center py-4">결과 없음</td></tr>';
+            `<tr><td colspan="6">${window.uiEmptyState({ compact: true, icon: 'bi bi-inbox', title: '결과가 없습니다' })}</td></tr>`;
       }
       async function changeRole(id, role) {
         const res = await fetch(`/api/admin/users/${id}/role`, {
@@ -337,7 +337,7 @@
         if (!tbody) return;
         if (!list.length) {
           tbody.innerHTML =
-            '<tr><td colspan="5" class="text-center text-muted">발행된 공지가 없습니다.</td></tr>';
+            `<tr><td colspan="5">${window.uiEmptyState({ compact: true, icon: 'bi bi-megaphone', title: '발행된 공지가 없습니다' })}</td></tr>`;
           return;
         }
         tbody.innerHTML = list
@@ -693,7 +693,7 @@
         else
           tbody.innerHTML =
             html ||
-            '<tr><td colspan="5" class="text-center py-3">신청 없음</td></tr>';
+            `<tr><td colspan="5">${window.uiEmptyState({ compact: true, icon: 'bi bi-inbox', title: '신청이 없습니다' })}</td></tr>`;
       }
       async function approveSignup(id) {
         try {
@@ -775,7 +775,7 @@
           const tbody = document.getElementById("deletedPagesBody");
           tbody.innerHTML =
             html ||
-            '<tr><td colspan="3" class="text-center py-3">없음</td></tr>';
+            `<tr><td colspan="3">${window.uiEmptyState({ compact: true, icon: 'bi bi-trash', title: '삭제된 문서가 없습니다' })}</td></tr>`;
           document.getElementById("deletedPagesTotal").textContent =
             deletedPagesTotal > 0 ? `총 ${deletedPagesTotal}건` : "";
           renderDeletedPagesPagination();
@@ -943,7 +943,7 @@
         const slice = sorted.slice((catAclPage - 1) * CAT_ACL_PAGE_SIZE, catAclPage * CAT_ACL_PAGE_SIZE);
 
         if (slice.length === 0) {
-          container.innerHTML = '<div class="p-3 text-center text-muted small">등록된 카테고리 ACL 이 없습니다.</div>';
+          container.innerHTML = window.uiEmptyState({ compact: true, icon: 'bi bi-shield-lock', title: '등록된 카테고리 ACL이 없습니다' });
         } else {
           container.innerHTML = slice.map(it => {
             const flags = (it.edit_acl && it.edit_acl.flags) || [];
@@ -1012,7 +1012,7 @@
             .join("");
           document.getElementById("adminLogBody").innerHTML =
             html ||
-            `<tr><td colspan="4" class="text-center text-muted py-3">로그가 없습니다.</td></tr>`;
+            `<tr><td colspan="4">${window.uiEmptyState({ compact: true, icon: 'bi bi-inbox', title: '로그가 없습니다' })}</td></tr>`;
           document.getElementById("adminLogTotal").textContent =
             adminLogTotal > 0 ? `총 ${adminLogTotal}건` : "";
           renderAdminLogPagination();
@@ -1125,7 +1125,7 @@
         const errBody = document.getElementById("errorsContainerBody");
         if (!err.errors || err.errors.length === 0) {
           errBody.innerHTML =
-            '<tr><td colspan="4" class="text-center text-muted">에러 없음</td></tr>';
+            `<tr><td colspan="4">${window.uiEmptyState({ compact: true, icon: 'bi bi-check-circle', title: '에러가 없습니다' })}</td></tr>`;
         } else {
           errBody.innerHTML = err.errors
             .map(
@@ -1145,7 +1145,7 @@
         const perfContainer = document.getElementById("performanceContainer");
         if (!perf.summary) {
           perfContainer.innerHTML =
-            '<span class="text-muted">데이터 없음</span>';
+            window.uiEmptyState({ compact: true, icon: 'bi bi-bar-chart', title: '데이터가 없습니다' });
         } else {
           perfContainer.innerHTML = `                    <div class="admin-metric-card">
                         <div class="text-muted mb-1">평균 (Avg)</div>
@@ -1165,7 +1165,7 @@
       function renderAnalyticsList(id, items) {
         const el = document.getElementById(id);
         if (!items || items.length === 0) {
-          el.innerHTML = '<div class="text-muted py-2">데이터 없음</div>';
+          el.innerHTML = window.uiEmptyState({ compact: true, icon: 'bi bi-bar-chart', title: '데이터가 없습니다' });
           return;
         }
         const max = Math.max(...items.map((i) => i.value), 1);

@@ -98,13 +98,15 @@ function cacheSet(q, mode, page, data) {
     }
 }
 
-function setNoResultsState(title, description) {
+function setNoResultsState(title, description, icon = 'bi bi-search') {
     const noResultsEl = document.getElementById('noResults');
     if (!noResultsEl) return;
-    const titleEl = noResultsEl.querySelector('h4');
-    const descriptionEl = noResultsEl.querySelector('p');
-    if (titleEl) titleEl.textContent = title;
-    if (descriptionEl) descriptionEl.textContent = description;
+    // title/description 은 신뢰 리터럴 또는 서버 오류 메시지이므로 이스케이프 후 삽입한다.
+    noResultsEl.innerHTML = window.uiEmptyState({
+        icon,
+        title: window.escapeHtml(title),
+        text: description ? window.escapeHtml(description) : undefined,
+    });
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -208,7 +210,7 @@ async function performSearch(q, mode, page) {
         listEl.innerHTML = '';
         setNoResultsState('검색 요청에 실패했습니다', err instanceof Error && err.message
             ? err.message
-            : '잠시 후 다시 시도해 주세요.');
+            : '잠시 후 다시 시도해 주세요.', 'bi bi-exclamation-triangle');
         noResultsEl.classList.remove('d-none');
         console.error('검색 실패', err);
     }

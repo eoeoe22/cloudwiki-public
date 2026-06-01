@@ -79,8 +79,7 @@ async function loadMedia(page = 1) {
       params.append("tags", mediaTagFilter.join(","));
     }
 
-    document.getElementById("mediaList").innerHTML =
-      '<div class="text-center text-muted py-3">불러오는 중...</div>';
+    document.getElementById("mediaList").innerHTML = window.uiSkeletonCards(6);
 
     const res = await fetch(`/api/admin/media?${params.toString()}`);
     if (!res.ok) throw new Error("이미지 목록 로딩 실패");
@@ -97,7 +96,7 @@ async function loadMedia(page = 1) {
     renderMedia();
   } catch (err) {
     document.getElementById("mediaList").innerHTML =
-      '<div class="text-center text-danger py-3">이미지 목록을 불러올 수 없습니다.</div>';
+      window.uiEmptyState({ icon: 'bi bi-exclamation-triangle', title: '이미지 목록을 불러올 수 없습니다' });
     document.getElementById("mediaPagination").innerHTML = "";
     document.getElementById("mediaTotalInfo").textContent = "";
   }
@@ -180,8 +179,7 @@ function renderMedia() {
   const totalInfo = document.getElementById("mediaTotalInfo");
 
   if (!mediaItems || mediaItems.length === 0) {
-    listEl.innerHTML =
-      '<div class="text-center text-muted py-3">이미지가 없습니다.</div>';
+    listEl.innerHTML = window.uiEmptyState({ icon: 'bi bi-images', title: '이미지가 없습니다' });
     document.getElementById("mediaPagination").innerHTML = "";
     totalInfo.textContent = "";
     return;
@@ -294,8 +292,7 @@ async function runGarbageCollector() {
   gcBody.style.display = "block";
   gcActions.style.display = "none";
   gcList.innerHTML = "";
-  gcStatus.innerHTML =
-    '<div class="spinner-border spinner-border-sm text-warning" role="status"></div> 미사용 이미지를 검색하는 중... (시간이 걸릴 수 있습니다)';
+  gcStatus.innerHTML = window.uiInlineLoading({ text: '미사용 이미지를 검색하는 중... (시간이 걸릴 수 있습니다)' });
   gcRunBtn.disabled = true;
 
   try {
@@ -395,8 +392,7 @@ async function gcDeleteSelected() {
 
   const gcDeleteBtn = document.getElementById("gcDeleteBtn");
   gcDeleteBtn.disabled = true;
-  gcDeleteBtn.innerHTML =
-    '<span class="spinner-border spinner-border-sm"></span> 삭제 중...';
+  gcDeleteBtn.innerHTML = window.uiInlineLoading({ text: '삭제 중...' });
 
   try {
     const res = await fetch("/api/admin/media/gc", {

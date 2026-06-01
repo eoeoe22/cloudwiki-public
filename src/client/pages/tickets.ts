@@ -184,7 +184,7 @@
     function renderTicketList() {
       const listEl = document.getElementById('ticketsList');
       if (!allTickets || allTickets.length === 0) {
-        listEl.innerHTML = '<div class="text-muted text-center py-5">티켓이 없습니다.</div>';
+        listEl.innerHTML = window.uiEmptyState({ icon: 'bi bi-ticket-perforated', title: '티켓이 없습니다' });
         return;
       }
 

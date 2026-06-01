@@ -184,7 +184,7 @@ async function showRevisions(slug, page = 1) {
       `;
     }).join('');
 
-    listEl.innerHTML = itemsHtml || '<div class="text-center text-muted py-5"><i class="bi bi-inbox fs-1 d-block mb-2"></i>편집 이력이 없습니다.</div>';
+    listEl.innerHTML = itemsHtml || window.uiEmptyState({ icon: 'bi bi-clock-history', title: '편집 이력이 없습니다' });
 
     renderRevisionsPagination();
 

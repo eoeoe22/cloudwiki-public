@@ -212,7 +212,7 @@ async function loadContributions(page = 1) {
     const paginationEl = document.getElementById('contributionsPagination');
     const isFirstLoad = contributionsTotal === 0 && page === 1;
     if (!isFirstLoad) {
-        listEl.innerHTML = '<div class="text-center text-muted py-3"><div class="spinner-border spinner-border-sm"></div> 불러오는 중...</div>';
+        listEl.innerHTML = window.uiSkeletonList(5);
     }
 
     const seq = ++contributionsRequestSeq;
@@ -244,7 +244,7 @@ async function loadContributions(page = 1) {
 
         if (total === 0) {
             contributionsPage = 1;
-            listEl.innerHTML = '<div class="text-center text-muted py-3">편집 내역이 없습니다.</div>';
+            listEl.innerHTML = window.uiEmptyState({ compact: true, icon: 'bi bi-inbox', title: '편집 내역이 없습니다' });
             paginationEl.innerHTML = '';
             return;
         }
@@ -262,7 +262,7 @@ async function loadContributions(page = 1) {
 
     } catch (e) {
         if (seq !== contributionsRequestSeq) return;
-        listEl.innerHTML = '<div class="text-center text-muted py-3">불러오기 실패</div>';
+        listEl.innerHTML = window.uiEmptyState({ compact: true, icon: 'bi bi-exclamation-triangle', title: '불러오기 실패', text: '잠시 후 다시 시도해 주세요.' });
         paginationEl.innerHTML = '';
     }
 }

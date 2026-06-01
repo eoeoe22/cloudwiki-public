@@ -72,7 +72,7 @@ async function loadRecentRevisions(page = 1) {
       document.getElementById('loading').classList.remove('d-none');
       document.getElementById('mainContent').classList.add('d-none');
     } else {
-      listEl.innerHTML = '<div class="text-center py-4"><div class="spinner-border spinner-border-sm text-primary" role="status"></div> 불러오는 중...</div>';
+      listEl.innerHTML = window.uiSkeletonList(8);
       document.getElementById('recentRevisionsPagination').classList.add('d-none');
     }
 
@@ -119,7 +119,7 @@ async function loadRecentRevisions(page = 1) {
 
     // 빈 결과 처리
     if (data.revisions.length === 0) {
-      listEl.innerHTML = '<div class="text-center text-muted py-5"><i class="bi bi-inbox fs-1 d-block mb-2"></i>최근 수정 내역이 없습니다.</div>';
+      listEl.innerHTML = window.uiEmptyState({ icon: 'bi bi-inbox', title: '최근 수정 내역이 없습니다', text: '문서가 편집되면 여기에 표시됩니다.' });
     }
 
     renderRecentRevisionsPagination();
@@ -197,7 +197,7 @@ async function loadAllPages(page = 1) {
     const listEl = document.getElementById('allPagesList');
     const offset = (page - 1) * ALL_PAGES_SIZE;
 
-    listEl.innerHTML = '<div class="text-center py-4"><div class="spinner-border spinner-border-sm text-primary" role="status"></div> 불러오는 중...</div>';
+    listEl.innerHTML = window.uiSkeletonList(8);
     document.getElementById('allPagesPagination').classList.add('d-none');
 
     const res = await fetch(`/api/w/all-pages?offset=${offset}&limit=${ALL_PAGES_SIZE}&sort=${currentSort}`, { signal });
@@ -215,7 +215,7 @@ async function loadAllPages(page = 1) {
         loadAllPages(totalAllPages);
         return;
       }
-      listEl.innerHTML = '<div class="text-center text-muted py-5"><i class="bi bi-inbox fs-1 d-block mb-2"></i>문서가 없습니다.</div>';
+      listEl.innerHTML = window.uiEmptyState({ icon: 'bi bi-inbox', title: '문서가 없습니다', text: '첫 문서를 작성해 보세요.' });
       return;
     }
 

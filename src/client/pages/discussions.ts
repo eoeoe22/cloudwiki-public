@@ -138,7 +138,7 @@
 
         const listEl = document.getElementById('discussionsList');
         if (!data.discussions || data.discussions.length === 0) {
-          listEl.innerHTML = '<div class="text-muted text-center py-5">토론이 없습니다. 새 토론을 시작해보세요!</div>';
+          listEl.innerHTML = window.uiEmptyState({ icon: 'bi bi-chat-left-text', title: '토론이 없습니다', text: '새 토론을 시작해보세요!' });
         } else {
           listEl.innerHTML = data.discussions.map(d => {
             const statusBadge = d.status === 'open'

@@ -2583,6 +2583,136 @@ html[data-theme="dark"] .push-status-on {
   }
 }
 
+/* ── 셸 전역 로딩(.wiki-loading) ── */
+/* search/recent-changes/revisions/discussions/tickets/index 등 9개 Astro 셸이
+   사용하지만 그동안 CSS 정의가 없어 스피너가 좌측 정렬로 표시되던 것을 정상화. */
+.wiki-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  padding: 3rem 1.5rem;
+  color: var(--wiki-text-muted);
+}
+
+/* ── 인라인 로딩 (버튼·소형 패널·부분 갱신) ── */
+.loading-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--wiki-text-muted);
+}
+
+.loading-inline.loading-block {
+  display: flex;
+  justify-content: center;
+  padding: 1.25rem 0;
+}
+
+/* ── 빈 상태 (아이콘 + 제목 + 안내 + 선택 CTA) ── */
+.empty-state {
+  padding: 3rem 1.5rem;
+  text-align: center;
+  color: var(--wiki-text-muted);
+}
+
+.empty-state.empty-state-compact {
+  padding: 1.5rem 1rem;
+}
+
+.empty-state-icon {
+  display: block;
+  font-size: 2.5rem;
+  line-height: 1;
+  color: var(--wiki-text-muted);
+  opacity: 0.55;
+  margin-bottom: 0.75rem;
+}
+
+.empty-state-compact .empty-state-icon {
+  font-size: 1.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.empty-state-title {
+  font-weight: 600;
+  color: var(--wiki-text);
+  margin-bottom: 0.35rem;
+}
+
+.empty-state-compact .empty-state-title {
+  font-size: 0.9rem;
+}
+
+.empty-state-text {
+  font-size: 0.9rem;
+  color: var(--wiki-text-muted);
+  margin-bottom: 0;
+}
+
+.empty-state-cta {
+  margin-top: 1rem;
+}
+
+/* ── 스켈레톤 (shimmer) ── */
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: var(--wiki-border);
+  border-radius: 6px;
+}
+
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, var(--wiki-card-bg), transparent);
+  opacity: 0.5;
+  animation: skeletonShimmer 1.4s ease-in-out infinite;
+}
+
+.skeleton-line {
+  height: 0.9rem;
+  margin-bottom: 0.6rem;
+}
+
+.skeleton-line.w-40 { width: 40%; }
+.skeleton-line.w-60 { width: 60%; }
+.skeleton-line.w-80 { width: 80%; }
+
+.skeleton-list-row {
+  padding: 0.85rem 0;
+  border-bottom: 1px solid var(--wiki-border);
+}
+
+.skeleton-list-row .skeleton-line:last-child {
+  margin-bottom: 0;
+}
+
+.skeleton-card {
+  height: 120px;
+  margin-bottom: 1rem;
+}
+
+@keyframes skeletonShimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+/* 모션 민감 사용자 존중: shimmer 애니메이션 정지(정적 회색 블록 유지) */
+@media (prefers-reduced-motion: reduce) {
+  .skeleton::after {
+    animation: none;
+  }
+
+  .spa-progress-bar-inner {
+    animation: none;
+  }
+}
+
 /* ── Scroll FAB Buttons ── */
 .scroll-fab-group {
   position: fixed;
