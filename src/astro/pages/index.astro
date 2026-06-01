@@ -195,6 +195,9 @@ import Footer from '../components/Footer.astro';
             <h5><i class="bi bi-link-45deg"></i> 이 문서를 참조하는 문서</h5>
             <div class="list-group" id="backlinksList"></div>
           </div>
+
+          <!-- 이전/다음 문서 (LAYOUT_MODE="docs" 에서만 노출, 그룹 트리 순서 기준) -->
+          <nav class="docs-page-nav d-none" id="docsPageNav" aria-label="이전/다음 문서"></nav>
         </div>
       </div>
 
@@ -239,7 +242,6 @@ import Footer from '../components/Footer.astro';
     <!-- 우측 문서내 목차 사이드바 (LAYOUT_MODE="docs" 또는 "right-toc" 에서 노출, 문서 조회 페이지 한정) -->
     <aside class="wiki-toc-sidebar wiki-toc-sidebar-right d-none" id="wikiTocSidebarRight" aria-label="문서 목차">
       <div class="wiki-toc-sidebar-inner">
-        <div class="wiki-toc-sidebar-title"><i class="bi bi-list-columns-reverse"></i> 목차</div>
         <nav class="wiki-toc-sidebar-nav" id="wikiTocSidebarRightNav"></nav>
       </div>
     </aside>

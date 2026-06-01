@@ -147,6 +147,15 @@
         const el = document.getElementById(id);
         if (el) el.classList.add('d-none');
       });
+      // docs 하단 이전/다음 푸터(#docsPageNav)는 .wiki-article 내부라 페이지 전환에도 남는다.
+      // 일반 docs 문서는 syncSidebarsForLayout() 에서 다시 칠하지만, 이미지/map: 문서 분기는
+      // syncSidebarsForLayout 을 호출하지 않으므로 여기서 초기화해 stale 한 prev/next 가
+      // 남지 않도록 한다.
+      const docsPageNav = document.getElementById('docsPageNav');
+      if (docsPageNav) {
+        docsPageNav.classList.add('d-none');
+        docsPageNav.innerHTML = '';
+      }
       // 진행 중인 그룹 nav 요청을 무효화한다. 모든 페이지 전환(article/home/404/map/image)이
       // hideAllPages 를 거치므로, 느린 /nav-tree 응답이 전환 후 도착해 숨긴 사이드바를 다시
       // 노출(paintGroupNav)하는 race 를 막는다.
@@ -264,7 +273,62 @@
       return `<li>${label}${childrenHtml}</li>`;
     }
 
+    // 그룹 트리를 사이드바 표시 순서(pre-order DFS, descendant 수→이름 정렬은 서버가 이미 적용)
+    // 그대로 평탄화한다. 실제 문서가 있는 노드(hasDoc)만 모아 prev/next 탐색에 쓰므로
+    // 경로상 중간 노드(문서 없음)는 자동으로 건너뛰어진다.
+    function flattenDocTree(root: any): { slug: string; name: string }[] {
+      const out: { slug: string; name: string }[] = [];
+      function walk(node: any) {
+        if (!node) return;
+        if (node.hasDoc) out.push({ slug: node.slug, name: node.name });
+        if (node.children) for (const c of node.children) walk(c);
+      }
+      walk(root);
+      return out;
+    }
+
+    // 본문 하단 이전/다음 문서 네비게이션 렌더 (docs 레이아웃 전용).
+    // 평탄화한 트리에서 현재 문서의 위치를 찾아 직전/직후 문서를 버튼으로 노출한다.
+    // 첫 문서면 이전 버튼을, 마지막 문서면 다음 버튼을 생략한다.
+    function paintDocNavFooter(root: any, currentSlug: string) {
+      const container = document.getElementById('docsPageNav');
+      if (!container) return;
+      const clear = () => { container.classList.add('d-none'); container.innerHTML = ''; };
+      if (!root || !currentSlug) { clear(); return; }
+      const flat = flattenDocTree(root);
+      const idx = flat.findIndex(n => n.slug === currentSlug);
+      if (idx === -1) { clear(); return; }
+      const prev = idx > 0 ? flat[idx - 1] : null;
+      const next = idx < flat.length - 1 ? flat[idx + 1] : null;
+      if (!prev && !next) { clear(); return; }
+
+      const linkHtml = (doc: { slug: string; name: string }, dir: 'prev' | 'next') => {
+        const isPrev = dir === 'prev';
+        const dirLabel = isPrev ? '이전 문서' : '다음 문서';
+        const icon = isPrev
+          ? '<i class="bi bi-chevron-left"></i>'
+          : '<i class="bi bi-chevron-right"></i>';
+        const inner = isPrev
+          ? `${icon}<span class="docs-page-nav-text"><span class="docs-page-nav-dir">${dirLabel}</span><span class="docs-page-nav-title">${window.escapeHtml(doc.name)}</span></span>`
+          : `<span class="docs-page-nav-text"><span class="docs-page-nav-dir">${dirLabel}</span><span class="docs-page-nav-title">${window.escapeHtml(doc.name)}</span></span>${icon}`;
+        return `<a href="/w/${encodeURIComponent(doc.slug)}" class="docs-page-nav-link docs-page-nav-${dir} wiki-spa-link" title="${window.escapeHtml(doc.slug)}">${inner}</a>`;
+      };
+
+      // 한쪽만 있을 때도 다음 버튼이 우측에 정렬되도록 빈 자리(placeholder)를 둔다.
+      const prevHtml = prev ? linkHtml(prev, 'prev') : '<span class="docs-page-nav-spacer"></span>';
+      const nextHtml = next ? linkHtml(next, 'next') : '<span class="docs-page-nav-spacer"></span>';
+      container.innerHTML = prevHtml + nextHtml;
+      container.querySelectorAll('.wiki-spa-link').forEach(link => {
+        link.addEventListener('click', function (this: HTMLAnchorElement, event) {
+          event.preventDefault();
+          navigateTo(this.getAttribute('href'));
+        });
+      });
+      container.classList.remove('d-none');
+    }
+
     function paintGroupNav(root: any, groupRoot: string, truncated: boolean, currentSlug: string) {
+      paintDocNavFooter(root, currentSlug);
       const sidebar = document.getElementById('wikiNavSidebar');
       const nav = document.getElementById('wikiNavSidebarTree');
       if (!sidebar || !nav) return;
@@ -296,6 +360,7 @@
       if (!currentSlug || (currentPage && (currentPage.is_map_doc || currentPage.is_image_doc))) {
         sidebar.classList.add('d-none');
         nav.innerHTML = '';
+        paintDocNavFooter(null, '');
         return;
       }
       const groupRoot = currentSlug.split('/')[0];
@@ -314,6 +379,7 @@
         if (!data || !data.root) {
           sidebar.classList.add('d-none');
           nav.innerHTML = '';
+          paintDocNavFooter(null, '');
           return;
         }
         _groupNavCache = { groupRoot, root: data.root, truncated: !!data.truncated };
@@ -323,6 +389,7 @@
         console.error(err);
         sidebar.classList.add('d-none');
         nav.innerHTML = '';
+        paintDocNavFooter(null, '');
       }
     }
 

@@ -417,9 +417,9 @@ async function updateCustomPreview() {
     const diffMode = getDiffPreviewMode();
     if (diffMode !== 'off') {
         await renderPreviewDiff(customPreview, diffMode);
-        // 일반 렌더 경로와 동일하게 스크롤 동기화 가이드 캐시를 무효화하고 레이아웃 관찰을
-        // 재설정한다. diff DOM 에는 헤딩 마커(data-raw-line)가 없으므로 캐시는 빈 상태로
-        // 재구축되어 스크롤 동기화가 stale 오프셋으로 패널을 움직이지 않고 no-op 된다.
+        // diff 모드에서는 스크롤 싱크가 비활성화되지만(syncEditorScrollToPreview /
+        // syncPreviewScrollToEditor 가 diff 모드에서 early return), 일반 렌더로 복귀했을 때
+        // 직전 diff DOM 기준의 가이드가 남지 않도록 캐시를 무효화하고 레이아웃 관찰만 갱신한다.
         if (typeof window._invalidateScrollSyncGuides === 'function') {
             window._invalidateScrollSyncGuides();
         }
@@ -2638,6 +2638,14 @@ document.addEventListener('DOMContentLoaded', async () => {
                 _previewLerpRAF = null;
                 return;
             }
+            // diff 미리보기로 전환되면 진행 중이던 lerp 가 diff DOM 의 scrollTop 을
+            // stale 한 일반 프리뷰 오프셋으로 계속 끌고 가지 않도록 즉시 중단한다.
+            if (getDiffPreviewMode() !== 'off') {
+                _previewScrollTarget = null;
+                _previewLerpRAF = null;
+                _lerpLastSetScrollTop = null;
+                return;
+            }
             // 우리가 마지막에 설정한 값과 현재 값이 다르면 사용자가 직접 스크롤한 것 → lerp 중단
             if (_lerpLastSetScrollTop !== null && Math.abs(customPreview.scrollTop - _lerpLastSetScrollTop) > 2) {
                 _previewScrollTarget = null;
@@ -2672,6 +2680,13 @@ document.addEventListener('DOMContentLoaded', async () => {
             const scroller = window._cmView && window._cmView.scrollDOM;
             if (!scroller || _editorScrollTarget === null) {
                 _editorLerpRAF = null;
+                return;
+            }
+            // diff 미리보기로 전환되면 역방향 lerp 도 즉시 중단 (위 동일 사유)
+            if (getDiffPreviewMode() !== 'off') {
+                _editorScrollTarget = null;
+                _editorLerpRAF = null;
+                _lerpLastSetEditorScrollTop = null;
                 return;
             }
             if (_lerpLastSetEditorScrollTop !== null && Math.abs(scroller.scrollTop - _lerpLastSetEditorScrollTop) > 2) {
@@ -2898,6 +2913,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             const scroller = view.scrollDOM;
             if (!scroller) return;
 
+            // diff 미리보기 모드: 프리뷰 DOM 에 헤딩/라인 마커(data-raw-line)가 없어
+            // 줄↔블록 정밀 매핑이 불가능하므로 스크롤 싱크를 끈다(프리뷰는 독립 스크롤).
+            // 빈 가이드 캐시만으로는 아래 하단 스냅 로직이 남아 부분 싱크가 일어나므로
+            // 여기서 명시적으로 early return 해 완전히 비활성화한다.
+            if (getDiffPreviewMode() !== 'off') return;
+
             // 에디터가 맨 아래까지 스크롤되면 프리뷰도 맨 아래로 (끝부분 오차 보정)
             if (scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 4) {
                 smoothScrollPreviewTo(customPreview.scrollHeight);
@@ -2958,6 +2979,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             const view = window._cmView;
             const scroller = view.scrollDOM;
             if (!scroller) return;
+
+            // diff 미리보기 모드: 역방향 스크롤 싱크도 끈다 (위 동일 사유)
+            if (getDiffPreviewMode() !== 'off') return;
 
             // 프리뷰가 맨 아래까지 스크롤되면 에디터도 맨 아래로
             if (customPreview.scrollTop + customPreview.clientHeight >= customPreview.scrollHeight - 4) {

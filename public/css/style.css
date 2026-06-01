@@ -1040,6 +1040,77 @@ html[data-theme="dark"] .user-dropdown-toggle {
   font-weight: 600;
 }
 
+/* ── 본문 하단 이전/다음 문서 네비게이션 (LAYOUT_MODE="docs") ──
+   그룹 트리 순서 기준으로 직전/직후 문서를 좌·우 버튼으로 노출한다.
+   한쪽만 있을 때도 다음 버튼이 우측에 정렬되도록 spacer 로 자리를 채운다. */
+.docs-page-nav {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--wiki-border);
+}
+
+.docs-page-nav-spacer {
+  flex: 1 1 0;
+}
+
+.docs-page-nav-link {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--wiki-border);
+  border-radius: 0.5rem;
+  text-decoration: none;
+  color: var(--wiki-text);
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.docs-page-nav-link:hover {
+  border-color: var(--wiki-primary);
+  background-color: rgba(var(--wiki-primary-rgb), 0.08);
+}
+
+.docs-page-nav-next {
+  justify-content: flex-end;
+  text-align: right;
+}
+
+.docs-page-nav-link .bi {
+  font-size: 1.25rem;
+  color: var(--wiki-text-muted);
+  flex-shrink: 0;
+}
+
+.docs-page-nav-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.docs-page-nav-dir {
+  font-size: 0.78rem;
+  color: var(--wiki-text-muted);
+}
+
+.docs-page-nav-title {
+  font-weight: 600;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 모바일(<992px)에서는 문서 제목을 숨기고 "이전 문서/다음 문서" 방향 라벨만 노출한다. */
+@media (max-width: 991px) {
+  .docs-page-nav-title {
+    display: none;
+  }
+}
+
 /* 에디터 프리뷰(#custom-wiki-preview)는 .wiki-layout-doc 밖이라 위의 본문 인라인 목차 카드
    숨김 규칙이 닿지 않는다. 조회 화면과 동일하게, left-toc/docs 레이아웃에서는 데스크탑(≥992px)
    에서만 프리뷰의 인라인 목차 카드를 숨겨 사이드바 목차와 중복을 피하고, 모바일에서는
@@ -1533,6 +1604,20 @@ html[data-theme="dark"] .btn-close {
 .search-result-item h4 a {
   color: var(--wiki-primary);
   font-weight: 700;
+}
+
+/* 카드 body(슬러그 보조 라벨 + 스니펫) 클릭 영역: 제목 링크와 분리된 별도 이동 링크.
+   본문 매치면 ?highlight= 위치로, 아니면 문서로만 이동한다. 링크지만 본문 텍스트처럼 보이도록
+   색을 상속받고 밑줄을 제거하며, hover 시 클릭 가능함을 알리는 약한 밑줄만 노출한다. */
+.search-result-body-link {
+  color: inherit;
+}
+
+.search-result-body-link:hover .snippet,
+.search-result-body-link:focus-visible .snippet {
+  text-decoration: underline;
+  text-decoration-color: var(--wiki-text-muted);
+  text-underline-offset: 2px;
 }
 
 /* 검색 결과 내 이미지 썸네일: 고정 정사각형에 이미지 비율 보존 */

@@ -33,9 +33,14 @@ function escapeForHtml(s: string): string {
  * LIKE fallback 경로에서 본문/슬러그로부터 직접 <mark> 하이라이트가 포함된 스니펫을 생성한다.
  * 본문에 매치가 있으면 본문 기준으로, 그렇지 않고 슬러그에 매치가 있으면 슬러그 기준으로 만든다.
  * 둘 다 없으면 빈 문자열을 반환한다.
+ *
+ * 반환의 `bodyMatch` 는 스니펫이 **본문(content)** 매치로 만들어졌는지를 나타낸다(슬러그 매치는 false).
+ * 클라이언트는 이 값으로 "카드 body 클릭 시 문서를 열고 해당 위치로 하이라이트 스크롤"할지,
+ * 아니면 "그냥 문서로만 이동"할지를 결정한다. 본문에 검색어가 실제로 존재해야만(=bodyMatch)
+ * 문서 페이지의 ?highlight= 스크롤이 의미를 가지므로 슬러그/제목 전용 매치와 구분한다.
  */
-function buildLikeSnippet(slug: string, content: string, query: string): string {
-    if (!query) return '';
+function buildLikeSnippet(slug: string, content: string, query: string): { html: string; bodyMatch: boolean } {
+    if (!query) return { html: '', bodyMatch: false };
     const q = query.toLowerCase();
 
     const findAndSlice = (src: string): string | null => {
@@ -54,7 +59,11 @@ function buildLikeSnippet(slug: string, content: string, query: string): string 
             + (end < src.length ? '...' : '');
     };
 
-    return findAndSlice(content) ?? findAndSlice(slug) ?? '';
+    const fromContent = findAndSlice(content);
+    if (fromContent !== null) return { html: fromContent, bodyMatch: true };
+    const fromSlug = findAndSlice(slug);
+    if (fromSlug !== null) return { html: fromSlug, bodyMatch: false };
+    return { html: '', bodyMatch: false };
 }
 
 /**
@@ -320,13 +329,17 @@ search.get('/search', async (c) => {
             .bind(likePattern, likePattern, likePattern, likePattern, likePattern, PAGE_SIZE, offset)
             .all<{ slug: string; title: string | null; content: string; deleted_at: number | null }>();
 
-        const safeResults = results.results.map((r) => ({
-            slug: r.slug,
-            title: r.title,
-            deleted_at: r.deleted_at,
-            isDeleted: !!r.deleted_at,
-            snippet: buildLikeSnippet(r.slug, r.content, trimmedQuery),
-        }));
+        const safeResults = results.results.map((r) => {
+            const snip = buildLikeSnippet(r.slug, r.content, trimmedQuery);
+            return {
+                slug: r.slug,
+                title: r.title,
+                deleted_at: r.deleted_at,
+                isDeleted: !!r.deleted_at,
+                snippet: snip.html,
+                bodyMatch: snip.bodyMatch,
+            };
+        });
 
         if (shouldTrack) trackSearch(c, trimmedQuery, total, Date.now() - searchStartTime);
         return c.json({ results: safeResults, total, page, pageSize: PAGE_SIZE, exact_match: exactMatch });
@@ -398,13 +411,19 @@ search.get('/search', async (c) => {
         // 스니펫은 본문에서 리터럴 substring 위치를 찾아 직접 <mark> 를 단다(escape 포함).
         // title 로만 매치된 행은 본문에 검색어가 없을 수 있으나, buildLikeSnippet 이 본문→슬러그
         // 순으로 탐색해 매치가 없으면 빈 문자열을 반환한다(표시명은 title 이 노출됨).
-        const safeResults = results.results.map((r) => ({
-            slug: r.slug,
-            title: r.title,
-            deleted_at: r.deleted_at,
-            isDeleted: !!r.deleted_at,
-            snippet: buildLikeSnippet(r.slug, r.content || '', trimmedQuery),
-        }));
+        // bodyMatch 는 스니펫이 본문 매치로 만들어졌는지를 알려, 클라이언트가 카드 body 클릭 시
+        // ?highlight= 로 해당 위치까지 스크롤할지(본문 매치) 단순 이동할지(제목/슬러그 매치)를 가른다.
+        const safeResults = results.results.map((r) => {
+            const snip = buildLikeSnippet(r.slug, r.content || '', trimmedQuery);
+            return {
+                slug: r.slug,
+                title: r.title,
+                deleted_at: r.deleted_at,
+                isDeleted: !!r.deleted_at,
+                snippet: snip.html,
+                bodyMatch: snip.bodyMatch,
+            };
+        });
 
         if (shouldTrack) trackSearch(c, trimmedQuery, total, Date.now() - searchStartTime);
         return c.json({ results: safeResults, total, page, pageSize: PAGE_SIZE, exact_match: exactMatch });
@@ -437,13 +456,17 @@ search.get('/search', async (c) => {
             .bind(likePattern, likePattern, likePattern, likePattern, likePattern, PAGE_SIZE, offset)
             .all<{ slug: string; title: string | null; content: string; deleted_at: number | null }>();
 
-        const safeResults = fallbackResults.results.map((r) => ({
-            slug: r.slug,
-            title: r.title,
-            deleted_at: r.deleted_at,
-            isDeleted: !!r.deleted_at,
-            snippet: buildLikeSnippet(r.slug, r.content, trimmedQuery),
-        }));
+        const safeResults = fallbackResults.results.map((r) => {
+            const snip = buildLikeSnippet(r.slug, r.content, trimmedQuery);
+            return {
+                slug: r.slug,
+                title: r.title,
+                deleted_at: r.deleted_at,
+                isDeleted: !!r.deleted_at,
+                snippet: snip.html,
+                bodyMatch: snip.bodyMatch,
+            };
+        });
 
         if (shouldTrack) trackSearch(c, trimmedQuery, total, Date.now() - searchStartTime);
         return c.json({ results: safeResults, total, page, pageSize: PAGE_SIZE, exact_match: exactMatch });

@@ -372,8 +372,14 @@ function renderSearchResponse(q, requestedPage, data) {
         `).join('');
     } else {
         // 슬러그+본문 검색 결과. r.title 이 있으면 표시 이름으로 사용하고 슬러그를 보조 라벨로.
-        // 클릭해 문서로 들어가면 매칭된 단어로 자동 스크롤·하이라이트하도록 ?highlight= 를 붙인다.
-        // (삭제된 문서는 본문이 렌더되지 않으므로 파라미터를 생략한다.)
+        //
+        // 클릭 동작 분리:
+        //  - 제목(<h4> 링크): 항상 문서로만 이동(하이라이트 없음).
+        //  - 카드 body(슬러그 보조 라벨 + 스니펫): 본문(content)에 매치된 하이라이트 스니펫이
+        //    있고(r.bodyMatch) 삭제되지 않은 문서면 ?highlight= 를 붙여 문서를 열고 매칭 위치로
+        //    스크롤·하이라이트한다. 제목/슬러그만 일치(bodyMatch=false)하면 본문에 검색어가 없을
+        //    수 있으므로 하이라이트 없이 문서로만 이동한다.
+        //  (삭제된 문서는 본문이 렌더되지 않으므로 하이라이트 파라미터를 항상 생략한다.)
         const highlightTerm = (q || '').trim();
         const highlightQS = highlightTerm
             ? `?highlight=${encodeURIComponent(highlightTerm)}`
@@ -383,15 +389,20 @@ function renderSearchResponse(q, requestedPage, data) {
             const slugSubLabel = r.title
                 ? `<div class="small text-muted mt-1"><code>${window.escapeHtml(r.slug)}</code></div>`
                 : '';
-            const href = `/w/${encodeURIComponent(r.slug)}${r.isDeleted ? '' : highlightQS}`;
+            const docUrl = `/w/${encodeURIComponent(r.slug)}`;
+            const bodyHref = (r.bodyMatch && !r.isDeleted && highlightQS)
+                ? `${docUrl}${highlightQS}`
+                : docUrl;
             return `
             <div class="search-result-item mb-4 pb-3 border-bottom">
                 <h4 class="mb-2 fs-5">
-                    <a class="text-decoration-none text-primary fw-semibold" href="${href}">${window.escapeHtml(displayName)}</a>
+                    <a class="text-decoration-none text-primary fw-semibold" href="${docUrl}">${window.escapeHtml(displayName)}</a>
                     ${r.isDeleted ? '<span class="badge bg-danger ms-2">삭제됨</span>' : ''}
                 </h4>
-                ${slugSubLabel}
-                <p class="snippet text-body mb-0" style="line-height: 1.6;">${r.snippet || ''}</p>
+                <a class="search-result-body-link d-block text-decoration-none" href="${bodyHref}">
+                    ${slugSubLabel}
+                    <p class="snippet text-body mb-0" style="line-height: 1.6;">${r.snippet || ''}</p>
+                </a>
             </div>`;
         }).join('');
     }
