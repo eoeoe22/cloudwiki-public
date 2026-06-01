@@ -463,7 +463,7 @@ async function sendDeleteRequest(slug, revId, hard) {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || '리비전 삭제 실패');
     const message = hard ? '리비전 본문이 영구 삭제되었습니다.' : '리비전이 숨겨졌습니다.';
-    await Swal.fire('완료', message, 'success');
+    await Swal.fire({ icon: 'success', title: message, toast: true, position: 'top-end', timer: 1500, showConfirmButton: false });
     showRevisions(slug, currentRevPage);
   } catch (err) {
     Swal.fire('오류', err.message, 'error');

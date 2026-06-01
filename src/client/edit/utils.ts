@@ -451,7 +451,9 @@ function saveDraftToLocal(): boolean {
             icon: 'success',
             title: '초안 저장됨',
             text: '이 브라우저에 임시 저장했습니다.',
-            timer: 1200,
+            toast: true,
+            position: 'top-end',
+            timer: 1500,
             showConfirmButton: false,
         });
         return true;
@@ -631,7 +633,9 @@ async function checkDraft(): Promise<void> {
             icon: 'success',
             title: '불러옴',
             text: '저장된 초안을 불러왔습니다.',
-            timer: 1000,
+            toast: true,
+            position: 'top-end',
+            timer: 1500,
             showConfirmButton: false,
         });
     } else {
@@ -739,6 +743,8 @@ async function checkSectionDrafts(): Promise<void> {
                 icon: 'success',
                 title: '불러옴',
                 text: `'${headingDisplay}' 섹션 초안을 본문에 병합했습니다.`,
+                toast: true,
+                position: 'top-end',
                 timer: 1500,
                 showConfirmButton: false,
             });

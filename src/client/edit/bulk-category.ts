@@ -90,8 +90,8 @@ function rulesTableHtml(rules: PrefixRule[]): string {
         .map(
             (r) => `
             <tr data-rule-id="${r.id}">
-                <td class="text-break"><code>${escapeHtml(r.prefix)}/**</code></td>
-                <td class="text-break">${escapeHtml(r.categories)}</td>
+                <td><code>${escapeHtml(r.prefix)}/**</code></td>
+                <td>${escapeHtml(r.categories)}</td>
                 <td class="text-end">
                     <button type="button" class="btn btn-sm btn-wiki btn-wiki-danger bulkcat-rule-delete">
                         <i class="mdi mdi-trash-can-outline"></i>

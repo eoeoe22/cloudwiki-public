@@ -491,18 +491,22 @@ search.get('/search/suggest', async (c) => {
     // (예: 에디터의 "하위 문서 구조 삽입" 루트 문서 선택은 공개 문서만 허용)
     const publicOnly = c.req.query('public_only') === '1';
     const canSeePrivate = !publicOnly && rbac.can(user?.role ?? 'guest', 'wiki:private');
+    // exclude_categories=1 → 카테고리 결과를 아예 제외한다. (예: 헤더의 map: 프리픽스 자동완성은
+    // 가상 문서를 일반 page 슬러그 기준으로만 매핑하므로, 카테고리가 7개 한도를 잠식하면 안 된다.)
+    const excludeCategories = c.req.query('exclude_categories') === '1';
     const trimmed = query.trim();
     const likePattern = `%${trimmed}%`;
     const startPattern = `${trimmed}%`;
 
-    // 1. 카테고리 검색
-    const catSql = `
-        SELECT DISTINCT category FROM page_categories
-        WHERE category LIKE ?
-        ORDER BY CASE WHEN category LIKE ? THEN 0 ELSE 1 END, length(category)
-        LIMIT 7
-    `;
-    const catResults = await db.prepare(catSql).bind(likePattern, startPattern).all();
+    // 1. 카테고리 검색 (exclude_categories=1 이면 건너뛴다)
+    const catResults = excludeCategories
+        ? { results: [] as Record<string, unknown>[] }
+        : await db.prepare(`
+            SELECT DISTINCT category FROM page_categories
+            WHERE category LIKE ?
+            ORDER BY CASE WHEN category LIKE ? THEN 0 ELSE 1 END, length(category)
+            LIMIT 7
+        `).bind(likePattern, startPattern).all();
 
     // 2. 문서 검색 — slug 와 대체 title 양쪽에서 매칭. 호출용 식별자는 항상 slug, title 은 표시용.
     let pageSql = `

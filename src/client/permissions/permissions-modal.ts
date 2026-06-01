@@ -6,6 +6,8 @@
  *  2) 하위 문서 일괄 적용 (비공개 / 편집 ACL)
  *  3) 기존 자동 규칙 목록·삭제
  *
+ * (프레젠테이션 모드(layout_mode) 는 이 모달에서 제거되어 에디터의 체크박스 + 본문 저장 경로로 옮겨졌다.)
+ *
  * 호출 API (모두 관리자 전용 — adminRoutes.use(requireAdmin)):
  *  - GET    /api/admin/pages/:slug/edit-acl
  *  - PUT    /api/admin/pages/:slug/edit-acl
@@ -158,18 +160,18 @@ async function fetchAclForSlug(slug: string): Promise<EditAcl | null> {
     return data.edit_acl ?? null;
 }
 
-async function patchPageFlags(slug: string, body: { is_private?: 0 | 1 }): Promise<{ ok: true; data: { is_private: 0 | 1 } } | { ok: false; error: string }> {
+async function patchPageFlags(slug: string, body: { is_private: 0 | 1 }): Promise<{ ok: true; data: { is_private: 0 | 1 } } | { ok: false; error: string }> {
     const res = await fetch(`/api/admin/pages/${encodeURIComponent(slug)}/flags`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ is_private: body.is_private }),
     });
     if (!res.ok) {
         const err = (await res.json().catch(() => ({}))) as { error?: string };
         return { ok: false, error: err.error || `오류 (${res.status})` };
     }
     const data = (await res.json()) as { is_private: 0 | 1 };
-    return { ok: true, data };
+    return { ok: true, data: { is_private: data.is_private } };
 }
 
 async function putPageEditAcl(slug: string, acl: EditAcl | null): Promise<{ ok: true; acl: EditAcl | null } | { ok: false; error: string }> {
@@ -261,7 +263,7 @@ function rulesTableHtml(rules: DocSettingRule[]): string {
     }
     const rows = rules.map((r) => `
         <tr data-rule-id="${r.id}">
-            <td class="text-break"><code>${escapeHtml(r.prefix)}/**</code></td>
+            <td><code>${escapeHtml(r.prefix)}/**</code></td>
             <td>${rulePrivateLabel(r.is_private)}</td>
             <td>${ruleAclLabel(r.edit_acl)}</td>
             <td>${ruleCategoriesLabel(r.categories)}</td>

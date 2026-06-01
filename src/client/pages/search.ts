@@ -282,7 +282,7 @@ function renderSearchResponse(q, requestedPage, data) {
                 : '';
             ctaHtml = `
         <div class="mb-4">
-            <div class="alert alert-light border d-flex justify-content-between align-items-center gap-2">
+            <div class="alert alert-light border d-flex flex-column flex-lg-row justify-content-between align-items-stretch align-items-lg-center gap-2">
                 <span><strong>"${window.escapeHtml(queryTrimmed)}"</strong> 문서가 아직 존재하지 않습니다.</span>
                 <div class="d-flex gap-2 flex-shrink-0">${gotoBtn}${createBtn}</div>
             </div>

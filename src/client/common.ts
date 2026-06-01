@@ -1125,7 +1125,7 @@ async function replyToMessage(originalMsgId, receiverId, receiverName) {
                 throw new Error(data.error || '발송 실패');
             }
 
-            Swal.fire({ icon: 'success', title: '쪽지 발송 완료', showConfirmButton: false, timer: 1200 });
+            Swal.fire({ icon: 'success', title: '쪽지 발송 완료', toast: true, position: 'top-end', showConfirmButton: false, timer: 1500 });
         } catch (e) {
             Swal.fire('오류', '쪽지 발송에 실패했습니다.', 'error');
         }
@@ -1161,7 +1161,7 @@ async function sendMessage(receiverId, receiverName) {
                 throw new Error(data.error || '발송 실패');
             }
 
-            Swal.fire({ icon: 'success', title: '쪽지 발송 완료', showConfirmButton: false, timer: 1200 });
+            Swal.fire({ icon: 'success', title: '쪽지 발송 완료', toast: true, position: 'top-end', showConfirmButton: false, timer: 1500 });
         } catch (e) {
             Swal.fire('오류', '쪽지 발송에 실패했습니다.', 'error');
         }

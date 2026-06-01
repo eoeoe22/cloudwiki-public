@@ -391,6 +391,11 @@ function buildAutoEditSummary(): string {
     const redirectEl = document.getElementById('redirectInput') as HTMLInputElement | null;
     const currRedirect = redirectEl ? redirectEl.value.trim() : '';
 
+    // 프레젠테이션 모드(layout_mode) — 'presentation' vs ''. 체크박스 상태를 직접 읽는다.
+    const origLayout = originalPageMeta.layout_mode === 'presentation' ? 'presentation' : '';
+    const presoEl = document.getElementById('presentationModeToggle') as HTMLInputElement | null;
+    const currLayout = presoEl && presoEl.checked ? 'presentation' : '';
+
     // 잠금/비공개 토글은 에디터에서 제거되어 자동 요약 후보에서도 빠진다.
     // 권한 관리 모달은 본문 리비전과 분리된 별도 엔드포인트(PATCH /pages/:slug/flags) 를 사용.
 
@@ -404,6 +409,9 @@ function buildAutoEditSummary(): string {
     if (removed.length) parts.push(`분류 ${removed.map(c => `'${c}'`).join(', ')} 삭제`);
     if (origRedirect !== currRedirect) {
         parts.push(currRedirect ? `넘겨주기 '${currRedirect}' 설정` : '넘겨주기 해제');
+    }
+    if (origLayout !== currLayout) {
+        parts.push(currLayout === 'presentation' ? '프레젠테이션 모드 설정' : '프레젠테이션 모드 해제');
     }
 
     if (editorAvailable) {

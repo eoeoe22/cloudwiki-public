@@ -23,6 +23,12 @@ export const TITLE_FORBIDDEN_CHARS = /[\x00-\x1F\x7F]/;
 export const TITLE_MAX_LENGTH = 100;
 
 /**
+ * 문서별 layout_mode 화이트리스트. 빈 문자열/null 은 NULL('자동' = 전역 LAYOUT_MODE).
+ * PUT /w/:slug 본문 저장 경로에서 사용. (admin PATCH /flags 의 동명 상수와 동일 의미.)
+ */
+export const ALLOWED_LAYOUT_MODES = new Set<string>(['presentation']);
+
+/**
  * 클라이언트가 보낸 title 입력을 정규화한다.
  * - undefined / null / 빈 문자열(공백 포함) → null
  * - 그 외 → trim 된 문자열
@@ -540,6 +546,135 @@ export function subtractCategoryString(
 }
 
 /**
+ * 신규 페이지 생성 시점에 적용되는 prefix 룰 / 카테고리 ACL 머지 로직.
+ * `/api/w/:slug PUT(create)` 와 MCP 제출안 승인(create) 가 공유한다.
+ *
+ * 입력 카테고리·private·edit_acl 에 다음을 차례로 적용해 최종값을 계산한다:
+ *   1) `category_prefix_rules` 의 합집합 (slug 가 prefix/ 로 시작하는 모든 룰)
+ *   2) "카테고리:이름" 슬러그의 자동 카테고리 prepend
+ *   3) `doc_setting_prefix_rules`: is_private/edit_acl(가장 긴 매치) + 카테고리 합집합
+ *      - 카테고리 전용 룰(is_private/edit_acl 모두 null)은 longest-match 후보에서 제외
+ *      - adminExplicitlySetEditAcl 가 true 면 prefix-rule edit_acl 이 입력값을 덮어쓰지 않는다
+ *   4) `category_acl` 템플릿을 effectiveCategory 의 각 카테고리에 머지
+ *      - explicitSet(=호출자 입력으로 명시된 카테고리): categoryAclChoices 의 mode 를 따른다
+ *        (키 누락이면 적용 안 함; 비관리자의 'overwrite' → 'merge' 다운그레이드)
+ *      - prefix-rule 로 자동 추가된 카테고리: 사용자 prompt 불가 → 기본 'merge'
+ *
+ * 오류는 console.error 후 그 단계만 스킵한다(콜드 스타트 마이그레이션 race 대비).
+ */
+export async function applyCreatePrefixRulesAndCategoryAcls(
+    db: D1Database,
+    slug: string,
+    input: {
+        category: string | null;
+        isPrivate: number;
+        editAcl: string | null;
+        adminExplicitlySetEditAcl: boolean;
+        categoryAclChoices: Record<string, unknown> | null;
+        isAdmin: boolean;
+    }
+): Promise<{ effectiveCategory: string | null; finalIsPrivate: number; finalEditAcl: string | null }> {
+    let effectiveCategory: string | null = input.category || null;
+    let finalIsPrivate = input.isPrivate;
+    let finalEditAcl: string | null = input.editAcl;
+
+    // 1. category_prefix_rules 합집합
+    try {
+        const ruleRows = await db
+            .prepare('SELECT prefix, categories FROM category_prefix_rules')
+            .all<{ prefix: string; categories: string }>();
+        const merged = mergeCategoriesFromRules(slug, effectiveCategory, ruleRows.results || []);
+        effectiveCategory = merged || null;
+    } catch (e) {
+        console.error('category_prefix_rules lookup failed (create):', e);
+    }
+
+    // 2. "카테고리:이름" 자동 카테고리 prepend
+    const _autoCategory = getCategoryDocAutoCategory(slug);
+    if (_autoCategory) {
+        const cats = splitCategoryString(effectiveCategory);
+        if (!cats.includes(_autoCategory)) cats.unshift(_autoCategory);
+        effectiveCategory = cats.join(',');
+    }
+
+    // 3. doc_setting_prefix_rules: is_private/edit_acl(longest match) + categories(합집합)
+    try {
+        await ensureDocSettingPrefixRulesMigration(db);
+        const ruleRows = await db
+            .prepare('SELECT prefix, is_private, edit_acl, categories FROM doc_setting_prefix_rules')
+            .all<{ prefix: string; is_private: number | null; edit_acl: string | null; categories: string | null }>();
+        let bestLen = -1;
+        let privateOverride: number | null = null;
+        let aclOverride: string | null = null;
+        for (const r of ruleRows.results || []) {
+            if (!slug.startsWith(r.prefix + '/')) continue;
+            if (r.is_private === null && r.edit_acl === null) continue;
+            if (r.prefix.length > bestLen) {
+                bestLen = r.prefix.length;
+                privateOverride = r.is_private;
+                aclOverride = r.edit_acl;
+            }
+        }
+        if (privateOverride !== null) finalIsPrivate = privateOverride;
+        if (aclOverride !== null && finalEditAcl === null && !input.adminExplicitlySetEditAcl) {
+            finalEditAcl = serializeEditAcl(parseEditAcl(aclOverride));
+        }
+
+        const catRules = (ruleRows.results || [])
+            .filter(r => r.categories)
+            .map(r => ({ prefix: r.prefix, categories: r.categories as string }));
+        if (catRules.length > 0) {
+            const merged = mergeCategoriesFromRules(slug, effectiveCategory, catRules);
+            effectiveCategory = merged || null;
+        }
+    } catch (e) {
+        console.error('doc_setting_prefix_rules lookup failed (create):', e);
+    }
+
+    // 4. category_acl 템플릿 머지
+    try {
+        const explicitCats = splitCategoryString(input.category);
+        const effectiveCats = splitCategoryString(effectiveCategory);
+        const explicitSet = new Set(explicitCats);
+        const choicesRaw = (input.categoryAclChoices && typeof input.categoryAclChoices === 'object' && !Array.isArray(input.categoryAclChoices))
+            ? input.categoryAclChoices
+            : null;
+
+        const apply: { name: string; mode: CategoryAclMode }[] = [];
+        for (const cat of effectiveCats) {
+            if (explicitSet.has(cat)) {
+                if (choicesRaw && Object.prototype.hasOwnProperty.call(choicesRaw, cat)) {
+                    let mode = normalizeCategoryAclMode(choicesRaw[cat]);
+                    if (!input.isAdmin && mode === 'overwrite') mode = 'merge';
+                    if (mode !== 'ignore') apply.push({ name: cat, mode });
+                }
+            } else {
+                apply.push({ name: cat, mode: 'merge' });
+            }
+        }
+
+        if (apply.length > 0) {
+            const templates = await getCategoryAclsBatch(db, apply.map(a => a.name));
+            let layered: EditAcl | null = parseEditAcl(finalEditAcl);
+            let mutated = false;
+            for (const a of apply) {
+                const tpl = templates.get(a.name);
+                if (!tpl) continue;
+                layered = applyCategoryAclToPage(layered, tpl, a.mode);
+                mutated = true;
+            }
+            if (mutated) {
+                finalEditAcl = serializeEditAcl(layered);
+            }
+        }
+    } catch (e) {
+        console.error('category_acl apply failed (create):', e);
+    }
+
+    return { effectiveCategory, finalIsPrivate, finalEditAcl };
+}
+
+/**
  * 문서 주소 변경 시 사용될 본문 재작성 헬퍼.
  * - 코드블럭(```...```)과 인라인 코드(`...`)는 마스킹하여 보존
  * - `[[oldSlug]]`, `[[oldSlug|표시]]`, `[[oldSlug#섹션]]`, `[[oldSlug#섹션|표시]]`를 새 슬러그로 치환
@@ -900,7 +1035,7 @@ wiki.get('/config', async (c) => {
         wikiLogoUrl: c.env.WIKI_LOGO_URL || '',
         wikiFaviconUrl: c.env.WIKI_FAVICON_URL || '',
         wikiVisibility: c.env.WIKI_VISIBILITY === 'closed' ? 'closed' : 'open',
-        layoutMode: (c.env.LAYOUT_MODE === 'left-toc' || c.env.LAYOUT_MODE === 'right-toc' || c.env.LAYOUT_MODE === 'docs') ? c.env.LAYOUT_MODE : 'default',
+        layoutMode: (c.env.LAYOUT_MODE === 'left-toc' || c.env.LAYOUT_MODE === 'right-toc' || c.env.LAYOUT_MODE === 'docs' || c.env.LAYOUT_MODE === 'wide') ? c.env.LAYOUT_MODE : 'default',
         selectedIconsOnly: c.env.SELECTED_ICONS_ONLY === 'true',
         enableConcurrentEditDetection: c.env.ENABLE_CONCURRENT_EDIT_DETECTION !== 'false',
         turnstileSiteKey: c.env.TURNSTILE_SITE_KEY || '',
@@ -1354,23 +1489,29 @@ wiki.get('/w/:slug', async (c) => {
     // 비로그인 응답이 글로벌 캐시에 들어가 있을 수 있어, map: 슬러그의 cache.match 는 비로그인 요청
     // (`!user`) 에서만 수행한다. 그래야 권한자가 anonymous 캐시에 갇히지 않는다.
     if (isMapNamespace(slug)) {
-        if (!user && !nocache) {
+        const rbac = c.get('rbac') as RBAC;
+        const isAdmin = !!user && rbac.can(user.role, 'admin:access');
+        // SPA 라우터가 ?perms=1 로 호출할 때도 SSR 분기와 동일하게 처리. 비관리자가 쿼리를 강제로 켜도 무시.
+        const permsQueryRaw = c.req.query('perms');
+        const showPerms = isAdmin && permsQueryRaw === '1';
+        // 비로그인 사용자의 ?perms=1 요청으로 캐시가 오염되지 않도록 perms 쿼리가 있으면 글로벌 매치를 건너뛴다.
+        if (!user && !nocache && permsQueryRaw == null) {
             const cached = await cache.match(cacheKey);
             if (cached) return new Response(cached.body, cached);
         }
-        const rbac = c.get('rbac') as RBAC;
         const canSeePrivate = rbac.can(user?.role ?? 'guest', 'wiki:private');
         const baseSlug = slug.substring('map:'.length);
-        const mapResult = await buildMapDocument({ db, baseSlug, canSeePrivate });
+        const mapResult = await buildMapDocument({ db, baseSlug, canSeePrivate, showPerms });
         const mapDoc = {
             slug,
             title: slug,
             is_map_doc: true,
+            _ssrShowPerms: showPerms,
             content: mapResult.markdown,
             created_at: 0,
             updated_at: 0,
         };
-        const safeForSharedCache = !user && !mapResult.hasPrivateChildren;
+        const safeForSharedCache = !user && !mapResult.hasPrivateChildren && !showPerms;
         if (safeForSharedCache && !nocache) {
             // map: 캐시는 자식 mutation 시 자동 무효화되지 않으므로 staleness 윈도우를 짧게 유지.
             const fresh = c.json(mapDoc, 200, { 'Cache-Control': `public, max-age=${MAP_CACHE_MAX_AGE_SECONDS}` });
@@ -1738,6 +1879,12 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
         turnstileToken?: string;
         title?: string | null;
         /**
+         * 문서 레이아웃 모드. 'presentation' 등 화이트리스트 값 또는 null('자동' = 전역 LAYOUT_MODE).
+         * 본문 저장과 함께 동일 PUT 으로 전송되며, 일반 사용자도 설정할 수 있다(권한 게이트 없음 — 표시 전용).
+         * 키 자체가 누락되면 기존 값을 유지한다.
+         */
+        layout_mode?: string | null;
+        /**
          * 신규 적용 카테고리에 대한 ACL 머지 모드.
          * 키: 카테고리명, 값: 'overwrite' | 'merge' | 'ignore'.
          * 에디터 chip 생성 시점에 사용자가 선택한 값을 전송한다.
@@ -1760,6 +1907,22 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
     }
     if (requestedTitle && requestedTitle.length > TITLE_MAX_LENGTH) {
         return c.json({ error: `대체 제목은 ${TITLE_MAX_LENGTH}자 이하여야 합니다.` }, 400);
+    }
+
+    // layout_mode 검증 — body 에 키가 명시된 경우에만 변경 의도로 해석한다(undefined = 기존값 유지).
+    // 빈 문자열/null 은 NULL('자동' = 전역 LAYOUT_MODE 따름). 그 외엔 화이트리스트(PRESENTATION 등) 만 허용.
+    // 표시 전용 메타이므로 별도 권한 게이트 없이 편집 권한자(wiki:edit) 면 누구나 설정 가능하다.
+    const hasLayoutInBody = Object.prototype.hasOwnProperty.call(body, 'layout_mode');
+    let requestedLayout: string | null | undefined;
+    if (hasLayoutInBody) {
+        const v = body.layout_mode;
+        if (v === null || v === '' || typeof v === 'undefined') {
+            requestedLayout = null;
+        } else if (typeof v === 'string' && ALLOWED_LAYOUT_MODES.has(v)) {
+            requestedLayout = v;
+        } else {
+            return c.json({ error: `layout_mode 허용 값: null | ${[...ALLOWED_LAYOUT_MODES].join(' | ')}` }, 400);
+        }
     }
 
     // Turnstile 검증
@@ -2098,23 +2261,23 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
         // 명시된 경우 NULL 로 저장돼 슬러그가 다시 표시 이름으로 노출된다.
         const finalTitle = hasTitleInBody ? requestedTitle ?? null : existing.title;
         try {
-            // edit_acl 은 admin 이 명시적으로 변경 요청한 경우에만 UPDATE 절에 포함한다.
-            // (그 외 케이스는 column 을 손대지 않아 admin 의 별도 ACL 갱신 race 를 회피.)
-            const updateSql = willUpdateEditAcl
-                ? `UPDATE pages
-             SET content = ?, title = ?, category = ?, is_private = ?, edit_acl = ?, redirect_to = ?, last_revision_id = ?,
-                 version = ?, rows = ?, characters = ?, updated_at = unixepoch()
-             WHERE id = ?`
-                : `UPDATE pages
-             SET content = ?, title = ?, category = ?, is_private = ?, redirect_to = ?, last_revision_id = ?,
-                 version = ?, rows = ?, characters = ?, updated_at = unixepoch()
-             WHERE id = ?`;
-            const baseBinds: (string | number | null)[] = [contentToStore, finalTitle, body.category || null, finalIsPrivate];
-            const tailBinds: (string | number | null)[] = [body.redirect_to || null, revisionId, newVersion, metrics.rows, metrics.characters, existing.id];
-            const updateBinds = willUpdateEditAcl
-                ? [...baseBinds, finalEditAcl, ...tailBinds]
-                : [...baseBinds, ...tailBinds];
-            await db.prepare(updateSql).bind(...updateBinds).run();
+            // SET 절을 동적으로 구성한다. edit_acl 은 admin 이 명시적으로 변경 요청한 경우에만,
+            // layout_mode 는 body 에 키가 명시된 경우에만 포함한다(그 외 케이스는 column 을 손대지 않아
+            // 다른 경로의 갱신을 stale 값으로 덮어쓰는 race 를 회피). 바인드 순서는 placeholder 순서와 일치.
+            const setClauses: string[] = ['content = ?', 'title = ?', 'category = ?', 'is_private = ?'];
+            const setBinds: (string | number | null)[] = [contentToStore, finalTitle, body.category || null, finalIsPrivate];
+            if (willUpdateEditAcl) {
+                setClauses.push('edit_acl = ?');
+                setBinds.push(finalEditAcl);
+            }
+            if (hasLayoutInBody) {
+                setClauses.push('layout_mode = ?');
+                setBinds.push(requestedLayout ?? null);
+            }
+            setClauses.push('redirect_to = ?', 'last_revision_id = ?', 'version = ?', 'rows = ?', 'characters = ?', 'updated_at = unixepoch()');
+            setBinds.push(body.redirect_to || null, revisionId, newVersion, metrics.rows, metrics.characters);
+            const updateSql = `UPDATE pages SET ${setClauses.join(', ')} WHERE id = ?`;
+            await db.prepare(updateSql).bind(...setBinds, existing.id).run();
         } catch (e: any) {
             // UPDATE 실패 시 (예: title 의 idx_pages_title_unique race) 막 만든 리비전 / R2 객체를 정리해
             // 고아 본문이 남지 않게 한다. UNIQUE 위반(SQLITE_CONSTRAINT) 은 409 로 매핑, 그 외는 500.
@@ -2202,118 +2365,25 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
         const isR2Only = isR2OnlyNamespace(slug, enabledExtensionsCreate);
         const contentToStore = isR2Only ? '' : body.content;
 
-        // 자동 카테고리 prefix 룰 합집합 (생성 시점)
-        let effectiveCategory: string | null = body.category || null;
-        try {
-            const ruleRows = await db
-                .prepare('SELECT prefix, categories FROM category_prefix_rules')
-                .all<{ prefix: string; categories: string }>();
-            const merged = mergeCategoriesFromRules(slug, effectiveCategory, ruleRows.results || []);
-            effectiveCategory = merged || null;
-        } catch (e) {
-            console.error('category_prefix_rules lookup failed (create):', e);
-        }
-
-        // "카테고리:이름" 슬러그는 자동 카테고리를 항상 포함시킨다 (제거 불가)
-        const _autoCategory = getCategoryDocAutoCategory(slug);
-        if (_autoCategory) {
-            const cats = splitCategoryString(effectiveCategory);
-            if (!cats.includes(_autoCategory)) cats.unshift(_autoCategory);
-            effectiveCategory = cats.join(',');
-        }
-
-        // 자동 문서 설정 prefix 룰 (생성 시점에만 적용)
-        // - is_private / edit_acl: 가장 긴 일치 prefix 가 승리 (longest-match).
-        //   더 긴 prefix 가 해당 필드를 null 로 두면 "여기서는 제한 없음" 으로 부모를 덮어쓴다 (기존 의미론 유지).
-        //   단, 카테고리 전용 룰(is_private/edit_acl 모두 null)은 ACL/private 의도가 없으므로
-        //   longest-match 후보에서 제외해 짧은 부모 룰의 ACL/private 을 가린(shadow) 사고를 막는다.
-        // - categories: 매칭되는 모든 prefix 의 합집합 (category_prefix_rules 와 동일 정책).
-        // 규칙 자체가 관리자가 작성한 정책이므로 생성자의 RBAC 검사를 우회해 강제 적용한다.
-        // 비관리자의 body.is_private 입력은 위에서 이미 0 으로 마스크된 상태이므로 추가 처리 불필요.
-        try {
-            // 구 배포 DB 에는 categories 컬럼이 없어 SELECT 가 실패하면 이 try 블록 전체가 catch 로
-            // 빠져 기존 is_private/edit_acl 강제 적용까지 모두 무력화된다 — 콜드 스타트 1회 마이그레이션.
-            await ensureDocSettingPrefixRulesMigration(db);
-            const ruleRows = await db
-                .prepare('SELECT prefix, is_private, edit_acl, categories FROM doc_setting_prefix_rules')
-                .all<{ prefix: string; is_private: number | null; edit_acl: string | null; categories: string | null }>();
-            let bestLen = -1;
-            let privateOverride: number | null = null;
-            let aclOverride: string | null = null;
-            for (const r of ruleRows.results || []) {
-                if (!slug.startsWith(r.prefix + '/')) continue;
-                if (r.is_private === null && r.edit_acl === null) continue; // 카테고리 전용 룰 제외
-                if (r.prefix.length > bestLen) {
-                    bestLen = r.prefix.length;
-                    privateOverride = r.is_private;
-                    aclOverride = r.edit_acl;
-                }
-            }
-            if (privateOverride !== null) finalIsPrivate = privateOverride;
-            // ACL 은 관리자가 body 에 edit_acl 키를 명시했으면 그 값을 우선한다 — 명시적으로 null 을 보내
-            // ACL 을 끄려는 요청을 "미지정" 과 구분해야 prefix 룰이 그 의도를 덮어쓰지 않는다.
-            // requestedEditAcl.provided=false (키 자체 미전송) 이고 현재 finalEditAcl===null 인 경우에만 prefix 룰 적용.
-            const adminExplicitlySetEditAcl = isAdmin && requestedEditAcl.provided;
-            if (aclOverride !== null && finalEditAcl === null && !adminExplicitlySetEditAcl) {
-                finalEditAcl = serializeEditAcl(parseEditAcl(aclOverride));
-            }
-
-            // categories: 매칭되는 모든 룰의 합집합. effectiveCategory 에 머지하면
-            // 뒤따르는 category_acl 머지 블록이 자동 부여된 카테고리에 매달린 ACL 도 함께 적용한다.
-            const catRules = (ruleRows.results || [])
-                .filter(r => r.categories)
-                .map(r => ({ prefix: r.prefix, categories: r.categories as string }));
-            if (catRules.length > 0) {
-                const merged = mergeCategoriesFromRules(slug, effectiveCategory, catRules);
-                effectiveCategory = merged || null;
-            }
-        } catch (e) {
-            console.error('doc_setting_prefix_rules lookup failed (create):', e);
-        }
-
-        // 카테고리 ACL 머지 (생성 시점)
-        //  - 사용자가 body 에 직접 적은 카테고리: category_acl_choices 의 모드를 따른다. 키 누락이면 적용 안 함 (레거시 클라이언트 호환).
-        //  - category_prefix_rules 로 자동 부여된 카테고리: 사용자에게 prompt 불가 → 기본 'merge'.
-        //  - 보안: 비관리자의 'overwrite' 는 'merge' 로 다운그레이드 (관리자가 설정한 prefix 룰 edit_acl 을 약화시키지 못하게).
-        try {
-            const explicitCats = splitCategoryString(body.category);
-            const effectiveCats = splitCategoryString(effectiveCategory);
-            const explicitSet = new Set(explicitCats);
-            const choicesRaw = (body.category_acl_choices && typeof body.category_acl_choices === 'object' && !Array.isArray(body.category_acl_choices))
-                ? (body.category_acl_choices as Record<string, unknown>)
-                : null;
-
-            const apply: { name: string; mode: CategoryAclMode }[] = [];
-            for (const cat of effectiveCats) {
-                if (explicitSet.has(cat)) {
-                    if (choicesRaw && Object.prototype.hasOwnProperty.call(choicesRaw, cat)) {
-                        let mode = normalizeCategoryAclMode(choicesRaw[cat]);
-                        if (!isAdmin && mode === 'overwrite') mode = 'merge';
-                        if (mode !== 'ignore') apply.push({ name: cat, mode });
-                    }
-                } else {
-                    // prefix-rule 로 자동 추가된 카테고리 — 사용자 prompt 불가, 기본 merge
-                    apply.push({ name: cat, mode: 'merge' });
-                }
-            }
-
-            if (apply.length > 0) {
-                const templates = await getCategoryAclsBatch(db, apply.map(a => a.name));
-                let layered: EditAcl | null = parseEditAcl(finalEditAcl);
-                let mutated = false;
-                for (const a of apply) {
-                    const tpl = templates.get(a.name);
-                    if (!tpl) continue;
-                    layered = applyCategoryAclToPage(layered, tpl, a.mode);
-                    mutated = true;
-                }
-                if (mutated) {
-                    finalEditAcl = serializeEditAcl(layered);
-                }
-            }
-        } catch (e) {
-            console.error('category_acl apply failed (create):', e);
-        }
+        // 자동 prefix 룰 / 카테고리 ACL 머지 — MCP 제출안 승인(create) 과 공유되는 헬퍼.
+        // - is_private / edit_acl 은 관리자가 작성한 prefix 룰이므로 생성자 RBAC 검사를 우회해 강제 적용한다.
+        //   비관리자의 body.is_private 입력은 위에서 이미 0 으로 마스크되어 있으므로 추가 처리 불필요.
+        // - edit_acl 은 관리자가 body 에 키를 명시한 경우(requestedEditAcl.provided=true) 그 의도를 보존한다.
+        const adminExplicitlySetEditAcl = isAdmin && requestedEditAcl.provided;
+        const categoryAclChoicesRaw = (body.category_acl_choices && typeof body.category_acl_choices === 'object' && !Array.isArray(body.category_acl_choices))
+            ? (body.category_acl_choices as Record<string, unknown>)
+            : null;
+        const prefixed = await applyCreatePrefixRulesAndCategoryAcls(db, slug, {
+            category: body.category || null,
+            isPrivate: finalIsPrivate,
+            editAcl: finalEditAcl,
+            adminExplicitlySetEditAcl,
+            categoryAclChoices: categoryAclChoicesRaw,
+            isAdmin: !!isAdmin,
+        });
+        let effectiveCategory = prefixed.effectiveCategory;
+        finalIsPrivate = prefixed.finalIsPrivate;
+        finalEditAcl = prefixed.finalEditAcl;
 
         // 새 ACL 이 적용된 신규 페이지를 생성하기 전에, 생성자(비관리자)가 그 ACL 을 통과하는지 검증한다.
         // 신규 페이지이므로 page_editor 플래그는 항상 false 로 평가 (pageId=null).
@@ -2346,9 +2416,9 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
         try {
             pageResult = await db
                 .prepare(
-                    'INSERT INTO pages (slug, title, content, category, is_private, edit_acl, redirect_to, rows, characters) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+                    'INSERT INTO pages (slug, title, content, category, is_private, edit_acl, redirect_to, rows, characters, layout_mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
                 )
-                .bind(slug, newDocTitle, contentToStore, effectiveCategory, finalIsPrivate, finalEditAcl, body.redirect_to || null, metrics.rows, metrics.characters)
+                .bind(slug, newDocTitle, contentToStore, effectiveCategory, finalIsPrivate, finalEditAcl, body.redirect_to || null, metrics.rows, metrics.characters, requestedLayout ?? null)
                 .run();
         } catch (e: any) {
             // UNIQUE race (slug 의 UNIQUE 또는 idx_pages_title_unique) — precheck 와 INSERT 사이에

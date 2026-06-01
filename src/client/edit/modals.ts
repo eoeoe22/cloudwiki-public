@@ -2492,7 +2492,7 @@ async function openTemplateModal(): Promise<void> {
                     editor.setMarkdown?.(tContent);
                 }
                 window.scrollToBottom?.();
-                Swal.fire('완료', '템플릿을 불러왔습니다.', 'success');
+                Swal.fire({ icon: 'success', title: '템플릿을 불러왔습니다.', toast: true, position: 'top-end', timer: 1500, showConfirmButton: false });
             } catch (err) {
                 const msg = err instanceof Error ? err.message : '오류';
                 Swal.fire('오류', msg, 'error');

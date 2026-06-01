@@ -95,7 +95,14 @@ export function applyPageSSR(response: Response, pageData: Record<string, any>, 
     const wikiLogoUrl = env.WIKI_LOGO_URL || '';
     const wikiFaviconUrl = env.WIKI_FAVICON_URL || '/favicon.ico';
     const customHeader = env.CUSTOM_HEADER || '';
-    const layoutMode = (env.LAYOUT_MODE === 'left-toc' || env.LAYOUT_MODE === 'right-toc' || env.LAYOUT_MODE === 'docs') ? env.LAYOUT_MODE : 'default';
+    // pageData._ssrLayoutMode (문서별 오버라이드) 가 있으면 우선. 없거나 화이트리스트 외 값이면 전역 env.LAYOUT_MODE fallback.
+    // 'presentation' 은 문서 내부 렌더 모드(슬라이드 덱)이며 셸/사이드바를 바꾸지 않으므로 layout-mode 화이트리스트에 포함하지 않는다.
+    const pageLayoutOverride = typeof pageData._ssrLayoutMode === 'string' ? pageData._ssrLayoutMode : null;
+    const resolveLayoutMode = (v: string | null | undefined): string | null => {
+        if (v === 'left-toc' || v === 'right-toc' || v === 'docs' || v === 'wide') return v;
+        return null;
+    };
+    const layoutMode = resolveLayoutMode(pageLayoutOverride) ?? resolveLayoutMode(env.LAYOUT_MODE) ?? 'default';
 
     // JSON을 HTML 내에 안전하게 삽입 (script 태그 내 특수문자 및 줄바꿈 이스케이프)
     const jsonStr = JSON.stringify(pageData)

@@ -51,7 +51,11 @@ CREATE TABLE IF NOT EXISTS pages (
   -- 형식: {"flags":["aged","page_editor","any_editor","admin_only"]} (AND 평가 — 모든 플래그 통과 필요).
   -- 'admin_only' 플래그: 해당 문서는 관리자(admin:access)만 편집 가능.
   -- 'admin_only' 가 없는 경우 관리자(admin:access)는 ACL 우회.
-  edit_acl          TEXT
+  edit_acl          TEXT,
+  -- 문서별 레이아웃 오버라이드. NULL = 전역 LAYOUT_MODE 따름.
+  -- 허용 값: 'presentation' (현재). 향후 'wide'/'docs-pro'/'zen' 확장 여지.
+  -- 미지/잘못된 값은 클라이언트·SSR 모두 NULL 로 취급.
+  layout_mode       TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_pages_updated ON pages(updated_at DESC);

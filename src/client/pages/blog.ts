@@ -199,7 +199,7 @@ async function announceBlogPost() {
       const data = await res.json().catch(() => ({}));
       throw new Error(data.error || '발행 실패');
     }
-    Swal.fire({ icon: 'success', title: '공지로 발행됨', timer: 1000, showConfirmButton: false });
+    Swal.fire({ icon: 'success', title: '공지로 발행됨', toast: true, position: 'top-end', timer: 1500, showConfirmButton: false });
     await window.loadConfig();
     syncAnnounceButtons(currentBlogPostId);
   } catch (e) {
@@ -215,7 +215,7 @@ async function unannounceBlogPost() {
       body: JSON.stringify({ postId: currentBlogPostId }),
     });
     if (!res.ok) throw new Error('취소 실패');
-    Swal.fire({ icon: 'success', title: '공지 취소됨', timer: 1000, showConfirmButton: false });
+    Swal.fire({ icon: 'success', title: '공지 취소됨', toast: true, position: 'top-end', timer: 1500, showConfirmButton: false });
     await window.loadConfig();
     syncAnnounceButtons(currentBlogPostId);
   } catch (e) {
@@ -276,7 +276,7 @@ async function shareCopyLink() {
   const cleanUrl = window.location.origin + window.location.pathname;
   try {
     await navigator.clipboard.writeText(cleanUrl);
-    Swal.fire({ icon: 'success', title: '복사 완료', text: '포스트 링크가 클립보드에 복사되었습니다.', timer: 1500, showConfirmButton: false });
+    Swal.fire({ icon: 'success', title: '복사 완료', text: '포스트 링크가 클립보드에 복사되었습니다.', toast: true, position: 'top-end', timer: 1500, showConfirmButton: false });
   } catch (err) {
     console.error('복사 실패:', err);
     Swal.fire('오류', '클립보드 복사에 실패했습니다.', 'error');
@@ -290,7 +290,7 @@ async function shareCopyText() {
     const postTitle = getShareTitle();
     const textWithTitle = postTitle ? postTitle + '\n' + content.innerText : content.innerText;
     await navigator.clipboard.writeText(textWithTitle);
-    Swal.fire({ icon: 'success', title: '복사 완료', text: '포스트 내용이 클립보드에 복사되었습니다.', timer: 1500, showConfirmButton: false });
+    Swal.fire({ icon: 'success', title: '복사 완료', text: '포스트 내용이 클립보드에 복사되었습니다.', toast: true, position: 'top-end', timer: 1500, showConfirmButton: false });
   } catch (err) {
     console.error('복사 실패:', err);
     Swal.fire('오류', '클립보드 복사에 실패했습니다.', 'error');
@@ -313,7 +313,7 @@ async function shareCopyMarkdown() {
     const postTitle = getShareTitle();
     const markdownWithTitle = postTitle ? postTitle + '\n\n' + resolvedContent : resolvedContent;
     await navigator.clipboard.writeText(markdownWithTitle);
-    Swal.fire({ icon: 'success', title: '복사 완료', text: '마크다운 원문이 클립보드에 복사되었습니다.', timer: 1500, showConfirmButton: false });
+    Swal.fire({ icon: 'success', title: '복사 완료', text: '마크다운 원문이 클립보드에 복사되었습니다.', toast: true, position: 'top-end', timer: 1500, showConfirmButton: false });
   } catch (err) {
     console.error('복사 실패:', err);
     Swal.fire('오류', '클립보드 복사에 실패했습니다.', 'error');

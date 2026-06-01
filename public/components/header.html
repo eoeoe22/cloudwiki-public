@@ -91,25 +91,33 @@
 
             input.addEventListener('input', function() {
                 clearTimeout(debounceTimer);
-                const q = this.value.trim();
+                const rawQ = this.value.trim();
+                // map: 프리픽스가 붙으면 일반 문서 LIKE 검색을 그대로 돌리되, 결과를 map: 가상 문서로 매핑한다.
+                const isMapMode = rawQ.toLowerCase().startsWith('map:');
+                const q = isMapMode ? rawQ.slice(4).trim() : rawQ;
                 if (q.length < 2) {
                     sugBox.classList.remove('show');
                     sugBox.innerHTML = '';
                     return;
                 }
-                debounceTimer = setTimeout(() => fetchSuggestions(q), 250);
+                debounceTimer = setTimeout(() => fetchSuggestions(q, isMapMode), 250);
             });
 
-            async function fetchSuggestions(q) {
+            async function fetchSuggestions(q, isMapMode) {
                 try {
-                    const res = await fetch('/api/search/suggest?q=' + encodeURIComponent(q));
+                    // map: 모드는 카테고리를 클라이언트에서 거르지 않고 서버에서 아예 제외시켜
+                    // 7개 한도가 카테고리에 잠식돼 페이지 결과가 비는 상황을 막는다.
+                    const url = '/api/search/suggest?q=' + encodeURIComponent(q)
+                        + (isMapMode ? '&exclude_categories=1' : '');
+                    const res = await fetch(url);
                     if (!res.ok) return;
                     const data = await res.json();
-                    renderSuggestions(data.suggestions || []);
+                    const items = data.suggestions || [];
+                    renderSuggestions(items, isMapMode);
                 } catch(e) { /* ignore */ }
             }
 
-            function renderSuggestions(items) {
+            function renderSuggestions(items, isMapMode) {
                 activeIdx = -1;
                 if (!items.length) {
                     sugBox.classList.remove('show');
@@ -117,12 +125,16 @@
                     return;
                 }
                 // item.title 이 있으면 표시 이름은 그것을, 호출 식별자(data-slug, /w/) 는 항상 slug.
+                // map: 모드에서는 호출 식별자도 map:<slug> 로 감싸 가상 문서 라우트로 이동시킨다.
                 sugBox.innerHTML = items.map((item, i) => {
-                    const displayName = item.title || item.slug;
+                    const baseSlug = item.slug;
+                    const baseDisplayName = item.title || baseSlug;
+                    const slugTarget = isMapMode ? 'map:' + baseSlug : baseSlug;
+                    const displayName = isMapMode ? 'map:' + baseDisplayName : baseDisplayName;
                     const slugSubLabel = item.title
-                        ? ' <small class="text-muted">' + escapeHtml(item.slug) + '</small>'
+                        ? ' <small class="text-muted">' + escapeHtml(slugTarget) + '</small>'
                         : '';
-                    return '<li class="search-suggestion-item" data-slug="' + escapeHtml(item.slug) + '">'
+                    return '<li class="search-suggestion-item" data-slug="' + escapeHtml(slugTarget) + '">'
                         + '<i class="mdi mdi-file-document-outline"></i> '
                         + escapeHtml(displayName) + slugSubLabel + '</li>';
                 }).join('');

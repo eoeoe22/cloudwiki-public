@@ -709,6 +709,7 @@ export async function applyNewPageInsert(
         category: string | null;
         redirectTo: string | null;
         editAcl?: string | null;       // serialize 된 JSON. 호출자가 prefix 룰을 평가해 주입.
+        isPrivate?: number;            // 호출자가 doc_setting_prefix_rules longest-match 로 산출. 누락 시 0.
         title?: string | null;        // 호출자가 사전 충돌 검증을 마쳤다고 가정. 누락 시 NULL.
         logType?: string;
         logMessage?: string;
@@ -723,8 +724,8 @@ export async function applyNewPageInsert(
     let pageResult;
     try {
         pageResult = await db
-            .prepare('INSERT INTO pages (slug, title, content, category, edit_acl, redirect_to, rows, characters) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-            .bind(slug, opts.title ?? null, contentToStore, opts.category, opts.editAcl ?? null, opts.redirectTo, metrics.rows, metrics.characters)
+            .prepare('INSERT INTO pages (slug, title, content, category, is_private, edit_acl, redirect_to, rows, characters) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+            .bind(slug, opts.title ?? null, contentToStore, opts.category, opts.isPrivate ?? 0, opts.editAcl ?? null, opts.redirectTo, metrics.rows, metrics.characters)
             .run();
     } catch (e: any) {
         // UNIQUE race: precheck ~ INSERT 사이에 다른 요청이 같은 slug/title 을 점유.

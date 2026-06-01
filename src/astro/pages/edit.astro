@@ -341,6 +341,18 @@ const ssrJson = JSON.stringify({ _wikiSyntax: branding.wikiSyntax })
                 </div>
             </div>
 
+            <!-- 프레젠테이션 모드 — 모든 편집자가 설정 가능(표시 전용 메타). 즉시 적용하지 않고
+                 문서 저장 시 본문 리비전과 함께 반영된다. 섹션 편집 모드에서는 숨겨진다. -->
+            <div class="mb-3" id="presentationModeSetting">
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="presentationModeToggle">
+                    <label class="form-check-label fw-bold" for="presentationModeToggle">
+                        <i class="mdi mdi-presentation"></i> 프레젠테이션 모드
+                    </label>
+                </div>
+                <div class="form-text text-muted">본문을 <code>---</code> 로 분할해 슬라이드로 표시합니다. 문서 저장 시 반영됩니다.</div>
+            </div>
+
             <div class="mb-3">
                 <label for="redirectInput" class="form-label fw-bold">문서 넘겨주기 (Redirect)</label>
                 <input type="text" id="redirectInput" class="form-control"

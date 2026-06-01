@@ -31,10 +31,8 @@ import {
     buildCommitSummary,
     validateMcpSummaryLength,
 } from './admin-mcp';
-import { findConflictingPage } from './wiki';
+import { findConflictingPage, applyCreatePrefixRulesAndCategoryAcls, splitCategoryString } from './wiki';
 import {
-    findPrefixRuleEditAcl,
-    serializeEditAcl,
     parseEditAcl,
     evaluateEditAcl,
     getEditAclMinAgeDays,
@@ -481,19 +479,39 @@ mcpSubmissionsRoutes.post('/mcp-submissions/:id/approve', requireAuth, async (c)
                 }, 409);
             }
         }
-        // 신규 문서 prefix 룰 ACL — /api/w/:slug 및 MCP commit_edit 의 create 분기와 일관되게,
-        // 승인 시점에도 가장 긴 일치 prefix 의 edit_acl 을 새 페이지에 그대로 기록한다.
-        const prefixAcl = await findPrefixRuleEditAcl(c.env.DB, slug);
-        const createEditAclSerialized = (prefixAcl && prefixAcl.flags.length > 0)
-            ? serializeEditAcl(prefixAcl) : null;
-        // 승인 시점의 user (= 새 페이지 author) 가 prefix 룰 ACL 을 통과하는지 평가.
+        // 신규 문서 prefix 룰 / 카테고리 ACL 머지 — /api/w/:slug PUT(create) 와 동일한 헬퍼를 호출해
+        // category_prefix_rules·doc_setting_prefix_rules·category_acl 템플릿을 모두 적용한다.
+        // draft 는 is_private/edit_acl 을 들고 있지 않으므로 초기값은 0/null 이고,
+        // 승인 시점(=새 페이지 author) 권한으로 비관리자 'overwrite' 다운그레이드를 결정한다.
+        //
+        // categoryAclChoices: 웹 UI 의 prompt 가 없으므로 draft 가 명시한 모든 카테고리를
+        // 'merge' 모드로 일괄 적용한다 — null 로 두면 헬퍼가 "키 누락 = 적용 안 함" 으로 처리해
+        // AI 가 작성한 'admin_only' category_acl 템플릿도 무시되며 ACL 우회가 가능해진다.
+        const isAdminCreate = rbac.can(user.role, 'admin:access');
+        const mcpCategoryAclChoices: Record<string, string> = {};
+        for (const cat of splitCategoryString(draft.category)) {
+            mcpCategoryAclChoices[cat] = 'merge';
+        }
+        const prefixed = await applyCreatePrefixRulesAndCategoryAcls(c.env.DB, slug, {
+            category: draft.category,
+            isPrivate: 0,
+            editAcl: null,
+            adminExplicitlySetEditAcl: false,
+            categoryAclChoices: mcpCategoryAclChoices,
+            isAdmin: isAdminCreate,
+        });
+        const createEditAclSerialized = prefixed.finalEditAcl;
+        const createCategory = prefixed.effectiveCategory;
+        const createIsPrivate = prefixed.finalIsPrivate;
+
+        // 승인 시점의 user (= 새 페이지 author) 가 최종 머지된 ACL 을 통과하는지 평가.
         // admin_only 플래그가 없으면 관리자는 우회.
-        if (prefixAcl && prefixAcl.flags.length > 0) {
-            const isAdminCreate = rbac.can(user.role, 'admin:access');
-            const hasAdminOnly = prefixAcl.flags.includes('admin_only');
+        const finalAclForCheck = parseEditAcl(createEditAclSerialized);
+        if (finalAclForCheck && finalAclForCheck.flags.length > 0) {
+            const hasAdminOnly = finalAclForCheck.flags.includes('admin_only');
             if (!isAdminCreate || hasAdminOnly) {
                 const minAge = await getEditAclMinAgeDays(c.env.DB);
-                const ev = await evaluateEditAcl(c.env.DB, prefixAcl, user, null, minAge, isAdminCreate);
+                const ev = await evaluateEditAcl(c.env.DB, finalAclForCheck, user, null, minAge, isAdminCreate);
                 if (!ev.allowed) {
                     const isAdminOnlyFail = ev.decisive === 'admin_only';
                     return c.json({
@@ -502,7 +520,7 @@ mcpSubmissionsRoutes.post('/mcp-submissions/:id/approve', requireAuth, async (c)
                         message: isAdminOnlyFail
                             ? '이 슬러그로 시작하는 문서는 관리자만 새로 생성할 수 있습니다.'
                             : '이 슬러그로 시작하는 문서는 ACL 정책상 새로 생성할 수 없습니다.',
-                        edit_acl: prefixAcl,
+                        edit_acl: finalAclForCheck,
                         min_age_days: minAge,
                     }, 403);
                 }
@@ -514,10 +532,11 @@ mcpSubmissionsRoutes.post('/mcp-submissions/:id/approve', requireAuth, async (c)
         try {
             const result = await applyNewPageInsert(c, user, slug, draft.content, {
                 summary: createSummaryWithDiff,
-                category: draft.category,
+                category: createCategory,
                 redirectTo: draft.redirect_to,
                 title: draft.has_title_change ? draft.title : null,
                 editAcl: createEditAclSerialized,
+                isPrivate: createIsPrivate,
                 logType: 'page_create_commit_approved',
                 logMessage: `[mcp-submission] approved draft #${draft.id} (create): ${slug} (v1)`,
             });

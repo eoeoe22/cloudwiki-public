@@ -1468,12 +1468,8 @@ html[data-theme="dark"] .toc-floating-body a.toc-active {
   border-color: var(--wiki-primary);
 }
 
-/* 모바일/태블릿(<992px)에서는 사이드바가 본문 아래로 쌓여 읽기 모드 의미가 없음 → 토글 숨김 */
-@media (max-width: 991px) {
-  .reading-mode-toggle {
-    display: none !important;
-  }
-}
+/* 읽기 모드 토글은 뷰포트 폭과 무관하게 문서 열람 페이지에서 항상 표시한다.
+   (모바일/태블릿에서도 사이드바·본문 하단 카드를 접어 본문에 집중할 수 있어 유용하다.) */
 
 /* 읽기 모드: 모든 레이아웃 모드에서 양쪽 사이드바와 본문 하단 카드를 숨겨 본문만 남긴다.
    - .wiki-sidebar: 기본/우측 사이드바(트렌딩·최근 변경·커스텀 사이드바)

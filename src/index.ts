@@ -477,8 +477,12 @@ app.get('/w/*', async (c) => {
     // "map:<base>" 슬러그는 실제 문서가 아니라 <base> 를 루트로 한 하위 문서 트리 뷰를
     // 합성해 보여주는 가상 페이지다. DB 조회 전에 가로채 트리 마크다운을 만들고 SSR 한다.
     if (isMapNamespace(slug)) {
+        // 관리자 토글: ?perms=1 이면 각 노드 옆에 비공개/ACL 태그를 표시. 비관리자가 강제로 켜도 무시.
+        const permsQueryRaw = c.req.query('perms');
+        const showPerms = !!isAdmin && permsQueryRaw === '1';
         // 비로그인 요청에 한해 글로벌 캐시 매치 (anonymous 응답만 캐시에 들어가므로 안전).
-        if (!user && canUseCache) {
+        // 비로그인 사용자가 `?perms=1` 로 캐시를 오염시키지 못하도록 쿼리 없는 응답만 매치한다.
+        if (!user && canUseCache && permsQueryRaw == null) {
             const cached = await cache.match(ssrCacheKey);
             if (cached) {
                 trackPageView(c, slug, Date.now() - startTime);
@@ -487,13 +491,14 @@ app.get('/w/*', async (c) => {
         }
         const baseSlug = slug.substring('map:'.length);
         const canSeePrivate = rbac.can(user?.role ?? 'guest', 'wiki:private');
-        const mapResult = await buildMapDocument({ db, baseSlug, canSeePrivate });
+        const mapResult = await buildMapDocument({ db, baseSlug, canSeePrivate, showPerms });
         const titleStr = `${slug} - ${wikiName}`;
         const description = `${baseSlug || '(루트)'} 의 하위 문서 구조`;
         const ssrData: Record<string, any> = {
             _ssrSlug: slug,
             _ssrNotFound: false,
             is_map_doc: true,
+            _ssrShowPerms: showPerms,
             slug,
             title: slug,
             content: mapResult.markdown,
@@ -503,9 +508,9 @@ app.get('/w/*', async (c) => {
             _ssrDescription: description,
         };
         const response = await renderHtml(c, '/', ssrData);
-        // 권한자 응답(비공개 자식 포함 가능) 또는 로그인 사용자는 캐시 우회.
+        // 권한자 응답(비공개 자식 포함 가능) 또는 로그인 사용자, ?perms=1(관리자 전용) 응답은 캐시 우회.
         // 비로그인 + 비공개 자식이 없는 트리만 공유 캐시 허용.
-        const safeForSharedCache = !user && !mapResult.hasPrivateChildren;
+        const safeForSharedCache = !user && !mapResult.hasPrivateChildren && !showPerms;
         if (safeForSharedCache && canUseCache) {
             const cachedResponse = new Response(response.body, response);
             // map: 캐시는 자식 mutation 시 자동 무효화되지 않으므로 staleness 윈도우를 짧게 유지.
@@ -819,6 +824,8 @@ ${contentBlock}
             _ssrTitle: `${page.title || page.slug} - ${wikiName}`,
             _ssrDescription: desc,
             _usedPalettes: usedPalettes,
+            // 문서별 레이아웃 오버라이드 — applyPageSSR 가 <body data-layout-mode> 를 이 값으로 베이킹.
+            _ssrLayoutMode: page.layout_mode ?? null,
         };
     }
 

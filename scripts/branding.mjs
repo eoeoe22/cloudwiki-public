@@ -127,7 +127,7 @@ export function readBranding() {
     if (_cached) return _cached;
     const toml = readFileSync(WRANGLER_TOML, 'utf8');
     const layoutModeRaw = readSingle(toml, 'LAYOUT_MODE', 'default');
-    const layoutMode = (layoutModeRaw === 'left-toc' || layoutModeRaw === 'right-toc' || layoutModeRaw === 'docs') ? layoutModeRaw : 'default';
+    const layoutMode = (layoutModeRaw === 'left-toc' || layoutModeRaw === 'right-toc' || layoutModeRaw === 'docs' || layoutModeRaw === 'wide') ? layoutModeRaw : 'default';
     _cached = {
         wikiName: readSingle(toml, 'WIKI_NAME', 'CloudWiki'),
         wikiLogoUrl: readSingle(toml, 'WIKI_LOGO_URL', ''),

@@ -222,7 +222,9 @@
           Swal.fire({
             icon: "success",
             title: "변경됨",
-            timer: 800,
+            toast: true,
+            position: "top-end",
+            timer: 1500,
             showConfirmButton: false,
           });
       }
@@ -400,7 +402,9 @@
           Swal.fire({
             icon: "success",
             title: "공지가 발행되었습니다.",
-            timer: 1000,
+            toast: true,
+            position: "top-end",
+            timer: 1500,
             showConfirmButton: false,
           });
           document.getElementById("annNewTitle").value = "";
@@ -546,8 +550,10 @@
           Swal.fire({
             icon: "success",
             title: "복사됨",
+            toast: true,
+            position: "top-end",
             showConfirmButton: false,
-            timer: 800,
+            timer: 1500,
           });
         } catch (e) {
           input.select();
@@ -555,8 +561,10 @@
           Swal.fire({
             icon: "success",
             title: "복사됨",
+            toast: true,
+            position: "top-end",
             showConfirmButton: false,
-            timer: 800,
+            timer: 1500,
           });
         }
       }
@@ -597,7 +605,9 @@
           Swal.fire({
             icon: "success",
             title: "저장 완료",
-            timer: 1000,
+            toast: true,
+            position: "top-end",
+            timer: 1500,
             showConfirmButton: false,
           });
       }
@@ -867,7 +877,9 @@
           Swal.fire({
             icon: "success",
             title: "복원 완료",
-            timer: 900,
+            toast: true,
+            position: "top-end",
+            timer: 1500,
             showConfirmButton: false,
           });
           loadDeletedPages(1);

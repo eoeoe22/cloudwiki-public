@@ -2869,7 +2869,8 @@ adminRoutes.put('/pages/:slug/edit-acl', async (c) => {
  * Body: { is_private?: 0|1 }
  * 본문/리비전 변경 없이 비공개 플래그만 갱신. 권한 관리 모달 단건 저장 경로.
  * 키가 생략되거나 현재 값과 같으면 변경 없이 현재 값을 반환한다.
- * (편집 잠금은 edit_acl 의 admin_only 플래그로 통합되어 별도 PUT /edit-acl 로 처리.)
+ * (편집 잠금은 edit_acl 의 admin_only 플래그로 통합되어 별도 PUT /edit-acl 로 처리.
+ *  layout_mode 는 본문 저장과 함께 PUT /w/:slug 로 옮겨졌다 — 이 엔드포인트는 더 이상 다루지 않는다.)
  */
 adminRoutes.patch('/pages/:slug/flags', async (c) => {
     const db = c.env.DB;
@@ -2894,18 +2895,15 @@ adminRoutes.patch('/pages/:slug/flags', async (c) => {
         .first<{ id: number; is_private: number }>();
     if (!page) return c.json({ error: '문서를 찾을 수 없습니다.' }, 404);
 
-    if (nextPriv === undefined) {
-        return c.json({ success: true, slug, is_private: page.is_private });
-    }
+    const privateChanged = nextPriv !== undefined && nextPriv !== page.is_private;
 
-    const privateChanged = nextPriv !== page.is_private;
     if (!privateChanged) {
         return c.json({ success: true, slug, is_private: page.is_private });
     }
 
     await db
         .prepare('UPDATE pages SET is_private = ?, updated_at = unixepoch() WHERE id = ?')
-        .bind(nextPriv, page.id)
+        .bind(nextPriv!, page.id)
         .run();
 
     // 비공개 전환(0→1) 시 권한 없는 유저의 stale 주시·토론 mute 정리.
@@ -2929,7 +2927,11 @@ adminRoutes.patch('/pages/:slug/flags', async (c) => {
         currentUser.id
     );
 
-    return c.json({ success: true, slug, is_private: nextPriv });
+    return c.json({
+        success: true,
+        slug,
+        is_private: nextPriv!,
+    });
 });
 
 // ── 컬러 팔레트 CRUD ────────────────────────────────────────────────

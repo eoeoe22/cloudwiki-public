@@ -270,8 +270,10 @@ async function deleteMedia(id, filename) {
       Swal.fire({
         icon: "success",
         title: "삭제됨",
+        toast: true,
+        position: "top-end",
         showConfirmButton: false,
-        timer: 1000,
+        timer: 1500,
       });
     } catch (err) {
       Swal.fire("오류", err.message, "error");

@@ -297,7 +297,9 @@
     border-radius: 8px;
     background: var(--wiki-card-bg);
     box-shadow: var(--wiki-shadow-sm);
-    overflow: hidden;
+    /* 모바일 등 좁은 폭에서 셀 텍스트가 줄바꿈되며 레이아웃이 깨지는 대신,
+       표를 내부에서 가로로 확장하고 컨테이너에 가로 스크롤을 둔다. */
+    overflow-x: auto;
 }
 .bulkcat-rules-empty {
     padding: 0.875rem 1rem;
@@ -321,12 +323,14 @@
     color: var(--wiki-text-muted);
     background: var(--wiki-bg);
     border-bottom: 1px solid var(--wiki-border);
+    white-space: nowrap;
 }
 .bulkcat-rules-table tbody td {
     padding: 0.5rem 0.875rem;
     border-top: 1px solid var(--wiki-border);
     vertical-align: middle;
     color: var(--wiki-text);
+    white-space: nowrap;
 }
 .bulkcat-rules-table tbody tr:first-child td {
     border-top: none;

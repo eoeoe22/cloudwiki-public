@@ -48,6 +48,7 @@ export default defineConfig({
                 'category-acl-modal': resolve(__dirname, 'src/client/permissions/category-acl-modal.ts'),
                 'discussion-edit': resolve(__dirname, 'src/client/discussion-edit/editor.ts'),
                 'render': resolve(__dirname, 'src/client/render.ts'),
+                'render-presentation': resolve(__dirname, 'src/client/render-presentation.ts'),
                 'common': resolve(__dirname, 'src/client/common.ts'),
                 'diff': resolve(__dirname, 'src/client/diff.ts'),
                 'push': resolve(__dirname, 'src/client/push.ts'),

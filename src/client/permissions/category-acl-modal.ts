@@ -293,7 +293,7 @@ async function showCategoryEditor(name: string): Promise<void> {
                         const err = (await saveRes.json().catch(() => ({}))) as { error?: string };
                         throw new Error(err.error || `저장 실패 (${saveRes.status})`);
                     }
-                    await window.Swal!.fire({ icon: 'success', title: '템플릿 저장됨', timer: 900, showConfirmButton: false });
+                    await window.Swal!.fire({ icon: 'success', title: '템플릿 저장됨', toast: true, position: 'top-end', timer: 1500, showConfirmButton: false });
                     window.Swal!.close();
                 } catch (e: any) {
                     await window.Swal!.fire({ icon: 'error', title: '저장 실패', text: e?.message || String(e) });

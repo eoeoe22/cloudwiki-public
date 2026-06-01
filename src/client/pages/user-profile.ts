@@ -200,7 +200,7 @@ async function adminChangeRole(role) {
     if (res.ok) {
         profileUser.role = role;
         renderAdminControls();
-        Swal.fire({ icon: 'success', title: '변경됨', timer: 800, showConfirmButton: false });
+        Swal.fire({ icon: 'success', title: '변경됨', toast: true, position: 'top-end', timer: 1500, showConfirmButton: false });
     } else {
         Swal.fire('오류', data.error || '변경 실패', 'error');
     }

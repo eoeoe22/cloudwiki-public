@@ -65,6 +65,8 @@
                 Swal.fire({
                     icon: 'success',
                     title: '프로필 사진이 갱신되었습니다.',
+                    toast: true,
+                    position: 'top-end',
                     showConfirmButton: false,
                     timer: 1500,
                 });
@@ -607,7 +609,10 @@
                     icon: 'success',
                     title: '승인되었습니다.',
                     text: `리비전 #${data.revision_id} 가 생성되었습니다. (+${data.lines_added ?? 0}줄 -${data.lines_removed ?? 0}줄)`,
-                    timer: 2000,
+                    toast: true,
+                    position: 'top-end',
+                    showConfirmButton: false,
+                    timer: 2500,
                 });
                 loadMcpSubmissions();
             } catch {
@@ -666,6 +671,8 @@
                 Swal.fire({
                     icon: 'success',
                     title: '이름이 변경되었습니다!',
+                    toast: true,
+                    position: 'top-end',
                     showConfirmButton: false,
                     timer: 1500
                 });
@@ -929,7 +936,7 @@
                 const data = await res.json().catch(() => ({}));
                 if (!res.ok) throw new Error(data.error || '세션 종료에 실패했습니다.');
 
-                Swal.fire({ icon: 'success', title: '세션이 종료되었습니다.', showConfirmButton: false, timer: 1200 });
+                Swal.fire({ icon: 'success', title: '세션이 종료되었습니다.', toast: true, position: 'top-end', showConfirmButton: false, timer: 1500 });
                 loadSessions();
             } catch (err) {
                 Swal.fire('오류', err.message, 'error');
@@ -956,6 +963,8 @@
                 Swal.fire({
                     icon: 'success',
                     title: `${data.count || 0}개의 세션이 종료되었습니다.`,
+                    toast: true,
+                    position: 'top-end',
                     showConfirmButton: false,
                     timer: 1500,
                 });
@@ -1072,7 +1081,7 @@
                 const data = await res.json().catch(() => ({}));
                 if (!res.ok) throw new Error(data.error || 'MCP 클라이언트 연결 해제에 실패했습니다.');
 
-                Swal.fire({ icon: 'success', title: '연결이 해제되었습니다.', showConfirmButton: false, timer: 1200 });
+                Swal.fire({ icon: 'success', title: '연결이 해제되었습니다.', toast: true, position: 'top-end', showConfirmButton: false, timer: 1500 });
                 loadMcpClients();
             } catch (err) {
                 Swal.fire('오류', err.message, 'error');
@@ -1099,6 +1108,8 @@
                 Swal.fire({
                     icon: 'success',
                     title: `${data.count || 0}개의 토큰이 무효화되었습니다.`,
+                    toast: true,
+                    position: 'top-end',
                     showConfirmButton: false,
                     timer: 1500,
                 });
@@ -1123,7 +1134,7 @@
                         const res = await fetch(`/api/messages/${id}`, { method: 'DELETE' });
                         if (!res.ok) throw new Error();
 
-                        Swal.fire({ icon: 'success', title: '삭제됨', showConfirmButton: false, timer: 1000 });
+                        Swal.fire({ icon: 'success', title: '삭제됨', toast: true, position: 'top-end', showConfirmButton: false, timer: 1500 });
                         // 목록 리로드
                         loadMessages(false);
                         // 헤더 알림 뱃지도 갱신 가능성 있음

@@ -97,6 +97,13 @@
     // ── 라우팅 ──
     function route() {
       const path = window.location.pathname;
+      // SPA 네비게이션(다른 문서/페이지) 진입 시 이전 프레젠테이션 덱을 해체한다.
+      // 같은 문서 내 슬라이드 해시(#/N) 이동은 popstate early-return 으로 route() 를
+      // 호출하지 않으므로, 여기서 정리해도 활성 덱의 body 클래스/키보드·해시 상태가 보존된다.
+      // (hideAllPages() 는 정상 로드 경로에서 렌더 이후 호출되므로 거기서 해체하면 안 된다.)
+      if (typeof window.teardownPresentation === 'function') {
+        try { window.teardownPresentation(); } catch (e) { /* noop */ }
+      }
       if (!_initialLoadDone) hideAllPages();
 
       if (path === '/' || path === '') {
@@ -170,7 +177,7 @@
     function relocateRightSidebarBelowArticle() {
       if (_rightSidebarRelocated) return;
       const mode = window.appConfig?.layoutMode;
-      if (mode !== 'left-toc' && mode !== 'right-toc' && mode !== 'docs') return;
+      if (mode !== 'left-toc' && mode !== 'right-toc' && mode !== 'docs' && mode !== 'wide') return;
       const sidebar = document.getElementById('wikiSidebar');
       const articlePage = document.getElementById('articlePage');
       if (!sidebar || !articlePage) return;
@@ -1141,6 +1148,17 @@
             }
           }
           _tryRenderExtDoc(15);
+        } else if (
+          page.layout_mode === 'presentation'
+          && !document.body.classList.contains('reading-mode')
+          && typeof window.renderPresentation === 'function'
+        ) {
+          // 프레젠테이션 문서: 본문을 `---` 기준으로 슬라이드 분할해 위키 레이아웃 안에서 인라인 덱으로 표시.
+          // 헤더/사이드바/푸터는 그대로 유지되며, 컨트롤 바의 "전체화면" 버튼으로 풀스크린 발표 모드 진입.
+          // 읽기 모드가 활성이면(위 조건에서 제외) 일반 렌더 경로로 폴백해 단일 문서처럼 본다.
+          await window.renderPresentation(page.content || '', slug, 'articleContent', {
+            palettes: page.used_palettes || null,
+          });
         } else {
           await window.renderWikiContent(page.content || '', slug, 'articleContent', {
             showCategory: true,
@@ -1549,10 +1567,46 @@
       if (_mcpBannerEl) _mcpBannerEl.style.display = 'none';
 
       const baseSlug = page.slug.replace(/^map:/, '');
+      const _mapIsAdmin = !!(window.currentUser && (window.currentUser.role === 'admin' || window.currentUser.role === 'super_admin'));
+      // SSR 단계에서 ?perms=1 이 isAdmin 일 때만 활성화돼 _ssrShowPerms 로 내려온다.
+      // 비관리자가 강제로 ?perms=1 을 붙여도 서버가 false 로 정규화하므로 신뢰 가능.
+      const _mapPermsActive = !!(page && page._ssrShowPerms);
+      // localStorage 자동 복원: 관리자이고, 현재 URL 에 perms 쿼리가 없는데 저장값이 ON 이면 ?perms=1 로 즉시 교체한다.
+      // 비관리자에게는 의미가 없으므로 건너뛴다. 무한 루프 방지를 위해 URL 에 perms 가 있으면 복원 시도 자체를 안 함.
+      if (_mapIsAdmin) {
+        try {
+          const _url0 = new URL(window.location.href);
+          if (!_url0.searchParams.has('perms') && localStorage.getItem('mapShowPerms') === '1') {
+            _url0.searchParams.set('perms', '1');
+            window.location.replace(_url0.toString());
+            return;
+          }
+        } catch (_) { /* localStorage 비활성 환경 등 — 무시 */ }
+      }
+      const _permsToggleHtml = _mapIsAdmin
+        ? `<label class="meta-item" style="cursor:pointer; user-select:none;">
+             <input type="checkbox" id="mapPermsToggle"${_mapPermsActive ? ' checked' : ''} style="vertical-align:middle; margin-right:4px;">
+             <i class="bi bi-shield-lock"></i> 권한 표시
+           </label>`
+        : '';
       document.getElementById('articleMeta').innerHTML = `
         <span class="meta-item"><i class="bi bi-diagram-3"></i> 지도 뷰</span>
         <span class="meta-item">루트: ${window.escapeHtml(baseSlug || '(전체)')}</span>
+        ${_permsToggleHtml}
       `;
+      if (_mapIsAdmin) {
+        const _toggleEl = document.getElementById('mapPermsToggle');
+        if (_toggleEl) {
+          _toggleEl.addEventListener('change', () => {
+            const _next = _toggleEl.checked;
+            try { localStorage.setItem('mapShowPerms', _next ? '1' : '0'); } catch (_) { /* ignore */ }
+            const _url = new URL(window.location.href);
+            if (_next) _url.searchParams.set('perms', '1');
+            else _url.searchParams.delete('perms');
+            window.location.assign(_url.toString());
+          });
+        }
+      }
 
       // 액션 버튼: 편집/이력 등은 모두 비활성화. 루트 문서로 이동하는 바로가기만 노출한다.
       const rootHref = baseSlug ? `/w/${encodeURIComponent(baseSlug)}` : '/';
@@ -1678,7 +1732,7 @@
         const rawEl = document.getElementById('articleRawContent');
         if (rawEl) rawEl.textContent = currentPage.content;
 
-        Swal.fire({ icon: 'success', title: '저장되었습니다.', timer: 1000, showConfirmButton: false });
+        Swal.fire({ icon: 'success', title: '저장되었습니다.', toast: true, position: 'top-end', timer: 1500, showConfirmButton: false });
       } catch (err) {
         console.error(err);
         Swal.fire('오류', err.message || '저장에 실패했습니다.', 'error');
@@ -2124,7 +2178,7 @@
       const cleanUrl = window.location.origin + window.location.pathname;
       try {
         await navigator.clipboard.writeText(cleanUrl);
-        Swal.fire({ icon: 'success', title: '복사 완료', text: '문서 링크가 클립보드에 복사되었습니다.', timer: 1500, showConfirmButton: false });
+        Swal.fire({ icon: 'success', title: '복사 완료', text: '문서 링크가 클립보드에 복사되었습니다.', toast: true, position: 'top-end', timer: 1500, showConfirmButton: false });
       } catch (err) {
         console.error('복사 실패:', err);
         Swal.fire('오류', '클립보드 복사에 실패했습니다.', 'error');
@@ -2135,10 +2189,8 @@
       const content = document.getElementById('articleContent');
       if (!content) return;
       try {
-        const pageTitle = currentPage && currentPage.slug ? currentPage.slug : '';
-        const textWithTitle = pageTitle ? pageTitle + '\n' + content.innerText : content.innerText;
-        await navigator.clipboard.writeText(textWithTitle);
-        Swal.fire({ icon: 'success', title: '복사 완료', text: '문서 내용이 클립보드에 복사되었습니다.', timer: 1500, showConfirmButton: false });
+        await navigator.clipboard.writeText(content.innerText);
+        Swal.fire({ icon: 'success', title: '복사 완료', text: '문서 내용이 클립보드에 복사되었습니다.', toast: true, position: 'top-end', timer: 1500, showConfirmButton: false });
       } catch (err) {
         console.error('복사 실패:', err);
         Swal.fire('오류', '클립보드 복사에 실패했습니다.', 'error');
@@ -2158,7 +2210,7 @@
         const pageTitle = currentPage.slug ? currentPage.slug : '';
         const markdownWithTitle = pageTitle ? pageTitle + '\n\n' + resolvedContent : resolvedContent;
         await navigator.clipboard.writeText(markdownWithTitle);
-        Swal.fire({ icon: 'success', title: '복사 완료', text: '마크다운 원문이 클립보드에 복사되었습니다.', timer: 1500, showConfirmButton: false });
+        Swal.fire({ icon: 'success', title: '복사 완료', text: '마크다운 원문이 클립보드에 복사되었습니다.', toast: true, position: 'top-end', timer: 1500, showConfirmButton: false });
       } catch (err) {
         console.error('복사 실패:', err);
         Swal.fire('오류', '클립보드 복사에 실패했습니다.', 'error');
@@ -2577,6 +2629,14 @@
         if (active) localStorage.setItem('readingMode', '1');
         else localStorage.removeItem('readingMode');
       } catch (e) { }
+      // 프레젠테이션 문서는 모드 전환 시 본문 렌더 경로가 갈리므로 재렌더가 필요.
+      // 읽기 모드 ON → 일반 문서처럼 합쳐서 표시 / OFF → 슬라이드 덱 복원.
+      if (currentPage && currentPage.layout_mode === 'presentation' && currentSlug) {
+        if (typeof window.teardownPresentation === 'function') {
+          try { window.teardownPresentation(); } catch (e) { /* noop */ }
+        }
+        showArticle(currentSlug);
+      }
     }
 
     // ── 조회수 지연 로드 ──

@@ -22,6 +22,7 @@ import Footer from '../components/Footer.astro';
         <link rel="stylesheet" href="/render.css" />
         <link rel="stylesheet" href="/css/wiki-nav.css" />
         <link rel="stylesheet" href="/css/bulk-modal.css" />
+        <link rel="stylesheet" href="/css/presentation.css" />
         <!-- 테마 FOUC 방지: CSS 로드 후 즉시 테마 적용 -->
         <script is:inline>try{var t=localStorage.getItem('themeMode');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
     </Fragment>
@@ -326,6 +327,7 @@ import Footer from '../components/Footer.astro';
     <Fragment slot="scripts">
         <script type="module" src="/dist/common.js" is:inline></script>
         <script type="module" src="/dist/render.js" is:inline></script>
+        <script type="module" src="/dist/render-presentation.js" is:inline></script>
         <script type="module" src="/dist/permissions-modal.js" is:inline></script>
         <script type="module" src="/dist/category-acl-modal.js" is:inline></script>
         <script type="module" src="/dist/index.js" is:inline></script>

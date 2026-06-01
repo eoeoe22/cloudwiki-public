@@ -13,6 +13,8 @@
  * 반환값에 `hasPrivateChildren` 을 포함해 호출 측이 공유 캐시 가능 여부를 판단하도록 한다.
  */
 
+import { parseEditAcl, type EditAclFlag } from './editAcl';
+
 export const MAP_TREE_LIMIT = 500;
 /**
  * `map:` 캐시 max-age (초). 자식 문서가 mutation 되어도 ancestor map 캐시는 자동 무효화되지
@@ -26,13 +28,31 @@ interface PageRow {
     rows: number | null;
     characters: number | null;
     is_private: number;
+    edit_acl: string | null;
 }
 
 interface BuildMapDocumentOptions {
     db: D1Database;
     baseSlug: string;
     canSeePrivate: boolean;
+    /**
+     * true 면 각 노드 라벨 옆에 비공개/ACL 태그를 위키 문법으로 덧붙인다.
+     * 관리자 전용 토글이며, 호출 측이 isAdmin && ?perms=1 여부로 판정해 전달한다.
+     * 비관리자에게 강제로 켜져도 호출 측이 false 로 정규화해야 한다.
+     */
+    showPerms?: boolean;
 }
+
+/**
+ * `permissions-modal.ts` 의 ACL_FLAG_LABELS 와 동일 — 트리 태그 텍스트용.
+ * 서버 측 단순 복제 (라벨이 바뀔 일이 드물고 클라이언트와 분리 모듈).
+ */
+const ACL_FLAG_LABELS: Record<EditAclFlag, string> = {
+    aged: '가입 N일 이상',
+    page_editor: '본 문서 편집 이력',
+    any_editor: '임의 문서 편집 이력',
+    admin_only: '관리자 전용',
+};
 
 export interface MapDocumentResult {
     markdown: string;
@@ -172,12 +192,12 @@ async function buildTreeNodes(opts: BuildMapDocumentOptions): Promise<BuildTreeN
 
     const baseRowQuery = baseSlug
         ? db.prepare(
-            `SELECT slug, content, rows, characters, is_private FROM pages
+            `SELECT slug, content, rows, characters, is_private, edit_acl FROM pages
              WHERE deleted_at IS NULL${privateFilter} AND slug = ? LIMIT 1`
         ).bind(baseSlug)
         : null;
     const childrenQuery = db.prepare(
-        `SELECT slug, content, rows, characters, is_private FROM pages
+        `SELECT slug, content, rows, characters, is_private, edit_acl FROM pages
          WHERE deleted_at IS NULL${privateFilter}
            AND slug LIKE ? ESCAPE '\\'
          ORDER BY slug ASC
@@ -250,8 +270,30 @@ function sortedChildren(node: TreeNode): TreeNode[] {
 /**
  * `map:<base>` 가상 문서용 트리 마크다운 생성기. (트리 구성은 buildTreeNodes 공유)
  */
+/**
+ * 노드(row 가 있는 경우)의 비공개/ACL 정보를 위키 문법 태그 문자열로 변환.
+ * showPerms 가 false 거나 row 가 없으면 빈 문자열 반환.
+ * `{tag:...}` 내부에는 `{` `}` `|` 가 들어가면 안 되므로 라벨에 그런 문자가 끼면 제거.
+ */
+function buildPermTags(row: PageRow | null, showPerms: boolean): string {
+    if (!showPerms || !row) return '';
+    const parts: string[] = [];
+    if (row.is_private === 1) {
+        parts.push('{palette:danger}{bi:eye-slash-fill}{tag:비공개}');
+    }
+    const acl = parseEditAcl(row.edit_acl);
+    if (acl && acl.flags.length > 0) {
+        const labels = acl.flags
+            .map(f => ACL_FLAG_LABELS[f])
+            .map(s => s.replace(/[{}|]/g, ''))
+            .join(', ');
+        parts.push(`{palette:warning}{bi:shield-lock}{tag:${labels}}`);
+    }
+    return parts.length > 0 ? ' ' + parts.join(' ') : '';
+}
+
 export async function buildMapDocument(opts: BuildMapDocumentOptions): Promise<MapDocumentResult> {
-    const { baseSlug } = opts;
+    const { baseSlug, showPerms = false } = opts;
     const { root, hasPrivateChildren, truncated } = await buildTreeNodes(opts);
 
     /** 한 노드의 자식 라인 모음 (TOC 항목 + 하위 문서 노드). 마지막 라인 `└──` 처리를 위해 합쳐서 관리. */
@@ -266,14 +308,15 @@ export async function buildMapDocument(opts: BuildMapDocumentOptions): Promise<M
         return out;
     }
 
-    function nodeLineLabel(node: TreeNode): { label: string; meta: string } {
+    function nodeLineLabel(node: TreeNode): { label: string; meta: string; perms: string } {
         const meta = node.row
             ? `(${node.row.rows ?? 0}줄, ${node.row.characters ?? 0}자)`
             : '(문서 없음)';
         const label = node.row
             ? `[[${node.slug}|${node.name}]]`
             : node.name;
-        return { label, meta };
+        const perms = buildPermTags(node.row, showPerms);
+        return { label, meta, perms };
     }
 
     const lines: string[] = [];
@@ -283,10 +326,11 @@ export async function buildMapDocument(opts: BuildMapDocumentOptions): Promise<M
         const headerMeta = root.row
             ? `(${root.row.rows ?? 0}줄, ${root.row.characters ?? 0}자)`
             : '(문서 없음)';
+        const headerPerms = buildPermTags(root.row, showPerms);
         if (baseSlug) {
-            lines.push(`[[${baseSlug}]] ${headerMeta}`);
+            lines.push(`[[${baseSlug}]] ${headerMeta}${headerPerms}`);
         } else {
-            lines.push(`(루트) ${headerMeta}`);
+            lines.push(`(루트) ${headerMeta}${headerPerms}`);
         }
     }
 
@@ -303,8 +347,8 @@ export async function buildMapDocument(opts: BuildMapDocumentOptions): Promise<M
                 const title = escapeWikiLinkLabel(cl.title);
                 lines.push(`${prefix}${connector}[[${node.slug}#${cl.num}|#${cl.num}. ${title}]]`);
             } else {
-                const { label, meta } = nodeLineLabel(cl.node);
-                lines.push(`${prefix}${connector}${label} ${meta}`);
+                const { label, meta, perms } = nodeLineLabel(cl.node);
+                lines.push(`${prefix}${connector}${label} ${meta}${perms}`);
                 drawChildren(cl.node, extendPrefix);
             }
         }

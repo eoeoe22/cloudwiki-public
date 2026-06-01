@@ -68,13 +68,15 @@ export interface CMView {
     focus(): void;
 }
 
-/** 페이지 메타 (originalPageMeta 상태 — 대체 제목 / 카테고리 / 리다이렉트 / 비공개 변경 비교용) */
+/** 페이지 메타 (originalPageMeta 상태 — 대체 제목 / 카테고리 / 리다이렉트 / 비공개 / 레이아웃 변경 비교용) */
 export interface PageMeta {
     /** 대체 제목 (display title). null/빈 문자열은 "미설정" 으로 동일 취급한다. */
     title?: string | null;
     category?: string | null;
     redirect_to?: string | null;
     is_private?: number | boolean | null;
+    /** 문서 레이아웃 모드. 'presentation' 또는 ''(자동). 프레젠테이션 체크박스 변경 비교용. */
+    layout_mode?: string | null;
 }
 
 /** localStorage 에 저장되는 초안 페이로드 */

@@ -626,8 +626,10 @@ async function submitForm() {
             Swal.fire({
                 icon: 'success',
                 title: '저장되었습니다.',
+                toast: true,
+                position: 'top-end',
                 showConfirmButton: false,
-                timer: 1200,
+                timer: 1500,
             });
         }
     } catch (err: any) {

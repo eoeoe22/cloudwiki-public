@@ -3315,8 +3315,13 @@ document.addEventListener('DOMContentLoaded', async () => {
                 title: page.title || '',
                 category: page.category || '',
                 redirect_to: page.redirect_to || '',
-                is_private: page.is_private ? 1 : 0
+                is_private: page.is_private ? 1 : 0,
+                layout_mode: page.layout_mode === 'presentation' ? 'presentation' : ''
             };
+
+            // 프레젠테이션 모드 체크박스 초기화 (모든 편집자, 기존 문서). 현재 layout_mode 가
+            // 'presentation' 이면 체크 상태로 표시. 즉시 적용하지 않고 문서 저장 시 PUT 으로 반영된다.
+            initPresentationModeToggle(page.layout_mode === 'presentation');
 
             {
                 categoryTags = (page.category || '').split(',').map(c => c.trim()).filter(c => c);
@@ -3373,7 +3378,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     if (fullLink) {
                         fullLink.href = '/edit?slug=' + encodeURIComponent(slug);
                     }
-                    // 섹션 모드에서 수정 불가한 필드 숨김 (슬러그/대체 제목/카테고리/잠금/리다이렉트)
+                    // 섹션 모드에서 수정 불가한 필드 숨김 (슬러그/대체 제목/카테고리/리다이렉트/프레젠테이션 모드)
                     const lockedContainers = [
                         document.getElementById('titleInput'),
                         document.getElementById('alternateTitleInput'),
@@ -3386,6 +3391,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                             if (wrapper) wrapper.style.display = 'none';
                         }
                     });
+                    // 프레젠테이션 체크박스는 자체 .mb-3 컨테이너를 직접 숨긴다.
+                    const presoSetting = document.getElementById('presentationModeSetting');
+                    if (presoSetting) presoSetting.style.display = 'none';
                 } else {
                     // 섹션을 찾지 못하면 전체 편집으로 자동 fallback
                     sectionMode = false;
@@ -3815,6 +3823,25 @@ async function loadMcpSubmissionIntoEditor(submissionId: number): Promise<boolea
     return true;
 }
 
+// ── 프레젠테이션 모드 체크박스 (에디터 문서 설정) ─────────────────────────────
+// 모든 편집자에게 노출되는 체크박스. 즉시 적용하지 않고, 체크 상태를 문서 저장 시
+// PUT /api/w/:slug 의 layout_mode 로 함께 전송해 본문 리비전과 함께 반영한다.
+// 변경 시 자동 편집 요약을 갱신해 "프레젠테이션 모드 설정/해제" 가 요약에 반영되게 한다.
+function initPresentationModeToggle(active: boolean): void {
+    const cb = document.getElementById('presentationModeToggle') as HTMLInputElement | null;
+    if (!cb) return;
+    cb.checked = active;
+    cb.addEventListener('change', () => {
+        if (typeof window.refreshAutoSummary === 'function') window.refreshAutoSummary();
+    });
+}
+
+// 현재 프레젠테이션 체크박스 상태를 layout_mode 값('presentation' | '')으로 반환.
+function getPresentationLayoutValue(): 'presentation' | '' {
+    const cb = document.getElementById('presentationModeToggle') as HTMLInputElement | null;
+    return cb && cb.checked ? 'presentation' : '';
+}
+
 function hasMeaningfulChanges() {
     const currentContent = editor ? editor.getMarkdown() : '';
 
@@ -3826,13 +3853,17 @@ function hasMeaningfulChanges() {
     if (currentContent !== originalContent) return true;
 
     // 신규 문서(originalPageMeta === null)는 빈 메타데이터를 기준선으로 사용한다.
-    const baseMeta = originalPageMeta || { title: '', category: '', redirect_to: '', is_private: 0 };
+    const baseMeta = originalPageMeta || { title: '', category: '', redirect_to: '', is_private: 0, layout_mode: '' };
 
     // 대체 제목 — null/빈 문자열은 동일(미설정)로 취급.
     const origTitle = (baseMeta.title || '').trim();
     const altTitleEl = document.getElementById('alternateTitleInput') as HTMLInputElement | null;
     const currTitle = altTitleEl ? altTitleEl.value.trim() : '';
     if (origTitle !== currTitle) return true;
+
+    // 프레젠테이션 모드(layout_mode) 변경 — 'presentation' vs ''.
+    const origLayout = baseMeta.layout_mode === 'presentation' ? 'presentation' : '';
+    if (origLayout !== getPresentationLayoutValue()) return true;
 
     const origCats = baseMeta.category
         ? baseMeta.category.split(',').map(c => c.trim()).filter(Boolean).sort()
@@ -4157,6 +4188,9 @@ async function savePage() {
                 const v = altTitleEl.value.trim();
                 (body as any).title = v ? v : null;
             }
+            // 프레젠테이션 모드 — 체크 시 'presentation', 해제 시 null('자동'). 섹션 모드에서는 숨겨져 전송하지 않는다.
+            const layoutValue = getPresentationLayoutValue();
+            (body as any).layout_mode = layoutValue ? layoutValue : null;
         }
 
         const res = await fetch(`/api/w/${encodeURIComponent(slug)}`, {
@@ -4301,7 +4335,8 @@ async function savePage() {
                     title: freshPageForFallback.title || '',
                     category: freshPageForFallback.category || '',
                     redirect_to: freshPageForFallback.redirect_to || '',
-                    is_private: freshPageForFallback.is_private ? 1 : 0
+                    is_private: freshPageForFallback.is_private ? 1 : 0,
+                    layout_mode: freshPageForFallback.layout_mode === 'presentation' ? 'presentation' : ''
                 };
                 // pageVersion 을 최신값으로 갱신
                 pageVersion = data.current_version;
