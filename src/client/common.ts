@@ -820,7 +820,8 @@ async function loadNotifications(append = false) {
                 'banned': 'mdi mdi-block-helper',
                 'message': 'mdi mdi-email-outline',
                 'ticket_created': 'mdi mdi-ticket-outline',
-                'ticket_comment': 'mdi mdi-ticket-confirmation-outline'
+                'ticket_comment': 'mdi mdi-ticket-confirmation-outline',
+                'mention': 'mdi mdi-at'
             };
             const icon = iconMap[n.type] || 'mdi mdi-bell';
             const timeAgo = _formatTimeAgo(n.created_at);

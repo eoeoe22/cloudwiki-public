@@ -1678,6 +1678,65 @@ function processWikiLinks(contentEl) {
     });
 }
 
+// ── 사용자 멘션 처리 (@[user:123]) ──
+// 토론·티켓 댓글 렌더에서만 동작한다. renderWikiContent 가 options.mentions
+// (id→{name} 맵) 를 전달할 때만 호출되며, 일반 위키 본문 렌더에는 영향이 없다.
+// processWikiLinks 와 동일하게 마크다운/정화 이후 DOM 텍스트 노드를 후처리한다.
+function processMentions(contentEl, mentionUsers) {
+    if (!contentEl) return;
+    const users = mentionUsers && typeof mentionUsers === 'object' ? mentionUsers : {};
+    const walker = document.createTreeWalker(contentEl, NodeFilter.SHOW_TEXT, null, false);
+    const textNodes = [];
+
+    while (walker.nextNode()) {
+        // Prism 하이라이트는 코드블록 텍스트를 중첩 span 으로 감싸므로 직계 부모만 보면
+        // CODE/PRE 안의 텍스트를 놓친다. 조상까지 검사해 코드 내 @[user:N] 치환을 방지한다.
+        const parentEl = walker.currentNode.parentElement;
+        if (parentEl && parentEl.closest('code, pre')) continue;
+        if (walker.currentNode.nodeValue.includes('@[user:')) {
+            textNodes.push(walker.currentNode);
+        }
+    }
+
+    textNodes.forEach(node => {
+        const frag = document.createDocumentFragment();
+        const parts = node.nodeValue.split(/(@\[user:\d+\])/g).filter(part => part !== '');
+
+        parts.forEach(part => {
+            const m = /^@\[user:(\d+)\]$/.exec(part);
+            if (m) {
+                const id = m[1];
+                const info = users[id];
+                if (info && info.name) {
+                    const a = document.createElement('a');
+                    a.href = `/profile/${id}`;
+                    a.className = 'wiki-mention';
+                    a.textContent = `@${info.name}`;
+                    a.onclick = (e) => {
+                        e.preventDefault();
+                        if (typeof navigateTo === 'function') {
+                            navigateTo(a.href);
+                        } else {
+                            window.location.href = a.href;
+                        }
+                    };
+                    frag.appendChild(a);
+                } else {
+                    // 삭제/알 수 없는 사용자
+                    const span = document.createElement('span');
+                    span.className = 'wiki-mention wiki-mention-unknown';
+                    span.textContent = '@(알 수 없음)';
+                    frag.appendChild(span);
+                }
+            } else if (part) {
+                frag.appendChild(document.createTextNode(part));
+            }
+        });
+
+        node.parentNode.replaceChild(frag, node);
+    });
+}
+
 // ── 각주 처리 ──
 var _fnUniqueCounter = 0;
 
@@ -3258,6 +3317,9 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
         });
 
         processWikiLinks(containerEl);
+        if (options.mentions) {
+            processMentions(containerEl, options.mentions);
+        }
         processFootnotes(containerEl);
 
         // 카테고리 링크 SPA 내비게이션 (인라인 onclick 대체)
@@ -4338,6 +4400,7 @@ window.generateTOC = generateTOC;
 window.buildTocOlHtml = _buildTocOlHtml;
 window.makeCollapsibleSections = makeCollapsibleSections;
 window.processWikiLinks = processWikiLinks;
+window.processMentions = processMentions;
 window.processFootnotes = processFootnotes;
 window._isSafeCssColor = _isSafeCssColor;
 window.WIKI_HARDCODED_PALETTES = WIKI_HARDCODED_PALETTES;

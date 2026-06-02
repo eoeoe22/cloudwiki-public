@@ -9,6 +9,7 @@ import { isR2OnlyNamespace } from '../utils/slug';
 import { createNotifications } from '../utils/notification';
 import { extractImageLinks } from '../utils/extractImageLinks';
 import { filterAuthorizedUserIds } from '../utils/pageAccessCleanup';
+import { resolveMentionRecipients, buildMentionUserMap } from '../utils/mentions';
 
 /** 토론 댓글 본문에서 이미지 r2 키를 추출해 page_links 에 INSERT.
  *  관리자 미디어 GC 가 토론에서만 쓰이는 이미지를 미사용으로 오인 삭제하지 않도록 보호한다.
@@ -110,9 +111,9 @@ discussionRoutes.post('/discussions/:pageId', requireAuth, requirePermission('co
 
     // 문서 존재 확인
     const page = await db
-        .prepare('SELECT id, slug FROM pages WHERE id = ? AND deleted_at IS NULL')
+        .prepare('SELECT id, slug, is_private FROM pages WHERE id = ? AND deleted_at IS NULL')
         .bind(pageId)
-        .first<{ id: number; slug: string }>();
+        .first<{ id: number; slug: string; is_private: number | null }>();
     if (!page) {
         return c.json({ error: '문서를 찾을 수 없습니다.' }, 404);
     }
@@ -131,6 +132,36 @@ discussionRoutes.post('/discussions/:pageId', requireAuth, requirePermission('co
 
     // 본문 이미지를 page_links 에 색인 (미디어 GC 보호)
     await indexCommentImages(db, Number(firstCommentResult.meta.last_row_id), content.trim());
+
+    // 토론 본문에서 멘션된 사용자에게 알림 (작성자 본인 제외)
+    try {
+        let mentionRecipients = await resolveMentionRecipients(db, c.env, content, user.id);
+        if (page.is_private === 1 && mentionRecipients.length > 0) {
+            const rbac = c.get('rbac') as RBAC;
+            const authorized = new Set(
+                await filterAuthorizedUserIds(db, c.env, rbac, mentionRecipients.map(r => r.id), 'wiki:private')
+            );
+            mentionRecipients = mentionRecipients.filter(r => authorized.has(r.id));
+        }
+        if (mentionRecipients.length > 0) {
+            const link = `/w/${encodeURIComponent(page.slug)}?mode=discussions&id=${discussionId}`;
+            const mentionContent = `'${title.trim()}' 토론에서 회원님을 언급했습니다.`;
+            await createNotifications(c.env, c.executionCtx, mentionRecipients.map(r => ({
+                userId: r.id,
+                type: 'mention',
+                content: mentionContent,
+                link,
+                push: {
+                    title: title.trim(),
+                    body: mentionContent,
+                    url: link,
+                    tag: `mention:discussion:${discussionId}`,
+                },
+            })));
+        }
+    } catch (e) {
+        console.error('Failed to create discussion mention notifications:', e);
+    }
 
     // Discord community 채널에 신규 토론 알림 (R2 전용 ns 는 제외)
     const enabledExtensions = (c.env.ENABLED_EXTENSIONS || '').split(',').map(s => s.trim()).filter(Boolean);
@@ -203,7 +234,13 @@ discussionRoutes.get('/discussions/thread/:id', async (c) => {
     enrichRoles(comments, 'author_role', '_author_email', c.env);
     enrichRoles(comments, 'quoted_author_role', '_quoted_author_email', c.env);
 
-    return c.json(safeJSON({ discussion, comments }));
+    // 멘션 렌더용 id→닉네임 맵
+    const mention_users = await buildMentionUserMap(
+        db,
+        (comments as Array<{ content?: string }>).map(cm => cm.content ?? '')
+    );
+
+    return c.json(safeJSON({ discussion, comments, mention_users }));
 });
 
 /**
@@ -291,18 +328,52 @@ discussionRoutes.post('/discussions/thread/:id/comments', requireAuth, requirePe
             const link = `/w/${encodeURIComponent(discussionInfo.slug)}?mode=discussions&id=${discussionId}`;
             const notifContent = `'${discussionInfo.title}' 토론에 새 댓글이 달렸습니다.`;
 
-            await createNotifications(c.env, c.executionCtx, recipientIds.map(userId => ({
-                userId,
-                type: 'discussion_comment',
-                content: notifContent,
-                link,
-                push: {
-                    title: discussionInfo.title,
-                    body: notifContent,
-                    url: link,
-                    tag: `discussion:${discussionId}`,
-                },
-            })));
+            // 멘션(@[user:N]) 수신자 해석. 비공개/삭제 페이지는 참여자와 동일 권한 규칙 적용.
+            // (직접 멘션은 의도적 호출이므로 토론 뮤트와 무관하게 알린다 — Slack/GitHub 관례)
+            let mentionRecipients = await resolveMentionRecipients(db, c.env, content, user.id);
+            if (isProtected && mentionRecipients.length > 0) {
+                const rbac = c.get('rbac') as RBAC;
+                const permission = discussionInfo.deleted_at !== null ? 'admin:access' : 'wiki:private';
+                const authorized = new Set(
+                    await filterAuthorizedUserIds(db, c.env, rbac, mentionRecipients.map(r => r.id), permission)
+                );
+                mentionRecipients = mentionRecipients.filter(r => authorized.has(r.id));
+            }
+            const mentionIdSet = new Set(mentionRecipients.map(r => r.id));
+
+            // 멘션된 사람은 일반 댓글 알림 대신 멘션 알림만 수신(중복 제거).
+            const commentRecipients = recipientIds.filter(id => !mentionIdSet.has(id));
+            const mentionContent = `'${discussionInfo.title}' 토론에서 회원님을 언급했습니다.`;
+
+            const notifications = [
+                ...commentRecipients.map(userId => ({
+                    userId,
+                    type: 'discussion_comment',
+                    content: notifContent,
+                    link,
+                    push: {
+                        title: discussionInfo.title,
+                        body: notifContent,
+                        url: link,
+                        tag: `discussion:${discussionId}`,
+                    },
+                })),
+                ...mentionRecipients.map(r => ({
+                    userId: r.id,
+                    type: 'mention',
+                    content: mentionContent,
+                    link,
+                    push: {
+                        title: discussionInfo.title,
+                        body: mentionContent,
+                        url: link,
+                        tag: `mention:discussion:${discussionId}`,
+                    },
+                })),
+            ];
+            if (notifications.length > 0) {
+                await createNotifications(c.env, c.executionCtx, notifications);
+            }
         }
     } catch (e) {
         console.error('Failed to create discussion notifications:', e);

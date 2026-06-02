@@ -7,6 +7,7 @@ import { dispatchDiscord } from '../utils/webhook/discord';
 import { ticketCreate, ticketStatus } from '../utils/webhook/events/ticket';
 import { createNotifications } from '../utils/notification';
 import { extractImageLinks } from '../utils/extractImageLinks';
+import { resolveMentionRecipients, buildMentionUserMap, type MentionRecipient } from '../utils/mentions';
 
 /** 티켓 댓글 본문에서 이미지 r2 키를 추출해 page_links 에 INSERT.
  *  관리자 미디어 GC 가 티켓에서만 쓰이는 이미지를 미사용으로 오인 삭제하지 않도록 보호한다. */
@@ -49,6 +50,16 @@ function canAccessTicket(rbac: RBAC, user: { id: number; role: string }, ticket:
     // type=discussion → discussion_manager도 접근 가능 (discussion:manage)
     if (ticket.type === 'discussion' && rbac.can(user.role, 'discussion:manage')) return true;
     return false;
+}
+
+/** 멘션 대상 중 티켓에 접근 가능한 사용자만 남긴다(canAccessTicket 와 동일 규칙).
+ *  티켓 제목이 권한 없는 사용자의 알림으로 누설되는 것을 방지한다. */
+function filterTicketMentionRecipients(
+    rbac: RBAC,
+    recipients: MentionRecipient[],
+    ticket: { user_id: number; type: string; deleted_at: number | null },
+): MentionRecipient[] {
+    return recipients.filter(r => canAccessTicket(rbac, { id: r.id, role: r.role }, ticket));
 }
 
 /**
@@ -168,7 +179,7 @@ ticketRoutes.post('/tickets', requireAuth, requirePermission('ticket:create'), a
     // 본문 이미지를 page_links 에 색인 (미디어 GC 보호)
     await indexCommentImages(db, Number(firstCommentResult.meta.last_row_id), content.trim());
 
-    // 해당하는 관리자에게 알림 발송
+    // 해당하는 관리자 + 멘션된 사용자에게 알림 발송
     try {
         let adminQuery = `SELECT id FROM users WHERE role IN ('admin', 'super_admin')`;
         if (type === 'discussion') {
@@ -179,20 +190,48 @@ ticketRoutes.post('/tickets', requireAuth, requirePermission('ticket:create'), a
         const link = `/tickets/${ticketId}`;
         const notifContent = `새 티켓 문의 [#${ticketId}] ${typeLabels[type]}: '${title.trim()}'`;
 
-        await createNotifications(c.env, c.executionCtx, admins
-            .filter(a => a.id !== user.id)
-            .map(a => ({
-                userId: a.id,
-                type: 'ticket_created',
-                content: notifContent,
+        // 멘션 수신자: 티켓 접근 권한이 있는 사용자만(제목 누설 방지), 본인 제외
+        const rbac = c.get('rbac');
+        const mentionRecipients = filterTicketMentionRecipients(
+            rbac,
+            await resolveMentionRecipients(db, c.env, content, user.id),
+            { user_id: user.id, type, deleted_at: null },
+        );
+        const mentionIdSet = new Set(mentionRecipients.map(r => r.id));
+        const mentionContent = `티켓 [#${ticketId}] '${title.trim()}'에서 회원님을 언급했습니다.`;
+
+        // 멘션된 관리자는 멘션 알림만 수신(ticket_created 중복 제거).
+        const notifications = [
+            ...admins
+                .filter(a => a.id !== user.id && !mentionIdSet.has(a.id))
+                .map(a => ({
+                    userId: a.id,
+                    type: 'ticket_created',
+                    content: notifContent,
+                    link,
+                    push: {
+                        title: `새 티켓 #${ticketId}`,
+                        body: notifContent,
+                        url: link,
+                        tag: `ticket:${ticketId}`,
+                    },
+                })),
+            ...mentionRecipients.map(r => ({
+                userId: r.id,
+                type: 'mention',
+                content: mentionContent,
                 link,
                 push: {
-                    title: `새 티켓 #${ticketId}`,
-                    body: notifContent,
+                    title: `티켓 #${ticketId}`,
+                    body: mentionContent,
                     url: link,
-                    tag: `ticket:${ticketId}`,
+                    tag: `mention:ticket:${ticketId}`,
                 },
-            })));
+            })),
+        ];
+        if (notifications.length > 0) {
+            await createNotifications(c.env, c.executionCtx, notifications);
+        }
     } catch (e) {
         console.error('Failed to create ticket notifications:', e);
     }
@@ -266,7 +305,13 @@ ticketRoutes.get('/tickets/:id', requireAuth, async (c) => {
     enrichRoles(comments, 'author_role', '_author_email', c.env);
     enrichRoles(comments, 'quoted_author_role', '_quoted_author_email', c.env);
 
-    return c.json(safeJSON({ ticket, comments }));
+    // 멘션 렌더용 id→닉네임 맵
+    const mention_users = await buildMentionUserMap(
+        db,
+        (comments as Array<{ content?: string }>).map(cm => cm.content ?? '')
+    );
+
+    return c.json(safeJSON({ ticket, comments, mention_users }));
 });
 
 /**
@@ -343,18 +388,47 @@ ticketRoutes.post('/tickets/:id/comments', requireAuth, requirePermission('comme
         const link = `/tickets/${ticketId}`;
         const notifContent = `티켓 [#${ticketId}] '${ticket.title}'에 새 댓글이 달렸습니다.`;
 
-        await createNotifications(c.env, c.executionCtx, Array.from(allRecipients).map(recipientId => ({
-            userId: recipientId,
-            type: 'ticket_comment',
-            content: notifContent,
-            link,
-            push: {
-                title: `티켓 #${ticketId}`,
-                body: notifContent,
-                url: link,
-                tag: `ticket:${ticketId}`,
-            },
-        })));
+        // 멘션 수신자: 티켓 접근 권한이 있는 사용자만(제목 누설 방지), 본인 제외
+        const mentionRecipients = filterTicketMentionRecipients(
+            rbac,
+            await resolveMentionRecipients(db, c.env, content, user.id),
+            ticket,
+        );
+        const mentionIdSet = new Set(mentionRecipients.map(r => r.id));
+        const mentionContent = `티켓 [#${ticketId}] '${ticket.title}'에서 회원님을 언급했습니다.`;
+
+        // 멘션된 사람은 일반 댓글 알림 대신 멘션 알림만 수신(중복 제거).
+        const notifications = [
+            ...Array.from(allRecipients)
+                .filter(recipientId => !mentionIdSet.has(recipientId))
+                .map(recipientId => ({
+                    userId: recipientId,
+                    type: 'ticket_comment',
+                    content: notifContent,
+                    link,
+                    push: {
+                        title: `티켓 #${ticketId}`,
+                        body: notifContent,
+                        url: link,
+                        tag: `ticket:${ticketId}`,
+                    },
+                })),
+            ...mentionRecipients.map(r => ({
+                userId: r.id,
+                type: 'mention',
+                content: mentionContent,
+                link,
+                push: {
+                    title: `티켓 #${ticketId}`,
+                    body: mentionContent,
+                    url: link,
+                    tag: `mention:ticket:${ticketId}`,
+                },
+            })),
+        ];
+        if (notifications.length > 0) {
+            await createNotifications(c.env, c.executionCtx, notifications);
+        }
     } catch (e) {
         console.error('Failed to create ticket comment notifications:', e);
     }

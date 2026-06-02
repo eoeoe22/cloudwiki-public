@@ -17,6 +17,9 @@
     let currentStatusFilter = '';
     let currentTypeFilter = '';
     let currentPage = 1;
+    let currentMentionUsers = {};
+    // 현재 티켓 참여자(멘션 자동완성 후보). 본인 제외.
+    let currentMentionParticipants = [];
     let allTickets = [];
 
     // 미니 에디터 핸들 (본문/댓글 두 인스턴스)
@@ -44,6 +47,7 @@
         skipTransclusion: true,
         skipExtensions: true,
         skipHeadingNumbers: true,
+        mentions: currentMentionUsers,
       });
     }
 
@@ -326,6 +330,21 @@
         const data = await res.json();
         const ticket = data.ticket;
         const comments = data.comments;
+        currentMentionUsers = data.mention_users || {};
+
+        // 멘션 자동완성 후보: 티켓 작성자 + 댓글 작성자(중복 제거, 본인 제외, 밴/삭제 제외)
+        {
+          const seen = new Map();
+          const addP = (id, name, picture, role) => {
+            if (!id || !name) return;
+            if (role === 'banned' || role === 'deleted') return;
+            if (window.currentUser && id === window.currentUser.id) return;
+            if (!seen.has(id)) seen.set(id, { id, name, picture: picture || null });
+          };
+          addP(ticket.user_id, ticket.user_name, ticket.user_picture, ticket.user_role);
+          for (const c of comments) addP(c.author_id, c.author_name, c.author_picture, c.author_role);
+          currentMentionParticipants = Array.from(seen.values());
+        }
 
         // 제목
         document.getElementById('ticketTitle').innerHTML =
@@ -534,6 +553,7 @@
         commentEditor = await create(rootEl, {
           initialValue: carryOver,
           placeholder: '댓글을 입력하세요 (위키 문법 지원)',
+          getMentionCandidates: () => currentMentionParticipants,
         });
         if (fb) { fb.classList.add('d-none'); fb.value = ''; }
       } catch (e) {

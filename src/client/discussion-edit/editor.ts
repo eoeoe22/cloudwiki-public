@@ -31,10 +31,20 @@ declare global {
     }
 }
 
+export interface MentionCandidate {
+    id: number;
+    name: string;
+    picture?: string | null;
+}
+
 export interface MiniEditorOptions {
     initialValue?: string;
     placeholder?: string;
     onChange?: (value: string) => void;
+    /** 멘션 후보 공급자. 호출 시점의 최신 목록(예: 현재 스레드 참여자)을 반환한다.
+     *  제공되면 툴바에 멘션(@) 버튼이 추가되고, 클릭 시 이 목록을 드롭다운으로 띄워
+     *  선택한 사용자를 `@[user:ID]` 로 삽입한다. 미제공 시 멘션 버튼이 비활성화된다. */
+    getMentionCandidates?: () => MentionCandidate[];
 }
 
 export interface MiniEditorHandle {
@@ -58,9 +68,122 @@ function getIsDarkMode(): boolean {
     return !!darkModeMql?.matches;
 }
 
+/**
+ * 멘션(@) 툴바 버튼 + 참여자 선택 드롭다운을 만든다.
+ * 버튼 클릭 시 `getCandidates()` 로 **현재 스레드 참여자** 목록을 매번 새로 읽어 메뉴를
+ * 다시 채우고, 항목을 선택하면 `insert('@[user:ID] ')` 로 멘션 문법을 커서 위치에 삽입한다.
+ * 후보가 없으면 안내 문구를 보여준다. (CM6 자동완성 대신 명시적 선택 방식)
+ */
+function makeMentionMenu(
+    getCandidates: () => MentionCandidate[],
+    insert: (text: string) => void
+): HTMLElement {
+    const wrapper = document.createElement('span');
+    wrapper.className = 'mini-editor-mention-wrapper';
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'mini-editor-btn';
+    btn.title = '멘션';
+    btn.innerHTML = '<i class="mdi mdi-at"></i>';
+
+    const menu = document.createElement('div');
+    menu.className = 'mini-editor-mention-menu';
+    menu.style.display = 'none';
+
+    // position:fixed 메뉴를 버튼 바로 아래(공간 부족 시 위)에 배치. 뷰포트 기준 좌표라
+    // 스크롤/리사이즈 시 재계산이 필요하다(메뉴 열린 동안만 리스너 부착).
+    function positionMenu(): void {
+        const r = btn.getBoundingClientRect();
+        menu.style.left = `${Math.round(r.left)}px`;
+        // 일단 아래로 배치 후 높이를 측정해 아래 공간이 부족하고 위가 더 넓으면 뒤집는다.
+        menu.style.top = `${Math.round(r.bottom + 4)}px`;
+        menu.style.bottom = 'auto';
+        const mh = menu.offsetHeight;
+        const spaceBelow = window.innerHeight - r.bottom - 8;
+        const spaceAbove = r.top - 8;
+        if (mh > spaceBelow && spaceAbove > spaceBelow) {
+            menu.style.top = 'auto';
+            menu.style.bottom = `${Math.round(window.innerHeight - r.top + 4)}px`;
+        }
+    }
+
+    function closeMenu(): void {
+        if (menu.style.display === 'none') return;
+        menu.style.display = 'none';
+        window.removeEventListener('scroll', positionMenu, true);
+        window.removeEventListener('resize', positionMenu);
+    }
+
+    function renderMenu(): void {
+        menu.replaceChildren();
+        const candidates = getCandidates() || [];
+        if (candidates.length === 0) {
+            const empty = document.createElement('div');
+            empty.className = 'mini-editor-mention-empty';
+            empty.textContent = '멘션할 참여자가 없습니다';
+            menu.appendChild(empty);
+            return;
+        }
+        for (const u of candidates) {
+            const item = document.createElement('button');
+            item.type = 'button';
+            item.className = 'mini-editor-mention-item';
+
+            if (u.picture) {
+                const img = document.createElement('img');
+                img.className = 'mini-editor-mention-avatar';
+                img.src = u.picture;
+                img.alt = '';
+                item.appendChild(img);
+            }
+
+            const name = document.createElement('span');
+            name.className = 'mini-editor-mention-name';
+            name.textContent = u.name; // textContent 로 XSS 방지
+            item.appendChild(name);
+
+            const id = document.createElement('span');
+            id.className = 'mini-editor-mention-id';
+            id.textContent = `#${u.id}`;
+            item.appendChild(id);
+
+            item.addEventListener('click', (e) => {
+                e.preventDefault();
+                closeMenu();
+                insert(`@[user:${u.id}] `);
+            });
+            menu.appendChild(item);
+        }
+    }
+
+    btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (menu.style.display === 'none') {
+            renderMenu();
+            menu.style.display = 'flex';
+            positionMenu();
+            window.addEventListener('scroll', positionMenu, true);
+            window.addEventListener('resize', positionMenu);
+        } else {
+            closeMenu();
+        }
+    });
+    document.addEventListener('click', (e) => {
+        if (!wrapper.contains(e.target as Node)) closeMenu();
+    });
+
+    wrapper.appendChild(btn);
+    wrapper.appendChild(menu);
+    return wrapper;
+}
+
 /** B/I/링크/이미지/인용/코드 + Markdown 이미지 삽입 헬퍼.
- *  EditorView dispatch 를 직접 호출해 어떤 인스턴스든 caller 의 view 만 조작. */
-function makeToolbar(view: any, EditorView: any): HTMLElement {
+ *  EditorView dispatch 를 직접 호출해 어떤 인스턴스든 caller 의 view 만 조작.
+ *  getMentionCandidates 가 주어지면 멘션(@) 버튼을 추가한다. 버튼 클릭 시 현재 스레드
+ *  참여자 목록을 드롭다운으로 띄우고, 선택하면 `@[user:ID]` 문법을 커서 위치에 삽입한다. */
+function makeToolbar(view: any, EditorView: any, getMentionCandidates?: () => MentionCandidate[]): HTMLElement {
     const bar = document.createElement('div');
     bar.className = 'mini-editor-toolbar';
 
@@ -116,6 +239,10 @@ function makeToolbar(view: any, EditorView: any): HTMLElement {
     bar.appendChild(makeBtn('<b>B</b>', '굵게', () => wrap('**', '**')));
     bar.appendChild(makeBtn('<i>I</i>', '기울임', () => wrap('*', '*')));
     bar.appendChild(makeBtn('<s>S</s>', '취소선', () => wrap('~~', '~~')));
+    if (getMentionCandidates) {
+        bar.appendChild(makeSep());
+        bar.appendChild(makeMentionMenu(getMentionCandidates, insertText));
+    }
     bar.appendChild(makeSep());
     bar.appendChild(makeBtn('<i class="mdi mdi-format-quote-close"></i>', '인용', () => insertLinePrefix('> ')));
     bar.appendChild(makeBtn('<i class="mdi mdi-format-list-bulleted"></i>', '목록', () => insertLinePrefix('- ')));
@@ -221,6 +348,11 @@ export async function createMiniEditor(
     const { languages } = cmLangData;
     const { oneDark } = cmOneDark;
 
+    // 멘션 후보 공급자(현재 스레드 참여자 등). 없으면 빈 목록 → 멘션 버튼 비활성.
+    // 자동완성 대신 툴바 @ 버튼의 드롭다운에서 명시적으로 선택해 삽입한다.
+    const mentionEnabled = typeof options.getMentionCandidates === 'function';
+    const getCandidates = options.getMentionCandidates ?? (() => []);
+
     rootEl.innerHTML = '';
     rootEl.classList.add('mini-editor-root');
 
@@ -310,7 +442,8 @@ export async function createMiniEditor(
     const mqlHandler = () => syncTheme();
     mql?.addEventListener?.('change', mqlHandler);
 
-    const toolbar = makeToolbar(view, EditorView);
+    // 멘션 버튼: 클릭 시 현재 스레드 참여자 드롭다운을 띄우고, 선택하면 `@[user:ID]` 삽입.
+    const toolbar = makeToolbar(view, EditorView, mentionEnabled ? getCandidates : undefined);
     rootEl.appendChild(toolbar);
     rootEl.appendChild(editorHost);
 
