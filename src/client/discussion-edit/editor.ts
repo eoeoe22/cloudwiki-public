@@ -73,11 +73,16 @@ function getIsDarkMode(): boolean {
  * 버튼 클릭 시 `getCandidates()` 로 **현재 스레드 참여자** 목록을 매번 새로 읽어 메뉴를
  * 다시 채우고, 항목을 선택하면 `insert('@[user:ID] ')` 로 멘션 문법을 커서 위치에 삽입한다.
  * 후보가 없으면 안내 문구를 보여준다. (CM6 자동완성 대신 명시적 선택 방식)
+ *
+ * 메뉴는 `document.body` 에 포털(append)한다. 미니 에디터 컨테이너(`overflow:hidden`)나
+ * 상위 글래스/애니메이션 요소(`transform`/`backdrop-filter` → fixed 기준 블록 생성)에
+ * 메뉴가 잘리거나 엉뚱한 좌표로 배치되는 것을 원천 차단하기 위함이다.
+ * 반환된 `destroy()` 는 포털 메뉴와 전역 리스너를 정리한다.
  */
 function makeMentionMenu(
     getCandidates: () => MentionCandidate[],
     insert: (text: string) => void
-): HTMLElement {
+): { wrapper: HTMLElement; destroy: () => void } {
     const wrapper = document.createElement('span');
     wrapper.className = 'mini-editor-mention-wrapper';
 
@@ -87,9 +92,11 @@ function makeMentionMenu(
     btn.title = '멘션';
     btn.innerHTML = '<i class="mdi mdi-at"></i>';
 
+    // 메뉴는 wrapper 가 아니라 document.body 에 둔다(포털).
     const menu = document.createElement('div');
     menu.className = 'mini-editor-mention-menu';
     menu.style.display = 'none';
+    document.body.appendChild(menu);
 
     // position:fixed 메뉴를 버튼 바로 아래(공간 부족 시 위)에 배치. 뷰포트 기준 좌표라
     // 스크롤/리사이즈 시 재계산이 필요하다(메뉴 열린 동안만 리스너 부착).
@@ -170,22 +177,37 @@ function makeMentionMenu(
             closeMenu();
         }
     });
-    document.addEventListener('click', (e) => {
-        if (!wrapper.contains(e.target as Node)) closeMenu();
-    });
+    // 메뉴는 body 에 있으므로 wrapper/menu 둘 다 바깥 클릭 판정에서 제외한다.
+    const onDocClick = (e: MouseEvent) => {
+        const t = e.target as Node;
+        if (!wrapper.contains(t) && !menu.contains(t)) closeMenu();
+    };
+    document.addEventListener('click', onDocClick);
 
     wrapper.appendChild(btn);
-    wrapper.appendChild(menu);
-    return wrapper;
+
+    function destroy(): void {
+        closeMenu();
+        document.removeEventListener('click', onDocClick);
+        menu.remove();
+    }
+
+    return { wrapper, destroy };
 }
 
 /** B/I/링크/이미지/인용/코드 + Markdown 이미지 삽입 헬퍼.
  *  EditorView dispatch 를 직접 호출해 어떤 인스턴스든 caller 의 view 만 조작.
  *  getMentionCandidates 가 주어지면 멘션(@) 버튼을 추가한다. 버튼 클릭 시 현재 스레드
- *  참여자 목록을 드롭다운으로 띄우고, 선택하면 `@[user:ID]` 문법을 커서 위치에 삽입한다. */
-function makeToolbar(view: any, EditorView: any, getMentionCandidates?: () => MentionCandidate[]): HTMLElement {
+ *  참여자 목록을 드롭다운으로 띄우고, 선택하면 `@[user:ID]` 문법을 커서 위치에 삽입한다.
+ *  멘션 메뉴는 body 에 포털되므로, 반환된 `destroy()` 로 포털 정리를 호출해야 한다. */
+function makeToolbar(
+    view: any,
+    EditorView: any,
+    getMentionCandidates?: () => MentionCandidate[]
+): { bar: HTMLElement; destroy: () => void } {
     const bar = document.createElement('div');
     bar.className = 'mini-editor-toolbar';
+    let mentionDestroy: () => void = () => {};
 
     function wrap(prefix: string, suffix: string, placeholder = '텍스트'): void {
         const { main } = view.state.selection;
@@ -241,7 +263,9 @@ function makeToolbar(view: any, EditorView: any, getMentionCandidates?: () => Me
     bar.appendChild(makeBtn('<s>S</s>', '취소선', () => wrap('~~', '~~')));
     if (getMentionCandidates) {
         bar.appendChild(makeSep());
-        bar.appendChild(makeMentionMenu(getMentionCandidates, insertText));
+        const mention = makeMentionMenu(getMentionCandidates, insertText);
+        bar.appendChild(mention.wrapper);
+        mentionDestroy = mention.destroy;
     }
     bar.appendChild(makeSep());
     bar.appendChild(makeBtn('<i class="mdi mdi-format-quote-close"></i>', '인용', () => insertLinePrefix('> ')));
@@ -319,7 +343,7 @@ function makeToolbar(view: any, EditorView: any, getMentionCandidates?: () => Me
 
     bar.appendChild(imgWrapper);
 
-    return bar;
+    return { bar, destroy: mentionDestroy };
 }
 
 /**
@@ -443,7 +467,7 @@ export async function createMiniEditor(
     mql?.addEventListener?.('change', mqlHandler);
 
     // 멘션 버튼: 클릭 시 현재 스레드 참여자 드롭다운을 띄우고, 선택하면 `@[user:ID]` 삽입.
-    const toolbar = makeToolbar(view, EditorView, mentionEnabled ? getCandidates : undefined);
+    const { bar: toolbar, destroy: destroyToolbar } = makeToolbar(view, EditorView, mentionEnabled ? getCandidates : undefined);
     rootEl.appendChild(toolbar);
     rootEl.appendChild(editorHost);
 
@@ -465,6 +489,7 @@ export async function createMiniEditor(
             view.focus();
         },
         destroy() {
+            destroyToolbar(); // body 에 포털된 멘션 메뉴/리스너 정리
             observer.disconnect();
             mql?.removeEventListener?.('change', mqlHandler);
             view.destroy();
