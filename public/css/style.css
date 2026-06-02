@@ -658,16 +658,6 @@ html[data-theme="dark"] .user-dropdown-toggle {
   font-size: 1.3rem;
 }
 
-/* ── 테마 토글 ── */
-.theme-toggle-btn i {
-  font-size: 1.3rem;
-}
-
-.theme-option.active {
-  color: var(--wiki-primary);
-  font-weight: 600;
-}
-
 /* ── Main Layout (Sidebar + Content) ── */
 .wiki-layout {
   display: flex;
@@ -1035,11 +1025,13 @@ html[data-theme="dark"] .user-dropdown-toggle {
 }
 
 /* wide 모드: 좌·우 사이드바를 모두 숨겨 산만함을 제거하고, 본문을 화면 중앙에 넉넉한
-   가독 폭으로 정렬한 몰입형 풀폭 읽기 레이아웃. 문서 내 탐색은 플로팅 목차 FAB(#tocFabBtn)
-   로만 제공한다. 트렌딩/최근 변경은 docs/left-toc 와 동일하게 JS(relocateRightSidebarBelowArticle)
-   로 본문 하단(.wiki-sidebar-bottom-relocated)으로 옮겨 노출한다. #wikiSidebar 숨김을 ≥992px 로만
-   한정하는 이유는 다른 모드와 동일(모바일 오프캔버스 #mobileSidebar 소스이므로). 좌측 목차/그룹
-   트리 사이드바는 wide 에서 동기화하지 않아 기본 d-none 으로 남으므로 별도 숨김 규칙이 불필요하다. */
+   가독 폭으로 정렬한 몰입형 풀폭 읽기 레이아웃. 사이드바가 없으므로 문서 내 탐색은 본문
+   상단에 float 되는 인라인 목차 카드(.wiki-toc-card)로 제공하며(default 모드와 동일), 스크롤
+   시 노출되는 플로팅 목차 FAB(#tocFabBtn)도 보조로 함께 동작한다. 트렌딩/최근 변경은
+   docs/left-toc 와 동일하게 JS(relocateRightSidebarBelowArticle)로 본문 하단
+   (.wiki-sidebar-bottom-relocated)으로 옮겨 노출한다. #wikiSidebar 숨김을 ≥992px 로만 한정하는
+   이유는 다른 모드와 동일(모바일 오프캔버스 #mobileSidebar 소스이므로). 좌측 목차/그룹 트리
+   사이드바는 wide 에서 동기화하지 않아 기본 d-none 으로 남으므로 별도 숨김 규칙이 불필요하다. */
 @media (min-width: 992px) {
   body[data-layout-mode="wide"] .wiki-layout-doc > .wiki-sidebar {
     display: none;
@@ -1049,12 +1041,8 @@ html[data-theme="dark"] .user-dropdown-toggle {
     margin: 0 auto;
   }
 }
-/* 인라인 목차 카드 숨김은 모든 뷰포트에 적용한다. left-toc/docs 와 달리 wide 는 모바일에서도
-   플로팅 FAB(#tocFabBtn, position:fixed 라 전 뷰포트에서 동작)로만 목차를 제공하므로, 모바일
-   인라인 목차 카드 폴백을 두지 않는다(≥992px 한정 시 모바일에서 카드가 남아 몰입 읽기와 어긋남). */
-body[data-layout-mode="wide"] .wiki-layout-doc .wiki-toc-card {
-  display: none;
-}
+/* wide 는 사이드바 목차가 없으므로 인라인 목차 카드를 전 뷰포트에서 그대로 노출한다(별도
+   숨김 규칙 없음 — 기본 .wiki-toc-card float:left 스타일이 본문 안에 목차를 표시). */
 
 /* 현재 문서 강조 (그룹 nav 트리). PC/모바일 공통. */
 .wiki-nav-sidebar-tree a.nav-current {
@@ -1145,11 +1133,8 @@ body[data-layout-mode="wide"] .wiki-layout-doc .wiki-toc-card {
     display: none;
   }
 }
-/* wide 레이아웃은 본문 인라인 목차 카드를 전 뷰포트에서 숨기므로(FAB 전용), 에디터 프리뷰도
-   동일하게 모든 폭에서 숨겨 프리뷰와 실제 wide 조회 화면을 일치시킨다. */
-body[data-layout-mode="wide"] #custom-wiki-preview .wiki-toc-card {
-  display: none;
-}
+/* wide 레이아웃은 본문 인라인 목차 카드를 전 뷰포트에서 노출하므로(사이드바 목차 없음),
+   에디터 프리뷰도 카드를 숨기지 않아 실제 wide 조회 화면과 일치시킨다(별도 규칙 불필요). */
 
 /* === LAYOUT_MODE="right-toc" 분기: left-toc 와 동일하되 현재 문서 목차를 우측에 배치 ===
    우측 목차 사이드바(#wikiTocSidebarRight)는 docs 모드와 동일 요소를 공유한다(JS 가 d-none 제거).

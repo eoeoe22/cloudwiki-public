@@ -11,7 +11,7 @@
  * - 모든 top-level function 과 var 선언을 그대로 유지하되, 파일 끝의 window 브리지
  *   블록에서 window.* 로 노출해 기존 classic-script-global 동작을 보존한다.
  * - 14개 HTML 페이지가 사용. 각 페이지의 inline classic <script> 가 bare 식별자
- *   (loadConfig / currentUser / escapeHtml / cycleTheme 등) 로 호출하므로 브리지 필수.
+ *   (loadConfig / currentUser / escapeHtml / openSettingsModal 등) 로 호출하므로 브리지 필수.
  * - HTML <head> 의 inline 테마 FOUC 방지 스크립트는 유지 (deferred ESM 보다 먼저 실행).
  *   본 모듈의 동일 IIFE 는 fallback 으로 남겨두며 실질적으로 no-op.
  * - escapeHtml / isSafeUrl 은 src/client/utils/* 에도 동일 구현이 있으나, 다른 클래식
@@ -305,29 +305,10 @@ function setTheme(mode) {
         localStorage.setItem('themeMode', mode);
     } catch (e) { /* 스토리지 접근 불가 시 무시 */ }
     applyThemeClass(mode);
-    updateThemeToggleUI(mode);
 }
 
 function getCurrentTheme() {
     try { return localStorage.getItem('themeMode') || 'auto'; } catch (e) { return 'auto'; }
-}
-
-function cycleTheme() {
-    var order = ['auto', 'light', 'dark'];
-    var curr = getCurrentTheme();
-    var next = order[(order.indexOf(curr) + 1) % order.length];
-    setTheme(next);
-}
-
-function updateThemeToggleUI(mode) {
-    // 헤더의 단독 테마 토글 버튼은 개인 설정 모달로 이관되어 제거됐다. 잔존 셀렉터(있으면)만
-    // 갱신하는 무해한 no-op 으로 남겨 둔다(외부 호환). 실제 테마 적용은 setTheme 이 담당.
-    if (!mode) mode = getCurrentTheme();
-    var icons = { auto: 'mdi-theme-light-dark', light: 'mdi-white-balance-sunny', dark: 'mdi-moon-waning-crescent' };
-    document.querySelectorAll('#navThemeIcon').forEach(function (el) {
-        el.classList.remove('mdi-theme-light-dark', 'mdi-white-balance-sunny', 'mdi-moon-waning-crescent');
-        el.classList.add(icons[mode] || icons.auto);
-    });
 }
 
 // ── 레이아웃 모드 사용자 오버라이드 (클라이언트 전용, localStorage) ──
@@ -633,9 +614,6 @@ async function loadConfig() {
     }
     // 헤더가 SSR로 이미 주입돼 있는 경우를 대비해 한 번 시도
     applyAnnouncementBanner();
-
-    // 테마 토글 UI 업데이트 (헤더는 Astro 빌드 타임에 인라인됨)
-    updateThemeToggleUI();
 
     // 전역 인증 상태 동기화 (레이아웃 주입 여부와 상관없이 항상 수행)
     await checkAuth();
@@ -1547,7 +1525,7 @@ function initTrendingTicker(container, count) {
 // window 브리지 — classic public/js/common.js 시절 모든 top-level 선언이
 // classic-script-global 로 자동 노출되었으므로, ESM 으로 이전한 뒤에도 동일한
 // 외부 계약을 유지한다. 14개 HTML 페이지의 inline classic <script> 가
-// bare 식별자로 호출 (`loadConfig`, `currentUser`, `escapeHtml`, `cycleTheme`,
+// bare 식별자로 호출 (`loadConfig`, `currentUser`, `escapeHtml`, `openSettingsModal`,
 // `goRandomPage`, `toggleNotificationPanel`, `doSearch` 등) 하므로 누락 시 회귀.
 // ESM 모듈 (edit/main.ts / render.ts 등) 도 window.* 로 읽으므로 동일하게 필수.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1566,8 +1544,6 @@ window.applyThemeClass = applyThemeClass;
 window.applyBsTheme = applyBsTheme;
 window.setTheme = setTheme;
 window.getCurrentTheme = getCurrentTheme;
-window.cycleTheme = cycleTheme;
-window.updateThemeToggleUI = updateThemeToggleUI;
 window.openSettingsModal = openSettingsModal;
 window.goRandomPage = goRandomPage;
 window.applyAnnouncementBanner = applyAnnouncementBanner;
