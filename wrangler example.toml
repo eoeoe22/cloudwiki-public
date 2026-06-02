@@ -104,7 +104,7 @@ FOOTER = """
 # === Discord Webhook ===
 # DISCORD_COMMUNITY_WEBHOOK_URL, DISCORD_ADMIN_WEBHOOK_URL 은 Workers 대시보드에서 시크릿으로 설정
 # URL 이 비어있으면 해당 채널은 자동 비활성. EVENTS 가 비어있으면 모든 이벤트 차단(긴급 음소거).
-DISCORD_ADMIN_EVENTS = "signup_pending,signup_rejected,ticket_create,ticket_status,user_ban,user_role_change,super_admin_action"
+DISCORD_ADMIN_EVENTS = "signup_pending,signup_rejected,ticket_create,ticket_status,user_ban,user_role_change,super_admin_action,pending_edit"
 DISCORD_COMMUNITY_EVENTS = "user_joined,discussion_create,announcement_publish"
 WIKI_PUBLIC_BASE_URL = "https://도메인"
 

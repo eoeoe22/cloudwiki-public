@@ -14,6 +14,7 @@ export const CDN_VERSIONS = {
     dompurify:        '3.4.2',
     jsdiff:           '5.1.0',
     prism:            '1.29.0',
+    mermaid:          '11.15.0',
     // CodeMirror / Lezer (esm.sh importmap)
     cmState:          '6.6.0',
     cmView:           '6.41.1',
@@ -41,6 +42,9 @@ export const CDN_URLS = {
     prismCore:            `${C}/prism/${CDN_VERSIONS.prism}/components/prism-core.min.js`,
     prismAutoloader:      `${C}/prism/${CDN_VERSIONS.prism}/plugins/autoloader/prism-autoloader.min.js`,
     prismComponentsBase:  `${C}/prism/${CDN_VERSIONS.prism}/components/`,
+    // Mermaid 는 번들/번들맵에 넣지 않고 render.ts 에서 다이어그램 블록이 있을 때만
+    // 동적 import() 로 지연 로드한다(다이어그램 없는 문서는 비용 0). esm.sh ESM 진입점.
+    mermaidEsm:           `${E}/mermaid@${CDN_VERSIONS.mermaid}`,
 } as const;
 
 export const FONTS = {

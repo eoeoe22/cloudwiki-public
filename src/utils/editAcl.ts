@@ -166,6 +166,31 @@ export async function evaluateEditAcl(
 }
 
 /**
+ * "신뢰 사용자" 판정 (사람 편집 보류 리비전 / pending changes 기능 전용).
+ *
+ * 보류 판정과 검토 권한 양쪽에서 공유한다.
+ *   - 보류 판정(PUT /api/w/:slug): 편집자가 신뢰되지 않으면(=false) 편집을 검토 대기로 보류한다.
+ *   - 검토 권한(pending-edits): 검토자가 해당 문서에 대해 신뢰되면(=true) 보류본을 검토할 수 있다.
+ *
+ * evaluateFlag 의 'aged'/'page_editor' SQL 프리미티브를 OR 로 재사용한다:
+ *   isAdmin || aged(계정 나이 >= minAgeDays) || page_editor(pageId 에 이 user 의 revision 존재)
+ * 'aged' 는 문서 무관(계정 상수)이라, aged/관리자는 전 문서에서 신뢰된다.
+ * pageId 가 null(신규 문서 생성)이면 page_editor 는 false 이므로 isAdmin || aged 로만 판정된다.
+ */
+export async function isTrustedEditor(
+    db: D1Database,
+    user: { id: number; created_at: number },
+    pageId: number | null,
+    minAgeDays: number,
+    isAdmin: boolean,
+): Promise<boolean> {
+    if (isAdmin) return true;
+    if (await evaluateFlag(db, 'aged', user, pageId, minAgeDays, isAdmin)) return true;
+    if (await evaluateFlag(db, 'page_editor', user, pageId, minAgeDays, isAdmin)) return true;
+    return false;
+}
+
+/**
  * settings.edit_acl_min_age_days 조회. 행이 없으면 0.
  */
 export async function getEditAclMinAgeDays(db: D1Database): Promise<number> {
@@ -214,4 +239,47 @@ export async function findPrefixRuleEditAcl(
         console.error('findPrefixRuleEditAcl failed:', e);
         return null;
     }
+}
+
+export interface DocPrefixPrivacyRule {
+    prefix: string;
+    is_private: number | null;
+    edit_acl: string | null;
+}
+
+/**
+ * doc_setting_prefix_rules 를 1회 로드. prefixRulesForcePrivate 와 함께 배치(목록)에서 N+1 을 피한다.
+ * 조회 실패 시 빈 배열(=강제 비공개 없음).
+ */
+export async function loadDocPrefixPrivacyRules(db: D1Database): Promise<DocPrefixPrivacyRule[]> {
+    try {
+        const { results } = await db
+            .prepare('SELECT prefix, is_private, edit_acl FROM doc_setting_prefix_rules')
+            .all<DocPrefixPrivacyRule>();
+        return results || [];
+    } catch (e) {
+        console.error('loadDocPrefixPrivacyRules failed:', e);
+        return [];
+    }
+}
+
+/**
+ * 신규 문서 slug 가 현재 prefix 룰에 의해 비공개로 강제되는지 평가.
+ * wiki.ts applyCreatePrefixRulesAndCategoryAcls 의 is_private longest-match 정책과 동일:
+ *   - is_private/edit_acl 둘 다 null 인 카테고리 전용 룰은 후보 제외
+ *   - 가장 긴 일치 prefix 룰의 is_private 가 1 이면 비공개 강제 (0/null 이면 비강제)
+ * pending create 보류본의 검토자 비공개 게이팅에 사용 (제출 후 prefix 룰이 바뀐 경우 대응).
+ */
+export function prefixRulesForcePrivate(rules: DocPrefixPrivacyRule[], slug: string): boolean {
+    let bestLen = -1;
+    let privateOverride: number | null = null;
+    for (const r of rules) {
+        if (!slug.startsWith(r.prefix + '/')) continue;
+        if (r.is_private === null && r.edit_acl === null) continue;
+        if (r.prefix.length > bestLen) {
+            bestLen = r.prefix.length;
+            privateOverride = r.is_private;
+        }
+    }
+    return privateOverride === 1;
 }

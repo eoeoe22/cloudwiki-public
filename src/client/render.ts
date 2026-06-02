@@ -3581,6 +3581,28 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
             link.appendChild(img);
         });
 
+        // ── Mermaid 다이어그램: ```mermaid 코드펜스를 복사버튼/Prism 경로 도달 전에 분기 ──
+        // 코드펜스는 verbatim 캡처라 Mermaid DSL({결정?}·|예|·==>·~~~ 등)이 위키 인라인 문법과
+        // 충돌하지 않는다. 언어 태그가 mermaid 인 <pre><code> 를 <figure> placeholder 로 치환해
+        // 이후 복사버튼/Prism 루프가 보지 못하게 하고(코드 하이라이팅 경로 무간섭), 비동기로 SVG 렌더.
+        let hasMermaid = false;
+        containerEl.querySelectorAll('pre > code.language-mermaid').forEach(codeEl => {
+            const pre = codeEl.parentElement;
+            if (!pre || !pre.parentNode) return;
+            const src = codeEl.textContent || '';
+            const figure = document.createElement('figure');
+            figure.className = 'mermaid-figure';
+            figure.setAttribute('role', 'img');
+            figure.dataset.src = src;
+            figure.innerHTML = '<div class="mermaid-loading"><span class="spinner-border spinner-border-sm"></span> 다이어그램 렌더링 중…</div>';
+            pre.parentNode.replaceChild(figure, pre);
+            hasMermaid = true;
+        });
+        if (hasMermaid) {
+            // fire-and-forget: 나머지 후처리를 막지 않도록 await 하지 않는다.
+            _renderMermaidFigures(containerEl);
+        }
+
         // 코드블럭 복사 버튼 추가 및 언어 하이라이팅 감지
         let requirePrism = false;
         containerEl.querySelectorAll('pre').forEach(pre => {
@@ -4164,6 +4186,130 @@ function _processExtensions(containerEl, extensionData) {
     tryRender(MAX_RETRIES);
 }
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Mermaid 다이어그램 (```mermaid 코드펜스) — 지연 로드 + 테마 동기화 렌더러.
+// Prism(코드 하이라이트) 경로와 분리되어, 언어 태그가 mermaid 인 코드펜스만 여기로 온다.
+// 라이브러리는 다이어그램이 있는 문서에서만 동적 import 로 1회 로드된다(없으면 비용 0).
+// ─────────────────────────────────────────────────────────────────────────────
+let _mermaidPromise = null;     // import 메모이즈 (최초 1회만 네트워크 로드)
+let _mermaidMod = null;         // 로드 완료된 mermaid 모듈
+let _mermaidSeq = 0;            // mermaid.render 고유 id 시퀀스
+
+/** 현재 적용 테마가 다크인지 판정. data-theme 명시값 우선, auto/미설정이면 OS 환경설정. */
+function _mermaidEffectiveDark() {
+    const attr = document.documentElement.getAttribute('data-theme');
+    if (attr === 'dark') return true;
+    if (attr === 'light') return false;
+    return typeof window.matchMedia === 'function'
+        && window.matchMedia('(prefers-color-scheme: dark)').matches;
+}
+
+function _mermaidInitConfig() {
+    // htmlLabels:false 로 라벨을 <foreignObject> HTML 대신 네이티브 SVG <text> 로 렌더한다.
+    // 생성 SVG 는 svg-only DOMPurify 프로파일로 재정화하는데, htmlLabels:true(기본)면
+    // 라벨 HTML 이 정화 단계에서 제거돼 노드/엣지 라벨이 사라진다(securityLevel:'strict' 는
+    // 라벨 HTML 을 escape 만 할 뿐 foreignObject 사용을 끄지 않음). text 라벨은 svg 프로파일로 보존된다.
+    return {
+        startOnLoad: false,
+        securityLevel: 'strict',
+        htmlLabels: false,
+        flowchart: { htmlLabels: false },
+        theme: _mermaidEffectiveDark() ? 'dark' : 'default',
+    };
+}
+
+/** mermaid 모듈을 1회 지연 로드(메모이즈). 실패 시 promise 를 비워 재시도를 허용한다. */
+function _loadMermaid() {
+    if (_mermaidPromise) return _mermaidPromise;
+    // Vite 가 URL 동적 import 를 번들하지 않도록 @vite-ignore. 런타임 네이티브 ESM 로 esm.sh 에서 로드.
+    _mermaidPromise = import(/* @vite-ignore */ CDN_URLS.mermaidEsm)
+        .then(mod => {
+            const mermaid = mod.default || mod;
+            mermaid.initialize(_mermaidInitConfig());
+            _mermaidMod = mermaid;
+            return mermaid;
+        })
+        .catch(err => {
+            _mermaidPromise = null;
+            throw err;
+        });
+    return _mermaidPromise;
+}
+
+/**
+ * 다이어그램 렌더가 끝나 레이아웃이 바뀌었음을 알리는 전역 신호.
+ * mermaid 는 네트워크 지연 import + 비동기 SVG 렌더라, 로딩 스피너 → 실제 다이어그램으로
+ * 바뀔 때 figure 높이가 크게 변한다. 에디터 프리뷰 스크롤 싱크는 헤딩 오프셋 가이드를
+ * 캐싱하는데, 다이어그램이 fold(<details>)·트랜스클루전 등 프리뷰의 *직속 자식이 아닌*
+ * 위치에 있으면 직속 자식만 보는 ResizeObserver 가 이 변동을 놓쳐 가이드가 낡은 채로 남는다.
+ * DOM 깊이와 무관하게 동기화할 수 있도록 렌더 완료 시 이벤트를 쏘아 청취 측(에디터)이
+ * 가이드 캐시를 무효화하게 한다. (조회 페이지 등 청취자 없는 곳에서는 무해)
+ */
+function _emitMermaidRendered() {
+    if (typeof window === 'undefined' || typeof window.dispatchEvent !== 'function') return;
+    try { window.dispatchEvent(new CustomEvent('wiki:mermaid-rendered')); } catch (_) { /* ignore */ }
+}
+
+/** root 내부의 .mermaid-figure 들을 SVG 로 렌더(원문은 data-src 에 보존). */
+async function _renderMermaidFigures(root) {
+    const figures = (root || document).querySelectorAll('.mermaid-figure');
+    if (figures.length === 0) return;
+    let mermaid;
+    try {
+        mermaid = await _loadMermaid();
+    } catch (err) {
+        figures.forEach(fig => {
+            fig.innerHTML = '<div class="mermaid-error alert alert-warning mb-0">다이어그램 라이브러리를 불러오지 못했습니다.</div>';
+        });
+        _emitMermaidRendered();
+        return;
+    }
+    for (const fig of figures) {
+        const src = (fig.dataset.src || '');
+        if (!src.trim()) { fig.innerHTML = ''; continue; }
+        const renderId = `wiki-mermaid-${++_mermaidSeq}`;
+        try {
+            const { svg } = await mermaid.render(renderId, src);
+            // securityLevel:'strict' 가 이미 정화하지만 기존 정책 일관성을 위해 DOMPurify 재정화.
+            const clean = (typeof DOMPurify !== 'undefined')
+                ? DOMPurify.sanitize(svg, { USE_PROFILES: { svg: true, svgFilters: true } })
+                : svg;
+            fig.innerHTML = clean;
+            const svgEl = fig.querySelector('svg');
+            if (svgEl) {
+                svgEl.removeAttribute('height');
+                svgEl.style.maxWidth = '100%';
+            }
+            if (!fig.getAttribute('aria-label')) fig.setAttribute('aria-label', '다이어그램');
+        } catch (err) {
+            // 잘못된 DSL 은 페이지를 깨지 않고 인라인 에러 박스로 표시.
+            const msg = (err && err.message) ? err.message : String(err);
+            fig.innerHTML = `<div class="mermaid-error alert alert-warning mb-0"><strong>다이어그램 오류</strong><br><span class="small">${escapeHtml(msg)}</span></div>`;
+            // mermaid 가 렌더 실패 시 body 에 남긴 임시 노드(d{renderId}) 정리.
+            const orphan = document.getElementById('d' + renderId);
+            if (orphan && orphan.parentNode) orphan.parentNode.removeChild(orphan);
+        }
+    }
+    // 모든 figure 렌더가 끝났으니(레이아웃 확정) 스크롤 싱크 등 청취 측에 알린다.
+    _emitMermaidRendered();
+}
+
+/** 테마 토글 / OS 다크모드 변경 시 모든 다이어그램을 새 테마로 재렌더. 미로드면 no-op. */
+function _rerenderAllMermaid() {
+    if (!_mermaidMod) return;
+    _mermaidMod.initialize(_mermaidInitConfig());
+    _renderMermaidFigures(document);
+}
+
+if (typeof window !== 'undefined') {
+    window.addEventListener('wiki:theme-changed', _rerenderAllMermaid);
+    if (typeof window.matchMedia === 'function') {
+        const _mq = window.matchMedia('(prefers-color-scheme: dark)');
+        if (_mq.addEventListener) _mq.addEventListener('change', _rerenderAllMermaid);
+        else if (_mq.addListener) _mq.addListener(_rerenderAllMermaid);
+    }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // window 브리지 — classic public/js/render.js 시절 모든 top-level 함수가

@@ -930,6 +930,27 @@ import Footer from '../components/Footer.astro';
                 </small>
               </div>
 
+              <hr />
+              <h6 class="fw-bold mb-3">사람 편집 보류 (검토 대기)</h6>
+              <div class="mb-4">
+                <div class="form-check form-switch">
+                  <input
+                    class="form-check-input"
+                    type="checkbox"
+                    role="switch"
+                    id="pendingChangesEnabledInput"
+                  />
+                  <label class="form-check-label" for="pendingChangesEnabledInput">
+                    신뢰되지 않은 사용자의 편집을 검토 대기로 보류
+                  </label>
+                </div>
+                <small class="text-muted d-block mt-1">
+                  켜면 비-<code>aged</code>·해당 문서 미편집·비관리자 사용자의 편집이 즉시 반영되지 않고
+                  검토 대기로 보류됩니다(MediaWiki FlaggedRevs 유사). 관리자 또는 신뢰 사용자가 마이페이지에서 승인/반려합니다.
+                  <b>신뢰 판정은 위 「가입 N일 이상」 값을 재사용</b>하므로, 그 값이 0이면 모든 사용자가 통과해 보류가 발생하지 않습니다.
+                </small>
+              </div>
+
               <button
                 class="btn btn-wiki w-100 mb-4"
                 onclick="saveWikiSettings()"

@@ -2815,6 +2815,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         // updateCustomPreview / 윈도우 리사이즈 등 동기화 함수 외부에서도 무효화할 수 있도록 노출
         window._invalidateScrollSyncGuides = _invalidateScrollSyncGuides;
         window.addEventListener('resize', _invalidateScrollSyncGuides, { passive: true });
+        // mermaid 다이어그램은 비동기(네트워크 import + SVG 렌더)로 레이아웃을 크게 바꾸는데,
+        // fold/트랜스클루전 등 프리뷰 직속 자식이 아닌 위치면 ResizeObserver(직속 자식만 관찰)가
+        // 변동을 놓친다. render.ts 가 렌더 완료 시 쏘는 신호를 받아 헤딩 가이드 캐시를 무효화한다.
+        window.addEventListener('wiki:mermaid-rendered', _invalidateScrollSyncGuides);
 
         // 프리뷰 내부의 비동기 레이아웃 변동(이미지/임베드 지연 로드, 폰트 늦은 적용,
         // 익스텐션의 사후 DOM 변형 등)도 헤딩 오프셋을 흔들 수 있으므로 감지하여 캐시 무효화.
@@ -4366,6 +4370,28 @@ async function savePage() {
         if (!res.ok) {
             const data = await res.json();
             throw new Error(data.error || '저장 실패');
+        }
+
+        const saveResult: any = await res.json().catch(() => ({}));
+
+        // 사람 편집 보류(pending changes): 신뢰되지 않은 사용자의 편집은 즉시 리비전이 되지 않고
+        // 검토 대기로 보류된다. 서버가 200 + { pending: true } 로 응답하므로 정상 저장과 구분해
+        // "검토 대기" 안내를 띄우고 공개 문서(마지막 승인본) 로 이동한다.
+        if (saveResult && saveResult.pending) {
+            if (DRAFT_KEY) localStorage.removeItem(DRAFT_KEY);
+            if (window.promotedFromDraftKey && window.promotedFromDraftKey !== DRAFT_KEY) {
+                localStorage.removeItem(window.promotedFromDraftKey);
+                window.promotedFromDraftKey = null;
+            }
+            isSuccess = true; // beforeunload 경고 방지
+            await window.Swal.fire({
+                icon: 'info',
+                title: '검토 대기로 제출되었습니다',
+                html: '이 편집은 검토자의 승인 후 반영됩니다.<br>승인 전까지 공개 문서에는 표시되지 않습니다.',
+                confirmButtonText: '확인',
+            });
+            window.location.href = '/w/' + encodeURIComponent(saveResult.slug || slug);
+            return;
         }
 
         if (DRAFT_KEY) localStorage.removeItem(DRAFT_KEY);

@@ -279,6 +279,12 @@
             minAgeEl.value = String(v);
           }
 
+          // 사람 편집 보류(검토 대기) 전역 토글
+          const pendingEl = document.getElementById("pendingChangesEnabledInput");
+          if (pendingEl) {
+            pendingEl.checked = s.pending_changes_enabled === 1 || s.pending_changes_enabled === true;
+          }
+
           // MCP 설정 로드
           const mcp = s.mcp_mode || "disabled";
           const b = document.getElementById("mcpModeDisplay");
@@ -595,6 +601,9 @@
             'input[name="signupPolicy"]:checked',
           ).value,
           edit_acl_min_age_days: Number.isFinite(minAgeVal) && minAgeVal >= 0 ? minAgeVal : 0,
+          pending_changes_enabled: document.getElementById("pendingChangesEnabledInput")?.checked
+            ? 1
+            : 0,
         };
         const res = await fetch("/api/admin/settings", {
           method: "PUT",

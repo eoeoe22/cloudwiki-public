@@ -1,5 +1,5 @@
-import { Hono } from 'hono';
-import type { Env, Page, Revision } from '../types';
+import { Hono, type Context } from 'hono';
+import type { Env, Page, Revision, User } from '../types';
 import { requireAuth, requireAdmin, requirePermission } from '../middleware/session';
 import { normalizeSlug, isR2OnlyNamespace, isMapNamespace, isGraphNamespace } from '../utils/slug';
 import { buildMapDocument, buildGroupTree, MAP_CACHE_MAX_AGE_SECONDS } from '../utils/mapDocument';
@@ -295,6 +295,151 @@ async function collectPageEditWatchers(
         // 안전 기본값: 권한 확인이 실패하면 비공개 문서 알림은 발송하지 않는다.
         return [];
     }
+}
+
+/**
+ * settings.pending_changes_enabled (사람 편집 보류 리비전 전역 토글) 조회.
+ * 컬럼/행이 없으면(=마이그레이션 미적용) 0(비활성)으로 안전 폴백한다.
+ */
+export async function getPendingChangesEnabled(db: D1Database): Promise<boolean> {
+    try {
+        const row = await db
+            .prepare('SELECT pending_changes_enabled AS v FROM settings WHERE id = 1')
+            .first<{ v: number | null }>();
+        return row?.v === 1;
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * 신뢰되지 않은 사용자의 편집을 pending_edits 검토 대기로 보류한다.
+ * - revisions/pages 를 건드리지 않으므로 공개 화면은 마지막 승인본을 계속 노출한다.
+ * - (author_id, slug) UNIQUE 로 작성자×슬러그당 1건만 유지 — 재제출 시 UPSERT 로 교체.
+ * - 검토자(관리자)에게 인앱+푸시 알림, admin Discord 채널 웹훅을 best-effort 발송.
+ *   비공개 문서는 본문/제목 노출 방지를 위해 웹훅을 생략한다.
+ * 반환: 생성/갱신된 pending_edit.id (UI 응답용).
+ */
+async function holdPendingEdit(
+    c: Context<Env>,
+    user: User,
+    input: {
+        pageId: number | null;
+        slug: string;
+        action: 'create' | 'update';
+        baseRevisionId: number | null;
+        baseVersion: number;
+        content: string;
+        category: string | null;
+        redirectTo: string | null;
+        title: string | null;
+        hasTitleChange: boolean;
+        summary: string | null;
+        isPrivate: boolean;       // 검토자 접근 게이팅용 (현재 또는 결과가 비공개면 true)
+        editAcl: string | null;   // applyEditAcl=true 일 때 승인 시 적용할 직렬화 edit_acl (update 전용)
+        applyEditAcl: boolean;    // 이 편집이 edit_acl 을 바꾸려는 경우만 true (direct-save 의 willUpdateEditAcl 과 동일)
+        layoutMode: string | null; // applyLayout=true 일 때 승인 시 적용할 layout_mode
+        applyLayout: boolean;     // 편집이 layout_mode 를 지정한 경우만 true (direct-save 의 hasLayoutInBody 와 동일; create 는 항상 true)
+        categoryAclChoices: string | null; // create 보류본의 원본 category_acl_choices(JSON 문자열). 승인 시 재생용. update 는 불필요(null).
+    },
+): Promise<number> {
+    const db = c.env.DB;
+    // (author_id, slug) UNIQUE 충돌 시 최신 내용으로 교체 (UPSERT).
+    const row = await db
+        .prepare(
+            `INSERT INTO pending_edits
+                (page_id, slug, action, author_id, base_revision_id, base_version,
+                 content, category, redirect_to, title, has_title_change, summary,
+                 is_private, edit_acl, apply_edit_acl, layout_mode, apply_layout, category_acl_choices, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())
+             ON CONFLICT(author_id, slug) DO UPDATE SET
+                page_id = excluded.page_id,
+                action = excluded.action,
+                base_revision_id = excluded.base_revision_id,
+                base_version = excluded.base_version,
+                content = excluded.content,
+                category = excluded.category,
+                redirect_to = excluded.redirect_to,
+                title = excluded.title,
+                has_title_change = excluded.has_title_change,
+                summary = excluded.summary,
+                is_private = excluded.is_private,
+                edit_acl = excluded.edit_acl,
+                apply_edit_acl = excluded.apply_edit_acl,
+                layout_mode = excluded.layout_mode,
+                apply_layout = excluded.apply_layout,
+                category_acl_choices = excluded.category_acl_choices,
+                updated_at = unixepoch()
+             RETURNING id`
+        )
+        .bind(
+            input.pageId,
+            input.slug,
+            input.action,
+            user.id,
+            input.baseRevisionId,
+            input.baseVersion,
+            input.content,
+            input.category,
+            input.redirectTo,
+            input.title,
+            input.hasTitleChange ? 1 : 0,
+            input.summary,
+            input.isPrivate ? 1 : 0,
+            input.editAcl,
+            input.applyEditAcl ? 1 : 0,
+            input.layoutMode,
+            input.applyLayout ? 1 : 0,
+            input.categoryAclChoices,
+        )
+        .first<{ id: number }>();
+    const pendingEditId = row?.id ?? 0;
+
+    // 검토자(관리자) 알림 — 신뢰 사용자(aged/이전 편집자)는 문서 배너로 발견하므로 폭주를 막고자
+    // 인앱/푸시는 관리자에 한정한다. 작성자 본인은 제외.
+    c.executionCtx.waitUntil((async () => {
+        try {
+            const { results } = await db
+                .prepare(
+                    "SELECT id FROM users WHERE (role = 'admin' OR role = 'super_admin') AND id != ?"
+                )
+                .bind(user.id)
+                .all<{ id: number }>();
+            const adminIds = (results || []).map(r => r.id);
+            if (adminIds.length === 0) return;
+            const link = '/mypage#pending-edits';
+            const actionLabel = input.action === 'create' ? '새 문서' : '문서 수정';
+            const content = `${user.name}님이 "${input.slug}" ${actionLabel} 편집을 검토 대기로 제출했습니다.`;
+            await createNotifications(c.env, c.executionCtx, adminIds.map(uid => ({
+                userId: uid,
+                type: 'pending_edit',
+                content,
+                link,
+                refId: pendingEditId,
+                push: {
+                    title: '검토 대기 편집',
+                    body: content,
+                    url: link,
+                    tag: `pending_edit:${pendingEditId}`,
+                },
+            })));
+        } catch (e) {
+            console.error('holdPendingEdit notify failed:', e);
+        }
+    })());
+
+    // Discord admin 채널 웹훅 (비공개 문서는 생략).
+    if (!input.isPrivate) {
+        dispatchDiscord(c.env, c.executionCtx, pendingEditCreated({
+            slug: input.slug,
+            action: input.action,
+            actor: { name: user.name, picture: user.picture },
+            summary: input.summary,
+            env: c.env,
+        }));
+    }
+
+    return pendingEditId;
 }
 
 /**
@@ -896,8 +1041,11 @@ import {
     evaluateEditAcl,
     getEditAclMinAgeDays,
     findPrefixRuleEditAcl,
+    isTrustedEditor,
     type EditAcl,
 } from '../utils/editAcl';
+import { dispatchDiscord } from '../utils/webhook/discord';
+import { pendingEditCreated } from '../utils/webhook/events/pendingEdit';
 import {
     getCategoryAcl,
     getCategoryAclsBatch,
@@ -1998,9 +2146,9 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
     }
 
     const existing = await db
-        .prepare('SELECT id, version, is_private, edit_acl, redirect_to, content, deleted_at, title FROM pages WHERE slug = ?')
+        .prepare('SELECT id, version, is_private, edit_acl, redirect_to, content, deleted_at, title, last_revision_id FROM pages WHERE slug = ?')
         .bind(slug)
-        .first<{ id: number; version: number; is_private: number; edit_acl: string | null; redirect_to: string | null; content: string; deleted_at: number | null; title: string | null }>();
+        .first<{ id: number; version: number; is_private: number; edit_acl: string | null; redirect_to: string | null; content: string; deleted_at: number | null; title: string | null; last_revision_id: number | null }>();
 
     // edit_acl body 입력 검증 (관리자만 반영). 비관리자는 기존 값 마스킹.
     let requestedEditAcl: { provided: boolean; value: EditAcl | null } = { provided: false, value: null };
@@ -2184,6 +2332,41 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
             }
         }
 
+        // ── 사람 편집 보류(pending changes) 분기 ──
+        // 전역 토글이 켜져 있고 편집자가 신뢰되지 않으면(비-aged·이 문서 미편집·비관리자)
+        // 즉시 리비전을 만들지 않고 검토 대기로 보류한다. 공개 화면은 마지막 승인본을 유지.
+        // ACL·비공개·동시편집 검증을 모두 통과한 직후 분기하므로, 보류본도 동일 사전조건을 만족한다.
+        if (await getPendingChangesEnabled(db)) {
+            const minAge = await getEditAclMinAgeDays(db);
+            if (!(await isTrustedEditor(db, user, existing.id, minAge, isAdmin))) {
+                const finalTitleHold = hasTitleInBody ? requestedTitle ?? null : existing.title;
+                const pendingEditId = await holdPendingEdit(c, user, {
+                    pageId: existing.id,
+                    slug,
+                    action: 'update',
+                    baseRevisionId: existing.last_revision_id,
+                    baseVersion: existing.version,
+                    content: body.content,
+                    category: body.category || null,
+                    redirectTo: body.redirect_to || null,
+                    title: finalTitleHold,
+                    hasTitleChange: hasTitleInBody,
+                    summary: body.summary ?? null,
+                    // 현재 페이지 또는 이번 편집 결과가 비공개면 비공개로 게이팅(둘 중 하나라도 비공개면 비공개 문서 본문 노출 방지).
+                    isPrivate: existing.is_private === 1 || finalIsPrivate === 1,
+                    // direct-save 가 edit_acl 을 쓰는 경우(willUpdateEditAcl: 카테고리 ACL 머지 등)만 승인 시 적용.
+                    editAcl: finalEditAcl,
+                    applyEditAcl: willUpdateEditAcl,
+                    // direct-save 는 body 에 layout_mode 키가 있을 때만 layout_mode 를 쓴다(hasLayoutInBody).
+                    layoutMode: hasLayoutInBody ? (requestedLayout ?? null) : null,
+                    applyLayout: hasLayoutInBody,
+                    // update 의 카테고리 ACL 머지 결과는 edit_acl 로 이미 캡처되므로 choices 재생 불필요.
+                    categoryAclChoices: null,
+                });
+                return c.json(safeJSON({ pending: true, slug, pending_edit_id: pendingEditId }));
+            }
+        }
+
         // 1. 리비전 본문을 R2에 먼저 업로드
         let r2Key: string;
         try {
@@ -2363,6 +2546,39 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
                         }, 403);
                     }
                 }
+            }
+        }
+
+        // ── 사람 편집 보류(pending changes) 분기 (신규 문서 생성) ──
+        // 전역 토글이 켜져 있고 생성자가 신뢰되지 않으면 페이지를 만들지 않고 보류한다.
+        // pageId=null·base_version=0 으로 저장하며, 승인 시 applyNewPageInsert 가 prefix/카테고리 ACL 을 재적용한다.
+        // 보류본은 body.category(raw) 를 저장하고, 승인 시점에 prefix 룰을 다시 평가한다.
+        if (await getPendingChangesEnabled(db)) {
+            const minAge = await getEditAclMinAgeDays(db);
+            if (!(await isTrustedEditor(db, user, null, minAge, isAdmin))) {
+                const pendingEditId = await holdPendingEdit(c, user, {
+                    pageId: null,
+                    slug,
+                    action: 'create',
+                    baseRevisionId: null,
+                    baseVersion: 0,
+                    content: body.content,
+                    category: body.category || null,
+                    redirectTo: body.redirect_to || null,
+                    title: requestedTitle ?? null,
+                    hasTitleChange: !!requestedTitle,
+                    summary: body.summary ?? null,
+                    isPrivate: finalIsPrivate === 1,
+                    // create 승인은 applyNewPageInsert 가 prefix/카테고리 ACL 을 재평가하므로 저장된 edit_acl 을 쓰지 않는다.
+                    editAcl: null,
+                    applyEditAcl: false,
+                    // direct-create 는 항상 layout_mode 를 INSERT 하므로 보류 create 도 항상 적용한다.
+                    layoutMode: requestedLayout ?? null,
+                    applyLayout: true,
+                    // direct-create 가 받은 category_acl_choices 를 그대로 저장해 승인 시 재생(ignore/merge 등 보존).
+                    categoryAclChoices: categoryAclChoicesRaw ? JSON.stringify(categoryAclChoicesRaw) : null,
+                });
+                return c.json(safeJSON({ pending: true, slug, pending_edit_id: pendingEditId, created: false }));
             }
         }
 

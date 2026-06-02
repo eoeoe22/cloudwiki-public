@@ -204,7 +204,13 @@ CREATE TABLE IF NOT EXISTS settings (
   announcement_next_id    INTEGER DEFAULT 1,
   -- pages.edit_acl 의 'aged' 플래그가 참조하는 전역 임계값(일).
   -- 0 이면 가입 즉시 통과 (사실상 'aged' 플래그 비활성).
-  edit_acl_min_age_days   INTEGER DEFAULT 15
+  edit_acl_min_age_days   INTEGER DEFAULT 15,
+  -- 사람 편집 보류 리비전(pending changes) 전역 토글.
+  -- 1 이면 신뢰되지 않은 사용자(비-aged·해당 문서 미편집·비관리자)의 사람 편집을
+  -- 즉시 리비전으로 만들지 않고 pending_edits 검토 대기로 보류한다 (MediaWiki FlaggedRevs 유사).
+  -- 'aged' 판정은 edit_acl_min_age_days 를 재사용하므로, 이 값이 0 이면 모든 사용자가
+  -- aged 로 통과해 보류가 발생하지 않는다 — 보류를 쓰려면 edit_acl_min_age_days 를 0 보다 크게 설정해야 한다.
+  pending_changes_enabled INTEGER DEFAULT 0
 );
 
 INSERT OR IGNORE INTO settings (id) VALUES (1);
@@ -347,6 +353,50 @@ CREATE INDEX IF NOT EXISTS idx_mcp_drafts_updated ON mcp_drafts(updated_at);
 CREATE INDEX IF NOT EXISTS idx_mcp_drafts_submitted
   ON mcp_drafts(user_id, submitted_at)
   WHERE submitted_at IS NOT NULL;
+
+-- 사람 편집 보류 리비전(pending changes) 검토 대기본.
+-- settings.pending_changes_enabled=1 일 때, 신뢰되지 않은 사용자의 PUT /api/w/:slug 편집은
+-- 즉시 리비전이 되지 않고 이 테이블에 보관된다 (revisions/pages/FTS/version 시퀀스 미오염).
+-- 공개 화면은 마지막 승인 리비전을 계속 노출하고, 관리자 또는 신뢰 사용자가 검토 후
+-- 승인(=원 편집자 author 로 정식 리비전 생성) 또는 반려(=폐기) 한다.
+--   action: 'create' (page_id NULL, base_version 0) | 'update' (대상 page.id, base_revision_id/base_version 스냅샷)
+--   author_id: 보류를 올린 원(미신뢰) 편집자. 승인 시 이 사용자가 리비전 author 가 된다.
+--   UNIQUE(author_id, slug): 작성자×슬러그당 1건 — 재제출 시 UPSERT 로 최신 내용으로 교체.
+CREATE TABLE IF NOT EXISTS pending_edits (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  page_id           INTEGER,
+  slug              TEXT NOT NULL,
+  action            TEXT NOT NULL,
+  author_id         INTEGER NOT NULL,
+  base_revision_id  INTEGER,
+  base_version      INTEGER NOT NULL DEFAULT 0,
+  content           TEXT NOT NULL DEFAULT '',
+  category          TEXT,
+  redirect_to       TEXT,
+  title             TEXT,
+  has_title_change  INTEGER NOT NULL DEFAULT 0,
+  summary           TEXT,
+  -- 검토자 접근 게이팅용 비공개 플래그. update=현재 페이지 또는 이번 편집 결과가 비공개면 1,
+  -- create=prefix 룰 적용 후 결과 비공개면 1. is_private=1 인 보류본은 wiki:private 권한자만 검토 가능.
+  is_private        INTEGER NOT NULL DEFAULT 0,
+  -- apply_edit_acl=1 일 때 승인 시 페이지에 적용할 직렬화 edit_acl(카테고리 ACL 머지 결과). update 전용.
+  -- create 는 승인 시 applyNewPageInsert 가 prefix/카테고리 ACL 을 재평가하므로 사용하지 않는다.
+  edit_acl          TEXT,
+  apply_edit_acl    INTEGER NOT NULL DEFAULT 0,
+  -- apply_layout=1 일 때 승인 시 적용할 layout_mode(프레젠테이션 모드 등). 'presentation' 또는 NULL(자동).
+  -- update 는 편집 본문에 layout_mode 키가 있을 때만(=direct-save 의 hasLayoutInBody) 적용, create 는 항상 적용.
+  layout_mode       TEXT,
+  apply_layout      INTEGER NOT NULL DEFAULT 0,
+  -- create 보류본의 원본 category_acl_choices (JSON 문자열, 없으면 NULL). 승인 시 그대로 재생해
+  -- direct-save 의 카테고리 ACL 적용 시맨틱(ignore/merge 등)을 보존한다. update 는 edit_acl 로 캡처돼 미사용.
+  category_acl_choices TEXT,
+  created_at        INTEGER DEFAULT (unixepoch()),
+  updated_at        INTEGER DEFAULT (unixepoch()),
+  FOREIGN KEY (author_id) REFERENCES users(id),
+  UNIQUE (author_id, slug)
+);
+CREATE INDEX IF NOT EXISTS idx_pending_edits_slug ON pending_edits(slug);
+CREATE INDEX IF NOT EXISTS idx_pending_edits_author ON pending_edits(author_id);
 
 -- 문서 간 링크 테이블 (역링크 인덱싱용)
 -- source_type: 'page' | 'blog' | 'discussion_comment' | 'ticket_comment'

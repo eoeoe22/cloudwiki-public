@@ -294,6 +294,8 @@ function applyThemeClass(mode) {
         document.documentElement.removeAttribute('data-theme');
     }
     applyBsTheme(mode);
+    // 테마 변경 구독자(예: render.ts 의 Mermaid 다이어그램 재렌더)에 통지.
+    try { window.dispatchEvent(new CustomEvent('wiki:theme-changed', { detail: { mode: mode } })); } catch (e) { /* noop */ }
 }
 
 function setTheme(mode) {

@@ -965,6 +965,26 @@
             .catch(() => { });
         }
 
+        // 사람 편집 보류(검토 대기) 배너 — 이 문서에 검토 가능한 보류 편집이 있고
+        // 현재 사용자에게 검토 권한이 있을 때만 노출(서버가 검토 권한자에게만 count>0 반환 → 자연 게이팅).
+        const _pendingBanner = document.getElementById('pendingEditBanner');
+        if (_pendingBanner) _pendingBanner.style.display = 'none';
+        if (window.currentUser && _pendingBanner) {
+          const _pendingSlug = page.slug;
+          fetch('/api/pending-edits/count?slug=' + encodeURIComponent(_pendingSlug))
+            .then(r => r.ok ? r.json() : { count: 0 })
+            .then(data => {
+              if (!data || !data.count) return;
+              if (!currentPage || currentPage.slug !== _pendingSlug) return;
+              _pendingBanner.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:0.75rem;padding:0.65rem 1rem;margin:0.5rem 0 1rem;border:1px solid #E67E22;background:rgba(230,126,34,0.10);border-radius:10px;font-size:0.95rem;';
+              _pendingBanner.innerHTML = `
+                <span><i class="bi bi-hourglass-split"></i> 검토 대기 중인 편집이 ${data.count}건 있습니다.</span>
+                <a href="/mypage#pending-edits" class="btn btn-sm" style="background:#E67E22;color:#fff;"><i class="bi bi-eye"></i> 검토하기</a>
+              `;
+            })
+            .catch(() => { });
+        }
+
         // 조회수는 이제 사용자가 조회수 확인 버튼을 클릭할 때만 로드됩니다 (loadPageViewCount 함수 참조).
 
         // redirect를 통해 문서를 조회한 경우, 액션 버튼에 실제 문서의 slug를 사용

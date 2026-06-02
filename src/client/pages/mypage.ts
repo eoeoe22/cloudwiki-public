@@ -32,6 +32,7 @@
             loadSessions();
             loadMcpClients();
             loadMcpSubmissions();
+            loadPendingEdits();
             checkNameChangeStatus();
             showPictureUpdateResult();
 
@@ -40,6 +41,7 @@
             // 약 30 회 × 150ms = 4.5초 — loadMcpSubmissions 의 fetch 가 정상 종료될 시간으로 충분.
             const hashScrollTargets = {
                 '#mcp-submissions': 'mcpSubmissionsSection',
+                '#pending-edits': 'pendingEditsSection',
                 '#notifications': 'notificationsArchiveSection',
             };
             const scrollSectionId = hashScrollTargets[window.location.hash];
@@ -650,6 +652,225 @@
             }
         }
 
+        // ─── 사람 편집 보류(검토 대기) ──────────────────────────────────────
+        // MCP 제출안과 거의 동일한 UI 지만, 검토 대상이 "남이 올린" 보류 편집이고 검토 권한이 있을 때만
+        // 항목이 내려온다. 승인 시 원 편집자 명의로 반영되고, 요약 끝에 검토자 닉네임+id 가 박제된다.
+        async function loadPendingEdits() {
+            const listEl = document.getElementById('pendingEditsList');
+            const section = document.getElementById('pendingEditsSection');
+            const countBadge = document.getElementById('pendingEditsCount');
+            if (!listEl || !section || !countBadge) return;
+            try {
+                const res = await fetch('/api/pending-edits');
+                if (!res.ok) throw new Error();
+                const data = await res.json();
+                const submissions = data.submissions || [];
+                if (submissions.length === 0) {
+                    section.style.display = 'none';
+                    return;
+                }
+                section.style.display = '';
+                countBadge.textContent = String(submissions.length);
+                listEl.innerHTML = '';
+                for (const s of submissions) {
+                    listEl.appendChild(buildPendingEditItem(s));
+                }
+            } catch (e) {
+                section.style.display = '';
+                listEl.innerHTML = window.uiEmptyState({ compact: true, icon: 'bi bi-exclamation-triangle', title: '불러오기 실패' });
+            }
+        }
+
+        function buildPendingEditItem(s) {
+            const wrap = document.createElement('div');
+            wrap.className = 'mcp-submission-item' + (s.has_conflict ? ' has-conflict' : '');
+
+            const head = document.createElement('div');
+            head.className = 'mcp-sub-head';
+            const slugLink = document.createElement('a');
+            slugLink.className = 'mcp-sub-slug';
+            slugLink.href = '/w/' + encodeURIComponent(s.slug);
+            slugLink.textContent = s.slug;
+            const actionBadge = document.createElement('span');
+            actionBadge.className = 'badge ' + (s.action === 'create' ? 'bg-success' : 'bg-info text-dark');
+            actionBadge.textContent = s.action === 'create' ? '신규' : '수정';
+            head.appendChild(slugLink);
+            head.appendChild(actionBadge);
+            if (s.has_conflict) {
+                const conflictBadge = document.createElement('span');
+                conflictBadge.className = 'badge bg-danger';
+                conflictBadge.textContent = s.conflict_reason === 'slug_taken' ? '제목 점거 충돌'
+                    : s.conflict_reason === 'slug_soft_deleted' ? '소프트 삭제된 동일 제목'
+                    : s.conflict_reason === 'page_missing' ? '문서 없음/삭제됨'
+                    : '동시 편집 충돌';
+                head.appendChild(conflictBadge);
+            }
+            wrap.appendChild(head);
+
+            if (s.summary) {
+                const summary = document.createElement('div');
+                summary.className = 'mcp-sub-summary';
+                summary.textContent = s.summary;
+                wrap.appendChild(summary);
+            }
+
+            const meta = document.createElement('div');
+            meta.className = 'mcp-sub-meta';
+            const ts = s.updated_at ? new Date(s.updated_at).toLocaleString('ko-KR') : '';
+            const author = s.author_name ? `${s.author_name}님 · ` : '';
+            meta.textContent = `${author}제출 ${ts} · 본문 ${s.content_length}자`;
+            wrap.appendChild(meta);
+
+            const actions = document.createElement('div');
+            actions.className = 'mcp-sub-actions';
+            const reviewBtn = document.createElement('button');
+            reviewBtn.className = 'btn btn-sm btn-wiki';
+            reviewBtn.innerHTML = '<i class="mdi mdi-eye-outline"></i> 검토';
+            reviewBtn.addEventListener('click', () => openPendingEditReview(s.id));
+            actions.appendChild(reviewBtn);
+
+            const rejectBtn = document.createElement('button');
+            rejectBtn.className = 'btn btn-sm btn-wiki btn-wiki-danger';
+            rejectBtn.innerHTML = '<i class="mdi mdi-close"></i> 반려';
+            rejectBtn.addEventListener('click', () => rejectPendingEdit(s.id, s.slug));
+            actions.appendChild(rejectBtn);
+
+            wrap.appendChild(actions);
+            return wrap;
+        }
+
+        async function openPendingEditReview(id) {
+            let detail;
+            try {
+                const res = await fetch('/api/pending-edits/' + encodeURIComponent(id));
+                if (!res.ok) {
+                    const errBody = await res.json().catch(() => ({}));
+                    Swal.fire('오류', errBody.error || '보류 편집을 불러오지 못했습니다.', 'error');
+                    return;
+                }
+                detail = await res.json();
+            } catch {
+                Swal.fire('오류', '네트워크 오류', 'error');
+                return;
+            }
+
+            const conflictBanner = detail.has_conflict
+                ? `<div class="alert alert-danger py-2 mb-2 text-start"><i class="mdi mdi-alert"></i> ${
+                    detail.conflict_reason === 'slug_taken' ? '동일 제목의 다른 문서가 그 사이 생성되었습니다. 승인할 수 없습니다.'
+                    : detail.conflict_reason === 'slug_soft_deleted' ? '동일 제목의 소프트 삭제된 문서가 존재합니다. 먼저 복원하거나 영구 삭제하지 않으면 승인할 수 없습니다.'
+                    : detail.conflict_reason === 'page_missing' ? '문서가 삭제되었거나 존재하지 않습니다. 승인할 수 없습니다.'
+                    : '제출 이후 다른 사용자가 페이지를 수정했습니다. 그대로 승인할 수 없으니 반려 후 작성자에게 재작성을 요청하세요.'
+                  }</div>`
+                : '';
+            const ts = detail.submitted_at ? new Date(detail.submitted_at).toLocaleString('ko-KR') : '';
+            const summaryDefault = detail.summary || '';
+
+            const enabledExts = (window.appConfig && window.appConfig.enabledExtensions) || [];
+            const isExtensionDataDiff = enabledExts.some((ext) => detail.slug.startsWith(ext + ':'));
+
+            const extraTopHtml = `
+                ${conflictBanner}
+                <div class="text-start small text-muted mb-2">
+                    <div><b>${window.escapeHtml(detail.slug)}</b> · ${detail.action === 'create' ? '신규' : '수정'} · ${window.escapeHtml(detail.author_name || '')}님 · 제출 ${window.escapeHtml(ts)}</div>
+                    <div>+${detail.lines_added}줄 / -${detail.lines_removed}줄</div>
+                </div>
+                <div class="mt-1 mb-2 text-start">
+                    <label class="form-label small mb-1">편집 요약 (승인 시 끝에 검토자 닉네임#id 가 자동 부착됩니다)</label>
+                    <input type="text" id="pendingApproveSummary" class="form-control form-control-sm" maxlength="200" value="${window.escapeHtml(summaryDefault)}">
+                </div>
+            `;
+
+            const result = await window.showDiffModal({
+                title: '검토 대기 편집 검토',
+                oldText: detail.current_content || '',
+                newText: detail.proposed_content || '',
+                slug: detail.slug,
+                forceRaw: isExtensionDataDiff,
+                width: '1100px',
+                extraTopHtml,
+                swalOptions: {
+                    showCancelButton: true,
+                    showDenyButton: true,
+                    confirmButtonText: '<i class="mdi mdi-check"></i> 승인',
+                    denyButtonText: '<i class="mdi mdi-close"></i> 반려',
+                    cancelButtonText: '닫기',
+                    confirmButtonColor: '#10B981',
+                    denyButtonColor: '#EF4444',
+                    preConfirm: () => {
+                        const input = document.getElementById('pendingApproveSummary');
+                        return { summary: input ? input.value : '' };
+                    },
+                },
+            });
+
+            if (result.isConfirmed) {
+                await approvePendingEdit(id, result.value && result.value.summary);
+            } else if (result.isDenied) {
+                await rejectPendingEdit(id, detail.slug);
+            }
+        }
+
+        async function approvePendingEdit(id, summary) {
+            try {
+                const res = await fetch('/api/pending-edits/' + encodeURIComponent(id) + '/approve', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ summary }),
+                });
+                const data = await res.json();
+                if (!res.ok) {
+                    const msg = data.error === 'conflict'
+                        ? '충돌이 발생해 승인할 수 없습니다. 문서 상태를 확인 후 반려하세요.'
+                        : (data.message || data.error || '승인 실패');
+                    Swal.fire('승인 실패', msg, 'error');
+                    return;
+                }
+                await Swal.fire({
+                    icon: 'success',
+                    title: '승인되었습니다.',
+                    text: `리비전 #${data.revision_id} 가 원 편집자 명의로 생성되었습니다.`,
+                    toast: true,
+                    position: 'top-end',
+                    showConfirmButton: false,
+                    timer: 2500,
+                });
+                loadPendingEdits();
+            } catch {
+                Swal.fire('오류', '네트워크 오류', 'error');
+            }
+        }
+
+        async function rejectPendingEdit(id, slug) {
+            const confirmRes = await Swal.fire({
+                icon: 'warning',
+                title: '편집을 반려하시겠습니까?',
+                input: 'text',
+                inputLabel: '반려 사유 (선택, 작성자에게 전달)',
+                inputAttributes: { maxlength: '100' },
+                text: `"${slug}" 의 보류 편집을 폐기합니다. 되돌릴 수 없습니다.`,
+                showCancelButton: true,
+                confirmButtonText: '반려',
+                cancelButtonText: '취소',
+                confirmButtonColor: '#EF4444',
+            });
+            if (!confirmRes.isConfirmed) return;
+            try {
+                const res = await fetch('/api/pending-edits/' + encodeURIComponent(id) + '/reject', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ reason: confirmRes.value || '' }),
+                });
+                if (!res.ok) {
+                    const errBody = await res.json().catch(() => ({}));
+                    Swal.fire('반려 실패', errBody.error || '반려에 실패했습니다.', 'error');
+                    return;
+                }
+                loadPendingEdits();
+            } catch {
+                Swal.fire('오류', '네트워크 오류', 'error');
+            }
+        }
+
         async function updateName() {
             const name = document.getElementById('nameInput').value.trim();
             if (!name) {
@@ -812,6 +1033,8 @@
             'message': 'mdi mdi-email-outline',
             'ticket_created': 'mdi mdi-ticket-outline',
             'ticket_comment': 'mdi mdi-ticket-confirmation-outline',
+            'pending_edit': 'mdi mdi-clock-edit-outline',
+            'pending_edit_result': 'mdi mdi-pencil-outline',
         };
 
         async function loadNotificationsArchive(isLoadMore = false) {

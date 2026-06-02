@@ -612,6 +612,9 @@ export async function applyExistingPageUpdate(
         redirectTo?: string | null;   // undefined → 기존 유지, null/string → 덮어쓰기
         title?: string | null;        // undefined → 기존 유지, null → 제거, string → 설정. 호출자가 사전 충돌 검증을 마쳤다고 가정.
         slug: string;
+        editAcl?: string | null;      // undefined → 기존 유지(MCP 기본), null/string → 덮어쓰기 (사람 편집 보류 승인의 카테고리 ACL 머지 적용용).
+        layoutMode?: string | null;   // undefined → 기존 유지(MCP 기본), null/string → 덮어쓰기 (사람 편집 보류 승인의 layout_mode 적용용).
+        summaryRaw?: boolean;         // true 면 withMcpPrefix() 를 건너뛰고 opts.summary 를 그대로 저장 (사람 편집 보류 승인 경로). 기본 false → [MCP] 접두.
         logType?: string;             // admin_log type (예: page_update / page_patch / page_revert) — 생략 시 로그 없음
         logMessage?: string;
     }
@@ -621,13 +624,14 @@ export async function applyExistingPageUpdate(
     const isR2Only = isR2OnlyNamespace(opts.slug, enabledExt);
     const metrics = computePageMetricsTracked(content, isR2Only);
     const newVersion = page.version + 1;
+    const revisionSummary = opts.summaryRaw ? (opts.summary ?? null) : withMcpPrefix(opts.summary);
 
     const r2Key = await uploadRevisionToR2(c.env.MEDIA, page.id, newVersion, content);
     let revisionId: number;
     try {
         const revResult = await db
             .prepare('INSERT INTO revisions (page_id, page_version, content, r2_key, summary, author_id) VALUES (?, ?, ?, ?, ?, ?)')
-            .bind(page.id, newVersion, '', r2Key, withMcpPrefix(opts.summary), user.id)
+            .bind(page.id, newVersion, '', r2Key, revisionSummary, user.id)
             .run();
         revisionId = revResult.meta.last_row_id;
     } catch (e) {
@@ -649,6 +653,17 @@ export async function applyExistingPageUpdate(
     if (opts.redirectTo !== undefined) {
         setClauses.push('redirect_to = ?');
         bindings.push(opts.redirectTo);
+    }
+    // editAcl: undefined → 기존 유지(MCP 경로 기본). null/string → 덮어쓰기.
+    // 사람 편집 보류 승인(update)에서 카테고리 ACL 머지 결과를 적용할 때 사용.
+    if (opts.editAcl !== undefined) {
+        setClauses.push('edit_acl = ?');
+        bindings.push(opts.editAcl);
+    }
+    // layoutMode: undefined → 기존 유지(MCP 경로 기본). null/string → 덮어쓰기 (보류 승인의 presentation 토글 등 적용).
+    if (opts.layoutMode !== undefined) {
+        setClauses.push('layout_mode = ?');
+        bindings.push(opts.layoutMode);
     }
     setClauses.push('last_revision_id = ?', 'version = ?', 'rows = ?', 'characters = ?', 'updated_at = unixepoch()');
     bindings.push(revisionId, newVersion, metrics.rows, metrics.characters);
@@ -713,6 +728,8 @@ export async function applyNewPageInsert(
         editAcl?: string | null;       // serialize 된 JSON. 호출자가 prefix 룰을 평가해 주입.
         isPrivate?: number;            // 호출자가 doc_setting_prefix_rules longest-match 로 산출. 누락 시 0.
         title?: string | null;        // 호출자가 사전 충돌 검증을 마쳤다고 가정. 누락 시 NULL.
+        layoutMode?: string | null;   // 신규 페이지 layout_mode. 누락 시 NULL(자동). 사람 편집 보류 승인(create)의 presentation 토글 적용용.
+        summaryRaw?: boolean;         // true 면 withMcpPrefix() 를 건너뛰고 opts.summary 를 그대로 저장 (사람 편집 보류 승인 경로). 기본 false → [MCP] 접두.
         logType?: string;
         logMessage?: string;
     }
@@ -726,8 +743,8 @@ export async function applyNewPageInsert(
     let pageResult;
     try {
         pageResult = await db
-            .prepare('INSERT INTO pages (slug, title, content, category, is_private, edit_acl, redirect_to, rows, characters) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
-            .bind(slug, opts.title ?? null, contentToStore, opts.category, opts.isPrivate ?? 0, opts.editAcl ?? null, opts.redirectTo, metrics.rows, metrics.characters)
+            .prepare('INSERT INTO pages (slug, title, content, category, is_private, edit_acl, redirect_to, rows, characters, layout_mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+            .bind(slug, opts.title ?? null, contentToStore, opts.category, opts.isPrivate ?? 0, opts.editAcl ?? null, opts.redirectTo, metrics.rows, metrics.characters, opts.layoutMode ?? null)
             .run();
     } catch (e: any) {
         // UNIQUE race: precheck ~ INSERT 사이에 다른 요청이 같은 slug/title 을 점유.
@@ -754,7 +771,7 @@ export async function applyNewPageInsert(
     try {
         const revResult = await db
             .prepare('INSERT INTO revisions (page_id, page_version, content, r2_key, summary, author_id) VALUES (?, ?, ?, ?, ?, ?)')
-            .bind(pageId, 1, '', firstR2Key, withMcpPrefix(opts.summary), user.id)
+            .bind(pageId, 1, '', firstR2Key, opts.summaryRaw ? (opts.summary ?? null) : withMcpPrefix(opts.summary), user.id)
             .run();
         revisionId = revResult.meta.last_row_id;
     } catch (e) {

@@ -363,6 +363,32 @@ html[data-theme="dark"] .wiki-content video:hover {
   font-family: var(--wiki-code-font) !important;
 }
 
+/* ── Mermaid 다이어그램 (```mermaid 코드펜스 → <figure>) ── */
+.wiki-content .mermaid-figure {
+  margin: 1.5rem 0;
+  padding: 1rem;
+  text-align: center;
+  background: var(--wiki-card-bg);
+  border: 1px solid var(--wiki-border);
+  border-radius: 8px;
+  overflow-x: auto;
+}
+
+.wiki-content .mermaid-figure svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.wiki-content .mermaid-figure .mermaid-loading {
+  color: var(--wiki-text-muted, #6b7280);
+  font-size: 0.9rem;
+  padding: 1rem 0;
+}
+
+.wiki-content .mermaid-figure .mermaid-error {
+  text-align: left;
+}
+
 /* ── Prism.js: VS Code Dark+/Light+ 스타일 테마 ──
    기본(라이트) 값은 VS Code Light+ 기준, 다크 모드는 Dark+ 기준으로 오버라이드한다.
    색상 변수는 이 블록 안에서만 쓰이며, 토큰 선택자에서 참조한다. */
