@@ -1631,6 +1631,49 @@ html[data-theme="dark"] #concurrent-edit-banner {
     margin-top: 4px;
 }
 
+/* ── 통합 슬라이드 편집: 위/아래 새 슬라이드 추가 존 (이미지 드롭존 스타일 미러링) ── */
+/* 에디터 패널(.wiki-editor-pane: flex column) 안에서 #cm-editor 위/아래를 차지한다. */
+.slide-add-zone {
+    flex: 0 0 auto;
+    margin: 8px;
+    padding: 14px 16px;
+    border: 2px dashed var(--wiki-primary);
+    border-radius: 8px;
+    text-align: center;
+    cursor: pointer;
+    transition: background 0.2s, border-color 0.2s;
+    background: rgba(var(--wiki-primary-rgb), 0.04);
+}
+
+.slide-add-zone:hover,
+.slide-add-zone.dragover {
+    background: rgba(var(--wiki-primary-rgb), 0.10);
+    border-color: var(--wiki-link);
+}
+
+.slide-add-zone i {
+    font-size: 1.6rem;
+    color: var(--wiki-primary);
+    display: block;
+    margin-bottom: 4px;
+}
+
+.slide-add-zone .slide-add-main {
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: var(--wiki-text);
+}
+
+.slide-add-zone .slide-add-sub {
+    font-size: 0.78rem;
+    color: var(--wiki-text-muted);
+    margin-top: 2px;
+}
+
+.slide-add-zone[hidden] {
+    display: none;
+}
+
 .img-upload-search-btn {
     display: flex;
     align-items: center;

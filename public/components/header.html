@@ -124,6 +124,15 @@
                 } catch(e) { /* ignore */ }
             }
 
+            // 호출 식별자(slug) 네임스페이스별 아이콘. map: 가상 트리, 카테고리:, 이미지:
+            // 는 각각 다른 mdi 아이콘으로, 그 외 일반 문서는 기본 문서 아이콘으로 표시한다.
+            function suggestionIcon(slugTarget) {
+                if (slugTarget.toLowerCase().startsWith('map:')) return 'mdi-file-tree-outline';
+                if (slugTarget.startsWith('카테고리:')) return 'mdi-tag-outline';
+                if (slugTarget.startsWith('이미지:')) return 'mdi-image-outline';
+                return 'mdi-file-document-outline';
+            }
+
             function renderSuggestions(items, isMapMode) {
                 activeIdx = -1;
                 if (!items.length) {
@@ -142,7 +151,7 @@
                         ? ' <small class="text-muted">' + escapeHtml(slugTarget) + '</small>'
                         : '';
                     return '<li class="search-suggestion-item" data-slug="' + escapeHtml(slugTarget) + '">'
-                        + '<i class="mdi mdi-file-document-outline"></i> '
+                        + '<i class="mdi ' + suggestionIcon(slugTarget) + '"></i> '
                         + escapeHtml(displayName) + slugSubLabel + '</li>';
                 }).join('');
                 sugBox.classList.add('show');

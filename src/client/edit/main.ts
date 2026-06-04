@@ -25,6 +25,7 @@ import { escapeHtml } from '../utils/html';
 import { normalizeSlug, hasSlugForbiddenChars } from '../utils/slug';
 import { CDN_URLS } from '../../shared/cdn';
 import { snapshotPreviewState, restorePreviewState } from './preview-state';
+import { splitSlides } from '../render-presentation';
 import type { CMEditor, CMSelection, PageMeta, SectionRange } from './types';
 
 declare global {
@@ -415,17 +416,52 @@ let pcViewMode = 'split';
 // 프레젠테이션 전역 핸들러(키보드/해시/풀스크린)를 한 번만 정리하기 위한 게이트.
 let _deckActive = false;
 
+// ── 통합 단일 슬라이드 편집 상태 ──────────────────────────────────────────────
+// 프레젠테이션 문서 + 일반(split) 모드일 때 활성. 에디터 CM 문서는 "현재 슬라이드"
+// 텍스트만 보유하고, editor.getMarkdown() 은 재구성된 전체 문서를 반환한다.
+//  - slides:  전체 문서를 `---` 로 분할한 정규 슬라이드 배열(빈 슬라이드 유지)
+//  - idx:     현재 편집 중인 슬라이드 인덱스
+//  - suppressChange: 프로그램적 에디터 스왑 중 change 핸들러를 무력화하는 가드
+//  - enterDoc/enterCanonical: 진입 시점 원본 전체 문서와 그 정규화 형태. 슬라이드 내용이
+//    진입 시점과 동일하면(구분자 공백 차이뿐) 원본을 그대로 반환해 불필요한 화이트스페이스
+//    변경·거짓 미저장 경고를 막는다.
+const slideCtl = {
+    active: false,
+    slides: [] as string[],
+    idx: 0,
+    suppressChange: false,
+    enterDoc: '',
+    enterCanonical: '',
+};
+// 슬라이드 조인 구분자. 앞뒤 빈 줄로 setext heading 오인을 막고 splitSlides 왕복을 안정화한다.
+const SLIDE_JOIN = '\n\n---\n\n';
+// 슬라이드 앞뒤의 빈 줄만 제거(첫 줄 들여쓰기·내부 빈 줄은 보존). 정규화의 멱등성을 보장.
+function trimSlide(s: string): string {
+    return (s || '').replace(/^\n+/, '').replace(/\n+$/, '');
+}
+// 슬라이드 배열을 정규 전체 문서로 합친다(각 슬라이드 trim + SLIDE_JOIN). 멱등.
+function canonicalizeSlides(parts: string[]): string {
+    return parts.map(trimSlide).join(SLIDE_JOIN);
+}
+// 덱(프리뷰)의 활성 슬라이드가 바뀔 때 호출될 콜백 — CM init 클로저가 채운다.
+// (module-level updateCustomPreview 가 renderPresentation 에 넘기기 위해 슬롯으로 둔다.)
+let _onDeckSlideChanged: ((idx: number) => void) | null = null;
+
 // 문서가 프레젠테이션 모드(설정 체크박스 ON)인지.
 function isPresentationActive() {
     const cb = document.getElementById('presentationModeToggle');
     return !!(cb && cb.checked);
 }
 
-// 프리뷰에 슬라이드 덱을 렌더해야 하는지: 프레젠테이션 문서이면서
-// (슬라이드 모드 또는 보기 모드)일 때. 그 외에는 일반 마크다운/ diff 렌더.
+// 프리뷰에 슬라이드 덱을 렌더해야 하는지. 그 외에는 일반 마크다운/ diff 렌더.
+//  - 일반(split): 통합 단일 슬라이드 편집이 활성(slideCtl.active)일 때만 덱.
+//    slideCtl.active 는 프레젠테이션·split·!sectionMode 를 모두 인코딩하므로 섹션 편집
+//    중인 프레젠테이션 문서(에디터가 단편만 보유)는 덱으로 렌더하지 않는다.
+//  - 보기(preview): 프레젠테이션 문서면 기존대로 덱.
 function shouldRenderSlideDeck() {
     if (!isPresentationActive()) return false;
-    return pcViewMode === 'slide' || pcViewMode === 'preview';
+    if (pcViewMode === 'split') return slideCtl.active;
+    return pcViewMode === 'preview';
 }
 
 async function updateCustomPreview() {
@@ -447,7 +483,13 @@ async function updateCustomPreview() {
         _deckActive = true;
         const deckMd = editor.getMarkdown();
         const palettes = (window.appConfig && window.appConfig.palettes) || null;
-        await window.renderPresentation(deckMd, slug || '', 'custom-wiki-preview', { palettes });
+        await window.renderPresentation(deckMd, slug || '', 'custom-wiki-preview', {
+            palettes,
+            // 통합 편집 중에는 빈 슬라이드도 유지해 덱 인덱스를 slideCtl 과 1:1 정렬한다.
+            keepEmptySlides: slideCtl.active,
+            // 덱에서 슬라이드를 넘기면 에디터의 현재 슬라이드도 함께 전환한다.
+            onSlideChange: (i) => { _onDeckSlideChanged?.(i); },
+        });
         // 덱 모드에서는 스크롤 싱크가 의미 없으므로 가이드 캐시만 무효화한다.
         if (typeof window._invalidateScrollSyncGuides === 'function') {
             window._invalidateScrollSyncGuides();
@@ -867,6 +909,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         // editor.getMarkdown() / editor.setMarkdown()을 통해 동작하도록 호환 유지
         editor = {
             getMarkdown: () => rawTextarea.value,
+            getRawText: () => rawTextarea.value,
             setMarkdown: (md) => { rawTextarea.value = md; updateRawCounts(); },
             on: () => { },           // change 이벤트 등 무시
             focus: () => rawTextarea.focus(),
@@ -923,7 +966,17 @@ document.addEventListener('DOMContentLoaded', async () => {
                 <div id="cm-toolbar" class="cm-toolbar"></div>
                 <div class="wiki-editor-split-row" id="wiki-editor-split-row">
                     <div class="wiki-editor-pane" id="cm-editor-pane">
+                        <div class="slide-add-zone slide-add-zone-top" id="slideAddZoneTop" hidden>
+                            <i class="mdi mdi-plus-circle-outline"></i>
+                            <div class="slide-add-main">위에 새 슬라이드</div>
+                            <div class="slide-add-sub">현재 슬라이드 앞에 빈 슬라이드 추가</div>
+                        </div>
                         <div id="cm-editor"></div>
+                        <div class="slide-add-zone slide-add-zone-bottom" id="slideAddZoneBottom" hidden>
+                            <i class="mdi mdi-plus-circle-outline"></i>
+                            <div class="slide-add-main">아래에 새 슬라이드</div>
+                            <div class="slide-add-sub">현재 슬라이드 뒤에 빈 슬라이드 추가</div>
+                        </div>
                     </div>
                     <div class="wiki-preview-pane" id="custom-wiki-preview"></div>
                     <!-- 에디터 전용 플로팅 TOC 패널 -->
@@ -1766,8 +1819,34 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         // ── 에디터 Shim 객체 (기존 edit.js 코드와 호환) ──
         editor = {
-            getMarkdown: () => cmEditorView.state.doc.toString(),
+            // 통합 슬라이드 편집 중이면 CM 문서는 "현재 슬라이드"만 보유하므로,
+            // 저장/초안/충돌/프리뷰 등 모든 기존 호출 경로가 전체 문서를 보도록
+            // 재구성된 전체 마크다운을 반환한다(reconstructFullDoc).
+            getMarkdown: () => slideCtl.active ? reconstructFullDoc() : cmEditorView.state.doc.toString(),
+            // 커서 좌표와 일치하는 원시 CM 텍스트(현재 슬라이드). 자동완성 등 커서 결합 소비자용.
+            getRawText: () => cmEditorView.state.doc.toString(),
             setMarkdown: (md) => {
+                // 통합 슬라이드 편집 중에는 외부 호출자가 넘긴 값이 항상 "전체 문서"
+                // (초안 복원/MCP 적재/충돌 머지 등)이므로, 그대로 단일 슬라이드 에디터에
+                // 덤프하지 않고 재분할해 현재 슬라이드만 다시 로드한다. 내부 슬라이드
+                // 스왑은 setEditorDocSuppressed(직접 dispatch)를 쓰므로 이 경로를 타지 않는다.
+                if (slideCtl.active) {
+                    const parts = splitSlides(md || '');
+                    slideCtl.slides = parts.length ? parts : [''];
+                    // 새 전체 문서가 새 기준선이 된다(원본 보존 비교용 스냅샷 갱신).
+                    slideCtl.enterDoc = md || '';
+                    slideCtl.enterCanonical = canonicalizeSlides(slideCtl.slides);
+                    slideCtl.idx = Math.max(0, Math.min(slideCtl.idx, slideCtl.slides.length - 1));
+                    loadActiveSlideIntoEditor();
+                    // loadActiveSlideIntoEditor 는 억제된 스왑이라 change 핸들러가 프리뷰를
+                    // 갱신하지 않는다(내부 슬라이드 전환용). 하지만 setMarkdown 은 외부에서
+                    // 들어온 전체 문서 교체(초안 복원/충돌 머지/MCP 적재)이므로, 비-슬라이드
+                    // 경로가 change 로 프리뷰를 갱신하는 것과 동일하게 덱을 명시적으로 다시
+                    // 그린다(덱 initial 이 새 문서와 어긋나지 않도록 해시도 동기화).
+                    syncHashToActive();
+                    updateCustomPreview();
+                    return;
+                }
                 cmEditorView.dispatch({
                     changes: { from: 0, to: cmEditorView.state.doc.length, insert: md }
                 });
@@ -1814,6 +1893,103 @@ document.addEventListener('DOMContentLoaded', async () => {
                 return cmEditorView.coordsAtPos(main.head);
             }
         };
+
+        // ── 통합 단일 슬라이드 편집 헬퍼 ─────────────────────────────────────────
+        // 프레젠테이션 문서 + 일반(split) 모드일 때, 에디터 CM 문서는 "현재 슬라이드"
+        // 텍스트만 보유한다. slideCtl.slides[idx] 는 자리표시자로, reconstructFullDoc 이
+        // 항상 라이브 에디터 텍스트로 덮어쓴다. 따라서 슬라이드 안에 `---` 를 입력하면
+        // 재구성된 전체 문서가 그만큼 더 분할되어 덱/카운트에 라이브 반영된다.
+        // slides 배열의 정규화(재분할)는 이동/삽입/이탈 경계에서만 수행한다.
+        function isSlideEditing() {
+            return isPresentationActive() && currentPcMode === 'split' && !sectionMode;
+        }
+        function reconstructFullDoc() {
+            const parts = slideCtl.slides.slice();
+            parts[slideCtl.idx] = cmEditorView.state.doc.toString();
+            const rebuilt = canonicalizeSlides(parts);
+            // 슬라이드 내용이 진입 시점과 동일하면(구분자 공백만 차이) 원본을 그대로 반환해
+            // 화이트스페이스 변경/거짓 미저장 경고를 방지한다.
+            if (rebuilt === slideCtl.enterCanonical) return slideCtl.enterDoc;
+            return rebuilt;
+        }
+        // 전체 문서를 재분할해 slideCtl.slides 를 정규화(액티브 영역에 `---` 가 들어가
+        // 여러 슬라이드로 늘어난 경우 반영). 이동/삽입/이탈 경계에서만 호출한다.
+        function reconcileSlidesFromEditor() {
+            const parts = splitSlides(reconstructFullDoc());
+            slideCtl.slides = parts.length ? parts : [''];
+            slideCtl.idx = Math.max(0, Math.min(slideCtl.idx, slideCtl.slides.length - 1));
+        }
+        // change 핸들러를 무력화한 채 CM 문서를 통째로 교체(프로그램적 슬라이드 스왑).
+        function setEditorDocSuppressed(text) {
+            slideCtl.suppressChange = true;
+            try {
+                cmEditorView.dispatch({ changes: { from: 0, to: cmEditorView.state.doc.length, insert: text } });
+            } finally {
+                slideCtl.suppressChange = false;
+            }
+            cmEditorView.requestMeasure();
+        }
+        function loadActiveSlideIntoEditor() {
+            // 슬라이드 앞뒤 빈 줄을 정리해 깔끔한 단일 슬라이드 본문만 에디터에 둔다.
+            setEditorDocSuppressed(trimSlide(slideCtl.slides[slideCtl.idx] ?? ''));
+        }
+        function syncHashToActive() {
+            const expected = `#/${slideCtl.idx + 1}`;
+            if (window.location.hash !== expected) history.replaceState(history.state, '', expected);
+        }
+        function toggleSlideAddZones(show) {
+            const top = document.getElementById('slideAddZoneTop');
+            const bottom = document.getElementById('slideAddZoneBottom');
+            if (top) top.hidden = !show;
+            if (bottom) bottom.hidden = !show;
+        }
+        // 일반(split) 진입: 전체 문서를 슬라이드로 분할해 현재 슬라이드만 에디터에 로드.
+        function enterSlideEditing() {
+            if (slideCtl.active) return;
+            const full = cmEditorView.state.doc.toString();
+            const parts = splitSlides(full);
+            slideCtl.slides = parts.length ? parts : [''];
+            // 진입 시점 스냅샷 — 무편집 이탈/저장 시 원본을 그대로 보존하기 위함.
+            slideCtl.enterDoc = full;
+            slideCtl.enterCanonical = canonicalizeSlides(slideCtl.slides);
+            const m = /^#\/(\d+)$/.exec(window.location.hash);
+            slideCtl.idx = m ? Math.max(0, Math.min(parseInt(m[1], 10) - 1, slideCtl.slides.length - 1)) : 0;
+            slideCtl.active = true;
+            loadActiveSlideIntoEditor();
+            toggleSlideAddZones(true);
+        }
+        // 일반(split) 이탈: 전체 문서를 재구성해 에디터에 되돌린다(작성/보기 모드는 전체 문서).
+        function leaveSlideEditing() {
+            if (!slideCtl.active) return;
+            const full = reconstructFullDoc();
+            slideCtl.active = false;
+            setEditorDocSuppressed(full);
+            toggleSlideAddZones(false);
+        }
+        // 덱(프리뷰)에서 슬라이드를 넘겼을 때 에디터를 해당 슬라이드로 전환.
+        function onDeckSlideChanged(deckIdx) {
+            if (!slideCtl.active) return;
+            if (deckIdx === slideCtl.idx) return; // 같은 슬라이드 → no-op(편집 중 재렌더 루프 차단)
+            reconcileSlidesFromEditor();          // 사용자 실제 이동 → 정규화(액티브 영역 멀티파트 확정)
+            slideCtl.idx = Math.max(0, Math.min(deckIdx, slideCtl.slides.length - 1));
+            loadActiveSlideIntoEditor();
+        }
+        _onDeckSlideChanged = onDeckSlideChanged;
+        // 위/아래 추가 존 클릭 → 현재 슬라이드 앞/뒤에 빈 슬라이드 삽입 후 활성화.
+        function insertSlide(where) {
+            if (!slideCtl.active) return;
+            reconcileSlidesFromEditor();
+            const at = where === 'before' ? slideCtl.idx : slideCtl.idx + 1;
+            slideCtl.slides.splice(at, 0, '');
+            slideCtl.idx = at;
+            loadActiveSlideIntoEditor();
+            syncHashToActive();
+            updateCustomPreview();
+            cmEditorView.focus();
+        }
+        // 추가 존 클릭 핸들러 부착(요소는 에디터 템플릿에 포함, 기본 hidden).
+        document.getElementById('slideAddZoneTop')?.addEventListener('click', () => insertSlide('before'));
+        document.getElementById('slideAddZoneBottom')?.addEventListener('click', () => insertSlide('after'));
 
         syncStateToWindow();
         // 에디터 shim 이 준비됐으니 자동완성 부착을 결정적으로 트리거한다.
@@ -2081,11 +2257,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         // ── 툴바 오른쪽 끝: 찾기/바꾸기 + 프리뷰 모드 + 설정 버튼 ──
         // 우측 정렬은 #cm-find-btn 의 margin-left:auto 로 처리 (findBtn 이 이 그룹의 첫 항목)
 
-        // PC 전용: 보기/작성/일반(+슬라이드) 모드 전환 드롭다운.
-        // 'slide' 는 프레젠테이션 문서에서만 노출되는 슬라이드 미리보기 모드로,
-        // 레이아웃은 일반(split)과 동일한 좌우 분할이되 프리뷰 패널이 슬라이드 덱을 렌더한다.
+        // PC 전용: 일반/작성/보기 모드 전환 드롭다운.
+        // 프레젠테이션 문서에서는 별도 '슬라이드 모드'가 없다 — 일반(split) 모드가 곧
+        // 단일 슬라이드 에디터 + 동기화 덱 프리뷰로 통합된 슬라이드 편집 경험이다.
         const PC_MODES = {
-            slide: { icon: 'mdi-presentation-play', label: '슬라이드 모드', desc: '프리뷰에서 슬라이드로 보기' },
             split: { icon: 'mdi-view-split-vertical', label: '일반 모드', desc: '에디터 + 프리뷰' },
             edit: { icon: 'mdi-pencil', label: '작성 모드', desc: '에디터만' },
             preview: { icon: 'mdi-eye-outline', label: '보기 모드', desc: '프리뷰만' },
@@ -2106,12 +2281,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         modePanel.style.display = 'none';
         document.body.appendChild(modePanel);
 
-        // 현재 프레젠테이션 상태에 따라 노출할 모드 키 목록. 슬라이드 모드는
-        // 프레젠테이션 문서에서만, 그 외에는 기존 3종(일반/작성/보기)만 표시한다.
+        // 노출할 모드 키 목록. 프레젠테이션 여부와 무관하게 일반/작성/보기 3종.
+        // (프레젠테이션 문서의 일반 모드가 통합 슬라이드 편집 경험을 담당한다.)
         function modeKeysForState() {
-            return isPresentationActive()
-                ? ['slide', 'split', 'edit', 'preview']
-                : ['split', 'edit', 'preview'];
+            return ['split', 'edit', 'preview'];
         }
 
         // 패널 옵션을 현재 상태에 맞춰 다시 그리고 클릭 핸들러/활성 표시를 부착한다.
@@ -2142,17 +2315,20 @@ document.addEventListener('DOMContentLoaded', async () => {
             const layoutEl = document.querySelector('.wiki-editor-layout');
             if (!layoutEl) return;
             if (!PC_MODES[mode]) mode = 'split';
-            // 슬라이드 모드는 프레젠테이션 문서에서만 유효 — 아니면 일반 모드로 강등.
-            if (mode === 'slide' && !isPresentationActive()) mode = 'split';
             const prev = currentPcMode;
             currentPcMode = mode;
             pcViewMode = mode; // module-level updateCustomPreview 가 읽는 미러
-            // 레이아웃: slide 는 split 과 동일한 좌우 분할(덱은 프리뷰 패널 내부에서 렌더).
-            if (mode === 'split' || mode === 'slide') {
+            // 레이아웃: split 은 좌우 분할(프레젠테이션 문서면 좌=단일 슬라이드, 우=덱).
+            if (mode === 'split') {
                 delete layoutEl.dataset.pcMode;
             } else {
                 layoutEl.dataset.pcMode = mode;
             }
+            // 통합 단일 슬라이드 편집 진입/이탈. 프레젠테이션 문서 + split + !sectionMode 일 때만 활성.
+            // updateCustomPreview(아래) 보다 먼저 처리해 에디터/덱이 올바른 내용으로 렌더되게 한다.
+            const wantSlideEditing = isPresentationActive() && mode === 'split' && !sectionMode;
+            if (wantSlideEditing && !slideCtl.active) enterSlideEditing();
+            else if (!wantSlideEditing && slideCtl.active) leaveSlideEditing();
             const m = PC_MODES[mode];
             modeBtn.innerHTML = `<i class="mdi ${m.icon}"></i><i class="mdi mdi-menu-down cm-toolbar-caret"></i>`;
             modeBtn.title = `보기 방식: ${m.label}`;
@@ -2173,12 +2349,16 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
 
         // 프레젠테이션 설정 체크박스 변경 시 호출되는 훅(initPresentationModeToggle 에서 연결).
-        // 프레젠테이션 해제 시 슬라이드 모드면 일반 모드로 폴백하고, 그 외에는 프리뷰 렌더
-        // 경로(덱/일반)가 바뀌었을 수 있으므로 프리뷰를 갱신한다.
+        // 일반(split) 모드에서 프레젠테이션을 켜면 통합 단일 슬라이드 편집으로 진입하고,
+        // 끄면 전체 문서 편집으로 되돌린다. 이후 프리뷰 렌더 경로(덱/일반)가 바뀌었을 수
+        // 있으므로 프리뷰를 갱신한다.
         window._onPresentationModeToggled = () => {
-            if (!isPresentationActive() && currentPcMode === 'slide') {
-                setPcMode('split');
-                return;
+            if (currentPcMode === 'split' && !sectionMode) {
+                if (isPresentationActive()) {
+                    if (!slideCtl.active) enterSlideEditing();
+                } else if (slideCtl.active) {
+                    leaveSlideEditing();
+                }
             }
             if (currentPcMode !== 'edit') {
                 updateCustomPreview();
@@ -2998,6 +3178,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             // 현재 기준 라인이 두 가이드 사이에 있으면 라인 위치로 선형 보간하여
             // 프리뷰 scrollTop 을 결정한다. 결과적으로 에디터에서 한 줄 움직이면
             // 프리뷰도 비례해 한 줄만큼 따라간다.
+            // 통합 슬라이드 편집 중에는 프리뷰가 덱이고 에디터는 단일 슬라이드라
+            // 줄↔헤딩 매핑이 무의미하므로 스크롤 동기화를 건너뛴다.
+            if (slideCtl.active) return;
             const customPreview = document.getElementById('custom-wiki-preview');
             if (!customPreview || !window._cmView) return;
 
@@ -3066,6 +3249,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         // 가이드포인트의 (line, targetTop) 쌍을 역으로 보간하여 대응 라인을 얻고,
         // 그 라인의 픽셀 위치로 에디터 스크롤을 부드럽게 이동시킨다.
         function syncPreviewScrollToEditor() {
+            // 통합 슬라이드 편집 중에는 프리뷰가 덱이므로 역방향 스크롤 싱크도 끈다.
+            if (slideCtl.active) return;
             const customPreview = document.getElementById('custom-wiki-preview');
             if (!customPreview || !window._cmView) return;
 
@@ -3211,6 +3396,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         // ── 실시간 프리뷰 ──
         editor.on('change', () => {
+            // 프로그램적 슬라이드 스왑(loadActiveSlideIntoEditor/leaveSlideEditing) 중에는
+            // 불필요한 덱 재렌더를 막는다(스왑 결과는 동일 전체 문서라 무의미한 비용).
+            if (slideCtl.suppressChange) return;
             clearTimeout(previewDebounce);
             previewDebounce = setTimeout(async () => {
                 await updateCustomPreview();
@@ -3223,6 +3411,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
         let isInitialLoadScroll = true;
         setTimeout(async () => {
+            // 초기 렌더 전, 프레젠테이션 문서이면서 일반(split) 모드면 통합 단일 슬라이드
+            // 편집으로 진입한다(초기 setPcMode('split') 시점엔 본문/체크박스가 아직 미초기화일 수 있음).
+            if (isSlideEditing() && !slideCtl.active) enterSlideEditing();
             await updateCustomPreview();
             if (isInitialLoadScroll) {
                 scrollPreviewToBottom();
@@ -3513,6 +3704,15 @@ document.addEventListener('DOMContentLoaded', async () => {
                 scrollPreviewToBottom();
             }
 
+            // 본문 적재 직후, 프레젠테이션 문서 + 일반(split) 모드면 통합 단일 슬라이드 편집으로
+            // 진입한다(이 시점의 에디터 전체 본문이 분할 기준). _onPresentationModeToggled 가
+            // 비프레젠테이션/섹션 문서에서는 enter 를 건너뛴다. (콘텐츠 로드와 초기 setTimeout
+            // 프리뷰 사이의 경합과 무관하게 결정적으로 진입시키는 경로.)
+            if (getPresentationLayoutValue() === 'presentation'
+                && typeof window._onPresentationModeToggled === 'function') {
+                window._onPresentationModeToggled();
+            }
+
             pageVersion = page.version;
             document.getElementById('editPageTitle').innerHTML =
                 useSectionMode
@@ -3699,6 +3899,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (editor && typeof editor.on === 'function') {
         let summaryDebounce = null;
         editor.on('change', () => {
+            // 프로그램적 슬라이드 스왑 중에는 자동 요약 재계산을 건너뛴다(전체 문서 불변).
+            if (slideCtl.suppressChange) return;
             clearTimeout(summaryDebounce);
             summaryDebounce = setTimeout(() => {
                 if (typeof window.refreshAutoSummary === 'function') window.refreshAutoSummary();

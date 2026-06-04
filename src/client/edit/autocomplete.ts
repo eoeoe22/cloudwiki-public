@@ -27,6 +27,16 @@ import './types';
 import { escapeHtml } from '../utils/html';
 import type { PaletteInfo } from './types';
 
+// 자동완성은 커서 위치(라인/컬럼)와 결합해 본문을 인덱싱하므로, 커서 좌표와 일치하는
+// "보이는 에디터 원시 텍스트"를 읽어야 한다. 통합 슬라이드 편집 중 editor.getMarkdown()
+// 은 재구성된 전체 문서를 반환하므로(좌표 불일치), getRawText() 로 현재 슬라이드 텍스트를
+// 읽는다. 일반 모드/폴백에서는 getMarkdown() 과 동일하다.
+function editorRawText(): string {
+    const ed = window.editor;
+    if (!ed) return '';
+    return ed.getRawText ? ed.getRawText() : ed.getMarkdown();
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Window 브리지 선언 (autocomplete 고유)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -166,7 +176,7 @@ function selectImgSizeAutocomplete(index: number): void {
     const line = from[0];
     const col = from[1];
 
-    const lines = editor.getMarkdown().split('\n');
+    const lines = editorRawText().split('\n');
     const textBefore = (lines[line - 1] || '').substring(0, col - 1);
     const match = textBefore.match(/!\[[^\]]*\]\([^)]+\)$/);
 
@@ -263,7 +273,7 @@ function selectCodeAutocomplete(index: number): void {
     const line = from[0];
     const col = from[1];
 
-    const lines = editor.getMarkdown().split('\n');
+    const lines = editorRawText().split('\n');
     const textBefore = (lines[line - 1] || '').substring(0, col - 1);
     const match = textBefore.match(/(?<!\{)\{([a-zA-Z]*)$/);
 
@@ -406,7 +416,7 @@ function selectBlockAutocomplete(index: number): void {
     const line = from[0];
     const col = from[1];
 
-    const lines = editor.getMarkdown().split('\n');
+    const lines = editorRawText().split('\n');
     const textBefore = (lines[line - 1] || '').substring(0, col - 1);
 
     if (!/^:::([a-zA-Z][a-zA-Z0-9_-]*)?$/.test(textBefore)) {
@@ -559,7 +569,7 @@ function selectIconAutocomplete(index: number): void {
     const line = from[0];
     const col = from[1];
 
-    const lines = editor.getMarkdown().split('\n');
+    const lines = editorRawText().split('\n');
     const textBefore = (lines[line - 1] || '').substring(0, col - 1);
 
     const selectedIconsOnly = window.selectedIconsOnly ?? false;
@@ -827,7 +837,7 @@ function applyColorAutocomplete(): void {
     const line = from[0];
     const col = from[1];
 
-    const lines = editor.getMarkdown().split('\n');
+    const lines = editorRawText().split('\n');
     const textBefore = (lines[line - 1] || '').substring(0, col - 1);
     const prefix = colorAc.trigger === 'bg' ? '{bg:' : '{color:';
     const lastTriggerIndex = textBefore.lastIndexOf(prefix);
@@ -1078,7 +1088,7 @@ function applyTimestampAutocomplete(): void {
     const line = from[0];
     const col = from[1];
 
-    const lines = editor.getMarkdown().split('\n');
+    const lines = editorRawText().split('\n');
     const textBefore = (lines[line - 1] || '').substring(0, col - 1);
     const prefix = `{${timestampAc.trigger}:`;
     const lastTriggerIndex = textBefore.lastIndexOf(prefix);
@@ -1261,7 +1271,7 @@ function selectPaletteAutocomplete(index: number): void {
     const line = from[0];
     const col  = from[1];
 
-    const lines = editor.getMarkdown().split('\n');
+    const lines = editorRawText().split('\n');
     const textBefore = (lines[line - 1] || '').substring(0, col - 1);
     const prefix = '{palette:';
     const lastTriggerIndex = textBefore.lastIndexOf(prefix);
@@ -1690,7 +1700,7 @@ function selectAutocomplete(index: number): void {
     const line = from[0];
     const col  = from[1];
 
-    const lines = editor.getMarkdown().split('\n');
+    const lines = editorRawText().split('\n');
     const textBefore = (lines[line - 1] || '').substring(0, col - 1);
 
     const trigger = wikiAc.type === 'template' ? '{{' : '[[';
@@ -1772,7 +1782,7 @@ async function _autoInsertTemplateParamSchema(slug: string, line: number, insert
 
     const editor = window.editor;
     if (!editor) return;
-    const currentMd = editor.getMarkdown();
+    const currentMd = editorRawText();
     const currentLines = currentMd.split('\n');
     const currentLine = currentLines[line - 1];
     if (typeof currentLine !== 'string') return;
@@ -2050,7 +2060,7 @@ function attachAutocomplete(viaFallback = false): void {
             const [from, to] = selection;
             if (from[0] !== to[0] || from[1] !== to[1]) { hideAutocompletesExcept(null); return; }
 
-            const lines = editor.getMarkdown().split('\n');
+            const lines = editorRawText().split('\n');
             const lineText = lines[from[0] - 1] || '';
             const textBefore = lineText.substring(0, from[1] - 1);
 

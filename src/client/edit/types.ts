@@ -37,6 +37,13 @@ export type CMSelection = [[number, number], [number, number]];
 /** CodeMirror6 기반 에디터 래퍼 인터페이스 (edit.js 의 editor = ... 가 만드는 객체) */
 export interface CMEditor {
     getMarkdown(): string;
+    /**
+     * 에디터에 실제로 보이는 원시 텍스트(CM 문서). 통합 슬라이드 편집 중 getMarkdown()
+     * 은 재구성된 전체 문서를 반환하므로, 커서 위치와 좌표가 일치해야 하는 소비자
+     * (자동완성 등)는 이 메서드로 "현재 슬라이드" 텍스트를 읽어야 한다. 일반 모드/폴백
+     * 에서는 getMarkdown() 과 동일하다.
+     */
+    getRawText?(): string;
     setMarkdown(text: string): void;
     /** 본문 삽입 (현재 selection 위치에 + 커서 끝 이동) */
     insertText?(text: string): void;

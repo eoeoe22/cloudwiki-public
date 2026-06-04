@@ -21,6 +21,12 @@
 
 interface PresentationOptions {
     palettes?: unknown;
+    // 덱의 활성 슬라이드가 바뀔 때(컨트롤/해시/키보드) 호출되는 콜백.
+    // 에디터 통합 슬라이드 편집에서 덱→에디터 동기화에 사용한다.
+    onSlideChange?: (idx: number) => void;
+    // 빈(공백) 슬라이드를 분할 결과에서 제거하지 않는다. 에디터 통합 편집 시
+    // 새로 추가한 빈 슬라이드가 덱에서 누락돼 인덱스가 어긋나는 것을 방지한다.
+    keepEmptySlides?: boolean;
 }
 
 // `---` 분할기. 컨테이너 깊이·코드 펜스 상태를 추적해 본문 hr 만 경계로 인식.
@@ -76,6 +82,9 @@ let _fullscreenHandler: (() => void) | null = null;
 let _activeDeckEl: HTMLElement | null = null;
 let _activeSlideIdx = 0;
 let _slideCount = 0;
+// 활성 슬라이드 변경 콜백(에디터 통합 편집 동기화용). renderPresentation 진입 시 세팅,
+// teardownPresentation 에서 정리한다.
+let _onSlideChange: ((idx: number) => void) | null = null;
 // 렌더 세대 토큰. renderPresentation 은 per-slide renderWikiContent 를 await 하므로,
 // (에디터 프리뷰처럼) 빠른 연속 호출 시 이전 호출이 await 에서 풀려 컨트롤/핸들러를
 // 최신 덱에 중복 바인딩할 수 있다(클릭 1회에 슬라이드 2칸 이동 등). 각 호출은 자신의
@@ -85,6 +94,7 @@ let _renderGeneration = 0;
 function applyActiveSlide(idx: number): void {
     if (!_activeDeckEl) return;
     const clamped = Math.max(0, Math.min(idx, _slideCount - 1));
+    const changed = clamped !== _activeSlideIdx;
     _activeSlideIdx = clamped;
     _activeDeckEl.querySelectorAll<HTMLElement>('.slide').forEach((el, i) => {
         el.classList.toggle('is-active', i === clamped);
@@ -101,6 +111,8 @@ function applyActiveSlide(idx: number): void {
         // replaceState 로 히스토리 폭주 방지 (← / → 키를 자주 눌러도 뒤로가기 스택이 부풀지 않게).
         history.replaceState(history.state, '', expectedHash);
     }
+    // 인덱스가 실제로 바뀐 경우에만 통지(에디터 통합 편집의 무한 루프 방지 1차 가드).
+    if (changed && _onSlideChange) _onSlideChange(clamped);
 }
 
 function gotoSlide(delta: number): void {
@@ -227,6 +239,7 @@ export function teardownPresentation(): void {
     _activeDeckEl = null;
     _activeSlideIdx = 0;
     _slideCount = 0;
+    _onSlideChange = null;
 }
 
 export async function renderPresentation(
@@ -244,7 +257,13 @@ export async function renderPresentation(
     // 이 호출의 세대 기록 — await 이후 더 새로운 호출이 시작됐는지 판별하는 데 쓴다.
     const myGen = ++_renderGeneration;
 
-    const slides = splitSlides(content || '').filter((s) => s.trim() !== '');
+    // 활성 슬라이드 변경 콜백 등록(에디터 통합 편집 동기화). teardown 이 이미 null 로 정리함.
+    _onSlideChange = options.onSlideChange ?? null;
+
+    // keepEmptySlides: 에디터 통합 편집 시 빈 슬라이드도 유지해 덱 인덱스를 slideCtl 과 1:1 정렬.
+    // 그 외(조회 화면)에는 공백-only 슬라이드를 제거한다.
+    const rawSlides = splitSlides(content || '');
+    const slides = options.keepEmptySlides ? rawSlides : rawSlides.filter((s) => s.trim() !== '');
     const effective = slides.length > 0 ? slides : [''];
     _slideCount = effective.length;
 
