@@ -922,6 +922,17 @@ app.get('/admin-media', async (c) => {
     return fetchAssetHtml(c, '/admin-media.html');
 });
 
+// /admin-bulk-delete 접근 시 서버사이드 권한 체크 후 admin-bulk-delete.html 서빙
+// (문서 대량 삭제는 최고 관리자 전용 — admin:access 가 아닌 '*' 권한 필요)
+app.get('/admin-bulk-delete', async (c) => {
+    const user = c.get('user');
+    const rbac = c.get('rbac') as RBAC;
+    if (!user || !rbac.can(user.role, '*')) {
+        return c.redirect('/');
+    }
+    return fetchAssetHtml(c, '/admin-bulk-delete.html');
+});
+
 // /mypage 접근 시 mypage.html 서빙 (SSR 브랜딩)
 app.get('/mypage', async (c) => {
     return fetchAssetHtml(c, '/mypage.html');

@@ -1296,3 +1296,13 @@
   border-color: var(--wiki-primary) !important;
   box-shadow: var(--wiki-shadow) !important;
 }
+
+/* ── 문서 대량 삭제 — 슬러그 링크 (체크박스 표 자체는 bulk-modal.css 의 .bulkcat-* 공유) ── */
+.bulk-node-link {
+  color: var(--wiki-text);
+  text-decoration: none;
+}
+
+.bulk-node-link:hover {
+  text-decoration: underline;
+}

@@ -407,11 +407,63 @@ function getDiffPreviewMode() {
     return (rendered && rendered.checked) ? 'rendered' : 'text';
 }
 
+// ── 프리뷰 보기 모드(슬라이드 덱 분기) ─────────────────────────────────────────
+// CM6 init 클로저의 setPcMode 가 갱신하는 현재 PC 보기 모드의 모듈 레벨 미러.
+// module-level 인 updateCustomPreview 가 클로저 밖에서 모드를 읽기 위해 둔다.
+let pcViewMode = 'split';
+// 슬라이드 덱이 현재 프리뷰에 렌더돼 있는지 — 일반 렌더 경로로 복귀할 때
+// 프레젠테이션 전역 핸들러(키보드/해시/풀스크린)를 한 번만 정리하기 위한 게이트.
+let _deckActive = false;
+
+// 문서가 프레젠테이션 모드(설정 체크박스 ON)인지.
+function isPresentationActive() {
+    const cb = document.getElementById('presentationModeToggle');
+    return !!(cb && cb.checked);
+}
+
+// 프리뷰에 슬라이드 덱을 렌더해야 하는지: 프레젠테이션 문서이면서
+// (슬라이드 모드 또는 보기 모드)일 때. 그 외에는 일반 마크다운/ diff 렌더.
+function shouldRenderSlideDeck() {
+    if (!isPresentationActive()) return false;
+    return pcViewMode === 'slide' || pcViewMode === 'preview';
+}
+
 async function updateCustomPreview() {
     if (!editor) return;
 
     let customPreview = document.getElementById('custom-wiki-preview');
     if (!customPreview) return;
+
+    // 슬라이드 덱 렌더 경로 — 프레젠테이션 문서의 슬라이드 모드/보기 모드.
+    // 본문을 `---` 기준으로 분할해 조회 화면과 동일한 인라인 덱(하단 컨트롤 바 +
+    // 전체화면 버튼)으로 표시한다. diff 토글보다 우선하며 diff 잔재 클래스를 제거한다.
+    if (shouldRenderSlideDeck() && typeof window.renderPresentation === 'function') {
+        // 진행 중인 렌더 diff(buildRichDiffHtml await) 를 무효화한다. diff 토글은
+        // 여전히 'rendered' 일 수 있어 그 guard(getDiffPreviewMode==='rendered')만으로는
+        // 막히지 않으므로, seq 를 bump 해 늦게 끝난 diff HTML 이 덱을 덮어쓰지 못하게 한다.
+        ++_previewDiffSeq;
+        customPreview.classList.remove('preview-diff-text', 'preview-diff-rendered', 'wrap-mode', 'wiki-content');
+        customPreview.classList.add('preview-slide-deck');
+        _deckActive = true;
+        const deckMd = editor.getMarkdown();
+        const palettes = (window.appConfig && window.appConfig.palettes) || null;
+        await window.renderPresentation(deckMd, slug || '', 'custom-wiki-preview', { palettes });
+        // 덱 모드에서는 스크롤 싱크가 의미 없으므로 가이드 캐시만 무효화한다.
+        if (typeof window._invalidateScrollSyncGuides === 'function') {
+            window._invalidateScrollSyncGuides();
+        }
+        return;
+    }
+
+    // 일반/diff 렌더 경로로 복귀: 직전에 덱이 떠 있었다면 프레젠테이션 전역 핸들러를
+    // 한 번 정리하고 덱 전용 클래스를 제거한다.
+    if (_deckActive) {
+        if (typeof window.teardownPresentation === 'function') {
+            try { window.teardownPresentation(); } catch (e) { /* noop */ }
+        }
+        _deckActive = false;
+        customPreview.classList.remove('preview-slide-deck');
+    }
 
     // 변경 사항 미리보기 모드가 켜진 경우 프리뷰 패널을 텍스트/렌더 diff 로 대체한다.
     const diffMode = getDiffPreviewMode();
@@ -2029,8 +2081,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         // ── 툴바 오른쪽 끝: 찾기/바꾸기 + 프리뷰 모드 + 설정 버튼 ──
         // 우측 정렬은 #cm-find-btn 의 margin-left:auto 로 처리 (findBtn 이 이 그룹의 첫 항목)
 
-        // PC 전용: 보기/작성/일반 모드 전환 드롭다운
+        // PC 전용: 보기/작성/일반(+슬라이드) 모드 전환 드롭다운.
+        // 'slide' 는 프레젠테이션 문서에서만 노출되는 슬라이드 미리보기 모드로,
+        // 레이아웃은 일반(split)과 동일한 좌우 분할이되 프리뷰 패널이 슬라이드 덱을 렌더한다.
         const PC_MODES = {
+            slide: { icon: 'mdi-presentation-play', label: '슬라이드 모드', desc: '프리뷰에서 슬라이드로 보기' },
             split: { icon: 'mdi-view-split-vertical', label: '일반 모드', desc: '에디터 + 프리뷰' },
             edit: { icon: 'mdi-pencil', label: '작성 모드', desc: '에디터만' },
             preview: { icon: 'mdi-eye-outline', label: '보기 모드', desc: '프리뷰만' },
@@ -2049,7 +2104,21 @@ document.addEventListener('DOMContentLoaded', async () => {
         modePanel.id = 'editor-mode-panel';
         modePanel.className = 'editor-settings-panel editor-mode-panel';
         modePanel.style.display = 'none';
-        modePanel.innerHTML = Object.entries(PC_MODES).map(([key, m]) => `
+        document.body.appendChild(modePanel);
+
+        // 현재 프레젠테이션 상태에 따라 노출할 모드 키 목록. 슬라이드 모드는
+        // 프레젠테이션 문서에서만, 그 외에는 기존 3종(일반/작성/보기)만 표시한다.
+        function modeKeysForState() {
+            return isPresentationActive()
+                ? ['slide', 'split', 'edit', 'preview']
+                : ['split', 'edit', 'preview'];
+        }
+
+        // 패널 옵션을 현재 상태에 맞춰 다시 그리고 클릭 핸들러/활성 표시를 부착한다.
+        function renderModePanel() {
+            modePanel.innerHTML = modeKeysForState().map((key) => {
+                const m = PC_MODES[key];
+                return `
             <button type="button" class="editor-mode-option" data-mode="${key}">
                 <i class="mdi ${m.icon}"></i>
                 <span class="editor-mode-option-text">
@@ -2057,18 +2126,29 @@ document.addEventListener('DOMContentLoaded', async () => {
                     <span class="editor-mode-option-desc">${m.desc}</span>
                 </span>
                 <i class="mdi mdi-check editor-mode-option-check"></i>
-            </button>
-        `).join('');
-        document.body.appendChild(modePanel);
+            </button>`;
+            }).join('');
+            modePanel.querySelectorAll('.editor-mode-option').forEach(opt => {
+                opt.classList.toggle('active', opt.dataset.mode === currentPcMode);
+                opt.addEventListener('click', () => {
+                    setPcMode(opt.dataset.mode);
+                    modePanel.style.display = 'none';
+                });
+            });
+        }
 
         let currentPcMode = 'split';
         function setPcMode(mode) {
             const layoutEl = document.querySelector('.wiki-editor-layout');
             if (!layoutEl) return;
             if (!PC_MODES[mode]) mode = 'split';
+            // 슬라이드 모드는 프레젠테이션 문서에서만 유효 — 아니면 일반 모드로 강등.
+            if (mode === 'slide' && !isPresentationActive()) mode = 'split';
             const prev = currentPcMode;
             currentPcMode = mode;
-            if (mode === 'split') {
+            pcViewMode = mode; // module-level updateCustomPreview 가 읽는 미러
+            // 레이아웃: slide 는 split 과 동일한 좌우 분할(덱은 프리뷰 패널 내부에서 렌더).
+            if (mode === 'split' || mode === 'slide') {
                 delete layoutEl.dataset.pcMode;
             } else {
                 layoutEl.dataset.pcMode = mode;
@@ -2085,11 +2165,25 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (prev === 'preview' && mode !== 'preview' && typeof cmEditorView !== 'undefined' && cmEditorView) {
                 cmEditorView.requestMeasure();
             }
-            // 프리뷰가 숨김에서 표시로 전환된 경우 즉시 갱신
-            if (prev === 'edit' && mode !== 'edit') {
+            // 프리뷰가 보이는 모드(작성 모드 외)로 바뀌었으면 갱신. slide↔split↔preview 간
+            // 전환은 프리뷰 렌더 경로(덱/일반)가 달라질 수 있으므로 항상 다시 그린다.
+            if (mode !== 'edit') {
                 updateCustomPreview();
             }
         }
+
+        // 프레젠테이션 설정 체크박스 변경 시 호출되는 훅(initPresentationModeToggle 에서 연결).
+        // 프레젠테이션 해제 시 슬라이드 모드면 일반 모드로 폴백하고, 그 외에는 프리뷰 렌더
+        // 경로(덱/일반)가 바뀌었을 수 있으므로 프리뷰를 갱신한다.
+        window._onPresentationModeToggled = () => {
+            if (!isPresentationActive() && currentPcMode === 'slide') {
+                setPcMode('split');
+                return;
+            }
+            if (currentPcMode !== 'edit') {
+                updateCustomPreview();
+            }
+        };
 
         function toggleModePanel() {
             const isVisible = modePanel.style.display !== 'none';
@@ -2097,6 +2191,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                 modePanel.style.display = 'none';
                 return;
             }
+            // 열 때마다 현재 프레젠테이션 상태/활성 모드를 반영해 옵션을 다시 그린다.
+            renderModePanel();
             modePanel.style.visibility = 'hidden';
             modePanel.style.left = '-9999px';
             modePanel.style.top = '-9999px';
@@ -2122,12 +2218,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             modePanel.style.visibility = '';
         }
 
-        modePanel.querySelectorAll('.editor-mode-option').forEach(opt => {
-            opt.addEventListener('click', () => {
-                setPcMode(opt.dataset.mode);
-                modePanel.style.display = 'none';
-            });
-        });
+        // 패널 옵션 버튼의 클릭 핸들러는 renderModePanel 이 매 렌더 시 부착한다(열 때마다 갱신).
 
         document.addEventListener('click', (e) => {
             if (!modePanel.contains(e.target) && !modeBtn.contains(e.target)) {
@@ -2135,6 +2226,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         });
 
+        renderModePanel();
         setPcMode('split');
 
         const settingsBtn = createToolbarBtn('<i class="mdi mdi-cog"></i>', '에디터 설정', () => toggleSettingsPanel());
@@ -3837,6 +3929,8 @@ function initPresentationModeToggle(active: boolean): void {
     cb.checked = active;
     cb.addEventListener('change', () => {
         if (typeof window.refreshAutoSummary === 'function') window.refreshAutoSummary();
+        // 보기 방식 패널의 슬라이드 모드 노출 및 프리뷰 렌더 경로(덱/일반) 동기화.
+        if (typeof window._onPresentationModeToggled === 'function') window._onPresentationModeToggled();
     });
 }
 

@@ -79,6 +79,12 @@
           roleSlot.innerHTML = roleBadge;
         }
 
+        // 문서 대량 삭제는 최고 관리자 전용 — 빠른 링크를 해당 권한자에게만 노출.
+        if (window.currentUser.role === 'super_admin') {
+          const bulkLink = document.getElementById("bulkDeleteQuickLink");
+          if (bulkLink) bulkLink.style.display = "";
+        }
+
         // 실시간 가입 대기 배지 및 메트릭 업데이트 (관리자 권한 확인 성공 후에만 실행)
         updateSidebarSignupBadge();
 

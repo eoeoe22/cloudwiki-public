@@ -1,0 +1,92 @@
+---
+// 문서 대량 삭제(최고 관리자) 페이지 셸. admin-media.astro 와 동일한 셸 구조를 따른다.
+// header/sidebar/footer 는 빌드 타임 컴포넌트 인라인, base CDN 은 BaseLayout 이 베이킹
+// (PAGE_BUNDLES['/admin-bulk-delete.html']=['base']). admin.css 는 head 슬롯에서 로드.
+import BaseLayout from '../layouts/BaseLayout.astro';
+import Header from '../components/Header.astro';
+import Sidebar from '../components/Sidebar.astro';
+import Footer from '../components/Footer.astro';
+---
+<BaseLayout pagePath="/admin-bulk-delete.html" title="관리자 콘솔 - 문서 대량 삭제 - CloudWiki">
+    <Fragment slot="head">
+        <link rel="stylesheet" href="/css/admin.css" />
+        <link rel="stylesheet" href="/css/bulk-modal.css" />
+        <!-- 테마 FOUC 방지: CSS 로드 후 즉시 테마 적용 -->
+        <script is:inline>try{var t=localStorage.getItem('themeMode');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
+    </Fragment>
+
+    <!-- ── 네비게이션 바 ── -->
+    <Header />
+
+    <div class="wiki-layout justify-content-center">
+        <div class="wiki-container">
+            <div class="admin-container">
+                <div class="mb-4">
+                    <a href="/admin" class="btn btn-wiki-outline btn-sm"><i class="mdi mdi-arrow-left"></i> 관리자 콘솔로 돌아가기</a>
+                </div>
+
+                <h2 class="mb-4">
+                    <i class="mdi mdi-delete-sweep"></i> 문서 대량 삭제
+                </h2>
+                <p class="text-muted mb-3">
+                    문서를 검색해 한 번에 여러 개를 삭제할 수 있습니다. <strong>최고 관리자 전용</strong> 기능입니다.
+                    하드 삭제(영구 삭제)는 되돌릴 수 없으며 토론·리비전·주시 설정까지 함께 제거합니다.
+                </p>
+
+                <!-- 검색 카드 -->
+                <div class="card shadow-sm border-0 mb-4">
+                    <div class="card-header py-3">
+                        <h5 class="mb-0"><i class="mdi mdi-magnify"></i> 문서 검색</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="d-flex gap-2 flex-wrap align-items-center">
+                            <input type="text" id="bulkSearchInput" class="form-control form-control-sm" placeholder="slug 검색..." style="max-width: 360px" />
+                            <button class="btn btn-wiki btn-sm" onclick="searchDocs()" id="bulkSearchBtn">
+                                <i class="mdi mdi-magnify"></i> 검색
+                            </button>
+                            <div class="form-check ms-2">
+                                <input class="form-check-input" type="checkbox" id="bulkTitleToggle" />
+                                <label class="form-check-label" for="bulkTitleToggle">제목(title)도 검색</label>
+                            </div>
+                        </div>
+                        <div id="bulkSearchInfo" class="text-muted small mt-2"></div>
+                    </div>
+                </div>
+
+                <!-- 결과/선택 카드 -->
+                <div class="card shadow-sm border-0 mb-4" id="bulkResultCard" style="display: none">
+                    <div class="card-header py-3">
+                        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+                            <h5 class="mb-0"><i class="mdi mdi-file-document-multiple-outline"></i> 검색 결과</h5>
+                            <span id="bulkSelectedCount" class="text-muted small"></span>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="bulkcat-subpages-panel" id="bulkTreePanel"></div>
+                        <div class="d-flex justify-content-end gap-2 mt-3">
+                            <button class="btn btn-wiki-outline btn-sm" onclick="bulkSoftDelete()" id="bulkSoftBtn">
+                                <i class="mdi mdi-delete-outline"></i> 선택 항목 삭제 (복원 가능)
+                            </button>
+                            <button class="btn btn-wiki-danger btn-sm" onclick="bulkHardDelete()" id="bulkHardBtn">
+                                <i class="mdi mdi-delete-forever"></i> 선택 항목 영구 삭제
+                            </button>
+                        </div>
+                        <div id="bulkActionResult" class="mt-3"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <aside class="wiki-sidebar d-none" id="wikiSidebar">
+            <Sidebar />
+        </aside>
+    </div>
+
+    <!-- ── 푸터 ── -->
+    <Footer />
+
+    <Fragment slot="scripts">
+        <script type="module" src="/dist/common.js" is:inline></script>
+        <script type="module" src="/dist/admin-bulk-delete.js" is:inline></script>
+    </Fragment>
+</BaseLayout>

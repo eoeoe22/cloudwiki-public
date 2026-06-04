@@ -1832,6 +1832,35 @@ function processFootnotes(contentEl) {
     }
 }
 
+// 렌더된 문서 본문(contentEl)을 "문서 텍스트 복사"용 평문으로 추출한다.
+// 본문의 각주 마커는 이미 `[1]`·`[2]` 형태로 렌더돼 있으므로 그대로 두고,
+// 하단의 `.wiki-footnotes` 섹션(아이콘 헤딩 + 번호 없는 <ol>)은 잘라낸 뒤
+// `각주\n[1] 내용\n[2] 내용2` 형태로 번호를 붙여 다시 이어 붙인다.
+function extractPlainTextWithFootnotes(contentEl) {
+    if (!contentEl) return '';
+    const fnSection = contentEl.querySelector('.wiki-footnotes');
+    if (!fnSection) return contentEl.innerText;
+
+    // 각주 항목을 번호와 함께 평문 라인으로 만든다(되돌아가기 아이콘은 span 외부라 제외됨).
+    const items = Array.from(fnSection.querySelectorAll(':scope > ol > li'));
+    const lines = items.map((li, i) => {
+        const span = li.querySelector('span');
+        const text = (span ? span.innerText : li.innerText).replace(/\s+/g, ' ').trim();
+        return `[${i + 1}] ${text}`;
+    });
+
+    // 본문 텍스트는 각주 섹션을 잠시 떼어낸 상태에서 읽는다(동기 처리라 화면 깜빡임 없음).
+    const parent = fnSection.parentNode;
+    const nextSibling = fnSection.nextSibling;
+    fnSection.remove();
+    const bodyText = contentEl.innerText;
+    if (nextSibling) parent.insertBefore(fnSection, nextSibling);
+    else parent.appendChild(fnSection);
+
+    if (lines.length === 0) return bodyText;
+    return `${bodyText.replace(/\s+$/, '')}\n\n각주\n${lines.join('\n')}`;
+}
+
 // ── 색상값 → [r,g,b] 파서 (캐시). 16진/rgb는 직접 파싱, 그 외는 DOM 폴백. ──
 const _wikiColorRgbCache = new Map();
 function _wikiColorToRgb(value) {
@@ -4402,6 +4431,7 @@ window.makeCollapsibleSections = makeCollapsibleSections;
 window.processWikiLinks = processWikiLinks;
 window.processMentions = processMentions;
 window.processFootnotes = processFootnotes;
+window.extractPlainTextWithFootnotes = extractPlainTextWithFootnotes;
 window._isSafeCssColor = _isSafeCssColor;
 window.WIKI_HARDCODED_PALETTES = WIKI_HARDCODED_PALETTES;
 window.getMergedWikiPalettes = getMergedWikiPalettes;

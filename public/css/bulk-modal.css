@@ -3,6 +3,8 @@
  * 사용처:
  *   - edit.html: 하위 문서 일괄 카테고리 적용 (src/client/edit/bulk-category.ts)
  *   - index.html: 권한 관리 모달 (src/client/permissions/permissions-modal.ts)
+ *   - admin-bulk-delete.html: 문서 대량 삭제 체크박스 표 (src/client/pages/admin-bulk-delete.ts)
+ *     — 모달이 아닌 페이지지만 동일한 `.bulkcat-*` 체크박스 표 마크업을 공유한다.
  *
  * 원래 edit.css 후단(라인 3473-3748)에 있던 정의를 분리해 문서 열람 페이지에서도
  * edit.css 전체를 로드하지 않고 모달 스타일만 가져갈 수 있게 했다.

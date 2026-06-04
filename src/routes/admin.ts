@@ -50,6 +50,7 @@ import {
 } from '../utils/categoryAcl';
 import { ensureDocSettingPrefixRulesMigration } from '../utils/docSettingPrefixRulesMigration';
 import { cleanupUnauthorizedSubscriptions } from '../utils/pageAccessCleanup';
+import { collectRevisionR2Keys, buildHardDeleteStatements } from '../utils/pageDeletion';
 import { normalizeSlug } from '../utils/slug';
 import type {
     AnnouncementAdminDTO,
@@ -1425,6 +1426,201 @@ adminRoutes.post('/category-acl/:name/bulk-apply', async (c) => {
         mode,
         templateSaved,
     });
+});
+
+
+// ── 문서 대량 삭제 (최고 관리자 전용) ──
+
+/** 한 번에 검색/삭제할 수 있는 문서 최대 개수. */
+const BULK_DELETE_MAX = 500;
+
+/**
+ * GET /bulk-delete/search
+ * 대량 삭제 대상 문서를 LIKE 검색한다. (최고 관리자 전용)
+ * - 기본은 slug 매칭, ?title=1 이면 title 도 LIKE 매칭 대상에 포함.
+ *   title 매칭은 "검색 디스커버리" 예외에 해당한다(COMMON.md 항상-적용 규칙 참조):
+ *   title 은 후보 발견용으로만 쓰이고 응답은 slug/title 을 분리 노출하며, 실제 삭제
+ *   호출(POST /bulk-delete)은 row 의 안정 식별자 `id` 로 수행되므로 식별·호출 경로에
+ *   title 이 참여하지 않는다.
+ * - 소프트 삭제된 문서도 포함(하드 삭제 대상으로 노출). deleted 플래그로 구분.
+ * - "이미지:"(미디어 관리 대상)·"map:"(가상 뷰) 예약 네임스페이스는 제외.
+ * - slug ASC 정렬 → 클라이언트가 하위 문서 트리를 자연스럽게 구성.
+ */
+adminRoutes.get('/bulk-delete/search', async (c) => {
+    const currentUser = c.get('user')!;
+    const rbac = c.get('rbac') as RBAC;
+    if (!rbac.can(currentUser.role, '*')) {
+        return c.json({ error: '최고 관리자만 사용할 수 있습니다.' }, 403);
+    }
+
+    const db = c.env.DB;
+    const q = (c.req.query('q') || '').trim();
+    if (!q) return c.json({ documents: [], total: 0, capped: false });
+    const includeTitle = c.req.query('title') === '1';
+
+    // LIKE 메타문자(%, _, \) escape — 사용자 입력 그대로만 매치.
+    const likeEscaped = q.replace(/[\\%_]/g, '\\$&');
+    const likePattern = `%${likeEscaped}%`;
+
+    const matchClause = includeTitle
+        ? "(slug LIKE ? ESCAPE '\\' OR title LIKE ? ESCAPE '\\')"
+        : "slug LIKE ? ESCAPE '\\'";
+    const binds = includeTitle ? [likePattern, likePattern] : [likePattern];
+
+    const { results } = await db
+        .prepare(
+            `SELECT id, slug, title, deleted_at
+               FROM pages
+              WHERE ${matchClause}
+                AND slug NOT LIKE '이미지:%'
+                AND slug NOT LIKE 'map:%'
+              ORDER BY slug ASC
+              LIMIT ${BULK_DELETE_MAX + 1}`
+        )
+        .bind(...binds)
+        .all<{ id: number; slug: string; title: string | null; deleted_at: number | null }>();
+
+    const capped = results.length > BULK_DELETE_MAX;
+    const rows = capped ? results.slice(0, BULK_DELETE_MAX) : results;
+    const documents = rows.map(r => ({
+        id: r.id,
+        slug: r.slug,
+        title: r.title,
+        deleted: r.deleted_at != null,
+    }));
+
+    return c.json({ documents, total: documents.length, capped });
+});
+
+/**
+ * POST /bulk-delete
+ * 선택한 문서들을 일괄 소프트/하드 삭제한다. (최고 관리자 전용)
+ * body: { ids: number[], mode: 'soft' | 'hard' }
+ * - soft: deleted_at 설정 (이미 삭제된 문서는 건너뜀) + 권한 없는 구독 정리.
+ * - hard: 모든 참조 행을 FK 안전 순서로 삭제(buildHardDeleteStatements) + R2 리비전 파일 정리.
+ *   "이미지:"/"map:" 네임스페이스는 대상에서 제외한다.
+ */
+adminRoutes.post('/bulk-delete', async (c) => {
+    const currentUser = c.get('user')!;
+    const rbac = c.get('rbac') as RBAC;
+    if (!rbac.can(currentUser.role, '*')) {
+        return c.json({ error: '최고 관리자만 사용할 수 있습니다.' }, 403);
+    }
+
+    const db = c.env.DB;
+    const body = await c.req.json<{ ids?: unknown; mode?: unknown }>().catch(() => ({} as any));
+
+    const mode = body.mode === 'hard' ? 'hard' : body.mode === 'soft' ? 'soft' : null;
+    if (!mode) return c.json({ error: "mode 는 'soft' 또는 'hard' 여야 합니다." }, 400);
+
+    // ids 검증 (정수·양수·중복 제거)
+    const ids: number[] = [];
+    const seen = new Set<number>();
+    if (Array.isArray(body.ids)) {
+        for (const v of body.ids) {
+            const n = typeof v === 'number' ? v : Number(v);
+            if (!Number.isInteger(n) || n <= 0 || seen.has(n)) continue;
+            seen.add(n);
+            ids.push(n);
+        }
+    }
+    if (ids.length === 0) return c.json({ error: '삭제할 문서를 선택하세요.' }, 400);
+    if (ids.length > BULK_DELETE_MAX) {
+        return c.json({ error: `한 번에 삭제할 수 있는 문서는 ${BULK_DELETE_MAX}개까지입니다.` }, 400);
+    }
+
+    // 대상 페이지 조회 (D1 100 bind 제한 → 90개씩 청크). 예약 네임스페이스 제외.
+    const SCAN_CHUNK = 90;
+    const targets: { id: number; slug: string; deleted_at: number | null }[] = [];
+    for (let i = 0; i < ids.length; i += SCAN_CHUNK) {
+        const chunkIds = ids.slice(i, i + SCAN_CHUNK);
+        const ph = chunkIds.map(() => '?').join(',');
+        const { results } = await db
+            .prepare(
+                `SELECT id, slug, deleted_at FROM pages
+                  WHERE id IN (${ph})
+                    AND slug NOT LIKE '이미지:%'
+                    AND slug NOT LIKE 'map:%'`
+            )
+            .bind(...chunkIds)
+            .all<{ id: number; slug: string; deleted_at: number | null }>();
+        if (results.length > 0) targets.push(...results);
+    }
+
+    let deleted = 0;
+    const affectedSlugs: string[] = [];
+
+    if (mode === 'soft') {
+        // 아직 삭제되지 않은 문서만 소프트 삭제 대상.
+        const toDelete = targets.filter(t => t.deleted_at == null);
+        if (toDelete.length > 0) {
+            const stmts = toDelete.map(t =>
+                db.prepare('UPDATE pages SET deleted_at = unixepoch() WHERE id = ?').bind(t.id)
+            );
+            const chunkSize = 200;
+            for (let i = 0; i < stmts.length; i += chunkSize) {
+                await db.batch(stmts.slice(i, i + chunkSize));
+            }
+            // 권한 없는 유저의 stale 주시·토론 mute 정리 (순차 — 자체 서브쿼리 발생).
+            for (const t of toDelete) {
+                await cleanupUnauthorizedSubscriptions(db, c.env, rbac, t.id, 'deleted');
+                affectedSlugs.push(t.slug);
+            }
+            deleted = toDelete.length;
+        }
+    } else {
+        // hard: 페이지 경계를 유지한 채 배치한다. buildHardDeleteStatements 는 페이지당
+        // 여러 statement 를 만들므로, 한 페이지의 statement 가 배치 경계로 쪼개지지 않도록
+        // "페이지 단위"로 청크한다(한 배치 = 그 안의 페이지들에 대해 all-or-nothing 트랜잭션).
+        // 배치별 try/catch 로 일부 실패해도 성공분만 집계·정리하고 부분 실패를 응답에 보고한다.
+        // 500개 × 페이지당 statement 를 단일 거대 배치로 보내지 않으므로 D1 배치 한도도 회피.
+        const STMTS_PER_PAGE = buildHardDeleteStatements(db, 0).length;
+        const PAGES_PER_BATCH = Math.max(1, Math.floor(200 / STMTS_PER_PAGE)); // ≈ 18 페이지/배치
+        const r2KeysToDelete: string[] = [];
+        for (let i = 0; i < targets.length; i += PAGES_PER_BATCH) {
+            const slice = targets.slice(i, i + PAGES_PER_BATCH);
+            // 성공 시에만 R2 파일을 지우기 위해, 배치 직전 해당 페이지들의 키를 미리 수집한다
+            // (리비전 행은 배치에서 삭제되므로 사후 조회 불가).
+            const sliceKeys = await collectRevisionR2Keys(db, slice.map(t => t.id));
+            const stmts: D1PreparedStatement[] = slice.flatMap(t => buildHardDeleteStatements(db, t.id));
+            try {
+                await db.batch(stmts);
+                deleted += slice.length;
+                for (const t of slice) affectedSlugs.push(t.slug);
+                if (sliceKeys.length > 0) r2KeysToDelete.push(...sliceKeys);
+            } catch (e) {
+                // 이 배치(페이지 집합)만 롤백된다. 이전 배치 성공분은 유지되며 아래에서 정리·보고.
+                console.error('bulk hard delete batch failed:', e);
+            }
+        }
+
+        if (r2KeysToDelete.length > 0) {
+            // 성공한 페이지들의 R2 객체만 정리. 응답 지연 방지를 위해 waitUntil 로 비동기 처리.
+            c.executionCtx.waitUntil(
+                Promise.allSettled(r2KeysToDelete.map(k => c.env.MEDIA.delete(k)))
+            );
+        }
+    }
+
+    // 캐시 무효화(best-effort). 콜론 포함 slug(틀/이미지 등)만 역링크 무효화로 비용 한정.
+    if (affectedSlugs.length > 0) {
+        c.executionCtx.waitUntil(
+            Promise.allSettled([
+                ...affectedSlugs.map(s => invalidatePageCache(c, s)),
+                ...affectedSlugs.filter(s => s.includes(':')).map(s => invalidateBacklinkCaches(c, s, db)),
+                refreshRecentChangesCache(c),
+            ])
+        );
+    }
+
+    writeAdminLog(
+        c,
+        mode === 'hard' ? 'bulk_hard_delete' : 'bulk_soft_delete',
+        `문서 대량 ${mode === 'hard' ? '영구 ' : ''}삭제: ${deleted}/${ids.length}건`,
+        currentUser.id
+    );
+
+    return c.json({ requested: ids.length, deleted, failed: ids.length - deleted, mode });
 });
 
 

@@ -14,10 +14,8 @@ import { ROLE_CASE_SQL, enrichRoles, RBAC } from '../utils/role';
 import { fetchMediaTags } from '../utils/mediaTags';
 import { createNotifications } from '../utils/notification';
 import { loadAllPalettes, loadPalettesForPage } from '../utils/palettes';
-import {
-    cleanupUnauthorizedSubscriptions,
-    cleanupOrphanDiscussionMutes,
-} from '../utils/pageAccessCleanup';
+import { cleanupUnauthorizedSubscriptions } from '../utils/pageAccessCleanup';
+import { collectRevisionR2Keys, buildHardDeleteStatements } from '../utils/pageDeletion';
 
 const wiki = new Hono<Env>();
 
@@ -3045,28 +3043,15 @@ wiki.delete('/w/:slug', requireAuth, async (c) => {
         }
 
         // 리비전 R2 파일 삭제
-        const revisionKeys = await db.prepare('SELECT r2_key FROM revisions WHERE page_id = ? AND r2_key IS NOT NULL')
-            .bind(page.id).all<{ r2_key: string }>();
-        if (revisionKeys.results.length > 0) {
-            await Promise.all(revisionKeys.results.map(r => c.env.MEDIA.delete(r.r2_key)));
+        const revisionKeys = await collectRevisionR2Keys(db, [page.id]);
+        if (revisionKeys.length > 0) {
+            await Promise.all(revisionKeys.map(k => c.env.MEDIA.delete(k)));
         }
 
         // Hard Delete Transaction
-        const batch = [
-            // source_type='page' + blog=0 양쪽 필터 — 마이그레이션 backfill 이전 legacy
-            // 블로그 행(source_type='page' DEFAULT + blog=1) 이 page.id 와 같은 id 일 때
-            // 잘못 삭제되지 않도록 한다.
-            db.prepare(
-                "DELETE FROM page_links WHERE source_page_id = ? AND source_type = 'page' AND blog = 0"
-            ).bind(page.id),
-            db.prepare('DELETE FROM page_categories WHERE page_id = ?').bind(page.id),
-            // discussions 자체는 hard delete 가 정리하지 않으므로 discussion_mutes 의
-            // orphan row 를 명시적으로 정리. page_watches 는 FK ON DELETE CASCADE 로 자동.
-            cleanupOrphanDiscussionMutes(db, page.id),
-            db.prepare('DELETE FROM revisions WHERE page_id = ?').bind(page.id),
-            db.prepare('DELETE FROM pages WHERE id = ?').bind(page.id)
-        ];
-        await db.batch(batch);
+        // 자식(토론 댓글/뮤트·토론) → 부모(페이지) 순서로 모든 참조 행을 정리해 FK 제약을 회피한다.
+        // (discussions/discussion_comments 누락으로 인한 FK 실패·orphan 잔존 버그를 공유 헬퍼로 수정)
+        await db.batch(buildHardDeleteStatements(db, page.id));
 
         // 캐시 무효화 (API + SSR) + 최근 변경 즉시 갱신
         // 틀: 등 콜론 포함 문서인 경우 역링크 문서 캐시도 함께 무효화

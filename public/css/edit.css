@@ -137,6 +137,13 @@
     overflow-x: hidden;
 }
 
+/* 슬라이드 덱 프리뷰(프레젠테이션 문서의 슬라이드/보기 모드):
+   패널 자체가 스크롤 컨테이너이므로 본문 패딩만 두고 덱 카드가 자연스럽게 들어가게 한다.
+   (.slide-deck/.slide 등 덱 내부 스타일은 presentation.css 가 담당) */
+#custom-wiki-preview.preview-slide-deck {
+    padding: 12px;
+}
+
 /* 프리뷰 패널 렌더 diff 표시: 패널 자체가 스크롤 컨테이너이므로
    내부 rich-diff-container 의 카드 테두리/중첩 스크롤은 해제하고 블록만 채운다 */
 #custom-wiki-preview.preview-diff-rendered .rich-diff-container {

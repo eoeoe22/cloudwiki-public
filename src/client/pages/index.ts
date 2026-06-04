@@ -2209,7 +2209,10 @@
       const content = document.getElementById('articleContent');
       if (!content) return;
       try {
-        await navigator.clipboard.writeText(content.innerText);
+        const text = typeof window.extractPlainTextWithFootnotes === 'function'
+          ? window.extractPlainTextWithFootnotes(content)
+          : content.innerText;
+        await navigator.clipboard.writeText(text);
         Swal.fire({ icon: 'success', title: '복사 완료', text: '문서 내용이 클립보드에 복사되었습니다.', toast: true, position: 'top-end', timer: 1500, showConfirmButton: false });
       } catch (err) {
         console.error('복사 실패:', err);
