@@ -746,6 +746,8 @@
 
               // 삭제된 문서 화면이 보이도록 렌더링 강제 업데이트
               if (typeof window.__sidebarLayoutUpdate === 'function') window.__sidebarLayoutUpdate();
+              // page_missing(대상 삭제)·slug_soft_deleted 요청도 이 화면에서 검토(주로 반려)할 수 있게 노출.
+              surfaceEditRequestsOn('deletedPageEditRequest', slug);
               return;
             }
 
@@ -763,6 +765,7 @@
             document.getElementById('createPageBtn').onclick = () => {
               window.location.href = `/edit?slug=${encodeURIComponent(slug)}`;
             };
+            surfaceEditRequestsOn('notFoundEditRequest', slug);
             document.title = `문서 없음 - ${window.appConfig.wikiName}`;
             return;
           }
@@ -782,6 +785,8 @@
 
             // 삭제된 문서 화면이 보이도록 렌더링 강제 업데이트
             if (typeof window.__sidebarLayoutUpdate === 'function') window.__sidebarLayoutUpdate();
+            // page_missing(대상 삭제)·slug_soft_deleted 요청도 이 화면에서 검토(주로 반려)할 수 있게 노출.
+            surfaceEditRequestsOn('deletedPageEditRequest', slug);
             return;
           }
 
@@ -799,6 +804,7 @@
             document.getElementById('createPageBtn').onclick = () => {
               window.location.href = `/edit?slug=${encodeURIComponent(slug)}`;
             };
+            surfaceEditRequestsOn('notFoundEditRequest', slug);
             document.title = `문서 없음 - ${window.appConfig.wikiName}`;
             return;
           }
@@ -958,25 +964,9 @@
             .catch(() => { });
         }
 
-        // 사람 편집 보류(검토 대기) 배너 — 이 문서에 검토 가능한 보류 편집이 있고
-        // 현재 사용자에게 검토 권한이 있을 때만 노출(서버가 검토 권한자에게만 count>0 반환 → 자연 게이팅).
+        // (편집 요청 배지/드롭다운은 articleEditBtn 렌더 이후로 이동 — surfaceArticleEditRequests 참조)
         const _pendingBanner = document.getElementById('pendingEditBanner');
         if (_pendingBanner) _pendingBanner.style.display = 'none';
-        if (window.currentUser && _pendingBanner) {
-          const _pendingSlug = page.slug;
-          fetch('/api/pending-edits/count?slug=' + encodeURIComponent(_pendingSlug))
-            .then(r => r.ok ? r.json() : { count: 0 })
-            .then(data => {
-              if (!data || !data.count) return;
-              if (!currentPage || currentPage.slug !== _pendingSlug) return;
-              _pendingBanner.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:0.75rem;padding:0.65rem 1rem;margin:0.5rem 0 1rem;border:1px solid #E67E22;background:rgba(230,126,34,0.10);border-radius:10px;font-size:0.95rem;';
-              _pendingBanner.innerHTML = `
-                <span><i class="bi bi-hourglass-split"></i> 검토 대기 중인 편집이 ${data.count}건 있습니다.</span>
-                <a href="/mypage#pending-edits" class="btn btn-sm" style="background:#E67E22;color:#fff;"><i class="bi bi-eye"></i> 검토하기</a>
-              `;
-            })
-            .catch(() => { });
-        }
 
         // 조회수는 이제 사용자가 조회수 확인 버튼을 클릭할 때만 로드됩니다 (loadPageViewCount 함수 참조).
 
@@ -992,7 +982,7 @@
 
         // 메인 액션 (편집, 이력, 토론)
         const mainActionsHtml = `
-          <a href="/edit?slug=${encodeURIComponent(actionSlug)}"
+          <a id="articleEditBtn" href="/edit?slug=${encodeURIComponent(actionSlug)}"
              class="btn btn-outline-secondary ${canEdit ? '' : 'disabled'}"
              ${canEdit ? '' : 'tabindex="-1" aria-disabled="true"'}
              title="${canEdit ? '이 문서 편집' : '이 문서는 관리자만 편집할 수 있습니다'}"
@@ -1007,6 +997,51 @@
           </a>
         `;
         document.getElementById('articleMainActions').innerHTML = mainActionsHtml;
+
+        // 편집 요청 배지/드롭다운 — articleEditBtn 이 렌더된 뒤 실행해야 교체 대상이 존재한다.
+        // 검토 가능한 편집 요청이 있고(서버 count>0, 검토 권한자 한정) 이 문서를 편집할 수 있는 사용자에게만
+        // 노출(admin_only 잠금 문서는 제외 — 승인은 서버에서 ACL 재평가하므로 UI 도 일치). 상단 배너도 같은 검토 UI.
+        const _canReviewEdit = window.currentUser && (isAdmin || !_aclAdminOnly);
+        if (_canReviewEdit) {
+          const _pendingSlug = page.slug;
+          const _editSlug = actionSlug;
+          fetch('/api/pending-edits/count?slug=' + encodeURIComponent(_pendingSlug))
+            .then(r => r.ok ? r.json() : { count: 0 })
+            .then(data => {
+              if (!data || !data.count) return;
+              if (!currentPage || currentPage.slug !== _pendingSlug) return;
+              if (_pendingBanner) {
+                _pendingBanner.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:0.75rem;padding:0.65rem 1rem;margin:0.5rem 0 1rem;border:1px solid #38BDF8;background:rgba(56,189,248,0.10);border-radius:10px;font-size:0.95rem;';
+                _pendingBanner.innerHTML = `
+                  <span><i class="bi bi-hourglass-split"></i> 검토 대기 중인 편집 요청이 ${data.count}건 있습니다.</span>
+                  <button type="button" class="btn btn-sm" style="background:#38BDF8;color:#06283d;"><i class="bi bi-eye"></i> 검토하기</button>
+                `;
+                const bannerBtn = _pendingBanner.querySelector('button');
+                if (bannerBtn) bannerBtn.addEventListener('click', () => reviewEditRequests(_pendingSlug));
+              }
+              // 편집 버튼 → 드롭다운(문서 편집하기 / 편집 요청 확인하기 N건). 하늘색 배지.
+              const editBtn = document.getElementById('articleEditBtn');
+              if (editBtn && !document.getElementById('articleEditGroup')) {
+                const group = document.createElement('div');
+                group.className = 'btn-group';
+                group.id = 'articleEditGroup';
+                group.innerHTML = `
+                  <button type="button" class="btn btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false" title="편집" aria-label="편집">
+                    <i class="bi bi-pencil" aria-hidden="true"></i><span class="d-none d-sm-inline"> 편집</span>
+                    <span class="badge rounded-pill ms-1" style="background:#38BDF8;color:#06283d;">${data.count}</span>
+                  </button>
+                  <ul class="dropdown-menu">
+                    <li><a class="dropdown-item" href="/edit?slug=${encodeURIComponent(_editSlug)}"><i class="bi bi-pencil-square"></i> 문서 편집하기</a></li>
+                    <li><button class="dropdown-item" type="button" id="reviewEditRequestsItem"><i class="bi bi-list-check"></i> 편집 요청 확인하기 (${data.count}건)</button></li>
+                  </ul>
+                `;
+                editBtn.replaceWith(group);
+                const reviewItem = group.querySelector('#reviewEditRequestsItem');
+                if (reviewItem) reviewItem.addEventListener('click', () => reviewEditRequests(_pendingSlug));
+              }
+            })
+            .catch(() => { });
+        }
 
         // 더보기 액션
         let moreActionsHtml = `
@@ -2945,6 +2980,216 @@
       });
       observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
     });
+
+// ── 편집 요청 검토(문서 페이지) ──
+// 편집 버튼 드롭다운 "편집 요청 확인하기"/상단 배너 "검토하기" 에서 호출. 서버가 검토 권한자에게만
+// 목록을 내려주므로(자연 게이팅) 별도 권한 체크 없이 호출한다. 기존 MCP 검토와 동일하게 showDiffModal 재사용.
+async function reviewEditRequests(slug) {
+  let list;
+  try {
+    const res = await fetch('/api/pending-edits?slug=' + encodeURIComponent(slug));
+    if (!res.ok) throw new Error();
+    const data = await res.json();
+    list = (data && data.submissions) || [];
+  } catch {
+    Swal.fire('오류', '편집 요청을 불러오지 못했습니다.', 'error');
+    return;
+  }
+  if (list.length === 0) {
+    Swal.fire('편집 요청', '검토할 편집 요청이 없습니다.', 'info');
+    return;
+  }
+  let chosenId = list[0].id;
+  // 한 문서에 여러 작성자의 요청이 있을 수 있으므로 2건 이상이면 선택 단계를 둔다.
+  if (list.length > 1) {
+    const options = {};
+    list.forEach(s => {
+      const ts = s.updated_at ? new Date(s.updated_at).toLocaleString('ko-KR') : '';
+      options[s.id] = `${s.author_name || '익명'} · ${s.action === 'create' ? '신규' : '수정'} · ${ts}${s.has_conflict ? ' · 충돌' : ''}`;
+    });
+    const pick = await Swal.fire({
+      title: '편집 요청 선택',
+      input: 'select',
+      inputOptions: options,
+      inputValue: String(list[0].id),
+      showCancelButton: true,
+      confirmButtonText: '검토',
+      cancelButtonText: '취소',
+    });
+    if (!pick.isConfirmed) return;
+    chosenId = Number(pick.value);
+  }
+  await openEditRequestDetail(chosenId);
+}
+
+// 문서 본문이 없는 화면(404 문서 없음 / 410 삭제됨)에도 검토 동선을 노출한다 — 편집 버튼 드롭다운이
+// 닿지 않는 경로라, 이게 없으면 새 문서(create) 요청이나 page_missing/slug_soft_deleted 요청을 검토자가
+// 발견·반려할 UI 경로가 사라져 요청이 영구히 stuck 된다. 서버가 검토 권한자에게만 count>0 을 반환하므로 자연 게이팅.
+async function surfaceEditRequestsOn(boxId, slug) {
+  const box = document.getElementById(boxId);
+  if (!box || !window.currentUser) return;
+  box.classList.add('d-none');
+  box.innerHTML = '';
+  try {
+    const res = await fetch('/api/pending-edits/count?slug=' + encodeURIComponent(slug));
+    const data = res.ok ? await res.json() : { count: 0 };
+    if (!data || !data.count) return;
+    box.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:0.75rem;padding:0.65rem 1rem;border:1px solid #38BDF8;background:rgba(56,189,248,0.10);border-radius:10px;font-size:0.95rem;">
+        <span><i class="bi bi-hourglass-split"></i> 이 제목으로 제출된 편집 요청이 ${data.count}건 있습니다.</span>
+        <button type="button" class="btn btn-sm" style="background:#38BDF8;color:#06283d;white-space:nowrap;"><i class="bi bi-list-check"></i> 편집 요청 확인하기</button>
+      </div>
+    `;
+    const btn = box.querySelector('button');
+    if (btn) btn.addEventListener('click', () => reviewEditRequests(slug));
+    box.classList.remove('d-none');
+  } catch { /* 무시 */ }
+}
+
+async function openEditRequestDetail(id) {
+  let detail;
+  try {
+    const res = await fetch('/api/pending-edits/' + encodeURIComponent(id));
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      Swal.fire('오류', e.error || '편집 요청을 불러오지 못했습니다.', 'error');
+      return;
+    }
+    detail = await res.json();
+  } catch {
+    Swal.fire('오류', '네트워크 오류', 'error');
+    return;
+  }
+
+  const editorUrl = '/edit?slug=' + encodeURIComponent(detail.slug) + '&edit_request=' + encodeURIComponent(id);
+  const conflictBanner = detail.has_conflict
+    ? `<div class="alert alert-warning py-2 mb-2 text-start"><i class="bi bi-exclamation-triangle"></i> ${
+        detail.conflict_reason === 'slug_taken' ? '동일 제목의 다른 문서가 그 사이 생성되었습니다. 직접 승인할 수 없습니다.'
+        : detail.conflict_reason === 'slug_soft_deleted' ? '동일 제목의 소프트 삭제된 문서가 존재합니다. 먼저 복원/영구삭제 해야 합니다.'
+        : detail.conflict_reason === 'page_missing' ? '문서가 삭제되었거나 존재하지 않습니다. 직접 승인할 수 없습니다.'
+        : '제출 이후 문서가 수정되었습니다. 그대로 승인할 수 없으니 “에디터에서 편집”으로 병합하거나 반려하세요.'
+      }</div>`
+    : '';
+  const ts = detail.submitted_at ? new Date(detail.submitted_at).toLocaleString('ko-KR') : '';
+  const enabledExts = (window.appConfig && window.appConfig.enabledExtensions) || [];
+  const isExtensionDataDiff = enabledExts.some(ext => detail.slug.startsWith(ext + ':'));
+  // 동시 수정 충돌(또는 기타 충돌)이면 직접 승인 불가 — 에디터 병합 경로로 유도(2-리비전).
+  const canDirectApprove = !detail.has_conflict;
+
+  const extraTopHtml = `
+    ${conflictBanner}
+    <div class="text-start small text-muted mb-2">
+      <div><b>${window.escapeHtml(detail.slug)}</b> · ${detail.action === 'create' ? '신규' : '수정'} · ${window.escapeHtml(detail.author_name || '')}님 · 제출 ${window.escapeHtml(ts)}</div>
+      <div>+${detail.lines_added}줄 / -${detail.lines_removed}줄</div>
+    </div>
+    <div class="mb-2 text-start">
+      <a href="${editorUrl}" class="btn btn-sm btn-outline-primary"><i class="bi bi-pencil-square"></i> 에디터에서 편집 (병합·추가 편집 후 승인)</a>
+    </div>
+    ${canDirectApprove ? `<div class="mt-1 mb-2 text-start">
+      <label class="form-label small mb-1">편집 요약 (승인 시 끝에 “요청 승인 : [닉네임|id]” 가 자동 부착됩니다)</label>
+      <input type="text" id="editRequestApproveSummary" class="form-control form-control-sm" maxlength="200" value="${window.escapeHtml(detail.summary || '')}">
+    </div>` : ''}
+  `;
+
+  const result = await window.showDiffModal({
+    title: '편집 요청 검토',
+    oldText: detail.current_content || '',
+    newText: detail.proposed_content || '',
+    slug: detail.slug,
+    forceRaw: isExtensionDataDiff,
+    width: '1100px',
+    extraTopHtml,
+    swalOptions: {
+      showCancelButton: true,
+      showDenyButton: true,
+      showConfirmButton: canDirectApprove,
+      confirmButtonText: '<i class="bi bi-check-lg"></i> 승인',
+      denyButtonText: '<i class="bi bi-x-lg"></i> 반려',
+      cancelButtonText: '닫기',
+      confirmButtonColor: '#10B981',
+      denyButtonColor: '#EF4444',
+      preConfirm: () => {
+        const inp = document.getElementById('editRequestApproveSummary');
+        return { summary: inp ? inp.value : '' };
+      },
+    },
+  });
+
+  if (result.isConfirmed) {
+    await approveEditRequest(id, result.value && result.value.summary, editorUrl);
+  } else if (result.isDenied) {
+    await rejectEditRequest(id, detail.slug);
+  }
+}
+
+async function approveEditRequest(id, summary, editorUrl) {
+  try {
+    const res = await fetch('/api/pending-edits/' + encodeURIComponent(id) + '/approve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ summary }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      // 직접 승인 시 충돌 → 에디터 병합 경로로 fallback.
+      if (data.error === 'conflict' && data.reason === 'concurrent_modification') {
+        const go = await Swal.fire({
+          icon: 'warning',
+          title: '동시 수정 충돌',
+          text: '제출 이후 문서가 수정되었습니다. 에디터에서 병합한 뒤 승인하시겠습니까?',
+          showCancelButton: true,
+          confirmButtonText: '에디터에서 편집',
+          cancelButtonText: '취소',
+        });
+        if (go.isConfirmed) window.location.href = editorUrl;
+        return;
+      }
+      Swal.fire('승인 실패', data.message || data.error || '승인에 실패했습니다.', 'error');
+      return;
+    }
+    await Swal.fire({
+      icon: 'success',
+      title: '승인되었습니다.',
+      text: data.two_revisions ? '요청분과 추가 편집이 각각 리비전으로 반영되었습니다.' : '요청자 명의 리비전으로 반영되었습니다.',
+      toast: true, position: 'top-end', showConfirmButton: false, timer: 2400,
+    });
+    window.location.reload();
+  } catch {
+    Swal.fire('오류', '네트워크 오류', 'error');
+  }
+}
+
+async function rejectEditRequest(id, slug) {
+  const confirmRes = await Swal.fire({
+    icon: 'warning',
+    title: '편집 요청을 반려하시겠습니까?',
+    input: 'text',
+    inputLabel: '반려 사유 (선택, 요청자에게 전달됩니다)',
+    inputAttributes: { maxlength: '100' },
+    text: `"${slug}" 의 편집 요청을 폐기합니다. 되돌릴 수 없습니다.`,
+    showCancelButton: true,
+    confirmButtonText: '반려',
+    cancelButtonText: '취소',
+    confirmButtonColor: '#EF4444',
+  });
+  if (!confirmRes.isConfirmed) return;
+  try {
+    const res = await fetch('/api/pending-edits/' + encodeURIComponent(id) + '/reject', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason: confirmRes.value || '' }),
+    });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      Swal.fire('반려 실패', e.error || '반려에 실패했습니다.', 'error');
+      return;
+    }
+    await Swal.fire({ icon: 'success', title: '반려되었습니다.', toast: true, position: 'top-end', showConfirmButton: false, timer: 2000 });
+    window.location.reload();
+  } catch {
+    Swal.fire('오류', '네트워크 오류', 'error');
+  }
+}
 
 // ── HTML 의 inline on* 속성에서 호출되는 함수들을 window 에 노출 ──
 window.goNewPage = goNewPage;

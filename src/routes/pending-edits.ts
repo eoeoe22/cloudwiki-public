@@ -1,26 +1,29 @@
-// 사람 편집 보류 리비전(pending changes) 검토 워크플로우.
+// 편집 요청(내부 식별자는 pending_edits 유지) 검토 워크플로우.
 //
-// settings.pending_changes_enabled=1 일 때, 신뢰되지 않은 사용자의 PUT /api/w/:slug 편집은
+// wrangler.toml `EDIT_REQUEST_ENABLED="true"` 일 때, 신뢰되지 않은 사용자의 PUT /api/w/:slug 편집은
 // 즉시 리비전이 되지 않고 pending_edits 에 보관된다(holdPendingEdit, wiki.ts). 본 라우트는
-// 그 보류본을 **검토자**(관리자 또는 신뢰 사용자) 가 검토·승인·반려하는 HTTP 인터페이스다.
+// 그 편집 요청을 **검토자**(관리자 또는 신뢰 사용자) 가 검토·승인·반려하는 HTTP 인터페이스다.
+// 검토 UI 는 문서 열람 페이지(편집 버튼 배지/드롭다운)에서 제공된다.
 //
-// MCP 제출안(mcp-submissions.ts)이 "자기 검토"(작성자=검토자) 인 것과 달리, 보류 편집은
+// MCP 제출안(mcp-submissions.ts)이 "자기 검토"(작성자=검토자) 인 것과 달리, 편집 요청은
 // 반달 대응이 목적이므로 **작성자 본인은 검토에서 제외**되고 검토자는 신뢰 사용자/관리자다.
 //
 // 검토 권한(reviewable):
-//   - 관리자(admin:access): 모든 보류본.
-//   - aged 사용자(가입 경과 >= edit_acl_min_age_days): 모든 보류본(aged 는 문서 무관 상수).
-//   - 그 외: 자신이 이전에 편집한 문서(page_editor) 의 보류본만.
+//   - 관리자(admin:access): 모든 요청.
+//   - aged 사용자(가입 경과 >= edit_acl_min_age_days): 모든 요청(aged 는 문서 무관 상수).
+//   - 그 외: 자신이 이전에 편집한 문서(page_editor) 의 요청만.
 //   - 단 항상 author_id != 본인.
 //
-// 승인 시: 리비전 author 는 **원 편집자**로 기록하고, 편집 요약 끝에 검토자 닉네임+id 를 강제 박제한다.
+// 승인 시: 리비전 author 는 **원 요청자**로 기록하고, 편집 요약 끝에 승인자 닉네임+id 를 강제 박제한다.
+//   승인자가 에디터에서 추가 편집한 경우(approve 본문 content) 리비전 2개를 만든다
+//   (rev1=원 요청분/요청자 명의, rev2=추가 편집분/승인자 명의).
 //
 // 노출 엔드포인트:
-//   GET  /api/pending-edits             — 검토 가능한 보류 목록
-//   GET  /api/pending-edits/count       — (선택) ?slug= 로 문서별 카운트(배너용), 미지정 시 전체
-//   GET  /api/pending-edits/:id         — 보류 본문 + 현재/베이스 본문 + diff
-//   POST /api/pending-edits/:id/approve — 원 편집자 author 로 새 리비전 생성
-//   POST /api/pending-edits/:id/reject  — 보류본 + 관련 알림 폐기
+//   GET  /api/pending-edits             — 검토 가능한 요청 목록(?slug= 로 문서 한정)
+//   GET  /api/pending-edits/count       — (선택) ?slug= 로 문서별 카운트(배지용), 미지정 시 전체
+//   GET  /api/pending-edits/:id         — 요청 본문 + 현재/베이스 본문 + diff
+//   POST /api/pending-edits/:id/approve — 원 요청자 author 로 새 리비전 생성(+content 시 2-리비전)
+//   POST /api/pending-edits/:id/reject  — 요청 + 관련 알림 폐기(+reason 알림)
 
 import { Hono, type Context } from 'hono';
 import type { Env, User } from '../types';
@@ -30,7 +33,7 @@ import { isR2OnlyNamespace } from '../utils/slug';
 import { getRevisionContent } from '../utils/r2';
 import { computeLineDiffStats } from '../utils/diff';
 import { applyExistingPageUpdate, applyNewPageInsert } from './admin-mcp';
-import { findConflictingPage, applyCreatePrefixRulesAndCategoryAcls } from './wiki';
+import { findConflictingPage, applyCreatePrefixRulesAndCategoryAcls, isEditRequestEnabled } from './wiki';
 import { createNotification } from '../utils/notification';
 import {
     parseEditAcl,
@@ -74,10 +77,10 @@ function unixToIso(sec: number | null): string | null {
     return new Date(sec * 1000).toISOString();
 }
 
-// 편집 요약 끝에 검토자 닉네임+숫자 id 를 강제 박제한다. 255자 초과 시 작성자 요약만 말줄임표(…)로
-// 잘라 한도를 맞추되, 검토자 접미는 항상 보존한다.
-function buildReviewerSuffix(authorSummary: string | null, reviewer: { name: string; id: number }): string {
-    const suffix = ` (검토:${reviewer.name}#${reviewer.id})`;
+// 편집 요청 승인 시, 요청자 명의 리비전의 요약 끝에 승인자(검토자) 닉네임+숫자 id 를 강제 박제한다.
+// 255자 초과 시 작성자 요약만 말줄임표(…)로 잘라 한도를 맞추되, 승인 접미는 항상 보존한다.
+function buildApprovalSuffix(authorSummary: string | null, reviewer: { name: string; id: number }): string {
+    const suffix = ` (요청 승인 : [${reviewer.name}|${reviewer.id}])`;
     const base = (authorSummary ?? '').trim();
     if (!base) return suffix.trimStart();
     const combined = `${base}${suffix}`;
@@ -242,13 +245,18 @@ async function loadReviewablePendingEdit(
 pendingEditsRoutes.get('/pending-edits', requireAuth, async (c) => {
     const user = c.get('user')!;
     const rbac = c.get('rbac') as RBAC;
+    // 기능 비활성 시(배포 토글 off) 잔여 row 노출을 막기 위해 빈 목록으로 폴백.
+    if (!isEditRequestEnabled(c.env)) return c.json({ submissions: [] });
     const cap = await computeReviewerCapability(c.env.DB, user, rbac);
+    const slug = c.req.query('slug');
 
     // 비공개 보류본은 wiki:private 권한자만 볼 수 있다 — 제출 시점 스냅샷(pe.is_private)과
     // 현재 페이지 비공개 상태(소프트 삭제 포함, slug UNIQUE 라 deleted_at 무관 EXISTS) 둘 다 검사.
     const privateFilter = cap.canViewPrivate
         ? ''
         : ' AND pe.is_private = 0 AND NOT EXISTS (SELECT 1 FROM pages pp WHERE pp.slug = pe.slug AND pp.is_private = 1)';
+    // 문서 페이지의 "편집 요청 확인하기"용 — slug 한정 필터(선택).
+    const slugFilter = slug ? ' AND pe.slug = ?' : '';
     // reviewsAll 이면 author 본인 제외 전체, 아니면 자신이 이전 편집한(page_editor) 문서만.
     const baseSelect = `
         SELECT pe.id, pe.slug, pe.action, pe.author_id, pe.base_revision_id, pe.base_version,
@@ -260,15 +268,17 @@ pendingEditsRoutes.get('/pending-edits', requireAuth, async (c) => {
         FROM pending_edits pe
         LEFT JOIN pages p ON p.slug = pe.slug AND p.deleted_at IS NULL
         LEFT JOIN users u ON u.id = pe.author_id
-        WHERE pe.author_id != ?${privateFilter}`;
+        WHERE pe.author_id != ?${privateFilter}${slugFilter}`;
     const sql = cap.reviewsAll
         ? `${baseSelect} ORDER BY pe.updated_at DESC LIMIT 100`
         : `${baseSelect} AND pe.page_id IS NOT NULL
              AND EXISTS (SELECT 1 FROM revisions r WHERE r.page_id = pe.page_id AND r.author_id = ?)
            ORDER BY pe.updated_at DESC LIMIT 100`;
-    const stmt = cap.reviewsAll
-        ? c.env.DB.prepare(sql).bind(user.id)
-        : c.env.DB.prepare(sql).bind(user.id, user.id);
+    // bind 순서: [user.id] (author 제외) → [slug?] (slugFilter) → [user.id?] (page_editor EXISTS, reviewsAll 아닐 때)
+    const binds: (string | number)[] = [user.id];
+    if (slug) binds.push(slug);
+    if (!cap.reviewsAll) binds.push(user.id);
+    const stmt = c.env.DB.prepare(sql).bind(...binds);
     type ListRow = {
         id: number; slug: string; action: string; author_id: number;
         base_revision_id: number | null; base_version: number;
@@ -340,6 +350,7 @@ pendingEditsRoutes.get('/pending-edits', requireAuth, async (c) => {
 pendingEditsRoutes.get('/pending-edits/count', requireAuth, async (c) => {
     const user = c.get('user')!;
     const rbac = c.get('rbac') as RBAC;
+    if (!isEditRequestEnabled(c.env)) return c.json({ count: 0 });
     const cap = await computeReviewerCapability(c.env.DB, user, rbac);
     const slug = c.req.query('slug');
 
@@ -393,6 +404,8 @@ pendingEditsRoutes.get('/pending-edits/count', requireAuth, async (c) => {
 pendingEditsRoutes.get('/pending-edits/:id', requireAuth, async (c) => {
     const user = c.get('user')!;
     const rbac = c.get('rbac') as RBAC;
+    // 기능 비활성(배포 kill switch) 시 잔여 row 도 다루지 못하게 차단 — list/count 와 동일 정책.
+    if (!isEditRequestEnabled(c.env)) return c.json({ error: 'not found' }, 404);
     const cap = await computeReviewerCapability(c.env.DB, user, rbac);
     const id = Number(c.req.param('id'));
     if (!Number.isFinite(id) || id <= 0) return c.json({ error: 'invalid id' }, 400);
@@ -485,6 +498,11 @@ pendingEditsRoutes.get('/pending-edits/:id', requireAuth, async (c) => {
         base_version: pe.base_version,
         category: pe.category,
         redirect_to: pe.redirect_to,
+        // 요청이 제안한 대체 제목/레이아웃 — 에디터 승인 시 메타 입력칸/프레젠테이션 토글 프리로드용.
+        title: pe.title,
+        has_title_change: pe.has_title_change === 1,
+        layout_mode: pe.layout_mode,
+        apply_layout: pe.apply_layout === 1,
         proposed_content: pe.content,
         current_content: currentContent,
         base_content: baseContent,
@@ -526,6 +544,8 @@ async function cleanupPendingEdit(
 pendingEditsRoutes.post('/pending-edits/:id/approve', requireAuth, async (c) => {
     const user = c.get('user')!; // 검토자
     const rbac = c.get('rbac') as RBAC;
+    // 기능 비활성(배포 kill switch) 시 잔여 row 의 승인·게시도 차단.
+    if (!isEditRequestEnabled(c.env)) return c.json({ error: 'not found' }, 404);
     if (!rbac.can(user.role, 'wiki:edit')) {
         return c.json({ error: 'forbidden', message: 'wiki:edit 권한이 필요합니다.' }, 403);
     }
@@ -543,22 +563,67 @@ pendingEditsRoutes.post('/pending-edits/:id/approve', requireAuth, async (c) => 
 
     // 검토자가 모달에서 요약을 수정해 보낸 경우 그 값을 사용하고, 키가 없으면 제출 시점 요약(pe.summary)으로 폴백.
     // (mcp-submissions approve 와 동일 정책: 명시적 빈 문자열은 빈 요약 의사로 보존.)
-    const body = await c.req.json<{ summary?: string }>().catch(() => ({} as { summary?: string }));
+    // body.content 가 있으면 = 승인자가 에디터에서 추가 편집한 최종 본문 → 2-리비전 경로
+    //   (rev1: 원 요청분=요청자 명의, rev2: 추가 편집분=승인자 명의). 없으면 현행 단일 리비전.
+    const body = await c.req.json<{
+        summary?: string; content?: string; expected_version?: number;
+        category?: string; redirect_to?: string; title?: string | null; layout_mode?: string | null;
+    }>().catch(() => ({} as {
+        summary?: string; content?: string; expected_version?: number;
+        category?: string; redirect_to?: string; title?: string | null; layout_mode?: string | null;
+    }));
+    const hasApproverContent = typeof body.content === 'string';
+    const approverContent = hasApproverContent ? (body.content as string) : '';
+    // 에디터 승인 경로가 로드/머지한 시점의 페이지 버전. 저장 직전 다른 편집이 끼어들었는지 검증한다.
+    const expectedVersion = (typeof body.expected_version === 'number' && Number.isFinite(body.expected_version))
+        ? body.expected_version
+        : null;
+    // 승인자가 에디터에서 바꾼 메타데이터를 rev2 에 반영(미전송 시 요청 메타로 폴백). rev1 은 항상 요청 메타.
+    // (에디터는 content 모드에서 title/layout_mode 를 string|null 로 명시 전송 — undefined 면 요청값 유지.)
+    const rev2Category = (typeof body.category === 'string') ? body.category : pe.category;
+    const rev2Redirect = (typeof body.redirect_to === 'string') ? body.redirect_to : pe.redirect_to;
+    const rev2Title = (body.title !== undefined) ? body.title : (pe.has_title_change ? pe.title : undefined);
+    const rev2Layout = (body.layout_mode !== undefined) ? body.layout_mode : (pe.apply_layout ? pe.layout_mode : undefined);
     const baseSummary = (typeof body.summary === 'string') ? body.summary : (pe.summary ?? '');
-    const finalSummary = buildReviewerSuffix(baseSummary, { name: user.name, id: user.id });
+    // 요청자 명의 리비전(단일 승인=baseSummary, 2-리비전 rev1=원 요청 요약)의 요약 끝에 승인자 박제.
+    // 2-리비전에서 baseSummary(body.summary)는 승인자의 추가 편집 요약(rev2)이므로, rev1 은 pe.summary 를 쓴다.
+    const requesterSummary = buildApprovalSuffix(
+        hasApproverContent ? (pe.summary ?? '') : baseSummary,
+        { name: user.name, id: user.id },
+    );
     const slug = pe.slug;
+
+    // 원 편집자에게 보내는 승인 알림(단일/2-리비전/부분 공용).
+    const notifyApproved = (content: string) => c.executionCtx.waitUntil(createNotification(c.env, c.executionCtx, {
+        userId: pe.author_id,
+        type: 'pending_edit_result',
+        content,
+        link: `/w/${encodeURIComponent(slug)}`,
+    }).catch(() => {}));
 
     if (pe.action === 'update') {
         const page = await c.env.DB.prepare(
-            'SELECT id, version, content, category, last_revision_id, title, edit_acl FROM pages WHERE slug = ? AND deleted_at IS NULL'
-        ).bind(slug).first<{ id: number; version: number; content: string; category: string | null; last_revision_id: number | null; title: string | null; edit_acl: string | null }>();
+            'SELECT id, version, content, category, last_revision_id, title, edit_acl, redirect_to, layout_mode FROM pages WHERE slug = ? AND deleted_at IS NULL'
+        ).bind(slug).first<{ id: number; version: number; content: string; category: string | null; last_revision_id: number | null; title: string | null; edit_acl: string | null; redirect_to: string | null; layout_mode: string | null }>();
         if (!page) return c.json({ error: 'conflict', reason: 'page_missing' }, 409);
-        if (page.last_revision_id !== pe.base_revision_id || page.version !== pe.base_version) {
+        // 충돌 사전체크:
+        //  - 단일 승인(no content): 제출 시점 base 와 현재가 동일해야 한다(pe.base_version).
+        //  - 에디터 승인(content): 승인자가 **로드/머지한 버전**(expected_version)과 현재가 동일해야 한다.
+        //    제출 base 와 달라도 승인자가 그 위에서 머지했으므로, base 가 아닌 로드 버전 기준으로 본다.
+        //    그 사이 다른 편집이 끼어들면(page.version 상승) 머지본이 그 편집을 덮어쓰므로 409 로 막고
+        //    에디터가 재머지하도록 유도한다. (expected_version 누락 시 base 기준으로 보수적 폴백.)
+        const conflictDetected = hasApproverContent
+            ? (expectedVersion !== null
+                ? page.version !== expectedVersion
+                : (page.last_revision_id !== pe.base_revision_id || page.version !== pe.base_version))
+            : (page.last_revision_id !== pe.base_revision_id || page.version !== pe.base_version);
+        if (conflictDetected) {
             return c.json({
                 error: 'conflict',
                 reason: 'concurrent_modification',
                 base_revision_id: pe.base_revision_id,
                 base_version: pe.base_version,
+                expected_version: expectedVersion,
                 current_revision_id: page.last_revision_id,
                 current_version: page.version,
             }, 409);
@@ -568,49 +633,169 @@ pendingEditsRoutes.post('/pending-edits/:id/approve', requireAuth, async (c) => 
         const aclFail = await reviewerAclFailResponse(c.env.DB, parseEditAcl(page.edit_acl), user, page.id, cap.minAge, isAdmin);
         if (aclFail) return c.json(aclFail.body, aclFail.status);
 
-        if (pe.has_title_change && pe.title) {
-            const titleConflict = await findConflictingPage(c.env.DB, pe.title, page.id);
+        // 충돌 검사는 **최종 반영될** 대체 제목 기준. 2-리비전이면 rev2(승인자) 제목, 단일이면 요청 제목.
+        const finalTitleForCheck = hasApproverContent
+            ? (typeof rev2Title === 'string' && rev2Title.trim() ? rev2Title : null)
+            : (pe.has_title_change && pe.title ? pe.title : null);
+        if (finalTitleForCheck) {
+            const titleConflict = await findConflictingPage(c.env.DB, finalTitleForCheck, page.id);
             if (titleConflict) {
                 return c.json({
                     error: 'conflict',
                     reason: titleConflict.matchedColumn === 'slug' ? 'title_collides_with_slug' : 'title_taken',
                     message: titleConflict.matchedColumn === 'slug'
-                        ? `'${pe.title}' 는 이미 다른 문서의 제목입니다.`
-                        : `'${pe.title}' 는 이미 다른 문서의 대체 제목입니다.`,
+                        ? `'${finalTitleForCheck}' 는 이미 다른 문서의 제목입니다.`
+                        : `'${finalTitleForCheck}' 는 이미 다른 문서의 대체 제목입니다.`,
                 }, 409);
             }
         }
 
+        // 충돌(stale-base) 머지 판정 — 요청 base 가 현재와 다른 채 승인자 머지본을 올리는 경우.
+        // 이때 rev1(요청자 옛 본문)이 공개로 남은 채 rev2 가 실패하면 그 사이 편집이 유실되므로,
+        // rev2 실패 시 rev1 을 보상 리비전으로 되돌리기 위해 승인 직전 본문/메타를 미리 캡처한다.
+        const isStaleBaseMerge = hasApproverContent
+            && (page.last_revision_id !== pe.base_revision_id || page.version !== pe.base_version);
+        let preApproval: {
+            content: string; category: string | null; title: string | null;
+            redirectTo: string | null; layoutMode: string | null; editAcl: string | null;
+        } | null = null;
+        if (isStaleBaseMerge) {
+            const enabledExt = (c.env.ENABLED_EXTENSIONS || '').split(',').map(s => s.trim()).filter(Boolean);
+            const r2Only = isR2OnlyNamespace(slug, enabledExt);
+            let preContent = page.content || '';
+            if (r2Only && page.last_revision_id) {
+                const lastRev = await c.env.DB.prepare('SELECT content, r2_key FROM revisions WHERE id = ?')
+                    .bind(page.last_revision_id).first<{ content: string; r2_key: string | null }>();
+                if (lastRev) {
+                    try { preContent = await getRevisionContent(c.env.MEDIA, lastRev, new URL(c.req.url).origin); }
+                    catch { preContent = page.content || ''; }
+                }
+            }
+            preApproval = {
+                content: preContent, category: page.category, title: page.title,
+                redirectTo: page.redirect_to, layoutMode: page.layout_mode, editAcl: page.edit_acl,
+            };
+        }
+
         try {
-            const result = await applyExistingPageUpdate(c, author, page, pe.content, {
-                summary: finalSummary,
+            // rev1: 원 요청분을 요청자 명의로 반영(요약 끝에 승인자 박제).
+            // editAcl/layoutMode/title/category/redirect 적용은 단일 승인 경로와 1:1 동일해야 한다
+            // (카테고리 ACL 머지·presentation 토글 등 누락 방지). 변경 시 양쪽을 함께 수정할 것.
+            const rev1 = await applyExistingPageUpdate(c, author, page, pe.content, {
+                summary: requesterSummary,
                 summaryRaw: true,
                 category: pe.category,
                 redirectTo: pe.redirect_to,
-                title: pe.has_title_change ? pe.title : undefined,
-                // 이 편집이 edit_acl 을 바꾸려던 경우(카테고리 ACL 머지 등)만 적용 — direct-save 의 willUpdateEditAcl 과 동일.
-                // apply_edit_acl=0 이면 undefined 로 두어 기존 ACL 을 그대로 유지(out-of-band ACL 변경 클로버 방지).
+                // 2-리비전이면 rev1 에도 **최종(승인자) 제목**을 적용한다. 요청의 stale 한 제목을 중간에
+                // 쓰면 그 제목이 그새 다른 문서에 점거됐을 때 rev1 write 가 UNIQUE 로 실패해, 승인자가
+                // 제목을 고쳤는데도 승인이 막힌다(검사는 위에서 최종 제목 기준으로 이미 통과).
+                title: hasApproverContent ? rev2Title : (pe.has_title_change ? pe.title : undefined),
                 editAcl: pe.apply_edit_acl ? pe.edit_acl : undefined,
-                // layout_mode 도 편집이 지정한 경우만 적용(apply_layout=0 이면 기존 유지).
                 layoutMode: pe.apply_layout ? pe.layout_mode : undefined,
                 slug,
+                // 2-리비전이면 rev1 재색인을 await 해 rev2(최종 본문) 재색인보다 먼저 끝나도록 한다.
+                awaitLinkCategoryIndex: hasApproverContent,
             });
+
+            if (!hasApproverContent) {
+                // 단일 리비전 — 기존 동작.
+                await cleanupPendingEdit(c, pe, user, 'pending_edit_approve',
+                    `[pending-edit] approved #${pe.id}: ${slug} (v${rev1.new_version}) author=${pe.author_id} reviewer=${user.id}`);
+                notifyApproved(`"${slug}" 편집 요청이 승인되어 반영되었습니다.`);
+                return c.json({
+                    approved: true,
+                    slug,
+                    version: rev1.new_version,
+                    revision_id: rev1.revision_id,
+                    rows: rev1.rows,
+                    characters: rev1.characters,
+                });
+            }
+
+            // rev2: 승인자의 추가 편집을 승인자 명의로 반영(rev1 직후 버전에 CAS). 메타데이터는 승인자가
+            // 에디터에서 바꾼 값(rev2*)을 적용한다(미전송 시 요청 메타로 폴백). editAcl 은 생략해 rev1 설정 유지.
+            const pageAfterRev1 = {
+                id: page.id,
+                version: rev1.new_version,
+                category: rev2Category ?? page.category,
+                title: (rev2Title !== undefined) ? rev2Title : (pe.has_title_change ? pe.title : page.title),
+            };
+            let rev2;
+            try {
+                rev2 = await applyExistingPageUpdate(c, user, pageAfterRev1, approverContent, {
+                    summary: baseSummary,
+                    summaryRaw: true,
+                    category: rev2Category,
+                    redirectTo: rev2Redirect,
+                    title: rev2Title,
+                    layoutMode: rev2Layout,
+                    slug,
+                });
+            } catch (e2: any) {
+                // 충돌(stale-base) 머지에서 rev2 가 실패하면, rev1(요청자 옛 본문)을 공개로 남길 경우 그
+                // 사이 편집이 유실된다. 이 경우 부분 승인으로 마감하지 않고 **보상 롤백** 후 요청을 유지(retryable)한다.
+                if (isStaleBaseMerge && preApproval) {
+                    // 동시 수정으로 실패(CONCURRENT_MODIFICATION)면 페이지가 rev1 이후 다른 편집으로 advance 돼
+                    // rev1 본문은 이미 그 편집으로 덮여 비공개 → 롤백 불필요. 그 외(제목 UNIQUE·R2/D1)는 페이지가
+                    // 아직 rev1 상태이므로 보상 리비전으로 승인 직전 본문/메타를 복원한다.
+                    let rolledBack = false;
+                    if (e2?.code !== 'CONCURRENT_MODIFICATION') {
+                        try {
+                            await applyExistingPageUpdate(c, user,
+                                { id: page.id, version: rev1.new_version, category: preApproval.category, title: preApproval.title },
+                                preApproval.content, {
+                                    summary: `편집 요청 승인 롤백: 추가 편집 반영 실패 (검토:${user.name}#${user.id})`,
+                                    summaryRaw: true,
+                                    category: preApproval.category,
+                                    redirectTo: preApproval.redirectTo,
+                                    title: preApproval.title ?? null,
+                                    editAcl: preApproval.editAcl,
+                                    layoutMode: preApproval.layoutMode,
+                                    slug,
+                                    logType: 'pending_edit_rollback',
+                                    logMessage: `[pending-edit] rev2 failed, rolled back rev1 #${pe.id}: ${slug} rev1=${rev1.revision_id} err=${e2?.code || e2?.message || 'unknown'}`,
+                                });
+                            rolledBack = true;
+                        } catch (e3) {
+                            console.error('pending-edit rollback failed:', e3);
+                        }
+                    }
+                    // 요청은 cleanup 하지 않고 유지 → 검토자가 최신 본문 기준으로 다시 머지/승인할 수 있다.
+                    return c.json({
+                        error: 'conflict',
+                        reason: 'rev2_failed',
+                        rolled_back: rolledBack,
+                        message: rolledBack
+                            ? '추가 편집 반영에 실패해 문서를 승인 직전 상태로 되돌렸습니다. 다시 시도해 주세요.'
+                            : '그 사이 다른 편집이 반영되어 승인을 완료하지 못했습니다. 최신 본문 기준으로 다시 시도해 주세요.',
+                    }, 409);
+                }
+                // 비충돌(clean) 머지: rev1 = 요청 본문(base==current, 유실 없음) → 부분 승인으로 정리(요청 stuck 방지).
+                const reasonNote = (e2?.code === 'CONCURRENT_MODIFICATION') ? '동시 수정 충돌' : '오류';
+                await cleanupPendingEdit(c, pe, user, 'pending_edit_approve',
+                    `[pending-edit] approved(partial) #${pe.id}: ${slug} rev1=${rev1.revision_id} rev2_failed=${e2?.code || e2?.message || 'unknown'} author=${pe.author_id} reviewer=${user.id}`);
+                notifyApproved(`"${slug}" 편집 요청이 승인되었습니다. (승인자 추가 편집은 ${reasonNote}로 미반영)`);
+                return c.json({
+                    approved: true,
+                    partial: true,
+                    slug,
+                    version: rev1.new_version,
+                    revision_id: rev1.revision_id,
+                    rev1_revision_id: rev1.revision_id,
+                });
+            }
             await cleanupPendingEdit(c, pe, user, 'pending_edit_approve',
-                `[pending-edit] approved #${pe.id}: ${slug} (v${page.version + 1}) author=${pe.author_id} reviewer=${user.id}`);
-            // 원 편집자에게 승인 알림.
-            c.executionCtx.waitUntil(createNotification(c.env, c.executionCtx, {
-                userId: pe.author_id,
-                type: 'pending_edit_result',
-                content: `"${slug}" 편집이 승인되어 반영되었습니다.`,
-                link: `/w/${encodeURIComponent(slug)}`,
-            }).catch(() => {}));
+                `[pending-edit] approved(2-rev) #${pe.id}: ${slug} rev1=${rev1.revision_id}(author=${pe.author_id}) rev2=${rev2.revision_id}(reviewer=${user.id})`);
+            notifyApproved(`"${slug}" 편집 요청이 승인·반영되었습니다. (승인자 추가 편집 포함)`);
             return c.json({
                 approved: true,
+                two_revisions: true,
                 slug,
-                version: result.new_version,
-                revision_id: result.revision_id,
-                rows: result.rows,
-                characters: result.characters,
+                version: rev2.new_version,
+                revision_id: rev2.revision_id,
+                rev1_revision_id: rev1.revision_id,
+                rows: rev2.rows,
+                characters: rev2.characters,
             });
         } catch (e: any) {
             if (e?.code === 'CONCURRENT_MODIFICATION') {
@@ -644,15 +829,19 @@ pendingEditsRoutes.post('/pending-edits/:id/approve', requireAuth, async (c) => 
                 message: `'${slug}' 는 다른 문서의 대체 제목과 충돌해 제목으로 사용할 수 없습니다.`,
             }, 409);
         }
-        if (pe.has_title_change && pe.title) {
-            const titleConflict = await findConflictingPage(c.env.DB, pe.title, null);
+        // 충돌 검사는 **최종 반영될** 대체 제목 기준(2-리비전이면 rev2 승인자 제목, 단일이면 요청 제목).
+        const createFinalTitle = hasApproverContent
+            ? (typeof rev2Title === 'string' && rev2Title.trim() ? rev2Title : null)
+            : (pe.has_title_change && pe.title ? pe.title : null);
+        if (createFinalTitle) {
+            const titleConflict = await findConflictingPage(c.env.DB, createFinalTitle, null);
             if (titleConflict) {
                 return c.json({
                     error: 'conflict',
                     reason: titleConflict.matchedColumn === 'slug' ? 'title_collides_with_slug' : 'title_taken',
                     message: titleConflict.matchedColumn === 'slug'
-                        ? `'${pe.title}' 는 이미 다른 문서의 제목입니다.`
-                        : `'${pe.title}' 는 이미 다른 문서의 대체 제목입니다.`,
+                        ? `'${createFinalTitle}' 는 이미 다른 문서의 제목입니다.`
+                        : `'${createFinalTitle}' 는 이미 다른 문서의 대체 제목입니다.`,
                 }, 409);
             }
         }
@@ -678,31 +867,87 @@ pendingEditsRoutes.post('/pending-edits/:id/approve', requireAuth, async (c) => 
         if (createAclFail) return c.json(createAclFail.body, createAclFail.status);
 
         try {
-            const result = await applyNewPageInsert(c, author, slug, pe.content, {
-                summary: finalSummary,
+            // rev1: 요청자 명의로 신규 문서 생성(요약 끝에 승인자 박제).
+            const rev1 = await applyNewPageInsert(c, author, slug, pe.content, {
+                summary: requesterSummary,
                 summaryRaw: true,
                 category: createCategory,
                 redirectTo: pe.redirect_to,
-                title: pe.has_title_change ? pe.title : null,
+                // 2-리비전이면 rev1(신규 생성)도 최종(승인자) 제목을 적용 — stale 한 요청 제목으로 인한
+                // 중간 TITLE_TAKEN 을 피한다(검사는 위에서 최종 제목 기준으로 이미 통과).
+                title: hasApproverContent ? (rev2Title ?? null) : (pe.has_title_change ? pe.title : null),
                 editAcl: createEditAclSerialized,
                 isPrivate: createIsPrivate,
                 layoutMode: pe.apply_layout ? pe.layout_mode : null,
+                // 2-리비전이면 rev1 재색인을 await 해 rev2(최종 본문) 재색인보다 먼저 끝나도록 한다.
+                awaitLinkCategoryIndex: hasApproverContent,
             });
+
+            if (!hasApproverContent) {
+                await cleanupPendingEdit(c, pe, user, 'pending_edit_approve',
+                    `[pending-edit] approved #${pe.id} (create): ${slug} (v1) author=${pe.author_id} reviewer=${user.id}`);
+                notifyApproved(`"${slug}" 새 문서 편집 요청이 승인되어 게시되었습니다.`);
+                return c.json({
+                    approved: true,
+                    slug,
+                    version: 1,
+                    revision_id: rev1.revision_id,
+                    rows: rev1.rows,
+                    characters: rev1.characters,
+                    created: true,
+                });
+            }
+
+            // rev2: 승인자의 추가 편집을 승인자 명의로 반영(방금 생성된 v1 페이지에 CAS → v2).
+            // 카테고리는 createCategory(프리픽스 룰 머지 결과)를 유지해 신규 생성 ACL/머지를 보존한다
+            // (신규 문서에서 승인자의 카테고리 변경은 무시 — 필요 시 게시 후 일반 편집으로 조정).
+            // redirect/title/layout 은 승인자 값(rev2*)을 반영한다. editAcl 은 rev1 설정 유지(생략).
+            const createdPage = {
+                id: rev1.page_id,
+                version: 1,
+                category: createCategory,
+                title: (rev2Title !== undefined) ? rev2Title : (pe.has_title_change ? pe.title : null),
+            };
+            let rev2;
+            try {
+                rev2 = await applyExistingPageUpdate(c, user, createdPage, approverContent, {
+                    summary: baseSummary,
+                    summaryRaw: true,
+                    category: createCategory,
+                    redirectTo: rev2Redirect,
+                    title: rev2Title,
+                    layoutMode: rev2Layout,
+                    slug,
+                });
+            } catch (e2: any) {
+                // rev1(신규 문서)은 이미 생성·공개됨. 사유 무관하게 요청을 정리하고 부분 승인으로 알린다
+                // (정리하지 않으면 slug 가 점거된 채 재시도가 slug_taken 으로 막혀 요청이 stuck 된다).
+                const reasonNote = (e2?.code === 'CONCURRENT_MODIFICATION') ? '동시 수정 충돌' : '오류';
+                await cleanupPendingEdit(c, pe, user, 'pending_edit_approve',
+                    `[pending-edit] approved(partial create) #${pe.id}: ${slug} rev1=${rev1.revision_id} rev2_failed=${e2?.code || e2?.message || 'unknown'} author=${pe.author_id} reviewer=${user.id}`);
+                notifyApproved(`"${slug}" 새 문서 편집 요청이 승인되어 게시되었습니다. (승인자 추가 편집은 ${reasonNote}로 미반영)`);
+                return c.json({
+                    approved: true,
+                    partial: true,
+                    slug,
+                    version: 1,
+                    revision_id: rev1.revision_id,
+                    rev1_revision_id: rev1.revision_id,
+                    created: true,
+                });
+            }
             await cleanupPendingEdit(c, pe, user, 'pending_edit_approve',
-                `[pending-edit] approved #${pe.id} (create): ${slug} (v1) author=${pe.author_id} reviewer=${user.id}`);
-            c.executionCtx.waitUntil(createNotification(c.env, c.executionCtx, {
-                userId: pe.author_id,
-                type: 'pending_edit_result',
-                content: `"${slug}" 새 문서 생성이 승인되어 게시되었습니다.`,
-                link: `/w/${encodeURIComponent(slug)}`,
-            }).catch(() => {}));
+                `[pending-edit] approved(2-rev create) #${pe.id}: ${slug} rev1=${rev1.revision_id}(author=${pe.author_id}) rev2=${rev2.revision_id}(reviewer=${user.id})`);
+            notifyApproved(`"${slug}" 새 문서 편집 요청이 승인·게시되었습니다. (승인자 추가 편집 포함)`);
             return c.json({
                 approved: true,
+                two_revisions: true,
                 slug,
-                version: 1,
-                revision_id: result.revision_id,
-                rows: result.rows,
-                characters: result.characters,
+                version: rev2.new_version,
+                revision_id: rev2.revision_id,
+                rev1_revision_id: rev1.revision_id,
+                rows: rev2.rows,
+                characters: rev2.characters,
                 created: true,
             });
         } catch (e: any) {
@@ -722,6 +967,8 @@ pendingEditsRoutes.post('/pending-edits/:id/approve', requireAuth, async (c) => 
 pendingEditsRoutes.post('/pending-edits/:id/reject', requireAuth, async (c) => {
     const user = c.get('user')!;
     const rbac = c.get('rbac') as RBAC;
+    // 기능 비활성(배포 kill switch) 시 잔여 row 의 반려 처리도 차단 — 토글 off 면 워크플로우 전체 정지.
+    if (!isEditRequestEnabled(c.env)) return c.json({ error: 'not found' }, 404);
     if (!rbac.can(user.role, 'wiki:edit')) {
         return c.json({ error: 'forbidden', message: 'wiki:edit 권한이 필요합니다.' }, 403);
     }
@@ -751,7 +998,7 @@ pendingEditsRoutes.post('/pending-edits/:id/reject', requireAuth, async (c) => {
     c.executionCtx.waitUntil(createNotification(c.env, c.executionCtx, {
         userId: pe.author_id,
         type: 'pending_edit_result',
-        content: `"${pe.slug}" 편집이 반려되었습니다.${reason}`,
+        content: `"${pe.slug}" 편집 요청이 반려되었습니다.${reason}`,
         link: `/w/${encodeURIComponent(pe.slug)}`,
     }).catch(() => {}));
     return c.json({ rejected: true, id: pe.id, slug: pe.slug });

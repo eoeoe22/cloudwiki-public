@@ -295,22 +295,15 @@ async function collectPageEditWatchers(
 }
 
 /**
- * settings.pending_changes_enabled (사람 편집 보류 리비전 전역 토글) 조회.
- * 컬럼/행이 없으면(=마이그레이션 미적용) 0(비활성)으로 안전 폴백한다.
+ * 편집 요청 전역 토글(wrangler.toml `EDIT_REQUEST_ENABLED`) 조회.
+ * "true" 일 때만 활성. 배포 타임 고정값이므로 env 문자열 비교로 판정한다.
  */
-export async function getPendingChangesEnabled(db: D1Database): Promise<boolean> {
-    try {
-        const row = await db
-            .prepare('SELECT pending_changes_enabled AS v FROM settings WHERE id = 1')
-            .first<{ v: number | null }>();
-        return row?.v === 1;
-    } catch {
-        return false;
-    }
+export function isEditRequestEnabled(env: Env['Bindings']): boolean {
+    return env.EDIT_REQUEST_ENABLED === 'true';
 }
 
 /**
- * 신뢰되지 않은 사용자의 편집을 pending_edits 검토 대기로 보류한다.
+ * 신뢰되지 않은 사용자의 편집을 pending_edits 편집 요청으로 보류한다.
  * - revisions/pages 를 건드리지 않으므로 공개 화면은 마지막 승인본을 계속 노출한다.
  * - (author_id, slug) UNIQUE 로 작성자×슬러그당 1건만 유지 — 재제출 시 UPSERT 로 교체.
  * - 검토자(관리자)에게 인앱+푸시 알림, admin Discord 채널 웹훅을 best-effort 발송.
@@ -404,9 +397,10 @@ async function holdPendingEdit(
                 .all<{ id: number }>();
             const adminIds = (results || []).map(r => r.id);
             if (adminIds.length === 0) return;
-            const link = '/mypage#pending-edits';
+            // 검토는 문서 열람 페이지(편집 버튼 배지/드롭다운)에서 수행한다.
+            const link = `/w/${encodeURIComponent(input.slug)}`;
             const actionLabel = input.action === 'create' ? '새 문서' : '문서 수정';
-            const content = `${user.name}님이 "${input.slug}" ${actionLabel} 편집을 검토 대기로 제출했습니다.`;
+            const content = `${user.name}님이 "${input.slug}" ${actionLabel} 편집 요청을 제출했습니다.`;
             await createNotifications(c.env, c.executionCtx, adminIds.map(uid => ({
                 userId: uid,
                 type: 'pending_edit',
@@ -414,7 +408,7 @@ async function holdPendingEdit(
                 link,
                 refId: pendingEditId,
                 push: {
-                    title: '검토 대기 편집',
+                    title: '편집 요청',
                     body: content,
                     url: link,
                     tag: `pending_edit:${pendingEditId}`,
@@ -2290,7 +2284,7 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
         // 전역 토글이 켜져 있고 편집자가 신뢰되지 않으면(비-aged·이 문서 미편집·비관리자)
         // 즉시 리비전을 만들지 않고 검토 대기로 보류한다. 공개 화면은 마지막 승인본을 유지.
         // ACL·비공개·동시편집 검증을 모두 통과한 직후 분기하므로, 보류본도 동일 사전조건을 만족한다.
-        if (await getPendingChangesEnabled(db)) {
+        if (isEditRequestEnabled(c.env)) {
             const minAge = await getEditAclMinAgeDays(db);
             if (!(await isTrustedEditor(db, user, existing.id, minAge, isAdmin))) {
                 const finalTitleHold = hasTitleInBody ? requestedTitle ?? null : existing.title;
@@ -2507,7 +2501,7 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
         // 전역 토글이 켜져 있고 생성자가 신뢰되지 않으면 페이지를 만들지 않고 보류한다.
         // pageId=null·base_version=0 으로 저장하며, 승인 시 applyNewPageInsert 가 prefix/카테고리 ACL 을 재적용한다.
         // 보류본은 body.category(raw) 를 저장하고, 승인 시점에 prefix 룰을 다시 평가한다.
-        if (await getPendingChangesEnabled(db)) {
+        if (isEditRequestEnabled(c.env)) {
             const minAge = await getEditAclMinAgeDays(db);
             if (!(await isTrustedEditor(db, user, null, minAge, isAdmin))) {
                 const pendingEditId = await holdPendingEdit(c, user, {

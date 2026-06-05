@@ -204,13 +204,8 @@ CREATE TABLE IF NOT EXISTS settings (
   announcement_next_id    INTEGER DEFAULT 1,
   -- pages.edit_acl 의 'aged' 플래그가 참조하는 전역 임계값(일).
   -- 0 이면 가입 즉시 통과 (사실상 'aged' 플래그 비활성).
-  edit_acl_min_age_days   INTEGER DEFAULT 15,
-  -- 사람 편집 보류 리비전(pending changes) 전역 토글.
-  -- 1 이면 신뢰되지 않은 사용자(비-aged·해당 문서 미편집·비관리자)의 사람 편집을
-  -- 즉시 리비전으로 만들지 않고 pending_edits 검토 대기로 보류한다 (MediaWiki FlaggedRevs 유사).
-  -- 'aged' 판정은 edit_acl_min_age_days 를 재사용하므로, 이 값이 0 이면 모든 사용자가
-  -- aged 로 통과해 보류가 발생하지 않는다 — 보류를 쓰려면 edit_acl_min_age_days 를 0 보다 크게 설정해야 한다.
-  pending_changes_enabled INTEGER DEFAULT 0
+  -- (편집 요청 전역 토글은 wrangler.toml `EDIT_REQUEST_ENABLED` 배포 타임 값으로 이전됨 — settings 미관리)
+  edit_acl_min_age_days   INTEGER DEFAULT 15
 );
 
 INSERT OR IGNORE INTO settings (id) VALUES (1);
@@ -354,8 +349,8 @@ CREATE INDEX IF NOT EXISTS idx_mcp_drafts_submitted
   ON mcp_drafts(user_id, submitted_at)
   WHERE submitted_at IS NOT NULL;
 
--- 사람 편집 보류 리비전(pending changes) 검토 대기본.
--- settings.pending_changes_enabled=1 일 때, 신뢰되지 않은 사용자의 PUT /api/w/:slug 편집은
+-- 편집 요청(내부적으로 pending_edits) 검토 대기본.
+-- wrangler.toml `EDIT_REQUEST_ENABLED="true"` 일 때, 신뢰되지 않은 사용자의 PUT /api/w/:slug 편집은
 -- 즉시 리비전이 되지 않고 이 테이블에 보관된다 (revisions/pages/FTS/version 시퀀스 미오염).
 -- 공개 화면은 마지막 승인 리비전을 계속 노출하고, 관리자 또는 신뢰 사용자가 검토 후
 -- 승인(=원 편집자 author 로 정식 리비전 생성) 또는 반려(=폐기) 한다.

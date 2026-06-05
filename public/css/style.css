@@ -220,6 +220,12 @@ div:where(.swal2-container) .swal2-html-container {
   color: var(--wiki-text) !important;
 }
 
+/* 유효성/안내 메시지(예: 클립보드 복사 알림) 테마 적용 */
+div:where(.swal2-container) .swal2-validation-message {
+  background: var(--wiki-toc-bg) !important;
+  color: var(--wiki-text) !important;
+}
+
 /* ── Navbar ── */
 .navbar {
   background: var(--wiki-glass-bg) !important;

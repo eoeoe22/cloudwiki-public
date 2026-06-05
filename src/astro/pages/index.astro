@@ -23,6 +23,8 @@ import Footer from '../components/Footer.astro';
         <link rel="stylesheet" href="/css/wiki-nav.css" />
         <link rel="stylesheet" href="/css/bulk-modal.css" />
         <link rel="stylesheet" href="/css/presentation.css" />
+        <!-- 편집 요청 검토 모달(showDiffModal)의 diff 하이라이트 스타일. -->
+        <link rel="stylesheet" href="/css/diff.css" />
         <!-- 테마 FOUC 방지: CSS 로드 후 즉시 테마 적용 -->
         <script is:inline>try{var t=localStorage.getItem('themeMode');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
     </Fragment>
@@ -213,6 +215,8 @@ import Footer from '../components/Footer.astro';
           <button class="btn btn-wiki" id="createPageBtn">
             <i class="bi bi-plus-lg"></i> 이 문서 만들기
           </button>
+          <!-- 새 문서 편집 요청 검토(검토 권한자 한정, 서버 count>0 시 client 가 노출) -->
+          <div id="notFoundEditRequest" class="mt-3 d-none"></div>
         </div>
       </div>
 
@@ -221,6 +225,8 @@ import Footer from '../components/Footer.astro';
         <div class="wiki-not-found">
           <h2><span class="mdi mdi-delete-empty text-danger"></span> 삭제된 문서입니다</h2>
           <p id="deletedSlug"></p>
+          <!-- 삭제/소프트삭제 충돌 편집 요청 검토(검토 권한자 한정, 서버 count>0 시 client 가 노출) -->
+          <div id="deletedPageEditRequest" class="mt-3 d-none"></div>
         </div>
       </div>
 
@@ -333,6 +339,8 @@ import Footer from '../components/Footer.astro';
         <script type="module" src="/dist/render-presentation.js" is:inline></script>
         <script type="module" src="/dist/permissions-modal.js" is:inline></script>
         <script type="module" src="/dist/category-acl-modal.js" is:inline></script>
+        <!-- 편집 요청 검토 모달(window.showDiffModal)을 문서 페이지에서 사용하므로 diff 번들을 로드한다. -->
+        <script type="module" src="/dist/diff.js" is:inline></script>
         <script type="module" src="/dist/index.js" is:inline></script>
     </Fragment>
 </BaseLayout>

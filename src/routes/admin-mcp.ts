@@ -617,6 +617,7 @@ export async function applyExistingPageUpdate(
         summaryRaw?: boolean;         // true 면 withMcpPrefix() 를 건너뛰고 opts.summary 를 그대로 저장 (사람 편집 보류 승인 경로). 기본 false → [MCP] 접두.
         logType?: string;             // admin_log type (예: page_update / page_patch / page_revert) — 생략 시 로그 없음
         logMessage?: string;
+        awaitLinkCategoryIndex?: boolean; // true 면 page_links/page_categories 재색인을 waitUntil 대신 await — 같은 페이지에 연속 리비전을 만드는 2-리비전 승인에서 rev1 의 재색인이 rev2 의 것과 경합/역전돼 중간 리비전 인덱스가 남는 것을 막는다(rev1 에만 사용).
     }
 ): Promise<{ revision_id: number; new_version: number; rows: number; characters: number }> {
     const db = c.env.DB;
@@ -696,7 +697,14 @@ export async function applyExistingPageUpdate(
     }
 
     const linkCatStmts = buildLinkAndCategoryStatements(c.env.DB, page.id, content, categoryValue ?? null);
-    c.executionCtx.waitUntil(c.env.DB.batch(linkCatStmts).catch(e => console.error('admin-mcp link/cat batch failed:', e)));
+    // 2-리비전 승인의 rev1 은 재색인을 await 해, 곧이어 만들 rev2(최종 본문)의 재색인보다 먼저
+    // 끝나도록 강제한다 — waitUntil 두 개가 경합하면 rev1 의 page_links/page_categories 가 나중에
+    // 끝나 중간(요청자) 리비전 기준 인덱스가 남을 수 있다.
+    if (opts.awaitLinkCategoryIndex) {
+        await c.env.DB.batch(linkCatStmts).catch(e => console.error('admin-mcp link/cat batch failed:', e));
+    } else {
+        c.executionCtx.waitUntil(c.env.DB.batch(linkCatStmts).catch(e => console.error('admin-mcp link/cat batch failed:', e)));
+    }
     c.executionCtx.waitUntil(Promise.allSettled([
         invalidatePageCache(c, opts.slug),
         refreshRecentChangesCache(c),
@@ -732,6 +740,7 @@ export async function applyNewPageInsert(
         summaryRaw?: boolean;         // true 면 withMcpPrefix() 를 건너뛰고 opts.summary 를 그대로 저장 (사람 편집 보류 승인 경로). 기본 false → [MCP] 접두.
         logType?: string;
         logMessage?: string;
+        awaitLinkCategoryIndex?: boolean; // true 면 page_links/page_categories 재색인을 await — 2-리비전 승인의 rev1(신규 생성)에서 rev2 재색인과의 경합/역전을 막는다.
     }
 ): Promise<{ page_id: number; revision_id: number; rows: number; characters: number }> {
     const db = c.env.DB;
@@ -782,7 +791,12 @@ export async function applyNewPageInsert(
     await db.prepare('UPDATE pages SET last_revision_id = ? WHERE id = ?').bind(revisionId, pageId).run();
 
     const linkCatStmts = buildLinkAndCategoryStatements(db, pageId, content, opts.category);
-    c.executionCtx.waitUntil(db.batch(linkCatStmts).catch(e => console.error('admin-mcp link/cat batch failed:', e)));
+    // 2-리비전 승인의 rev1(신규 생성)은 재색인을 await 해 rev2(최종 본문) 재색인보다 먼저 끝나도록 한다.
+    if (opts.awaitLinkCategoryIndex) {
+        await db.batch(linkCatStmts).catch(e => console.error('admin-mcp link/cat batch failed:', e));
+    } else {
+        c.executionCtx.waitUntil(db.batch(linkCatStmts).catch(e => console.error('admin-mcp link/cat batch failed:', e)));
+    }
     c.executionCtx.waitUntil(Promise.allSettled([
         invalidatePageCache(c, slug),
         refreshRecentChangesCache(c),

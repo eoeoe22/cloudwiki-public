@@ -4,7 +4,6 @@ import {
     mergeCategoriesFromRules,
     splitCategoryString,
     subtractCategoryString,
-    getPendingChangesEnabled,
 } from './wiki';
 import {
     invalidatePageCache,
@@ -303,14 +302,12 @@ adminRoutes.get('/settings', async (c) => {
     const mcpMode = c.env.MCP_MODE || 'disabled';
 
     if (!row) {
-        return c.json({ namechange_ratelimit: 0, allow_direct_message: 0, signup_policy: 'open', edit_acl_min_age_days: 0, pending_changes_enabled: 0, mcp_mode: mcpMode });
+        return c.json({ namechange_ratelimit: 0, allow_direct_message: 0, signup_policy: 'open', edit_acl_min_age_days: 0, mcp_mode: mcpMode });
     }
 
     row.mcp_mode = mcpMode;
     // 마이그레이션 전 DB 의 NULL 을 0 으로 보정 (클라이언트가 명시적 정수만 다루도록)
     if (row.edit_acl_min_age_days == null) row.edit_acl_min_age_days = 0;
-    // 마이그레이션 전 DB 에는 컬럼 자체가 없을 수 있으므로 undefined/null 을 0 으로 보정.
-    row.pending_changes_enabled = row.pending_changes_enabled === 1 ? 1 : 0;
 
     return c.json(row);
 });
@@ -639,13 +636,9 @@ adminRoutes.put('/settings', async (c) => {
         allow_direct_message?: number;
         signup_policy?: string;
         edit_acl_min_age_days?: number;
-        pending_changes_enabled?: number | boolean;
     }>();
 
     // 기존 값 스냅샷 (변경 detail 알림용).
-    // pending_changes_enabled 는 마이그레이션 전 DB 에 컬럼이 없을 수 있으므로 여기서 SELECT 하지 않는다 —
-    // 이 스냅샷은 모든 settings 업데이트(가입정책/개명제한 등)에서 실행되므로, 신규 컬럼을 참조하면
-    // 마이그레이션 전 환경에서 무관한 업데이트까지 throw 로 막힌다. 신규 컬럼은 아래 tolerant 헬퍼로 별도 조회.
     const oldRow = await db
         .prepare('SELECT namechange_ratelimit, allow_direct_message, signup_policy, edit_acl_min_age_days FROM settings WHERE id = 1')
         .first<{ namechange_ratelimit: number; allow_direct_message: number; signup_policy: string; edit_acl_min_age_days: number | null }>();
@@ -702,23 +695,7 @@ adminRoutes.put('/settings', async (c) => {
         }
     }
 
-    if (body.pending_changes_enabled !== undefined) {
-        const val = body.pending_changes_enabled ? 1 : 0;
-        // 이전 값은 컬럼이 없으면 false 로 폴백하는 tolerant 헬퍼로 읽는다(스냅샷 SELECT 와 분리).
-        const oldVal = (await getPendingChangesEnabled(db)) ? 1 : 0;
-        // 클라이언트(admin 페이지)는 이 필드를 항상 전송하므로, 마이그레이션 전 DB(컬럼 없음)에서도
-        // 이 UPDATE 가 throw 해 가입정책 등 무관한 설정 변경까지 막지 않도록 write 를 tolerant 처리한다.
-        try {
-            await db.prepare('UPDATE settings SET pending_changes_enabled = ? WHERE id = 1')
-                .bind(val)
-                .run();
-            if (oldVal !== val) {
-                changes.push(`pending_changes_enabled: ${oldVal} → ${val}`);
-            }
-        } catch (e) {
-            console.error('pending_changes_enabled update skipped (마이그레이션 미적용으로 컬럼 부재 추정):', e);
-        }
-    }
+    // (편집 요청 전역 토글은 wrangler.toml `EDIT_REQUEST_ENABLED` 배포 타임 값으로 이전 — settings 미관리)
 
     // super_admin 이 settings 변경한 경우만 감사 알림 (다른 admin 도 settings 호출 가능하나
     // 지금 정책상 settings 수정은 모두 admin 권한이라 super 한정으로 좁혀야 노이즈가 적다).

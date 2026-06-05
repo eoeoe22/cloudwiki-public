@@ -27,6 +27,7 @@ export type Env = {
         WIKI_HOME_PAGE: string;
         WIKI_NAME: string;
         ENABLE_CONCURRENT_EDIT_DETECTION: string;
+        EDIT_REQUEST_ENABLED: string;
         WIKI_LOGO_URL: string;
         WIKI_FAVICON_URL: string;
         CUSTOM_HEADER: string;
