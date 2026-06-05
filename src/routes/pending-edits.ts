@@ -42,6 +42,7 @@ import {
     loadDocPrefixPrivacyRules,
     prefixRulesForcePrivate,
     type EditAcl,
+    type DocPrefixPrivacyRule,
 } from '../utils/editAcl';
 
 const pendingEditsRoutes = new Hono<Env>();
@@ -133,12 +134,14 @@ function parseReplayChoices(pe: PendingEditRow): Record<string, unknown> | null 
 }
 
 // 보류본의 "유효 edit_acl" 을 계산한다 — 검토자(승인/반려)가 이 문서를 편집할 권한이 있는지 판정용.
-//   update: 현재 페이지의 edit_acl (slug UNIQUE, 라이브 페이지 기준)
+//   update: 현재 페이지의 edit_acl. slug 는 UNIQUE 라 단일 행이므로 deleted_at 필터를 두지 않는다 —
+//           소프트 삭제된 ACL 보호 페이지(page_missing 충돌)라도 보호 ACL 을 유지해, ACL 미통과
+//           검토자가 보류 상세를 열어(또는 반려해) proposed_content 를 읽지 못하게 한다.
 //   create: prefix+카테고리 ACL 재생 결과(작성자=비관리자 기준 isAdmin=false 로 direct-save 시맨틱 보존)
 async function resolveReviewerEditAcl(c: Context<Env>, pe: PendingEditRow): Promise<EditAcl | null> {
     if (pe.action === 'update') {
         const row = await c.env.DB
-            .prepare('SELECT edit_acl FROM pages WHERE slug = ? AND deleted_at IS NULL')
+            .prepare('SELECT edit_acl FROM pages WHERE slug = ?')
             .bind(pe.slug)
             .first<{ edit_acl: string | null }>();
         return parseEditAcl(row?.edit_acl ?? null);
@@ -182,6 +185,29 @@ async function reviewerAclFailResponse(
             min_age_days: minAge,
         },
     };
+}
+
+// 검토자가 특정 보류 행의 문서 ACL 을 통과하는지(=실제로 승인/반려할 수 있는지) 판정한다.
+// 목록/카운트/상세 노출을 승인·반려 게이트(reviewerAclFailResponse)와 일치시켜, ACL(admin_only·
+// page_editor 등)을 통과하지 못하는 검토자에게는 요청을 보이지도 열지도 못하게 한다.
+//   - update: 보류 행에 조인된 현재 페이지 edit_acl(preResolvedAcl)을 우선 사용해 재조회를 피한다.
+//             없으면 resolveReviewerEditAcl 로 폴백(slug 로 현재 페이지 ACL 조회).
+//   - create: prefix+카테고리 ACL 재생(resolveReviewerEditAcl) 결과로 판정.
+// ACL 이 없으면(대부분의 일반 문서) reviewerAclFailResponse 가 즉시 통과시켜 추가 쿼리가 없다.
+async function reviewerCanActOnPending(
+    c: Context<Env>,
+    user: User,
+    cap: ReviewerCapability,
+    row: { slug: string; action: string; page_id: number | null; category: string | null; category_acl_choices: string | null },
+    preResolvedAcl?: EditAcl | null,
+): Promise<boolean> {
+    const acl = row.action === 'update' && preResolvedAcl !== undefined
+        ? preResolvedAcl
+        : await resolveReviewerEditAcl(c, row as PendingEditRow);
+    const fail = await reviewerAclFailResponse(
+        c.env.DB, acl, user, row.action === 'update' ? row.page_id : null, cap.minAge, cap.isAdmin,
+    );
+    return fail === null;
 }
 
 // 보류본 1건을 로드하면서 현재 사용자의 검토 권한까지 검증한다. 권한이 없으면(또는 작성자 본인이면)
@@ -260,47 +286,71 @@ pendingEditsRoutes.get('/pending-edits', requireAuth, async (c) => {
     // reviewsAll 이면 author 본인 제외 전체, 아니면 자신이 이전 편집한(page_editor) 문서만.
     const baseSelect = `
         SELECT pe.id, pe.slug, pe.action, pe.author_id, pe.base_revision_id, pe.base_version,
+               pe.page_id, pe.category, pe.category_acl_choices,
                pe.summary, pe.updated_at, length(pe.content) AS content_length,
                u.name AS author_name,
+               pd.edit_acl AS page_edit_acl,
                p.last_revision_id AS current_revision_id,
                p.version AS current_version,
                EXISTS (SELECT 1 FROM pages WHERE slug = pe.slug AND deleted_at IS NOT NULL) AS has_soft_deleted
         FROM pending_edits pe
         LEFT JOIN pages p ON p.slug = pe.slug AND p.deleted_at IS NULL
+        LEFT JOIN pages pd ON pd.slug = pe.slug
         LEFT JOIN users u ON u.id = pe.author_id
         WHERE pe.author_id != ?${privateFilter}${slugFilter}`;
-    const sql = cap.reviewsAll
-        ? `${baseSelect} ORDER BY pe.updated_at DESC LIMIT 100`
-        : `${baseSelect} AND pe.page_id IS NOT NULL
-             AND EXISTS (SELECT 1 FROM revisions r WHERE r.page_id = pe.page_id AND r.author_id = ?)
-           ORDER BY pe.updated_at DESC LIMIT 100`;
-    // bind 순서: [user.id] (author 제외) → [slug?] (slugFilter) → [user.id?] (page_editor EXISTS, reviewsAll 아닐 때)
-    const binds: (string | number)[] = [user.id];
-    if (slug) binds.push(slug);
-    if (!cap.reviewsAll) binds.push(user.id);
-    const stmt = c.env.DB.prepare(sql).bind(...binds);
+    const reviewerScope = cap.reviewsAll
+        ? ''
+        : ` AND pe.page_id IS NOT NULL
+             AND EXISTS (SELECT 1 FROM revisions r WHERE r.page_id = pe.page_id AND r.author_id = ?)`;
+    const pageSql = `${baseSelect}${reviewerScope} ORDER BY pe.updated_at DESC, pe.id DESC LIMIT ? OFFSET ?`;
+    // bind 순서: [user.id] (author 제외) → [slug?] (slugFilter) → [user.id?] (page_editor EXISTS) → [limit, offset]
+    const whereBinds: (string | number)[] = [user.id];
+    if (slug) whereBinds.push(slug);
+    if (!cap.reviewsAll) whereBinds.push(user.id);
     type ListRow = {
         id: number; slug: string; action: string; author_id: number;
+        page_id: number | null; category: string | null; category_acl_choices: string | null;
         base_revision_id: number | null; base_version: number;
         summary: string | null; updated_at: number; content_length: number;
-        author_name: string | null;
+        author_name: string | null; page_edit_acl: string | null;
         current_revision_id: number | null; current_version: number | null; has_soft_deleted: number;
     };
-    let results: ListRow[];
+
+    // 비공개(create prefix)·문서 ACL 게이트는 SQL LIMIT 뒤 JS 에서 적용되므로, 최신 ACL-보호 요청이
+    // 더 오래된 actionable 요청을 굶기지(starve) 못하도록, 원하는 개수(100)를 채우거나 후보가 소진될
+    // 때까지(스캔 상한 내) updated_at DESC 로 배치 스캔한다. ACL 없는 행은 추가 쿼리 없이 통과한다.
+    const DESIRED = 100;
+    const FETCH_BATCH = 100;
+    const MAX_SCAN = 1000;
+    let prefixRules: DocPrefixPrivacyRule[] | null = null;
+    const rows: ListRow[] = [];
     try {
-        ({ results } = await stmt.all<ListRow>());
+        for (let offset = 0; rows.length < DESIRED && offset < MAX_SCAN; offset += FETCH_BATCH) {
+            const { results } = await c.env.DB
+                .prepare(pageSql)
+                .bind(...whereBinds, FETCH_BATCH, offset)
+                .all<ListRow>();
+            const batch = results || [];
+            if (batch.length === 0) break;
+            for (const r of batch) {
+                // create 보류본은 pages 행이 없어 SQL 비공개 필터가 닿지 않는다 — 현재 prefix 룰이 비공개를
+                // 강제하는 create 행은 wiki:private 없는 검토자에게서 제외한다.
+                if (!cap.canViewPrivate && r.action === 'create') {
+                    if (prefixRules === null) prefixRules = await loadDocPrefixPrivacyRules(c.env.DB);
+                    if (prefixRulesForcePrivate(prefixRules, r.slug)) continue;
+                }
+                // 문서 ACL 게이트 — 승인/반려 권한과 일치. ACL 없는 행은 추가 쿼리 없이 통과.
+                if (await reviewerCanActOnPending(c, user, cap, r, parseEditAcl(r.page_edit_acl))) {
+                    rows.push(r);
+                    if (rows.length >= DESIRED) break;
+                }
+            }
+            if (batch.length < FETCH_BATCH) break; // 후보 소진
+        }
     } catch (e) {
         // 마이그레이션 미적용(pending_edits 테이블 없음) 시 빈 목록으로 폴백 — mypage 가 매번 호출하므로.
         if (isMissingPendingEditsTable(e)) return c.json({ submissions: [] });
         throw e;
-    }
-
-    // create 보류본은 pages 행이 없어 위 SQL 의 현재-페이지 비공개 필터가 닿지 않는다.
-    // 현재 prefix 룰이 비공개를 강제하는 create 행은 wiki:private 없는 검토자에게서 제외한다.
-    let rows = results || [];
-    if (!cap.canViewPrivate && rows.some(r => r.action === 'create')) {
-        const prefixRules = await loadDocPrefixPrivacyRules(c.env.DB);
-        rows = rows.filter(r => !(r.action === 'create' && prefixRulesForcePrivate(prefixRules, r.slug)));
     }
 
     const submissions = rows.map(r => {
@@ -369,28 +419,40 @@ pendingEditsRoutes.get('/pending-edits/count', requireAuth, async (c) => {
         binds.push(slug);
     }
 
-    // create 보류본의 현재 prefix-룰 비공개는 SQL 로 longest-match 판정이 어려우므로,
-    // wiki:private 없는 검토자에 한해 후보 행(slug/action)을 가져와 JS 에서 제외한 뒤 센다.
-    // (목록/상세 게이팅과 동일한 prefixRulesForcePrivate 정책 — 배지와 목록 일관성 유지.)
+    // 후보 행을 가져와 JS 에서 (1) create 보류본의 현재 prefix-룰 비공개 제외(wiki:private 없는 검토자),
+    // (2) 문서 ACL 게이트(목록/상세/승인·반려와 동일) 를 적용해 센다. SQL 만으로는 longest-match prefix
+    // 비공개 판정과 동적 ACL(admin_only·page_editor 등) 평가가 어렵기 때문이다. ACL 필터가 SQL LIMIT 뒤
+    // JS 에서 적용되므로, 최신 ACL-보호 요청이 actionable 요청을 굶기지 못하도록 후보가 소진될 때까지
+    // (스캔 상한 내) 배치 스캔한다. 상한 도달 시 count 는 하한값(배지 정보용이라 충분).
     // 마이그레이션 미적용(테이블 없음) 시 0 으로 폴백.
+    const candidateSql = `SELECT pe.slug, pe.action, pe.page_id, pe.category, pe.category_acl_choices,
+                                 p.edit_acl AS page_edit_acl
+                          FROM pending_edits pe
+                          LEFT JOIN pages p ON p.slug = pe.slug
+                          WHERE ${conds.join(' AND ')}
+                          ORDER BY pe.updated_at DESC, pe.id DESC LIMIT ? OFFSET ?`;
+    const COUNT_BATCH = 500;
+    const COUNT_MAX_SCAN = 2000;
+    let prefixRules: DocPrefixPrivacyRule[] | null = null;
     try {
-        if (!cap.canViewPrivate) {
+        let count = 0;
+        for (let offset = 0; offset < COUNT_MAX_SCAN; offset += COUNT_BATCH) {
             const { results } = await c.env.DB
-                .prepare(`SELECT pe.slug, pe.action FROM pending_edits pe WHERE ${conds.join(' AND ')} LIMIT 500`)
-                .bind(...binds)
-                .all<{ slug: string; action: string }>();
-            const candidates = results || [];
-            const hasCreate = candidates.some(r => r.action === 'create');
-            const prefixRules = hasCreate ? await loadDocPrefixPrivacyRules(c.env.DB) : [];
-            const count = candidates.filter(r => !(r.action === 'create' && prefixRulesForcePrivate(prefixRules, r.slug))).length;
-            return c.json({ count });
+                .prepare(candidateSql)
+                .bind(...binds, COUNT_BATCH, offset)
+                .all<{ slug: string; action: string; page_id: number | null; category: string | null; category_acl_choices: string | null; page_edit_acl: string | null }>();
+            const batch = results || [];
+            if (batch.length === 0) break;
+            for (const r of batch) {
+                if (!cap.canViewPrivate && r.action === 'create') {
+                    if (prefixRules === null) prefixRules = await loadDocPrefixPrivacyRules(c.env.DB);
+                    if (prefixRulesForcePrivate(prefixRules, r.slug)) continue;
+                }
+                if (await reviewerCanActOnPending(c, user, cap, r, parseEditAcl(r.page_edit_acl))) count++;
+            }
+            if (batch.length < COUNT_BATCH) break; // 후보 소진
         }
-
-        const row = await c.env.DB
-            .prepare(`SELECT COUNT(*) AS cnt FROM pending_edits pe WHERE ${conds.join(' AND ')}`)
-            .bind(...binds)
-            .first<{ cnt: number }>();
-        return c.json({ count: row?.cnt ?? 0 });
+        return c.json({ count });
     } catch (e) {
         if (isMissingPendingEditsTable(e)) return c.json({ count: 0 });
         throw e;
@@ -411,6 +473,11 @@ pendingEditsRoutes.get('/pending-edits/:id', requireAuth, async (c) => {
     if (!Number.isFinite(id) || id <= 0) return c.json({ error: 'invalid id' }, 400);
     const pe = await loadReviewablePendingEdit(c.env.DB, user, id, cap);
     if (!pe) return c.json({ error: 'not found' }, 404);
+    // 문서 ACL 미통과 검토자에게는 본문(proposed/current/base) 노출을 막는다 — 승인/반려 게이트와 동일.
+    // 존재 누설을 피하기 위해 403 대신 404 로 위장(loadReviewablePendingEdit 정책과 일관).
+    if (!(await reviewerCanActOnPending(c, user, cap, pe))) {
+        return c.json({ error: 'not found' }, 404);
+    }
 
     const page = await c.env.DB.prepare(
         `SELECT id, version, is_private, content, last_revision_id, deleted_at,

@@ -1861,8 +1861,12 @@ wiki.get('/w/:slug/edit-permission', requireAuth, async (c) => {
         }
         if (acl && acl.flags.length > 0) {
             const ev = await evaluateEditAcl(db, acl, user, page.id, minAge, isAdmin);
+            // ACL 미달이어도 편집 요청 기능이 켜져 있으면 에디터 진입을 허용한다(edit_request).
+            // 저장 단계(PUT)에서 편집 요청으로 보류되고, 승인 시 ACL 이 다시 강제된다.
+            const editRequest = !ev.allowed && isEditRequestEnabled(c.env);
             return c.json({
-                allowed: ev.allowed,
+                allowed: ev.allowed || editRequest,
+                edit_request: editRequest,
                 reason: ev.allowed ? undefined : (ev.decisive === 'admin_only' ? 'admin_only' : 'edit_acl'),
                 decisive: ev.decisive,
                 acl,
@@ -1894,8 +1898,11 @@ wiki.get('/w/:slug/edit-permission', requireAuth, async (c) => {
     }
     // 신규 문서이므로 page_editor 는 항상 false (pageId=null).
     const ev = await evaluateEditAcl(db, ruleAcl, user, null, minAge, isAdmin);
+    // ACL 미달이어도 편집 요청 기능이 켜져 있으면 진입 허용(저장 시 create 보류).
+    const editRequest = !ev.allowed && isEditRequestEnabled(c.env);
     return c.json({
-        allowed: ev.allowed,
+        allowed: ev.allowed || editRequest,
+        edit_request: editRequest,
         reason: ev.allowed ? undefined : (ev.decisive === 'admin_only' ? 'admin_only' : 'edit_acl'),
         decisive: ev.decisive,
         acl: ruleAcl,
@@ -2160,6 +2167,10 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
         }
 
         // edit_acl 평가 — admin_only 플래그가 없으면 관리자는 우회. 비공개 단계를 통과한 뒤 검사한다.
+        // 편집 요청 기능이 켜져 있으면 ACL 미달이어도 즉시 거부하지 않고 편집 요청(pending_edits)으로
+        // 보류한다(aclHeldForPending). 검토자 승인/반려 단계에서 reviewerAclFailResponse 가 동일 ACL 을
+        // 다시 강제하므로(admin_only 포함) 비관리자가 비관리자 보류본을 승인해 ACL 을 우회할 수 없다.
+        let aclHeldForPending = false;
         const aclParsed = parseEditAcl(existing.edit_acl);
         if (aclParsed && aclParsed.flags.length > 0) {
             const hasAdminOnly = aclParsed.flags.includes('admin_only');
@@ -2167,14 +2178,18 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
                 const minAge = await getEditAclMinAgeDays(db);
                 const ev = await evaluateEditAcl(db, aclParsed, user, existing.id, minAge, isAdmin);
                 if (!ev.allowed) {
-                    const isAdminOnlyFail = ev.decisive === 'admin_only';
-                    return c.json({
-                        error: isAdminOnlyFail
-                            ? '이 문서는 관리자만 편집할 수 있습니다.'
-                            : '이 문서를 편집할 권한이 부족합니다.',
-                        edit_acl: aclParsed,
-                        min_age_days: minAge,
-                    }, 403);
+                    if (isEditRequestEnabled(c.env)) {
+                        aclHeldForPending = true;
+                    } else {
+                        const isAdminOnlyFail = ev.decisive === 'admin_only';
+                        return c.json({
+                            error: isAdminOnlyFail
+                                ? '이 문서는 관리자만 편집할 수 있습니다.'
+                                : '이 문서를 편집할 권한이 부족합니다.',
+                            edit_acl: aclParsed,
+                            min_age_days: minAge,
+                        }, 403);
+                    }
                 }
             }
         }
@@ -2286,7 +2301,9 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
         // ACL·비공개·동시편집 검증을 모두 통과한 직후 분기하므로, 보류본도 동일 사전조건을 만족한다.
         if (isEditRequestEnabled(c.env)) {
             const minAge = await getEditAclMinAgeDays(db);
-            if (!(await isTrustedEditor(db, user, existing.id, minAge, isAdmin))) {
+            // ACL 미달로 보류가 강제된 경우(aclHeldForPending)는 신뢰 여부와 무관하게 항상 보류한다 —
+            // ACL 을 통과하지 못한 편집이 신뢰 사용자라는 이유로 즉시 리비전이 되어선 안 된다.
+            if (aclHeldForPending || !(await isTrustedEditor(db, user, existing.id, minAge, isAdmin))) {
                 const finalTitleHold = hasTitleInBody ? requestedTitle ?? null : existing.title;
                 const pendingEditId = await holdPendingEdit(c, user, {
                     pageId: existing.id,
@@ -2476,6 +2493,8 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
         // 신규 페이지이므로 page_editor 플래그는 항상 false 로 평가 (pageId=null).
         // 관리자(admin:access)는 admin_only 가 없는 ACL 을 우회 — admin:access 는 자기 자신이 직접 작성한
         // ACL 도 만족하지 못할 수 있으므로 관리자 우회가 없으면 신규 ACL 자체를 만들 수 없게 된다.
+        // 편집 요청 기능이 켜져 있으면 생성 ACL 미달도 거부 대신 편집 요청(create 보류)으로 돌린다.
+        let createAclHeldForPending = false;
         if (finalEditAcl) {
             const aclForCreate = parseEditAcl(finalEditAcl);
             if (aclForCreate && aclForCreate.flags.length > 0) {
@@ -2484,14 +2503,18 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
                     const minAge = await getEditAclMinAgeDays(db);
                     const ev = await evaluateEditAcl(db, aclForCreate, user, null, minAge, isAdmin);
                     if (!ev.allowed) {
-                        const isAdminOnlyFail = ev.decisive === 'admin_only';
-                        return c.json({
-                            error: isAdminOnlyFail
-                                ? '이 슬러그로 시작하는 문서는 관리자만 새로 생성할 수 있습니다.'
-                                : '이 슬러그로 시작하는 문서는 ACL 정책상 새로 생성할 수 없습니다.',
-                            edit_acl: aclForCreate,
-                            min_age_days: minAge,
-                        }, 403);
+                        if (isEditRequestEnabled(c.env)) {
+                            createAclHeldForPending = true;
+                        } else {
+                            const isAdminOnlyFail = ev.decisive === 'admin_only';
+                            return c.json({
+                                error: isAdminOnlyFail
+                                    ? '이 슬러그로 시작하는 문서는 관리자만 새로 생성할 수 있습니다.'
+                                    : '이 슬러그로 시작하는 문서는 ACL 정책상 새로 생성할 수 없습니다.',
+                                edit_acl: aclForCreate,
+                                min_age_days: minAge,
+                            }, 403);
+                        }
                     }
                 }
             }
@@ -2503,7 +2526,8 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
         // 보류본은 body.category(raw) 를 저장하고, 승인 시점에 prefix 룰을 다시 평가한다.
         if (isEditRequestEnabled(c.env)) {
             const minAge = await getEditAclMinAgeDays(db);
-            if (!(await isTrustedEditor(db, user, null, minAge, isAdmin))) {
+            // 생성 ACL 미달로 보류가 강제된 경우(createAclHeldForPending)는 신뢰 여부와 무관하게 항상 보류.
+            if (createAclHeldForPending || !(await isTrustedEditor(db, user, null, minAge, isAdmin))) {
                 const pendingEditId = await holdPendingEdit(c, user, {
                     pageId: null,
                     slug,

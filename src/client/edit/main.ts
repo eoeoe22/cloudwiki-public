@@ -804,6 +804,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (res.ok) {
                 const ep = await res.json() as {
                     allowed: boolean;
+                    edit_request?: boolean;
                     reason?: string;
                     decisive?: string;
                     acl?: { flags: string[] } | null;
@@ -854,6 +855,20 @@ document.addEventListener('DOMContentLoaded', async () => {
                     });
                     window.location.href = slug ? `/w/${encodeURIComponent(slug)}` : '/';
                     return;
+                }
+                // ACL 미달이지만 편집 요청 기능으로 진입이 허용된 경우 — 저장 시 편집 요청으로
+                // 제출됨을 미리 알린다(비차단 토스트). 차단 팝업은 띄우지 않고 에디터를 그대로 연다.
+                if (ep.edit_request) {
+                    window.Swal.fire({
+                        toast: true,
+                        position: 'top',
+                        icon: 'info',
+                        title: '편집 요청 모드',
+                        text: '편집 권한이 부족하여, 저장하면 검토자 승인을 위한 편집 요청으로 제출됩니다.',
+                        showConfirmButton: false,
+                        timer: 6000,
+                        timerProgressBar: true,
+                    });
                 }
             }
         } catch (e) {
