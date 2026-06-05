@@ -98,51 +98,100 @@ async function tryAuthenticateBearer(c: Context<Env>): Promise<McpAuthContext | 
     if (!token) return unauthorized(c, 'Empty bearer token');
 
     const tokenHash = await sha256Hex(token);
-    const row = await c.env.DB
-        .prepare(
-            `SELECT t.id, t.user_id, t.scope, t.access_expires_at, t.revoked_at,
-                    u.id AS uid, u.provider, u.uid AS provider_uid, u.email, u.name, u.picture, u.role, u.banned_until, u.last_namechange, u.created_at
-             FROM oauth_tokens t
-             JOIN users u ON t.user_id = u.id
-             WHERE t.access_token_hash = ?`
-        )
-        .bind(tokenHash)
-        .first<{
-            id: number; user_id: number; scope: string | null; access_expires_at: number; revoked_at: number | null;
-            uid: number; provider: string; provider_uid: string; email: string; name: string; picture: string | null;
-            role: string; banned_until: number | null; last_namechange: number | null; created_at: number;
-        }>();
-
-    if (!row) return unauthorized(c, 'Token not found');
     const now = Math.floor(Date.now() / 1000);
-    if (row.revoked_at) return unauthorized(c, 'Token revoked');
-    if (row.access_expires_at < now) return unauthorized(c, 'Token expired');
 
-    // 통합 엔드포인트는 mcp / admin-mcp 라벨 모두 받는다 (둘 다 OAUTH_ACCEPTED_SCOPES 에 포함).
-    // scope 컬럼이 NULL 인 레거시 admin-mcp 토큰을 그대로 통과시키기 위해, 기록된 값이 없으면
-    // 구버전 기본 라벨(admin-mcp) 로 간주한다 (oauth.ts 의 issueTokenPair 도 같은 폴백을 사용).
-    // 권한 분기는 사용자 역할로만 한다.
-    const scope = row.scope || OAUTH_SCOPE_ADMIN_MCP;
-    const scopeTokens = scope.split(/\s+/).filter(Boolean);
-    if (!scopeTokens.some(s => OAUTH_ACCEPTED_SCOPES.has(s))) {
-        return unauthorized(c, 'Token scope does not permit MCP access');
+    let userRow: {
+        uid: number; provider: string; provider_uid: string; email: string;
+        name: string; picture: string | null; role: string; banned_until: number | null;
+        last_namechange: number | null; created_at: number;
+    } | null = null;
+    let tokenId: number | null = null;
+    let scope: string | null = null;
+
+    let isApiKeyAuth = token.startsWith('mcp_');
+
+    if (isApiKeyAuth) {
+        // API 키 인증
+        try {
+            const row = await c.env.DB
+                .prepare(
+                    `SELECT k.user_id, k.expires_at,
+                            u.id AS uid, u.provider, u.uid AS provider_uid, u.email, u.name, u.picture, u.role, u.banned_until, u.last_namechange, u.created_at
+                     FROM mcp_api_keys k
+                     JOIN users u ON k.user_id = u.id
+                     WHERE k.key_hash = ?`
+                )
+                .bind(tokenHash)
+                .first<{
+                    user_id: number; expires_at: number;
+                    uid: number; provider: string; provider_uid: string; email: string; name: string; picture: string | null;
+                    role: string; banned_until: number | null; last_namechange: number | null; created_at: number;
+                }>();
+
+            if (row) {
+                if (row.expires_at < now) return unauthorized(c, 'Token expired');
+                userRow = row;
+                scope = 'mcp admin-mcp';
+            } else {
+                isApiKeyAuth = false;
+            }
+        } catch {
+            // 테이블이 없는 등의 DB 에러 발생 시 OAuth 토큰 인증으로 Fallback
+            isApiKeyAuth = false;
+        }
+    }
+
+    if (!isApiKeyAuth) {
+        // OAuth 토큰 인증
+        const row = await c.env.DB
+            .prepare(
+                `SELECT t.id, t.user_id, t.scope, t.access_expires_at, t.revoked_at,
+                        u.id AS uid, u.provider, u.uid AS provider_uid, u.email, u.name, u.picture, u.role, u.banned_until, u.last_namechange, u.created_at
+                 FROM oauth_tokens t
+                 JOIN users u ON t.user_id = u.id
+                 WHERE t.access_token_hash = ?`
+            )
+            .bind(tokenHash)
+            .first<{
+                id: number; user_id: number; scope: string | null; access_expires_at: number; revoked_at: number | null;
+                uid: number; provider: string; provider_uid: string; email: string; name: string; picture: string | null;
+                role: string; banned_until: number | null; last_namechange: number | null; created_at: number;
+            }>();
+
+        if (!row) return unauthorized(c, 'Token not found');
+        if (row.revoked_at) return unauthorized(c, 'Token revoked');
+        if (row.access_expires_at < now) return unauthorized(c, 'Token expired');
+
+        const scopeVal = row.scope || OAUTH_SCOPE_ADMIN_MCP;
+        const scopeTokens = scopeVal.split(/\s+/).filter(Boolean);
+        if (!scopeTokens.some(s => OAUTH_ACCEPTED_SCOPES.has(s))) {
+            return unauthorized(c, 'Token scope does not permit MCP access');
+        }
+
+        userRow = row;
+        tokenId = row.id;
+        scope = scopeVal;
+
+        // OAuth 토큰의 경우 사용 시각 갱신
+        c.executionCtx.waitUntil(
+            c.env.DB.prepare('UPDATE oauth_tokens SET last_used_at = unixepoch() WHERE id = ?')
+                .bind(row.id).run().catch(() => {})
+        );
+    }
+
+    if (!userRow) {
+        return unauthorized(c, 'Token not found');
     }
 
     // 권한 재검증: super_admin 보정 + ban 처리
-    let effectiveRole = row.role;
-    if (isSuperAdmin(row.email, c.env)) {
+    let effectiveRole = userRow.role;
+    if (isSuperAdmin(userRow.email, c.env)) {
         effectiveRole = 'super_admin';
-    } else if (row.banned_until && row.banned_until > now) {
+    } else if (userRow.banned_until && userRow.banned_until > now) {
         effectiveRole = 'banned';
-    } else if (row.role === 'banned') {
+    } else if (userRow.role === 'banned') {
         effectiveRole = 'user';
     }
-
-    // 토큰 사용 시각 갱신 (best-effort) — guest 강등 여부와 무관하게 토큰 자체는 유효했다.
-    c.executionCtx.waitUntil(
-        c.env.DB.prepare('UPDATE oauth_tokens SET last_used_at = unixepoch() WHERE id = ?')
-            .bind(row.id).run().catch(() => {})
-    );
 
     // 토큰 발급 후 권한이 강등되어 wiki:read 도 admin:access 도 없는 역할로 떨어졌거나
     // banned/deleted 인 경우 — guest 모드로 강등해 읽기 도구만 허용한다.
@@ -157,20 +206,20 @@ async function tryAuthenticateBearer(c: Context<Env>): Promise<McpAuthContext | 
     }
 
     const user: User = {
-        id: row.uid,
-        provider: row.provider,
-        uid: row.provider_uid,
-        email: row.email,
-        name: row.name,
-        picture: row.picture,
+        id: userRow.uid,
+        provider: userRow.provider,
+        uid: userRow.provider_uid,
+        email: userRow.email,
+        name: userRow.name,
+        picture: userRow.picture,
         role: effectiveRole as User['role'],
-        banned_until: row.banned_until,
-        last_namechange: row.last_namechange,
-        created_at: row.created_at,
+        banned_until: userRow.banned_until,
+        last_namechange: userRow.last_namechange,
+        created_at: userRow.created_at,
     };
     c.set('user', user);
 
-    return { user, tokenId: row.id, scope };
+    return { user, tokenId, scope };
 }
 
 // GET /api/mcp - 기본 정보 (브라우저 접속 시 안내 페이지)

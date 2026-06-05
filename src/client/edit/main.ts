@@ -1942,6 +1942,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             const bottom = document.getElementById('slideAddZoneBottom');
             if (top) top.hidden = !show;
             if (bottom) bottom.hidden = !show;
+            // 통합 슬라이드 편집 활성 표시 — CSS 가 본문 목차 FAB/플로팅 패널을 숨긴다.
+            const layoutEl = document.querySelector('.wiki-editor-layout');
+            if (layoutEl) layoutEl.classList.toggle('slide-edit-active', !!show);
         }
         // 일반(split) 진입: 전체 문서를 슬라이드로 분할해 현재 슬라이드만 에디터에 로드.
         function enterSlideEditing() {

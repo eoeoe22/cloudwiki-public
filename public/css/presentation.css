@@ -125,6 +125,94 @@
     font-size: 0.95rem;
 }
 
+/* 슬라이드 번호 배지 — 전체 보기(그리드)에서만 노출 */
+.slide-overview-num {
+    display: none;
+}
+
+/* ───── 전체 보기(그리드) 모드 ───── */
+/* 모든 슬라이드를 작은 썸네일 그리드로 배치. 썸네일을 클릭하면 해당 슬라이드로 이동. */
+.slide-deck.is-overview .slide-deck-stage {
+    height: auto;
+    max-height: 65vh;
+    min-height: 0;
+    overflow-y: auto;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 12px;
+    padding: 14px;
+    align-content: start;
+}
+
+.slide-deck.is-overview .slide {
+    position: relative;
+    inset: auto;
+    width: 100%;
+    height: 132px;
+    padding: 10px 12px;
+    display: block;
+    overflow: hidden;
+    border: 1px solid var(--wiki-border, rgba(127, 127, 127, 0.2));
+    border-radius: 8px;
+    background: var(--wiki-bg, #fff);
+    cursor: pointer;
+    animation: none;
+    transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.slide-deck.is-overview .slide:hover {
+    border-color: var(--wiki-primary, #3b82f6);
+}
+
+.slide-deck.is-overview .slide.is-active {
+    border-color: var(--wiki-primary, #3b82f6);
+    box-shadow: 0 0 0 2px var(--wiki-primary, #3b82f6);
+}
+
+/* 썸네일 본문은 클릭을 가로채지 않고(슬라이드 전체가 클릭 대상), 축소 렌더 */
+.slide-deck.is-overview .slide-content {
+    pointer-events: none;
+    max-width: none;
+    margin: 0;
+    font-size: 0.55rem;
+    line-height: 1.3;
+}
+
+.slide-deck.is-overview .slide-content h1 { font-size: 0.85rem; }
+.slide-deck.is-overview .slide-content h2 { font-size: 0.72rem; }
+.slide-deck.is-overview .slide-content h3 { font-size: 0.62rem; }
+.slide-deck.is-overview .slide-content table { font-size: 0.5rem; }
+
+/* 그라데이션 페이드로 넘치는 본문을 자연스럽게 잘라 보이게 */
+.slide-deck.is-overview .slide::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 28px;
+    background: linear-gradient(to bottom, transparent, var(--wiki-bg, #fff));
+    pointer-events: none;
+}
+
+.slide-deck.is-overview .slide-overview-num {
+    display: block;
+    position: absolute;
+    top: 5px;
+    left: 7px;
+    z-index: 1;
+    min-width: 1.4em;
+    padding: 0 0.3em;
+    height: 1.4em;
+    line-height: 1.4em;
+    text-align: center;
+    font-size: 0.7rem;
+    font-variant-numeric: tabular-nums;
+    color: #fff;
+    background: var(--wiki-primary, #3b82f6);
+    border-radius: 4px;
+}
+
 /* ───── 전체화면 모드 ───── */
 body.presentation-fullscreen {
     overflow: hidden;

@@ -82,6 +82,9 @@ let _fullscreenHandler: (() => void) | null = null;
 let _activeDeckEl: HTMLElement | null = null;
 let _activeSlideIdx = 0;
 let _slideCount = 0;
+// 전체 보기(그리드) 모드 — 모든 슬라이드를 작은 썸네일 그리드로 배치. 썸네일 클릭 시 해당
+// 슬라이드로 이동하며 단일 뷰로 복귀한다.
+let _overviewActive = false;
 // 활성 슬라이드 변경 콜백(에디터 통합 편집 동기화용). renderPresentation 진입 시 세팅,
 // teardownPresentation 에서 정리한다.
 let _onSlideChange: ((idx: number) => void) | null = null;
@@ -117,6 +120,20 @@ function applyActiveSlide(idx: number): void {
 
 function gotoSlide(delta: number): void {
     applyActiveSlide(_activeSlideIdx + delta);
+}
+
+function setOverview(on: boolean): void {
+    _overviewActive = on;
+    if (_activeDeckEl) _activeDeckEl.classList.toggle('is-overview', on);
+    const btn = _activeDeckEl?.querySelector<HTMLElement>('[data-slide-act="overview"]');
+    if (btn) {
+        btn.classList.toggle('active', on);
+        btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    }
+}
+
+function toggleOverview(): void {
+    setOverview(!_overviewActive);
 }
 
 function isFullscreenActive(): boolean {
@@ -240,6 +257,7 @@ export function teardownPresentation(): void {
     _activeSlideIdx = 0;
     _slideCount = 0;
     _onSlideChange = null;
+    _overviewActive = false;
 }
 
 export async function renderPresentation(
@@ -272,7 +290,7 @@ export async function renderPresentation(
     mount.innerHTML = `
         <div class="slide-deck" role="region" aria-label="프레젠테이션 슬라이드">
             <div class="slide-deck-stage">
-                ${effective.map((_, i) => `<section class="slide" data-slide-index="${i}"><div class="wiki-content slide-content" id="slideContent-${i}"></div></section>`).join('')}
+                ${effective.map((_, i) => `<section class="slide" data-slide-index="${i}"><div class="wiki-content slide-content" id="slideContent-${i}"></div><span class="slide-overview-num" aria-hidden="true">${i + 1}</span></section>`).join('')}
             </div>
             <div class="slide-deck-progress" aria-hidden="true">
                 <div class="slide-deck-progress-fill"></div>
@@ -281,6 +299,7 @@ export async function renderPresentation(
                 <button type="button" class="slide-deck-btn" data-slide-act="prev" aria-label="이전 슬라이드"><i class="bi bi-chevron-left"></i></button>
                 <span class="slide-deck-indicator" aria-live="polite">1 / ${_slideCount}</span>
                 <button type="button" class="slide-deck-btn" data-slide-act="next" aria-label="다음 슬라이드"><i class="bi bi-chevron-right"></i></button>
+                <button type="button" class="slide-deck-btn slide-deck-btn-overview" data-slide-act="overview" title="전체 보기 (그리드)" aria-label="전체 슬라이드 그리드 보기" aria-pressed="false"><i class="bi bi-grid-3x3-gap"></i></button>
                 <button type="button" class="slide-deck-btn slide-deck-btn-fullscreen" data-slide-act="fullscreen" title="전체 화면 (F)" aria-label="전체 화면 전환"><i class="bi bi-arrows-fullscreen"></i></button>
             </div>
         </div>
@@ -314,13 +333,26 @@ export async function renderPresentation(
             if (act === 'prev') gotoSlide(-1);
             else if (act === 'next') gotoSlide(1);
             else if (act === 'fullscreen') toggleFullscreen();
+            else if (act === 'overview') toggleOverview();
         });
     });
 
-    // 좌/우 클릭 영역 — 전체화면 모드에서만 활성. 인라인에서는 본문 내부의 텍스트 선택/링크 클릭을 보호.
     _activeDeckEl?.addEventListener('click', (e) => {
-        if (!document.body.classList.contains('presentation-fullscreen')) return;
         const target = e.target as HTMLElement | null;
+        // 전체 보기(그리드) 모드: 컨트롤이 아닌 썸네일을 클릭하면 해당 슬라이드로 이동하고
+        // 단일 뷰로 복귀한다. 썸네일 본문은 pointer-events:none(CSS)이라 내부 링크는 안 눌린다.
+        if (_overviewActive) {
+            if (target?.closest('.slide-deck-controls')) return;
+            const slideEl = target?.closest<HTMLElement>('.slide');
+            if (slideEl) {
+                const idx = parseInt(slideEl.getAttribute('data-slide-index') || '0', 10);
+                setOverview(false);
+                applyActiveSlide(Number.isFinite(idx) ? idx : 0);
+            }
+            return;
+        }
+        // 좌/우 클릭 영역 — 전체화면 모드에서만 활성. 인라인에서는 본문 내부의 텍스트 선택/링크 클릭을 보호.
+        if (!document.body.classList.contains('presentation-fullscreen')) return;
         if (target?.closest('.slide-deck-controls') || target?.closest('a, button, input, textarea, select, label, summary')) return;
         const rect = _activeDeckEl!.getBoundingClientRect();
         const x = (e as MouseEvent).clientX - rect.left;

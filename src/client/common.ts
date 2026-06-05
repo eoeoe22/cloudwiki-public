@@ -337,34 +337,55 @@ function applyLayoutOverride() {
 }
 
 // ── 개인 설정 모달 ──
+// 세그먼트(버튼 그룹)에서 주어진 값의 버튼만 활성화한다(한 번에 하나).
+function setSegActive(groupEl, value) {
+    if (!groupEl) return;
+    var btns = groupEl.querySelectorAll('.seg-btn');
+    for (var i = 0; i < btns.length; i++) {
+        var on = btns[i].getAttribute('data-value') === value;
+        btns[i].classList.toggle('active', on);
+        btns[i].setAttribute('aria-pressed', on ? 'true' : 'false');
+    }
+}
+
 function openSettingsModal() {
     var modalEl = document.getElementById('settingsModal');
     if (!modalEl || typeof bootstrap === 'undefined' || !bootstrap.Modal) return;
-    var themeSel = document.getElementById('settingTheme');
-    if (themeSel) themeSel.value = getCurrentTheme();
-    var layoutSel = document.getElementById('settingLayoutMode');
-    if (layoutSel) layoutSel.value = getLayoutOverride() || 'site';
+    setSegActive(document.getElementById('settingTheme'), getCurrentTheme());
+    setSegActive(document.getElementById('settingLayoutMode'), getLayoutOverride() || 'site');
     bootstrap.Modal.getOrCreateInstance(modalEl).show();
 }
 
 function setupSettingsModal() {
-    var themeSel = document.getElementById('settingTheme');
-    if (themeSel && !themeSel.dataset.bound) {
-        themeSel.dataset.bound = '1';
-        // 테마는 즉시 라이브 적용(리로드 불필요).
-        themeSel.addEventListener('change', function () { setTheme(this.value); });
+    var themeSeg = document.getElementById('settingTheme');
+    if (themeSeg && !themeSeg.dataset.bound) {
+        themeSeg.dataset.bound = '1';
+        themeSeg.addEventListener('click', function (e) {
+            var btn = e.target && e.target.closest ? e.target.closest('.seg-btn') : null;
+            if (!btn || !themeSeg.contains(btn)) return;
+            var value = btn.getAttribute('data-value');
+            if (!value) return;
+            setSegActive(themeSeg, value);
+            // 테마는 즉시 라이브 적용(리로드 불필요).
+            setTheme(value);
+        });
     }
-    var layoutSel = document.getElementById('settingLayoutMode');
-    if (layoutSel && !layoutSel.dataset.bound) {
-        layoutSel.dataset.bound = '1';
-        layoutSel.addEventListener('change', function () {
+    var layoutSeg = document.getElementById('settingLayoutMode');
+    if (layoutSeg && !layoutSeg.dataset.bound) {
+        layoutSeg.dataset.bound = '1';
+        layoutSeg.addEventListener('click', function (e) {
+            var btn = e.target && e.target.closest ? e.target.closest('.seg-btn') : null;
+            if (!btn || !layoutSeg.contains(btn)) return;
+            var value = btn.getAttribute('data-value');
+            if (!value) return;
             var prev = getLayoutOverride();
-            var next = this.value === 'site' ? null : this.value;
+            var next = value === 'site' ? null : value;
+            setSegActive(layoutSeg, value);
             if ((prev || null) === (next || null)) return; // 변경 없음
             try {
                 if (next) localStorage.setItem(LAYOUT_OVERRIDE_KEY, next);
                 else localStorage.removeItem(LAYOUT_OVERRIDE_KEY);
-            } catch (e) { /* ignore */ }
+            } catch (e2) { /* ignore */ }
             // 사이드바 재배치 1회 가드(_rightSidebarRelocated)·그룹 nav fetch 때문에
             // 깨끗한 재초기화를 위해 새로고침한다.
             location.reload();

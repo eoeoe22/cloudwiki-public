@@ -603,6 +603,31 @@ import Footer from '../components/Footer.astro';
                     </div>
                 </div>
 
+                <!-- MCP API 키 관리 -->
+                <div class="profile-section" id="mcpApiKeySection" style="display:none;">
+                    <div class="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2">
+                        <h4 class="mb-0"><i class="mdi mdi-key-outline"></i> MCP API 키 관리</h4>
+                    </div>
+                    <small class="text-muted d-block mb-3">
+                        외부 MCP 클라이언트가 브라우저 인증(OAuth) 대신 직접 헤더에 API 키를 실어 인증할 수 있게 합니다.
+                    </small>
+                    <div class="alert alert-warning py-2 mb-3">
+                        <i class="mdi mdi-alert-decagram-outline"></i> <strong>보안 경고:</strong> 
+                        API 키 방식은 OAuth 방식에 비해 보안상 권장되지 않습니다. 유출 시 에이전트 권한이 탈취될 수 있으므로, 반드시 로컬 신뢰 환경에서만 사용하고 유출 시 즉시 삭제하거나 재발급하십시오.
+                    </div>
+                    <div id="mcpApiKeyContainer" class="mcp-api-key-container">
+                        <div class="text-center text-muted py-2">불러오는 중...</div>
+                    </div>
+                    <div class="d-flex gap-2">
+                        <button class="btn btn-sm btn-wiki" id="generateMcpApiKeyBtn" onclick="generateMcpApiKey()">
+                            <i class="mdi mdi-key-plus"></i> API 키 발급/갱신
+                        </button>
+                        <button class="btn btn-sm btn-outline-danger d-none" id="deleteMcpApiKeyBtn" onclick="deleteMcpApiKey()">
+                            <i class="mdi mdi-key-remove"></i> API 키 삭제
+                        </button>
+                    </div>
+                </div>
+
                 <!-- 문의하기 / 회원탈퇴 -->
                 <div class="text-center mb-4 d-flex justify-content-center gap-2">
                     <a href="/tickets" class="btn btn-wiki-outline">

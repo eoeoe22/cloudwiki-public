@@ -14,6 +14,7 @@ import type { AuthProvidersResponse } from '../../shared/api/auth';
 import { dispatchDiscord } from '../../utils/webhook/discord';
 import { signupPending } from '../../utils/webhook/events/signup';
 import { createNotification } from '../../utils/notification';
+import { sha256Hex } from '../../utils/oauth';
 
 const auth = new Hono<Env>();
 
@@ -900,5 +901,84 @@ auth.delete('/api/me/account', requireAuth, async (c) => {
 
     return c.json({ success: true });
 });
+
+/**
+ * GET /api/me/mcp-api-key
+ * 현재 로그인한 사용자의 MCP API 키 정보 조회
+ */
+auth.get('/api/me/mcp-api-key', requireAuth, async (c) => {
+    const user = c.get('user')!;
+    const db = c.env.DB;
+    try {
+        const row = await db
+            .prepare('SELECT masked_key, expires_at, created_at FROM mcp_api_keys WHERE user_id = ?')
+            .bind(user.id)
+            .first<{ masked_key: string; expires_at: number; created_at: number }>();
+
+        return c.json({ apiKey: row || null });
+    } catch {
+        // DB 마이그레이션 전 등으로 테이블이 없는 경우 조용히 null 반환하여 UI 먹통 방지
+        return c.json({ apiKey: null });
+    }
+});
+
+/**
+ * POST /api/me/mcp-api-key
+ * MCP API 키 생성 또는 갱신 (30일 고정 수명)
+ */
+auth.post('/api/me/mcp-api-key', requireAuth, async (c) => {
+    const user = c.get('user')!;
+    const db = c.env.DB;
+
+    // 32바이트 보안 랜덤 바이트 생성
+    const rawBytes = new Uint8Array(32);
+    crypto.getRandomValues(rawBytes);
+    const keyString = 'mcp_' + Array.from(rawBytes).map(b => b.toString(16).padStart(2, '0')).join('');
+
+    const keyHash = await sha256Hex(keyString);
+    const maskedKey = keyString.slice(0, 8) + '...' + keyString.slice(-4);
+    const expiresAt = Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60; // 30일 고정
+
+    try {
+        await db
+            .prepare(
+                `INSERT OR REPLACE INTO mcp_api_keys (user_id, key_hash, masked_key, expires_at, created_at)
+                 VALUES (?, ?, ?, ?, unixepoch())`
+            )
+            .bind(user.id, keyHash, maskedKey, expiresAt)
+            .run();
+
+        return c.json({
+            rawKey: keyString,
+            maskedKey,
+            expiresAt,
+        });
+    } catch (err: any) {
+        if (err?.message?.includes('no such table')) {
+            return c.json({ error: 'DB에 mcp_api_keys 테이블이 존재하지 않습니다. 마이데이터 마이그레이션을 먼저 적용해주십시오.' }, 500);
+        }
+        return c.json({ error: err.message || 'API 키 발급 중 오류가 발생했습니다.' }, 500);
+    }
+});
+
+/**
+ * DELETE /api/me/mcp-api-key
+ * MCP API 키 삭제
+ */
+auth.delete('/api/me/mcp-api-key', requireAuth, async (c) => {
+    const user = c.get('user')!;
+    const db = c.env.DB;
+
+    try {
+        await db.prepare('DELETE FROM mcp_api_keys WHERE user_id = ?').bind(user.id).run();
+        return c.json({ success: true });
+    } catch (err: any) {
+        if (err?.message?.includes('no such table')) {
+            return c.json({ error: 'DB에 mcp_api_keys 테이블이 존재하지 않습니다.' }, 500);
+        }
+        return c.json({ error: err.message || 'API 키 삭제 중 오류가 발생했습니다.' }, 500);
+    }
+});
+
 
 export default auth;

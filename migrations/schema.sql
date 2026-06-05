@@ -605,3 +605,14 @@ CREATE TABLE IF NOT EXISTS oauth_tokens (
 );
 CREATE INDEX IF NOT EXISTS idx_oauth_tokens_user ON oauth_tokens(user_id);
 CREATE INDEX IF NOT EXISTS idx_oauth_tokens_refresh ON oauth_tokens(refresh_token_hash);
+
+-- MCP API 키 테이블
+CREATE TABLE IF NOT EXISTS mcp_api_keys (
+  user_id     INTEGER PRIMARY KEY,
+  key_hash    TEXT NOT NULL UNIQUE,  -- SHA-256 hex
+  masked_key  TEXT NOT NULL,         -- UI 노출용 (예: "mcp_abc...xyz")
+  created_at  INTEGER DEFAULT (unixepoch()),
+  expires_at  INTEGER NOT NULL,      -- unixepoch() + 30 * 86400
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_mcp_api_keys_expires ON mcp_api_keys(expires_at);

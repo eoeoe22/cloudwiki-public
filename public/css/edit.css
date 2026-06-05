@@ -1633,16 +1633,20 @@ html[data-theme="dark"] #concurrent-edit-banner {
 
 /* ── 통합 슬라이드 편집: 위/아래 새 슬라이드 추가 존 (이미지 드롭존 스타일 미러링) ── */
 /* 에디터 패널(.wiki-editor-pane: flex column) 안에서 #cm-editor 위/아래를 차지한다. */
+/* 작성 공간을 최대한 확보하기 위해 한 줄짜리 컴팩트 바로 표시한다(아이콘 + 짧은 라벨). */
 .slide-add-zone {
     flex: 0 0 auto;
-    margin: 8px;
-    padding: 14px 16px;
-    border: 2px dashed var(--wiki-primary);
-    border-radius: 8px;
-    text-align: center;
+    margin: 5px 6px;
+    padding: 4px 10px;
+    border: 1px dashed var(--wiki-primary);
+    border-radius: 6px;
     cursor: pointer;
     transition: background 0.2s, border-color 0.2s;
     background: rgba(var(--wiki-primary-rgb), 0.04);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
 }
 
 .slide-add-zone:hover,
@@ -1652,26 +1656,31 @@ html[data-theme="dark"] #concurrent-edit-banner {
 }
 
 .slide-add-zone i {
-    font-size: 1.6rem;
+    font-size: 1rem;
+    line-height: 1;
     color: var(--wiki-primary);
-    display: block;
-    margin-bottom: 4px;
 }
 
 .slide-add-zone .slide-add-main {
     font-weight: 600;
-    font-size: 0.9rem;
+    font-size: 0.78rem;
     color: var(--wiki-text);
 }
 
+/* 컴팩트 바에서는 보조 설명을 숨긴다(영역 축소). */
 .slide-add-zone .slide-add-sub {
-    font-size: 0.78rem;
-    color: var(--wiki-text-muted);
-    margin-top: 2px;
+    display: none;
 }
 
 .slide-add-zone[hidden] {
     display: none;
+}
+
+/* 통합 슬라이드 편집 중에는 본문 목차 FAB·플로팅 목차 패널이 무의미하므로 숨긴다
+   (에디터는 현재 슬라이드만 표시). enter/leaveSlideEditing 이 레이아웃에 .slide-edit-active 토글. */
+.wiki-editor-layout.slide-edit-active #editorScrollFabGroup,
+.wiki-editor-layout.slide-edit-active #editorTocFloatingPanel {
+    display: none !important;
 }
 
 .img-upload-search-btn {

@@ -3065,3 +3065,48 @@ html[data-theme="dark"] .push-status-on {
   z-index: 2069;
 }
 
+
+/* ── 개인 설정 모달 세그먼트(버튼 그룹) ──
+ * 테마·레이아웃 모드 선택을 드롭다운 대신 한 번에 하나만 활성화되는
+ * 세그먼트 컨트롤로 표시한다. (settingsModal 의 #settingTheme/#settingLayoutMode) */
+.setting-seg {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.setting-seg .seg-btn {
+  flex: 1 1 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--bs-border-color);
+  border-radius: 8px;
+  background: var(--bs-body-bg);
+  color: var(--bs-body-color);
+  font-size: 0.875rem;
+  line-height: 1.2;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.setting-seg .seg-btn i {
+  font-size: 1.15rem;
+}
+.setting-seg .seg-btn:hover {
+  background: var(--bs-secondary-bg);
+  border-color: var(--bs-secondary-border-subtle, var(--bs-border-color));
+}
+.setting-seg .seg-btn:focus-visible {
+  outline: 2px solid var(--bs-primary);
+  outline-offset: 1px;
+}
+.setting-seg .seg-btn.active {
+  background: var(--bs-primary);
+  border-color: var(--bs-primary);
+  color: #fff;
+}
+.setting-seg .seg-btn.active:hover {
+  background: var(--bs-primary);
+}
