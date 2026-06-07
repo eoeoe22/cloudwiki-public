@@ -26,12 +26,11 @@ import { getRevisionContent } from '../utils/r2';
 import { computeLineDiffStats } from '../utils/diff';
 import { ensureMcpDraftsMigration } from '../utils/mcpDraftsMigration';
 import {
-    applyExistingPageUpdate,
-    applyNewPageInsert,
     buildCommitSummary,
     validateMcpSummaryLength,
 } from './admin-mcp';
 import { findConflictingPage, applyCreatePrefixRulesAndCategoryAcls, splitCategoryString } from './wiki';
+import { commitPageMutation } from '../utils/pagePipeline/commit';
 import {
     parseEditAcl,
     evaluateEditAcl,
@@ -323,8 +322,8 @@ mcpSubmissionsRoutes.post('/mcp-submissions/:id/approve', requireAuth, async (c)
 
     if (draft.action === 'update') {
         const page = await c.env.DB.prepare(
-            'SELECT id, version, content, category, last_revision_id, title FROM pages WHERE slug = ? AND deleted_at IS NULL'
-        ).bind(slug).first<{ id: number; version: number; content: string; category: string | null; last_revision_id: number | null; title: string | null }>();
+            'SELECT id, version, content, category, last_revision_id, title, is_private FROM pages WHERE slug = ? AND deleted_at IS NULL'
+        ).bind(slug).first<{ id: number; version: number; content: string; category: string | null; last_revision_id: number | null; title: string | null; is_private: number }>();
         if (!page) {
             return c.json({ error: 'conflict', reason: 'page_missing' }, 409);
         }
@@ -407,14 +406,23 @@ mcpSubmissionsRoutes.post('/mcp-submissions/:id/approve', requireAuth, async (c)
         const summaryWithDiff = diffStats ? buildCommitSummary(finalSummary, diffStats) : finalSummary;
 
         try {
-            const result = await applyExistingPageUpdate(c, user, page, draft.content, {
+            // 저장+주시자 알림을 통합 파이프라인에 위임(enforceAcl 은 위에서 이미 검증).
+            // 단일 리비전이므로 notify 기본값(true)으로 주시자 알림 1회 발송된다.
+            const result = await commitPageMutation(c, {
+                kind: 'update',
+                origin: 'mcp_approve',
+                actor: user,
+                slug,
+                content: draft.content,
                 summary: summaryWithDiff,
                 category: draft.category,
                 redirectTo: draft.redirect_to,
                 title: draft.has_title_change ? draft.title : undefined,
-                slug,
+                page,
+                isPrivate: page.is_private === 1,
                 logType: 'page_commit_approved',
                 logMessage: `[mcp-submission] approved draft #${draft.id}: ${slug} (v${page.version + 1})`,
+                rbac,
             });
             // 승인 성공 — draft + 관련 알림 정리.
             await c.env.DB.batch([
@@ -530,15 +538,25 @@ mcpSubmissionsRoutes.post('/mcp-submissions/:id/approve', requireAuth, async (c)
         const createSummaryWithDiff = createDiffStats ? buildCommitSummary(finalSummary, createDiffStats) : finalSummary;
 
         try {
-            const result = await applyNewPageInsert(c, user, slug, draft.content, {
+            // 신규 문서 생성 + 주시자 알림 통합 파이프라인 위임(ACL/카테고리는 위에서 preResolved).
+            const result = await commitPageMutation(c, {
+                kind: 'create',
+                origin: 'mcp_approve',
+                actor: user,
+                slug,
+                content: draft.content,
                 summary: createSummaryWithDiff,
                 category: createCategory,
                 redirectTo: draft.redirect_to,
                 title: draft.has_title_change ? draft.title : null,
                 editAcl: createEditAclSerialized,
-                isPrivate: createIsPrivate,
+                isPrivate: createIsPrivate === 1,
                 logType: 'page_create_commit_approved',
                 logMessage: `[mcp-submission] approved draft #${draft.id} (create): ${slug} (v1)`,
+                rbac,
+                // 신규 문서 생성은 직접 PUT(create) 경로와 동일하게 주시자 알림을 보내지 않는다
+                // (본 변경의 범위는 update 승인 경로의 알림 누락 해소). create 알림은 후속 과제.
+                notify: false,
             });
             await c.env.DB.batch([
                 c.env.DB.prepare("DELETE FROM notifications WHERE type = 'mcp_submission' AND ref_id = ?").bind(draft.id),

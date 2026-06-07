@@ -342,7 +342,7 @@ function buildModalHtml(slug: string, page: CurrentPage | null, pageLoadError: s
                     <code class="bulkcat-prefix-code">${escapeHtml(slug)}/**</code>
                 </div>
                 <div class="bulkcat-subpages-panel" id="permBulkPanel">
-                    <div class="bulkcat-empty">불러오는 중…</div>
+                    ${window.uiInlineLoading({ block: true })}
                 </div>
 
                 <div class="bulkcat-actions-row" style="display: flex; flex-direction: column; gap: 10px; margin-top: 0.5rem;">
@@ -629,7 +629,7 @@ function setAllBulkRows(state: ModalState, checked: boolean): void {
 
 function renderBulkSubpages(items: SubpageItem[], prefix: string): string {
     if (items.length === 0) {
-        return '<div class="bulkcat-empty">선택 가능한 하위 문서가 없습니다.</div>';
+        return window.uiEmptyState({ icon: 'bi bi-inbox', title: '선택 가능한 하위 문서가 없습니다', compact: true });
     }
     const prefixWithSlash = prefix + '/';
     const rows = items.map((item) => {

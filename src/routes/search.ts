@@ -67,6 +67,30 @@ function buildLikeSnippet(slug: string, content: string, query: string): { html:
 }
 
 /**
+ * 검색 날짜 필터 파싱: 'YYYY-MM-DD' 만 허용하고 UTC 자정 기준 unixepoch(초)로 변환한다.
+ * endOfDay=true 면 그날의 마지막 초(+86399)를 반환해 `to` 를 포함 범위(inclusive)로 만든다.
+ * 형식이 어긋나거나 롤오버되는 무효 날짜(예: 2026-13-40)는 null 을 반환해 필터를 무시한다.
+ * pages.updated_at 은 unixepoch() 초 단위이므로 동일 단위로 비교한다.
+ */
+function parseDateParam(s: string | undefined, endOfDay: boolean): number | null {
+    if (!s) return null;
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s.trim());
+    if (!m) return null;
+    const year = Number(m[1]);
+    const month = Number(m[2]);
+    const day = Number(m[3]);
+    const ms = Date.UTC(year, month - 1, day);
+    if (!Number.isFinite(ms)) return null;
+    // Date.UTC 는 범위를 벗어난 값을 롤오버하므로 역검증으로 실제 유효 날짜만 통과시킨다.
+    const d = new Date(ms);
+    if (d.getUTCFullYear() !== year || d.getUTCMonth() !== month - 1 || d.getUTCDate() !== day) {
+        return null;
+    }
+    const base = Math.floor(ms / 1000);
+    return endOfDay ? base + 86399 : base;
+}
+
+/**
  * GET /search?q=키워드&mode=content|category
  * mode=content (기본값): FTS5 기반 전문 검색
  * mode=category: 카테고리 이름으로 문서 목록 반환
@@ -90,6 +114,38 @@ search.get('/search', async (c) => {
     const isAdmin = user && rbac.can(user.role, 'admin:access');
     const canSeePrivate = rbac.can(user?.role ?? 'guest', 'wiki:private');
     const privateFilter = canSeePrivate ? '' : ' AND is_private = 0';
+
+    // ── 일반 문서 검색 필터(보고서 기반): 정렬/필드/카테고리/날짜/비공개 토글 ──
+    // 이 필터들은 일반 문서 검색(FTS5 + LIKE fallback) 경로에만 적용한다.
+    // 이미지(이미지:)·카테고리 가상(카테고리:)·mode=category·exact_match 경로에는 적용하지 않는다.
+    const SORTS = new Set(['relevance', 'recent', 'title']);
+    const sortParam = c.req.query('sort') ?? '';
+    const sort = SORTS.has(sortParam) ? sortParam : 'relevance';
+    const FIELDS = new Set(['all', 'title', 'body']);
+    const fieldParam = c.req.query('field') ?? '';
+    const field = FIELDS.has(fieldParam) ? fieldParam : 'all';
+    const categoryFilter = (c.req.query('category') || '').trim();
+    const fromTs = parseDateParam(c.req.query('from'), false);
+    const toTs = parseDateParam(c.req.query('to'), true);
+    // 비공개 포함 토글: wiki:private 보유자만 끌 수 있다(기본 포함). 권한 미달이면 무시(강제 제외 유지).
+    const includePrivate = c.req.query('include_private') !== '0';
+    const effectiveSeePrivate = canSeePrivate && includePrivate;
+
+    // category(정확 일치) + 날짜 범위 추가필터 SQL 조각 빌더.
+    // FTS 경로는 별칭 'p', LIKE 경로는 별칭 없이('') 호출해 동일 조건을 재사용한다.
+    const buildExtraFilters = (alias: string): { sql: string; binds: unknown[] } => {
+        const a = alias ? alias + '.' : '';
+        const parts: string[] = [];
+        const binds: unknown[] = [];
+        if (categoryFilter) {
+            parts.push(`AND EXISTS (SELECT 1 FROM page_categories pc WHERE pc.page_id = ${a}id AND pc.category = ?)`);
+            binds.push(categoryFilter);
+        }
+        if (fromTs !== null) { parts.push(`AND ${a}updated_at >= ?`); binds.push(fromTs); }
+        if (toTs !== null) { parts.push(`AND ${a}updated_at <= ?`); binds.push(toTs); }
+        return { sql: parts.length ? ' ' + parts.join(' ') : '', binds };
+    };
+
     const searchStartTime = Date.now();
 
     // 서버 사이드 페이지네이션: 페이지당 PAGE_SIZE 건, LIMIT/OFFSET 으로 DB 부하 최소화.
@@ -301,32 +357,64 @@ search.get('/search', async (c) => {
     // String.length 는 UTF-16 code unit 기준이라 비-BMP 문자(이모지 등)에서 codepoint 수와
     // 어긋난다. trigram 은 codepoint 단위로 토크나이즈하므로 [...]로 codepoint 수를 센다.
     const queryCodepointLength = [...trimmedQuery].length;
-    if (queryCodepointLength < 3) {
-        const visibility = (isAdmin ? '' : ' AND deleted_at IS NULL') + privateFilter;
+
+    // LIKE 기반 검색(짧은 쿼리 / field=title / FTS5 오류 fallback 공용 경로).
+    // field 에 따라 매칭 컬럼(슬러그·제목·본문)을 좁히고, sort/카테고리/날짜/비공개 필터를 함께 반영한다.
+    const runLikeSearch = async () => {
+        const visibility = (isAdmin ? '' : ' AND deleted_at IS NULL') + (effectiveSeePrivate ? '' : ' AND is_private = 0');
         // LIKE 메타문자(%, _, \)를 escape 해 사용자가 입력한 문자열 그대로만 매치한다.
         const likeEscaped = trimmedQuery.replace(/[\\%_]/g, '\\$&');
         const likePattern = `%${likeEscaped}%`;
+        const extra = buildExtraFilters('');
+
+        // field 별 매칭 컬럼 집합: title=슬러그/제목, body=본문, all=셋 다.
+        let whereCols: string;
+        const whereBinds: unknown[] = [];
+        if (field === 'title') {
+            whereCols = `(slug LIKE ? ESCAPE '\\' OR title LIKE ? ESCAPE '\\')`;
+            whereBinds.push(likePattern, likePattern);
+        } else if (field === 'body') {
+            whereCols = `(content LIKE ? ESCAPE '\\')`;
+            whereBinds.push(likePattern);
+        } else {
+            whereCols = `(slug LIKE ? ESCAPE '\\' OR title LIKE ? ESCAPE '\\' OR content LIKE ? ESCAPE '\\')`;
+            whereBinds.push(likePattern, likePattern, likePattern);
+        }
+        const whereSql = `WHERE ${whereCols}${visibility}${extra.sql}`;
 
         const totalRow = await db
-            .prepare(`SELECT COUNT(*) as total FROM pages WHERE (slug LIKE ? ESCAPE '\\' OR title LIKE ? ESCAPE '\\' OR content LIKE ? ESCAPE '\\')${visibility}`)
-            .bind(likePattern, likePattern, likePattern)
+            .prepare(`SELECT COUNT(*) as total FROM pages ${whereSql}`)
+            .bind(...whereBinds, ...extra.binds)
             .first<{ total: number }>();
         const total = totalRow?.total ?? 0;
         const { page, offset } = clampPage(total);
 
-        // 슬러그 LIKE 매치를 가장 우선, 다음 title 매치, 마지막 본문 매치로 정렬한다.
-        // 스니펫을 직접 만들기 위해 content도 함께 가져온다(<3글자 fallback이라 호출 빈도가 낮다).
+        // sort 별 정렬. relevance 는 슬러그>제목>본문 우선 후 updated_at DESC.
+        let orderSql: string;
+        const orderBinds: unknown[] = [];
+        // 모든 정렬에 고유 slug 를 최종 타이브레이커로 붙여 페이지네이션을 결정적으로 만든다(FTS 경로와 동일).
+        if (sort === 'recent') {
+            orderSql = 'ORDER BY updated_at DESC, slug ASC';
+        } else if (sort === 'title') {
+            // 결과 카드는 표시 제목(title 우선, 없으면 slug)을 렌더하므로 동일 키로 정렬한다.
+            orderSql = 'ORDER BY COALESCE(title, slug) ASC, slug ASC';
+        } else {
+            orderSql = `ORDER BY (CASE WHEN slug LIKE ? ESCAPE '\\' THEN 0
+                          WHEN title LIKE ? ESCAPE '\\' THEN 1
+                          ELSE 2 END), updated_at DESC, slug ASC`;
+            orderBinds.push(likePattern, likePattern);
+        }
+
+        // 스니펫을 직접 만들기 위해 content도 함께 가져온다.
         const sql = `
             SELECT slug, title, content, deleted_at
             FROM pages
-            WHERE (slug LIKE ? ESCAPE '\\' OR title LIKE ? ESCAPE '\\' OR content LIKE ? ESCAPE '\\')${visibility}
-            ORDER BY (CASE WHEN slug LIKE ? ESCAPE '\\' THEN 0
-                          WHEN title LIKE ? ESCAPE '\\' THEN 1
-                          ELSE 2 END), updated_at DESC
+            ${whereSql}
+            ${orderSql}
             LIMIT ? OFFSET ?
         `;
         const results = await db.prepare(sql)
-            .bind(likePattern, likePattern, likePattern, likePattern, likePattern, PAGE_SIZE, offset)
+            .bind(...whereBinds, ...extra.binds, ...orderBinds, PAGE_SIZE, offset)
             .all<{ slug: string; title: string | null; content: string; deleted_at: number | null }>();
 
         const safeResults = results.results.map((r) => {
@@ -342,10 +430,15 @@ search.get('/search', async (c) => {
         });
 
         if (shouldTrack) trackSearch(c, trimmedQuery, total, Date.now() - searchStartTime);
-        return c.json({ results: safeResults, total, page, pageSize: PAGE_SIZE, exact_match: exactMatch });
+        return c.json({ results: safeResults, total, page, pageSize: PAGE_SIZE, exact_match: exactMatch, applied: { sort, field } });
+    };
+
+    // 트라이그램 미스(<3 codepoint) 또는 제목 전용 검색(field=title)은 FTS 를 건너뛰고 LIKE 로 처리한다.
+    if (queryCodepointLength < 3 || field === 'title') {
+        return await runLikeSearch();
     }
 
-    // FTS5 Trigram 검색 (3글자 이상)
+    // FTS5 Trigram 검색 (3글자 이상, field=all|body)
     //
     // 하이라이트 스니펫은 FTS5 의 snippet() 보조함수를 쓰지 않고 본문에서 직접 만든다.
     // pages_fts 는 trigram 토크나이저 + 외부 콘텐츠(content=pages) 테이블이라, snippet()
@@ -355,7 +448,7 @@ search.get('/search', async (c) => {
     // 리터럴 substring 위치에 정확히 <mark> 를 단다(다른 fallback 경로와 동일한 방식).
     // FTS5 는 행 선별/랭킹용으로만 사용한다.
     try {
-        const visibility = (isAdmin ? '' : ' AND p.deleted_at IS NULL') + (canSeePrivate ? '' : ' AND p.is_private = 0');
+        const visibility = (isAdmin ? '' : ' AND p.deleted_at IS NULL') + (effectiveSeePrivate ? '' : ' AND p.is_private = 0');
 
         // Trigram 토크나이저에서는 따옴표로 감싸면 정확한 substring 매칭
         const safeMatchQuery = '"' + trimmedQuery.replace(/"/g, '""') + '"';
@@ -369,6 +462,15 @@ search.get('/search', async (c) => {
         // (예: 검색어 "100%"가 모든 행에 매치되어 결과가 부풀려지는 현상 방지)
         const likeEscaped = trimmedQuery.replace(/[\\%_]/g, '\\$&');
         const likePattern = `%${likeEscaped}%`;
+        const extra = buildExtraFilters('p');
+
+        // field 별 WHERE: all=(FTS OR 제목 LIKE), body=(FTS AND 본문 LIKE).
+        // (field=title 은 위에서 LIKE 경로로 분기되어 여기 도달하지 않는다.)
+        // 두 경우 모두 FTS subquery 의 MATCH 바인드 1개 + 컬럼 LIKE 바인드 1개로 동일하다.
+        const whereCols = field === 'body'
+            ? `(fts.rowid IS NOT NULL AND p.content LIKE ? ESCAPE '\\')`
+            : `(fts.rowid IS NOT NULL OR p.title LIKE ? ESCAPE '\\')`;
+        const whereSql = `WHERE ${whereCols}${visibility}${extra.sql}`;
 
         const totalRow = await db
             .prepare(
@@ -376,15 +478,33 @@ search.get('/search', async (c) => {
                  FROM pages p
                  LEFT JOIN (SELECT rowid FROM pages_fts WHERE pages_fts MATCH ?) AS fts
                    ON fts.rowid = p.id
-                 WHERE (fts.rowid IS NOT NULL OR p.title LIKE ? ESCAPE '\\')${visibility}`
+                 ${whereSql}`
             )
-            .bind(safeMatchQuery, likePattern)
+            .bind(safeMatchQuery, likePattern, ...extra.binds)
             .first<{ total: number }>();
         const total = totalRow?.total ?? 0;
         const { page, offset } = clampPage(total);
 
-        // 슬러그/title LIKE 매치를 FTS rank 보다 우선해 정렬한다.
+        // sort 별 정렬. relevance 는 슬러그/title LIKE 매치를 FTS rank 보다 우선한다.
         // FTS 는 행 선별/랭킹용으로만 사용하고, 스니펫(<mark>)은 아래에서 본문 기준으로 직접 만든다.
+        let orderSql: string;
+        const orderBinds: unknown[] = [];
+        // 모든 정렬에 고유 slug 를 최종 타이브레이커로 붙여 LIMIT/OFFSET 페이지네이션을 결정적으로 만든다
+        // (updated_at 은 초 단위라 동률이 흔하고, 동률 시 SQLite 의 행 순서는 미정의).
+        if (sort === 'recent') {
+            orderSql = 'ORDER BY p.updated_at DESC, p.slug ASC';
+        } else if (sort === 'title') {
+            // 결과 카드는 표시 제목(title 우선, 없으면 slug)을 렌더하므로 동일 키로 정렬한다.
+            orderSql = 'ORDER BY COALESCE(p.title, p.slug) ASC, p.slug ASC';
+        } else {
+            orderSql = `ORDER BY (CASE WHEN p.slug LIKE ? ESCAPE '\\' THEN 0
+                          WHEN p.title LIKE ? ESCAPE '\\' THEN 1
+                          ELSE 2 END),
+                    CASE WHEN fts.rank IS NULL THEN 1 ELSE 0 END,
+                    fts.rank, p.slug ASC`;
+            orderBinds.push(likePattern, likePattern);
+        }
+
         const sql = `
            SELECT p.slug, p.title, p.content, p.deleted_at,
                   fts.rank as rank
@@ -394,18 +514,14 @@ search.get('/search', async (c) => {
                FROM pages_fts
                WHERE pages_fts MATCH ?
            ) AS fts ON fts.rowid = p.id
-           WHERE (fts.rowid IS NOT NULL OR p.title LIKE ? ESCAPE '\\')${visibility}
-           ORDER BY (CASE WHEN p.slug LIKE ? ESCAPE '\\' THEN 0
-                          WHEN p.title LIKE ? ESCAPE '\\' THEN 1
-                          ELSE 2 END),
-                    CASE WHEN fts.rank IS NULL THEN 1 ELSE 0 END,
-                    fts.rank
+           ${whereSql}
+           ${orderSql}
            LIMIT ? OFFSET ?
         `;
 
         const results = await db
             .prepare(sql)
-            .bind(safeMatchQuery, likePattern, likePattern, likePattern, PAGE_SIZE, offset)
+            .bind(safeMatchQuery, likePattern, ...extra.binds, ...orderBinds, PAGE_SIZE, offset)
             .all<{ slug: string; title: string | null; content: string; deleted_at: number | null; rank: number | null }>();
 
         // 스니펫은 본문에서 리터럴 substring 위치를 찾아 직접 <mark> 를 단다(escape 포함).
@@ -426,50 +542,11 @@ search.get('/search', async (c) => {
         });
 
         if (shouldTrack) trackSearch(c, trimmedQuery, total, Date.now() - searchStartTime);
-        return c.json({ results: safeResults, total, page, pageSize: PAGE_SIZE, exact_match: exactMatch });
+        return c.json({ results: safeResults, total, page, pageSize: PAGE_SIZE, exact_match: exactMatch, applied: { sort, field } });
     } catch (ftsError) {
-        // FTS5 쿼리 실패 시 LIKE fallback
+        // FTS5 쿼리 실패 시 LIKE fallback (필터/정렬/필드 동작은 LIKE 경로가 동일하게 처리)
         console.error('FTS5 search failed, falling back to LIKE:', ftsError);
-        const visibility = (isAdmin ? '' : ' AND deleted_at IS NULL') + privateFilter;
-        // LIKE 메타문자(%, _, \)를 escape 해 사용자가 입력한 문자열 그대로만 매치한다.
-        const likeEscaped = trimmedQuery.replace(/[\\%_]/g, '\\$&');
-        const likePattern = `%${likeEscaped}%`;
-
-        const totalRow = await db
-            .prepare(`SELECT COUNT(*) as total FROM pages WHERE (slug LIKE ? ESCAPE '\\' OR title LIKE ? ESCAPE '\\' OR content LIKE ? ESCAPE '\\')${visibility}`)
-            .bind(likePattern, likePattern, likePattern)
-            .first<{ total: number }>();
-        const total = totalRow?.total ?? 0;
-        const { page, offset } = clampPage(total);
-
-        // 슬러그 LIKE 매치를 가장 우선, 다음 title 매치, 마지막 본문 매치로 정렬한다.
-        const fallbackSql = `
-            SELECT slug, title, content, deleted_at
-            FROM pages
-            WHERE (slug LIKE ? ESCAPE '\\' OR title LIKE ? ESCAPE '\\' OR content LIKE ? ESCAPE '\\')${visibility}
-            ORDER BY (CASE WHEN slug LIKE ? ESCAPE '\\' THEN 0
-                          WHEN title LIKE ? ESCAPE '\\' THEN 1
-                          ELSE 2 END), updated_at DESC
-            LIMIT ? OFFSET ?
-        `;
-        const fallbackResults = await db.prepare(fallbackSql)
-            .bind(likePattern, likePattern, likePattern, likePattern, likePattern, PAGE_SIZE, offset)
-            .all<{ slug: string; title: string | null; content: string; deleted_at: number | null }>();
-
-        const safeResults = fallbackResults.results.map((r) => {
-            const snip = buildLikeSnippet(r.slug, r.content, trimmedQuery);
-            return {
-                slug: r.slug,
-                title: r.title,
-                deleted_at: r.deleted_at,
-                isDeleted: !!r.deleted_at,
-                snippet: snip.html,
-                bodyMatch: snip.bodyMatch,
-            };
-        });
-
-        if (shouldTrack) trackSearch(c, trimmedQuery, total, Date.now() - searchStartTime);
-        return c.json({ results: safeResults, total, page, pageSize: PAGE_SIZE, exact_match: exactMatch });
+        return await runLikeSearch();
     }
 });
 

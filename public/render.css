@@ -1,12 +1,10 @@
 /* ── 문서 렌더링 전용 스타일 ── */
 /* ── TOC (Table of Contents) ── */
+/* bg/border/radius 는 style.css 의 공통 .surface-card 그룹에서 제공 */
 .wiki-toc {
-  background: var(--wiki-card-bg);
-  border: 1px solid var(--wiki-border);
-  border-radius: 8px;
-  padding: 1.5rem;
+  padding: var(--wiki-space-6);
   box-shadow: none;
-  margin-bottom: 2rem;
+  margin-bottom: var(--wiki-space-8);
 }
 
 /* ── 본문 상단 인라인 목차 카드 (좌측 플로팅, 도입부·본문이 우측·하단을 감쌈) ── */
@@ -18,10 +16,7 @@
 .wiki-toc-card {
   float: left;
   width: clamp(220px, 28%, 320px);
-  margin: 0 1.25rem 1rem 0;
-  background: var(--wiki-card-bg);
-  border: 1px solid var(--wiki-border);
-  border-radius: 8px;
+  margin: 0 var(--wiki-space-5) var(--wiki-space-4) 0;
   box-shadow: var(--wiki-shadow-sm);
   overflow: hidden;
 }
@@ -51,10 +46,10 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.5rem;
+  gap: var(--wiki-space-2);
   padding: 0.6rem 0.85rem;
   font-weight: 600;
-  font-size: 0.85rem;
+  font-size: var(--wiki-fs-base);
   color: var(--wiki-text);
   border-bottom: 1px solid var(--wiki-border);
 }
@@ -69,9 +64,9 @@
   color: var(--wiki-text-muted);
   cursor: pointer;
   padding: 0;
-  font-size: 0.85rem;
+  font-size: var(--wiki-fs-base);
   line-height: 1;
-  transition: color 0.15s;
+  transition: color var(--wiki-dur-instant);
 }
 
 .wiki-toc-card-toggle:hover {
@@ -82,7 +77,7 @@
 .wiki-toc-card-body {
   display: grid;
   grid-template-rows: 1fr;
-  transition: grid-template-rows 0.3s ease;
+  transition: grid-template-rows var(--wiki-dur-slow) ease;
 }
 
 .wiki-toc-card-collapsed .wiki-toc-card-body {
@@ -110,7 +105,7 @@
 
 /* 최상위 목록에만 상하 여백 — 접힘 시 grid 0fr 로 완전히 가려지도록 nav 패딩은 0 */
 .wiki-toc-card-nav > ol {
-  margin-block: 0.5rem;
+  margin-block: var(--wiki-space-2);
 }
 
 .wiki-toc-card-nav ol ol,
@@ -127,8 +122,8 @@
   text-decoration: none;
   display: block;
   padding: 0.2rem 0.35rem;
-  border-radius: 6px;
-  transition: background 0.15s, color 0.15s;
+  border-radius: var(--wiki-radius-base);
+  transition: background var(--wiki-dur-instant), color var(--wiki-dur-instant);
 }
 
 .wiki-toc-card-nav a:hover {
@@ -147,7 +142,7 @@
   .wiki-toc-card {
     float: none;
     width: 100%;
-    margin: 0 0 1rem 0;
+    margin: 0 0 var(--wiki-space-4) 0;
   }
 }
 
@@ -155,11 +150,11 @@
 .accordion-item {
   background-color: var(--wiki-bg);
   border: 1px solid var(--wiki-border) !important;
-  margin-bottom: 0.75rem;
-  border-radius: 3px !important;
+  margin-bottom: var(--wiki-space-3);
+  border-radius: var(--wiki-radius-xs) !important;
   box-shadow: var(--wiki-shadow-sm);
   overflow: hidden;
-  transition: box-shadow 0.2s ease;
+  transition: box-shadow var(--wiki-dur-fast) ease;
 }
 
 .accordion-item:hover {
@@ -171,7 +166,7 @@
   color: var(--wiki-text);
   font-weight: 600;
   box-shadow: none !important;
-  padding: 1rem 1.5rem;
+  padding: var(--wiki-space-4) var(--wiki-space-6);
 }
 
 .accordion-button:not(.collapsed) {
@@ -184,7 +179,7 @@
 }
 
 .accordion-body {
-  padding: 1.5rem;
+  padding: var(--wiki-space-6);
   background-color: var(--wiki-bg);
   color: var(--wiki-text);
 }
@@ -206,20 +201,71 @@
   height: auto;
 }
 
+/* ── 본문 측정폭(measure) ──
+   산문 블록만 ~66ch(--wiki-measure) 로 제한해 가독성을 확보한다. 표/코드/이미지/
+   콜아웃/탭/목차 등 넓은 블록은 대상에서 제외(자연 전체폭). render.ts 가 본문을
+   섹션(.wiki-section-body-inner)·도입부(.wiki-lead-body)로 감싸므로 각 컨테이너의
+   직계 산문 자식을 대상으로 한다. `>` 직계 제약으로 표 셀·콜아웃 내부 산문은
+   자동 제외된다. (미섹션/렌더 전 상태 대비 .wiki-content 직계도 포함) */
+.wiki-content .wiki-section-body-inner > p,
+.wiki-content .wiki-section-body-inner > ul,
+.wiki-content .wiki-section-body-inner > ol,
+.wiki-content .wiki-section-body-inner > dl,
+.wiki-content .wiki-section-body-inner > blockquote,
+.wiki-content .wiki-lead-body > p,
+.wiki-content .wiki-lead-body > ul,
+.wiki-content .wiki-lead-body > ol,
+.wiki-content .wiki-lead-body > dl,
+.wiki-content .wiki-lead-body > blockquote,
+.wiki-content > p,
+.wiki-content > ul,
+.wiki-content > ol,
+.wiki-content > dl,
+.wiki-content > blockquote {
+  max-width: var(--wiki-measure);
+}
+
+/* 헤딩 측정폭 (섹션 래핑 후 .wiki-section-heading, 미섹션 시 직계 h*) */
+.wiki-content .wiki-section-heading,
+.wiki-content > h1,
+.wiki-content > h2,
+.wiki-content > h3,
+.wiki-content > h4,
+.wiki-content > h5,
+.wiki-content > h6 {
+  max-width: var(--wiki-measure);
+}
+
 .wiki-content h1,
 .wiki-content h2,
 .wiki-content h3 {
-  margin-top: 2.5rem;
-  margin-bottom: 1rem;
+  margin-top: var(--wiki-space-10);
+  margin-bottom: var(--wiki-space-4);
   font-weight: 700;
   color: var(--wiki-text);
 }
 
 .wiki-content h2 {
-  font-size: 1.6rem;
-  padding-bottom: 0.5rem;
+  font-size: var(--wiki-fs-4xl);
+  padding-bottom: var(--wiki-space-2);
   border-bottom: 1px solid var(--wiki-border);
   /* 얇고 뚜렷한 선 */
+}
+
+/* 헤딩 크기 스케일 — h2 1.6rem 아래로 일관된 단계. h5/h6 가 본문보다 작아지던
+   브라우저 기본값 문제 해소(모두 본문 이상 + 굵게). */
+.wiki-content h3 { font-size: var(--wiki-fs-2xl); }
+.wiki-content h4 { font-size: var(--wiki-fs-xl); }
+.wiki-content h5 { font-size: var(--wiki-fs-lg); }
+.wiki-content h6 { font-size: var(--wiki-fs-body); }
+
+.wiki-content h4,
+.wiki-content h5,
+.wiki-content h6 {
+  margin-top: 1.75rem;
+  margin-bottom: var(--wiki-space-3);
+  font-weight: 700;
+  color: var(--wiki-text);
 }
 
 /* ── 접을 수 있는 섹션 ── */
@@ -238,7 +284,7 @@
 }
 
 .wiki-section-toggle-icon {
-  margin-right: 0.5rem;
+  margin-right: var(--wiki-space-2);
   font-size: 0.7em;
   color: var(--wiki-text-muted);
   flex-shrink: 0;
@@ -246,7 +292,7 @@
 
 .wiki-section-toggle-icon i {
   display: inline-block;
-  transition: transform 0.25s ease;
+  transition: transform var(--wiki-dur-moderate) ease;
 }
 
 .wiki-section-collapsed>.wiki-section-heading .wiki-section-toggle-icon i {
@@ -260,7 +306,7 @@
 .wiki-section-body {
   display: grid;
   grid-template-rows: 1fr;
-  transition: grid-template-rows 0.3s ease;
+  transition: grid-template-rows var(--wiki-dur-slow) ease;
 }
 
 .wiki-section-collapsed>.wiki-section-body {
@@ -277,8 +323,8 @@
 }
 
 .wiki-content img {
-  border-radius: 8px;
-  margin: 1.5rem 0;
+  border-radius: var(--wiki-radius-lg);
+  margin: var(--wiki-space-6) 0;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
   /* 이미지만 살짝 띄우기 */
   max-width: 100%;
@@ -292,7 +338,7 @@
   html:not([data-theme="light"]) .wiki-content img:not([data-size="icon"]),
   html:not([data-theme="light"]) .wiki-content video {
     filter: opacity(0.85) brightness(0.9);
-    transition: filter 0.25s var(--wiki-ease);
+    transition: filter var(--wiki-dur-moderate) var(--wiki-ease);
   }
   html:not([data-theme="light"]) .wiki-content img:not([data-size="icon"]):hover,
   html:not([data-theme="light"]) .wiki-content video:hover {
@@ -302,7 +348,7 @@
 html[data-theme="dark"] .wiki-content img:not([data-size="icon"]),
 html[data-theme="dark"] .wiki-content video {
   filter: opacity(0.85) brightness(0.9);
-  transition: filter 0.25s var(--wiki-ease);
+  transition: filter var(--wiki-dur-moderate) var(--wiki-ease);
 }
 html[data-theme="dark"] .wiki-content img:not([data-size="icon"]):hover,
 html[data-theme="dark"] .wiki-content video:hover {
@@ -322,9 +368,9 @@ html[data-theme="dark"] .wiki-content video:hover {
 .wiki-content code {
   background: var(--wiki-code-bg);
   padding: 0.2rem 0.4rem;
-  border-radius: 8px;
+  border-radius: var(--wiki-radius-lg);
   font-size: 0.9em;
-  color: var(--wiki-primary);
+  color: var(--wiki-text);
   border: 1px solid var(--wiki-border);
   box-shadow: none;
   word-break: break-all;
@@ -332,17 +378,24 @@ html[data-theme="dark"] .wiki-content video:hover {
   font-family: var(--wiki-code-font) !important;
 }
 
+/* 링크 안의 인라인 코드(`[`foo`](url)` → <a><code>)는 앵커 색을 상속해
+   링크 어포던스를 유지한다(기본/hover 모두). 일반 코드의 중립색이 링크색을
+   덮어쓰지 않도록 더 구체적인 셀렉터로 inherit. */
+.wiki-content a code {
+  color: inherit;
+}
+
 /* 큰 코드 블록 (Wrapper로 마진 이동) */
 .wiki-code-wrapper {
   position: relative;
-  margin: 1.5rem 0;
+  margin: var(--wiki-space-6) 0;
 }
 
 .wiki-content pre {
   background: var(--wiki-code-bg);
   color: var(--wiki-text);
   padding: 1.2rem;
-  border-radius: 8px;
+  border-radius: var(--wiki-radius-lg);
   white-space: pre-wrap;
   word-break: break-all;
   overflow-wrap: break-word;
@@ -365,12 +418,12 @@ html[data-theme="dark"] .wiki-content video:hover {
 
 /* ── Mermaid 다이어그램 (```mermaid 코드펜스 → <figure>) ── */
 .wiki-content .mermaid-figure {
-  margin: 1.5rem 0;
-  padding: 1rem;
+  margin: var(--wiki-space-6) 0;
+  padding: var(--wiki-space-4);
   text-align: center;
   background: var(--wiki-card-bg);
   border: 1px solid var(--wiki-border);
-  border-radius: 8px;
+  border-radius: var(--wiki-radius-lg);
   overflow-x: auto;
 }
 
@@ -381,8 +434,8 @@ html[data-theme="dark"] .wiki-content video:hover {
 
 .wiki-content .mermaid-figure .mermaid-loading {
   color: var(--wiki-text-muted, #6b7280);
-  font-size: 0.9rem;
-  padding: 1rem 0;
+  font-size: var(--wiki-fs-body);
+  padding: var(--wiki-space-4) 0;
 }
 
 .wiki-content .mermaid-figure .mermaid-error {
@@ -394,9 +447,11 @@ html[data-theme="dark"] .wiki-content video:hover {
    색상 변수는 이 블록 안에서만 쓰이며, 토큰 선택자에서 참조한다. */
 .wiki-content pre[class*="language-"],
 .wiki-content pre[class*="language-"] code[class*="language-"] {
-  /* VS Code Light+ (기본값) */
-  --vscode-bg: #ffffff;
-  --vscode-fg: #000000;
+  /* VS Code Light+ (기본값) — 표면색(bg/fg)은 style.css :root --code-render-* 단일 소스를
+     참조하며 light-dark() 로 테마 분기되므로 아래 다크/강제테마 블록에서 재정의하지 않는다.
+     구문 색은 엔진별 팔레트로 분리 유지. */
+  --vscode-bg: var(--code-render-bg);
+  --vscode-fg: var(--code-render-fg);
   --vscode-comment: #008000;
   --vscode-string: #a31515;
   --vscode-number: #098658;
@@ -417,9 +472,7 @@ html[data-theme="dark"] .wiki-content video:hover {
 @media (prefers-color-scheme: dark) {
   html:not([data-theme="light"]) .wiki-content pre[class*="language-"],
   html:not([data-theme="light"]) .wiki-content pre[class*="language-"] code[class*="language-"] {
-    /* VS Code Dark+ */
-    --vscode-bg: #000000;
-    --vscode-fg: #d4d4d4;
+    /* VS Code Dark+ (bg/fg 는 --code-render-* 가 처리) */
     --vscode-comment: #6a9955;
     --vscode-string: #ce9178;
     --vscode-number: #b5cea8;
@@ -440,8 +493,7 @@ html[data-theme="dark"] .wiki-content video:hover {
 /* 사용자 강제 라이트 모드 */
 html[data-theme="light"] .wiki-content pre[class*="language-"],
 html[data-theme="light"] .wiki-content pre[class*="language-"] code[class*="language-"] {
-  --vscode-bg: #ffffff;
-  --vscode-fg: #000000;
+  /* bg/fg 는 --code-render-* 가 처리 */
   --vscode-comment: #008000;
   --vscode-string: #a31515;
   --vscode-number: #098658;
@@ -461,8 +513,7 @@ html[data-theme="light"] .wiki-content pre[class*="language-"] code[class*="lang
 /* 사용자 강제 다크 모드 */
 html[data-theme="dark"] .wiki-content pre[class*="language-"],
 html[data-theme="dark"] .wiki-content pre[class*="language-"] code[class*="language-"] {
-  --vscode-bg: #000000;
-  --vscode-fg: #d4d4d4;
+  /* bg/fg 는 --code-render-* 가 처리 */
   --vscode-comment: #6a9955;
   --vscode-string: #ce9178;
   --vscode-number: #b5cea8;
@@ -484,7 +535,7 @@ html[data-theme="dark"] .wiki-content pre[class*="language-"] code[class*="langu
   background: var(--vscode-bg) !important;
   color: var(--vscode-fg) !important;
   padding: 1.2rem !important;
-  border-radius: 8px !important;
+  border-radius: var(--wiki-radius-lg) !important;
   white-space: pre-wrap !important;
   word-break: break-all !important;
   overflow-wrap: break-word !important;
@@ -617,15 +668,15 @@ html[data-theme="dark"] .wiki-content pre[class*="language-"] code[class*="langu
   background: transparent;
   border: 1px solid transparent;
   color: var(--wiki-text-muted);
-  border-radius: 8px;
+  border-radius: var(--wiki-radius-lg);
   padding: 0.3rem 0.5rem;
   cursor: pointer;
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: all var(--wiki-dur-fast) cubic-bezier(0.4, 0, 0.2, 1);
   display: flex;
   align-items: center;
   justify-content: center;
   opacity: 0.7;
-  font-size: 1rem;
+  font-size: var(--wiki-fs-lg);
 }
 
 .btn-copy-code:hover,
@@ -651,13 +702,13 @@ html[data-theme="dark"] .wiki-content pre[class*="language-"] code[class*="langu
   margin-left: 0.35em;
   padding: 0;
   border: 1px solid transparent;
-  border-radius: 5px;
+  border-radius: var(--wiki-radius-md);
   background: transparent;
   color: var(--wiki-text-muted);
   font-size: 0.65em;
   cursor: pointer;
   opacity: 1;
-  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  transition: background var(--wiki-dur-instant), border-color var(--wiki-dur-instant), color var(--wiki-dur-instant);
   vertical-align: middle;
   line-height: 1;
   flex-shrink: 0;
@@ -693,13 +744,13 @@ html[data-theme="dark"] .wiki-content pre[class*="language-"] code[class*="langu
   margin-left: 0.2em;
   padding: 0;
   border: 1px solid transparent;
-  border-radius: 5px;
+  border-radius: var(--wiki-radius-md);
   background: transparent;
   color: var(--wiki-text-muted);
   font-size: 0.65em;
   cursor: pointer;
   opacity: 1;
-  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  transition: background var(--wiki-dur-instant), border-color var(--wiki-dur-instant), color var(--wiki-dur-instant);
   vertical-align: middle;
   line-height: 1;
   flex-shrink: 0;
@@ -723,10 +774,10 @@ html[data-theme="dark"] .wiki-content pre[class*="language-"] code[class*="langu
 .wiki-content blockquote {
   border-left: 4px solid var(--wiki-primary);
   /* 왼쪽 강조선 */
-  padding: 1rem 1.5rem;
-  margin: 1.5rem 0;
+  padding: var(--wiki-space-4) var(--wiki-space-6);
+  margin: var(--wiki-space-6) 0;
   background: var(--wiki-card-bg);
-  border-radius: 0 5px 5px 0;
+  border-radius: 0 var(--wiki-radius-md) var(--wiki-radius-md) 0;
   color: var(--wiki-text-muted);
   box-shadow: none;
 }
@@ -734,10 +785,10 @@ html[data-theme="dark"] .wiki-content pre[class*="language-"] code[class*="langu
 /* Tables - 데이터가 잘 보이는 구조 */
 .wiki-content table {
   width: 100%;
-  margin: 1.5rem 0;
+  margin: var(--wiki-space-6) 0;
   border-collapse: collapse;
   /* separate 대신 collapse */
-  border-radius: 8px;
+  border-radius: var(--wiki-radius-lg);
   overflow: hidden;
   /* 모바일에서 표가 화면을 벗어나지 않도록 감싸기 */
   display: block;
@@ -771,11 +822,26 @@ html[data-theme="dark"] .wiki-content pre[class*="language-"] code[class*="langu
   color: var(--wiki-text);
 }
 
+/* zebra 줄무늬 — 짝수 행 미세 틴트(테마 인지) */
+.wiki-content table tbody tr:nth-child(even) {
+  background: color-mix(in srgb, var(--wiki-text) 4%, transparent);
+}
+
+/* 숫자 셀 정렬 일관성 */
+.wiki-content table td {
+  font-variant-numeric: tabular-nums;
+}
+
+/* 표 헤더 sticky 는 적용하지 않는다 — render.ts 의 makeCollapsibleSections 가 표를
+   접기 애니메이션용 overflow:hidden 컨테이너(.wiki-section-body-inner)로 이동시키므로,
+   그 조상이 sticky 의 스크롤 컨테이너가 되어 top:0 이 뷰포트 스크롤에 반응하지 못한다
+   (헤딩 아래 표 = 대부분). 도입부 표만 동작하는 비일관 상태를 피하기 위해 미적용. */
+
 .wiki-content a {
   color: var(--wiki-primary);
   text-decoration: none;
   font-weight: 500;
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: all var(--wiki-dur-fast) cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .wiki-content a:hover {
@@ -788,7 +854,7 @@ html[data-theme="dark"] .wiki-content pre[class*="language-"] code[class*="langu
 .wiki-content hr {
   border: none;
   border-top: 2px solid var(--wiki-hr-color);
-  margin: 2rem 0;
+  margin: var(--wiki-space-8) 0;
   opacity: 1;
 }
 
@@ -797,7 +863,7 @@ html[data-theme="dark"] .wiki-content pre[class*="language-"] code[class*="langu
 
 /* Category list heading inside article (for inline category lists) */
 .category-list h4 {
-  font-size: 1.1rem;
+  font-size: var(--wiki-fs-xl);
   font-weight: 700;
   color: var(--wiki-text-muted);
 }
@@ -816,8 +882,8 @@ html[data-theme="dark"] .wiki-content pre[class*="language-"] code[class*="langu
 .category-list .category-groups {
   display: flex;
   flex-direction: column;
-  gap: 1.25rem;
-  margin-top: 0.75rem;
+  gap: var(--wiki-space-5);
+  margin-top: var(--wiki-space-3);
 }
 
 .category-list .category-group {
@@ -825,18 +891,18 @@ html[data-theme="dark"] .wiki-content pre[class*="language-"] code[class*="langu
 }
 
 .category-list .category-group-label {
-  font-size: 1rem;
+  font-size: var(--wiki-fs-lg);
   font-weight: 700;
   color: var(--wiki-primary);
-  margin: 0 0 0.5rem 0;
-  padding-bottom: 0.25rem;
+  margin: 0 0 var(--wiki-space-2) 0;
+  padding-bottom: var(--wiki-space-1);
   border-bottom: 1px solid var(--wiki-border);
 }
 
 .category-list .category-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: 0.5rem;
+  gap: var(--wiki-space-2);
 }
 
 .category-list .category-item {
@@ -845,7 +911,7 @@ html[data-theme="dark"] .wiki-content pre[class*="language-"] code[class*="langu
   gap: 0.35rem;
   padding: 0.45rem 0.65rem;
   border: 1px solid var(--wiki-border);
-  border-radius: 6px;
+  border-radius: var(--wiki-radius-base);
   background: var(--wiki-card-bg);
   color: var(--wiki-text);
   text-decoration: none;
@@ -869,16 +935,16 @@ html[data-theme="dark"] .wiki-content pre[class*="language-"] code[class*="langu
 }
 
 .category-list .category-summary {
-  margin-top: 0.25rem;
+  margin-top: var(--wiki-space-1);
 }
 
 .category-list .category-pagination {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.25rem;
+  gap: var(--wiki-space-1);
   justify-content: center;
   align-items: center;
-  margin-top: 1.5rem;
+  margin-top: var(--wiki-space-6);
 }
 
 .category-list .category-pagination button {
@@ -886,7 +952,7 @@ html[data-theme="dark"] .wiki-content pre[class*="language-"] code[class*="langu
 }
 
 .category-list .category-pagination-ellipsis {
-  padding: 0 0.25rem;
+  padding: 0 var(--wiki-space-1);
   color: var(--wiki-text-muted);
 }
 /* ── Folding Block (펼치기/접기) ── */
@@ -910,7 +976,7 @@ html[data-theme="dark"] .wiki-content pre[class*="language-"] code[class*="langu
   content: '▶ ';
   font-size: 0.75em;
   margin-right: 0.3em;
-  transition: transform 0.2s;
+  transition: transform var(--wiki-dur-fast);
   display: inline-block;
 }
 
@@ -927,7 +993,7 @@ html[data-theme="dark"] .wiki-content pre[class*="language-"] code[class*="langu
 /* ── 펼치기/접기 (Folding) 내용물 애니메이션 ── */
 /* 기본 폴백: 열릴 때 부드럽게 나타나는 애니메이션 (모든 브라우저 지원) */
 .wiki-fold[open] .wiki-fold-content {
-  animation: fold-show 0.3s ease-out;
+  animation: fold-show var(--wiki-dur-slow) ease-out;
 }
 
 @keyframes fold-show {
@@ -949,7 +1015,7 @@ html[data-theme="dark"] .wiki-content pre[class*="language-"] code[class*="langu
   }
 
   .wiki-fold::details-content {
-    transition: height 0.3s ease-out, opacity 0.3s ease-out, content-visibility 0.3s allow-discrete;
+    transition: height var(--wiki-dur-slow) ease-out, opacity var(--wiki-dur-slow) ease-out, content-visibility var(--wiki-dur-slow) allow-discrete;
     height: 0;
     opacity: 0;
     overflow: hidden;
@@ -978,13 +1044,13 @@ html[data-theme="dark"] .wiki-content pre[class*="language-"] code[class*="langu
   backdrop-filter: var(--wiki-glass-blur);
   -webkit-backdrop-filter: var(--wiki-glass-blur);
   border: 1px solid var(--wiki-glass-border);
-  border-radius: 8px;
+  border-radius: var(--wiki-radius-lg);
   box-shadow: var(--wiki-shadow-lg);
   z-index: 1049;
   opacity: 0;
   pointer-events: none;
   transform: translateY(12px) scale(0.95);
-  transition: opacity 0.25s ease, transform 0.25s ease;
+  transition: opacity var(--wiki-dur-moderate) ease, transform var(--wiki-dur-moderate) ease;
 }
 
 .toc-floating-panel.visible {
@@ -999,7 +1065,7 @@ html[data-theme="dark"] .wiki-content pre[class*="language-"] code[class*="langu
   justify-content: space-between;
   padding: 0.6rem 0.85rem;
   font-weight: 600;
-  font-size: 0.85rem;
+  font-size: var(--wiki-fs-base);
   border-bottom: 1px solid var(--wiki-glass-border);
   color: var(--wiki-text);
 }
@@ -1012,7 +1078,7 @@ html[data-theme="dark"] .wiki-content pre[class*="language-"] code[class*="langu
   padding: 0;
   font-size: 0.8rem;
   line-height: 1;
-  transition: color 0.15s;
+  transition: color var(--wiki-dur-instant);
 }
 
 .toc-floating-close:hover {
@@ -1048,8 +1114,8 @@ html[data-theme="dark"] .wiki-content pre[class*="language-"] code[class*="langu
   text-decoration: none;
   display: block;
   padding: 0.2rem 0.35rem;
-  border-radius: 8px;
-  transition: background 0.15s, color 0.15s;
+  border-radius: var(--wiki-radius-lg);
+  transition: background var(--wiki-dur-instant), color var(--wiki-dur-instant);
   text-align: left;
 }
 
@@ -1115,7 +1181,7 @@ html[data-theme="dark"] .toc-floating-body a.toc-active {
   align-items: center;
   width: 5.5rem;
   border: 1px solid var(--wiki-border);
-  border-radius: 8px;
+  border-radius: var(--wiki-radius-lg);
   overflow: hidden;
   background: var(--wiki-card-bg);
   box-shadow: var(--wiki-shadow-sm);
@@ -1131,7 +1197,7 @@ html[data-theme="dark"] .toc-floating-body a.toc-active {
   padding: 4px 0;
   background: var(--wiki-primary);
   color: var(--wiki-btn-text);
-  font-size: 0.75rem;
+  font-size: var(--wiki-fs-sm);
   font-weight: 700;
   letter-spacing: 0.05em;
 }
@@ -1181,7 +1247,7 @@ html[data-theme="dark"] .toc-floating-body a.toc-active {
   width: 0.95em;
   height: 0.95em;
   border: 1.5px solid var(--wiki-border);
-  border-radius: 3px;
+  border-radius: var(--wiki-radius-xs);
   display: inline-block;
   vertical-align: middle;
   margin-right: 0.3em;
@@ -1212,13 +1278,13 @@ html[data-theme="dark"] .toc-floating-body a.toc-active {
 
 /* 익스텐션 경고/에러 메시지 */
 .wiki-ext .alert {
-  margin: 1rem 0;
+  margin: var(--wiki-space-4) 0;
   font-size: 0.875rem;
 }
 
 /* 익스텐션 문서 직접 열람 뷰 */
 .wiki-ext-doc-view {
-  margin: 0.5rem 0;
+  margin: var(--wiki-space-2) 0;
 }
 
 .wiki-ext-doc-rendered {
@@ -1232,29 +1298,29 @@ html[data-theme="dark"] .toc-floating-body a.toc-active {
 
 /* 익스텐션 데이터 문서 원본 표시 */
 .wiki-ext-raw-data {
-  margin: 0.5rem 0;
+  margin: var(--wiki-space-2) 0;
 }
 
 .wiki-ext-raw-badge {
   display: inline-flex;
   align-items: center;
   gap: 0.375rem;
-  padding: 0.25rem 0.75rem;
-  font-size: 0.75rem;
+  padding: var(--wiki-space-1) var(--wiki-space-3);
+  font-size: var(--wiki-fs-sm);
   font-weight: 600;
   color: var(--wiki-text-muted);
   background: var(--wiki-bg);
   border: 1px solid var(--wiki-border);
   border-bottom: none;
-  border-radius: 6px 6px 0 0;
+  border-radius: var(--wiki-radius-base) var(--wiki-radius-base) 0 0;
 }
 
 .wiki-ext-raw-pre {
   background: var(--wiki-code-bg);
   color: var(--wiki-text);
   border: 1px solid var(--wiki-border);
-  border-radius: 0 6px 6px 6px;
-  padding: 1rem;
+  border-radius: 0 var(--wiki-radius-base) var(--wiki-radius-base) var(--wiki-radius-base);
+  padding: var(--wiki-space-4);
   margin: 0;
   font-size: 0.8rem;
   line-height: 1.5;
@@ -1267,14 +1333,14 @@ html[data-theme="dark"] .toc-floating-body a.toc-active {
 /* 익스텐션 데이터 문서 에디터 (raw textarea) */
 .wiki-ext-raw-editor {
   border: 1px solid var(--wiki-border);
-  border-radius: 8px;
+  border-radius: var(--wiki-radius-lg);
   overflow: hidden;
   background: var(--wiki-bg);
 }
 
 /* 이미지 문서 (/w/이미지:파일명) 뷰 */
 .wiki-image-doc-view {
-  margin: 0.5rem 0;
+  margin: var(--wiki-space-2) 0;
 }
 
 .wiki-image-doc-media {
@@ -1283,9 +1349,9 @@ html[data-theme="dark"] .toc-floating-body a.toc-active {
   align-items: center;
   background: var(--wiki-bg);
   border: 1px solid var(--wiki-border);
-  border-radius: 8px;
-  padding: 1rem;
-  margin-bottom: 1rem;
+  border-radius: var(--wiki-radius-lg);
+  padding: var(--wiki-space-4);
+  margin-bottom: var(--wiki-space-4);
 }
 
 .wiki-image-doc-media img,
@@ -1293,11 +1359,11 @@ html[data-theme="dark"] .toc-floating-body a.toc-active {
   max-width: 100%;
   max-height: 70vh;
   height: auto;
-  border-radius: 4px;
+  border-radius: var(--wiki-radius-sm);
 }
 
 .wiki-image-doc-text {
-  margin-top: 1rem;
+  margin-top: var(--wiki-space-4);
 }
 
 .wiki-image-doc-content {
@@ -1307,17 +1373,17 @@ html[data-theme="dark"] .toc-floating-body a.toc-active {
   background: var(--wiki-bg);
   color: var(--wiki-text);
   border: 1px solid var(--wiki-border);
-  border-radius: 8px;
-  padding: 1rem;
+  border-radius: var(--wiki-radius-lg);
+  padding: var(--wiki-space-4);
   margin: 0;
   font-family: inherit;
-  font-size: 1rem;
+  font-size: var(--wiki-fs-lg);
   line-height: 1.7;
 }
 
 /* 이미지 문서 하단 태그 배지 영역 */
 .wiki-image-doc-tags {
-  margin-top: 0.75rem;
+  margin-top: var(--wiki-space-3);
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -1325,7 +1391,7 @@ html[data-theme="dark"] .toc-floating-body a.toc-active {
 }
 
 .wiki-image-doc-tags-label {
-  font-size: 0.85rem;
+  font-size: var(--wiki-fs-base);
   margin-right: 4px;
   display: inline-flex;
   align-items: center;
@@ -1333,7 +1399,7 @@ html[data-theme="dark"] .toc-floating-body a.toc-active {
 }
 
 .wiki-image-doc-tags-empty {
-  font-size: 0.85rem;
+  font-size: var(--wiki-fs-base);
   font-style: italic;
 }
 
@@ -1351,7 +1417,7 @@ html[data-theme="dark"] .toc-floating-body a.toc-active {
 .wiki-ext-raw-editor-badge {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--wiki-space-2);
   padding: 0.5rem 0.875rem;
   font-size: 0.8rem;
   font-weight: 600;
@@ -1362,7 +1428,7 @@ html[data-theme="dark"] .toc-floating-body a.toc-active {
 
 .wiki-ext-raw-editor-hint {
   font-weight: 400;
-  font-size: 0.75rem;
+  font-size: var(--wiki-fs-sm);
   opacity: 0.7;
 }
 
@@ -1371,7 +1437,7 @@ html[data-theme="dark"] .toc-floating-body a.toc-active {
   width: 100%;
   min-height: 600px;
   max-height: 80vh;
-  padding: 1rem;
+  padding: var(--wiki-space-4);
   margin: 0;
   border: none;
   outline: none;
@@ -1419,9 +1485,9 @@ html[data-theme="dark"] .toc-floating-body a.toc-active {
   color: var(--wiki-text);
   background: var(--wiki-bg);
   border: 1px solid var(--wiki-border);
-  border-radius: 6px;
+  border-radius: var(--wiki-radius-base);
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all var(--wiki-dur-instant) ease;
   white-space: nowrap;
 }
 
@@ -1449,12 +1515,12 @@ html[data-theme="dark"] .toc-floating-body a.toc-active {
   background: transparent;
   border: 1px solid var(--wiki-border);
   color: var(--wiki-text-muted);
-  border-radius: 6px;
+  border-radius: var(--wiki-radius-base);
   padding: 0.25rem 0.6rem;
   font-size: 0.8rem;
   font-weight: 500;
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+  transition: background var(--wiki-dur-instant) ease, color var(--wiki-dur-instant) ease, border-color var(--wiki-dur-instant) ease;
 }
 
 .view-count-toggle:hover {
@@ -1480,12 +1546,12 @@ html[data-theme="dark"] .toc-floating-body a.toc-active {
   background: transparent;
   border: 1px solid var(--wiki-border);
   color: var(--wiki-text-muted);
-  border-radius: 6px;
+  border-radius: var(--wiki-radius-base);
   padding: 0.25rem 0.6rem;
   font-size: 0.8rem;
   font-weight: 500;
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+  transition: background var(--wiki-dur-instant) ease, color var(--wiki-dur-instant) ease, border-color var(--wiki-dur-instant) ease;
 }
 
 .reading-mode-toggle:hover {
@@ -1518,7 +1584,7 @@ body.reading-mode .wiki-container {
 /* PC(≥992px)에서는 읽기 모드가 본문을 화면 가로 폭 최대치로 확장 */
 @media (min-width: 992px) {
   body.reading-mode .wiki-layout {
-    padding: 0 1rem;
+    padding: 0 var(--wiki-space-4);
     gap: 0;
   }
 
@@ -1548,15 +1614,15 @@ body.reading-mode .reading-mode-toggle {
   background: var(--wiki-code-bg);
   color: var(--wiki-text);
   padding: 1.2rem;
-  border-radius: 8px;
+  border-radius: var(--wiki-radius-lg);
   border: 1px solid var(--wiki-border);
   white-space: pre-wrap;
   word-break: break-word;
   overflow-wrap: break-word;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-  font-size: 0.9rem;
+  font-size: var(--wiki-fs-body);
   line-height: 1.55;
-  margin: 0 0 1rem 0;
+  margin: 0 0 var(--wiki-space-4) 0;
 }
 
 body.raw-mode #wikiAccordion,
@@ -1586,15 +1652,15 @@ body.raw-mode .wiki-content-raw {
 .wiki-card {
   background: var(--wiki-card-bg);
   border: 1px solid var(--wiki-border);
-  border-radius: 8px;
+  border-radius: var(--wiki-radius-lg);
   padding: 0;
-  margin-bottom: 1rem;
+  margin-bottom: var(--wiki-space-4);
   box-shadow: var(--wiki-shadow-sm);
   overflow: hidden;
 }
 
 .wiki-card-header {
-  padding: 0.75rem 1.25rem;
+  padding: var(--wiki-space-3) var(--wiki-space-5);
   font-size: 0.875rem;
   font-weight: 600;
   color: var(--wiki-text-muted);
@@ -1603,7 +1669,7 @@ body.raw-mode .wiki-content-raw {
 }
 
 .wiki-card-body {
-  padding: 1rem 1.25rem;
+  padding: var(--wiki-space-4) var(--wiki-space-5);
   color: var(--wiki-text);
 }
 
@@ -1614,9 +1680,9 @@ body.raw-mode .wiki-content-raw {
 .wiki-embed {
   border-left: 4px solid var(--wiki-link);
   background: var(--wiki-card-bg);
-  border-radius: 4px;
+  border-radius: var(--wiki-radius-sm);
   padding: 0.625rem 1rem;
-  margin-bottom: 1rem;
+  margin-bottom: var(--wiki-space-4);
   box-shadow: var(--wiki-shadow-sm);
 }
 
@@ -1625,7 +1691,7 @@ body.raw-mode .wiki-content-raw {
   font-weight: 700;
   color: var(--wiki-text);
   margin-top: 0;
-  margin-bottom: 0.5rem;
+  margin-bottom: var(--wiki-space-2);
   line-height: 1.3;
 }
 
@@ -1645,15 +1711,15 @@ body.raw-mode .wiki-content-raw {
 
 .wiki-embed-body img {
   max-width: 100%;
-  border-radius: 4px;
-  margin-top: 0.5rem;
+  border-radius: var(--wiki-radius-sm);
+  margin-top: var(--wiki-space-2);
 }
 
 .wiki-grid {
   display: flex;
   flex-wrap: wrap;
   gap: 0.625rem;
-  margin-bottom: 1rem;
+  margin-bottom: var(--wiki-space-4);
 }
 
 .wiki-grid > * {
@@ -1687,8 +1753,8 @@ body.raw-mode .wiki-content-raw {
   display: flex;
   flex-wrap: nowrap;
   align-items: flex-start;
-  gap: 0.75rem;
-  margin-bottom: 1rem;
+  gap: var(--wiki-space-3);
+  margin-bottom: var(--wiki-space-4);
   max-width: 100%;
   overflow-x: auto;
   scrollbar-width: thin;
@@ -1714,7 +1780,7 @@ body.raw-mode .wiki-content-raw {
 .wiki-stat {
   background: var(--wiki-bg);
   border: 1px solid var(--wiki-border);
-  border-radius: 6px;
+  border-radius: var(--wiki-radius-base);
   padding: 0.9rem 0.75rem;
   text-align: center;
   display: flex;
@@ -1732,15 +1798,15 @@ body.raw-mode .wiki-content-raw {
 }
 
 .wiki-stat-label {
-  font-size: 0.75rem;
+  font-size: var(--wiki-fs-sm);
   color: var(--wiki-text-muted);
-  margin-top: 0.25rem;
+  margin-top: var(--wiki-space-1);
 }
 
 .wiki-badge {
   display: inline-block;
   padding: 2px 10px;
-  border-radius: 20px;
+  border-radius: var(--wiki-radius-2xl);
   font-size: 0.6875rem;
   font-weight: 500;
   line-height: 1.4;
@@ -1755,7 +1821,7 @@ body.raw-mode .wiki-content-raw {
 .wiki-tag {
   display: inline-block;
   padding: 1px 8px;
-  border-radius: 10px;
+  border-radius: var(--wiki-radius-xl);
   font-size: 0.6875rem;
   line-height: 1.5;
   background: var(--wiki-bg);
@@ -1775,7 +1841,7 @@ body.raw-mode .wiki-content-raw {
 a.wiki-button {
   display: inline-block;
   padding: 0.4rem 0.95rem;
-  border-radius: 6px;
+  border-radius: var(--wiki-radius-base);
   font-size: 0.875rem;
   font-weight: 500;
   line-height: 1.4;
@@ -1784,7 +1850,7 @@ a.wiki-button {
   border: 1px solid var(--wiki-primary);
   text-decoration: none;
   cursor: pointer;
-  transition: filter 0.15s ease, transform 0.1s ease, box-shadow 0.15s ease;
+  transition: filter var(--wiki-dur-instant) ease, transform 0.1s ease, box-shadow var(--wiki-dur-instant) ease;
   margin: 2px 2px;
   vertical-align: baseline;
   white-space: nowrap;
@@ -1854,7 +1920,7 @@ a.wiki-button > .wiki-button-label {
   width: 1.4em;
   height: 1.4em;
   object-fit: contain;
-  border-radius: 3px;
+  border-radius: var(--wiki-radius-xs);
 }
 
 .wiki-badge > .wiki-icon-img,
@@ -1891,24 +1957,27 @@ img[data-size="icon"] {
   --callout-bg-tint: rgba(107, 114, 128, 0.08);
   border: 1px solid var(--wiki-border);
   border-left: 4px solid var(--callout-accent);
-  border-radius: 6px;
+  border-radius: var(--wiki-radius-base);
   background: var(--callout-bg-tint);
-  margin: 0.75rem 0;
+  margin: var(--wiki-space-3) 0;
   overflow: hidden;
 }
 
-.wiki-callout-info    { --callout-accent: #0ea5e9; --callout-bg-tint: rgba(14, 165, 233, 0.08); }
-.wiki-callout-tip     { --callout-accent: #14b8a6; --callout-bg-tint: rgba(20, 184, 166, 0.08); }
-.wiki-callout-success { --callout-accent: #10b981; --callout-bg-tint: rgba(16, 185, 129, 0.08); }
-.wiki-callout-warning { --callout-accent: #f59e0b; --callout-bg-tint: rgba(245, 158, 11, 0.10); }
-.wiki-callout-danger  { --callout-accent: #ef4444; --callout-bg-tint: rgba(239, 68, 68, 0.08); }
-.wiki-callout-note    { --callout-accent: #6b7280; --callout-bg-tint: rgba(107, 114, 128, 0.08); }
+/* accent 는 시맨틱 토큰(success/warning/danger) 또는 신규 callout 토큰(info/tip/note)을
+   단일 소스로 참조하고, bg-tint 는 accent 의 color-mix 로 파생(값은 기존 rgba 와 동일).
+   note 다크는 의도적으로 더 밝은 중립 베이스(#a1a1aa)를 쓰므로 리터럴 유지. */
+.wiki-callout-info    { --callout-accent: var(--wiki-callout-info); --callout-bg-tint: color-mix(in srgb, var(--callout-accent) 8%, transparent); }
+.wiki-callout-tip     { --callout-accent: var(--wiki-callout-tip); --callout-bg-tint: color-mix(in srgb, var(--callout-accent) 8%, transparent); }
+.wiki-callout-success { --callout-accent: var(--wiki-success); --callout-bg-tint: color-mix(in srgb, var(--callout-accent) 8%, transparent); }
+.wiki-callout-warning { --callout-accent: var(--wiki-warning); --callout-bg-tint: color-mix(in srgb, var(--callout-accent) 10%, transparent); }
+.wiki-callout-danger  { --callout-accent: var(--wiki-danger); --callout-bg-tint: color-mix(in srgb, var(--callout-accent) 8%, transparent); }
+.wiki-callout-note    { --callout-accent: var(--wiki-callout-note); --callout-bg-tint: color-mix(in srgb, var(--callout-accent) 8%, transparent); }
 
-html[data-theme="dark"] .wiki-callout-info    { --callout-bg-tint: rgba(14, 165, 233, 0.14); }
-html[data-theme="dark"] .wiki-callout-tip     { --callout-bg-tint: rgba(20, 184, 166, 0.14); }
-html[data-theme="dark"] .wiki-callout-success { --callout-bg-tint: rgba(16, 185, 129, 0.14); }
-html[data-theme="dark"] .wiki-callout-warning { --callout-bg-tint: rgba(245, 158, 11, 0.16); }
-html[data-theme="dark"] .wiki-callout-danger  { --callout-bg-tint: rgba(239, 68, 68, 0.14); }
+html[data-theme="dark"] .wiki-callout-info    { --callout-bg-tint: color-mix(in srgb, var(--callout-accent) 14%, transparent); }
+html[data-theme="dark"] .wiki-callout-tip     { --callout-bg-tint: color-mix(in srgb, var(--callout-accent) 14%, transparent); }
+html[data-theme="dark"] .wiki-callout-success { --callout-bg-tint: color-mix(in srgb, var(--callout-accent) 14%, transparent); }
+html[data-theme="dark"] .wiki-callout-warning { --callout-bg-tint: color-mix(in srgb, var(--callout-accent) 16%, transparent); }
+html[data-theme="dark"] .wiki-callout-danger  { --callout-bg-tint: color-mix(in srgb, var(--callout-accent) 14%, transparent); }
 html[data-theme="dark"] .wiki-callout-note    { --callout-bg-tint: rgba(161, 161, 170, 0.12); }
 
 .wiki-callout-header {
@@ -1928,7 +1997,7 @@ html[data-theme="dark"] .wiki-callout-note    { --callout-bg-tint: rgba(161, 161
 }
 
 .wiki-callout-title {
-  font-size: 0.95rem;
+  font-size: var(--wiki-fs-md);
   line-height: 1.3;
 }
 
@@ -1938,7 +2007,7 @@ html[data-theme="dark"] .wiki-callout-note    { --callout-bg-tint: rgba(161, 161
 }
 
 .wiki-callout-body > p:first-child { margin-top: 0.4rem; }
-.wiki-callout-body > p:last-child  { margin-bottom: 0.25rem; }
+.wiki-callout-body > p:last-child  { margin-bottom: var(--wiki-space-1); }
 .wiki-callout-body > *:last-child  { margin-bottom: 0; }
 
 /* ── 키보드 키 ({kbd:Ctrl+C}) ── */
@@ -1947,7 +2016,7 @@ html[data-theme="dark"] .wiki-callout-note    { --callout-bg-tint: rgba(161, 161
   padding: 3px 7px;
   background: var(--wiki-bg);
   border: 1px solid var(--wiki-border);
-  border-radius: 6px;
+  border-radius: var(--wiki-radius-base);
   vertical-align: baseline;
   line-height: 1;
 }
@@ -1971,7 +2040,7 @@ html[data-theme="dark"] .wiki-callout-note    { --callout-bg-tint: rgba(161, 161
   background: var(--wiki-card-bg);
   border: 1px solid var(--wiki-border);
   border-bottom-width: 2px;
-  border-radius: 4px;
+  border-radius: var(--wiki-radius-sm);
   box-shadow: 0 1px 0 rgba(0, 0, 0, 0.04);
   text-align: center;
   white-space: nowrap;
@@ -1987,18 +2056,18 @@ html[data-theme="dark"] .wiki-callout-note    { --callout-bg-tint: rgba(161, 161
 /* ── 진행도 바 ({progress:70|라벨}) ── */
 .wiki-progress {
   display: block;
-  margin: 0.5rem 0;
-  padding: 0.5rem 0.75rem;
+  margin: var(--wiki-space-2) 0;
+  padding: var(--wiki-space-2) var(--wiki-space-3);
   background: var(--wiki-bg);
   border: 1px solid var(--wiki-border);
-  border-radius: 6px;
+  border-radius: var(--wiki-radius-base);
 }
 
 .wiki-progress-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--wiki-space-2);
   margin-bottom: 0.35rem;
   font-size: 0.8rem;
 }
@@ -2028,15 +2097,15 @@ html[data-theme="dark"] .wiki-callout-note    { --callout-bg-tint: rgba(161, 161
   width: 100%;
   height: 8px;
   background: var(--wiki-border);
-  border-radius: 999px;
+  border-radius: var(--wiki-radius-full);
   overflow: hidden;
 }
 
 .wiki-progress-fill {
   height: 100%;
   background: var(--wiki-primary);
-  border-radius: 999px;
-  transition: width 0.2s ease;
+  border-radius: var(--wiki-radius-full);
+  transition: width var(--wiki-dur-fast) ease;
 }
 
 /* ── Bootstrap 컴포넌트 위키 통합 (callout / card / tabs / accordion / steps) ── */
@@ -2046,7 +2115,7 @@ html[data-theme="dark"] .wiki-callout-note    { --callout-bg-tint: rgba(161, 161
   background: var(--wiki-card-bg);
   border-color: var(--wiki-border);
   color: var(--wiki-text);
-  margin: 0.75rem 0;
+  margin: var(--wiki-space-3) 0;
 }
 .wiki-card.card > .wiki-card-header.card-header {
   background: var(--wiki-card-bg);
@@ -2067,8 +2136,8 @@ html[data-theme="dark"] .wiki-callout-note    { --callout-bg-tint: rgba(161, 161
 
 /* :::tabs — Bootstrap nav-tabs 위에 위키 카드 배경 적용 */
 .wiki-tabs {
-  margin: 0.75rem 0;
-  border-radius: 6px;
+  margin: var(--wiki-space-3) 0;
+  border-radius: var(--wiki-radius-base);
   overflow: visible;
 }
 .wiki-tabs > .nav-tabs {
@@ -2087,7 +2156,10 @@ html[data-theme="dark"] .wiki-callout-note    { --callout-bg-tint: rgba(161, 161
 }
 .wiki-tabs > .nav-tabs .nav-link:hover { color: var(--wiki-text); }
 .wiki-tabs > .nav-tabs .nav-link.active {
-  color: var(--wiki-text);
+  /* active 색은 앱 nav-tabs(.nav-tabs .nav-link.active)와 동일하게 정렬 —
+     primary 강조 + 굵게. 나머지 본문 탭 외형(폰트/패딩/보더)은 유지. */
+  color: var(--wiki-primary);
+  font-weight: 700;
   background: var(--wiki-card-bg);
   border-color: var(--wiki-border);
   border-bottom-color: var(--wiki-card-bg);
@@ -2096,7 +2168,7 @@ html[data-theme="dark"] .wiki-callout-note    { --callout-bg-tint: rgba(161, 161
   background: var(--wiki-card-bg);
   border: 1px solid var(--wiki-border);
   border-top: 0;
-  border-radius: 0 6px 6px 6px;
+  border-radius: 0 var(--wiki-radius-base) var(--wiki-radius-base) var(--wiki-radius-base);
   padding: 0.85rem 1rem;
   color: var(--wiki-text);
 }
@@ -2113,8 +2185,8 @@ html[data-theme="dark"] .wiki-callout-note    { --callout-bg-tint: rgba(161, 161
   --bs-accordion-btn-color: var(--wiki-text);
   --bs-accordion-btn-focus-border-color: var(--wiki-primary);
   --bs-accordion-btn-focus-box-shadow: 0 0 0 0.15rem color-mix(in srgb, var(--wiki-primary) 25%, transparent);
-  margin: 0.75rem 0;
-  border-radius: 6px;
+  margin: var(--wiki-space-3) 0;
+  border-radius: var(--wiki-radius-base);
   /* overflow:hidden 은 본문 내부 popover/툴팁/드롭다운을 잘라내므로 사용하지 않는다.
      모서리 라운딩은 BS 가 첫/마지막 .accordion-item 에서 자체 처리. */
 }
@@ -2126,7 +2198,7 @@ html[data-theme="dark"] .wiki-callout-note    { --callout-bg-tint: rgba(161, 161
   line-height: inherit;
 }
 .wiki-accordion .accordion-button {
-  font-size: 0.95rem;
+  font-size: var(--wiki-fs-md);
   font-weight: 600;
   padding: 0.6rem 0.9rem;
 }
@@ -2139,7 +2211,7 @@ html[data-theme="dark"] .wiki-callout-note    { --callout-bg-tint: rgba(161, 161
 /* :::steps — Bootstrap 에 stepper 가 없어 커스텀. bi 아이콘 + 세로 레이아웃 */
 .wiki-steps {
   list-style: none;
-  margin: 0.75rem 0;
+  margin: var(--wiki-space-3) 0;
   padding: 0;
   display: flex;
   flex-direction: column;
@@ -2149,7 +2221,7 @@ html[data-theme="dark"] .wiki-callout-note    { --callout-bg-tint: rgba(161, 161
 .wiki-step {
   display: flex;
   align-items: flex-start;
-  gap: 0.75rem;
+  gap: var(--wiki-space-3);
   position: relative;
   padding: 0.4rem 0;
 }
@@ -2159,7 +2231,7 @@ html[data-theme="dark"] .wiki-callout-note    { --callout-bg-tint: rgba(161, 161
   flex-shrink: 0;
   width: 2rem;
   height: 2rem;
-  border-radius: 999px;
+  border-radius: var(--wiki-radius-full);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2167,9 +2239,9 @@ html[data-theme="dark"] .wiki-callout-note    { --callout-bg-tint: rgba(161, 161
   border: 2px solid var(--wiki-border);
   color: var(--wiki-text-muted);
   font-weight: 700;
-  font-size: 0.85rem;
+  font-size: var(--wiki-fs-base);
 }
-.wiki-step-marker .wiki-step-icon { display: none; font-size: 1rem; }
+.wiki-step-marker .wiki-step-icon { display: none; font-size: var(--wiki-fs-lg); }
 .wiki-step-marker .wiki-step-num  { display: inline; }
 
 .wiki-step-done   .wiki-step-marker { background: var(--wiki-primary); border-color: var(--wiki-primary); color: #fff; }
@@ -2198,8 +2270,8 @@ html[data-theme="dark"] .wiki-callout-note    { --callout-bg-tint: rgba(161, 161
   padding-top: 0.3rem;
 }
 .wiki-step-current .wiki-step-title { color: var(--wiki-primary); }
-.wiki-step-body { color: var(--wiki-text); font-size: 0.95rem; }
-.wiki-step-body > :first-child { margin-top: 0.25rem; }
+.wiki-step-body { color: var(--wiki-text); font-size: var(--wiki-fs-md); }
+.wiki-step-body > :first-child { margin-top: var(--wiki-space-1); }
 .wiki-step-body > :last-child  { margin-bottom: 0; }
 .wiki-step-body:empty { display: none; }
 
@@ -2213,7 +2285,7 @@ html[data-theme="dark"] .wiki-callout-note    { --callout-bg-tint: rgba(161, 161
 mark.search-hit {
   background: var(--wiki-primary, #ffe066);
   color: #fff;
-  border-radius: 3px;
+  border-radius: var(--wiki-radius-xs);
   padding: 0 2px;
   scroll-margin-top: 80px;
   animation: wiki-search-hit-pulse 1.6s ease-out 1;

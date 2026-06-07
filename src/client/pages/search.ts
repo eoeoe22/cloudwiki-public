@@ -66,16 +66,54 @@ function goImageSearch() {
 function goCategorySearch() {
     goNamespaceSearch(CATEGORY_PREFIX);
 }
+
+// "문서" 칩: 네임스페이스 prefix 를 모두 제거하고 일반 문서 검색으로 전환한다.
+function goDocumentSearch() {
+    const headerInput = document.getElementById('searchInput');
+    const params = new URLSearchParams(window.location.search);
+    let baseQuery = ((headerInput && headerInput.value.trim()) || params.get('q') || currentQuery || '').trim();
+    for (const other of [IMAGE_PREFIX, CATEGORY_PREFIX]) {
+        if (baseQuery.startsWith(other)) {
+            baseQuery = baseQuery.slice(other.length).trim();
+            break;
+        }
+    }
+    if (headerInput) headerInput.value = baseQuery;
+    window.location.href = `/search?q=${encodeURIComponent(baseQuery)}&mode=content`;
+}
+
 // 진행 중인 fetch 를 추적해 새 요청이 시작될 때 이전 요청을 취소한다.
 // 이전 요청이 늦게 완료되어 현재 UI 를 덮어쓰는 경쟁 상태를 방지한다.
 let activeAbortController = null;
 const CACHE_CAPACITY = 30;
 
+// 일반 문서 검색 필터 파라미터 키. URL/캐시키/초기화에서 공용으로 사용한다.
+const FILTER_KEYS = ['sort', 'field', 'category', 'from', 'to', 'include_private'];
+
+// URL 의 현재 필터 상태를 읽어 정규화된 객체로 반환한다(서버 기본값과 동일한 기본값 적용).
+function getFilters() {
+    const params = new URLSearchParams(window.location.search);
+    return {
+        sort: params.get('sort') || 'relevance',
+        field: params.get('field') || 'all',
+        category: params.get('category') || '',
+        from: params.get('from') || '',
+        to: params.get('to') || '',
+        include_private: params.get('include_private'), // '0' 또는 null(기본 포함)
+    };
+}
+
+// 필터를 캐시키에 합칠 직렬화 문자열. 기본값도 그대로 반영해 조합별로 캐시를 분리한다.
+function filtersKey() {
+    const f = getFilters();
+    return [f.sort, f.field, f.category, f.from, f.to, f.include_private || ''].join('\u0000');
+}
+
 function cacheKey(q, mode, page) {
     // 사용자 ID·역할을 키에 포함해 권한이 다른 세션 간 캐시 재사용을 방지한다.
     // (예: 관리자가 조회한 삭제/비공개 문서가 권한 변경 후에도 캐시에서 노출되는 상황 차단)
     const uid = window.currentUser ? `${window.currentUser.id}\u0000${window.currentUser.role}` : 'anon';
-    return `${q}\u0000${mode}\u0000${page}\u0000${uid}`;
+    return `${q}\u0000${mode}\u0000${page}\u0000${filtersKey()}\u0000${uid}`;
 }
 
 function cacheGet(q, mode, page) {
@@ -123,6 +161,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (searchInput) searchInput.value = q;
     document.getElementById('searchQuery').textContent = q ? `"${q}" 검색 결과` : '';
 
+    // 필터 컨트롤을 URL 값으로 초기화하고, 모드에 따라 필터 바/네임스페이스 칩 상태를 갱신한다.
+    syncFilterControls();
+    updateFilterChrome(q, mode);
+    initCategoryAutocomplete();
+
     if (q) {
         performSearch(q, mode, page);
     } else {
@@ -133,6 +176,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 // popstate: 뒤/앞 브라우저 이동 시 캐시 우선으로 렌더링(미스 시 재요청)한다.
 window.addEventListener('popstate', () => {
     if (!currentQuery) return;
+    // URL 이 바뀌었을 수 있으므로 필터 컨트롤/칩 상태를 다시 동기화한다.
+    syncFilterControls();
+    updateFilterChrome(currentQuery, currentMode);
     performSearch(currentQuery, currentMode, getCurrentPage());
 });
 
@@ -140,6 +186,103 @@ function getCurrentPage() {
     const params = new URLSearchParams(window.location.search);
     const p = parseInt(params.get('page') || '1', 10);
     return Number.isFinite(p) && p >= 1 ? p : 1;
+}
+
+// 필터 컨트롤(select/input/checkbox)을 URL 의 현재 필터 상태로 맞춘다.
+function syncFilterControls() {
+    const f = getFilters();
+    const sortEl = document.getElementById('sortSelect');
+    if (sortEl) sortEl.value = f.sort;
+    const fieldEl = document.getElementById('fieldSelect');
+    if (fieldEl) fieldEl.value = f.field;
+    const catEl = document.getElementById('categoryFilter');
+    if (catEl) catEl.value = f.category;
+    const fromEl = document.getElementById('fromDate');
+    if (fromEl) fromEl.value = f.from;
+    const toEl = document.getElementById('toDate');
+    if (toEl) toEl.value = f.to;
+    const incEl = document.getElementById('includePrivate');
+    if (incEl) incEl.checked = f.include_private !== '0';
+}
+
+// 현재 모드(일반/이미지/카테고리)에 따라 필터 바 표시 여부, 활성 네임스페이스 칩,
+// 비공개 토글 노출(관리자/최고관리자 한정)을 갱신한다.
+function updateFilterChrome(q, mode) {
+    const qq = (q || '').trim();
+    const isImage = qq.startsWith(IMAGE_PREFIX);
+    const isCategoryNs = qq.startsWith(CATEGORY_PREFIX);
+    const isCategoryMode = mode === 'category';
+    const isDoc = !isImage && !isCategoryNs && !isCategoryMode;
+
+    // 필터 바는 일반 문서 검색에서만 노출한다.
+    const filters = document.getElementById('searchFilters');
+    if (filters) filters.classList.toggle('d-none', !isDoc);
+
+    // 활성 네임스페이스 칩 강조.
+    const activeNs = isImage ? 'image' : (isCategoryNs ? 'category' : 'doc');
+    document.querySelectorAll('#namespaceChips .search-chip').forEach((el) => {
+        el.classList.toggle('is-active', el.getAttribute('data-ns') === activeNs);
+    });
+
+    // 비공개 포함 토글: 서버 RBAC 와 동일하게 /api/me 의 permissions['wiki:private'] 로 게이팅한다
+    // (역할 문자열 직접 비교 금지 — rbac.md 규칙). 권한 미달 사용자는 토글이 없어도 서버가
+    // 비공개를 강제 제외하므로 동작에 영향 없음.
+    const wrap = document.getElementById('includePrivateWrap');
+    if (wrap) {
+        const canPrivate = !!(window.currentUser && window.currentUser.permissions && window.currentUser.permissions['wiki:private']);
+        wrap.classList.toggle('d-none', !(isDoc && canPrivate));
+    }
+}
+
+// 필터 컨트롤 변경 시: URL 동기화 → page=1 리셋 → 재검색(캐시 히트 시 네트워크 생략).
+function onFilterChange() {
+    const params = new URLSearchParams(window.location.search);
+    const setOrDel = (key, val) => { if (val) params.set(key, val); else params.delete(key); };
+
+    const sortVal = document.getElementById('sortSelect')?.value || 'relevance';
+    const fieldVal = document.getElementById('fieldSelect')?.value || 'all';
+    const catVal = (document.getElementById('categoryFilter')?.value || '').trim();
+    const fromVal = document.getElementById('fromDate')?.value || '';
+    const toVal = document.getElementById('toDate')?.value || '';
+
+    setOrDel('sort', sortVal !== 'relevance' ? sortVal : '');
+    setOrDel('field', fieldVal !== 'all' ? fieldVal : '');
+    setOrDel('category', catVal);
+    setOrDel('from', fromVal);
+    setOrDel('to', toVal);
+
+    // 비공개 토글은 노출(권한 보유)된 경우에만 반영한다. 체크 해제 시에만 include_private=0.
+    const incEl = document.getElementById('includePrivate');
+    const wrap = document.getElementById('includePrivateWrap');
+    if (incEl && wrap && !wrap.classList.contains('d-none')) {
+        setOrDel('include_private', incEl.checked ? '' : '0');
+    } else {
+        params.delete('include_private');
+    }
+
+    params.set('page', '1');
+
+    // 결과 URL 이 현재와 동일하면 중복 처리를 건너뛴다. 카테고리 자동완성 선택/Enter 는
+    // onFilterChange() 를 직접 호출하는데, 입력값이 프로그램으로 바뀌면 #categoryFilter 의
+    // 네이티브 onchange 가 blur 시 한 번 더 발화해 같은 URL 을 두 번 push(뒤로가기 1회로
+    // 안 돌아감) + 검색을 두 번 시작하기 때문이다.
+    const nextSearch = params.toString();
+    const curSearch = new URLSearchParams(window.location.search).toString();
+    if (nextSearch === curSearch) return;
+
+    history.pushState({}, '', `?${nextSearch}`);
+    performSearch(currentQuery, currentMode, 1);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+// 필터 초기화: 모든 필터 파라미터를 제거하고 1페이지부터 재검색한다.
+function resetFilters() {
+    const params = new URLSearchParams(window.location.search);
+    FILTER_KEYS.forEach((k) => params.delete(k));
+    params.set('page', '1');
+    history.pushState({}, '', `?${params.toString()}`);
+    syncFilterControls();
+    performSearch(currentQuery, currentMode, 1);
 }
 
 async function performSearch(q, mode, page) {
@@ -171,10 +314,19 @@ async function performSearch(q, mode, page) {
     noResultsEl.classList.add('d-none');
 
     try {
-        const res = await fetch(
-            `/api/search?q=${encodeURIComponent(q)}&mode=${encodeURIComponent(mode)}&page=${encodeURIComponent(page)}`,
-            { signal: controller.signal }
-        );
+        const qs = new URLSearchParams();
+        qs.set('q', q);
+        qs.set('mode', mode);
+        qs.set('page', String(page));
+        // 일반 문서 검색 필터(기본값은 생략해 URL/요청을 깔끔하게 유지).
+        const f = getFilters();
+        if (f.sort && f.sort !== 'relevance') qs.set('sort', f.sort);
+        if (f.field && f.field !== 'all') qs.set('field', f.field);
+        if (f.category) qs.set('category', f.category);
+        if (f.from) qs.set('from', f.from);
+        if (f.to) qs.set('to', f.to);
+        if (f.include_private === '0') qs.set('include_private', '0');
+        const res = await fetch(`/api/search?${qs.toString()}`, { signal: controller.signal });
 
         if (!res.ok) {
             let errorMessage = `검색 요청에 실패했습니다. (HTTP ${res.status})`;
@@ -511,6 +663,175 @@ document.addEventListener('click', (e) => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// 카테고리 필터 자동완성
+//
+// 에디터(src/client/edit/autocomplete.ts)의 카테고리 입력 자동완성을 검색 필터 바로
+// 이식한 것이다. 동일한 LIKE 추천 엔드포인트(/api/w/search-categories)·동일한 드롭다운
+// 마크업(.list-group-item.cat-ac-item)·동일한 키보드 조작(↑/↓/Enter/Tab/Esc)·200ms
+// 디바운스를 그대로 사용한다. 에디터는 다중 태그 입력이지만 검색 필터는 단일 값(정확
+// 일치) 이므로, 선택 시 입력칸 값을 교체하고 onFilterChange() 로 즉시 재검색한다.
+// ─────────────────────────────────────────────────────────────────────────────
+const categoryAc = {
+    visible: false,
+    results: [],
+    selectedIndex: -1,
+    query: '',
+    lastQuery: null,
+    debounceTimer: null,
+    div: null,
+    input: null,
+};
+
+function hideCategoryAutocomplete() {
+    categoryAc.visible = false;
+    categoryAc.results = [];
+    categoryAc.selectedIndex = -1;
+    categoryAc.lastQuery = null;
+    if (categoryAc.div) categoryAc.div.style.display = 'none';
+}
+
+// position:fixed 드롭다운을 입력칸 바로 아래(2px 간격)·동일 너비로 배치한다.
+function positionCategoryAc() {
+    if (!categoryAc.div || !categoryAc.input) return;
+    const rect = categoryAc.input.getBoundingClientRect();
+    categoryAc.div.style.left = rect.left + 'px';
+    categoryAc.div.style.top = (rect.bottom + 2) + 'px';
+    categoryAc.div.style.width = rect.width + 'px';
+}
+
+function showCategoryAutocomplete(query) {
+    if (!categoryAc.div || !categoryAc.input) return;
+    categoryAc.query = query;
+    if (!query) { hideCategoryAutocomplete(); return; }
+    categoryAc.visible = true;
+
+    // 같은 쿼리면 이미 표시 중인 결과를 유지한 채 위치만 갱신한다.
+    if (categoryAc.query === categoryAc.lastQuery) {
+        positionCategoryAc();
+        if (categoryAc.results.length > 0) categoryAc.div.style.display = 'block';
+        return;
+    }
+    categoryAc.lastQuery = categoryAc.query;
+
+    // 쿼리가 바뀌는 즉시 이전 결과/선택/DOM 을 무효화한다. 새 응답(또는 실패)이 도착하기 전까지
+    // stale 항목이 화살표·Enter/Tab·클릭으로 선택되거나 화면에 남지 않도록 드롭다운을 비우고 숨긴다.
+    categoryAc.results = [];
+    categoryAc.selectedIndex = -1;
+    categoryAc.div.innerHTML = '';
+    categoryAc.div.style.display = 'none';
+
+    if (categoryAc.debounceTimer !== null) clearTimeout(categoryAc.debounceTimer);
+    categoryAc.debounceTimer = setTimeout(async () => {
+        if (!categoryAc.visible) return;
+        // 요청 시점의 쿼리를 캡처해, 응답이 늦게 도착해도 그 사이 입력이 더 바뀌었으면
+        // (stale) 무시한다. 디바운스가 겹치는 요청을 완전히 막지는 못하기 때문이다.
+        const reqQuery = categoryAc.query;
+        try {
+            // context=search: 검색 가시성과 일치하도록 admin_only 카테고리도 추천에 포함시키되,
+            // '비공개 포함' 토글(include_private)도 performSearch 와 동일하게 전달해 추천/결과
+            // 가시성을 맞춘다.
+            const qs = new URLSearchParams();
+            qs.set('q', reqQuery);
+            qs.set('context', 'search');
+            if (getFilters().include_private === '0') qs.set('include_private', '0');
+            const res = await fetch(`/api/w/search-categories?${qs.toString()}`);
+            if (!res.ok) return;
+            const data = await res.json();
+            // 응답이 도착하는 사이 입력이 더 바뀌었거나(stale) 포커스가 빠져 드롭다운이 닫혔으면
+            // (blur) 렌더하지 않는다 — 닫힌 드롭다운이 늦은 응답으로 다시 열리는 것을 막는다.
+            if (reqQuery !== categoryAc.query || !categoryAc.visible) return;
+            categoryAc.results = data.results || [];
+            renderCategoryAcResults();
+        } catch (e) {
+            console.error('Category autocomplete fetch error:', e);
+        }
+    }, 200);
+}
+
+function renderCategoryAcResults() {
+    if (!categoryAc.div) return;
+    if (categoryAc.results.length === 0) { hideCategoryAutocomplete(); return; }
+    positionCategoryAc();
+    categoryAc.div.style.display = 'block';
+    categoryAc.div.innerHTML = categoryAc.results.map((item, index) => `
+        <div class="list-group-item cat-ac-item" data-index="${index}" onmousedown="selectSearchCategoryAcByIndex(${index})">
+            <i class="mdi mdi-tag-outline"></i>
+            <span>${window.escapeHtml(item)}</span>
+        </div>
+    `).join('');
+    categoryAc.selectedIndex = -1;
+    highlightCategoryAcItem();
+}
+
+function highlightCategoryAcItem() {
+    if (!categoryAc.div) return;
+    categoryAc.div.querySelectorAll('.cat-ac-item').forEach((item, idx) => {
+        item.classList.toggle('active', idx === categoryAc.selectedIndex);
+        if (idx === categoryAc.selectedIndex) item.scrollIntoView({ block: 'nearest' });
+    });
+}
+
+function selectCategoryAc(index) {
+    const item = categoryAc.results[index];
+    if (!item) return;
+    if (categoryAc.input) categoryAc.input.value = item;
+    hideCategoryAutocomplete();
+    onFilterChange();
+}
+
+function initCategoryAutocomplete() {
+    const input = document.getElementById('categoryFilter');
+    const div = document.getElementById('searchCategoryAutocomplete');
+    if (!input || !div) return;
+    categoryAc.input = input;
+    categoryAc.div = div;
+
+    input.addEventListener('input', () => {
+        showCategoryAutocomplete(input.value.trim());
+    });
+
+    input.addEventListener('keydown', (e) => {
+        if (e.isComposing) return;
+        if (categoryAc.visible && categoryAc.results.length > 0) {
+            if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                categoryAc.selectedIndex = (categoryAc.selectedIndex + 1) % categoryAc.results.length;
+                highlightCategoryAcItem();
+                return;
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                categoryAc.selectedIndex = (categoryAc.selectedIndex - 1 + categoryAc.results.length) % categoryAc.results.length;
+                highlightCategoryAcItem();
+                return;
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                hideCategoryAutocomplete();
+                return;
+            } else if ((e.key === 'Enter' || e.key === 'Tab') && categoryAc.selectedIndex >= 0) {
+                e.preventDefault();
+                selectCategoryAc(categoryAc.selectedIndex);
+                return;
+            }
+        }
+        // 선택 항목 없이 Enter: 현재 입력값을 그대로 카테고리 필터로 적용(폼이 없어 기본 동작 없음).
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            hideCategoryAutocomplete();
+            onFilterChange();
+        }
+    });
+
+    // blur 직후 onmousedown 선택이 끝나도록 약간 지연 후 드롭다운을 닫는다.
+    input.addEventListener('blur', () => {
+        setTimeout(() => hideCategoryAutocomplete(), 150);
+    });
+}
+
 // HTML onclick 속성에서 호출되므로 window 로 노출한다.
+window.selectSearchCategoryAcByIndex = (index) => selectCategoryAc(index);
 window.goImageSearch = goImageSearch;
 window.goCategorySearch = goCategorySearch;
+window.goDocumentSearch = goDocumentSearch;
+window.onFilterChange = onFilterChange;
+window.resetFilters = resetFilters;

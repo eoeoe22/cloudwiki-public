@@ -598,9 +598,14 @@ export async function dispatchAdminReadTool(c: Context<Env>, user: User, toolNam
     return null;
 }
 
-// 기존 문서를 새 리비전으로 갱신하는 공용 헬퍼.
+// 기존 문서를 새 리비전으로 갱신하는 공용 헬퍼(저수준 write 단계).
 // create_or_update_page 의 update 경로, patch_page, revert_page 가 공유한다.
 // 호출자는 페이지 존재/슬러그 검증을 이미 마쳤다고 가정한다.
+//
+// 주의: 이 헬퍼는 주시자 알림을 내지 않는다. 새 저장 경로는 가능하면 통합 파이프라인
+// `commitPageMutation`(src/utils/pagePipeline)을 경유해 주시자 알림 등 사이드이펙트 누락을
+// 구조적으로 막아야 한다. 본 헬퍼 직접 호출은 아직 파이프라인 미이행 경로(commit_edit /
+// revert / move — 3~4단계)에서만 유지한다.
 export async function applyExistingPageUpdate(
     c: Context<Env>,
     user: User,
@@ -721,9 +726,12 @@ export async function applyExistingPageUpdate(
     return { revision_id: revisionId, new_version: newVersion, rows: metrics.rows ?? 0, characters: metrics.characters ?? 0 };
 }
 
-// 신규 페이지를 INSERT 하고 첫 리비전을 생성하는 공용 헬퍼.
+// 신규 페이지를 INSERT 하고 첫 리비전을 생성하는 공용 헬퍼(저수준 write 단계).
 // commit_edit (action='create') 가 사용한다. 호출자는 슬러그 충돌(soft-deleted 포함) 검사를
 // 이미 마쳤다고 가정한다.
+//
+// 주의: 새 저장 경로는 가능하면 통합 파이프라인 `commitPageMutation`(src/utils/pagePipeline)을
+// 경유한다. 본 헬퍼 직접 호출은 아직 파이프라인 미이행 경로(commit_edit — 3단계)에서만 유지한다.
 export async function applyNewPageInsert(
     c: Context<Env>,
     user: User,

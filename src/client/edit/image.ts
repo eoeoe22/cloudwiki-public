@@ -180,7 +180,7 @@ async function openExistingImageSearch(callback: ImageInsertCallback): Promise<v
         if (!grid || !info || !moreWrap) { loading = false; return; }
 
         if (offset === 0) {
-            grid.innerHTML = '<div class="existing-img-search-empty">불러오는 중...</div>';
+            grid.innerHTML = '<div class="existing-img-search-empty">' + window.uiInlineLoading() + '</div>';
         }
         try {
             const params = new URLSearchParams();
@@ -217,7 +217,9 @@ async function openExistingImageSearch(callback: ImageInsertCallback): Promise<v
 
     function renderGrid(grid: HTMLElement): void {
         if (!items.length) {
-            grid.innerHTML = '<div class="existing-img-search-empty">이미지가 없습니다.</div>';
+            grid.innerHTML = '<div class="existing-img-search-empty">'
+                + window.uiEmptyState({ icon: 'bi bi-images', title: '이미지가 없습니다', compact: true })
+                + '</div>';
             return;
         }
         grid.innerHTML = items.map((m) => {

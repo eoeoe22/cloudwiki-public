@@ -26,6 +26,7 @@ import {
     skeletonList,
     skeletonCards,
 } from './utils/ui-state';
+import { initCommandPalette } from './command-palette';
 
 // ── 테마 초기화 (body 내 fallback, head의 인라인 스크립트가 먼저 실행됨) ──
 // data-theme: 위키 자체 다크모드 변수 (--wiki-card-bg 등)
@@ -348,11 +349,23 @@ function setSegActive(groupEl, value) {
     }
 }
 
+// 한 글자(g·/·e·?) 단축키 사용 여부 (WCAG 2.1.4 문자 키 단축키 끄기 수단).
+// 기본값은 'on' 이며, command-palette.ts 가 keydown 마다 동일 키를 라이브로 읽는다.
+var KBD_SHORTCUTS_KEY = 'keyboardShortcutsEnabled';
+function getKeyboardShortcutsPref() {
+    try {
+        return localStorage.getItem(KBD_SHORTCUTS_KEY) === 'off' ? 'off' : 'on';
+    } catch (e) {
+        return 'on';
+    }
+}
+
 function openSettingsModal() {
     var modalEl = document.getElementById('settingsModal');
     if (!modalEl || typeof bootstrap === 'undefined' || !bootstrap.Modal) return;
     setSegActive(document.getElementById('settingTheme'), getCurrentTheme());
     setSegActive(document.getElementById('settingLayoutMode'), getLayoutOverride() || 'site');
+    setSegActive(document.getElementById('settingKeyboardShortcuts'), getKeyboardShortcutsPref());
     bootstrap.Modal.getOrCreateInstance(modalEl).show();
 }
 
@@ -389,6 +402,22 @@ function setupSettingsModal() {
             // 사이드바 재배치 1회 가드(_rightSidebarRelocated)·그룹 nav fetch 때문에
             // 깨끗한 재초기화를 위해 새로고침한다.
             location.reload();
+        });
+    }
+    var kbdSeg = document.getElementById('settingKeyboardShortcuts');
+    if (kbdSeg && !kbdSeg.dataset.bound) {
+        kbdSeg.dataset.bound = '1';
+        kbdSeg.addEventListener('click', function (e) {
+            var btn = e.target && e.target.closest ? e.target.closest('.seg-btn') : null;
+            if (!btn || !kbdSeg.contains(btn)) return;
+            var value = btn.getAttribute('data-value');
+            if (value !== 'on' && value !== 'off') return;
+            setSegActive(kbdSeg, value);
+            try {
+                if (value === 'off') localStorage.setItem(KBD_SHORTCUTS_KEY, 'off');
+                else localStorage.removeItem(KBD_SHORTCUTS_KEY);
+            } catch (e2) { /* ignore */ }
+            // command-palette.ts 가 keydown 마다 라이브로 읽으므로 새로고침 불필요.
         });
     }
 }
@@ -1355,6 +1384,15 @@ async function sendMessage(receiverId, receiverName) {
         document.addEventListener('DOMContentLoaded', setupSettingsModal);
     } else {
         setupSettingsModal();
+    }
+})();
+
+// ── 전역 커맨드 팔레트 & 키보드 단축키 초기화 ──
+(function () {
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initCommandPalette);
+    } else {
+        initCommandPalette();
     }
 })();
 

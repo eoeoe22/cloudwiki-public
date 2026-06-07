@@ -123,7 +123,7 @@ function buildModalHtml(currentSlug: string, rules: PrefixRule[]): string {
                     <code class="bulkcat-prefix-code">${escapeHtml(currentSlug)}/**</code>
                 </div>
                 <div class="bulkcat-subpages-panel" id="bulkCatSubpagesPanel">
-                    <div class="bulkcat-empty">불러오는 중…</div>
+                    ${window.uiInlineLoading({ block: true })}
                 </div>
             </section>
 
@@ -477,7 +477,7 @@ function renderSubpagesTable(items: SubpageItem[], prefix: string): { rows: RowS
     if (items.length === 0) {
         return {
             rows: [],
-            panelHtml: '<div class="bulkcat-empty">선택 가능한 하위 문서가 없습니다.</div>',
+            panelHtml: window.uiEmptyState({ icon: 'bi bi-inbox', title: '선택 가능한 하위 문서가 없습니다', compact: true }),
         };
     }
     // DOM 생성은 호출자가 수행 — 여기서는 마크업만 만들고 rows 는 별도 객체로 채운다.

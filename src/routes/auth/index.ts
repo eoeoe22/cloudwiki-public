@@ -344,7 +344,7 @@ auth.get('/api/me', (c) => {
     }
     const rbac = c.get('rbac') as RBAC;
     const permissionKeys = [
-        'wiki:read', 'wiki:edit', 'wiki:delete',
+        'wiki:read', 'wiki:edit', 'wiki:delete', 'wiki:private',
         'comment:create', 'ticket:create', 'ticket:manage',
         'media:upload', 'discussion:manage', 'admin:access', 'user:manage',
     ] as const;

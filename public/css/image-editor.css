@@ -13,7 +13,7 @@
     overflow: hidden;
     background: repeating-conic-gradient(#e0e0e0 0% 25%, #fff 0% 50%) 50% / 16px 16px;
     border: 1px solid var(--wiki-border);
-    border-radius: 8px;
+    border-radius: var(--wiki-radius-lg);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -89,12 +89,12 @@ html[data-theme="dark"] .img-editor-canvas-wrap {
     gap: 6px;
     padding: 6px 14px;
     border: 1px solid var(--wiki-border);
-    border-radius: 8px;
+    border-radius: var(--wiki-radius-lg);
     background: var(--wiki-card-bg);
     color: var(--wiki-text);
     font-size: 0.88rem;
     cursor: pointer;
-    transition: background 0.15s, border-color 0.15s;
+    transition: background var(--wiki-dur-instant), border-color var(--wiki-dur-instant);
 }
 
 .img-editor-toolbar button:hover {
@@ -109,7 +109,7 @@ html[data-theme="dark"] .img-editor-canvas-wrap {
 }
 
 .img-editor-toolbar button i {
-    font-size: 1.1rem;
+    font-size: var(--wiki-fs-xl);
 }
 
 .img-editor-toolbar .separator {

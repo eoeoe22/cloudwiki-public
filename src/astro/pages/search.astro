@@ -25,18 +25,72 @@ import Footer from '../components/Footer.astro';
                         <i class="mdi mdi-magnify"></i> 검색 결과
                     </h2>
                     <div class="d-flex gap-2">
-                        <button type="button" class="btn btn-wiki-outline btn-sm" id="imageSearchBtn" onclick="goImageSearch()" title="이미지 검색하기" aria-label="이미지 검색하기">
-                            <i class="mdi mdi-image-search-outline"></i>
-                        </button>
-                        <button type="button" class="btn btn-wiki-outline btn-sm" id="categorySearchBtn" onclick="goCategorySearch()" title="카테고리 검색하기" aria-label="카테고리 검색하기">
-                            <i class="mdi mdi-folder-search-outline"></i>
-                        </button>
                         <button type="button" class="btn btn-wiki-outline btn-sm" onclick="history.back()">
                             <i class="bi bi-arrow-left"></i> 뒤로
                         </button>
                     </div>
                 </div>
-                <p class="text-muted mb-4" id="searchQuery"></p>
+                <p class="text-muted mb-2" id="searchQuery"></p>
+
+                <!-- 네임스페이스 칩 (모든 검색 모드 공통) -->
+                <div class="search-namespace-chips d-flex flex-wrap gap-2 mb-3" id="namespaceChips">
+                    <button type="button" class="search-chip" data-ns="doc" onclick="goDocumentSearch()">
+                        <i class="mdi mdi-file-document-outline"></i> 문서
+                    </button>
+                    <button type="button" class="search-chip" data-ns="image" onclick="goImageSearch()">
+                        <i class="mdi mdi-image-search-outline"></i> 이미지
+                    </button>
+                    <button type="button" class="search-chip" data-ns="category" onclick="goCategorySearch()">
+                        <i class="mdi mdi-folder-search-outline"></i> 카테고리
+                    </button>
+                </div>
+
+                <!-- 필터 바 (일반 문서 검색 모드 전용 — search.ts 가 모드에 따라 표시/숨김) -->
+                <div class="search-filters card card-body mb-4 d-none" id="searchFilters">
+                    <div class="row g-2 align-items-end">
+                        <div class="col-6 col-md-auto">
+                            <label class="form-label small mb-1" for="sortSelect">정렬</label>
+                            <select id="sortSelect" class="form-select form-select-sm" onchange="onFilterChange()">
+                                <option value="relevance">관련도순</option>
+                                <option value="recent">최신순</option>
+                                <option value="title">제목순</option>
+                            </select>
+                        </div>
+                        <div class="col-6 col-md-auto">
+                            <label class="form-label small mb-1" for="fieldSelect">검색 범위</label>
+                            <select id="fieldSelect" class="form-select form-select-sm" onchange="onFilterChange()">
+                                <option value="all">제목+본문</option>
+                                <option value="title">제목만</option>
+                                <option value="body">본문만</option>
+                            </select>
+                        </div>
+                        <div class="col-12 col-md">
+                            <label class="form-label small mb-1" for="categoryFilter">카테고리</label>
+                            <input type="text" id="categoryFilter" class="form-control form-control-sm" placeholder="정확한 카테고리명" autocomplete="off" onchange="onFilterChange()">
+                            <!-- 카테고리 자동완성 드롭다운 (에디터 #category-autocomplete 과 동일 방식 — position:fixed 라 JS 가 입력칸 기준으로 좌표/너비를 잡는다) -->
+                            <div id="searchCategoryAutocomplete" class="list-group"></div>
+                        </div>
+                        <div class="col-6 col-md-auto">
+                            <label class="form-label small mb-1" for="fromDate">시작일</label>
+                            <input type="date" id="fromDate" class="form-control form-control-sm" onchange="onFilterChange()">
+                        </div>
+                        <div class="col-6 col-md-auto">
+                            <label class="form-label small mb-1" for="toDate">종료일</label>
+                            <input type="date" id="toDate" class="form-control form-control-sm" onchange="onFilterChange()">
+                        </div>
+                        <div class="col-12 col-md-auto d-none" id="includePrivateWrap">
+                            <div class="form-check mb-1 mb-md-2">
+                                <input class="form-check-input" type="checkbox" id="includePrivate" checked onchange="onFilterChange()">
+                                <label class="form-check-label small" for="includePrivate">비공개 포함</label>
+                            </div>
+                        </div>
+                        <div class="col-auto">
+                            <button type="button" class="btn btn-wiki-outline btn-sm" id="resetFilters" onclick="resetFilters()">
+                                <i class="bi bi-x-circle"></i> 초기화
+                            </button>
+                        </div>
+                    </div>
+                </div>
 
                 <!-- 로딩 -->
                 <div id="loading" class="wiki-loading">

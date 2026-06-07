@@ -120,7 +120,12 @@ function aclBadge(acl: EditAcl | null): string {
 
 function pageListHtml(pages: PageItem[]): string {
     if (pages.length === 0) {
-        return `<div class="bulkcat-empty">이 카테고리에 속한 문서가 없습니다. 템플릿만 저장하면 이후 적용되는 문서에 적용됩니다.</div>`;
+        return window.uiEmptyState({
+            icon: 'bi bi-folder',
+            title: '이 카테고리에 속한 문서가 없습니다',
+            text: '템플릿만 저장하면 이후 적용되는 문서에 적용됩니다.',
+            compact: true,
+        });
     }
     const rows = pages.map(p => `
         <tr data-page-id="${p.id}">
@@ -172,7 +177,7 @@ function buildEditorHtml(name: string, initialAcl: EditAcl | null, pageCount: nu
                     <span class="bulkcat-counter" id="catAclPagesCounter">불러오는 중…</span>
                 </header>
                 <div class="bulkcat-subpages-panel" id="catAclPagesPanel">
-                    <div class="bulkcat-empty">불러오는 중…</div>
+                    ${window.uiInlineLoading({ block: true })}
                 </div>
                 <div class="bulkcat-actions-row" style="display: flex; flex-direction: column; gap: 10px; margin-top: 0.5rem;">
                     <div role="radiogroup" aria-label="모드" class="bulkcat-option-row">

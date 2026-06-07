@@ -22,7 +22,6 @@ import Footer from '../components/Footer.astro';
             <div class="wiki-article" style="width: 100%; max-width: 100%; overflow-x: hidden;">
 
                 <h1 class="h3 mb-1"><i class="bi bi-compass text-primary"></i> 탐색</h1>
-                <p class="text-muted mb-4">위키의 활동, 통계, 손이 필요한 문서를 한눈에 살펴보세요.</p>
 
                 <!-- 통계 -->
                 <div id="exploreStats" class="d-flex gap-2 mb-4 flex-wrap">
@@ -42,7 +41,7 @@ import Footer from '../components/Footer.astro';
                 <!-- 위젯 카드 그리드 -->
                 <div class="row g-3">
                     <!-- 고아 문서 -->
-                    <div class="col-lg-6">
+                    <div class="col-lg-4">
                         <div class="card h-100 shadow-sm">
                             <div class="card-header bg-transparent fw-bold">
                                 <i class="bi bi-link-45deg text-secondary"></i> 고아 문서
@@ -53,7 +52,7 @@ import Footer from '../components/Footer.astro';
                     </div>
 
                     <!-- 작성 요청 (빨간 링크) -->
-                    <div class="col-lg-6">
+                    <div class="col-lg-4">
                         <div class="card h-100 shadow-sm">
                             <div class="card-header bg-transparent fw-bold">
                                 <i class="bi bi-pencil-fill text-danger"></i> 작성 요청
@@ -64,7 +63,7 @@ import Footer from '../components/Footer.astro';
                     </div>
 
                     <!-- 최근 토론 활동 -->
-                    <div class="col-lg-6">
+                    <div class="col-lg-4">
                         <div class="card h-100 shadow-sm">
                             <div class="card-header bg-transparent fw-bold">
                                 <i class="bi bi-chat-left-dots text-info"></i> 최근 토론 활동
@@ -72,20 +71,20 @@ import Footer from '../components/Footer.astro';
                             <div class="card-body p-2" id="recentDiscussionsList"></div>
                         </div>
                     </div>
+                </div>
 
-                    <!-- 무작위 문서 -->
-                    <div class="col-lg-6">
-                        <div class="card h-100 shadow-sm">
-                            <div class="card-header bg-transparent fw-bold">
-                                <i class="bi bi-shuffle text-success"></i> 무작위 탐색
-                            </div>
-                            <div class="card-body d-flex flex-column align-items-start justify-content-center gap-2">
-                                <p class="text-muted mb-1">무엇을 읽을지 모르겠다면 무작위 문서로 떠나보세요.</p>
-                                <button type="button" class="btn btn-success" onclick="goRandomPage()">
-                                    <i class="bi bi-shuffle"></i> 무작위 문서 열기
-                                </button>
+                <!-- 랜덤 탐색 (슬림 배너 — 그리드 stretch 로 인한 PC 여백 제거) -->
+                <div class="card shadow-sm mt-3">
+                    <div class="card-body d-flex flex-wrap align-items-center justify-content-between gap-3 py-3">
+                        <div class="d-flex align-items-center gap-3">
+                            <i class="bi bi-shuffle text-success fs-3"></i>
+                            <div>
+                                <div class="fw-bold">랜덤 탐색</div>
                             </div>
                         </div>
+                        <button type="button" class="btn btn-wiki" onclick="goRandomPage()">
+                            <i class="bi bi-shuffle"></i> 랜덤 문서 열기
+                        </button>
                     </div>
                 </div>
 

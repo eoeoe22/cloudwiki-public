@@ -32,8 +32,9 @@ import { RBAC } from '../utils/role';
 import { isR2OnlyNamespace } from '../utils/slug';
 import { getRevisionContent } from '../utils/r2';
 import { computeLineDiffStats } from '../utils/diff';
-import { applyExistingPageUpdate, applyNewPageInsert } from './admin-mcp';
 import { findConflictingPage, applyCreatePrefixRulesAndCategoryAcls, isEditRequestEnabled } from './wiki';
+import { commitPageMutation } from '../utils/pagePipeline/commit';
+import { notifyPageWatchers } from '../utils/pagePipeline/notifyWatchers';
 import { createNotification } from '../utils/notification';
 import {
     parseEditAcl,
@@ -670,8 +671,8 @@ pendingEditsRoutes.post('/pending-edits/:id/approve', requireAuth, async (c) => 
 
     if (pe.action === 'update') {
         const page = await c.env.DB.prepare(
-            'SELECT id, version, content, category, last_revision_id, title, edit_acl, redirect_to, view_mode FROM pages WHERE slug = ? AND deleted_at IS NULL'
-        ).bind(slug).first<{ id: number; version: number; content: string; category: string | null; last_revision_id: number | null; title: string | null; edit_acl: string | null; redirect_to: string | null; view_mode: string | null }>();
+            'SELECT id, version, content, category, last_revision_id, title, edit_acl, redirect_to, view_mode, is_private FROM pages WHERE slug = ? AND deleted_at IS NULL'
+        ).bind(slug).first<{ id: number; version: number; content: string; category: string | null; last_revision_id: number | null; title: string | null; edit_acl: string | null; redirect_to: string | null; view_mode: string | null; is_private: number }>();
         if (!page) return c.json({ error: 'conflict', reason: 'page_missing' }, 409);
         // 충돌 사전체크:
         //  - 단일 승인(no content): 제출 시점 base 와 현재가 동일해야 한다(pe.base_version).
@@ -748,7 +749,12 @@ pendingEditsRoutes.post('/pending-edits/:id/approve', requireAuth, async (c) => 
             // rev1: 원 요청분을 요청자 명의로 반영(요약 끝에 승인자 박제).
             // editAcl/viewMode/title/category/redirect 적용은 단일 승인 경로와 1:1 동일해야 한다
             // (카테고리 ACL 머지·presentation 토글 등 누락 방지). 변경 시 양쪽을 함께 수정할 것.
-            const rev1 = await applyExistingPageUpdate(c, author, page, pe.content, {
+            const rev1 = await commitPageMutation(c, {
+                kind: 'update',
+                origin: 'pending_approve',
+                actor: author,
+                slug,
+                content: pe.content,
                 summary: requesterSummary,
                 summaryRaw: true,
                 category: pe.category,
@@ -759,9 +765,14 @@ pendingEditsRoutes.post('/pending-edits/:id/approve', requireAuth, async (c) => 
                 title: hasApproverContent ? rev2Title : (pe.has_title_change ? pe.title : undefined),
                 editAcl: pe.apply_edit_acl ? pe.edit_acl : undefined,
                 viewMode: pe.apply_view ? pe.view_mode : undefined,
-                slug,
+                page,
+                isPrivate: page.is_private === 1,
                 // 2-리비전이면 rev1 재색인을 await 해 rev2(최종 본문) 재색인보다 먼저 끝나도록 한다.
                 awaitLinkCategoryIndex: hasApproverContent,
+                rbac,
+                // 단일 승인이면 이 리비전이 최종 → 주시자 알림. 2-리비전이면 rev1 은 중간 리비전이라
+                // 억제하고 rev2(최종 본문)에서만 1회 알림한다(중복 알림 방지).
+                notify: !hasApproverContent,
             });
 
             if (!hasApproverContent) {
@@ -789,14 +800,22 @@ pendingEditsRoutes.post('/pending-edits/:id/approve', requireAuth, async (c) => 
             };
             let rev2;
             try {
-                rev2 = await applyExistingPageUpdate(c, user, pageAfterRev1, approverContent, {
+                rev2 = await commitPageMutation(c, {
+                    kind: 'update',
+                    origin: 'pending_approve',
+                    actor: user,
+                    slug,
+                    content: approverContent,
                     summary: baseSummary,
                     summaryRaw: true,
                     category: rev2Category,
                     redirectTo: rev2Redirect,
                     title: rev2Title,
                     viewMode: rev2View,
-                    slug,
+                    page: pageAfterRev1,
+                    isPrivate: page.is_private === 1,
+                    rbac,
+                    // 최종 리비전 → 주시자 알림 1회(notify 기본 true).
                 });
             } catch (e2: any) {
                 // 충돌(stale-base) 머지에서 rev2 가 실패하면, rev1(요청자 옛 본문)을 공개로 남길 경우 그
@@ -808,20 +827,27 @@ pendingEditsRoutes.post('/pending-edits/:id/approve', requireAuth, async (c) => 
                     let rolledBack = false;
                     if (e2?.code !== 'CONCURRENT_MODIFICATION') {
                         try {
-                            await applyExistingPageUpdate(c, user,
-                                { id: page.id, version: rev1.new_version, category: preApproval.category, title: preApproval.title },
-                                preApproval.content, {
-                                    summary: `편집 요청 승인 롤백: 추가 편집 반영 실패 (검토:${user.name}#${user.id})`,
-                                    summaryRaw: true,
-                                    category: preApproval.category,
-                                    redirectTo: preApproval.redirectTo,
-                                    title: preApproval.title ?? null,
-                                    editAcl: preApproval.editAcl,
-                                    viewMode: preApproval.viewMode,
-                                    slug,
-                                    logType: 'pending_edit_rollback',
-                                    logMessage: `[pending-edit] rev2 failed, rolled back rev1 #${pe.id}: ${slug} rev1=${rev1.revision_id} err=${e2?.code || e2?.message || 'unknown'}`,
-                                });
+                            await commitPageMutation(c, {
+                                kind: 'update',
+                                origin: 'pending_approve',
+                                actor: user,
+                                slug,
+                                content: preApproval.content,
+                                page: { id: page.id, version: rev1.new_version, category: preApproval.category, title: preApproval.title },
+                                summary: `편집 요청 승인 롤백: 추가 편집 반영 실패 (검토:${user.name}#${user.id})`,
+                                summaryRaw: true,
+                                category: preApproval.category,
+                                redirectTo: preApproval.redirectTo,
+                                title: preApproval.title ?? null,
+                                editAcl: preApproval.editAcl,
+                                viewMode: preApproval.viewMode,
+                                isPrivate: page.is_private === 1,
+                                rbac,
+                                logType: 'pending_edit_rollback',
+                                logMessage: `[pending-edit] rev2 failed, rolled back rev1 #${pe.id}: ${slug} rev1=${rev1.revision_id} err=${e2?.code || e2?.message || 'unknown'}`,
+                                // 보상(롤백) 리비전 → 주시자 알림 억제.
+                                notify: false,
+                            });
                             rolledBack = true;
                         } catch (e3) {
                             console.error('pending-edit rollback failed:', e3);
@@ -841,6 +867,20 @@ pendingEditsRoutes.post('/pending-edits/:id/approve', requireAuth, async (c) => 
                 const reasonNote = (e2?.code === 'CONCURRENT_MODIFICATION') ? '동시 수정 충돌' : '오류';
                 await cleanupPendingEdit(c, pe, user, 'pending_edit_approve',
                     `[pending-edit] approved(partial) #${pe.id}: ${slug} rev1=${rev1.revision_id} rev2_failed=${e2?.code || e2?.message || 'unknown'} author=${pe.author_id} reviewer=${user.id}`);
+                // rev1 은 부분 승인으로 **최종 공개 리비전**이 된다(rev2 미반영). 2-리비전 경로에서
+                // rev1 알림을 억제했으므로(rev2 가 낼 예정이었음), 여기서 rev1(원 요청자 명의)에 대해
+                // 주시자 알림을 1회 발송해야 update 승인의 알림 누락이 다시 생기지 않는다.
+                notifyPageWatchers(c, {
+                    pageId: page.id,
+                    slug,
+                    editorId: author.id,
+                    editorName: author.name,
+                    categories: (pe.category || '').split(',').map(s => s.trim()).filter(s => s.length > 0),
+                    isPrivate: page.is_private === 1,
+                    revisionId: rev1.revision_id,
+                    summary: requesterSummary,
+                    rbac,
+                });
                 notifyApproved(`"${slug}" 편집 요청이 승인되었습니다. (승인자 추가 편집은 ${reasonNote}로 미반영)`);
                 return c.json({
                     approved: true,
@@ -935,7 +975,12 @@ pendingEditsRoutes.post('/pending-edits/:id/approve', requireAuth, async (c) => 
 
         try {
             // rev1: 요청자 명의로 신규 문서 생성(요약 끝에 승인자 박제).
-            const rev1 = await applyNewPageInsert(c, author, slug, pe.content, {
+            const rev1 = await commitPageMutation(c, {
+                kind: 'create',
+                origin: 'pending_approve',
+                actor: author,
+                slug,
+                content: pe.content,
                 summary: requesterSummary,
                 summaryRaw: true,
                 category: createCategory,
@@ -944,10 +989,13 @@ pendingEditsRoutes.post('/pending-edits/:id/approve', requireAuth, async (c) => 
                 // 중간 TITLE_TAKEN 을 피한다(검사는 위에서 최종 제목 기준으로 이미 통과).
                 title: hasApproverContent ? (rev2Title ?? null) : (pe.has_title_change ? pe.title : null),
                 editAcl: createEditAclSerialized,
-                isPrivate: createIsPrivate,
+                isPrivate: createIsPrivate === 1,
                 viewMode: pe.apply_view ? pe.view_mode : null,
                 // 2-리비전이면 rev1 재색인을 await 해 rev2(최종 본문) 재색인보다 먼저 끝나도록 한다.
                 awaitLinkCategoryIndex: hasApproverContent,
+                rbac,
+                // 신규 문서 생성은 직접 PUT(create) 경로와 동일하게 주시자 알림을 보내지 않는다.
+                notify: false,
             });
 
             if (!hasApproverContent) {
@@ -977,14 +1025,23 @@ pendingEditsRoutes.post('/pending-edits/:id/approve', requireAuth, async (c) => 
             };
             let rev2;
             try {
-                rev2 = await applyExistingPageUpdate(c, user, createdPage, approverContent, {
+                rev2 = await commitPageMutation(c, {
+                    kind: 'update',
+                    origin: 'pending_approve',
+                    actor: user,
+                    slug,
+                    content: approverContent,
                     summary: baseSummary,
                     summaryRaw: true,
                     category: createCategory,
                     redirectTo: rev2Redirect,
                     title: rev2Title,
                     viewMode: rev2View,
-                    slug,
+                    page: createdPage,
+                    isPrivate: createIsPrivate === 1,
+                    rbac,
+                    // 신규 문서 생성 흐름(2-리비전 create)의 rev2 → 직접 PUT(create) 와 동일하게 알림 억제.
+                    notify: false,
                 });
             } catch (e2: any) {
                 // rev1(신규 문서)은 이미 생성·공개됨. 사유 무관하게 요청을 정리하고 부분 승인으로 알린다

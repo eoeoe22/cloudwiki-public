@@ -127,8 +127,7 @@ function makeMentionMenu(
         const candidates = getCandidates() || [];
         if (candidates.length === 0) {
             const empty = document.createElement('div');
-            empty.className = 'mini-editor-mention-empty';
-            empty.textContent = '멘션할 참여자가 없습니다';
+            empty.innerHTML = window.uiEmptyState({ icon: 'bi bi-people', title: '멘션할 참여자가 없습니다', compact: true });
             menu.appendChild(empty);
             return;
         }

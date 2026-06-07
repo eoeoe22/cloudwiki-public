@@ -12,7 +12,7 @@ html {
     height: 200px;
     background-color: var(--wiki-card-bg);
     border: 1px solid var(--wiki-border);
-    border-radius: 6px 6px 4px 4px;
+    border-radius: var(--wiki-radius-base) var(--wiki-radius-base) var(--wiki-radius-sm) var(--wiki-radius-sm);
     position: relative;
 }
 
@@ -59,7 +59,7 @@ html {
     background-color: var(--wiki-text-muted);
     width: 0;
     height: 7px;
-    border-radius: 6px;
+    border-radius: var(--wiki-radius-base);
     margin: 10px 0;
 }
 
@@ -80,12 +80,12 @@ html {
 }
 
 .pokeup {
-    transition: all .3s ease;
+    transition: all var(--wiki-dur-slow) ease;
 }
 
 .pokeup:hover {
     transform: translateY(-10px);
-    transition: .3s ease;
+    transition: var(--wiki-dur-slow) ease;
 }
 
 
@@ -120,8 +120,8 @@ html {
 }
 
 .writeLine {
-    -webkit-animation: writeLine .4s linear forwards;
-    animation: writeLine .4s linear forwards;
+    -webkit-animation: writeLine var(--wiki-dur-enter) linear forwards;
+    animation: writeLine var(--wiki-dur-enter) linear forwards;
 }
 
 .explode {
@@ -250,12 +250,12 @@ html {
     text-align: center;
     text-decoration: none;
     display: inline-block;
-    font-size: 0.95rem;
+    font-size: var(--wiki-fs-md);
     font-weight: 700;
-    border-radius: 4px;
+    border-radius: var(--wiki-radius-sm);
     margin: 10px 2px;
     box-shadow: var(--wiki-shadow-sm);
-    transition: all 0.2s var(--wiki-ease);
+    transition: all var(--wiki-dur-fast) var(--wiki-ease);
     cursor: pointer;
 }
 

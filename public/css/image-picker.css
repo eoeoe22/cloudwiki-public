@@ -44,16 +44,16 @@
     text-align: center;
     padding: 32px 0;
     color: var(--wiki-text-muted);
-    font-size: 0.9rem;
+    font-size: var(--wiki-fs-body);
 }
 
 .existing-img-tile {
     border: 1px solid var(--wiki-border);
-    border-radius: 6px;
+    border-radius: var(--wiki-radius-base);
     overflow: hidden;
     cursor: pointer;
     background: var(--wiki-card-bg);
-    transition: border-color 0.15s, transform 0.15s, box-shadow 0.15s;
+    transition: border-color var(--wiki-dur-instant), transform var(--wiki-dur-instant), box-shadow var(--wiki-dur-instant);
     display: flex;
     flex-direction: column;
 }
@@ -74,7 +74,7 @@
 
 .existing-img-tile-name {
     padding: 4px 6px;
-    font-size: 0.75rem;
+    font-size: var(--wiki-fs-sm);
     color: var(--wiki-text);
     white-space: nowrap;
     overflow: hidden;
@@ -91,13 +91,13 @@
 
 .existing-img-tile-tag,
 .existing-img-tile-tag-more {
-    font-size: 0.68rem;
+    font-size: var(--wiki-fs-xs);
     line-height: 1.1;
     padding: 2px 6px;
     background-color: color-mix(in srgb, var(--wiki-primary) 10%, transparent);
     color: var(--wiki-primary);
     border: 1px solid color-mix(in srgb, var(--wiki-primary) 20%, transparent);
-    border-radius: 6px;
+    border-radius: var(--wiki-radius-base);
     white-space: nowrap;
     max-width: 100%;
     overflow: hidden;
@@ -125,7 +125,7 @@
 .existing-img-size-preview img {
     max-width: 100%;
     max-height: 200px;
-    border-radius: 6px;
+    border-radius: var(--wiki-radius-base);
     border: 1px solid var(--wiki-border);
 }
 
@@ -151,9 +151,9 @@
     gap: 8px;
     padding: 6px 10px;
     border: 1px solid var(--wiki-border);
-    border-radius: 6px;
+    border-radius: var(--wiki-radius-base);
     cursor: pointer;
-    font-size: 0.9rem;
+    font-size: var(--wiki-fs-body);
 }
 
 .existing-img-size-options label:hover {

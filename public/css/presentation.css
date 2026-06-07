@@ -17,7 +17,7 @@
     background: var(--wiki-bg, #fff);
     color: var(--wiki-text, #1f2937);
     border: 1px solid var(--wiki-border, rgba(127, 127, 127, 0.2));
-    border-radius: 8px;
+    border-radius: var(--wiki-radius-lg);
     overflow: hidden;
     display: flex;
     flex-direction: column;
@@ -37,7 +37,7 @@
     inset: 0;
     width: 100%;
     height: 100%;
-    padding: 2.5rem 2.5rem 1.5rem;
+    padding: var(--wiki-space-10) var(--wiki-space-10) var(--wiki-space-6);
     overflow-y: auto;
     overflow-x: hidden;
     display: none;
@@ -78,7 +78,7 @@
 .slide-deck-progress-fill {
     height: 100%;
     width: 0;
-    background: var(--wiki-primary, #3b82f6);
+    background: var(--wiki-primary);
     transition: width 200ms ease-out;
 }
 
@@ -88,8 +88,8 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 0.5rem;
-    padding: 0 1rem;
+    gap: var(--wiki-space-2);
+    padding: 0 var(--wiki-space-4);
     background: var(--wiki-bg-secondary, rgba(127, 127, 127, 0.06));
     border-top: 1px solid var(--wiki-border, rgba(127, 127, 127, 0.18));
 }
@@ -97,7 +97,7 @@
 .slide-deck-btn {
     background: transparent;
     border: 1px solid transparent;
-    border-radius: 6px;
+    border-radius: var(--wiki-radius-base);
     width: 34px;
     height: 34px;
     display: inline-flex;
@@ -114,7 +114,7 @@
 }
 
 .slide-deck-btn-fullscreen {
-    margin-left: 0.5rem;
+    margin-left: var(--wiki-space-2);
 }
 
 .slide-deck-indicator {
@@ -122,7 +122,7 @@
     color: var(--wiki-text-muted, #6b7280);
     min-width: 5em;
     text-align: center;
-    font-size: 0.95rem;
+    font-size: var(--wiki-fs-md);
 }
 
 /* 슬라이드 번호 배지 — 전체 보기(그리드)에서만 노출 */
@@ -153,20 +153,20 @@
     display: block;
     overflow: hidden;
     border: 1px solid var(--wiki-border, rgba(127, 127, 127, 0.2));
-    border-radius: 8px;
+    border-radius: var(--wiki-radius-lg);
     background: var(--wiki-bg, #fff);
     cursor: pointer;
     animation: none;
-    transition: border-color 0.15s, box-shadow 0.15s;
+    transition: border-color var(--wiki-dur-instant), box-shadow var(--wiki-dur-instant);
 }
 
 .slide-deck.is-overview .slide:hover {
-    border-color: var(--wiki-primary, #3b82f6);
+    border-color: var(--wiki-primary);
 }
 
 .slide-deck.is-overview .slide.is-active {
-    border-color: var(--wiki-primary, #3b82f6);
-    box-shadow: 0 0 0 2px var(--wiki-primary, #3b82f6);
+    border-color: var(--wiki-primary);
+    box-shadow: 0 0 0 2px var(--wiki-primary);
 }
 
 /* 썸네일 본문은 클릭을 가로채지 않고(슬라이드 전체가 클릭 대상), 축소 렌더 */
@@ -178,7 +178,7 @@
     line-height: 1.3;
 }
 
-.slide-deck.is-overview .slide-content h1 { font-size: 0.85rem; }
+.slide-deck.is-overview .slide-content h1 { font-size: var(--wiki-fs-base); }
 .slide-deck.is-overview .slide-content h2 { font-size: 0.72rem; }
 .slide-deck.is-overview .slide-content h3 { font-size: 0.62rem; }
 .slide-deck.is-overview .slide-content table { font-size: 0.5rem; }
@@ -209,8 +209,8 @@
     font-size: 0.7rem;
     font-variant-numeric: tabular-nums;
     color: #fff;
-    background: var(--wiki-primary, #3b82f6);
-    border-radius: 4px;
+    background: var(--wiki-primary);
+    border-radius: var(--wiki-radius-sm);
 }
 
 /* ───── 전체화면 모드 ───── */
@@ -294,7 +294,7 @@ body.presentation-fullscreen .slide-content {
 body.presentation-fullscreen .slide-content h1 { font-size: 2.6rem; }
 body.presentation-fullscreen .slide-content h2 { font-size: 2.1rem; }
 body.presentation-fullscreen .slide-content h3 { font-size: 1.7rem; }
-body.presentation-fullscreen .slide-content h4 { font-size: 1.4rem; }
+body.presentation-fullscreen .slide-content h4 { font-size: var(--wiki-fs-2xl); }
 
 body.presentation-fullscreen .slide-deck-progress {
     position: absolute;
@@ -314,11 +314,11 @@ body.presentation-fullscreen .slide-deck-controls {
 }
 
 @media (max-width: 768px) {
-    .slide { padding: 1.5rem 1.25rem 1rem; }
+    .slide { padding: var(--wiki-space-6) var(--wiki-space-5) var(--wiki-space-4); }
     .slide-deck-stage { height: 55vh; min-height: 320px; }
     body.presentation-fullscreen .slide { padding: 4vh 5vw 8vh; }
-    body.presentation-fullscreen .slide-content { font-size: 1.1rem; }
+    body.presentation-fullscreen .slide-content { font-size: var(--wiki-fs-xl); }
     body.presentation-fullscreen .slide-content h1 { font-size: 2rem; }
-    body.presentation-fullscreen .slide-content h2 { font-size: 1.6rem; }
+    body.presentation-fullscreen .slide-content h2 { font-size: var(--wiki-fs-4xl); }
     body.presentation-fullscreen .slide-content h3 { font-size: 1.35rem; }
 }

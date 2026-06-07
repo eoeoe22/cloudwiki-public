@@ -16,6 +16,7 @@ import { createNotifications } from '../utils/notification';
 import { loadAllPalettes, loadPalettesForPage } from '../utils/palettes';
 import { cleanupUnauthorizedSubscriptions } from '../utils/pageAccessCleanup';
 import { collectRevisionR2Keys, buildHardDeleteStatements } from '../utils/pageDeletion';
+import { notifyPageWatchers } from '../utils/pagePipeline/notifyWatchers';
 
 const wiki = new Hono<Env>();
 
@@ -192,107 +193,9 @@ function extractLinks(content: string): { target_slug: string; link_type: string
     return links;
 }
 
-/**
- * 편집된 문서의 알림을 받아야 할 유저 ID 목록을 모은다.
- *
- *  - 직접 주시자: page_watches.page_id = 편집 대상 문서
- *  - 상위 문서 subtree 주시자: 편집 대상의 slug 가 'A/B/C' 라면 'A', 'A/B' 같은
- *    상위 슬러그를 scope='subtree' 로 주시하는 유저 (편집 대상 본인은 'this' 만으로도
- *    위 직접 주시자에 포함되므로 여기서는 prefix 만 고려)
- *  - 카테고리 주시자: 편집 본문에서 파싱된 카테고리 목록 ↔ category_watches
- *    page_categories 테이블은 fire-and-forget 갱신이라 fan-out 시점에 race 가
- *    발생할 수 있으므로 호출자가 새 카테고리 목록을 직접 넘기는 방식을 쓴다.
- *
- * 편집 작성자 본인은 항상 제외된다.
- *
- * 비공개 문서(isPrivate=true) 의 경우 'wiki:private' 권한이 없는 구독자는
- * 알림 대상에서 제외된다. 권한 없는 유저가 카테고리/상위 슬러그를 추측해
- * 비공개 문서 슬러그·요약을 알림으로 받는 정보 노출을 방지한다.
- */
-async function collectPageEditWatchers(
-    db: D1Database,
-    pageId: number,
-    slug: string,
-    editorId: number,
-    categories: string[],
-    isPrivate: boolean,
-    env: Env['Bindings'],
-    rbac: RBAC,
-): Promise<number[]> {
-    const parents: string[] = [];
-    const parts = slug.split('/');
-    // 'A/B/C' → ['A', 'A/B'] (자기 자신 'A/B/C' 는 제외 — 직접 주시자 쿼리가 담당)
-    for (let i = 1; i < parts.length; i++) {
-        parents.push(parts.slice(0, i).join('/'));
-    }
-
-    const userIds = new Set<number>();
-    try {
-        const direct = await db
-            .prepare('SELECT user_id FROM page_watches WHERE page_id = ? AND user_id != ?')
-            .bind(pageId, editorId)
-            .all<{ user_id: number }>();
-        for (const r of direct.results) userIds.add(r.user_id);
-
-        if (parents.length > 0) {
-            const placeholders = parents.map(() => '?').join(',');
-            const subtree = await db
-                .prepare(
-                    `SELECT DISTINCT pw.user_id
-                     FROM page_watches pw
-                     JOIN pages p ON pw.page_id = p.id
-                     WHERE pw.scope = 'subtree'
-                       AND pw.user_id != ?
-                       AND p.slug IN (${placeholders})`,
-                )
-                .bind(editorId, ...parents)
-                .all<{ user_id: number }>();
-            for (const r of subtree.results) userIds.add(r.user_id);
-        }
-
-        if (categories.length > 0) {
-            const placeholders = categories.map(() => '?').join(',');
-            const cat = await db
-                .prepare(
-                    `SELECT DISTINCT user_id
-                     FROM category_watches
-                     WHERE user_id != ? AND category IN (${placeholders})`,
-                )
-                .bind(editorId, ...categories)
-                .all<{ user_id: number }>();
-            for (const r of cat.results) userIds.add(r.user_id);
-        }
-    } catch (e) {
-        console.error('collectPageEditWatchers failed:', e);
-    }
-
-    if (userIds.size === 0) return [];
-
-    // 비공개 문서: wiki:private 권한이 없는 구독자는 제외한다.
-    if (!isPrivate) return Array.from(userIds);
-
-    try {
-        const ids = Array.from(userIds);
-        const placeholders = ids.map(() => '?').join(',');
-        const rows = await db
-            .prepare(
-                `SELECT u.id, u.email, ${ROLE_CASE_SQL} AS role
-                 FROM users u
-                 WHERE u.id IN (${placeholders})`,
-            )
-            .bind(...ids)
-            .all<{ id: number; email: string; role: string }>();
-        // super_admin 이메일 보정 (DB role 값과 별도로 운영자가 .env 로 격상한 경우)
-        enrichRoles(rows.results as any[], 'role', 'email', env);
-        return rows.results
-            .filter(r => rbac.can(r.role, 'wiki:private'))
-            .map(r => r.id);
-    } catch (e) {
-        console.error('collectPageEditWatchers private filter failed:', e);
-        // 안전 기본값: 권한 확인이 실패하면 비공개 문서 알림은 발송하지 않는다.
-        return [];
-    }
-}
+// 주시자 수집/알림 로직은 src/utils/pagePipeline/notifyWatchers.ts 로 이전했다
+// (collectPageEditWatchers + notifyPageWatchers). 직접 PUT 과 commitPageMutation
+// 파이프라인이 동일한 알림을 내도록 단일 소스로 공유한다.
 
 /**
  * 편집 요청 전역 토글(wrangler.toml `EDIT_REQUEST_ENABLED`) 조회.
@@ -1178,10 +1081,39 @@ wiki.get('/w/search-categories', async (c) => {
     const isAdmin = !!(user && rbac.can(user.role, 'admin:access'));
     const q = c.req.query('q') || '';
 
-    // 비관리자에게는 admin_only 카테고리(category_acl.edit_acl 에 admin_only 플래그) 를 제외한다.
-    // 마이그레이션 호환: category_acl 행 자체가 없는 카테고리는 레거시 admin_categories 도 차단 대상.
-    // 단, category_acl 행이 존재하면 그 값이 단일 소스 — admin 이 새 UI 에서 admin_only 를 해제하면
-    // 레거시 admin_categories 행이 살아 있어도 잠금이 풀린다.
+    // context=search: 검색 페이지의 카테고리 필터 자동완성용 호출.
+    // 검색의 카테고리 필터(src/routes/search.ts)는 ACL 무관 정확 일치라 비관리자도
+    // admin_only 카테고리로 검색이 가능하다. 따라서 검색 컨텍스트에서는 admin_only 제외를
+    // 적용하지 않되, 대신 /api/search·/api/w/category 와 동일하게 호출자가 볼 수 있는 문서
+    // (소프트 삭제 제외, 비공개는 wiki:private 보유자만)에 연결된 카테고리만 추천해
+    // 비공개/삭제 문서에만 달린 카테고리명이 노출되지 않게 한다.
+    const searchContext = c.req.query('context') === 'search';
+
+    let rows: { category: string }[];
+    if (searchContext) {
+        // 검색 페이지의 '비공개 포함' 토글과 가시성을 맞춘다: wiki:private 보유자라도
+        // include_private=0 이면 /api/search 와 동일하게 비공개 문서를 제외해, 비공개 문서에만
+        // 달린 카테고리가 추천됐다가 선택 시 결과 0건이 되는 불일치를 막는다.
+        const canSeePrivate = !!(user && rbac.can(user.role, 'wiki:private'));
+        const includePrivate = c.req.query('include_private') !== '0';
+        const effectiveSeePrivate = canSeePrivate && includePrivate;
+        const privacy = effectiveSeePrivate ? '' : ' AND p.is_private = 0';
+        const like = q.length > 0 ? ' AND pc.category LIKE ?' : '';
+        const stmt = db.prepare(
+            `SELECT DISTINCT pc.category FROM page_categories pc
+             JOIN pages p ON p.id = pc.page_id
+             WHERE p.deleted_at IS NULL${privacy}${like}
+             ORDER BY pc.category ASC LIMIT 8`
+        );
+        const bound = q.length > 0 ? stmt.bind(`%${q}%`) : stmt;
+        rows = (await bound.all<{ category: string }>()).results;
+        return c.json({ results: rows.map(r => r.category) });
+    }
+
+    // 편집 컨텍스트(기본): 비관리자에게 admin_only 카테고리(category_acl.edit_acl 에 admin_only
+    // 플래그) 를 제외한다. 마이그레이션 호환: category_acl 행 자체가 없는 카테고리는 레거시
+    // admin_categories 도 차단 대상. 단, category_acl 행이 존재하면 그 값이 단일 소스 — admin 이
+    // 새 UI 에서 admin_only 를 해제하면 레거시 admin_categories 행이 살아 있어도 잠금이 풀린다.
     const adminFilter = isAdmin
         ? ''
         : ` AND NOT (
@@ -1203,7 +1135,6 @@ wiki.get('/w/search-categories', async (c) => {
             )
           )`;
 
-    let rows: { category: string }[];
     if (q.length > 0) {
         const { results } = await db
             .prepare(`SELECT DISTINCT category FROM page_categories WHERE category LIKE ?${adminFilter} ORDER BY category ASC LIMIT 8`)
@@ -2400,53 +2331,24 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
         const linkCatStmts = buildLinkAndCategoryStatements(db, existing.id, body.content, body.category || null);
         c.executionCtx.waitUntil(db.batch(linkCatStmts).catch(e => console.error('Failed to update links/categories:', e)));
 
-        // 주시자에게 알림 발송 (비동기)
-        // fan-out 대상:
-        //   1) page_watches: 정확히 이 문서를 주시하는 유저 (scope 무관)
-        //   2) page_watches scope='subtree': 이 문서의 상위 문서(slug prefix 매치) 를
-        //      subtree 로 주시하는 유저
-        //   3) category_watches: 이 문서가 속한 카테고리(= body.category) 를 주시하는 유저
-        //      page_categories 가 비동기로 갱신되므로 그 테이블을 읽지 않고
-        //      방금 저장한 본문의 카테고리 목록을 직접 넘긴다.
+        // 주시자에게 알림 발송 (비동기) — 직접 PUT/파이프라인 공용 헬퍼.
+        // category_watches fan-out 은 page_categories 가 비동기 갱신되므로 그 테이블을 읽지 않고
+        // 방금 저장한 본문의 카테고리 목록(body.category)을 직접 넘긴다.
         const editedCategories = (body.category || '')
             .split(',')
             .map(s => s.trim())
             .filter(s => s.length > 0);
-        c.executionCtx.waitUntil(
-            collectPageEditWatchers(
-                db,
-                existing.id,
-                slug,
-                user.id,
-                editedCategories,
-                finalIsPrivate === 1,
-                c.env,
-                rbac,
-            )
-                .then(async watchers => {
-                    if (watchers.length === 0) return;
-                    const watchLink = `/w/${encodeURIComponent(slug)}?mode=revisions&diff=${revisionId}`;
-                    const rawSummary = (body.summary ?? '').trim();
-                    const truncatedSummary = [...rawSummary].length > 15
-                        ? [...rawSummary].slice(0, 15).join('') + '...'
-                        : rawSummary;
-                    const summarySuffix = truncatedSummary ? ` (${truncatedSummary})` : '';
-                    const notifContent = `${user.name}님이 "${slug}" 문서를 편집했습니다.${summarySuffix}`;
-                    await createNotifications(c.env, c.executionCtx, watchers.map(uid => ({
-                        userId: uid,
-                        type: 'page_watch',
-                        content: notifContent,
-                        link: watchLink,
-                        push: {
-                            title: `${slug}`,
-                            body: notifContent,
-                            url: watchLink,
-                            tag: `page_watch:${existing.id}`,
-                        },
-                    })));
-                })
-                .catch(e => console.error('Failed to notify watchers:', e))
-        );
+        notifyPageWatchers(c, {
+            pageId: existing.id,
+            slug,
+            editorId: user.id,
+            editorName: user.name,
+            categories: editedCategories,
+            isPrivate: finalIsPrivate === 1,
+            revisionId,
+            summary: body.summary ?? null,
+            rbac,
+        });
 
         // 캐시 무효화 (API + SSR) + 최근 변경 즉시 갱신
         // 콜론이 포함된 문서(틀, 익스텐션 등)인 경우 역링크 문서 캐시도 함께 무효화

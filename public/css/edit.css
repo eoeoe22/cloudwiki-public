@@ -21,11 +21,12 @@
 
   --cm-param-token: light-dark(#b45309, #fbbf24);
 
-  --cm-inline-code-bg: light-dark(#f6f8fa, #2d2d2d);
-  --cm-inline-code-fg: light-dark(#24292f, #e0e0e0);
+  /* 코드 표면색은 style.css :root 의 --code-editor-* 단일 소스를 참조 (값 동일) */
+  --cm-inline-code-bg: var(--code-editor-inline-bg);
+  --cm-inline-code-fg: var(--code-editor-inline-fg);
 
-  --cm-code-block-bg: light-dark(#f6f8fa, #111111);
-  --cm-code-block-fg: light-dark(#24292f, #e0e0e0);
+  --cm-code-block-bg: var(--code-editor-block-bg);
+  --cm-code-block-fg: var(--code-editor-block-fg);
 }
 
 /* ── PC 버전 레이아웃 최적화: 에디터가 화면을 꽉 채우도록 ── */
@@ -34,13 +35,13 @@
         max-width: 100% !important;
         width: 100%;
         margin: 0 auto;
-        padding: 0 2rem;
+        padding: 0 var(--wiki-space-8);
     }
 
     #conflict-ui {
         max-width: 100% !important;
         width: 100%;
-        padding: 0 2rem;
+        padding: 0 var(--wiki-space-8);
     }
 }
 
@@ -52,9 +53,9 @@
 #custom-wiki-preview ul,
 #custom-wiki-preview ol {
     line-height: 1.7;
-    padding-left: 2rem;
+    padding-left: var(--wiki-space-8);
     margin-top: 0;
-    margin-bottom: 1rem;
+    margin-bottom: var(--wiki-space-4);
 }
 
 #custom-wiki-preview ul ul,
@@ -92,7 +93,7 @@
     gap: 0.4rem;
     padding: 0.65rem 0.85rem;
     border: 1px solid var(--wiki-border);
-    border-radius: 6px;
+    border-radius: var(--wiki-radius-base);
     background: var(--wiki-bg);
 }
 
@@ -128,7 +129,7 @@
     padding: 8px 10px;
     font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
     line-height: 1.5;
-    font-size: 0.85rem;
+    font-size: var(--wiki-fs-base);
 }
 
 #custom-wiki-preview.preview-diff-text.wrap-mode {
@@ -170,7 +171,7 @@
     align-items: center;
     justify-content: center;
     gap: 15px;
-    transition: opacity 0.3s ease, visibility 0.3s ease;
+    transition: opacity var(--wiki-dur-slow) ease, visibility var(--wiki-dur-slow) ease;
 }
 
 #initLoadingOverlay.hidden {
@@ -188,7 +189,7 @@
 }
 
 #initLoadingOverlay span {
-    font-size: 1.1rem;
+    font-size: var(--wiki-fs-xl);
     font-weight: 600;
     color: var(--wiki-text);
 }
@@ -198,9 +199,9 @@
     display: flex;
     flex-wrap: wrap;
     justify-content: flex-end;
-    gap: 0.75rem;
-    margin-top: 0.25rem;
-    padding: 0 0.25rem;
+    gap: var(--wiki-space-3);
+    margin-top: var(--wiki-space-1);
+    padding: 0 var(--wiki-space-1);
     font-size: 0.72rem;
     font-weight: 500;
     color: var(--wiki-text-muted);
@@ -218,7 +219,7 @@
     gap: 0;
     height: 600px;
     border: 1px solid var(--wiki-border);
-    border-radius: 6px;
+    border-radius: var(--wiki-radius-base);
     overflow: hidden;
     flex-direction: column;
     /* mobile-tabs / toolbar / split-row */
@@ -326,11 +327,11 @@
         border: none;
         background: transparent;
         color: var(--wiki-text-muted);
-        font-size: 0.9rem;
+        font-size: var(--wiki-fs-body);
         font-weight: 500;
         cursor: pointer;
         border-bottom: 2px solid transparent;
-        transition: color 0.15s, border-color 0.15s;
+        transition: color var(--wiki-dur-instant), border-color var(--wiki-dur-instant);
     }
 
     .cm-tab-btn.active {
@@ -422,7 +423,7 @@ html[data-theme="dark"] #cm-editor .cm-editor {
     z-index: 3000;
     background: var(--wiki-card-bg);
     border: 1px solid var(--wiki-border);
-    border-radius: 10px;
+    border-radius: var(--wiki-radius-xl);
     box-shadow: 0 6px 24px rgba(0, 0, 0, 0.15);
     width: 230px;
     max-width: calc(100vw - 16px);
@@ -506,7 +507,7 @@ html[data-theme="dark"] #cm-editor .cm-editor {
 
 .editor-settings-section-title {
     padding: 4px 14px 2px;
-    font-size: 0.75rem;
+    font-size: var(--wiki-fs-sm);
     font-weight: 600;
     color: var(--wiki-text-muted);
 }
@@ -536,12 +537,12 @@ html[data-theme="dark"] .editor-settings-panel {
     cursor: pointer;
     width: 30px;
     height: 28px;
-    border-radius: 4px;
+    border-radius: var(--wiki-radius-sm);
     font-size: 13px;
     font-weight: 600;
     padding: 0;
     line-height: 1;
-    transition: background-color 0.15s;
+    transition: background-color var(--wiki-dur-instant);
 }
 
 .cm-toolbar-btn:hover {
@@ -588,7 +589,7 @@ html[data-theme="dark"] .editor-settings-panel {
     background: transparent;
     color: var(--wiki-text);
     text-align: left;
-    border-radius: 6px;
+    border-radius: var(--wiki-radius-base);
     cursor: pointer;
     transition: background 0.12s;
 }
@@ -611,7 +612,7 @@ html[data-theme="dark"] .editor-settings-panel {
 }
 
 .editor-mode-option-label {
-    font-size: 0.9rem;
+    font-size: var(--wiki-fs-body);
     font-weight: 600;
     line-height: 1.2;
 }
@@ -648,7 +649,7 @@ html[data-theme="dark"] .editor-settings-panel {
     color: var(--cm-wiki-link);
     font-weight: bold;
     background: var(--cm-wiki-link-bg);
-    border-radius: 3px;
+    border-radius: var(--wiki-radius-xs);
     padding: 0 2px;
 }
 
@@ -656,7 +657,7 @@ html[data-theme="dark"] .editor-settings-panel {
     color: var(--cm-wiki-template);
     font-weight: bold;
     background: var(--cm-wiki-template-bg);
-    border-radius: 3px;
+    border-radius: var(--wiki-radius-xs);
     padding: 0 2px;
 }
 
@@ -664,20 +665,20 @@ html[data-theme="dark"] .editor-settings-panel {
     color: var(--cm-wiki-template-param);
     font-weight: bold;
     background: var(--cm-wiki-template-param-bg);
-    border-radius: 3px;
+    border-radius: var(--wiki-radius-xs);
     padding: 0 2px;
 }
 
 .cm-bg-color {
     border: 1px solid var(--wiki-border);
-    border-radius: 3px;
+    border-radius: var(--wiki-radius-xs);
     padding: 0 2px;
 }
 
 /* ────────────── GitHub 스타일 편집 충돌 UI ────────────── */
 
 .conflict-header {
-    border-radius: 8px;
+    border-radius: var(--wiki-radius-lg);
 }
 
 .conflict-header .conflict-header-info {
@@ -707,7 +708,7 @@ html[data-theme="dark"] .editor-settings-panel {
 .conflict-section {
     margin-top: 16px;
     border: 1px solid var(--wiki-border);
-    border-radius: 8px;
+    border-radius: var(--wiki-radius-lg);
     background: var(--wiki-bg);
     overflow: hidden;
 }
@@ -728,7 +729,7 @@ html[data-theme="dark"] .editor-settings-panel {
 .conflict-section > summary::before {
     content: '▶';
     font-size: 0.65rem;
-    transition: transform 0.15s ease;
+    transition: transform var(--wiki-dur-instant) ease;
     color: var(--wiki-text-muted);
     flex-shrink: 0;
 }
@@ -850,7 +851,7 @@ html[data-theme="dark"] .editor-settings-panel {
     margin: 8px 12px 12px;
     padding: 10px;
     border: 1px dashed var(--wiki-border);
-    border-radius: 6px;
+    border-radius: var(--wiki-radius-base);
     white-space: pre-wrap;
     font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
     font-size: 0.82rem;
@@ -863,7 +864,7 @@ html[data-theme="dark"] .editor-settings-panel {
     max-height: 60vh;
     overflow: auto;
     border: 1px dashed var(--wiki-border);
-    border-radius: 6px;
+    border-radius: var(--wiki-radius-base);
 }
 
 /* 병합 초안 영역 */
@@ -880,7 +881,7 @@ html[data-theme="dark"] .editor-settings-panel {
     line-height: 1.5;
     resize: vertical;
     border: 1px solid var(--wiki-border);
-    border-radius: 6px;
+    border-radius: var(--wiki-radius-base);
     padding: 10px;
     background: var(--wiki-bg);
     color: var(--wiki-text);
@@ -911,9 +912,9 @@ html[data-theme="dark"] .editor-settings-panel {
     gap: 8px;
     padding: 6px 10px;
     border: 1px solid var(--wiki-border);
-    border-radius: 6px;
+    border-radius: var(--wiki-radius-base);
     background: rgba(0, 0, 0, 0.02);
-    font-size: 0.85rem;
+    font-size: var(--wiki-fs-base);
 }
 .conflict-hunk-row.resolved {
     opacity: 0.55;
@@ -979,7 +980,7 @@ html[data-theme="dark"] .conflict-chip {
 @media (max-width: 768px) {
     /* PC 전용 좌우 여백 제거 — 충돌 UI 컨테이너 폭 확보 */
     #conflict-ui {
-        padding: 0 0.75rem !important;
+        padding: 0 var(--wiki-space-3) !important;
     }
 
     /* 헤더: 칩 영역과 툴바가 좁은 화면에서 자연스럽게 쌓이도록 */
@@ -1108,7 +1109,7 @@ html[data-theme="dark"] .conflict-chip {
     }
     #diffModeUnifiedBtn .mdi,
     #diffModeSplitBtn .mdi {
-        font-size: 1rem;
+        font-size: var(--wiki-fs-lg);
     }
     .conflict-diff-table { font-size: 0.7rem; }
     .conflict-diff-table .diff-gutter { width: 26px; font-size: 0.62rem; }
@@ -1121,10 +1122,10 @@ html[data-theme="dark"] .conflict-chip {
     display: none;
     background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%);
     border: 1px solid #ffc107;
-    border-radius: 8px;
+    border-radius: var(--wiki-radius-lg);
     padding: 12px 16px;
     margin-bottom: 16px;
-    font-size: 0.95rem;
+    font-size: var(--wiki-fs-md);
     align-items: center;
     gap: 10px;
     box-shadow: 0 2px 8px rgba(255, 193, 7, 0.15);
@@ -1158,7 +1159,7 @@ html[data-theme="dark"] #concurrent-edit-banner {
     z-index: 2100;
     background: var(--wiki-card-bg);
     border: 1px solid var(--wiki-border);
-    border-radius: 8px;
+    border-radius: var(--wiki-radius-lg);
     box-shadow: 0 4px 15px rgba(0, 0, 0, 0.15);
     display: none;
     overflow: hidden;
@@ -1179,7 +1180,7 @@ html[data-theme="dark"] #concurrent-edit-banner {
     display: flex;
     align-items: center;
     gap: 8px;
-    font-size: 0.9rem;
+    font-size: var(--wiki-fs-body);
     padding: 8px 12px;
 }
 
@@ -1203,7 +1204,7 @@ html[data-theme="dark"] #concurrent-edit-banner {
     z-index: 2100;
     background: var(--wiki-card-bg);
     border: 1px solid var(--wiki-border);
-    border-radius: 8px;
+    border-radius: var(--wiki-radius-lg);
     box-shadow: 0 4px 15px rgba(0, 0, 0, 0.15);
     min-width: 250px;
     max-width: 400px;
@@ -1218,11 +1219,11 @@ html[data-theme="dark"] #concurrent-edit-banner {
     border-bottom: 1px solid var(--wiki-border);
     padding: 10px 15px;
     cursor: pointer;
-    transition: background 0.2s;
+    transition: background var(--wiki-dur-fast);
     display: flex;
     align-items: center;
     gap: 10px;
-    font-size: 0.95rem;
+    font-size: var(--wiki-fs-md);
 }
 
 #wiki-autocomplete .list-group-item:last-child {
@@ -1245,9 +1246,9 @@ html[data-theme="dark"] #concurrent-edit-banner {
 }
 
 #wiki-autocomplete .item-type {
-    font-size: 0.75rem;
+    font-size: var(--wiki-fs-sm);
     padding: 2px 6px;
-    border-radius: 8px;
+    border-radius: var(--wiki-radius-lg);
     background: var(--wiki-border);
     color: var(--wiki-text-muted);
     margin-left: auto;
@@ -1276,7 +1277,7 @@ html[data-theme="dark"] #concurrent-edit-banner {
     z-index: 2100;
     background: var(--wiki-card-bg);
     border: 1px solid var(--wiki-border);
-    border-radius: 8px;
+    border-radius: var(--wiki-radius-lg);
     box-shadow: 0 4px 15px rgba(0, 0, 0, 0.15);
     width: 330px;
     display: none;
@@ -1309,12 +1310,12 @@ html[data-theme="dark"] #concurrent-edit-banner {
     align-items: center;
     padding: 6px 3px;
     cursor: pointer;
-    border-radius: 8px;
+    border-radius: var(--wiki-radius-lg);
     border: 1px solid transparent;
     font-size: 0.6rem;
     text-align: center;
     color: var(--wiki-text);
-    transition: all 0.15s;
+    transition: all var(--wiki-dur-instant);
     overflow: hidden;
 }
 
@@ -1343,7 +1344,7 @@ html[data-theme="dark"] #concurrent-edit-banner {
 #icon-autocomplete .icon-ac-loading {
     padding: 14px;
     text-align: center;
-    font-size: 0.85rem;
+    font-size: var(--wiki-fs-base);
     color: var(--wiki-text-muted);
 }
 
@@ -1353,7 +1354,7 @@ html[data-theme="dark"] #concurrent-edit-banner {
     z-index: 2100;
     background: var(--wiki-card-bg);
     border: 1px solid var(--wiki-border);
-    border-radius: 8px;
+    border-radius: var(--wiki-radius-lg);
     box-shadow: 0 4px 15px rgba(0, 0, 0, 0.15);
     width: 280px;
     display: none;
@@ -1384,10 +1385,10 @@ html[data-theme="dark"] #concurrent-edit-banner {
 #color-autocomplete .color-swatch {
     width: 28px;
     height: 28px;
-    border-radius: 8px;
+    border-radius: var(--wiki-radius-lg);
     cursor: pointer;
     border: 2px solid transparent;
-    transition: border-color 0.15s, transform 0.1s;
+    transition: border-color var(--wiki-dur-instant), transform 0.1s;
     flex-shrink: 0;
     touch-action: manipulation;
     -webkit-tap-highlight-color: transparent;
@@ -1406,7 +1407,7 @@ html[data-theme="dark"] #concurrent-edit-banner {
 #color-autocomplete .color-palette-canvas {
     width: 100%;
     height: 120px;
-    border-radius: 8px;
+    border-radius: var(--wiki-radius-lg);
     cursor: crosshair;
     border: 1px solid var(--wiki-border);
     touch-action: none;
@@ -1415,7 +1416,7 @@ html[data-theme="dark"] #concurrent-edit-banner {
 #color-autocomplete .color-hue-slider {
     width: 100%;
     height: 16px;
-    border-radius: 8px;
+    border-radius: var(--wiki-radius-lg);
     cursor: pointer;
     border: 1px solid var(--wiki-border);
     margin-top: 6px;
@@ -1432,17 +1433,17 @@ html[data-theme="dark"] #concurrent-edit-banner {
 #color-autocomplete .color-preview-box {
     width: 32px;
     height: 32px;
-    border-radius: 8px;
+    border-radius: var(--wiki-radius-lg);
     border: 1px solid var(--wiki-border);
     flex-shrink: 0;
 }
 
 #color-autocomplete .color-hex-input {
     flex: 1;
-    font-size: 0.85rem;
+    font-size: var(--wiki-fs-base);
     padding: 4px 8px;
     border: 1px solid var(--wiki-border);
-    border-radius: 8px;
+    border-radius: var(--wiki-radius-lg);
     background: var(--wiki-bg);
     color: var(--wiki-text);
     font-family: monospace;
@@ -1452,12 +1453,12 @@ html[data-theme="dark"] #concurrent-edit-banner {
     padding: 4px 12px;
     font-size: 0.8rem;
     border: none;
-    border-radius: 8px;
+    border-radius: var(--wiki-radius-lg);
     background: var(--wiki-primary);
     color: #fff;
     cursor: pointer;
     font-weight: 600;
-    transition: opacity 0.15s;
+    transition: opacity var(--wiki-dur-instant);
 }
 
 #color-autocomplete .color-apply-btn:hover {
@@ -1474,12 +1475,12 @@ html[data-theme="dark"] #concurrent-edit-banner {
 .color-modal-swatch {
     width: 100%;
     aspect-ratio: 1 / 1;
-    border-radius: 4px;
+    border-radius: var(--wiki-radius-sm);
     border: 1px solid rgba(128, 128, 128, 0.3);
     cursor: pointer;
     touch-action: manipulation;
     -webkit-tap-highlight-color: transparent;
-    transition: transform 0.1s, border-color 0.15s;
+    transition: transform 0.1s, border-color var(--wiki-dur-instant);
 }
 
 .color-modal-swatch:hover {
@@ -1493,7 +1494,7 @@ html[data-theme="dark"] #concurrent-edit-banner {
     z-index: 2100;
     background: var(--wiki-card-bg);
     border: 1px solid var(--wiki-border);
-    border-radius: 8px;
+    border-radius: var(--wiki-radius-lg);
     box-shadow: 0 4px 15px rgba(0, 0, 0, 0.15);
     width: 280px;
     max-height: 320px;
@@ -1523,7 +1524,7 @@ html[data-theme="dark"] #concurrent-edit-banner {
 #palette-autocomplete .palette-ac-empty {
     padding: 12px;
     text-align: center;
-    font-size: 0.85rem;
+    font-size: var(--wiki-fs-base);
     color: var(--wiki-text-muted);
 }
 
@@ -1532,7 +1533,7 @@ html[data-theme="dark"] #concurrent-edit-banner {
     align-items: center;
     gap: 8px;
     padding: 4px 8px 4px 5px;
-    border-radius: 6px;
+    border-radius: var(--wiki-radius-base);
     cursor: pointer;
     border-left: 3px solid transparent;
 }
@@ -1552,7 +1553,7 @@ html[data-theme="dark"] #concurrent-edit-banner {
     justify-content: center;
     min-width: 64px;
     padding: 2px 8px;
-    border-radius: 10px;
+    border-radius: var(--wiki-radius-xl);
     font-size: 0.78rem;
     font-weight: 600;
     border: 1px solid var(--wiki-border);
@@ -1560,7 +1561,7 @@ html[data-theme="dark"] #concurrent-edit-banner {
 
 #palette-autocomplete .palette-ac-name {
     font-family: monospace;
-    font-size: 0.85rem;
+    font-size: var(--wiki-fs-base);
     color: var(--wiki-text);
     flex: 1;
     overflow: hidden;
@@ -1572,7 +1573,7 @@ html[data-theme="dark"] #concurrent-edit-banner {
     font-size: 0.7rem;
     color: var(--wiki-text-muted);
     border: 1px solid var(--wiki-border);
-    border-radius: 4px;
+    border-radius: var(--wiki-radius-sm);
     padding: 0 4px;
 }
 
@@ -1582,7 +1583,7 @@ html[data-theme="dark"] #concurrent-edit-banner {
     z-index: 1100;
     background: var(--wiki-card-bg);
     border: 1px solid var(--wiki-border);
-    border-radius: 8px;
+    border-radius: var(--wiki-radius-lg);
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
     padding: 16px;
     width: 320px;
@@ -1598,11 +1599,11 @@ html[data-theme="dark"] #concurrent-edit-banner {
 
 .img-upload-dropzone {
     border: 2px dashed var(--wiki-primary);
-    border-radius: 8px;
+    border-radius: var(--wiki-radius-lg);
     padding: 32px 16px;
     text-align: center;
     cursor: pointer;
-    transition: background 0.2s, border-color 0.2s;
+    transition: background var(--wiki-dur-fast), border-color var(--wiki-dur-fast);
     background: rgba(var(--wiki-primary-rgb), 0.04);
 }
 
@@ -1621,7 +1622,7 @@ html[data-theme="dark"] #concurrent-edit-banner {
 
 .img-upload-dropzone .drop-main-text {
     font-weight: 600;
-    font-size: 0.95rem;
+    font-size: var(--wiki-fs-md);
     color: var(--wiki-text);
 }
 
@@ -1639,9 +1640,9 @@ html[data-theme="dark"] #concurrent-edit-banner {
     margin: 5px 6px;
     padding: 4px 10px;
     border: 1px dashed var(--wiki-primary);
-    border-radius: 6px;
+    border-radius: var(--wiki-radius-base);
     cursor: pointer;
-    transition: background 0.2s, border-color 0.2s;
+    transition: background var(--wiki-dur-fast), border-color var(--wiki-dur-fast);
     background: rgba(var(--wiki-primary-rgb), 0.04);
     display: flex;
     align-items: center;
@@ -1656,7 +1657,7 @@ html[data-theme="dark"] #concurrent-edit-banner {
 }
 
 .slide-add-zone i {
-    font-size: 1rem;
+    font-size: var(--wiki-fs-lg);
     line-height: 1;
     color: var(--wiki-primary);
 }
@@ -1705,7 +1706,7 @@ html[data-theme="dark"] #concurrent-edit-banner {
 .slide-edit-nav-btn {
     background: transparent;
     border: 1px solid transparent;
-    border-radius: 6px;
+    border-radius: var(--wiki-radius-base);
     width: 34px;
     height: 34px;
     display: inline-flex;
@@ -1739,7 +1740,7 @@ html[data-theme="dark"] #concurrent-edit-banner {
     color: var(--wiki-text-muted);
     min-width: 4.5em;
     text-align: center;
-    font-size: 0.95rem;
+    font-size: var(--wiki-fs-md);
 }
 
 /* 통합 슬라이드 편집 중에는 슬라이드 컨트롤을 에디터 하단 내비게이션 바로 이관한다.
@@ -1766,10 +1767,10 @@ body.presentation-fullscreen #custom-wiki-preview {
     background: transparent;
     color: var(--wiki-text);
     border: 1px solid var(--wiki-border);
-    border-radius: 6px;
+    border-radius: var(--wiki-radius-base);
     font-size: 0.88rem;
     cursor: pointer;
-    transition: background 0.15s, border-color 0.15s;
+    transition: background var(--wiki-dur-instant), border-color var(--wiki-dur-instant);
 }
 
 .img-upload-search-btn:hover {
@@ -1779,7 +1780,7 @@ body.presentation-fullscreen #custom-wiki-preview {
 }
 
 .img-upload-search-btn i {
-    font-size: 1.1rem;
+    font-size: var(--wiki-fs-xl);
 }
 
 /* ── 기존 이미지 검색 모달 ── */
@@ -1817,16 +1818,16 @@ body.presentation-fullscreen #custom-wiki-preview {
     text-align: center;
     padding: 32px 0;
     color: var(--wiki-text-muted);
-    font-size: 0.9rem;
+    font-size: var(--wiki-fs-body);
 }
 
 .existing-img-tile {
     border: 1px solid var(--wiki-border);
-    border-radius: 6px;
+    border-radius: var(--wiki-radius-base);
     overflow: hidden;
     cursor: pointer;
     background: var(--wiki-card-bg);
-    transition: border-color 0.15s, transform 0.15s, box-shadow 0.15s;
+    transition: border-color var(--wiki-dur-instant), transform var(--wiki-dur-instant), box-shadow var(--wiki-dur-instant);
     display: flex;
     flex-direction: column;
 }
@@ -1847,7 +1848,7 @@ body.presentation-fullscreen #custom-wiki-preview {
 
 .existing-img-tile-name {
     padding: 4px 6px;
-    font-size: 0.75rem;
+    font-size: var(--wiki-fs-sm);
     color: var(--wiki-text);
     white-space: nowrap;
     overflow: hidden;
@@ -1864,13 +1865,13 @@ body.presentation-fullscreen #custom-wiki-preview {
 
 .existing-img-tile-tag,
 .existing-img-tile-tag-more {
-    font-size: 0.68rem;
+    font-size: var(--wiki-fs-xs);
     line-height: 1.1;
     padding: 2px 6px;
     background-color: color-mix(in srgb, var(--wiki-primary) 10%, transparent);
     color: var(--wiki-primary);
     border: 1px solid color-mix(in srgb, var(--wiki-primary) 20%, transparent);
-    border-radius: 6px;
+    border-radius: var(--wiki-radius-base);
     white-space: nowrap;
     max-width: 100%;
     overflow: hidden;
@@ -1898,7 +1899,7 @@ body.presentation-fullscreen #custom-wiki-preview {
 .existing-img-size-preview img {
     max-width: 100%;
     max-height: 200px;
-    border-radius: 6px;
+    border-radius: var(--wiki-radius-base);
     border: 1px solid var(--wiki-border);
 }
 
@@ -1924,9 +1925,9 @@ body.presentation-fullscreen #custom-wiki-preview {
     gap: 8px;
     padding: 6px 10px;
     border: 1px solid var(--wiki-border);
-    border-radius: 6px;
+    border-radius: var(--wiki-radius-base);
     cursor: pointer;
-    font-size: 0.9rem;
+    font-size: var(--wiki-fs-body);
 }
 
 .existing-img-size-options label:hover {
@@ -1939,7 +1940,7 @@ body.presentation-fullscreen #custom-wiki-preview {
     z-index: 1100;
     background: var(--wiki-card-bg);
     border: 1px solid var(--wiki-border);
-    border-radius: 8px;
+    border-radius: var(--wiki-radius-lg);
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
     padding: 12px;
     display: none;
@@ -1989,11 +1990,11 @@ body.presentation-fullscreen #custom-wiki-preview {
     width: 100%;
     margin-top: 10px;
     padding: 6px 10px;
-    font-size: 0.85rem;
+    font-size: var(--wiki-fs-base);
     background: var(--wiki-bg);
     color: var(--wiki-text);
     border: 1px solid var(--wiki-border);
-    border-radius: 4px;
+    border-radius: var(--wiki-radius-sm);
     cursor: pointer;
     transition: background 0.12s, border-color 0.12s, color 0.12s;
 }
@@ -2005,7 +2006,7 @@ body.presentation-fullscreen #custom-wiki-preview {
 }
 
 .table-insert-csv-btn i {
-    font-size: 1rem;
+    font-size: var(--wiki-fs-lg);
 }
 
 /* ── 표 안 커서 위 인라인 편집 툴바 ── */
@@ -2018,7 +2019,7 @@ body.presentation-fullscreen #custom-wiki-preview {
     padding: 4px;
     background: var(--wiki-bg);
     border: 1px solid var(--wiki-border);
-    border-radius: 6px;
+    border-radius: var(--wiki-radius-base);
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
 }
 
@@ -2032,9 +2033,9 @@ body.presentation-fullscreen #custom-wiki-preview {
     background: transparent;
     color: var(--wiki-text);
     border: none;
-    border-radius: 4px;
+    border-radius: var(--wiki-radius-sm);
     cursor: pointer;
-    font-size: 1rem;
+    font-size: var(--wiki-fs-lg);
     transition: background 0.1s, color 0.1s;
 }
 
@@ -2084,7 +2085,7 @@ body.presentation-fullscreen #custom-wiki-preview {
 
 /* ── 타임스탬프 삽입 모달 ── */
 .timestamp-insert-form .form-label {
-    font-size: 0.85rem;
+    font-size: var(--wiki-fs-base);
     color: var(--wiki-text-muted);
     margin-bottom: 4px;
 }
@@ -2100,10 +2101,10 @@ body.presentation-fullscreen #custom-wiki-preview {
     min-width: 92px;
     padding: 8px 10px;
     border: 1px solid var(--wiki-border);
-    border-radius: 6px;
+    border-radius: var(--wiki-radius-base);
     background: var(--wiki-bg);
     color: var(--wiki-text);
-    font-size: 0.9rem;
+    font-size: var(--wiki-fs-body);
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -2113,7 +2114,7 @@ body.presentation-fullscreen #custom-wiki-preview {
 }
 
 .timestamp-insert-type-tab i {
-    font-size: 1.1rem;
+    font-size: var(--wiki-fs-xl);
 }
 
 .timestamp-insert-type-tab:hover {
@@ -2148,7 +2149,7 @@ body.presentation-fullscreen #custom-wiki-preview {
     min-height: 46px;
     padding: 10px 12px;
     border: 1px dashed var(--wiki-border);
-    border-radius: 6px;
+    border-radius: var(--wiki-radius-base);
     background: var(--wiki-bg);
     display: flex;
     align-items: center;
@@ -2184,7 +2185,7 @@ body.presentation-fullscreen #custom-wiki-preview {
     overflow: hidden;
     background: repeating-conic-gradient(#e0e0e0 0% 25%, #fff 0% 50%) 50% / 16px 16px;
     border: 1px solid var(--wiki-border);
-    border-radius: 8px;
+    border-radius: var(--wiki-radius-lg);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -2279,12 +2280,12 @@ html[data-theme="dark"] .img-editor-canvas-wrap {
     gap: 6px;
     padding: 6px 14px;
     border: 1px solid var(--wiki-border);
-    border-radius: 8px;
+    border-radius: var(--wiki-radius-lg);
     background: var(--wiki-card-bg);
     color: var(--wiki-text);
     font-size: 0.88rem;
     cursor: pointer;
-    transition: background 0.15s, border-color 0.15s;
+    transition: background var(--wiki-dur-instant), border-color var(--wiki-dur-instant);
 }
 
 .img-editor-toolbar button:hover {
@@ -2299,7 +2300,7 @@ html[data-theme="dark"] .img-editor-canvas-wrap {
 }
 
 .img-editor-toolbar button i {
-    font-size: 1.1rem;
+    font-size: var(--wiki-fs-xl);
 }
 
 .img-editor-toolbar .separator {
@@ -2320,7 +2321,7 @@ html[data-theme="dark"] .img-editor-canvas-wrap {
     z-index: 2100;
     background: var(--wiki-card-bg);
     border: 1px solid var(--wiki-border);
-    border-radius: 8px;
+    border-radius: var(--wiki-radius-lg);
     box-shadow: 0 4px 15px rgba(0, 0, 0, 0.15);
     width: 294px;
     display: none;
@@ -2352,11 +2353,11 @@ html[data-theme="dark"] .img-editor-canvas-wrap {
     padding: 3px 10px;
     font-size: 0.78rem;
     border: 1px solid var(--wiki-border);
-    border-radius: 20px;
+    border-radius: var(--wiki-radius-2xl);
     background: var(--wiki-bg);
     color: var(--wiki-text);
     cursor: pointer;
-    transition: all 0.15s;
+    transition: all var(--wiki-dur-instant);
     white-space: nowrap;
 }
 
@@ -2378,7 +2379,7 @@ html[data-theme="dark"] .img-editor-canvas-wrap {
     font-size: 0.83rem;
     padding: 4px 8px;
     border: 1px solid var(--wiki-border);
-    border-radius: 8px;
+    border-radius: var(--wiki-radius-lg);
     background: var(--wiki-bg);
     color: var(--wiki-text);
     font-family: monospace;
@@ -2389,12 +2390,12 @@ html[data-theme="dark"] .img-editor-canvas-wrap {
     padding: 4px 12px;
     font-size: 0.8rem;
     border: none;
-    border-radius: 8px;
+    border-radius: var(--wiki-radius-lg);
     background: var(--wiki-primary);
     color: #fff;
     cursor: pointer;
     font-weight: 600;
-    transition: opacity 0.15s;
+    transition: opacity var(--wiki-dur-instant);
     white-space: nowrap;
     flex-shrink: 0;
 }
@@ -2415,17 +2416,17 @@ html[data-theme="dark"] .img-editor-canvas-wrap {
 #timestamp-autocomplete .ts-cal-nav-btn {
     background: none;
     border: 1px solid var(--wiki-border);
-    border-radius: 6px;
+    border-radius: var(--wiki-radius-base);
     color: var(--wiki-text);
     cursor: pointer;
     width: 26px;
     height: 26px;
-    font-size: 1rem;
+    font-size: var(--wiki-fs-lg);
     line-height: 1;
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: background 0.15s, border-color 0.15s;
+    transition: background var(--wiki-dur-instant), border-color var(--wiki-dur-instant);
     flex-shrink: 0;
 }
 
@@ -2443,8 +2444,8 @@ html[data-theme="dark"] .img-editor-canvas-wrap {
     color: var(--wiki-text);
     cursor: pointer;
     padding: 2px 8px;
-    border-radius: 6px;
-    transition: background 0.15s;
+    border-radius: var(--wiki-radius-base);
+    transition: background var(--wiki-dur-instant);
 }
 
 #timestamp-autocomplete .ts-cal-ym-btn:hover {
@@ -2484,7 +2485,7 @@ html[data-theme="dark"] .img-editor-canvas-wrap {
 #timestamp-autocomplete .ts-cal-cell {
     background: none;
     border: 1px solid transparent;
-    border-radius: 6px;
+    border-radius: var(--wiki-radius-base);
     font-size: 0.8rem;
     color: var(--wiki-text);
     cursor: pointer;
@@ -2526,7 +2527,7 @@ html[data-theme="dark"] .img-editor-canvas-wrap {
     justify-content: space-between;
     padding: 6px 8px 4px;
     border-bottom: 1px solid var(--wiki-border);
-    font-size: 0.85rem;
+    font-size: var(--wiki-fs-base);
     font-weight: 600;
     color: var(--wiki-text);
 }
@@ -2541,7 +2542,7 @@ html[data-theme="dark"] .img-editor-canvas-wrap {
 #timestamp-autocomplete .ts-cal-year-btn {
     background: none;
     border: 1px solid transparent;
-    border-radius: 6px;
+    border-radius: var(--wiki-radius-base);
     font-size: 0.8rem;
     color: var(--wiki-text);
     cursor: pointer;
@@ -2653,7 +2654,7 @@ html[data-theme="dark"] .img-editor-canvas-wrap {
     background-color: var(--palette-bg);
     color: var(--palette-color);
     border: 1px solid rgba(128, 128, 128, 0.5);
-    border-radius: 3px;
+    border-radius: var(--wiki-radius-xs);
     font-weight: 600;
     font-family: system-ui, -apple-system, sans-serif;
     cursor: pointer;
@@ -2705,7 +2706,7 @@ html[data-theme="dark"] .img-editor-canvas-wrap {
 .cm-inline-code {
     background-color: var(--cm-inline-code-bg) !important;
     color: var(--cm-inline-code-fg) !important;
-    border-radius: 4px;
+    border-radius: var(--wiki-radius-sm);
     padding: 2px 4px;
     font-family: monospace;
 }
@@ -2888,7 +2889,7 @@ html[data-theme="dark"] .cm-editor span.cm-inline-code::selection {
 
 /* ── 카드 블록 삽입 모달 ── */
 .card-insert-form .form-label {
-    font-size: 0.85rem;
+    font-size: var(--wiki-fs-base);
     color: var(--wiki-text-muted);
     margin-bottom: 4px;
 }
@@ -2901,7 +2902,7 @@ html[data-theme="dark"] .cm-editor span.cm-inline-code::selection {
 
 .card-insert-palette-swatch {
     border: 1px solid var(--wiki-border);
-    border-radius: 4px;
+    border-radius: var(--wiki-radius-sm);
     padding: 4px 10px;
     font-size: 0.82rem;
     cursor: pointer;
@@ -2934,9 +2935,9 @@ html[data-theme="dark"] .cm-editor span.cm-inline-code::selection {
     align-items: center;
     gap: 6px;
     border: 1px solid var(--wiki-border);
-    border-radius: 4px;
+    border-radius: var(--wiki-radius-sm);
     padding: 6px 12px;
-    font-size: 0.85rem;
+    font-size: var(--wiki-fs-base);
     cursor: pointer;
     background: var(--wiki-bg);
     color: var(--wiki-text);
@@ -2958,7 +2959,7 @@ html[data-theme="dark"] .cm-editor span.cm-inline-code::selection {
 
 /* ── 구조 컴포넌트(탭/아코디언/진행상황) 삽입 모달 ── */
 .structure-insert-form .form-label {
-    font-size: 0.85rem;
+    font-size: var(--wiki-fs-base);
     color: var(--wiki-text-muted);
     margin-bottom: 4px;
 }
@@ -2974,10 +2975,10 @@ html[data-theme="dark"] .cm-editor span.cm-inline-code::selection {
     min-width: 100px;
     padding: 8px 10px;
     border: 1px solid var(--wiki-border);
-    border-radius: 6px;
+    border-radius: var(--wiki-radius-base);
     background: var(--wiki-bg);
     color: var(--wiki-text);
-    font-size: 0.9rem;
+    font-size: var(--wiki-fs-body);
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -3008,7 +3009,7 @@ html[data-theme="dark"] .cm-editor span.cm-inline-code::selection {
 
 .structure-insert-row {
     border: 1px solid var(--wiki-border);
-    border-radius: 6px;
+    border-radius: var(--wiki-radius-base);
     padding: 10px;
     background: var(--wiki-card-bg);
 }
@@ -3041,7 +3042,7 @@ html[data-theme="dark"] .cm-editor span.cm-inline-code::selection {
 .structure-insert-row-remove {
     flex: 0 0 auto;
     border: 1px solid var(--wiki-border);
-    border-radius: 4px;
+    border-radius: var(--wiki-radius-sm);
     background: var(--wiki-bg);
     color: var(--wiki-text-muted);
     width: 28px;
@@ -3070,7 +3071,7 @@ html[data-theme="dark"] .cm-editor span.cm-inline-code::selection {
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    font-size: 0.85rem;
+    font-size: var(--wiki-fs-base);
     color: var(--wiki-text);
     cursor: pointer;
     user-select: none;
@@ -3087,7 +3088,7 @@ html[data-theme="dark"] .cm-editor span.cm-inline-code::selection {
     align-items: center;
     gap: 4px;
     border: 1px solid var(--wiki-border);
-    border-radius: 4px;
+    border-radius: var(--wiki-radius-sm);
     padding: 3px 8px;
     font-size: 0.8rem;
     cursor: pointer;
@@ -3108,11 +3109,11 @@ html[data-theme="dark"] .cm-editor span.cm-inline-code::selection {
 .structure-insert-add-row {
     width: 100%;
     border: 1px dashed var(--wiki-border);
-    border-radius: 6px;
+    border-radius: var(--wiki-radius-base);
     padding: 8px 10px;
     background: transparent;
     color: var(--wiki-text-muted);
-    font-size: 0.9rem;
+    font-size: var(--wiki-fs-body);
     cursor: pointer;
     display: inline-flex;
     align-items: center;
@@ -3129,7 +3130,7 @@ html[data-theme="dark"] .cm-editor span.cm-inline-code::selection {
 
 /* ── 배지 삽입 모달 ── */
 .badge-insert-form .form-label {
-    font-size: 0.85rem;
+    font-size: var(--wiki-fs-base);
     color: var(--wiki-text-muted);
     margin-bottom: 4px;
 }
@@ -3145,10 +3146,10 @@ html[data-theme="dark"] .cm-editor span.cm-inline-code::selection {
     min-width: 92px;
     padding: 8px 10px;
     border: 1px solid var(--wiki-border);
-    border-radius: 6px;
+    border-radius: var(--wiki-radius-base);
     background: var(--wiki-bg);
     color: var(--wiki-text);
-    font-size: 0.9rem;
+    font-size: var(--wiki-fs-body);
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -3158,7 +3159,7 @@ html[data-theme="dark"] .cm-editor span.cm-inline-code::selection {
 }
 
 .badge-insert-type-tab i {
-    font-size: 1.1rem;
+    font-size: var(--wiki-fs-xl);
 }
 
 .badge-insert-type-tab:hover {
@@ -3184,7 +3185,7 @@ html[data-theme="dark"] .cm-editor span.cm-inline-code::selection {
 
 .badge-insert-palette-swatch {
     border: 1px solid var(--wiki-border);
-    border-radius: 4px;
+    border-radius: var(--wiki-radius-sm);
     padding: 4px 10px;
     font-size: 0.82rem;
     cursor: pointer;
@@ -3232,7 +3233,7 @@ html[data-theme="dark"] .cm-editor span.cm-inline-code::selection {
     gap: 8px;
     padding: 6px 10px;
     border: 1px solid var(--wiki-border);
-    border-radius: 6px;
+    border-radius: var(--wiki-radius-base);
     background: var(--wiki-bg);
 }
 
@@ -3247,7 +3248,7 @@ html[data-theme="dark"] .cm-editor span.cm-inline-code::selection {
 }
 
 .badge-insert-icon-placeholder {
-    font-size: 0.75rem;
+    font-size: var(--wiki-fs-sm);
     color: var(--wiki-text-muted);
 }
 
@@ -3268,7 +3269,7 @@ html[data-theme="dark"] .cm-editor span.cm-inline-code::selection {
     padding: 4px 10px;
     font-size: 0.82rem;
     border: 1px solid var(--wiki-border);
-    border-radius: 4px;
+    border-radius: var(--wiki-radius-sm);
     background: var(--wiki-bg);
     color: var(--wiki-text);
     cursor: pointer;
@@ -3296,7 +3297,7 @@ html[data-theme="dark"] .cm-editor span.cm-inline-code::selection {
     min-height: 46px;
     padding: 10px 12px;
     border: 1px dashed var(--wiki-border);
-    border-radius: 6px;
+    border-radius: var(--wiki-radius-base);
     background: var(--wiki-bg);
     display: flex;
     align-items: center;
@@ -3337,10 +3338,10 @@ html[data-theme="dark"] .cm-editor span.cm-inline-code::selection {
     gap: 4px;
     padding: 6px 10px;
     border: 1px solid var(--wiki-border);
-    border-radius: 4px;
+    border-radius: var(--wiki-radius-sm);
     background: var(--wiki-bg);
     color: var(--wiki-text);
-    font-size: 0.85rem;
+    font-size: var(--wiki-fs-base);
     cursor: pointer;
     transition: background 0.12s, color 0.12s, border-color 0.12s;
 }
@@ -3362,7 +3363,7 @@ html[data-theme="dark"] .cm-editor span.cm-inline-code::selection {
     z-index: 3000;
     background: var(--wiki-card-bg);
     border: 1px solid var(--wiki-border);
-    border-radius: 8px;
+    border-radius: var(--wiki-radius-lg);
     box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
     padding: 8px;
     min-width: 380px;
@@ -3388,10 +3389,10 @@ html[data-theme="dark"] .cm-find-panel {
     height: 28px;
     padding: 0 8px;
     border: 1px solid var(--wiki-border);
-    border-radius: 4px;
+    border-radius: var(--wiki-radius-sm);
     background: var(--wiki-bg);
     color: var(--wiki-text);
-    font-size: 0.85rem;
+    font-size: var(--wiki-fs-base);
 }
 
 .cm-find-input:focus {
@@ -3401,7 +3402,7 @@ html[data-theme="dark"] .cm-find-panel {
 }
 
 .cm-find-status {
-    font-size: 0.75rem;
+    font-size: var(--wiki-fs-sm);
     color: var(--wiki-text-muted);
     min-width: 40px;
     text-align: center;
@@ -3419,7 +3420,7 @@ html[data-theme="dark"] .cm-find-panel {
     border: none;
     background: transparent;
     color: var(--wiki-text);
-    border-radius: 4px;
+    border-radius: var(--wiki-radius-sm);
     cursor: pointer;
     padding: 0;
     line-height: 1;
@@ -3437,7 +3438,7 @@ html[data-theme="dark"] .cm-find-panel {
     width: auto;
     padding: 0 10px;
     gap: 4px;
-    font-size: 0.85rem;
+    font-size: var(--wiki-fs-base);
 }
 
 .cm-find-toggle {
@@ -3459,7 +3460,7 @@ html[data-theme="dark"] .cm-find-panel {
     justify-content: center;
     width: 28px;
     height: 28px;
-    border-radius: 4px;
+    border-radius: var(--wiki-radius-sm);
     font-size: 0.78rem;
     font-weight: 600;
     color: var(--wiki-text-muted);
@@ -3515,7 +3516,7 @@ html[data-theme="dark"] .cm-search-match-active {
     z-index: 1100;
     background: var(--wiki-card-bg);
     border: 1px solid var(--wiki-border);
-    border-radius: 8px;
+    border-radius: var(--wiki-radius-lg);
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
     width: 360px;
     max-width: calc(100dvw - 16px);
@@ -3532,7 +3533,7 @@ html[data-theme="dark"] .cm-search-match-active {
     padding: 8px 12px;
     border-bottom: 1px solid var(--wiki-border);
     background: var(--wiki-toc-bg);
-    font-size: 0.85rem;
+    font-size: var(--wiki-fs-base);
     color: var(--wiki-text-muted);
     display: flex;
     align-items: center;
@@ -3569,9 +3570,9 @@ html[data-theme="dark"] .cm-search-match-active {
     color: var(--wiki-text);
     font-size: 0.78rem;
     padding: 4px 8px;
-    border-radius: 4px;
+    border-radius: var(--wiki-radius-sm);
     cursor: pointer;
-    transition: background 0.15s, border-color 0.15s, color 0.15s;
+    transition: background var(--wiki-dur-instant), border-color var(--wiki-dur-instant), color var(--wiki-dur-instant);
 }
 
 .special-char-tab:hover {
@@ -3605,7 +3606,7 @@ html[data-theme="dark"] .cm-search-match-active {
     font-size: 1.05rem;
     line-height: 1;
     height: 34px;
-    border-radius: 4px;
+    border-radius: var(--wiki-radius-sm);
     padding: 0;
     transition: background 0.12s, border-color 0.12s, color 0.12s, transform 0.05s;
 }
@@ -3642,7 +3643,7 @@ html[data-theme="dark"] .cm-search-match-active {
     background: var(--wiki-card-bg, #ffffff);
     color: var(--wiki-text, #212529);
     border: 1px solid var(--wiki-border, #dee2e6);
-    border-radius: 10px;
+    border-radius: var(--wiki-radius-xl);
     box-shadow: 0 12px 32px rgba(0, 0, 0, 0.25);
     padding: 20px 24px;
     display: flex;
@@ -3660,7 +3661,7 @@ html[data-theme="dark"] .cm-search-match-active {
 }
 
 .turnstile-verify-body {
-    font-size: 0.9rem;
+    font-size: var(--wiki-fs-body);
     color: var(--wiki-text-muted, #6c757d);
     text-align: center;
 }
@@ -3683,7 +3684,7 @@ html[data-theme="dark"] .cm-search-match-active {
     position: absolute;
     inset: 0;
     background-color: var(--wiki-bg, #ffffff);
-    border-radius: 4px;
+    border-radius: var(--wiki-radius-sm);
     z-index: 5;
     pointer-events: auto;
 }

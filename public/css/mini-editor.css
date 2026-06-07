@@ -5,7 +5,7 @@
     display: flex;
     flex-direction: column;
     border: 1px solid var(--wiki-border, #ced4da);
-    border-radius: 6px;
+    border-radius: var(--wiki-radius-base);
     background: var(--wiki-card-bg, #fff);
     overflow: hidden;
 }
@@ -29,10 +29,10 @@
     padding: 0 8px;
     background: transparent;
     border: 1px solid transparent;
-    border-radius: 4px;
+    border-radius: var(--wiki-radius-sm);
     color: var(--wiki-text, #212529);
     cursor: pointer;
-    font-size: 0.95rem;
+    font-size: var(--wiki-fs-md);
     line-height: 1;
     transition: background-color 0.12s, border-color 0.12s;
 }
@@ -80,7 +80,7 @@
 
 /* CM6 내장 placeholder 색상 톤 다운 */
 .mini-editor-host .cm-placeholder {
-    color: var(--wiki-muted, #6c757d);
+    color: var(--wiki-text-muted);
     opacity: 0.7;
 }
 
@@ -101,7 +101,7 @@
     padding: 4px;
     background: var(--wiki-card-bg, #fff);
     border: 1px solid var(--wiki-border, #ced4da);
-    border-radius: 6px;
+    border-radius: var(--wiki-radius-base);
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
     z-index: 1050;
 }
@@ -113,10 +113,10 @@
     padding: 6px 10px;
     background: transparent;
     border: none;
-    border-radius: 4px;
+    border-radius: var(--wiki-radius-sm);
     color: var(--wiki-text, #212529);
     cursor: pointer;
-    font-size: 0.9rem;
+    font-size: var(--wiki-fs-body);
     text-align: left;
 }
 
@@ -145,7 +145,7 @@
     padding: 4px;
     background: var(--wiki-card-bg, #fff);
     border: 1px solid var(--wiki-border, #ced4da);
-    border-radius: 6px;
+    border-radius: var(--wiki-radius-base);
     box-shadow: 0 6px 18px rgba(0, 0, 0, 0.16);
     z-index: 1060;
 }
@@ -157,10 +157,10 @@
     padding: 6px 10px;
     background: transparent;
     border: none;
-    border-radius: 4px;
+    border-radius: var(--wiki-radius-sm);
     color: var(--wiki-text, #212529);
     cursor: pointer;
-    font-size: 0.9rem;
+    font-size: var(--wiki-fs-body);
     text-align: left;
     width: 100%;
 }
@@ -186,12 +186,8 @@
 
 .mini-editor-mention-id {
     flex-shrink: 0;
-    color: var(--wiki-muted, #6c757d);
+    color: var(--wiki-text-muted);
     font-size: 0.8em;
 }
 
-.mini-editor-mention-empty {
-    padding: 8px 10px;
-    color: var(--wiki-muted, #6c757d);
-    font-size: 0.9rem;
-}
+/* 멘션 후보 없음 상태는 표준 .empty-state(window.uiEmptyState)로 통합 */

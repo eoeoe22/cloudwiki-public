@@ -125,3 +125,16 @@ export function skeletonCards(count = 3): string {
     }
     return `<div class="skeleton-wrap" aria-busy="true" aria-live="polite">${out}</div>`;
 }
+
+// common.ts 가 아래 헬퍼들을 window.* 로 노출한다(common.js 가 항상 먼저 로드).
+// 타입검사 대상(@ts-nocheck 아님) 클라이언트 모듈에서 window.uiEmptyState 등을
+// 안전하게 호출할 수 있도록 전역 Window 를 단일 소스로 augment 한다.
+declare global {
+    interface Window {
+        uiEmptyState: (opts: EmptyStateOptions) => string;
+        uiInlineLoading: (opts?: InlineLoadingOptions) => string;
+        uiSkeletonLines: (count?: number) => string;
+        uiSkeletonList: (rows?: number) => string;
+        uiSkeletonCards: (count?: number) => string;
+    }
+}

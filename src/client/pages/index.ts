@@ -703,6 +703,9 @@
     async function showArticle(slug) {
       showLoading();
       currentSlug = slug;
+      // 커맨드 팔레트 편집 단축키용 정식 편집 대상 초기화 — 일반 문서 분기에서만 다시 설정한다
+      // (이미지/map/카테고리 폴백/없음/비공개/삭제 화면은 null 유지 → 편집 액션·`e` 비활성).
+      window.currentArticleEdit = null;
 
       // Raw 보기 모드 초기화 — 모든 early-return 분기(404 카테고리 폴백, 403, 410 등) 이전에 수행
       // 이전 문서에서 활성화된 raw-mode 가 남아 있으면 body.raw-mode 스타일이 다음 페이지의
@@ -838,6 +841,13 @@
 
         currentPage = page;
         applyShareAiVisibility(page);
+
+        // 커맨드 팔레트 최근 방문 문서 기록 (일반 위키 문서 한정 — 이미지/map/카테고리 문서는
+        // 위 분기에서 이미 return 되었거나 recordRecentDoc 내부에서 가상 네임스페이스로 제외됨).
+        // 비공개 문서는 공유 localStorage(recentVisitedDocs)에 남기지 않는다 — 로그아웃/타 계정이
+        // 같은 브라우저에서 팔레트를 열 때 /api/search/suggest 로는 발견 불가한 비공개 제목/슬러그가
+        // 권한 검사 없이 노출되는 메타데이터 누출을 막기 위함.
+        if (!page.is_private) window.recordRecentDoc?.(page.slug, page.title);
 
         // 표시 이름: title 이 있으면 그것을, 없으면 slug. 모든 호출(링크/API) 은 항상 page.slug 기준.
         const displayName = page.title || page.slug;
@@ -979,6 +989,10 @@
         // 편집 권한 확인
         const _aclAdminOnly = _aclFlags.includes('admin_only');
         const canEdit = window.currentUser && (isAdmin || !_aclAdminOnly);
+
+        // 커맨드 팔레트 편집 단축키(`e`/"현재 문서 편집")용 정식 편집 대상 노출.
+        // actionSlug 는 리다이렉트 시 canonical page.slug 이며, 편집 불가 시 null 로 비활성화한다.
+        window.currentArticleEdit = canEdit ? { slug: actionSlug } : null;
 
         // 메인 액션 (편집, 이력, 토론)
         const mainActionsHtml = `
