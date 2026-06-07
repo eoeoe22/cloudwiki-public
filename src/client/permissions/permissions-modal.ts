@@ -6,7 +6,7 @@
  *  2) 하위 문서 일괄 적용 (비공개 / 편집 ACL)
  *  3) 기존 자동 규칙 목록·삭제
  *
- * (프레젠테이션 모드(layout_mode) 는 이 모달에서 제거되어 에디터의 체크박스 + 본문 저장 경로로 옮겨졌다.)
+ * (프레젠테이션 모드(view_mode) 는 이 모달에서 제거되어 에디터의 체크박스 + 본문 저장 경로로 옮겨졌다.)
  *
  * 호출 API (모두 관리자 전용 — adminRoutes.use(requireAdmin)):
  *  - GET    /api/admin/pages/:slug/edit-acl

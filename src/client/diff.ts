@@ -269,9 +269,34 @@ export async function buildRichDiffHtml(oldText: string, newText: string, slug: 
             return '<div class="diff-empty">변경된 내용이 없습니다.</div>';
         }
 
+        // 변경된 블록(문단) 주변 CONTEXT 블록만 표시, 나머지 미변경 구간은 접는다.
+        // computeLineDiff 의 줄 단위 컨텍스트+생략 패턴을 블록 단위로 그대로 차용.
+        const CONTEXT = 1;
+        const visible = new Set<number>();
+        ops.forEach((op, idx) => {
+            if (op.type !== 'same') {
+                for (let k = Math.max(0, idx - CONTEXT); k <= Math.min(ops.length - 1, idx + CONTEXT); k++) {
+                    visible.add(k);
+                }
+            }
+        });
+
         const parts: string[] = [];
-        for (const op of ops) {
-            parts.push(`<div class="rich-diff-block rich-diff-${op.type}">${op.html}</div>`);
+        let skipStart = -1;
+        for (let idx = 0; idx < ops.length; idx++) {
+            if (visible.has(idx)) {
+                if (skipStart !== -1) {
+                    parts.push(`<div class="rich-diff-skip">⋯ ${idx - skipStart}개 문단 생략됨</div>`);
+                    skipStart = -1;
+                }
+                const op = ops[idx];
+                parts.push(`<div class="rich-diff-block rich-diff-${op.type}">${op.html}</div>`);
+            } else if (skipStart === -1) {
+                skipStart = idx;
+            }
+        }
+        if (skipStart !== -1) {
+            parts.push(`<div class="rich-diff-skip">⋯ ${ops.length - skipStart}개 문단 생략됨</div>`);
         }
         return parts.join('');
     } finally {

@@ -1204,7 +1204,7 @@
           }
           _tryRenderExtDoc(15);
         } else if (
-          page.layout_mode === 'presentation'
+          page.view_mode === 'presentation'
           && !document.body.classList.contains('reading-mode')
           && typeof window.renderPresentation === 'function'
         ) {
@@ -2689,7 +2689,7 @@
       } catch (e) { }
       // 프레젠테이션 문서는 모드 전환 시 본문 렌더 경로가 갈리므로 재렌더가 필요.
       // 읽기 모드 ON → 일반 문서처럼 합쳐서 표시 / OFF → 슬라이드 덱 복원.
-      if (currentPage && currentPage.layout_mode === 'presentation' && currentSlug) {
+      if (currentPage && currentPage.view_mode === 'presentation' && currentSlug) {
         if (typeof window.teardownPresentation === 'function') {
           try { window.teardownPresentation(); } catch (e) { /* noop */ }
         }

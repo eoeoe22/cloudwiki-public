@@ -83,7 +83,7 @@ export const PAGE_BUNDLES: Record<string, BundleName[]> = {
     '/admin.html':          ['base'],
     '/admin-media.html':    ['base'],
     '/admin-bulk-delete.html': ['base'],
-    '/recent-changes.html': ['base'],
+    '/explore.html':        ['base'],
     '/search.html':         ['base'],
     '/setup-profile.html':  ['base'],
     '/user-profile.html':   ['base'],

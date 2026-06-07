@@ -110,6 +110,11 @@ export async function refreshRecentChangesCache(c: any) {
         },
     });
     await cache.put(cacheUrl, response);
+
+    // 탐색 포털 집계(/api/explore/summary)도 같은 변경 시점에 무효화한다.
+    // 공개 위키에서 엣지 캐시된 summary 에 비공개 전환·삭제된 문서의 slug/title·토론
+    // 제목이 stale 로 남아 노출되지 않도록, recent-changes 와 동일한 무효화 지점에 묶는다.
+    await cache.delete(`${origin}/api/explore/summary`);
 }
 
 /**

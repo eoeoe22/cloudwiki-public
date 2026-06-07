@@ -56,7 +56,7 @@ export default defineConfig({
                 'setup-profile': resolve(__dirname, 'src/client/pages/setup-profile.ts'),
                 'setup-profile-form': resolve(__dirname, 'src/client/pages/setup-profile-form.ts'),
                 'search': resolve(__dirname, 'src/client/pages/search.ts'),
-                'recent-changes': resolve(__dirname, 'src/client/pages/recent-changes.ts'),
+                'explore': resolve(__dirname, 'src/client/pages/explore.ts'),
                 'user-profile': resolve(__dirname, 'src/client/pages/user-profile.ts'),
                 'blog': resolve(__dirname, 'src/client/pages/blog.ts'),
                 'revisions': resolve(__dirname, 'src/client/pages/revisions.ts'),

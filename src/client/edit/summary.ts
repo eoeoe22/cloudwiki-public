@@ -391,8 +391,8 @@ function buildAutoEditSummary(): string {
     const redirectEl = document.getElementById('redirectInput') as HTMLInputElement | null;
     const currRedirect = redirectEl ? redirectEl.value.trim() : '';
 
-    // 프레젠테이션 모드(layout_mode) — 'presentation' vs ''. 체크박스 상태를 직접 읽는다.
-    const origLayout = originalPageMeta.layout_mode === 'presentation' ? 'presentation' : '';
+    // 프레젠테이션 모드(view_mode) — 'presentation' vs ''. 체크박스 상태를 직접 읽는다.
+    const origLayout = originalPageMeta.view_mode === 'presentation' ? 'presentation' : '';
     const presoEl = document.getElementById('presentationModeToggle') as HTMLInputElement | null;
     const currLayout = presoEl && presoEl.checked ? 'presentation' : '';
 

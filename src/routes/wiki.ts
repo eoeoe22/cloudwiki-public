@@ -27,10 +27,10 @@ export const TITLE_FORBIDDEN_CHARS = /[\x00-\x1F\x7F]/;
 export const TITLE_MAX_LENGTH = 100;
 
 /**
- * 문서별 layout_mode 화이트리스트. 빈 문자열/null 은 NULL('자동' = 전역 LAYOUT_MODE).
- * PUT /w/:slug 본문 저장 경로에서 사용. (admin PATCH /flags 의 동명 상수와 동일 의미.)
+ * 문서별 view_mode 화이트리스트(본문 보기 모드 — 전역 LAYOUT_MODE 페이지 레이아웃과 별개).
+ * 빈 문자열/null 은 NULL(일반 본문). PUT /w/:slug 본문 저장 경로에서 사용.
  */
-export const ALLOWED_LAYOUT_MODES = new Set<string>(['presentation']);
+export const ALLOWED_VIEW_MODES = new Set<string>(['presentation']);
 
 /**
  * 클라이언트가 보낸 title 입력을 정규화한다.
@@ -328,8 +328,8 @@ async function holdPendingEdit(
         isPrivate: boolean;       // 검토자 접근 게이팅용 (현재 또는 결과가 비공개면 true)
         editAcl: string | null;   // applyEditAcl=true 일 때 승인 시 적용할 직렬화 edit_acl (update 전용)
         applyEditAcl: boolean;    // 이 편집이 edit_acl 을 바꾸려는 경우만 true (direct-save 의 willUpdateEditAcl 과 동일)
-        layoutMode: string | null; // applyLayout=true 일 때 승인 시 적용할 layout_mode
-        applyLayout: boolean;     // 편집이 layout_mode 를 지정한 경우만 true (direct-save 의 hasLayoutInBody 와 동일; create 는 항상 true)
+        viewMode: string | null; // applyView=true 일 때 승인 시 적용할 view_mode
+        applyView: boolean;       // 편집이 view_mode 를 지정한 경우만 true (direct-save 의 hasViewInBody 와 동일; create 는 항상 true)
         categoryAclChoices: string | null; // create 보류본의 원본 category_acl_choices(JSON 문자열). 승인 시 재생용. update 는 불필요(null).
     },
 ): Promise<number> {
@@ -340,7 +340,7 @@ async function holdPendingEdit(
             `INSERT INTO pending_edits
                 (page_id, slug, action, author_id, base_revision_id, base_version,
                  content, category, redirect_to, title, has_title_change, summary,
-                 is_private, edit_acl, apply_edit_acl, layout_mode, apply_layout, category_acl_choices, created_at, updated_at)
+                 is_private, edit_acl, apply_edit_acl, view_mode, apply_view, category_acl_choices, created_at, updated_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())
              ON CONFLICT(author_id, slug) DO UPDATE SET
                 page_id = excluded.page_id,
@@ -356,8 +356,8 @@ async function holdPendingEdit(
                 is_private = excluded.is_private,
                 edit_acl = excluded.edit_acl,
                 apply_edit_acl = excluded.apply_edit_acl,
-                layout_mode = excluded.layout_mode,
-                apply_layout = excluded.apply_layout,
+                view_mode = excluded.view_mode,
+                apply_view = excluded.apply_view,
                 category_acl_choices = excluded.category_acl_choices,
                 updated_at = unixepoch()
              RETURNING id`
@@ -378,8 +378,8 @@ async function holdPendingEdit(
             input.isPrivate ? 1 : 0,
             input.editAcl,
             input.applyEditAcl ? 1 : 0,
-            input.layoutMode,
-            input.applyLayout ? 1 : 0,
+            input.viewMode,
+            input.applyView ? 1 : 0,
             input.categoryAclChoices,
         )
         .first<{ id: number }>();
@@ -1938,11 +1938,11 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
         turnstileToken?: string;
         title?: string | null;
         /**
-         * 문서 레이아웃 모드. 'presentation' 등 화이트리스트 값 또는 null('자동' = 전역 LAYOUT_MODE).
+         * 문서 본문 보기 모드(전역 LAYOUT_MODE 페이지 레이아웃과 별개). 'presentation' 등 화이트리스트 값 또는 null(일반 본문).
          * 본문 저장과 함께 동일 PUT 으로 전송되며, 일반 사용자도 설정할 수 있다(권한 게이트 없음 — 표시 전용).
          * 키 자체가 누락되면 기존 값을 유지한다.
          */
-        layout_mode?: string | null;
+        view_mode?: string | null;
         /**
          * 신규 적용 카테고리에 대한 ACL 머지 모드.
          * 키: 카테고리명, 값: 'overwrite' | 'merge' | 'ignore'.
@@ -1968,19 +1968,19 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
         return c.json({ error: `대체 제목은 ${TITLE_MAX_LENGTH}자 이하여야 합니다.` }, 400);
     }
 
-    // layout_mode 검증 — body 에 키가 명시된 경우에만 변경 의도로 해석한다(undefined = 기존값 유지).
-    // 빈 문자열/null 은 NULL('자동' = 전역 LAYOUT_MODE 따름). 그 외엔 화이트리스트(PRESENTATION 등) 만 허용.
+    // view_mode 검증 — body 에 키가 명시된 경우에만 변경 의도로 해석한다(undefined = 기존값 유지).
+    // 빈 문자열/null 은 NULL(일반 본문). 그 외엔 화이트리스트(PRESENTATION 등) 만 허용.
     // 표시 전용 메타이므로 별도 권한 게이트 없이 편집 권한자(wiki:edit) 면 누구나 설정 가능하다.
-    const hasLayoutInBody = Object.prototype.hasOwnProperty.call(body, 'layout_mode');
-    let requestedLayout: string | null | undefined;
-    if (hasLayoutInBody) {
-        const v = body.layout_mode;
+    const hasViewInBody = Object.prototype.hasOwnProperty.call(body, 'view_mode');
+    let requestedView: string | null | undefined;
+    if (hasViewInBody) {
+        const v = body.view_mode;
         if (v === null || v === '' || typeof v === 'undefined') {
-            requestedLayout = null;
-        } else if (typeof v === 'string' && ALLOWED_LAYOUT_MODES.has(v)) {
-            requestedLayout = v;
+            requestedView = null;
+        } else if (typeof v === 'string' && ALLOWED_VIEW_MODES.has(v)) {
+            requestedView = v;
         } else {
-            return c.json({ error: `layout_mode 허용 값: null | ${[...ALLOWED_LAYOUT_MODES].join(' | ')}` }, 400);
+            return c.json({ error: `view_mode 허용 값: null | ${[...ALLOWED_VIEW_MODES].join(' | ')}` }, 400);
         }
     }
 
@@ -2322,9 +2322,9 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
                     // direct-save 가 edit_acl 을 쓰는 경우(willUpdateEditAcl: 카테고리 ACL 머지 등)만 승인 시 적용.
                     editAcl: finalEditAcl,
                     applyEditAcl: willUpdateEditAcl,
-                    // direct-save 는 body 에 layout_mode 키가 있을 때만 layout_mode 를 쓴다(hasLayoutInBody).
-                    layoutMode: hasLayoutInBody ? (requestedLayout ?? null) : null,
-                    applyLayout: hasLayoutInBody,
+                    // direct-save 는 body 에 view_mode 키가 있을 때만 view_mode 를 쓴다(hasViewInBody).
+                    viewMode: hasViewInBody ? (requestedView ?? null) : null,
+                    applyView: hasViewInBody,
                     // update 의 카테고리 ACL 머지 결과는 edit_acl 로 이미 캡처되므로 choices 재생 불필요.
                     categoryAclChoices: null,
                 });
@@ -2366,7 +2366,7 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
         const finalTitle = hasTitleInBody ? requestedTitle ?? null : existing.title;
         try {
             // SET 절을 동적으로 구성한다. edit_acl 은 admin 이 명시적으로 변경 요청한 경우에만,
-            // layout_mode 는 body 에 키가 명시된 경우에만 포함한다(그 외 케이스는 column 을 손대지 않아
+            // view_mode 는 body 에 키가 명시된 경우에만 포함한다(그 외 케이스는 column 을 손대지 않아
             // 다른 경로의 갱신을 stale 값으로 덮어쓰는 race 를 회피). 바인드 순서는 placeholder 순서와 일치.
             const setClauses: string[] = ['content = ?', 'title = ?', 'category = ?', 'is_private = ?'];
             const setBinds: (string | number | null)[] = [contentToStore, finalTitle, body.category || null, finalIsPrivate];
@@ -2374,9 +2374,9 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
                 setClauses.push('edit_acl = ?');
                 setBinds.push(finalEditAcl);
             }
-            if (hasLayoutInBody) {
-                setClauses.push('layout_mode = ?');
-                setBinds.push(requestedLayout ?? null);
+            if (hasViewInBody) {
+                setClauses.push('view_mode = ?');
+                setBinds.push(requestedView ?? null);
             }
             setClauses.push('redirect_to = ?', 'last_revision_id = ?', 'version = ?', 'rows = ?', 'characters = ?', 'updated_at = unixepoch()');
             setBinds.push(body.redirect_to || null, revisionId, newVersion, metrics.rows, metrics.characters);
@@ -2544,9 +2544,9 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
                     // create 승인은 applyNewPageInsert 가 prefix/카테고리 ACL 을 재평가하므로 저장된 edit_acl 을 쓰지 않는다.
                     editAcl: null,
                     applyEditAcl: false,
-                    // direct-create 는 항상 layout_mode 를 INSERT 하므로 보류 create 도 항상 적용한다.
-                    layoutMode: requestedLayout ?? null,
-                    applyLayout: true,
+                    // direct-create 는 항상 view_mode 를 INSERT 하므로 보류 create 도 항상 적용한다.
+                    viewMode: requestedView ?? null,
+                    applyView: true,
                     // direct-create 가 받은 category_acl_choices 를 그대로 저장해 승인 시 재생(ignore/merge 등 보존).
                     categoryAclChoices: categoryAclChoicesRaw ? JSON.stringify(categoryAclChoicesRaw) : null,
                 });
@@ -2560,9 +2560,9 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
         try {
             pageResult = await db
                 .prepare(
-                    'INSERT INTO pages (slug, title, content, category, is_private, edit_acl, redirect_to, rows, characters, layout_mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+                    'INSERT INTO pages (slug, title, content, category, is_private, edit_acl, redirect_to, rows, characters, view_mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
                 )
-                .bind(slug, newDocTitle, contentToStore, effectiveCategory, finalIsPrivate, finalEditAcl, body.redirect_to || null, metrics.rows, metrics.characters, requestedLayout ?? null)
+                .bind(slug, newDocTitle, contentToStore, effectiveCategory, finalIsPrivate, finalEditAcl, body.redirect_to || null, metrics.rows, metrics.characters, requestedView ?? null)
                 .run();
         } catch (e: any) {
             // UNIQUE race (slug 의 UNIQUE 또는 idx_pages_title_unique) — precheck 와 INSERT 사이에

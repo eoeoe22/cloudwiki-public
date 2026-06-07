@@ -1683,6 +1683,78 @@ html[data-theme="dark"] #concurrent-edit-banner {
     display: none !important;
 }
 
+/* ── 통합 슬라이드 편집: 에디터 하단 내비게이션 바 ── */
+/* 에디터 패널(flex column) 맨 아래를 에디터 폭 전체로 차지한다. 프리뷰 탭(모바일) 없이도
+   슬라이드 이동/전체보기/전체화면을 제어한다. 슬라이드 덱의 하단 컨트롤 바를 이쪽으로 이관. */
+.slide-edit-nav {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    height: 44px;
+    padding: 0 10px;
+    border-top: 1px solid var(--wiki-border);
+    background: var(--wiki-bg-secondary, rgba(127, 127, 127, 0.06));
+}
+
+.slide-edit-nav[hidden] {
+    display: none;
+}
+
+.slide-edit-nav-btn {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    width: 34px;
+    height: 34px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--wiki-text);
+    cursor: pointer;
+    font-size: 1.05rem;
+}
+
+.slide-edit-nav-btn:hover:not(:disabled) {
+    background: var(--wiki-hover, rgba(127, 127, 127, 0.12));
+    border-color: var(--wiki-border);
+}
+
+.slide-edit-nav-btn:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+
+.slide-edit-nav-btn.active {
+    color: var(--wiki-primary);
+}
+
+.slide-edit-nav-btn-fullscreen {
+    margin-left: 0.4rem;
+}
+
+.slide-edit-nav-indicator {
+    font-variant-numeric: tabular-nums;
+    color: var(--wiki-text-muted);
+    min-width: 4.5em;
+    text-align: center;
+    font-size: 0.95rem;
+}
+
+/* 통합 슬라이드 편집 중에는 슬라이드 컨트롤을 에디터 하단 내비게이션 바로 이관한다.
+   PC(좌우 분할)에서 우측 덱의 중복 컨트롤 바를 숨긴다(전체화면은 제외 — 덱 자체 컨트롤 사용). */
+@media (min-width: 769px) {
+    body:not(.presentation-fullscreen) .wiki-editor-layout.slide-edit-active #custom-wiki-preview .slide-deck-controls {
+        display: none;
+    }
+}
+
+/* 전체화면: 에디터 탭에서 진입했더라도 덱(프리뷰 패널)이 보이도록 강제 표시한다. */
+body.presentation-fullscreen #custom-wiki-preview {
+    display: block !important;
+}
+
 .img-upload-search-btn {
     display: flex;
     align-items: center;

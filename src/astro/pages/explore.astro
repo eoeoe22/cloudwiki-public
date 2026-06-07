@@ -1,13 +1,13 @@
 ---
-// 최근 수정 내역 페이지 셸. 기존 public/recent-changes.html 과 동일한 마커/구조를 유지하되,
-// header/sidebar/footer 를 빌드 타임에 컴포넌트로 인라인한다(런타임 placeholder 주입 불필요).
-// base CDN(Bootstrap 등)은 BaseLayout 이 빌드 타임에 인라인(베이킹) — PAGE_BUNDLES['/recent-changes.html']=['base']기준으로 베이킹.
+// 탐색 포털 셸. 통계/고아 문서/작성 요청(빨간 링크)/최근 토론/무작위 문서 카드를 본문에 두고,
+// 트렌딩·최근 변경은 recent-changes.astro 와 동일한 검증된 사이드바 마크업을 재사용한다
+// (common.ts 의 loadTrending/loadRecentChanges 가 .trending-container/.recent-changes-container 를 채움).
 import BaseLayout from '../layouts/BaseLayout.astro';
 import Header from '../components/Header.astro';
 import Sidebar from '../components/Sidebar.astro';
 import Footer from '../components/Footer.astro';
 ---
-<BaseLayout pagePath="/recent-changes.html" title="최근 수정 내역 - CloudWiki">
+<BaseLayout pagePath="/explore.html" title="탐색 - CloudWiki">
     <Fragment slot="head">
         <!-- 테마 FOUC 방지: CSS 로드 후 즉시 테마 적용 -->
         <script is:inline>try{var t=localStorage.getItem('themeMode');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
@@ -19,25 +19,79 @@ import Footer from '../components/Footer.astro';
     <!-- ── 메인 레이아웃 ── -->
     <div class="wiki-layout">
         <div class="wiki-container">
-            <!-- 로딩 -->
-            <div id="loading" class="wiki-loading">
-                <div class="spinner-border text-primary" role="status"></div>
-                <span>불러오는 중...</span>
-            </div>
+            <div class="wiki-article" style="width: 100%; max-width: 100%; overflow-x: hidden;">
 
-            <!-- 메인 콘텐츠 -->
-            <div id="mainContent" class="d-none">
-                <div class="wiki-article" style="width: 100%; max-width: 100vw; overflow-x: hidden;">
+                <h1 class="h3 mb-1"><i class="bi bi-compass text-primary"></i> 탐색</h1>
+                <p class="text-muted mb-4">위키의 활동, 통계, 손이 필요한 문서를 한눈에 살펴보세요.</p>
 
-                    <!-- 위키 통계 -->
-                    <div id="wikiStatsBar" class="d-flex gap-3 mb-3 flex-wrap">
-                        <span class="badge bg-primary bg-opacity-10 text-primary border px-3 py-2" style="font-size: 0.9rem;">
-                            <i class="bi bi-file-earmark-text"></i> 문서 <strong id="statPageCount">-</strong>개
-                        </span>
-                        <span class="badge bg-success bg-opacity-10 text-success border px-3 py-2" style="font-size: 0.9rem;">
-                            <i class="bi bi-pencil-square"></i> 편집 <strong id="statRevisionCount">-</strong>회
-                        </span>
+                <!-- 통계 -->
+                <div id="exploreStats" class="d-flex gap-2 mb-4 flex-wrap">
+                    <span class="placeholder-glow"><span class="placeholder col-12 d-inline-block" style="width: 320px; height: 2.4rem; border-radius: 6px;"></span></span>
+                </div>
+
+                <!-- 검토 대기 편집 요청 (검토자에게만, 카운트>0 시 노출) -->
+                <div id="pendingEditsCard" class="alert alert-info d-none align-items-center mb-4" role="alert">
+                    <i class="bi bi-pencil-square fs-4 me-3"></i>
+                    <div class="flex-grow-1">
+                        <strong>검토 대기 편집 요청 <span id="pendingEditsCount">0</span>건</strong>
+                        <div class="small text-muted">검토는 각 문서 열람 페이지에서 진행할 수 있습니다.</div>
                     </div>
+                    <a href="#docActivity" class="btn btn-sm btn-outline-primary ms-2">최근 수정 내역 보기</a>
+                </div>
+
+                <!-- 위젯 카드 그리드 -->
+                <div class="row g-3">
+                    <!-- 고아 문서 -->
+                    <div class="col-lg-6">
+                        <div class="card h-100 shadow-sm">
+                            <div class="card-header bg-transparent fw-bold">
+                                <i class="bi bi-link-45deg text-secondary"></i> 고아 문서
+                                <span class="text-muted small fw-normal">— 다른 문서에서 링크되지 않은 문서</span>
+                            </div>
+                            <div class="card-body p-2" id="orphansList"></div>
+                        </div>
+                    </div>
+
+                    <!-- 작성 요청 (빨간 링크) -->
+                    <div class="col-lg-6">
+                        <div class="card h-100 shadow-sm">
+                            <div class="card-header bg-transparent fw-bold">
+                                <i class="bi bi-pencil-fill text-danger"></i> 작성 요청
+                                <span class="text-muted small fw-normal">— 링크됐지만 아직 없는 문서</span>
+                            </div>
+                            <div class="card-body p-2" id="wantedList"></div>
+                        </div>
+                    </div>
+
+                    <!-- 최근 토론 활동 -->
+                    <div class="col-lg-6">
+                        <div class="card h-100 shadow-sm">
+                            <div class="card-header bg-transparent fw-bold">
+                                <i class="bi bi-chat-left-dots text-info"></i> 최근 토론 활동
+                            </div>
+                            <div class="card-body p-2" id="recentDiscussionsList"></div>
+                        </div>
+                    </div>
+
+                    <!-- 무작위 문서 -->
+                    <div class="col-lg-6">
+                        <div class="card h-100 shadow-sm">
+                            <div class="card-header bg-transparent fw-bold">
+                                <i class="bi bi-shuffle text-success"></i> 무작위 탐색
+                            </div>
+                            <div class="card-body d-flex flex-column align-items-start justify-content-center gap-2">
+                                <p class="text-muted mb-1">무엇을 읽을지 모르겠다면 무작위 문서로 떠나보세요.</p>
+                                <button type="button" class="btn btn-success" onclick="goRandomPage()">
+                                    <i class="bi bi-shuffle"></i> 무작위 문서 열기
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ── 문서 활동 (최근 수정 내역 / 모든 문서 목록) — 기존 /recent-changes 통합 ── -->
+                <div id="docActivity" class="mt-5">
+                    <h2 class="h5 mb-3"><i class="bi bi-clock-history text-primary"></i> 문서 활동</h2>
 
                     <!-- 탭 네비게이션 -->
                     <ul class="nav nav-tabs mb-3" role="tablist">
@@ -96,12 +150,12 @@ import Footer from '../components/Footer.astro';
                             </nav>
                         </div>
                     </div>
-
                 </div>
+
             </div>
         </div>
 
-        <!-- 오른쪽 사이드바 (PC 전용 오프캔버스 컨테이너 및 최근 변경) -->
+        <!-- 오른쪽 사이드바 (트렌딩 + 최근 변경) -->
         <aside class="wiki-sidebar" id="wikiSidebar">
             <Sidebar />
 
@@ -123,8 +177,8 @@ import Footer from '../components/Footer.astro';
                 </div>
             </div>
 
-            <!-- PC 전용 최근 변경 -->
-            <div class="d-none d-lg-block">
+            <!-- 최근 변경 -->
+            <div>
                 <div class="sidebar-section sidebar-section-pc-only">
                     <h6 class="sidebar-title"><i class="bi bi-clock-history"></i> 최근 변경</h6>
                     <div id="recentChangesListPc" class="recent-changes-list recent-changes-container">
@@ -144,6 +198,6 @@ import Footer from '../components/Footer.astro';
 
     <Fragment slot="scripts">
         <script type="module" src="/dist/common.js" is:inline></script>
-        <script type="module" src="/dist/recent-changes.js" is:inline></script>
+        <script type="module" src="/dist/explore.js" is:inline></script>
     </Fragment>
 </BaseLayout>

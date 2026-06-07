@@ -1,6 +1,6 @@
 // 프레젠테이션(슬라이드) 뷰어.
 //
-// 문서별 layout_mode='presentation' 인 문서를 본문 마크다운의 `---` 수평선 기준으로
+// 문서별 view_mode='presentation' 인 문서를 본문 마크다운의 `---` 수평선 기준으로
 // 슬라이드 단위로 분할해 표시한다. 슬라이드 본문 렌더링은 기존 window.renderWikiContent
 // 를 그대로 재사용해 위키 문법·트랜스클루전·팔레트가 전부 동일하게 동작한다.
 //
@@ -24,6 +24,9 @@ interface PresentationOptions {
     // 덱의 활성 슬라이드가 바뀔 때(컨트롤/해시/키보드) 호출되는 콜백.
     // 에디터 통합 슬라이드 편집에서 덱→에디터 동기화에 사용한다.
     onSlideChange?: (idx: number) => void;
+    // 오버뷰(전체 보기) 활성 상태가 바뀔 때 호출되는 콜백. 덱 자체 컨트롤·썸네일 클릭 등
+    // 에디터 외부 경로의 토글까지 외부(에디터 내비게이션 버튼)에 전파해 상태를 동기화한다.
+    onOverviewChange?: (on: boolean) => void;
     // 빈(공백) 슬라이드를 분할 결과에서 제거하지 않는다. 에디터 통합 편집 시
     // 새로 추가한 빈 슬라이드가 덱에서 누락돼 인덱스가 어긋나는 것을 방지한다.
     keepEmptySlides?: boolean;
@@ -88,6 +91,12 @@ let _overviewActive = false;
 // 활성 슬라이드 변경 콜백(에디터 통합 편집 동기화용). renderPresentation 진입 시 세팅,
 // teardownPresentation 에서 정리한다.
 let _onSlideChange: ((idx: number) => void) | null = null;
+// 오버뷰 활성 상태 변경 통지 콜백(외부 버튼 동기화용). renderPresentation 진입 시 세팅,
+// teardownPresentation 에서 정리. setOverview 가 상태 변경 시 호출한다.
+let _onOverviewChange: ((on: boolean) => void) | null = null;
+// 콘텐츠 라이브 재렌더가 실제 풀스크린 element 를 분리시켜 발생하는 단 한 번의
+// fullscreenchange 를 무시하기 위한 가드(시뮬레이션 풀스크린 유지). onFullscreenChange 가 소비.
+let _skipFullscreenSync = false;
 // 렌더 세대 토큰. renderPresentation 은 per-slide renderWikiContent 를 await 하므로,
 // (에디터 프리뷰처럼) 빠른 연속 호출 시 이전 호출이 await 에서 풀려 컨트롤/핸들러를
 // 최신 덱에 중복 바인딩할 수 있다(클릭 1회에 슬라이드 2칸 이동 등). 각 호출은 자신의
@@ -130,6 +139,8 @@ function setOverview(on: boolean): void {
         btn.classList.toggle('active', on);
         btn.setAttribute('aria-pressed', on ? 'true' : 'false');
     }
+    // 덱 자체 컨트롤/썸네일 클릭 등 모든 경로의 오버뷰 변경을 외부(에디터 버튼)에 전파.
+    if (_onOverviewChange) _onOverviewChange(on);
 }
 
 function toggleOverview(): void {
@@ -164,6 +175,13 @@ function toggleFullscreen(): void {
 }
 
 function onFullscreenChange(): void {
+    // 콘텐츠 라이브 재렌더 중에는 덱 element 가 innerHTML 교체로 분리되며 브라우저가
+    // 실제 풀스크린을 자동 종료(fullscreenchange 발생)한다. 이때 body 클래스를 벗기면
+    // 시뮬레이션 풀스크린까지 사라지므로, renderPresentation 이 세운 가드로 그 1회만 무시한다.
+    if (_skipFullscreenSync) {
+        _skipFullscreenSync = false;
+        return;
+    }
     // 브라우저가 ESC/F11 등으로 풀스크린을 빠져나가면 body 클래스도 동기화.
     if (!isFullscreenActive()) {
         document.body.classList.remove('presentation-fullscreen');
@@ -214,7 +232,13 @@ function onKeydown(e: KeyboardEvent): void {
             toggleFullscreen();
             return;
         case 'Escape':
-            // 브라우저가 ESC 로 풀스크린을 풀면 fullscreenchange 핸들러가 body 클래스를 정리.
+            // 실제 풀스크린은 브라우저가 ESC 로 빠져나가며 fullscreenchange 핸들러가 body 클래스를 정리한다.
+            // 다만 라이브 재렌더로 덱 element 가 분리돼 "시뮬레이션 풀스크린"(body 클래스만 남고 실제
+            // 풀스크린 element 없음)이 된 경우엔 fullscreenchange 가 발생하지 않으므로 ESC 로 직접 종료한다.
+            if (document.body.classList.contains('presentation-fullscreen') && !isFullscreenActive()) {
+                e.preventDefault();
+                exitFullscreen();
+            }
             return;
     }
 }
@@ -228,7 +252,7 @@ function onHashChange(): void {
     }
 }
 
-export function teardownPresentation(): void {
+export function teardownPresentation(opts: { preserveViewState?: boolean } = {}): void {
     // 세대 토큰을 올려, 아직 await 중인 in-flight renderPresentation 호출이 깨어났을 때
     // 컨트롤/전역 핸들러를 (이미 교체됐을 수 있는) 덱에 다시 바인딩하지 않고 중단하게 한다.
     // 덱 모드를 떠나며 호출되는 경로(에디터 일반/ diff 복귀, 페이지 이동 등)에서 stale
@@ -242,22 +266,33 @@ export function teardownPresentation(): void {
         window.removeEventListener('hashchange', _hashHandler);
         _hashHandler = null;
     }
-    if (_fullscreenHandler) {
+    // 콘텐츠 라이브 재렌더(preserveViewState)에서는 fullscreenchange 핸들러를 떼지 않고 유지한다.
+    // mount.innerHTML 교체로 실제 풀스크린 element 가 분리되면 브라우저가 단 1회 fullscreenchange
+    // (자동 종료)를 발생시키는데, 핸들러가 계속 붙어 있어야 그 이벤트를 _skipFullscreenSync 가드로
+    // 확실히 소비(무시)할 수 있다. 핸들러를 떼면 분리 이벤트가 누락돼 가드가 해제되지 않거나
+    // 타이머로 일찍 풀려 다음 입력 시 풀스크린이 의도치 않게 종료되는 레이스가 생긴다.
+    // (renderPresentation 이 끝에서 동일 참조를 다시 add 하므로 dedupe 되어 중복 등록되지 않는다.)
+    if (_fullscreenHandler && !opts.preserveViewState) {
         document.removeEventListener('fullscreenchange', _fullscreenHandler);
         _fullscreenHandler = null;
     }
-    // 풀스크린이 켜진 상태로 떠나는 경우 정리.
-    if (document.body.classList.contains('presentation-fullscreen')) {
-        document.body.classList.remove('presentation-fullscreen');
-        if (isFullscreenActive()) {
-            document.exitFullscreen?.().catch(() => { /* noop */ });
+    // preserveViewState: 같은 mount 의 콘텐츠 라이브 재렌더(에디터 프리뷰 debounce 등)에서는
+    // 사용자가 연 오버뷰/풀스크린 같은 일시적 뷰 상태를 보존한다(renderPresentation 이 빌드 후 재적용).
+    // 그 외(덱 모드 이탈/페이지 이동)에서는 기존대로 풀스크린/오버뷰를 정리한다.
+    if (!opts.preserveViewState) {
+        if (document.body.classList.contains('presentation-fullscreen')) {
+            document.body.classList.remove('presentation-fullscreen');
+            if (isFullscreenActive()) {
+                document.exitFullscreen?.().catch(() => { /* noop */ });
+            }
         }
+        _overviewActive = false;
     }
     _activeDeckEl = null;
     _activeSlideIdx = 0;
     _slideCount = 0;
     _onSlideChange = null;
-    _overviewActive = false;
+    _onOverviewChange = null;
 }
 
 export async function renderPresentation(
@@ -269,14 +304,26 @@ export async function renderPresentation(
     const mount = document.getElementById(mountId);
     if (!mount) return;
 
-    // 이전 렌더 잔재 정리.
-    teardownPresentation();
+    // 콘텐츠 라이브 재렌더 간 일시적 뷰 상태(오버뷰/풀스크린)를 보존해, 에디터 프리뷰의
+    // debounce 재렌더가 사용자가 방금 연 그리드/풀스크린을 닫지 않게 한다. 오버뷰는 빌드 후
+    // 현재 _overviewActive 로 재적용하고(아래), 풀스크린 body 클래스는 teardown(preserveViewState)
+    // 이 유지하므로 별도 캡처가 필요 없다.
+    // 실제 풀스크린이면 곧 덱 element 가 분리되어 단 한 번의 fullscreenchange(자동 종료)가
+    // 발생한다 — onFullscreenChange 가 body 클래스를 벗기지 않도록 그 1회를 무시하게 가드를 세운다.
+    // teardown(preserveViewState)이 fullscreenchange 핸들러를 유지하므로 이 분리 이벤트는 반드시
+    // 핸들러에 도달해 가드를 소비(해제)한다. 타이머로 미리 풀면 분리 이벤트보다 먼저 해제돼
+    // 클래스가 벗겨질 수 있어, 타이머 없이 "이벤트 소비 시 1회 해제" 방식만 사용한다.
+    if (isFullscreenActive()) _skipFullscreenSync = true;
+
+    // 이전 렌더 잔재 정리(뷰 상태는 보존).
+    teardownPresentation({ preserveViewState: true });
 
     // 이 호출의 세대 기록 — await 이후 더 새로운 호출이 시작됐는지 판별하는 데 쓴다.
     const myGen = ++_renderGeneration;
 
-    // 활성 슬라이드 변경 콜백 등록(에디터 통합 편집 동기화). teardown 이 이미 null 로 정리함.
+    // 활성 슬라이드/오버뷰 변경 콜백 등록(에디터 동기화). teardown 이 이미 null 로 정리함.
     _onSlideChange = options.onSlideChange ?? null;
+    _onOverviewChange = options.onOverviewChange ?? null;
 
     // keepEmptySlides: 에디터 통합 편집 시 빈 슬라이드도 유지해 덱 인덱스를 slideCtl 과 1:1 정렬.
     // 그 외(조회 화면)에는 공백-only 슬라이드를 제거한다.
@@ -371,14 +418,46 @@ export async function renderPresentation(
     const m = /^#\/(\d+)$/.exec(window.location.hash);
     const initial = m ? Math.max(0, parseInt(m[1], 10) - 1) : 0;
     applyActiveSlide(initial);
+
+    // 오버뷰 상태를 새 덱 DOM 에 재적용한다(innerHTML 재구성으로 is-overview 클래스가 사라지므로).
+    // 캡처 시점의 prevOverview 가 아니라 "현재" _overviewActive 를 적용해, 비동기 렌더 도중
+    // 사용자가 (에디터 내비게이션으로) 오버뷰를 토글한 경우 그 최신 의도를 덮어쓰지 않는다.
+    // (_overviewActive 는 teardown 의 preserveViewState 로 보존되고 토글이 갱신한다.)
+    setOverview(_overviewActive);
+    // 풀스크린 body 클래스는 <body> 에 있어 덱 innerHTML 교체와 무관하게 그대로 유지되므로
+    // 별도 재적용이 불필요하다(재적용하면 렌더 도중의 사용자 종료를 되돌릴 수 있어 하지 않는다).
+    // 실제 풀스크린은 element 분리로 종료되어 시뮬레이션 풀스크린(body 클래스)으로 이어진다.
+}
+
+// 외부(에디터 하단 내비게이션 바)에서 현재 활성 덱의 전체화면/전체보기를 토글하기 위한 진입점.
+// 활성 덱(_activeDeckEl)이 없으면 no-op 이다.
+export function presentationToggleFullscreen(): void {
+    if (!_activeDeckEl) return;
+    toggleFullscreen();
+}
+// 토글 후의 오버뷰 활성 상태를 반환한다(에디터 측 외부 버튼의 pressed/active 동기화용).
+export function presentationToggleOverview(): boolean {
+    if (!_activeDeckEl) return _overviewActive;
+    toggleOverview();
+    return _overviewActive;
+}
+// 현재 오버뷰 활성 여부(외부 버튼 상태 동기화용 — 덱 재렌더 후 보존된 상태 반영).
+export function presentationIsOverview(): boolean {
+    return _overviewActive;
 }
 
 declare global {
     interface Window {
         renderPresentation?: typeof renderPresentation;
         teardownPresentation?: typeof teardownPresentation;
+        presentationToggleFullscreen?: typeof presentationToggleFullscreen;
+        presentationToggleOverview?: typeof presentationToggleOverview;
+        presentationIsOverview?: typeof presentationIsOverview;
     }
 }
 
 window.renderPresentation = renderPresentation;
 window.teardownPresentation = teardownPresentation;
+window.presentationToggleFullscreen = presentationToggleFullscreen;
+window.presentationToggleOverview = presentationToggleOverview;
+window.presentationIsOverview = presentationIsOverview;

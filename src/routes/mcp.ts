@@ -409,8 +409,8 @@ async function handleJsonRpc(c: Context<Env>, body: any, user: User | null) {
                 if (adminEditResult) return { jsonrpc: '2.0', id, result: adminEditResult };
             }
 
-            if (toolName === 'read_document_batch' || toolName === 'get_toc_batch') {
-                const isTocMode = toolName === 'get_toc_batch';
+            if (toolName === 'read_document_batch' || toolName === 'get_map') {
+                const isTocMode = toolName === 'get_map';
                 const BATCH_LIMIT = 10;
                 const TREE_DISPLAY_CAP = 500;
                 const raw = args.raw === true;

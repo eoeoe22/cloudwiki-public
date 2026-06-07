@@ -26,6 +26,7 @@ import pendingEditsRoutes from './routes/pending-edits';
 import oauthRoutes from './routes/oauth';
 import analyticsRoutes from './routes/analytics';
 import blogRoutes from './routes/blog';
+import exploreRoutes from './routes/explore';
 import { trackPageView, trackError, queryAnalytics } from './utils/analytics';
 import { isR2OnlyNamespace, isMapNamespace, normalizeSlug } from './utils/slug';
 import { getRevisionContent } from './utils/r2';
@@ -147,6 +148,7 @@ app.route('/api', pendingEditsRoutes);
 app.route('/', oauthRoutes); // /.well-known/* + /oauth/*
 app.route('/api/admin/analytics', analyticsRoutes);
 app.route('/api', blogRoutes);
+app.route('/api', exploreRoutes);
 
 // ── Service Worker (/sw.js) ──
 // Vite 빌드 산출물을 /dist/sw.js 로 두고, 루트 스코프 부여를 위해 /sw.js 로 위임한다.
@@ -411,12 +413,16 @@ app.get('/w/:slug/discussions', (c) => {
     return c.redirect(`/w/${encodeURIComponent(slug)}?mode=discussions`, 301);
 });
 
-// /recent-changes → recent-changes.html 서빙 (SSR 브랜딩 적용)
-app.get('/recent-changes', async (c) => {
+// /recent-changes → /explore 통합. 최근 수정 내역/모든 문서 목록 탭이 explore 로 흡수돼
+// 별도 페이지는 제거됐다. 기존 링크/북마크 호환을 위해 영구 리다이렉트한다.
+app.get('/recent-changes', (c) => c.redirect('/explore#docActivity', 301));
+
+// /explore → explore.html 서빙 (탐색 포털, 전체 공개)
+app.get('/explore', async (c) => {
     if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) {
         return c.redirect('/login');
     }
-    return fetchAssetHtml(c, '/recent-changes.html');
+    return fetchAssetHtml(c, '/explore.html');
 });
 
 // /w/* → 와일드카드 라우트: 슬래시 포함 슬러그를 지원하기 위해 경로 전체를 슬러그로 처리
@@ -827,8 +833,8 @@ ${contentBlock}
             _ssrTitle: `${page.title || page.slug} - ${wikiName}`,
             _ssrDescription: desc,
             _usedPalettes: usedPalettes,
-            // 문서별 레이아웃 오버라이드 — applyPageSSR 가 <body data-layout-mode> 를 이 값으로 베이킹.
-            _ssrLayoutMode: page.layout_mode ?? null,
+            // 문서별 본문 보기 모드 — 클라이언트가 'presentation' 등 본문 렌더 모드를 판정하는 데 사용.
+            _ssrViewMode: page.view_mode ?? null,
         };
     }
 

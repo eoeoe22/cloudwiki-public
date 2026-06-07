@@ -3019,7 +3019,7 @@ adminRoutes.put('/pages/:slug/edit-acl', async (c) => {
  * 본문/리비전 변경 없이 비공개 플래그만 갱신. 권한 관리 모달 단건 저장 경로.
  * 키가 생략되거나 현재 값과 같으면 변경 없이 현재 값을 반환한다.
  * (편집 잠금은 edit_acl 의 admin_only 플래그로 통합되어 별도 PUT /edit-acl 로 처리.
- *  layout_mode 는 본문 저장과 함께 PUT /w/:slug 로 옮겨졌다 — 이 엔드포인트는 더 이상 다루지 않는다.)
+ *  view_mode 는 본문 저장과 함께 PUT /w/:slug 로 옮겨졌다 — 이 엔드포인트는 더 이상 다루지 않는다.)
  */
 adminRoutes.patch('/pages/:slug/flags', async (c) => {
     const db = c.env.DB;

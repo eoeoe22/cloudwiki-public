@@ -613,7 +613,7 @@ export async function applyExistingPageUpdate(
         title?: string | null;        // undefined → 기존 유지, null → 제거, string → 설정. 호출자가 사전 충돌 검증을 마쳤다고 가정.
         slug: string;
         editAcl?: string | null;      // undefined → 기존 유지(MCP 기본), null/string → 덮어쓰기 (사람 편집 보류 승인의 카테고리 ACL 머지 적용용).
-        layoutMode?: string | null;   // undefined → 기존 유지(MCP 기본), null/string → 덮어쓰기 (사람 편집 보류 승인의 layout_mode 적용용).
+        viewMode?: string | null;     // undefined → 기존 유지(MCP 기본), null/string → 덮어쓰기 (사람 편집 보류 승인의 view_mode 적용용).
         summaryRaw?: boolean;         // true 면 withMcpPrefix() 를 건너뛰고 opts.summary 를 그대로 저장 (사람 편집 보류 승인 경로). 기본 false → [MCP] 접두.
         logType?: string;             // admin_log type (예: page_update / page_patch / page_revert) — 생략 시 로그 없음
         logMessage?: string;
@@ -661,10 +661,10 @@ export async function applyExistingPageUpdate(
         setClauses.push('edit_acl = ?');
         bindings.push(opts.editAcl);
     }
-    // layoutMode: undefined → 기존 유지(MCP 경로 기본). null/string → 덮어쓰기 (보류 승인의 presentation 토글 등 적용).
-    if (opts.layoutMode !== undefined) {
-        setClauses.push('layout_mode = ?');
-        bindings.push(opts.layoutMode);
+    // viewMode: undefined → 기존 유지(MCP 경로 기본). null/string → 덮어쓰기 (보류 승인의 presentation 토글 등 적용).
+    if (opts.viewMode !== undefined) {
+        setClauses.push('view_mode = ?');
+        bindings.push(opts.viewMode);
     }
     setClauses.push('last_revision_id = ?', 'version = ?', 'rows = ?', 'characters = ?', 'updated_at = unixepoch()');
     bindings.push(revisionId, newVersion, metrics.rows, metrics.characters);
@@ -736,7 +736,7 @@ export async function applyNewPageInsert(
         editAcl?: string | null;       // serialize 된 JSON. 호출자가 prefix 룰을 평가해 주입.
         isPrivate?: number;            // 호출자가 doc_setting_prefix_rules longest-match 로 산출. 누락 시 0.
         title?: string | null;        // 호출자가 사전 충돌 검증을 마쳤다고 가정. 누락 시 NULL.
-        layoutMode?: string | null;   // 신규 페이지 layout_mode. 누락 시 NULL(자동). 사람 편집 보류 승인(create)의 presentation 토글 적용용.
+        viewMode?: string | null;     // 신규 페이지 view_mode. 누락 시 NULL(일반 본문). 사람 편집 보류 승인(create)의 presentation 토글 적용용.
         summaryRaw?: boolean;         // true 면 withMcpPrefix() 를 건너뛰고 opts.summary 를 그대로 저장 (사람 편집 보류 승인 경로). 기본 false → [MCP] 접두.
         logType?: string;
         logMessage?: string;
@@ -752,8 +752,8 @@ export async function applyNewPageInsert(
     let pageResult;
     try {
         pageResult = await db
-            .prepare('INSERT INTO pages (slug, title, content, category, is_private, edit_acl, redirect_to, rows, characters, layout_mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-            .bind(slug, opts.title ?? null, contentToStore, opts.category, opts.isPrivate ?? 0, opts.editAcl ?? null, opts.redirectTo, metrics.rows, metrics.characters, opts.layoutMode ?? null)
+            .prepare('INSERT INTO pages (slug, title, content, category, is_private, edit_acl, redirect_to, rows, characters, view_mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+            .bind(slug, opts.title ?? null, contentToStore, opts.category, opts.isPrivate ?? 0, opts.editAcl ?? null, opts.redirectTo, metrics.rows, metrics.characters, opts.viewMode ?? null)
             .run();
     } catch (e: any) {
         // UNIQUE race: precheck ~ INSERT 사이에 다른 요청이 같은 slug/title 을 점유.

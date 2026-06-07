@@ -1400,7 +1400,7 @@ async function loadRecentChanges() {
                 const title = section.querySelector('.sidebar-title');
                 if (title && !title.querySelector('a')) {
                     const link = document.createElement('a');
-                    link.href = '/recent-changes';
+                    link.href = '/explore#docActivity';
                     link.className = 'text-decoration-none text-reset';
                     link.addEventListener('click', function (e) {
                         e.preventDefault();

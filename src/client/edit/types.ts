@@ -82,8 +82,8 @@ export interface PageMeta {
     category?: string | null;
     redirect_to?: string | null;
     is_private?: number | boolean | null;
-    /** 문서 레이아웃 모드. 'presentation' 또는 ''(자동). 프레젠테이션 체크박스 변경 비교용. */
-    layout_mode?: string | null;
+    /** 문서 본문 보기 모드. 'presentation' 또는 ''(일반 본문). 프레젠테이션 체크박스 변경 비교용. */
+    view_mode?: string | null;
 }
 
 /** localStorage 에 저장되는 초안 페이로드 */

@@ -52,10 +52,10 @@ CREATE TABLE IF NOT EXISTS pages (
   -- 'admin_only' 플래그: 해당 문서는 관리자(admin:access)만 편집 가능.
   -- 'admin_only' 가 없는 경우 관리자(admin:access)는 ACL 우회.
   edit_acl          TEXT,
-  -- 문서별 레이아웃 오버라이드. NULL = 전역 LAYOUT_MODE 따름.
-  -- 허용 값: 'presentation' (현재). 향후 'wide'/'docs-pro'/'zen' 확장 여지.
+  -- 문서별 본문 보기 모드(전역 LAYOUT_MODE 페이지 레이아웃과 별개). NULL = 일반 본문 렌더.
+  -- 허용 값: 'presentation' (현재 슬라이드 덱). 향후 다른 본문 표시 모드 확장 여지.
   -- 미지/잘못된 값은 클라이언트·SSR 모두 NULL 로 취급.
-  layout_mode       TEXT
+  view_mode         TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_pages_updated ON pages(updated_at DESC);
@@ -378,10 +378,10 @@ CREATE TABLE IF NOT EXISTS pending_edits (
   -- create 는 승인 시 applyNewPageInsert 가 prefix/카테고리 ACL 을 재평가하므로 사용하지 않는다.
   edit_acl          TEXT,
   apply_edit_acl    INTEGER NOT NULL DEFAULT 0,
-  -- apply_layout=1 일 때 승인 시 적용할 layout_mode(프레젠테이션 모드 등). 'presentation' 또는 NULL(자동).
-  -- update 는 편집 본문에 layout_mode 키가 있을 때만(=direct-save 의 hasLayoutInBody) 적용, create 는 항상 적용.
-  layout_mode       TEXT,
-  apply_layout      INTEGER NOT NULL DEFAULT 0,
+  -- apply_view=1 일 때 승인 시 적용할 view_mode(프레젠테이션 모드 등). 'presentation' 또는 NULL(자동).
+  -- update 는 편집 본문에 view_mode 키가 있을 때만(=direct-save 의 hasViewInBody) 적용, create 는 항상 적용.
+  view_mode         TEXT,
+  apply_view        INTEGER NOT NULL DEFAULT 0,
   -- create 보류본의 원본 category_acl_choices (JSON 문자열, 없으면 NULL). 승인 시 그대로 재생해
   -- direct-save 의 카테고리 ACL 적용 시맨틱(ignore/merge 등)을 보존한다. update 는 edit_acl 로 캡처돼 미사용.
   category_acl_choices TEXT,

@@ -452,6 +452,9 @@ function canonicalizeSlides(parts: string[]): string {
 // 덱(프리뷰)의 활성 슬라이드가 바뀔 때 호출될 콜백 — CM init 클로저가 채운다.
 // (module-level updateCustomPreview 가 renderPresentation 에 넘기기 위해 슬롯으로 둔다.)
 let _onDeckSlideChanged: ((idx: number) => void) | null = null;
+// 에디터 하단 슬라이드 내비게이션 바(인디케이터/이동 버튼)의 상태를 라이브 갱신하는 콜백 슬롯.
+// CM init 클로저가 채우며, module-level updateCustomPreview 가 덱 재렌더 후 호출한다.
+let _refreshSlideNav: (() => void) | null = null;
 
 // 문서가 프레젠테이션 모드(설정 체크박스 ON)인지.
 function isPresentationActive() {
@@ -495,11 +498,15 @@ async function updateCustomPreview() {
             keepEmptySlides: slideCtl.active,
             // 덱에서 슬라이드를 넘기면 에디터의 현재 슬라이드도 함께 전환한다.
             onSlideChange: (i) => { _onDeckSlideChanged?.(i); },
+            // 덱 자체 컨트롤/썸네일 클릭 등으로 오버뷰가 바뀌면 에디터 내비게이션 버튼 상태도 맞춘다.
+            onOverviewChange: () => { _refreshSlideNav?.(); },
         });
         // 덱 모드에서는 스크롤 싱크가 의미 없으므로 가이드 캐시만 무효화한다.
         if (typeof window._invalidateScrollSyncGuides === 'function') {
             window._invalidateScrollSyncGuides();
         }
+        // 에디터 하단 내비게이션 바(인디케이터/버튼 상태)를 라이브 슬라이드 수에 맞춰 갱신.
+        _refreshSlideNav?.();
         return;
     }
 
@@ -1012,6 +1019,15 @@ document.addEventListener('DOMContentLoaded', async () => {
                             <i class="mdi mdi-plus-circle-outline"></i>
                             <div class="slide-add-main">아래에 새 슬라이드</div>
                             <div class="slide-add-sub">현재 슬라이드 뒤에 빈 슬라이드 추가</div>
+                        </div>
+                        <!-- 통합 슬라이드 편집용 하단 내비게이션 바(에디터 폭 전체). 프리뷰 탭 없이도
+                             슬라이드 이동/전체보기/전체화면을 제어한다. slideCtl.active 일 때만 노출. -->
+                        <div class="slide-edit-nav" id="slideEditNav" hidden role="toolbar" aria-label="슬라이드 이동">
+                            <button type="button" class="slide-edit-nav-btn" data-slide-nav="prev" aria-label="이전 슬라이드"><i class="bi bi-chevron-left"></i></button>
+                            <span class="slide-edit-nav-indicator" id="slideEditNavIndicator" aria-live="polite">1 / 1</span>
+                            <button type="button" class="slide-edit-nav-btn" data-slide-nav="next" aria-label="다음 슬라이드"><i class="bi bi-chevron-right"></i></button>
+                            <button type="button" class="slide-edit-nav-btn slide-edit-nav-btn-overview" data-slide-nav="overview" title="전체 보기 (그리드)" aria-label="전체 슬라이드 그리드 보기" aria-pressed="false"><i class="bi bi-grid-3x3-gap"></i></button>
+                            <button type="button" class="slide-edit-nav-btn slide-edit-nav-btn-fullscreen" data-slide-nav="fullscreen" title="전체 화면" aria-label="전체 화면 전환"><i class="bi bi-arrows-fullscreen"></i></button>
                         </div>
                     </div>
                     <div class="wiki-preview-pane" id="custom-wiki-preview"></div>
@@ -1978,9 +1994,13 @@ document.addEventListener('DOMContentLoaded', async () => {
             const bottom = document.getElementById('slideAddZoneBottom');
             if (top) top.hidden = !show;
             if (bottom) bottom.hidden = !show;
+            // 에디터 하단 슬라이드 내비게이션 바도 함께 토글(프리뷰 탭 없이 이동/전체화면 제어).
+            const nav = document.getElementById('slideEditNav');
+            if (nav) nav.hidden = !show;
             // 통합 슬라이드 편집 활성 표시 — CSS 가 본문 목차 FAB/플로팅 패널을 숨긴다.
             const layoutEl = document.querySelector('.wiki-editor-layout');
             if (layoutEl) layoutEl.classList.toggle('slide-edit-active', !!show);
+            if (show) refreshSlideNav();
         }
         // 일반(split) 진입: 전체 문서를 슬라이드로 분할해 현재 슬라이드만 에디터에 로드.
         function enterSlideEditing() {
@@ -2012,6 +2032,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             reconcileSlidesFromEditor();          // 사용자 실제 이동 → 정규화(액티브 영역 멀티파트 확정)
             slideCtl.idx = Math.max(0, Math.min(deckIdx, slideCtl.slides.length - 1));
             loadActiveSlideIntoEditor();
+            refreshSlideNav();
         }
         _onDeckSlideChanged = onDeckSlideChanged;
         // 위/아래 추가 존 클릭 → 현재 슬라이드 앞/뒤에 빈 슬라이드 삽입 후 활성화.
@@ -2024,11 +2045,80 @@ document.addEventListener('DOMContentLoaded', async () => {
             loadActiveSlideIntoEditor();
             syncHashToActive();
             updateCustomPreview();
+            refreshSlideNav();
             cmEditorView.focus();
         }
         // 추가 존 클릭 핸들러 부착(요소는 에디터 템플릿에 포함, 기본 hidden).
         document.getElementById('slideAddZoneTop')?.addEventListener('click', () => insertSlide('before'));
         document.getElementById('slideAddZoneBottom')?.addEventListener('click', () => insertSlide('after'));
+
+        // ── 에디터 하단 슬라이드 내비게이션 바 ──────────────────────────────────
+        // 프리뷰 탭(모바일) 없이도 슬라이드를 이동/전체보기/전체화면 할 수 있도록, 에디터 폭
+        // 전체를 차지하는 하단 바를 둔다. 이동은 통합 슬라이드 편집 상태(slideCtl)를 직접
+        // 조작하고, 전체보기/전체화면은 덱 토글(render-presentation)에 위임한다.
+        const slideNavEl = document.getElementById('slideEditNav');
+        const slideNavIndicator = document.getElementById('slideEditNavIndicator');
+        const slideNavPrevBtn = slideNavEl?.querySelector('[data-slide-nav="prev"]');
+        const slideNavNextBtn = slideNavEl?.querySelector('[data-slide-nav="next"]');
+        const slideNavOverviewBtn = slideNavEl?.querySelector('[data-slide-nav="overview"]');
+        // 에디터 측 전체보기 버튼의 pressed/active 상태를 덱의 오버뷰 활성 상태와 동기화한다.
+        // (PC split 에서는 덱 자체 컨트롤이 숨겨져 이 버튼이 유일한 오버뷰 컨트롤이므로 a11y/시각 표시 필요.)
+        function syncSlideNavOverviewBtn() {
+            if (!slideNavOverviewBtn) return;
+            const on = !!window.presentationIsOverview?.();
+            slideNavOverviewBtn.classList.toggle('active', on);
+            slideNavOverviewBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+        }
+        // 인디케이터/이동 버튼 상태를 라이브 슬라이드 수(전체 문서 재분할)에 맞춰 갱신.
+        function refreshSlideNav() {
+            if (!slideNavEl || slideNavEl.hidden) return;
+            const total = slideCtl.active ? Math.max(1, splitSlides(reconstructFullDoc()).length) : 1;
+            const cur = Math.min(slideCtl.idx, total - 1);
+            if (slideNavIndicator) slideNavIndicator.textContent = `${cur + 1} / ${total}`;
+            if (slideNavPrevBtn) slideNavPrevBtn.disabled = cur <= 0;
+            if (slideNavNextBtn) slideNavNextBtn.disabled = cur >= total - 1;
+            // 덱 재렌더가 보존된 오버뷰 상태를 재적용할 수 있으므로 버튼 상태도 함께 맞춘다.
+            syncSlideNavOverviewBtn();
+        }
+        _refreshSlideNav = refreshSlideNav;
+        // 에디터 측 이전/다음 — 현재 슬라이드 텍스트를 확정(reconcile)한 뒤 대상 슬라이드로 전환.
+        function gotoEditorSlide(delta) {
+            if (!slideCtl.active) return;
+            reconcileSlidesFromEditor();
+            const target = Math.max(0, Math.min(slideCtl.idx + delta, slideCtl.slides.length - 1));
+            if (target === slideCtl.idx) { refreshSlideNav(); return; }
+            slideCtl.idx = target;
+            loadActiveSlideIntoEditor();
+            syncHashToActive();
+            updateCustomPreview();
+            refreshSlideNav();
+            cmEditorView.focus();
+        }
+        // 전체보기/전체화면은 덱에 위임한다. 모바일 에디터 탭에서는 덱이 숨겨진 프리뷰
+        // 패널에 라이브 렌더돼 있으므로, 패널을 표시(탭 전환, 재렌더 없음)한 뒤 덱을 토글한다.
+        function runDeckAction(act) {
+            // 모바일 에디터 탭에서는 덱이 숨겨진 프리뷰 패널에 라이브 렌더돼 있으므로,
+            // 패널을 표시(탭 전환, 재렌더 없음)한 뒤 덱을 토글한다. isMobile 은 init 시점 값이라
+            // 초기화 후 뷰포트가 좁아진 경우를 놓치므로, 클릭 시점의 실제 너비로 판정한다.
+            if (window.innerWidth <= 768) revealPreviewPaneForDeck();
+            // 토글만 수행한다. 직전 편집의 지연 프리뷰 재렌더(change debounce)가 뒤따라 fire 돼도
+            // renderPresentation 이 오버뷰/풀스크린 상태를 보존·재적용하므로 그리드/풀스크린이
+            // 닫히지 않으며, 그 재렌더가 최신 본문을 덱에 반영한다(전체화면은 시뮬레이션으로 이어짐).
+            if (act === 'overview') {
+                window.presentationToggleOverview?.();
+                syncSlideNavOverviewBtn();
+            } else if (act === 'fullscreen') {
+                window.presentationToggleFullscreen?.();
+            }
+        }
+        slideNavEl?.querySelectorAll('[data-slide-nav]').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                const act = btn.dataset.slideNav;
+                if (act === 'prev') gotoEditorSlide(-1);
+                else if (act === 'next') gotoEditorSlide(1);
+                else runDeckAction(act);
+            });
+        });
 
         syncStateToWindow();
         // 에디터 shim 이 준비됐으니 자동완성 부착을 결정적으로 트리거한다.
@@ -2066,6 +2156,18 @@ document.addEventListener('DOMContentLoaded', async () => {
         cmTabBtns.forEach(btn => {
             btn.addEventListener('click', () => activateCmTab(btn.dataset.tab));
         });
+
+        // 모바일에서 에디터 하단 내비게이션의 전체보기/전체화면을 누르면, 덱이 보이도록
+        // 프리뷰 탭을 표시한다. 덱은 (숨겨진 프리뷰 패널에) 이미 라이브 렌더돼 있으므로
+        // updateCustomPreview 로 재렌더하지 않는다 — 재렌더는 _activeDeckEl 을 잠시 비워
+        // 직후의 덱 토글(전체화면 requestFullscreen 등)을 무력화할 수 있다.
+        function revealPreviewPaneForDeck() {
+            cmTabBtns.forEach(btn => btn.classList.toggle('active', btn.dataset.tab === 'preview'));
+            const layoutEl = document.querySelector('.wiki-editor-layout');
+            if (layoutEl) layoutEl.dataset.activeTab = 'preview';
+            cmEditorPane.classList.remove('cm-tab-active');
+            cmPreviewPane.classList.add('cm-tab-active');
+        }
 
         // 모바일이면 에디터 탭을 기본 활성화 (PC는 CSS로 항상 표시)
         if (isMobile) {
@@ -3642,12 +3744,12 @@ document.addEventListener('DOMContentLoaded', async () => {
                 category: page.category || '',
                 redirect_to: page.redirect_to || '',
                 is_private: page.is_private ? 1 : 0,
-                layout_mode: page.layout_mode === 'presentation' ? 'presentation' : ''
+                view_mode: page.view_mode === 'presentation' ? 'presentation' : ''
             };
 
-            // 프레젠테이션 모드 체크박스 초기화 (모든 편집자, 기존 문서). 현재 layout_mode 가
+            // 프레젠테이션 모드 체크박스 초기화 (모든 편집자, 기존 문서). 현재 view_mode 가
             // 'presentation' 이면 체크 상태로 표시. 즉시 적용하지 않고 문서 저장 시 PUT 으로 반영된다.
-            initPresentationModeToggle(page.layout_mode === 'presentation');
+            initPresentationModeToggle(page.view_mode === 'presentation');
 
             {
                 categoryTags = (page.category || '').split(',').map(c => c.trim()).filter(c => c);
@@ -4277,12 +4379,12 @@ async function loadEditRequestIntoEditor(requestId: number): Promise<boolean> {
         const altTitleEl = document.getElementById('alternateTitleInput') as HTMLInputElement | null;
         if (altTitleEl) altTitleEl.value = (typeof detail.title === 'string') ? detail.title : '';
     }
-    // 요청이 레이아웃(프레젠테이션) 변경을 제안했으면 토글을 그 값으로 맞춘다(apply_layout=1 인 경우만;
-    // 0 이면 페이지 현재 레이아웃 유지). change 이벤트를 발생시켜 슬라이드 프리뷰/자동요약을 동기화한다.
-    if (detail.apply_layout) {
+    // 요청이 보기 모드(프레젠테이션) 변경을 제안했으면 토글을 그 값으로 맞춘다(apply_view=1 인 경우만;
+    // 0 이면 페이지 현재 보기 모드 유지). change 이벤트를 발생시켜 슬라이드 프리뷰/자동요약을 동기화한다.
+    if (detail.apply_view) {
         const cb = document.getElementById('presentationModeToggle') as HTMLInputElement | null;
         if (cb) {
-            const want = detail.layout_mode === 'presentation';
+            const want = detail.view_mode === 'presentation';
             if (cb.checked !== want) {
                 cb.checked = want;
                 cb.dispatchEvent(new Event('change'));
@@ -4346,7 +4448,7 @@ async function loadEditRequestIntoEditor(requestId: number): Promise<boolean> {
 
 // ── 프레젠테이션 모드 체크박스 (에디터 문서 설정) ─────────────────────────────
 // 모든 편집자에게 노출되는 체크박스. 즉시 적용하지 않고, 체크 상태를 문서 저장 시
-// PUT /api/w/:slug 의 layout_mode 로 함께 전송해 본문 리비전과 함께 반영한다.
+// PUT /api/w/:slug 의 view_mode 로 함께 전송해 본문 리비전과 함께 반영한다.
 // 변경 시 자동 편집 요약을 갱신해 "프레젠테이션 모드 설정/해제" 가 요약에 반영되게 한다.
 function initPresentationModeToggle(active: boolean): void {
     const cb = document.getElementById('presentationModeToggle') as HTMLInputElement | null;
@@ -4359,7 +4461,7 @@ function initPresentationModeToggle(active: boolean): void {
     });
 }
 
-// 현재 프레젠테이션 체크박스 상태를 layout_mode 값('presentation' | '')으로 반환.
+// 현재 프레젠테이션 체크박스 상태를 view_mode 값('presentation' | '')으로 반환.
 function getPresentationLayoutValue(): 'presentation' | '' {
     const cb = document.getElementById('presentationModeToggle') as HTMLInputElement | null;
     return cb && cb.checked ? 'presentation' : '';
@@ -4376,7 +4478,7 @@ function hasMeaningfulChanges() {
     if (currentContent !== originalContent) return true;
 
     // 신규 문서(originalPageMeta === null)는 빈 메타데이터를 기준선으로 사용한다.
-    const baseMeta = originalPageMeta || { title: '', category: '', redirect_to: '', is_private: 0, layout_mode: '' };
+    const baseMeta = originalPageMeta || { title: '', category: '', redirect_to: '', is_private: 0, view_mode: '' };
 
     // 대체 제목 — null/빈 문자열은 동일(미설정)로 취급.
     const origTitle = (baseMeta.title || '').trim();
@@ -4384,8 +4486,8 @@ function hasMeaningfulChanges() {
     const currTitle = altTitleEl ? altTitleEl.value.trim() : '';
     if (origTitle !== currTitle) return true;
 
-    // 프레젠테이션 모드(layout_mode) 변경 — 'presentation' vs ''.
-    const origLayout = baseMeta.layout_mode === 'presentation' ? 'presentation' : '';
+    // 프레젠테이션 모드(view_mode) 변경 — 'presentation' vs ''.
+    const origLayout = baseMeta.view_mode === 'presentation' ? 'presentation' : '';
     if (origLayout !== getPresentationLayoutValue()) return true;
 
     const origCats = baseMeta.category
@@ -4713,7 +4815,7 @@ async function savePage() {
             }
             // 프레젠테이션 모드 — 체크 시 'presentation', 해제 시 null('자동'). 섹션 모드에서는 숨겨져 전송하지 않는다.
             const layoutValue = getPresentationLayoutValue();
-            (body as any).layout_mode = layoutValue ? layoutValue : null;
+            (body as any).view_mode = layoutValue ? layoutValue : null;
         }
 
         // 편집 요청 승인 모드: 정상 PUT 대신 approve(content) 호출 → 2-리비전(요청자 rev1 + 승인자 rev2).
@@ -4736,7 +4838,7 @@ async function savePage() {
                     category,
                     redirect_to,
                     title: (body as any).title,
-                    layout_mode: (body as any).layout_mode,
+                    view_mode: (body as any).view_mode,
                 }),
             });
             const erData: any = await erRes.json().catch(() => ({}));
@@ -4950,7 +5052,7 @@ async function savePage() {
                     category: freshPageForFallback.category || '',
                     redirect_to: freshPageForFallback.redirect_to || '',
                     is_private: freshPageForFallback.is_private ? 1 : 0,
-                    layout_mode: freshPageForFallback.layout_mode === 'presentation' ? 'presentation' : ''
+                    view_mode: freshPageForFallback.view_mode === 'presentation' ? 'presentation' : ''
                 };
                 // pageVersion 을 최신값으로 갱신
                 pageVersion = data.current_version;

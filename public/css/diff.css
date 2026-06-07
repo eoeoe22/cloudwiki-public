@@ -140,3 +140,14 @@
   border-left-color: var(--wiki-border);
   opacity: 0.85;
 }
+
+/* 미변경 문단 구간을 접은 자리 표시 — Raw diff 의 .diff-skip-label 과 일관 */
+.rich-diff-skip {
+  text-align: center;
+  color: var(--wiki-text-muted);
+  font-size: 0.8rem;
+  padding: 0.35rem 0;
+  margin: 0.25rem 0;
+  border-top: 1px dashed var(--wiki-border);
+  border-bottom: 1px dashed var(--wiki-border);
+}

@@ -66,8 +66,8 @@ interface PendingEditRow {
     is_private: number;
     edit_acl: string | null;
     apply_edit_acl: number;
-    layout_mode: string | null;
-    apply_layout: number;
+    view_mode: string | null;
+    apply_view: number;
     category_acl_choices: string | null;
     created_at: number;
     updated_at: number;
@@ -223,7 +223,7 @@ async function loadReviewablePendingEdit(
         row = await db.prepare(
         `SELECT id, page_id, slug, action, author_id, base_revision_id, base_version,
                 content, category, redirect_to, title, has_title_change, summary,
-                is_private, edit_acl, apply_edit_acl, layout_mode, apply_layout, category_acl_choices, created_at, updated_at
+                is_private, edit_acl, apply_edit_acl, view_mode, apply_view, category_acl_choices, created_at, updated_at
          FROM pending_edits WHERE id = ?`
     ).bind(id).first<PendingEditRow>();
     } catch (e) {
@@ -568,8 +568,8 @@ pendingEditsRoutes.get('/pending-edits/:id', requireAuth, async (c) => {
         // 요청이 제안한 대체 제목/레이아웃 — 에디터 승인 시 메타 입력칸/프레젠테이션 토글 프리로드용.
         title: pe.title,
         has_title_change: pe.has_title_change === 1,
-        layout_mode: pe.layout_mode,
-        apply_layout: pe.apply_layout === 1,
+        view_mode: pe.view_mode,
+        apply_view: pe.apply_view === 1,
         proposed_content: pe.content,
         current_content: currentContent,
         base_content: baseContent,
@@ -634,10 +634,10 @@ pendingEditsRoutes.post('/pending-edits/:id/approve', requireAuth, async (c) => 
     //   (rev1: 원 요청분=요청자 명의, rev2: 추가 편집분=승인자 명의). 없으면 현행 단일 리비전.
     const body = await c.req.json<{
         summary?: string; content?: string; expected_version?: number;
-        category?: string; redirect_to?: string; title?: string | null; layout_mode?: string | null;
+        category?: string; redirect_to?: string; title?: string | null; view_mode?: string | null;
     }>().catch(() => ({} as {
         summary?: string; content?: string; expected_version?: number;
-        category?: string; redirect_to?: string; title?: string | null; layout_mode?: string | null;
+        category?: string; redirect_to?: string; title?: string | null; view_mode?: string | null;
     }));
     const hasApproverContent = typeof body.content === 'string';
     const approverContent = hasApproverContent ? (body.content as string) : '';
@@ -646,11 +646,11 @@ pendingEditsRoutes.post('/pending-edits/:id/approve', requireAuth, async (c) => 
         ? body.expected_version
         : null;
     // 승인자가 에디터에서 바꾼 메타데이터를 rev2 에 반영(미전송 시 요청 메타로 폴백). rev1 은 항상 요청 메타.
-    // (에디터는 content 모드에서 title/layout_mode 를 string|null 로 명시 전송 — undefined 면 요청값 유지.)
+    // (에디터는 content 모드에서 title/view_mode 를 string|null 로 명시 전송 — undefined 면 요청값 유지.)
     const rev2Category = (typeof body.category === 'string') ? body.category : pe.category;
     const rev2Redirect = (typeof body.redirect_to === 'string') ? body.redirect_to : pe.redirect_to;
     const rev2Title = (body.title !== undefined) ? body.title : (pe.has_title_change ? pe.title : undefined);
-    const rev2Layout = (body.layout_mode !== undefined) ? body.layout_mode : (pe.apply_layout ? pe.layout_mode : undefined);
+    const rev2View = (body.view_mode !== undefined) ? body.view_mode : (pe.apply_view ? pe.view_mode : undefined);
     const baseSummary = (typeof body.summary === 'string') ? body.summary : (pe.summary ?? '');
     // 요청자 명의 리비전(단일 승인=baseSummary, 2-리비전 rev1=원 요청 요약)의 요약 끝에 승인자 박제.
     // 2-리비전에서 baseSummary(body.summary)는 승인자의 추가 편집 요약(rev2)이므로, rev1 은 pe.summary 를 쓴다.
@@ -670,8 +670,8 @@ pendingEditsRoutes.post('/pending-edits/:id/approve', requireAuth, async (c) => 
 
     if (pe.action === 'update') {
         const page = await c.env.DB.prepare(
-            'SELECT id, version, content, category, last_revision_id, title, edit_acl, redirect_to, layout_mode FROM pages WHERE slug = ? AND deleted_at IS NULL'
-        ).bind(slug).first<{ id: number; version: number; content: string; category: string | null; last_revision_id: number | null; title: string | null; edit_acl: string | null; redirect_to: string | null; layout_mode: string | null }>();
+            'SELECT id, version, content, category, last_revision_id, title, edit_acl, redirect_to, view_mode FROM pages WHERE slug = ? AND deleted_at IS NULL'
+        ).bind(slug).first<{ id: number; version: number; content: string; category: string | null; last_revision_id: number | null; title: string | null; edit_acl: string | null; redirect_to: string | null; view_mode: string | null }>();
         if (!page) return c.json({ error: 'conflict', reason: 'page_missing' }, 409);
         // 충돌 사전체크:
         //  - 단일 승인(no content): 제출 시점 base 와 현재가 동일해야 한다(pe.base_version).
@@ -724,7 +724,7 @@ pendingEditsRoutes.post('/pending-edits/:id/approve', requireAuth, async (c) => 
             && (page.last_revision_id !== pe.base_revision_id || page.version !== pe.base_version);
         let preApproval: {
             content: string; category: string | null; title: string | null;
-            redirectTo: string | null; layoutMode: string | null; editAcl: string | null;
+            redirectTo: string | null; viewMode: string | null; editAcl: string | null;
         } | null = null;
         if (isStaleBaseMerge) {
             const enabledExt = (c.env.ENABLED_EXTENSIONS || '').split(',').map(s => s.trim()).filter(Boolean);
@@ -740,13 +740,13 @@ pendingEditsRoutes.post('/pending-edits/:id/approve', requireAuth, async (c) => 
             }
             preApproval = {
                 content: preContent, category: page.category, title: page.title,
-                redirectTo: page.redirect_to, layoutMode: page.layout_mode, editAcl: page.edit_acl,
+                redirectTo: page.redirect_to, viewMode: page.view_mode, editAcl: page.edit_acl,
             };
         }
 
         try {
             // rev1: 원 요청분을 요청자 명의로 반영(요약 끝에 승인자 박제).
-            // editAcl/layoutMode/title/category/redirect 적용은 단일 승인 경로와 1:1 동일해야 한다
+            // editAcl/viewMode/title/category/redirect 적용은 단일 승인 경로와 1:1 동일해야 한다
             // (카테고리 ACL 머지·presentation 토글 등 누락 방지). 변경 시 양쪽을 함께 수정할 것.
             const rev1 = await applyExistingPageUpdate(c, author, page, pe.content, {
                 summary: requesterSummary,
@@ -758,7 +758,7 @@ pendingEditsRoutes.post('/pending-edits/:id/approve', requireAuth, async (c) => 
                 // 제목을 고쳤는데도 승인이 막힌다(검사는 위에서 최종 제목 기준으로 이미 통과).
                 title: hasApproverContent ? rev2Title : (pe.has_title_change ? pe.title : undefined),
                 editAcl: pe.apply_edit_acl ? pe.edit_acl : undefined,
-                layoutMode: pe.apply_layout ? pe.layout_mode : undefined,
+                viewMode: pe.apply_view ? pe.view_mode : undefined,
                 slug,
                 // 2-리비전이면 rev1 재색인을 await 해 rev2(최종 본문) 재색인보다 먼저 끝나도록 한다.
                 awaitLinkCategoryIndex: hasApproverContent,
@@ -795,7 +795,7 @@ pendingEditsRoutes.post('/pending-edits/:id/approve', requireAuth, async (c) => 
                     category: rev2Category,
                     redirectTo: rev2Redirect,
                     title: rev2Title,
-                    layoutMode: rev2Layout,
+                    viewMode: rev2View,
                     slug,
                 });
             } catch (e2: any) {
@@ -817,7 +817,7 @@ pendingEditsRoutes.post('/pending-edits/:id/approve', requireAuth, async (c) => 
                                     redirectTo: preApproval.redirectTo,
                                     title: preApproval.title ?? null,
                                     editAcl: preApproval.editAcl,
-                                    layoutMode: preApproval.layoutMode,
+                                    viewMode: preApproval.viewMode,
                                     slug,
                                     logType: 'pending_edit_rollback',
                                     logMessage: `[pending-edit] rev2 failed, rolled back rev1 #${pe.id}: ${slug} rev1=${rev1.revision_id} err=${e2?.code || e2?.message || 'unknown'}`,
@@ -945,7 +945,7 @@ pendingEditsRoutes.post('/pending-edits/:id/approve', requireAuth, async (c) => 
                 title: hasApproverContent ? (rev2Title ?? null) : (pe.has_title_change ? pe.title : null),
                 editAcl: createEditAclSerialized,
                 isPrivate: createIsPrivate,
-                layoutMode: pe.apply_layout ? pe.layout_mode : null,
+                viewMode: pe.apply_view ? pe.view_mode : null,
                 // 2-리비전이면 rev1 재색인을 await 해 rev2(최종 본문) 재색인보다 먼저 끝나도록 한다.
                 awaitLinkCategoryIndex: hasApproverContent,
             });
@@ -983,7 +983,7 @@ pendingEditsRoutes.post('/pending-edits/:id/approve', requireAuth, async (c) => 
                     category: createCategory,
                     redirectTo: rev2Redirect,
                     title: rev2Title,
-                    layoutMode: rev2Layout,
+                    viewMode: rev2View,
                     slug,
                 });
             } catch (e2: any) {

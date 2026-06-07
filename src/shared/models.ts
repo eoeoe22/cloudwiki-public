@@ -52,8 +52,8 @@ export interface Page {
     characters: number | null;
     // 편집 ACL (JSON). NULL=비활성. 형식: {"flags":["aged"|"page_editor"|"any_editor"|"admin_only"]} (AND 평가)
     edit_acl: string | null;
-    // 문서별 레이아웃 오버라이드. NULL = 전역 LAYOUT_MODE 따름. 'presentation' = 슬라이드 뷰.
-    layout_mode: string | null;
+    // 문서별 본문 보기 모드(전역 LAYOUT_MODE 와 별개). NULL = 일반 본문. 'presentation' = 슬라이드 뷰.
+    view_mode: string | null;
 }
 
 export interface Revision {
