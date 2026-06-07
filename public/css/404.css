@@ -245,7 +245,7 @@ html {
 .button {
     background: linear-gradient(135deg, var(--wiki-primary), var(--wiki-accent));
     border: none;
-    color: #ffffff;
+    color: var(--wiki-btn-text);
     padding: 0.6rem 1.4rem;
     text-align: center;
     text-decoration: none;
@@ -262,7 +262,7 @@ html {
 .button:hover {
     box-shadow: var(--wiki-shadow-md);
     transform: translateY(-2px);
-    color: #ffffff;
+    color: var(--wiki-btn-text);
     filter: brightness(1.1);
 }
 

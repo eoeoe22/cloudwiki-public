@@ -75,6 +75,7 @@ ENABLE_CONCURRENT_EDIT_DETECTION = "true" # 문서 동시편집 감지 (KV)
 EDIT_REQUEST_ENABLED = "false" # 편집 요청: "true" 시 ACL 미달 사용자의 편집을 편집 요청으로 보류(검토자 승인/반려). edit_acl_min_age_days > 0 필요.
 WIKI_VISIBILITY = "open" # 문서 열람 권한: "open" (비로그인 사용자도 열람 가능), "closed" (로그인 필요)
 LAYOUT_MODE = "default" # 문서 조회 페이지 레이아웃 모드: "default" (우측 사이드바에 트렌딩/최근 변경), "left-toc" (좌측 사이드바에 현재 문서 목차, 우측 숨김), "right-toc"(좌측 사이드바에 현재 목차, 좌측 숨김) "docs" (좌측=슬래시 그룹 문서 트리, 우측=현재 문서 목차, 기술 문서 스타일), "wide" (좌우 사이드바 숨김, 본문 중앙 풀폭 몰입 읽기, 목차는 플로팅 버튼)
+WIKI_THEME = "default" # 컬러 테마(스킨): "default" (빌트인 색). 추가 스킨은 scripts/themes.mjs 의 THEMES 에 정의 후 이름 지정 시 빌드 타임에 색 토큰 교체.
 EMAIL_RESTRICTION = "" # 이메일 도메인 가입 제한 설정: "" 또는 "none" (제한 없음), "whitelist" (허용 도메인만), "blacklist" (차단 도메인 제외)
 EMAIL_LIST = "example.com, example.example.com" # 콤마로 구분된 도메인 목록 (EMAIL_RESTRICTION이 whitelist 또는 blacklist일 때 사용)
 ENABLED_EXTENSIONS = "" # 확장 기능 활성화, 쉼표로 구분. 예 : "freq,extension1,extension2"

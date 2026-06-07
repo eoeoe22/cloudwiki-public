@@ -480,7 +480,7 @@ div:where(.swal2-container) .swal2-validation-message {
 /* New Page Button */
 .btn-new-page {
   background: linear-gradient(135deg, var(--wiki-primary), var(--wiki-accent));
-  color: #ffffff;
+  color: var(--wiki-btn-text);
   border: none;
   border-radius: var(--wiki-radius-sm);
   padding: 0.6rem 1.4rem;
@@ -493,7 +493,7 @@ div:where(.swal2-container) .swal2-validation-message {
 .btn-new-page:hover {
   box-shadow: var(--wiki-shadow-md);
   transform: translateY(-2px);
-  color: #ffffff;
+  color: var(--wiki-btn-text);
   filter: brightness(1.1);
 }
 
@@ -561,7 +561,7 @@ div:where(.swal2-container) .swal2-validation-message {
 .offcanvas .btn-outline-primary:hover,
 .offcanvas-lg .btn-outline-primary:hover {
   background-color: var(--wiki-primary);
-  color: #fff !important;
+  color: var(--wiki-btn-text) !important;
 }
 
 .offcanvas .dropdown-menu,
@@ -2483,7 +2483,7 @@ html[data-theme="dark"] .btn-close {
   height: 18px;
   padding: 0 6px;
   background: var(--wiki-primary);
-  color: #fff;
+  color: var(--wiki-btn-text);
   font-size: 0.72rem;
   font-weight: 600;
   line-height: 18px;
@@ -3181,7 +3181,7 @@ html[data-theme="dark"] .push-status-on {
 .icon-picker-none-btn:hover {
   color: var(--wiki-danger);
   border-color: var(--wiki-danger);
-  background: rgba(239, 68, 68, 0.08);
+  background: color-mix(in srgb, var(--wiki-danger) 8%, transparent);
 }
 
 .icon-picker-none-btn:focus-visible {

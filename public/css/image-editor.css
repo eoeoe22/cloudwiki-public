@@ -105,7 +105,7 @@ html[data-theme="dark"] .img-editor-canvas-wrap {
 .img-editor-toolbar button.active {
     border-color: var(--wiki-primary);
     background: var(--wiki-primary);
-    color: #fff;
+    color: var(--wiki-btn-text);
 }
 
 .img-editor-toolbar button i {

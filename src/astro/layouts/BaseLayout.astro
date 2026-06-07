@@ -8,6 +8,7 @@
 import { PAGE_BUNDLES, renderHeadTags, renderBodyScripts } from '../../shared/cdn';
 import type { BundleName } from '../../shared/cdn';
 import { readBranding } from '../../../scripts/branding.mjs';
+import { resolveThemeCss } from '../../../scripts/themes.mjs';
 
 interface Props {
     title: string;
@@ -23,6 +24,9 @@ const headTags = renderHeadTags(bundles);
 const bodyScripts = renderBodyScripts(bundles);
 const bakedTitle = title.replace(/CloudWiki/g, branding.wikiName).replace(/Cloudwiki/g, branding.wikiName);
 const customHeader = injectCustomHeader ? branding.customHeader : '';
+// 컬러 테마 스킨: WIKI_THEME 이 가리키는 스킨의 토큰 오버라이드 CSS.
+// "default"(기본)면 빈 문자열 → 베이킹 없음(= style.css 그대로, 무변화).
+const themeCss = resolveThemeCss(branding.theme);
 ---
 <!DOCTYPE html>
 <html lang={lang}>
@@ -34,6 +38,7 @@ const customHeader = injectCustomHeader ? branding.customHeader : '';
     <title class="app-wiki-name">{bakedTitle}</title>
     <link rel="icon" id="wiki-favicon" href={branding.wikiFaviconUrl} />
     <link rel="stylesheet" href="/css/style.css" />
+    {themeCss && <style is:inline data-wiki-theme={branding.theme} set:html={themeCss}></style>}
     <slot name="head" />
     <Fragment set:html={headTags.append} />
 </head>

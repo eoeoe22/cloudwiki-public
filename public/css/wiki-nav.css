@@ -84,7 +84,7 @@
 .parent-docs-siblings .parent-docs-sibling-item:hover,
 .parent-docs-siblings .parent-docs-sibling-item:focus {
   background-color: var(--wiki-primary);
-  color: #fff;
+  color: var(--wiki-btn-text);
   outline: none;
 }
 

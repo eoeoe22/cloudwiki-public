@@ -524,7 +524,7 @@ html[data-theme="dark"] .editor-settings-panel {
 /* 설정 버튼 활성 상태 */
 .cm-toolbar-btn.active {
     background: var(--wiki-primary);
-    color: #fff;
+    color: var(--wiki-btn-text);
 }
 
 .cm-toolbar-btn {
@@ -1455,7 +1455,7 @@ html[data-theme="dark"] #concurrent-edit-banner {
     border: none;
     border-radius: var(--wiki-radius-lg);
     background: var(--wiki-primary);
-    color: #fff;
+    color: var(--wiki-btn-text);
     cursor: pointer;
     font-weight: 600;
     transition: opacity var(--wiki-dur-instant);
@@ -2075,8 +2075,8 @@ body.presentation-fullscreen #custom-wiki-preview {
 }
 
 .cm-table-toolbar-danger:hover:not(:disabled) {
-    background: rgba(239, 68, 68, 0.15);
-    color: #ef4444;
+    background: color-mix(in srgb, var(--wiki-danger) 15%, transparent);
+    color: var(--wiki-danger);
 }
 
 .cm-table-toolbar-color {
@@ -2296,7 +2296,7 @@ html[data-theme="dark"] .img-editor-canvas-wrap {
 .img-editor-toolbar button.active {
     border-color: var(--wiki-primary);
     background: var(--wiki-primary);
-    color: #fff;
+    color: var(--wiki-btn-text);
 }
 
 .img-editor-toolbar button i {
@@ -2392,7 +2392,7 @@ html[data-theme="dark"] .img-editor-canvas-wrap {
     border: none;
     border-radius: var(--wiki-radius-lg);
     background: var(--wiki-primary);
-    color: #fff;
+    color: var(--wiki-btn-text);
     cursor: pointer;
     font-weight: 600;
     transition: opacity var(--wiki-dur-instant);
@@ -2516,7 +2516,7 @@ html[data-theme="dark"] .img-editor-canvas-wrap {
 #timestamp-autocomplete .ts-cal-cell.selected {
     background: var(--wiki-primary);
     border-color: var(--wiki-primary);
-    color: #fff;
+    color: var(--wiki-btn-text);
     font-weight: 700;
 }
 
@@ -2560,7 +2560,7 @@ html[data-theme="dark"] .img-editor-canvas-wrap {
 #timestamp-autocomplete .ts-cal-year-btn.selected {
     background: var(--wiki-primary);
     border-color: var(--wiki-primary);
-    color: #fff;
+    color: var(--wiki-btn-text);
     font-weight: 700;
 }
 
@@ -3475,7 +3475,7 @@ html[data-theme="dark"] .cm-find-panel {
 
 .cm-find-toggle input:checked + span {
     background: var(--wiki-primary);
-    color: #fff;
+    color: var(--wiki-btn-text);
 }
 
 .cm-find-toggle input:focus-visible + span {
@@ -3582,7 +3582,7 @@ html[data-theme="dark"] .cm-search-match-active {
 
 .special-char-tab.active {
     background: var(--wiki-primary);
-    color: #fff;
+    color: var(--wiki-btn-text);
     border-color: var(--wiki-primary);
 }
 

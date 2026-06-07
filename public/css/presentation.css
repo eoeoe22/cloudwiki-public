@@ -208,7 +208,7 @@
     text-align: center;
     font-size: 0.7rem;
     font-variant-numeric: tabular-nums;
-    color: #fff;
+    color: var(--wiki-btn-text);
     background: var(--wiki-primary);
     border-radius: var(--wiki-radius-sm);
 }

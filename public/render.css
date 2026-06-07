@@ -1600,7 +1600,7 @@ body.reading-mode .reading-mode-toggle {
 
 .reading-mode-exit-fab {
   background: var(--wiki-primary) !important;
-  color: #fff !important;
+  color: var(--wiki-btn-text) !important;
   border-color: var(--wiki-primary) !important;
 }
 
@@ -1640,7 +1640,7 @@ body.raw-mode .wiki-content-raw {
 
 .raw-mode-exit-fab {
   background: var(--wiki-primary) !important;
-  color: #fff !important;
+  color: var(--wiki-btn-text) !important;
   border-color: var(--wiki-primary) !important;
 }
 
@@ -2244,7 +2244,7 @@ html[data-theme="dark"] .wiki-callout-note    { --callout-bg-tint: rgba(161, 161
 .wiki-step-marker .wiki-step-icon { display: none; font-size: var(--wiki-fs-lg); }
 .wiki-step-marker .wiki-step-num  { display: inline; }
 
-.wiki-step-done   .wiki-step-marker { background: var(--wiki-primary); border-color: var(--wiki-primary); color: #fff; }
+.wiki-step-done   .wiki-step-marker { background: var(--wiki-primary); border-color: var(--wiki-primary); color: var(--wiki-btn-text); }
 .wiki-step-done   .wiki-step-marker .wiki-step-icon { display: inline; }
 .wiki-step-done   .wiki-step-marker .wiki-step-num  { display: none; }
 .wiki-step-current .wiki-step-marker { border-color: var(--wiki-primary); color: var(--wiki-primary); }
@@ -2284,7 +2284,7 @@ html[data-theme="dark"] .wiki-callout-note    { --callout-bg-tint: rgba(161, 161
    기본 <mark>(브라우저 노랑)와 구분되도록 위키 강조색 배경 + 진입 시 잠깐 펄스 애니메이션. */
 mark.search-hit {
   background: var(--wiki-primary, #ffe066);
-  color: #fff;
+  color: var(--wiki-btn-text);
   border-radius: var(--wiki-radius-xs);
   padding: 0 2px;
   scroll-margin-top: 80px;

@@ -138,6 +138,9 @@ export function readBranding() {
         footerHtml: buildCustomFooterHtml(readTriple(toml, 'FOOTER') || null),
         // edit.astro 가 #ssr-data 로 베이킹하는 문법 가이드 문서 슬러그(배포타임 고정값).
         wikiSyntax: readSingle(toml, 'WIKI_SYNTAX', ''),
+        // 컬러 테마(스킨) 이름 — scripts/themes.mjs THEMES 키. "default" = 빌트인(style.css).
+        // BaseLayout.astro 가 resolveThemeCss(theme) 로 해소해 head 에 베이킹한다.
+        theme: readSingle(toml, 'WIKI_THEME', 'default'),
     };
     return _cached;
 }
