@@ -312,6 +312,43 @@ function getCurrentTheme() {
     try { return localStorage.getItem('themeMode') || 'auto'; } catch (e) { return 'auto'; }
 }
 
+// ── 색 테마(스킨) 사용자 선택 — 멀티 스킨 모드 전용 ──
+// 운영자가 wrangler.toml WIKI_THEMES 에 2개 이상 등록하면 BaseLayout 이 각 스킨을
+// html[data-wiki-theme] 스코프로 베이킹하고, window.__WIKI_SKINS__ 로 {list, default, labels}
+// 를 노출한다. 사용자는 개인 설정에서 스킨을 골라 localStorage 'themeSkin' 에 저장한다(브라우저
+// 한정). FOUC 조기 적용은 BaseLayout.astro 의 head 인라인 스크립트가 담당하며, 본 헬퍼는
+// 설정 모달의 라이브 전환과 활성 표시를 맡는다. data-theme(밝기)과 독립된 별도 축이다.
+var THEME_SKIN_KEY = 'themeSkin';
+
+function getSkinMeta() {
+    var m = window.__WIKI_SKINS__;
+    return (m && Array.isArray(m.list) && m.list.length >= 2) ? m : null;
+}
+
+function getThemeSkin() {
+    var meta = getSkinMeta();
+    if (!meta) return null;
+    var fallback = meta.default || 'default';
+    try {
+        var v = localStorage.getItem(THEME_SKIN_KEY);
+        return (v && meta.list.indexOf(v) >= 0) ? v : fallback;
+    } catch (e) { return fallback; }
+}
+
+function applyThemeSkinAttr(skin) {
+    if (!skin || skin === 'default') document.documentElement.removeAttribute('data-wiki-theme');
+    else document.documentElement.setAttribute('data-wiki-theme', skin);
+    // 테마 변경 구독자(render.ts 의 Mermaid 다이어그램 재렌더 등)에 통지.
+    try { window.dispatchEvent(new CustomEvent('wiki:theme-changed', { detail: { skin: skin } })); } catch (e) { /* noop */ }
+}
+
+function setThemeSkin(skin) {
+    var meta = getSkinMeta();
+    if (!meta || meta.list.indexOf(skin) === -1) return;
+    try { localStorage.setItem(THEME_SKIN_KEY, skin); } catch (e) { /* 스토리지 접근 불가 시 무시 */ }
+    applyThemeSkinAttr(skin);
+}
+
 // ── 레이아웃 모드 사용자 오버라이드 (클라이언트 전용, localStorage) ──
 // 사이트 전역 LAYOUT_MODE(wrangler.toml → BaseLayout 베이킹 → /api/config.layoutMode) 위에
 // 사용자가 자신의 브라우저에서만 적용되는 레이아웃을 덮어쓴다.
@@ -364,6 +401,7 @@ function openSettingsModal() {
     var modalEl = document.getElementById('settingsModal');
     if (!modalEl || typeof bootstrap === 'undefined' || !bootstrap.Modal) return;
     setSegActive(document.getElementById('settingTheme'), getCurrentTheme());
+    if (getSkinMeta()) setSegActive(document.getElementById('settingThemeSkin'), getThemeSkin());
     setSegActive(document.getElementById('settingLayoutMode'), getLayoutOverride() || 'site');
     setSegActive(document.getElementById('settingKeyboardShortcuts'), getKeyboardShortcutsPref());
     bootstrap.Modal.getOrCreateInstance(modalEl).show();
@@ -382,6 +420,32 @@ function setupSettingsModal() {
             // 테마는 즉시 라이브 적용(리로드 불필요).
             setTheme(value);
         });
+    }
+    // 색 테마(스킨) — 멀티 스킨 모드일 때만 버튼을 동적 주입하고 래퍼를 노출한다.
+    var skinSeg = document.getElementById('settingThemeSkin');
+    var skinWrap = document.getElementById('settingThemeSkinWrap');
+    if (skinSeg && skinWrap && !skinSeg.dataset.bound) {
+        var skinMeta = getSkinMeta();
+        if (skinMeta) {
+            skinSeg.dataset.bound = '1';
+            var labels = skinMeta.labels || {};
+            skinSeg.innerHTML = skinMeta.list.map(function (k) {
+                var label = labels[k] || k;
+                return '<button type="button" class="seg-btn" data-value="' + escapeHtml(k) +
+                    '" aria-pressed="false" title="' + escapeHtml(label) + '">' +
+                    '<i class="mdi mdi-palette-outline" aria-hidden="true"></i><span>' + escapeHtml(label) + '</span></button>';
+            }).join('');
+            skinWrap.style.display = '';
+            skinSeg.addEventListener('click', function (e) {
+                var btn = e.target && e.target.closest ? e.target.closest('.seg-btn') : null;
+                if (!btn || !skinSeg.contains(btn)) return;
+                var value = btn.getAttribute('data-value');
+                if (!value) return;
+                setSegActive(skinSeg, value);
+                // 스킨은 즉시 라이브 적용(리로드 불필요).
+                setThemeSkin(value);
+            });
+        }
     }
     var layoutSeg = document.getElementById('settingLayoutMode');
     if (layoutSeg && !layoutSeg.dataset.bound) {
@@ -1604,6 +1668,8 @@ window.applyThemeClass = applyThemeClass;
 window.applyBsTheme = applyBsTheme;
 window.setTheme = setTheme;
 window.getCurrentTheme = getCurrentTheme;
+window.setThemeSkin = setThemeSkin;
+window.getThemeSkin = getThemeSkin;
 window.openSettingsModal = openSettingsModal;
 window.goRandomPage = goRandomPage;
 window.applyAnnouncementBanner = applyAnnouncementBanner;

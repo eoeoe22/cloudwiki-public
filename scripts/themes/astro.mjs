@@ -46,6 +46,16 @@ export default {
         '--wiki-glass-bg': 'light-dark(rgba(255, 255, 255, 0.75), rgba(27, 30, 38, 0.7))',
         '--wiki-glass-border': 'light-dark(rgba(124, 49, 213, 0.14), rgba(255, 255, 255, 0.1))',
         '--wiki-shadow-lg': 'light-dark(0 20px 25px -5px rgba(124, 49, 213, 0.12), 0 20px 25px -5px rgba(0, 0, 0, 0.7))',
+        // ── 헤더(navbar) — 테마 전환이 한눈에 보이도록 네뷸라 그라데이션 컬러 바로 교체.
+        // bg/shadow 는 그라데이션/그림자라 light-dark() 불가 → root 에 라이트값, dark 그룹에
+        // 다크값. text/brand/border 는 색이라 light-dark() 로 모드 분기.
+        // 라이트: 퍼플→마젠타 그라데이션(가장 밝은 stop #a23fd8 L≈0.16, 흰 전경 4.9:1↑).
+        '--wiki-header-bg': 'linear-gradient(100deg, #6a1fb8 0%, #8e2fd0 55%, #a23fd8 100%)',
+        '--wiki-header-shadow': '0 6px 24px -8px rgba(124, 49, 213, 0.55)',
+        '--wiki-header-border': 'light-dark(rgba(255, 255, 255, 0.18), rgba(216, 185, 255, 0.16))',
+        // 전경: 라이트=흰 텍스트/연핑크 브랜드 아이콘, 다크=라벤더 화이트/라벤더 브랜드.
+        '--wiki-header-text': 'light-dark(#ffffff, #f3e8ff)',
+        '--wiki-header-brand': 'light-dark(#f3d9ff, #d8b9ff)',
     },
     dark: {
         // 다크 트리플렛(= #d8b9ff).
@@ -57,5 +67,8 @@ export default {
         '--wiki-glass-bg': 'rgba(27, 30, 38, 0.7)',
         '--wiki-glass-border': 'rgba(255, 255, 255, 0.1)',
         '--wiki-shadow-lg': '0 20px 25px -5px rgba(0, 0, 0, 0.7), 0 8px 30px -6px rgba(141, 70, 231, 0.35)',
+        // 헤더 다크: 딥 보이드 퍼플 바 + 퍼플 글로우(라이트값은 root, 여기는 다크 전용).
+        '--wiki-header-bg': 'linear-gradient(100deg, #1b1230 0%, #241640 55%, #2e1a4d 100%)',
+        '--wiki-header-shadow': '0 6px 28px -8px rgba(141, 70, 231, 0.5)',
     },
 };

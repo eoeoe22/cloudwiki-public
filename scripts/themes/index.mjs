@@ -69,6 +69,14 @@ export const THEMEABLE_TOKENS = {
         '--wiki-bg-alt': 'light-dark(#f1f5f9, #0a0a0a)',
         '--wiki-btn-text': 'light-dark(#ffffff, #000000)',
         '--wiki-border-muted': 'light-dark(rgba(0, 0, 0, 0.05), rgba(255, 255, 255, 0.04))',
+        // 헤더(navbar) 표면 — 기본값은 페이지 표면 토큰을 참조(default 무변화). 스킨이 이
+        // 토큰만 덮어 컬러 바/그라데이션 헤더를 만든다. bg/shadow 에 그라데이션·그림자를
+        // 넣는 스킨은 light-dark() 불가 → root 에 라이트값, dark 그룹에 다크값을 둔다.
+        '--wiki-header-bg': 'var(--wiki-glass-bg)',
+        '--wiki-header-border': 'var(--wiki-border)',
+        '--wiki-header-shadow': 'var(--wiki-shadow-sm)',
+        '--wiki-header-text': 'var(--wiki-text)',
+        '--wiki-header-brand': 'var(--wiki-primary)',
         // 포커스 링 색(사이트 전역 input/button/pagination/admin 컨트롤이 --wiki-focus-ring
         // 으로 참조). --wiki-primary-rgb 와 독립된 플랫 색이라, 팔레트를 바꾸면 여기도 함께
         // 지정해야 포커스 링이 새 색을 따른다.
@@ -122,6 +130,18 @@ export const THEMES = {
     astro,
 };
 
+/**
+ * 스킨 키 → 개인 설정 모달에 표시할 사람-대상 라벨. 멀티 스킨 모드(아래 resolveThemesCss)
+ * 에서 BaseLayout 이 window.__WIKI_SKINS__.labels 로 노출해 스킨 선택 버튼 텍스트로 쓴다.
+ * 여기 없는 키는 키 문자열을 그대로 라벨로 쓰므로(폴백) 새 테마 추가 시 라벨 등록은 선택이다.
+ *
+ * @type {Record<string, string>}
+ */
+export const THEME_LABELS = {
+    default: '기본',
+    astro: 'Astro',
+};
+
 /** 객체 토큰 맵을 `--k: v;` 선언 문자열로 직렬화 */
 function declarations(map) {
     if (!map) return '';
@@ -154,7 +174,7 @@ export function buildThemeCss(theme) {
 }
 
 /**
- * `WIKI_THEME` 값으로 베이킹할 테마 CSS 를 해소한다.
+ * `WIKI_THEME` 값으로 베이킹할 테마 CSS 를 해소한다(단일 스킨 모드).
  * - "default"(또는 미지정) → '' (베이킹 없음, style.css 그대로)
  * - 등록된 스킨명 → 해당 스킨 CSS
  * - 미등록명 → '' 로 폴백하고 경고(오타로 깨진 배포 방지)
@@ -164,9 +184,89 @@ export function buildThemeCss(theme) {
  */
 export function resolveThemeCss(name) {
     const key = (name || 'default').trim();
-    if (!(key in THEMES)) {
+    if (!Object.hasOwn(THEMES, key)) {
         console.warn(`[themes] 알 수 없는 WIKI_THEME "${key}" — 기본 테마로 폴백합니다.`);
         return '';
     }
     return buildThemeCss(THEMES[key]);
+}
+
+/**
+ * `WIKI_THEMES`(허용 목록) 를 **등록된 스킨**(THEMES 키)만 남기고 거른다(중복 제거 포함).
+ * 멀티 스킨 모드 진입(skinList.length ≥ 2) 판정과 사용자 노출 목록의 단일 소스이며, 미등록
+ * 스킨이 섞여도 (a) 선택 불가 스킨이 버튼으로 노출돼 베이스로 떨어지거나 (b) 전부 미등록이면
+ * 멀티 모드가 켜진 채 CSS 가 비어 `WIKI_THEME` 단일 스킨 폴백이 무력화되는 일을 막는다.
+ * `"default"` 는 THEMES 키(= 베이스)라 유효 항목으로 유지된다.
+ *
+ * @param {readonly string[]} names
+ * @returns {string[]}
+ */
+export function filterRegisteredThemes(names) {
+    if (!Array.isArray(names)) return [];
+    const seen = new Set();
+    const out = [];
+    for (const raw of names) {
+        const key = (raw || '').trim();
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        // Object.hasOwn — `in` 은 Object.prototype 상속 키(constructor/toString 등)도 인정해
+        // 미등록 이름이 등록 스킨으로 통과하는 것을 막는다(자기 속성만 등록 스킨으로 인정).
+        if (Object.hasOwn(THEMES, key)) out.push(key);
+        else console.warn(`[themes] 알 수 없는 WIKI_THEMES 항목 "${key}" — 목록에서 제외합니다.`);
+    }
+    return out;
+}
+
+/**
+ * 멀티 스킨 모드: 테마 정의를 `html[data-wiki-theme="<name>"]` 로 **스코프**해 직렬화한다.
+ * 단일 스킨 모드(buildThemeCss)는 토큰을 bare `:root` 로 베이킹해 항상 적용하지만, 멀티
+ * 스킨 모드에서는 허용된 스킨을 모두 베이킹하되 활성 스킨만 `<html data-wiki-theme>` 로
+ * 선택되도록 스코프해야 한다.
+ *
+ * 캐스케이드: `html[data-wiki-theme="x"]`(특성 0,1,1)이 베이스 `:root`(0,1,0)를 이기고,
+ * 다크 그룹은 베이스의 다크 분기(@media `:root:not([data-theme=light])` 0,2,0 / `html[data-theme=dark]`
+ * 0,1,1)를 스킨 스코프와 결합해(각각 0,2,1) 이긴다(style.css 의 다크 분기 구조 미러).
+ * "default"/null 은 베이스(style.css)가 곧 그 스킨이므로 스코프 규칙을 만들지 않는다.
+ *
+ * @param {string} name 스킨 키(THEMES 키)
+ * @param {ThemeDefinition | null | undefined} theme
+ * @returns {string}
+ */
+export function buildScopedThemeCss(name, theme) {
+    if (!theme || !name || name === 'default') return '';
+    const sel = `html[data-wiki-theme="${name}"]`;
+    let css = '';
+    const root = declarations(theme.root);
+    if (root) css += `${sel}{${root}}`;
+    const dark = declarations(theme.dark);
+    if (dark) {
+        css += `@media(prefers-color-scheme:dark){${sel}:not([data-theme="light"]){${dark}}}`;
+        css += `${sel}[data-theme="dark"]{${dark}}`;
+    }
+    return css;
+}
+
+/**
+ * `WIKI_THEMES`(허용 목록) 의 모든 스킨을 스코프 베이킹할 CSS 로 해소한다(멀티 스킨 모드).
+ * - "default" 항목은 베이스(style.css)가 그 스킨이므로 스킵(스코프 규칙 불필요).
+ * - 중복은 1회만, 미등록명은 스킵하고 경고(오타로 깨진 배포 방지).
+ *
+ * @param {readonly string[]} names
+ * @returns {string}
+ */
+export function resolveThemesCss(names) {
+    if (!Array.isArray(names)) return '';
+    const seen = new Set();
+    let css = '';
+    for (const raw of names) {
+        const key = (raw || '').trim();
+        if (!key || key === 'default' || seen.has(key)) continue;
+        seen.add(key);
+        if (!Object.hasOwn(THEMES, key)) {
+            console.warn(`[themes] 알 수 없는 WIKI_THEMES 항목 "${key}" — 건너뜁니다.`);
+            continue;
+        }
+        css += buildScopedThemeCss(key, THEMES[key]);
+    }
+    return css;
 }

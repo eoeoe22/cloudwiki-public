@@ -139,8 +139,16 @@ export function readBranding() {
         // edit.astro 가 #ssr-data 로 베이킹하는 문법 가이드 문서 슬러그(배포타임 고정값).
         wikiSyntax: readSingle(toml, 'WIKI_SYNTAX', ''),
         // 컬러 테마(스킨) 이름 — scripts/themes/ 의 THEMES 키. "default" = 빌트인(style.css).
-        // BaseLayout.astro 가 resolveThemeCss(theme) 로 해소해 head 에 베이킹한다.
+        // 단일 스킨 모드에서 BaseLayout.astro 가 resolveThemeCss(theme) 로 해소해 베이킹하고,
+        // 멀티 스킨 모드(아래 themes ≥ 2)에서는 사용자가 고른 기본 선택 스킨으로 쓰인다.
         theme: readSingle(toml, 'WIKI_THEME', 'default'),
+        // 사용자 선택형 멀티 스킨 허용 목록(콤마 구분) — 2개 이상이면 BaseLayout.astro 가
+        // 각 스킨을 html[data-wiki-theme] 로 스코프 베이킹하고 개인 설정 모달에서 전환 가능하게 한다.
+        // 비어 있거나 1개 이하면 단일 스킨 모드(기존 동작)로 폴백.
+        themes: (readSingle(toml, 'WIKI_THEMES', '') || '')
+            .split(',')
+            .map((s) => s.trim())
+            .filter((s, i, a) => s && a.indexOf(s) === i),
     };
     return _cached;
 }

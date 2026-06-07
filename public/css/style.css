@@ -87,6 +87,17 @@
   /* 시맨틱 뮤트 보더 */
   --wiki-border-muted: light-dark(rgba(0, 0, 0, 0.05), rgba(255, 255, 255, 0.04));
 
+  /* 헤더(navbar) 표면 — 테마가 헤더를 극적으로 바꿀 수 있도록 페이지 표면과 분리한다.
+     기본값은 기존 글래스 헤더 그대로라 default 테마는 무변화. 스킨은 이 토큰만 덮어
+     컬러 바/그라데이션 헤더를 만들 수 있다(전경은 --wiki-header-text/-brand 로 대비 확보).
+     bg/shadow 에 그라데이션·그림자를 넣는 스킨은 light-dark() 로 표현 불가하므로 root 에
+     라이트값, dark 그룹에 다크값을 둔다(themes.md 토큰 계약 참고). */
+  --wiki-header-bg: var(--wiki-glass-bg);
+  --wiki-header-border: var(--wiki-border);
+  --wiki-header-shadow: var(--wiki-shadow-sm);
+  --wiki-header-text: var(--wiki-text);
+  --wiki-header-brand: var(--wiki-primary);
+
   /* ─────────────────────────────────────────────────────────────
      Design tokens — DESIGN.md(radii/spacing/typography/motion/zIndex)
      명세를 CSS 변수로 실체화. 논리명↔CSS 변수명 매핑은 DESIGN.md 참조.
@@ -334,11 +345,11 @@ div:where(.swal2-container) .swal2-validation-message {
 
 /* ── Navbar ── */
 .navbar {
-  background: var(--wiki-glass-bg) !important;
+  background: var(--wiki-header-bg) !important;
   backdrop-filter: var(--wiki-glass-blur);
   -webkit-backdrop-filter: var(--wiki-glass-blur);
-  border-bottom: 1px solid var(--wiki-border);
-  box-shadow: var(--wiki-shadow-sm);
+  border-bottom: 1px solid var(--wiki-header-border);
+  box-shadow: var(--wiki-header-shadow);
   padding: 0.8rem 1.5rem 0.6rem;
   margin-bottom: var(--wiki-space-8);
   position: relative;
@@ -362,8 +373,8 @@ div:where(.swal2-container) .swal2-validation-message {
   font-weight: 800;
   font-size: var(--wiki-fs-2xl);
   letter-spacing: -0.02em;
-  color: var(--wiki-text) !important;
-  /* 브랜드를 하얗게, 포인트는 아이콘에만 */
+  color: var(--wiki-header-text) !important;
+  /* 브랜드 텍스트는 헤더 전경색을 따른다(컬러 헤더 스킨 대비 확보) */
 }
 
 .navbar-brand .brand-icon {
@@ -371,7 +382,13 @@ div:where(.swal2-container) .swal2-validation-message {
   height: 28px;
   margin-right: 8px;
   vertical-align: -4px;
-  color: var(--wiki-primary);
+  color: var(--wiki-header-brand);
+}
+
+/* 헤더에 직접 얹힌 .text-body 아이콘(햄버거·설정·로그인·랜덤 등)도 헤더 전경색을 따른다.
+   기본값(--wiki-header-text = --wiki-text)이라 default 테마는 무변화. */
+.navbar .text-body {
+  color: var(--wiki-header-text) !important;
 }
 
 .brand-logo {

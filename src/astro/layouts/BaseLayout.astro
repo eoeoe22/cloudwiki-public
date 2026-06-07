@@ -8,7 +8,7 @@
 import { PAGE_BUNDLES, renderHeadTags, renderBodyScripts } from '../../shared/cdn';
 import type { BundleName } from '../../shared/cdn';
 import { readBranding } from '../../../scripts/branding.mjs';
-import { resolveThemeCss } from '../../../scripts/themes/index.mjs';
+import { resolveThemeCss, resolveThemesCss, filterRegisteredThemes, THEME_LABELS } from '../../../scripts/themes/index.mjs';
 
 interface Props {
     title: string;
@@ -24,12 +24,35 @@ const headTags = renderHeadTags(bundles);
 const bodyScripts = renderBodyScripts(bundles);
 const bakedTitle = title.replace(/CloudWiki/g, branding.wikiName).replace(/Cloudwiki/g, branding.wikiName);
 const customHeader = injectCustomHeader ? branding.customHeader : '';
-// 컬러 테마 스킨: WIKI_THEME 이 가리키는 스킨의 토큰 오버라이드 CSS.
-// "default"(기본)면 빈 문자열 → 베이킹 없음(= style.css 그대로, 무변화).
-const themeCss = resolveThemeCss(branding.theme);
+// 컬러 테마 스킨.
+// - 멀티 스킨 모드(WIKI_THEMES 에 2개 이상): 각 스킨을 html[data-wiki-theme] 로 스코프
+//   베이킹하고, 운영자 기본 선택 스킨을 <html data-wiki-theme> 로 SSR(무JS·초기 페인트
+//   대응). 사용자는 개인 설정 모달에서 전환(localStorage 'themeSkin', window.__WIKI_SKINS__).
+// - 단일 스킨 모드(기존): WIKI_THEME 을 bare :root 로 베이킹. "default"면 빈 문자열(무변화).
+// 등록된 스킨(THEMES 키)만 남긴다 — 미등록 스킨이 멀티 모드를 켜거나 선택 버튼으로
+// 노출돼 베이스로 떨어지는 일을 막고, 전부 미등록이면 단일 스킨(WIKI_THEME) 폴백을 보존한다.
+const skinList = filterRegisteredThemes(branding.themes || []);
+const multiSkin = skinList.length >= 2;
+const defaultSkin = multiSkin
+    ? (skinList.includes(branding.theme) ? branding.theme : skinList[0])
+    : 'default';
+const themeCss = multiSkin ? resolveThemesCss(skinList) : resolveThemeCss(branding.theme);
+// 멀티 스킨 모드에서만: 개인 설정 모달에 노출할 스킨 메타(목록/기본/라벨)와 FOUC 부트 스크립트.
+const skinMeta = multiSkin
+    ? JSON.stringify({
+          list: skinList,
+          default: defaultSkin,
+          labels: Object.fromEntries(skinList.map((k) => [k, THEME_LABELS[k] || k])),
+      })
+    : '';
+const skinBootScript = multiSkin
+    ? `window.__WIKI_SKINS__=${skinMeta};try{var s=localStorage.getItem('themeSkin');var L=window.__WIKI_SKINS__.list;if(s&&L.indexOf(s)>=0){if(s==='default')document.documentElement.removeAttribute('data-wiki-theme');else document.documentElement.setAttribute('data-wiki-theme',s);}}catch(e){}`
+    : '';
+// SSR 기본 스킨(무JS·초기 페인트). "default" 면 베이스(style.css)가 곧 그 스킨이라 속성 생략.
+const htmlSkinAttr = multiSkin && defaultSkin !== 'default' ? defaultSkin : undefined;
 ---
 <!DOCTYPE html>
-<html lang={lang}>
+<html lang={lang} data-wiki-theme={htmlSkinAttr}>
 
 <head>
     <meta charset="UTF-8" />
@@ -38,7 +61,8 @@ const themeCss = resolveThemeCss(branding.theme);
     <title class="app-wiki-name">{bakedTitle}</title>
     <link rel="icon" id="wiki-favicon" href={branding.wikiFaviconUrl} />
     <link rel="stylesheet" href="/css/style.css" />
-    {themeCss && <style is:inline data-wiki-theme={branding.theme} set:html={themeCss}></style>}
+    {themeCss && <style is:inline set:html={themeCss}></style>}
+    {skinBootScript && <script is:inline set:html={skinBootScript}></script>}
     <slot name="head" />
     <Fragment set:html={headTags.append} />
 </head>
