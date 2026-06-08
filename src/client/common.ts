@@ -444,7 +444,10 @@ function openSettingsModal() {
     var modalEl = document.getElementById('settingsModal');
     if (!modalEl || typeof bootstrap === 'undefined' || !bootstrap.Modal) return;
     setSegActive(document.getElementById('settingTheme'), getCurrentTheme());
-    if (getSkinMeta()) setSegActive(document.getElementById('settingThemeSkin'), getThemeSkin());
+    if (getSkinMeta()) {
+        var skinSel = document.getElementById('settingThemeSkin');
+        if (skinSel) skinSel.value = getThemeSkin();
+    }
     reconcileThemeControls();
     setSegActive(document.getElementById('settingLayoutMode'), getLayoutOverride() || 'site');
     setSegActive(document.getElementById('settingKeyboardShortcuts'), getKeyboardShortcutsPref());
@@ -465,27 +468,24 @@ function setupSettingsModal() {
             setTheme(value);
         });
     }
-    // 색 테마(스킨) — 멀티 스킨 모드일 때만 버튼을 동적 주입하고 래퍼를 노출한다.
-    var skinSeg = document.getElementById('settingThemeSkin');
+    // 색 테마(스킨) — 멀티 스킨 모드일 때만 option 을 동적 주입하고 래퍼를 노출한다.
+    // 스킨 수가 늘어도 폭이 일정한 <select> 드롭다운으로 표시한다.
+    var skinSel = document.getElementById('settingThemeSkin');
     var skinWrap = document.getElementById('settingThemeSkinWrap');
-    if (skinSeg && skinWrap && !skinSeg.dataset.bound) {
+    if (skinSel && skinWrap && !skinSel.dataset.bound) {
         var skinMeta = getSkinMeta();
         if (skinMeta) {
-            skinSeg.dataset.bound = '1';
+            skinSel.dataset.bound = '1';
             var labels = skinMeta.labels || {};
-            skinSeg.innerHTML = skinMeta.list.map(function (k) {
+            skinSel.innerHTML = skinMeta.list.map(function (k) {
                 var label = labels[k] || k;
-                return '<button type="button" class="seg-btn" data-value="' + escapeHtml(k) +
-                    '" aria-pressed="false" title="' + escapeHtml(label) + '">' +
-                    '<i class="mdi mdi-palette-outline" aria-hidden="true"></i><span>' + escapeHtml(label) + '</span></button>';
+                return '<option value="' + escapeHtml(k) + '">' + escapeHtml(label) + '</option>';
             }).join('');
+            skinSel.value = getThemeSkin();
             skinWrap.style.display = '';
-            skinSeg.addEventListener('click', function (e) {
-                var btn = e.target && e.target.closest ? e.target.closest('.seg-btn') : null;
-                if (!btn || !skinSeg.contains(btn)) return;
-                var value = btn.getAttribute('data-value');
+            skinSel.addEventListener('change', function () {
+                var value = skinSel.value;
                 if (!value) return;
-                setSegActive(skinSeg, value);
                 // 스킨은 즉시 라이브 적용(리로드 불필요).
                 setThemeSkin(value);
             });

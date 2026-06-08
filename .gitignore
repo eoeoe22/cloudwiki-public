@@ -33,6 +33,9 @@
 /public/admin.html
 /public/blog-edit.html
 
+# 멀티 스킨 색 테마 외부 CSS (scripts/build-skins-css.mjs 가 빌드 타임에 생성)
+/public/css/skins-*.css
+
 # wrangler / cloudflare
 .wrangler
 .dev.vars

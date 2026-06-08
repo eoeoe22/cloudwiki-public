@@ -18,6 +18,8 @@
 // branding.mjs 와 마찬가지로 tsconfig include 밖의 plain .mjs 라 Worker/클라이언트
 // 타입체크와 분리되며, astro build 의 프런트매터에서만 import 된다.
 
+import { createHash } from 'node:crypto';
+
 import defaultTheme from './default.mjs';
 import astro from './astro.mjs';
 
@@ -143,7 +145,7 @@ export const THEMES = {
  * @type {Record<string, string>}
  */
 export const THEME_LABELS = {
-    default: '기본',
+    default: 'VIA(기본)',
     astro: 'Astro',
 };
 
@@ -190,7 +192,7 @@ export function buildThemeCss(theme) {
 export function resolveThemeCss(name) {
     const key = (name || 'default').trim();
     if (!Object.hasOwn(THEMES, key)) {
-        console.warn(`[themes] 알 수 없는 WIKI_THEME "${key}" — 기본 테마로 폴백합니다.`);
+        console.warn(`[themes] 알 수 없는 WIKI_THEME "${key}" — 기본 테마로 전환됩니다.`);
         return '';
     }
     return buildThemeCss(THEMES[key]);
@@ -301,4 +303,28 @@ export function resolveThemesCss(names) {
         css += buildScopedThemeCss(key, THEMES[key]);
     }
     return css;
+}
+
+/**
+ * 멀티 스킨 CSS 문자열의 콘텐츠 해시(16 hex). 외부 스킨 CSS 파일명(`skins-<hash>.css`)에
+ * 쓰여 콘텐츠가 바뀌면 파일명도 바뀌므로 `immutable` 영구 캐시가 안전하다(자동 캐시 버스팅).
+ * 빌드 스크립트(`scripts/build-skins-css.mjs`, 파일 기록)와 `BaseLayout.astro`(href 도출)가
+ * **동일 입력 → 동일 파일명**을 얻도록 이 단일 헬퍼를 공유한다.
+ *
+ * @param {string} css
+ * @returns {string}
+ */
+export function hashCss(css) {
+    return createHash('sha256').update(css || '', 'utf8').digest('hex').slice(0, 16);
+}
+
+/**
+ * 멀티 스킨 스코프 CSS 를 외부 파일로 서빙할 때의 공개 경로(`/css/skins-<hash>.css`).
+ * css 가 비면(외부화할 스킨 없음) null 을 반환해 호출 측이 `<link>` 를 생략하게 한다.
+ *
+ * @param {string} css `resolveThemesCss` 결과
+ * @returns {string | null}
+ */
+export function skinsCssHref(css) {
+    return css ? `/css/skins-${hashCss(css)}.css` : null;
 }

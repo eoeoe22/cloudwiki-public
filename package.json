@@ -6,8 +6,8 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "build": "astro build && node scripts/copy-astro-pages.mjs && vite build",
-    "build:astro": "astro build && node scripts/copy-astro-pages.mjs",
+    "build": "node scripts/build-skins-css.mjs && astro build && node scripts/copy-astro-pages.mjs && vite build",
+    "build:astro": "node scripts/build-skins-css.mjs && astro build && node scripts/copy-astro-pages.mjs",
     "build:watch": "vite build --watch",
     "typecheck": "tsc --noEmit",
     "typecheck:client": "tsc --noEmit -p tsconfig.client.json",

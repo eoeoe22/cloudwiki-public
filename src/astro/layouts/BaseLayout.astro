@@ -8,7 +8,7 @@
 import { PAGE_BUNDLES, renderHeadTags, renderBodyScripts } from '../../shared/cdn';
 import type { BundleName } from '../../shared/cdn';
 import { readBranding } from '../../../scripts/branding.mjs';
-import { resolveThemeCss, resolveThemesCss, filterRegisteredThemes, THEME_LABELS, isDarkOnlyTheme, getDarkOnlyThemes } from '../../../scripts/themes/index.mjs';
+import { resolveThemeCss, resolveThemesCss, skinsCssHref, filterRegisteredThemes, THEME_LABELS, isDarkOnlyTheme, getDarkOnlyThemes } from '../../../scripts/themes/index.mjs';
 
 interface Props {
     title: string;
@@ -36,7 +36,14 @@ const multiSkin = skinList.length >= 2;
 const defaultSkin = multiSkin
     ? (skinList.includes(branding.theme) ? branding.theme : skinList[0])
     : 'default';
-const themeCss = multiSkin ? resolveThemesCss(skinList) : resolveThemeCss(branding.theme);
+// 단일 스킨: WIKI_THEME 한 스킨을 bare :root 인라인 베이킹(작아서 인라인 유지).
+// 멀티 스킨: 등록된 모든 스킨 스코프 CSS 를 외부 콘텐츠 해시 파일(scripts/build-skins-css.mjs
+//   가 빌드 타임에 기록)로 분리하고 <link> 로 참조한다. HTML 셸에서 토큰 바이트를 빼 페이지
+//   응답을 줄이고, 파일은 페이지 이동·재방문 간 immutable 영구 캐시(_headers)로 1회만 받는다.
+//   파일명 해시는 빌드 스크립트와 동일한 skinsCssHref 로 도출해 항상 같은 경로를 가리킨다.
+const singleThemeCss = !multiSkin ? resolveThemeCss(branding.theme) : '';
+const skinsCss = multiSkin ? resolveThemesCss(skinList) : '';
+const skinsHref = skinsCssHref(skinsCss);
 // 다크 모드 전용 스킨(darkOnly: true) — 활성인 동안 밝기를 다크로 고정한다.
 // - 멀티 스킨: 허용 목록 중 다크 전용 키들을 window.__WIKI_SKINS__.darkOnly 로 노출해,
 //   사용자가 그 스킨을 고른 동안에만 강제한다(런타임 reconcile).
@@ -89,7 +96,8 @@ const forceDarkBootScript = singleDarkOnly
     <title class="app-wiki-name">{bakedTitle}</title>
     <link rel="icon" id="wiki-favicon" href={branding.wikiFaviconUrl} />
     <link rel="stylesheet" href="/css/style.css" />
-    {themeCss && <style is:inline set:html={themeCss}></style>}
+    {singleThemeCss && <style is:inline set:html={singleThemeCss}></style>}
+    {skinsHref && <link rel="stylesheet" href={skinsHref} />}
     {skinBootScript && <script is:inline set:html={skinBootScript}></script>}
     <slot name="head" />
     {forceDarkBootScript && <script is:inline set:html={forceDarkBootScript}></script>}
