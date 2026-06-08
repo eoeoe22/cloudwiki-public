@@ -47,6 +47,10 @@ export interface UpdatePageMutationInput extends CommonMutationInput {
     page: { id: number; version: number; category: string | null; title?: string | null };
     category?: string | null;     // undefined → 기존 유지
     editAcl?: string | null;      // undefined → 기존 유지 (승인 경로의 apply_edit_acl 일 때만 지정)
+    // is_private 컬럼 쓰기 값. undefined → 컬럼을 손대지 않음(승인/MCP 경로 — 본 저장이 비공개를
+    // 바꾸지 않는다). 직접 PUT 은 wiki:private 권한자가 저장과 함께 비공개를 토글할 수 있으므로
+    // 최종값(0/1)을 전달해 컬럼을 갱신한다.
+    isPrivateWrite?: number;
 }
 
 export interface CreatePageMutationInput extends CommonMutationInput {

@@ -28,6 +28,11 @@ import astro from './astro.mjs';
  * @property {Record<string, string>} [dark] 다크 전용 오버라이드(트리플렛/glass/shadow 등
  *   light-dark 로 표현 불가한 값). style.css 와 동일하게 @media 다크 + html[data-theme=dark]
  *   양쪽에 동일 선언으로 베이킹된다.
+ * @property {boolean} [darkOnly] 다크 모드 전용 테마. true 면 이 테마/스킨이 활성인 동안
+ *   사이트가 사용자 밝기 선호(themeMode)와 무관하게 **항상 다크**로 고정된다(`data-theme="dark"`
+ *   강제 → color-scheme:dark → `light-dark()` 가 다크로 해소되고 dark 그룹이 적용). 토큰은
+ *   `light-dark()` 쌍으로 둬도(라이트값은 inert) 플랫 다크값으로 둬도 동일하게 동작한다.
+ *   개인 설정의 밝기(자동/다크/라이트) 토글은 활성 동안 숨겨진다.
  */
 
 /**
@@ -215,6 +220,33 @@ export function filterRegisteredThemes(names) {
         else console.warn(`[themes] 알 수 없는 WIKI_THEMES 항목 "${key}" — 목록에서 제외합니다.`);
     }
     return out;
+}
+
+/**
+ * 등록된 스킨이 **다크 모드 전용**(`darkOnly: true`)인지 판정한다.
+ * 미등록명/`default`/null 센티넬은 false. 단일 스킨(WIKI_THEME)·멀티 스킨(WIKI_THEMES)
+ * 양쪽에서 SSR 강제 다크(`data-theme="dark"`) 베이킹 여부 판정에 쓰인다.
+ *
+ * @param {string | undefined | null} name THEMES 키
+ * @returns {boolean}
+ */
+export function isDarkOnlyTheme(name) {
+    const key = (name || '').trim();
+    if (!Object.hasOwn(THEMES, key)) return false;
+    const theme = THEMES[key];
+    return !!(theme && theme.darkOnly);
+}
+
+/**
+ * `WIKI_THEMES`(허용 목록) 중 **다크 전용 스킨**의 키 배열을 반환한다(등록·중복 정리 후).
+ * 멀티 스킨 모드에서 BaseLayout 이 `window.__WIKI_SKINS__.darkOnly` 로 노출해, 사용자가
+ * 다크 전용 스킨을 고른 동안에만 밝기를 다크로 고정·토글을 숨기는 데 쓴다.
+ *
+ * @param {readonly string[]} names
+ * @returns {string[]}
+ */
+export function getDarkOnlyThemes(names) {
+    return filterRegisteredThemes(names).filter((key) => isDarkOnlyTheme(key));
 }
 
 /**

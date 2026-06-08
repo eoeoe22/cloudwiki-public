@@ -1297,7 +1297,7 @@
   box-shadow: var(--wiki-shadow) !important;
 }
 
-/* ── 문서 대량 삭제 — 슬러그 링크 (체크박스 표 자체는 bulk-modal.css 의 .bulkcat-* 공유) ── */
+/* ── 문서 대량 관리 — 슬러그 링크 (체크박스 표 자체는 bulk-modal.css 의 .bulkcat-* 공유) ── */
 .bulk-node-link {
   color: var(--wiki-text);
   text-decoration: none;
@@ -1305,4 +1305,38 @@
 
 .bulk-node-link:hover {
   text-decoration: underline;
+}
+
+/* ── 문서 대량 관리 — 작업 섹션(삭제/이동) ── */
+.bulk-action-title {
+  font-weight: 600;
+  margin-bottom: 0.75rem;
+  color: var(--wiki-text);
+}
+
+/* ── 대량 이동(제목 변경) — 미리보기 / 건너뜀 박스 ── */
+.bulk-move-preview-box,
+.bulk-move-skip-box {
+  border: 1px solid var(--wiki-border);
+  border-radius: 8px;
+  background: var(--wiki-bg-soft, rgba(0, 0, 0, 0.02));
+  padding: 0.75rem 1rem;
+}
+
+.bulk-move-preview-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.bulk-move-preview-list li {
+  padding: 0.15rem 0;
+  word-break: break-all;
+}
+
+.bulk-move-newslug {
+  color: var(--wiki-primary);
+  font-weight: 600;
 }

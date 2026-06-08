@@ -118,9 +118,9 @@ import Footer from '../components/Footer.astro';
                       <i class="mdi mdi-image-multiple-outline"></i>
                       <span>이미지 관리 도구</span>
                     </a>
-                    <a href="/admin-bulk-delete" class="admin-quick-action" id="bulkDeleteQuickLink" style="display: none">
-                      <i class="mdi mdi-delete-sweep-outline"></i>
-                      <span>문서 대량 삭제 (최고 관리자)</span>
+                    <a href="/admin-bulk-manage" class="admin-quick-action" id="bulkManageQuickLink" style="display: none">
+                      <i class="mdi mdi-file-document-multiple-outline"></i>
+                      <span>문서 대량 관리 (최고 관리자)</span>
                     </a>
                   </div>
                 </div>
@@ -1134,6 +1134,9 @@ import Footer from '../components/Footer.astro';
                     <option value="hard_delete">문서 영구 삭제</option>
                     <option value="restore">문서 복원</option>
                     <option value="doc_move">문서 이동</option>
+                    <option value="bulk_soft_delete">문서 대량 삭제</option>
+                    <option value="bulk_hard_delete">문서 대량 영구 삭제</option>
+                    <option value="bulk_move">문서 대량 이동</option>
                   </select>
                 </div>
               </div>

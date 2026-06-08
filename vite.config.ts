@@ -61,7 +61,7 @@ export default defineConfig({
                 'blog': resolve(__dirname, 'src/client/pages/blog.ts'),
                 'revisions': resolve(__dirname, 'src/client/pages/revisions.ts'),
                 'admin-media': resolve(__dirname, 'src/client/pages/admin-media.ts'),
-                'admin-bulk-delete': resolve(__dirname, 'src/client/pages/admin-bulk-delete.ts'),
+                'admin-bulk-manage': resolve(__dirname, 'src/client/pages/admin-bulk-manage.ts'),
                 'index': resolve(__dirname, 'src/client/pages/index.ts'),
                 'admin': resolve(__dirname, 'src/client/pages/admin.ts'),
                 'mypage': resolve(__dirname, 'src/client/pages/mypage.ts'),

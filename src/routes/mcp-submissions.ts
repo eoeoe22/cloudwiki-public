@@ -22,6 +22,7 @@ import type { Env, User } from '../types';
 import { requireAuth } from '../middleware/session';
 import { RBAC } from '../utils/role';
 import { isR2OnlyNamespace } from '../utils/slug';
+import { getEnabledExtensions } from '../utils/extensions';
 import { getRevisionContent } from '../utils/r2';
 import { computeLineDiffStats } from '../utils/diff';
 import { ensureMcpDraftsMigration } from '../utils/mcpDraftsMigration';
@@ -211,7 +212,7 @@ mcpSubmissionsRoutes.get('/mcp-submissions/:id', requireAuth, async (c) => {
                 hasConflict = true;
                 conflictReason = 'concurrent_modification';
             }
-            const enabledExt = (c.env.ENABLED_EXTENSIONS || '').split(',').map(s => s.trim()).filter(Boolean);
+            const enabledExt = getEnabledExtensions(c.env);
             const r2Only = isR2OnlyNamespace(draft.slug, enabledExt);
             if (r2Only && page.last_revision_id) {
                 const lastRev = await c.env.DB.prepare('SELECT content, r2_key FROM revisions WHERE id = ?')
@@ -383,7 +384,7 @@ mcpSubmissionsRoutes.post('/mcp-submissions/:id/approve', requireAuth, async (c)
         }
 
         // 승인 시점에 다시 한 번 라인 diff 계산 — admin-mcp commit_edit 와 동일한 마커.
-        const enabledExt = (c.env.ENABLED_EXTENSIONS || '').split(',').map(s => s.trim()).filter(Boolean);
+        const enabledExt = getEnabledExtensions(c.env);
         let diffStats: { added: number; removed: number } | null = null;
         try {
             let prevContent = page.content || '';

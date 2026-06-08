@@ -1171,6 +1171,8 @@
           });
 
           const contentEl = document.getElementById('articleContent');
+          // 직전 문서(일반/익스텐션)의 익스텐션 정리 훅을 먼저 실행(Chart/위젯 누수 방지) 후 교체.
+          if (typeof window._teardownExtensions === 'function') window._teardownExtensions(contentEl);
           const rawId = `ext-raw-collapse-${Date.now()}`;
           contentEl.innerHTML = `
             <div class="wiki-ext-doc-view">
@@ -1201,8 +1203,18 @@
           });
 
           // 익스텐션 렌더러 호출 (비동기 로드 대기 포함)
+          // ExtensionData 계약(title/args/secondary 항상 존재)에 맞춰 정규화한다 — 계약대로
+          // data.args['1'] 같이 접근하는 제3자 확장이 직접 문서 열람 시 크래시하지 않도록.
+          // (직접 문서는 파이프 인자·secondary 페치 경로가 없으므로 빈 객체로 채운다.)
           const renderedEl = document.getElementById('ext-doc-rendered');
-          const extData = { content: page.content || '', slug: decodedSlugForExt };
+          const extData = {
+            extName: extPrefix,
+            slug: decodedSlugForExt,
+            content: page.content || '',
+            title: page.title || decodedSlugForExt,
+            args: {},
+            secondary: {},
+          };
           function _tryRenderExtDoc(retries) {
             if (!renderedEl || !renderedEl.isConnected) {
               return;
@@ -1210,6 +1222,12 @@
             const renderer = window._extensionRenderers && window._extensionRenderers[extPrefix];
             if (renderer) {
               renderer(renderedEl, extData);
+              // 인라인 익스텐션과 동일한 라이프사이클 대상이 되도록 마킹 — 테마 변경 시
+              // 재컬러(_onExtThemeChange)·컨테이너 교체 시 정리(_teardownExtensions)가 적용된다.
+              // (SDK 래퍼가 renderer 호출 중 el._extDestroy 를 이미 기록함)
+              renderedEl.setAttribute('data-ext-name', extPrefix);
+              (renderedEl as any)._extData = extData;
+              renderedEl.dataset.extRendered = '1';
             } else if (retries > 0 && renderedEl.isConnected) {
               setTimeout(() => _tryRenderExtDoc(retries - 1), 200);
             } else if (renderedEl.isConnected) {

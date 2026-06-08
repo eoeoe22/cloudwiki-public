@@ -92,27 +92,15 @@
         return spls[lo] + t * (spls[hi] - spls[lo]);
     }
 
-    /** Chart.js 4.x 동적 로드 */
-    function _loadChartJs() {
-        return new Promise((resolve, reject) => {
-            if (typeof Chart !== 'undefined') { resolve(); return; }
-            if (document.getElementById('chartjs-script')) {
-                const check = setInterval(() => {
-                    if (typeof Chart !== 'undefined') { clearInterval(check); resolve(); }
-                }, 100);
-                return;
-            }
-            const script = document.createElement('script');
-            script.id = 'chartjs-script';
-            script.src = 'https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js';
-            script.onload = resolve;
-            script.onerror = reject;
-            document.body.appendChild(script);
-        });
-    }
+    /** Chart.js 4.x CDN (raw ext 파일이라 src/shared/cdn.ts 를 import 할 수 없어 인라인 유지). */
+    const CHART_CDN = 'https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js';
 
-    /** freq 모듈 렌더러 */
-    function renderFreqGraph(containerDiv, extData) {
+    /** freq 모듈 렌더러 (SDK ctx 주입) */
+    function renderFreqGraph(containerDiv, extData, ctx) {
+        // SDK 가 발급한 렌더 세대 토큰을 캡처한다. Chart.js 지연 로드 도중 테마 변경·정리(teardown)·
+        // 재렌더가 일어나면 세대가 어긋나므로, 늦게 도착한 콜백이 파기/교체된 캔버스에 차트를
+        // 만들지 않도록 한다(_freqChart 덮어쓰기로 인한 인스턴스 누수 방지).
+        const renderGen = containerDiv._extGen;
         const parsed = _parseFreqData(extData.content);
 
         if (parsed.freq.length === 0) {
@@ -254,9 +242,10 @@
             });
         }
 
-        _loadChartJs().then(() => {
-            const isDark = document.documentElement.getAttribute('data-bs-theme') === 'dark'
-                || window.matchMedia('(prefers-color-scheme: dark)').matches;
+        ctx.loadScript(CHART_CDN, { id: 'chartjs-script', global: 'Chart' }).then(() => {
+            // 로드 대기 중 이 렌더가 교체/정리됐으면(세대 불일치) 또는 요소가 분리됐으면 중단.
+            if (containerDiv._extGen !== renderGen || !containerDiv.isConnected) return;
+            const isDark = ctx.theme.isDark();
 
             const gridColor = isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)';
             const textColor = isDark ? '#b0b0b0' : '#555';
@@ -415,6 +404,9 @@
                 }
             });
 
+            // 정리 훅(destroy)·테마 변경 재렌더가 인스턴스를 파기할 수 있도록 요소에 보관.
+            containerDiv._freqChart = chart;
+
             // 보정/위상 토글 상태를 한 번에 적용.
             const applyState = () => {
                 const primary = chart.data.datasets[0];
@@ -465,12 +457,28 @@
                 });
             }
         }).catch(err => {
+            // 교체/정리된 렌더의 늦은 실패는 무시(현재 활성 렌더 내용 보존).
+            if (containerDiv._extGen !== renderGen) return;
             console.error('Chart.js load failed:', err);
             containerDiv.innerHTML = '<div class="alert alert-danger">⚠️ 그래프 라이브러리 로드에 실패했습니다.</div>';
         });
     }
 
-    // 전역 레지스트리에 등록
-    if (!window._extensionRenderers) window._extensionRenderers = {};
-    window._extensionRenderers['freq'] = renderFreqGraph;
+    /** 정리 훅 — Chart 인스턴스 파기(테마 변경 재렌더·SPA 재렌더 시 누수 방지). */
+    function destroyFreqGraph(containerDiv) {
+        if (containerDiv && containerDiv._freqChart) {
+            try { containerDiv._freqChart.destroy(); } catch (e) { /* noop */ }
+            containerDiv._freqChart = null;
+        }
+    }
+
+    // SDK 등록. onThemeChange 미정의 → SDK 가 테마 변경 시 destroy+재렌더로 색을 갱신한다
+    // (색상은 데이터셋 생성 시점에 결정되므로 부분 갱신보다 재렌더가 단순·정확).
+    //
+    // 익스텐션 렌더는 항상 render.ts(= window.defineExtension/ctx 제공) 가 로드된 페이지에서만
+    // 일어나므로, SDK 가 없는 페이지(렌더가 일어나지 않음)에서는 등록하지 않는다. ctx 없이
+    // 레거시 (el,data) 시그니처로 등록하면 ctx 기반 렌더러가 호출 시 throw 하므로 폴백을 두지 않는다.
+    if (typeof window.defineExtension === 'function') {
+        window.defineExtension({ name: 'freq' }, { render: renderFreqGraph, destroy: destroyFreqGraph });
+    }
 })();

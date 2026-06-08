@@ -221,7 +221,7 @@
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="닫기"></button>
             </div>
             <div class="modal-body">
-                <div class="mb-3">
+                <div class="mb-3" id="settingThemeWrap">
                     <span class="form-label d-block">테마</span>
                     <div class="setting-seg" id="settingTheme" role="group" aria-label="테마">
                         <button type="button" class="seg-btn" data-value="auto" aria-pressed="false" title="자동 (시스템 설정)">
@@ -235,6 +235,8 @@
                         </button>
                     </div>
                 </div>
+                <!-- 다크 전용 색 테마(스킨)가 활성일 때 common.ts 가 위 밝기 토글을 숨기고 이 안내를 보인다. -->
+                <p class="text-muted small mb-3" id="settingThemeForcedNote" style="display:none;"><i class="mdi mdi-moon-waxing-crescent me-1"></i>현재 색 테마는 다크 모드 전용이라 밝기를 변경할 수 없습니다.</p>
                 <div class="mb-3" id="settingThemeSkinWrap" style="display:none;">
                     <span class="form-label d-block">색 테마</span>
                     <!-- 버튼은 멀티 스킨 모드(window.__WIKI_SKINS__)일 때 common.ts 가 동적 주입한다. -->

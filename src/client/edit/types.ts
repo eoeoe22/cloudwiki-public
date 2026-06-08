@@ -242,6 +242,7 @@ declare global {
             name?: string;
             picture?: string | null;
             role?: string;
+            permissions?: Record<string, boolean>;
         };
         marked?: unknown;
         DOMPurify?: unknown;
@@ -304,6 +305,8 @@ declare global {
             containerId: string,
             options?: Record<string, unknown>,
         ) => Promise<void> | void;
+        /** render.ts 가 노출하는 익스텐션 정리 헬퍼(컨테이너 직접 교체 전 호출) */
+        _teardownExtensions?: (containerEl: HTMLElement) => void;
         /** edit.js 의 var 글로벌 — SELECTED_ICONS_ONLY 환경변수 반영 */
         selectedIconsOnly?: boolean;
         /** render.js 의 하드코딩 팔레트 프리셋 */

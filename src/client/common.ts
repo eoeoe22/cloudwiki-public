@@ -34,6 +34,11 @@ import { initCommandPalette } from './command-palette';
 //   auto 모드일 때는 OS 환경설정을 즉시 반영하고, 변경 이벤트도 추적한다.
 (function () {
     try {
+        // 다크 전용 테마/스킨이 활성이면 밝기 선호와 무관하게 다크 고정(head 부트 스크립트와 동일 판정).
+        if (isForcedDark()) {
+            document.documentElement.setAttribute('data-theme', 'dark');
+            return;
+        }
         var saved = localStorage.getItem('themeMode') || 'auto';
         if (saved === 'light' || saved === 'dark') {
             document.documentElement.setAttribute('data-theme', saved);
@@ -52,10 +57,11 @@ function applyBsTheme(mode) {
 }
 (function () {
     try {
-        applyBsTheme(localStorage.getItem('themeMode') || 'auto');
+        applyBsTheme(isForcedDark() ? 'dark' : (localStorage.getItem('themeMode') || 'auto'));
         if (window.matchMedia) {
             const mq = window.matchMedia('(prefers-color-scheme: dark)');
             const onChange = () => {
+                if (isForcedDark()) { applyBsTheme('dark'); return; }
                 const cur = (function () { try { return localStorage.getItem('themeMode') || 'auto'; } catch (e) { return 'auto'; } })();
                 if (cur === 'auto') applyBsTheme('auto');
             };
@@ -288,7 +294,30 @@ function doSearch(e) {
 }
 
 // ── 테마 관리 ──
+// 현재 활성 테마/스킨이 다크 모드 전용이라 밝기를 다크로 강제해야 하는지 판정한다.
+// - 단일 스킨 다크 전용: BaseLayout 이 window.__WIKI_FORCE_DARK__=true 를 head 에서 박는다.
+// - 멀티 스킨: window.__WIKI_SKINS__.darkOnly 에 든 스킨이 현재 data-wiki-theme 일 때.
+//   (getThemeSkin 의 localStorage 의존을 피해 DOM 속성을 직접 읽어 부트 타이밍에도 안전.)
+function isForcedDark() {
+    try {
+        if (window.__WIKI_FORCE_DARK__) return true;
+        var m = window.__WIKI_SKINS__;
+        if (m && Array.isArray(m.darkOnly) && m.darkOnly.length) {
+            var cur = document.documentElement.getAttribute('data-wiki-theme') || 'default';
+            return m.darkOnly.indexOf(cur) >= 0;
+        }
+    } catch (e) { /* noop */ }
+    return false;
+}
+
 function applyThemeClass(mode) {
+    if (isForcedDark()) {
+        // 다크 전용 동안에는 사용자 선택을 무시하고 다크 고정(선호값은 보존하되 적용만 막음).
+        document.documentElement.setAttribute('data-theme', 'dark');
+        applyBsTheme('dark');
+        try { window.dispatchEvent(new CustomEvent('wiki:theme-changed', { detail: { mode: 'dark', forced: true } })); } catch (e) { /* noop */ }
+        return;
+    }
     if (mode === 'light' || mode === 'dark') {
         document.documentElement.setAttribute('data-theme', mode);
     } else {
@@ -347,6 +376,20 @@ function setThemeSkin(skin) {
     if (!meta || meta.list.indexOf(skin) === -1) return;
     try { localStorage.setItem(THEME_SKIN_KEY, skin); } catch (e) { /* 스토리지 접근 불가 시 무시 */ }
     applyThemeSkinAttr(skin);
+    // 새 스킨이 다크 전용이면 다크 고정, 아니면 사용자 밝기 선호(themeMode)를 복원한다.
+    // applyThemeSkinAttr 가 data-wiki-theme 를 먼저 갱신하므로 isForcedDark 가 새 스킨 기준으로 평가된다.
+    applyThemeClass(getCurrentTheme());
+    reconcileThemeControls();
+}
+
+// 개인 설정 모달의 밝기(자동/다크/라이트) 토글을 강제 다크 여부에 맞춰 노출/숨김한다.
+// 다크 전용 스킨이 활성이면 토글이 무의미하므로 감추고 안내 문구를 보인다.
+function reconcileThemeControls() {
+    var wrap = document.getElementById('settingThemeWrap');
+    var note = document.getElementById('settingThemeForcedNote');
+    var forced = isForcedDark();
+    if (wrap) wrap.style.display = forced ? 'none' : '';
+    if (note) note.style.display = forced ? '' : 'none';
 }
 
 // ── 레이아웃 모드 사용자 오버라이드 (클라이언트 전용, localStorage) ──
@@ -402,6 +445,7 @@ function openSettingsModal() {
     if (!modalEl || typeof bootstrap === 'undefined' || !bootstrap.Modal) return;
     setSegActive(document.getElementById('settingTheme'), getCurrentTheme());
     if (getSkinMeta()) setSegActive(document.getElementById('settingThemeSkin'), getThemeSkin());
+    reconcileThemeControls();
     setSegActive(document.getElementById('settingLayoutMode'), getLayoutOverride() || 'site');
     setSegActive(document.getElementById('settingKeyboardShortcuts'), getKeyboardShortcutsPref());
     bootstrap.Modal.getOrCreateInstance(modalEl).show();

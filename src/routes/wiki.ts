@@ -2,6 +2,7 @@ import { Hono, type Context } from 'hono';
 import type { Env, Page, Revision, User } from '../types';
 import { requireAuth, requireAdmin, requirePermission } from '../middleware/session';
 import { normalizeSlug, isR2OnlyNamespace, isMapNamespace } from '../utils/slug';
+import { getEnabledExtensions } from '../utils/extensions';
 import { buildMapDocument, buildGroupTree, MAP_CACHE_MAX_AGE_SECONDS } from '../utils/mapDocument';
 import { safeJSON } from '../utils/json';
 import {
@@ -16,7 +17,7 @@ import { createNotifications } from '../utils/notification';
 import { loadAllPalettes, loadPalettesForPage } from '../utils/palettes';
 import { cleanupUnauthorizedSubscriptions } from '../utils/pageAccessCleanup';
 import { collectRevisionR2Keys, buildHardDeleteStatements } from '../utils/pageDeletion';
-import { notifyPageWatchers } from '../utils/pagePipeline/notifyWatchers';
+import { commitPageMutation } from '../utils/pagePipeline/commit';
 
 const wiki = new Hono<Env>();
 
@@ -193,9 +194,10 @@ function extractLinks(content: string): { target_slug: string; link_type: string
     return links;
 }
 
-// 주시자 수집/알림 로직은 src/utils/pagePipeline/notifyWatchers.ts 로 이전했다
-// (collectPageEditWatchers + notifyPageWatchers). 직접 PUT 과 commitPageMutation
-// 파이프라인이 동일한 알림을 내도록 단일 소스로 공유한다.
+// 문서 본문 저장(생성/수정)은 통합 파이프라인 commitPageMutation(src/utils/pagePipeline)으로
+// 위임한다. 직접 PUT 도 승인(pending/mcp) 경로와 동일하게 이 파이프라인을 거치므로 리비전 저장·
+// 재색인·캐시 무효화·주시자 알림이 단일 소스에서 일관되게 실행된다(주시자 수집/알림 로직은
+// src/utils/pagePipeline/notifyWatchers.ts).
 
 /**
  * 편집 요청 전역 토글(wrangler.toml `EDIT_REQUEST_ENABLED`) 조회.
@@ -779,8 +781,7 @@ async function rewriteBacklinksForRename(
     for (const p of overflow) skipped.push(p.slug);
 
     const origin = new URL(c.req.url).origin;
-    const enabledExtensions = (c.env.ENABLED_EXTENSIONS || '')
-        .split(',').map((s: string) => s.trim()).filter(Boolean);
+    const enabledExtensions = getEnabledExtensions(c.env);
 
     const isAdmin = rbac.can(user.role, 'admin:access');
     for (const page of targets) {
@@ -994,7 +995,7 @@ wiki.get('/config', async (c) => {
         selectedIconsOnly: c.env.SELECTED_ICONS_ONLY === 'true',
         enableConcurrentEditDetection: c.env.ENABLE_CONCURRENT_EDIT_DETECTION !== 'false',
         turnstileSiteKey: c.env.TURNSTILE_SITE_KEY || '',
-        enabledExtensions: (c.env.ENABLED_EXTENSIONS || '').split(',').map((s: string) => s.trim()).filter(Boolean),
+        enabledExtensions: getEnabledExtensions(c.env),
         mediaPublicUrl: c.env.MEDIA_PUBLIC_URL || '',
         announcements,
         palettes,
@@ -1036,7 +1037,7 @@ wiki.get('/w/search-titles', async (c) => {
     const params: any[] = [];
 
     if (type === 'template') {
-        const enabledExtensions = (c.env.ENABLED_EXTENSIONS || '').split(',').map((s: string) => s.trim()).filter(Boolean);
+        const enabledExtensions = getEnabledExtensions(c.env);
         const namespaceLikes = ["slug LIKE '틀:%'", ...enabledExtensions.map(() => "slug LIKE ?")];
         query += ` AND (${namespaceLikes.join(' OR ')})`;
         enabledExtensions.forEach(ext => params.push(`${ext}:%`));
@@ -1622,7 +1623,7 @@ wiki.get('/w/:slug', async (c) => {
 
     // R2-only 네임스페이스인 경우, 본문이 비어있다면 최신 리비전에서 본문을 가져옵니다.
     const origin = new URL(c.req.url).origin;
-    const enabledExtensionsRead = (c.env.ENABLED_EXTENSIONS || '').split(',').map((s: string) => s.trim()).filter(Boolean);
+    const enabledExtensionsRead = getEnabledExtensions(c.env);
     if (isR2OnlyNamespace(page.slug, enabledExtensionsRead) && (!page.content || page.content === '')) {
         if (page.last_revision_id) {
             const lastRev = await db.prepare('SELECT content, r2_key FROM revisions WHERE id = ?').bind(page.last_revision_id).first<{ content: string, r2_key: string | null }>();
@@ -2032,9 +2033,9 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
     }
 
     const existing = await db
-        .prepare('SELECT id, version, is_private, edit_acl, redirect_to, content, deleted_at, title, last_revision_id FROM pages WHERE slug = ?')
+        .prepare('SELECT id, version, is_private, edit_acl, redirect_to, content, deleted_at, title, last_revision_id, category FROM pages WHERE slug = ?')
         .bind(slug)
-        .first<{ id: number; version: number; is_private: number; edit_acl: string | null; redirect_to: string | null; content: string; deleted_at: number | null; title: string | null; last_revision_id: number | null }>();
+        .first<{ id: number; version: number; is_private: number; edit_acl: string | null; redirect_to: string | null; content: string; deleted_at: number | null; title: string | null; last_revision_id: number | null; category: string | null }>();
 
     // edit_acl body 입력 검증 (관리자만 반영). 비관리자는 기존 값 마스킹.
     let requestedEditAcl: { provided: boolean; value: EditAcl | null } = { provided: false, value: null };
@@ -2193,10 +2194,8 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
             }
         }
 
-        const newVersion = existing.version + 1;
-
-        // R2-only 네임스페이스 여부 확인
-        const enabledExtensionsEdit = (c.env.ENABLED_EXTENSIONS || '').split(',').map((s: string) => s.trim()).filter(Boolean);
+        // R2-only 네임스페이스 여부 확인 (낙관적 락 충돌 검사 시 R2 본문 비교에 사용)
+        const enabledExtensionsEdit = getEnabledExtensions(c.env);
         const isR2Only = isR2OnlyNamespace(slug, enabledExtensionsEdit);
 
         // Optimistic Locking 체크 시, R2-only 문서인 경우 R2에서 실제 본문을 가져와 비교
@@ -2263,61 +2262,66 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
             }
         }
 
-        // 1. 리비전 본문을 R2에 먼저 업로드
-        let r2Key: string;
-        try {
-            r2Key = await uploadRevisionToR2(c.env.MEDIA, existing.id, newVersion, body.content);
-        } catch (e) {
-            console.error('R2 revision upload failed:', e);
-            return c.json({ error: '리비전 저장에 실패했습니다. 잠시 후 다시 시도해주세요.' }, 500);
-        }
-
-        // 2. D1에 리비전 메타데이터 삽입 (content는 빈 문자열, r2_key 저장)
-        let revisionId: number;
-        try {
-            const revResult = await db
-                .prepare(
-                    'INSERT INTO revisions (page_id, page_version, content, r2_key, summary, author_id) VALUES (?, ?, ?, ?, ?, ?)'
-                )
-                .bind(existing.id, newVersion, '', r2Key, body.summary ?? null, user.id)
-                .run();
-            revisionId = revResult.meta.last_row_id;
-        } catch (e) {
-            // D1 실패 시 업로드한 R2 파일 롤백
-            await c.env.MEDIA.delete(r2Key).catch(() => {});
-            console.error('D1 revision insert failed:', e);
-            return c.json({ error: '리비전 저장에 실패했습니다. 잠시 후 다시 시도해주세요.' }, 500);
-        }
-
-        // 3. 페이지 업데이트 (pages.content는 R2-only가 아닐 때만 최신 본문 유지)
-        const contentToStore = isR2Only ? '' : body.content;
-        const metrics = computePageMetricsTracked(body.content, isR2Only);
-        // title: body 에 명시된 경우만 변경(기존 유지). normalizeTitleInput 결과(null) 가
-        // 명시된 경우 NULL 로 저장돼 슬러그가 다시 표시 이름으로 노출된다.
+        // ── 리비전 저장 + 후처리(재색인·캐시 무효화·주시자 알림)를 통합 파이프라인에 위임 ──
+        // R2 업로드 → revisions INSERT → pages UPDATE(version-CAS) → 링크/카테고리 재색인 →
+        // 3종 캐시 무효화 → 주시자 알림이 승인(pending/mcp) 경로와 동일한 단일 소스로 실행된다.
+        // 사람 편집이므로 요약에 [MCP] 접두를 붙이지 않는다(summaryRaw: true).
+        //
+        // 컬럼 쓰기 규칙은 인라인 구현과 동일하게 유지한다:
+        //   - title: body 에 키가 명시된 경우만 변경, 그 외 기존값(existing.title) 유지.
+        //   - edit_acl: admin 명시 변경 또는 카테고리 ACL 머지(willUpdateEditAcl) 일 때만 갱신.
+        //   - view_mode: body 에 키가 명시된 경우(hasViewInBody)만 갱신.
+        //   - is_private: wiki:private 권한 게이트를 거친 최종값(finalIsPrivate)으로 항상 갱신.
         const finalTitle = hasTitleInBody ? requestedTitle ?? null : existing.title;
+        let updateResult;
         try {
-            // SET 절을 동적으로 구성한다. edit_acl 은 admin 이 명시적으로 변경 요청한 경우에만,
-            // view_mode 는 body 에 키가 명시된 경우에만 포함한다(그 외 케이스는 column 을 손대지 않아
-            // 다른 경로의 갱신을 stale 값으로 덮어쓰는 race 를 회피). 바인드 순서는 placeholder 순서와 일치.
-            const setClauses: string[] = ['content = ?', 'title = ?', 'category = ?', 'is_private = ?'];
-            const setBinds: (string | number | null)[] = [contentToStore, finalTitle, body.category || null, finalIsPrivate];
-            if (willUpdateEditAcl) {
-                setClauses.push('edit_acl = ?');
-                setBinds.push(finalEditAcl);
-            }
-            if (hasViewInBody) {
-                setClauses.push('view_mode = ?');
-                setBinds.push(requestedView ?? null);
-            }
-            setClauses.push('redirect_to = ?', 'last_revision_id = ?', 'version = ?', 'rows = ?', 'characters = ?', 'updated_at = unixepoch()');
-            setBinds.push(body.redirect_to || null, revisionId, newVersion, metrics.rows, metrics.characters);
-            const updateSql = `UPDATE pages SET ${setClauses.join(', ')} WHERE id = ?`;
-            await db.prepare(updateSql).bind(...setBinds, existing.id).run();
+            updateResult = await commitPageMutation(c, {
+                kind: 'update',
+                origin: 'http_put',
+                actor: user,
+                slug,
+                content: body.content,
+                summary: body.summary ?? null,
+                summaryRaw: true,
+                category: body.category || null,
+                redirectTo: body.redirect_to || null,
+                title: finalTitle,
+                // willUpdateEditAcl 이 아니면 undefined → 컬럼을 손대지 않아 다른 경로의 갱신을 stale 값으로 덮어쓰지 않는다.
+                editAcl: willUpdateEditAcl ? finalEditAcl : undefined,
+                viewMode: hasViewInBody ? (requestedView ?? null) : undefined,
+                isPrivateWrite: finalIsPrivate,
+                page: { id: existing.id, version: existing.version, category: existing.category, title: existing.title },
+                isPrivate: finalIsPrivate === 1,
+                rbac,
+            });
         } catch (e: any) {
-            // UPDATE 실패 시 (예: title 의 idx_pages_title_unique race) 막 만든 리비전 / R2 객체를 정리해
-            // 고아 본문이 남지 않게 한다. UNIQUE 위반(SQLITE_CONSTRAINT) 은 409 로 매핑, 그 외는 500.
-            await db.prepare('DELETE FROM revisions WHERE id = ?').bind(revisionId).run().catch(() => {});
-            await c.env.MEDIA.delete(r2Key).catch(() => {});
+            // version-CAS 실패(동시 수정) — 인라인 구현에는 없던 추가 안전망. SELECT 이후 다른 요청이
+            // 페이지를 앞서 갱신했으므로, SELECT 시점의 stale 한 existing 대신 "현재" 페이지의 버전·본문을
+            // 다시 읽어 반환한다(expected_version 충돌 응답과 동일하게 R2-only 문서는 최신 리비전 본문을
+            // R2 에서 가져온다). 클라이언트가 올바른 base 로 머지/재시도하게 한다.
+            if (e?.code === 'CONCURRENT_MODIFICATION') {
+                const fresh = await db
+                    .prepare('SELECT version, content FROM pages WHERE id = ?')
+                    .bind(existing.id)
+                    .first<{ version: number; content: string }>();
+                let currentContent = (fresh?.content ?? existing.content) || '';
+                if (isR2Only && currentContent === '' && fresh) {
+                    const lastRev = await db
+                        .prepare('SELECT content, r2_key FROM revisions WHERE page_id = ? AND page_version = ?')
+                        .bind(existing.id, fresh.version)
+                        .first<{ content: string; r2_key: string | null }>();
+                    if (lastRev) {
+                        currentContent = await getRevisionContent(c.env.MEDIA, lastRev, new URL(c.req.url).origin);
+                    }
+                }
+                const currentNormalized = currentContent.replace(/\r\n?/g, '\n');
+                return c.json({
+                    error: '편집 충돌이 발생했습니다. 다른 사용자가 문서를 수정했습니다.',
+                    current_version: fresh?.version ?? existing.version,
+                    content: currentNormalized,
+                }, 409);
+            }
+            // title 의 idx_pages_title_unique race 는 409 로 매핑(헬퍼가 리비전/R2 롤백을 이미 수행).
             const msg = String(e?.message || e);
             if (/UNIQUE|constraint/i.test(msg) && /title/i.test(msg)) {
                 console.error('D1 page UPDATE failed due to title UNIQUE race:', e);
@@ -2327,38 +2331,7 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
             return c.json({ error: '문서 저장에 실패했습니다. 잠시 후 다시 시도해주세요.' }, 500);
         }
 
-        // page_links, page_categories 갱신 (비동기)
-        const linkCatStmts = buildLinkAndCategoryStatements(db, existing.id, body.content, body.category || null);
-        c.executionCtx.waitUntil(db.batch(linkCatStmts).catch(e => console.error('Failed to update links/categories:', e)));
-
-        // 주시자에게 알림 발송 (비동기) — 직접 PUT/파이프라인 공용 헬퍼.
-        // category_watches fan-out 은 page_categories 가 비동기 갱신되므로 그 테이블을 읽지 않고
-        // 방금 저장한 본문의 카테고리 목록(body.category)을 직접 넘긴다.
-        const editedCategories = (body.category || '')
-            .split(',')
-            .map(s => s.trim())
-            .filter(s => s.length > 0);
-        notifyPageWatchers(c, {
-            pageId: existing.id,
-            slug,
-            editorId: user.id,
-            editorName: user.name,
-            categories: editedCategories,
-            isPrivate: finalIsPrivate === 1,
-            revisionId,
-            summary: body.summary ?? null,
-            rbac,
-        });
-
-        // 캐시 무효화 (API + SSR) + 최근 변경 즉시 갱신
-        // 콜론이 포함된 문서(틀, 익스텐션 등)인 경우 역링크 문서 캐시도 함께 무효화
-        c.executionCtx.waitUntil(Promise.allSettled([
-            invalidatePageCache(c, slug),
-            refreshRecentChangesCache(c),
-            invalidateBacklinkCaches(c, slug, db),
-        ]));
-
-        return c.json(safeJSON({ slug, version: newVersion, revision_id: revisionId }));
+        return c.json(safeJSON({ slug, version: updateResult.new_version, revision_id: updateResult.revision_id }));
     } else {
         finalIsPrivate = rbac.can(user.role, 'wiki:private') ? (body.is_private ?? 0) : 0;
         // edit_acl 은 관리자만 직접 지정 가능. 비관리자가 만든 신규 문서는 NULL 로 시작(아래 prefix 룰이 덮어쓸 수 있음).
@@ -2367,9 +2340,8 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
             : null;
 
         // ── 새 문서 생성 ──
-        const enabledExtensionsCreate = (c.env.ENABLED_EXTENSIONS || '').split(',').map((s: string) => s.trim()).filter(Boolean);
-        const isR2Only = isR2OnlyNamespace(slug, enabledExtensionsCreate);
-        const contentToStore = isR2Only ? '' : body.content;
+        // (R2-only 여부·본문 저장 형태·메트릭 계산은 통합 파이프라인의 applyNewPageInsert 가 슬러그
+        //  기준으로 동일하게 처리하므로 여기서 따로 계산하지 않는다.)
 
         // 자동 prefix 룰 / 카테고리 ACL 머지 — MCP 제출안 승인(create) 과 공유되는 헬퍼.
         // - is_private / edit_acl 은 관리자가 작성한 prefix 룰이므로 생성자 RBAC 검사를 우회해 강제 적용한다.
@@ -2456,80 +2428,44 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
             }
         }
 
-        const metrics = computePageMetricsTracked(body.content, isR2Only);
-        const newDocTitle = requestedTitle ?? null;
-        let pageResult;
+        // ── 신규 페이지 INSERT + 첫 리비전 + 후처리(재색인·캐시 무효화)를 통합 파이프라인에 위임 ──
+        // ACL/카테고리/비공개는 위에서 prefix 룰·카테고리 ACL 로 이미 preResolved 했고, 파이프라인은
+        // 그 값을 그대로 INSERT 한다. 사람 편집이므로 요약에 [MCP] 접두를 붙이지 않는다(summaryRaw: true).
+        // 신규 문서 생성은 승인(mcp) 경로와 동일하게 주시자 알림을 보내지 않는다(notify: false).
+        let createResult;
         try {
-            pageResult = await db
-                .prepare(
-                    'INSERT INTO pages (slug, title, content, category, is_private, edit_acl, redirect_to, rows, characters, view_mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-                )
-                .bind(slug, newDocTitle, contentToStore, effectiveCategory, finalIsPrivate, finalEditAcl, body.redirect_to || null, metrics.rows, metrics.characters, requestedView ?? null)
-                .run();
+            createResult = await commitPageMutation(c, {
+                kind: 'create',
+                origin: 'http_put',
+                actor: user,
+                slug,
+                content: body.content,
+                summary: body.summary ?? null,
+                summaryRaw: true,
+                category: effectiveCategory ?? null,
+                editAcl: finalEditAcl,
+                redirectTo: body.redirect_to || null,
+                title: requestedTitle ?? null,
+                viewMode: requestedView ?? null,
+                isPrivate: finalIsPrivate === 1,
+                rbac,
+                notify: false,
+            });
         } catch (e: any) {
-            // UNIQUE race (slug 의 UNIQUE 또는 idx_pages_title_unique) — precheck 와 INSERT 사이에
-            // 다른 요청이 같은 slug/title 을 가져간 경우. 500 대신 409 로 매핑해 클라이언트가 재시도 안내.
-            const msg = String(e?.message || e);
-            if (/UNIQUE|constraint/i.test(msg)) {
-                console.error('Page INSERT failed due to UNIQUE race:', e);
-                if (/title/i.test(msg)) {
-                    return c.json({ error: '대체 제목이 다른 문서와 충돌했습니다. 잠시 후 다시 시도해주세요.' }, 409);
-                }
+            // applyNewPageInsert 가 UNIQUE race(slug/title)를 명시적 코드로 던지는 경우 409 로 매핑
+            // (페이지/리비전/R2 롤백은 헬퍼가 이미 수행). precheck 와 INSERT 사이의 동시 생성 안내.
+            if (e?.code === 'TITLE_TAKEN') {
+                return c.json({ error: '대체 제목이 다른 문서와 충돌했습니다. 잠시 후 다시 시도해주세요.' }, 409);
+            }
+            if (e?.code === 'SLUG_TAKEN') {
                 return c.json({ error: '같은 제목의 문서가 동시에 생성되었습니다. 다시 시도해주세요.' }, 409);
             }
-            throw e;
+            // R2 업로드 실패 등 그 외 오류(헬퍼가 페이지/리비전 롤백을 이미 수행) — 인라인 구현과 동일하게 500 JSON.
+            console.error('Page create via pipeline failed:', e);
+            return c.json({ error: '문서 저장에 실패했습니다. 잠시 후 다시 시도해주세요.' }, 500);
         }
 
-        const pageId = pageResult.meta.last_row_id;
-
-        // 첫 리비전 생성
-        // 1. R2 업로드
-        let firstR2Key: string;
-        try {
-            firstR2Key = await uploadRevisionToR2(c.env.MEDIA, pageId, 1, body.content);
-        } catch (e) {
-            // R2 실패 시 방금 생성한 페이지 롤백
-            await db.prepare('DELETE FROM pages WHERE id = ?').bind(pageId).run().catch(() => {});
-            console.error('R2 first revision upload failed:', e);
-            return c.json({ error: '리비전 저장에 실패했습니다. 잠시 후 다시 시도해주세요.' }, 500);
-        }
-
-        // 2. D1 리비전 삽입
-        let revisionId: number;
-        try {
-            const revResult = await db
-                .prepare(
-                    'INSERT INTO revisions (page_id, page_version, content, r2_key, summary, author_id) VALUES (?, ?, ?, ?, ?, ?)'
-                )
-                .bind(pageId, 1, '', firstR2Key, body.summary ?? null, user.id)
-                .run();
-            revisionId = revResult.meta.last_row_id;
-        } catch (e) {
-            await c.env.MEDIA.delete(firstR2Key).catch(() => {});
-            await db.prepare('DELETE FROM pages WHERE id = ?').bind(pageId).run().catch(() => {});
-            console.error('D1 first revision insert failed:', e);
-            return c.json({ error: '리비전 저장에 실패했습니다. 잠시 후 다시 시도해주세요.' }, 500);
-        }
-
-        // last_revision_id 업데이트
-        await db
-            .prepare('UPDATE pages SET last_revision_id = ? WHERE id = ?')
-            .bind(revisionId, pageId)
-            .run();
-
-        // page_links, page_categories 갱신 (비동기)
-        const linkCatStmts = buildLinkAndCategoryStatements(db, pageId, body.content, effectiveCategory);
-        c.executionCtx.waitUntil(db.batch(linkCatStmts).catch(e => console.error('Failed to update links/categories:', e)));
-
-        // 캐시 무효화 (API + SSR) + 최근 변경 즉시 갱신
-        // 콜론이 포함된 문서(틀, 익스텐션 등)인 경우 역링크 문서 캐시도 함께 무효화
-        c.executionCtx.waitUntil(Promise.allSettled([
-            invalidatePageCache(c, slug),
-            refreshRecentChangesCache(c),
-            invalidateBacklinkCaches(c, slug, db),
-        ]));
-
-        return c.json(safeJSON({ slug, version: 1, revision_id: revisionId }), 201);
+        return c.json(safeJSON({ slug, version: 1, revision_id: createResult.revision_id }), 201);
     }
 });
 
@@ -3079,49 +3015,68 @@ wiki.post('/w/:slug/restore', requireAuth, async (c) => {
 });
 
 /**
- * POST /w/:slug/move
- * 문서 이동 (이름 변경) — 관리자 전용
- * - 기존 문서 이름(slug)을 새로운 이름으로 변경
- * - 기존 문서에 리디렉션을 생성하지 않음
- * - Backlinks FROM this page are updated to reflect the new source slug
- * - update_backlinks: true인 경우, 이 문서를 가리키던 역링크 문서들의 본문도 일괄 재작성
+ * 단일 문서 이동(이름 변경)의 핵심 로직. 라우트(`POST /w/:slug/move`)와
+ * 관리자 대량 이동(`POST /api/admin/bulk-manage/move`)이 공유하는 단일 소스다.
+ * - 기존 문서 이름(slug)을 새로운 이름으로 변경하며 리디렉션은 생성하지 않는다.
+ * - Backlinks FROM this page 는 page_links 재구축으로 새 source slug 를 반영한다.
+ * - updateBacklinks=true 인 경우, 이 문서를 가리키던 역링크 문서들의 본문도 일괄 재작성한다.
+ *
+ * 검증/권한 실패는 throw 하지 않고 `{ ok: false, status, error }` 로 반환해
+ * 대량 호출 측이 항목별로 건너뛸 수 있게 한다(이동 성공분은 그대로 유지).
  */
-wiki.post('/w/:slug/move', requireAdmin, async (c) => {
-    const currentSlug = c.req.param('slug');
-    const { new_slug, update_backlinks } = await c.req.json<{ new_slug: string; update_backlinks?: boolean }>();
-    const user = c.get('user')!;
-    const rbac = c.get('rbac') as RBAC;
-    const db = c.env.DB;
+export interface MovePageOutcome {
+    ok: boolean;
+    /** ok=false 일 때 HTTP 상태 힌트(400/403/404/409). */
+    status?: 400 | 403 | 404 | 409;
+    error?: string;
+    old_slug: string;
+    /** ok=true 일 때 정규화된 새 slug. */
+    new_slug?: string;
+    backlinks?: { updated: number; skipped: string[]; conflicts: string[]; total: number };
+    backlinks_error?: string;
+}
 
-    if (!new_slug || new_slug.trim().length === 0) {
-        return c.json({ error: '새 문서 이름을 입력해주세요.' }, 400);
+export async function movePage(
+    c: any,
+    currentSlug: string,
+    newSlugRaw: string,
+    user: { id: number; role: string },
+    rbac: RBAC,
+    options?: { updateBacklinks?: boolean },
+): Promise<MovePageOutcome> {
+    const db: D1Database = c.env.DB;
+    const fail = (status: 400 | 403 | 404 | 409, error: string): MovePageOutcome =>
+        ({ ok: false, status, error, old_slug: currentSlug });
+
+    if (!newSlugRaw || newSlugRaw.trim().length === 0) {
+        return fail(400, '새 문서 이름을 입력해주세요.');
     }
 
     // 앞뒤 공백 + 앞뒤 슬래시 제거 (슬래시는 하위 문서 구분자로만 유의미)
-    const trimmedNewSlug = normalizeSlug(new_slug);
+    const trimmedNewSlug = normalizeSlug(newSlugRaw);
     if (!trimmedNewSlug) {
-        return c.json({ error: '새 문서 이름을 입력해주세요.' }, 400);
+        return fail(400, '새 문서 이름을 입력해주세요.');
     }
 
     // 동일 슬러그로의 no-op 이동 차단. findConflictingPage 는 page.id 를 제외하므로 자기 자신을
     // 잡아내지 않아, 그대로 두면 admin_log 와 백링크 재작성이 무의미하게 실행된다.
     if (trimmedNewSlug === currentSlug) {
-        return c.json({ error: '새 문서 이름이 기존 이름과 동일합니다.' }, 400);
+        return fail(400, '새 문서 이름이 기존 이름과 동일합니다.');
     }
 
     // 보안: 슬러그 금지 문자 점검
     if (SLUG_FORBIDDEN_CHARS.test(trimmedNewSlug)) {
-        return c.json({ error: '제목에 사용할 수 없는 특수문자가 포함되어 있습니다.' }, 400);
+        return fail(400, '제목에 사용할 수 없는 특수문자가 포함되어 있습니다.');
     }
 
     // "이미지:" 네임스페이스는 media 테이블 기반 이미지 문서 전용이므로 이동 대상/출처가 될 수 없다
     if (currentSlug.startsWith('이미지:') || trimmedNewSlug.startsWith('이미지:')) {
-        return c.json({ error: '"이미지:" 네임스페이스는 이미지 문서 전용이며, 일반 문서 이동 대상이 될 수 없습니다.' }, 400);
+        return fail(400, '"이미지:" 네임스페이스는 이미지 문서 전용이며, 일반 문서 이동 대상이 될 수 없습니다.');
     }
 
     // "map:" 네임스페이스는 가상 트리 뷰 전용이므로 이동 대상/출처가 될 수 없다
     if (currentSlug.startsWith('map:') || trimmedNewSlug.startsWith('map:')) {
-        return c.json({ error: '"map:" 네임스페이스는 가상 트리 뷰 전용이며, 일반 문서 이동 대상이 될 수 없습니다.' }, 400);
+        return fail(400, '"map:" 네임스페이스는 가상 트리 뷰 전용이며, 일반 문서 이동 대상이 될 수 없습니다.');
     }
 
     // 네임스페이스 이동 제한: 콜론이 포함된 문서는 다른 네임스페이스로 이동 불가
@@ -3129,13 +3084,13 @@ wiki.post('/w/:slug/move', requireAdmin, async (c) => {
     const currentNamespace = isNamespaceDocument ? currentSlug.split(':')[0] : '';
     const newNamespace = trimmedNewSlug.includes(':') ? trimmedNewSlug.split(':')[0] : '';
     if (isNamespaceDocument && currentNamespace !== newNamespace) {
-        return c.json({ error: '네임스페이스가 있는 문서는 다른 네임스페이스로 이동할 수 없습니다.' }, 400);
+        return fail(400, '네임스페이스가 있는 문서는 다른 네임스페이스로 이동할 수 없습니다.');
     }
 
     // 페이지 먼저 조회 — 충돌 검사에서 자기 자신을 제외해야 한다 (rename to same slug 등 idempotent 호출 안전망).
     const page = await db.prepare('SELECT id, category, is_private, edit_acl FROM pages WHERE slug = ? AND deleted_at IS NULL').bind(currentSlug).first<{ id: number, category: string | null, is_private: number, edit_acl: string | null }>();
     if (!page) {
-        return c.json({ error: '문서를 찾을 수 없습니다.' }, 404);
+        return fail(404, '문서를 찾을 수 없습니다.');
     }
 
     // new_slug 가 다른 페이지의 slug 또는 title 과 충돌하는지 검사.
@@ -3146,11 +3101,11 @@ wiki.post('/w/:slug/move', requireAdmin, async (c) => {
         const msg = moveConflict.matchedColumn === 'slug'
             ? `이미 존재하는 문서 이름입니다.${deletedSuffix}`
             : `'${trimmedNewSlug}' 는 이미 다른 문서의 대체 제목과 같아 사용할 수 없습니다.${deletedSuffix}`;
-        return c.json({ error: msg }, 409);
+        return fail(409, msg);
     }
 
     if (page.is_private === 1 && !rbac.can(user.role, 'wiki:private')) {
-        return c.json({ error: '문서를 찾을 수 없습니다.' }, 404);
+        return fail(404, '문서를 찾을 수 없습니다.');
     }
 
     // admin_only ACL 문서 이동은 관리자만 가능. (구 is_locked 분기 대체)
@@ -3158,7 +3113,7 @@ wiki.post('/w/:slug/move', requireAdmin, async (c) => {
     if (!moveIsAdmin) {
         const aclMove = parseEditAcl(page.edit_acl);
         if (aclMove && aclMove.flags.includes('admin_only')) {
-            return c.json({ error: '관리자 전용 문서는 관리자만 이동할 수 있습니다.' }, 403);
+            return fail(403, '관리자 전용 문서는 관리자만 이동할 수 있습니다.');
         }
     }
 
@@ -3171,7 +3126,7 @@ wiki.post('/w/:slug/move', requireAdmin, async (c) => {
         const msg = String(e?.message || e);
         if (/UNIQUE|constraint/i.test(msg)) {
             console.error('Page slug UPDATE failed due to UNIQUE race:', e);
-            return c.json({ error: '새 제목이 다른 문서와 충돌합니다. 다시 시도해주세요.' }, 409);
+            return fail(409, '새 제목이 다른 문서와 충돌합니다. 다시 시도해주세요.');
         }
         throw e;
     }
@@ -3204,11 +3159,11 @@ wiki.post('/w/:slug/move', requireAdmin, async (c) => {
     // 역링크 본문 일괄 재작성 (옵션)
     let backlinksResult: { updated: string[]; skipped: string[]; conflicts: string[]; total: number } | undefined;
     let backlinksError: string | undefined;
-    if (update_backlinks === true) {
+    if (options?.updateBacklinks === true) {
         try {
             backlinksResult = await rewriteBacklinksForRename(c, currentSlug, trimmedNewSlug, user, rbac);
         } catch (e) {
-            // 이동 자체는 이미 커밋되었으므로 200을 반환하되, 실패 사실을 응답 본문으로 명시해
+            // 이동 자체는 이미 커밋되었으므로 성공으로 처리하되, 실패 사실을 응답 본문으로 명시해
             // 관리자가 역링크가 갱신되지 않았음을 인지할 수 있게 한다.
             console.error('rewriteBacklinksForRename failed:', e);
             backlinksError = e instanceof Error ? e.message : String(e);
@@ -3234,15 +3189,9 @@ wiki.post('/w/:slug/move', requireAdmin, async (c) => {
         invalidateBacklinkCaches(c, currentSlug, db),
     ]));
 
-    const response: {
-        message: string;
-        new_slug: string;
-        backlinks?: { updated: number; skipped: string[]; conflicts: string[]; total: number };
-        backlinks_error?: string;
-    } = { message: '문서가 이동되었습니다.', new_slug: trimmedNewSlug };
-
+    const outcome: MovePageOutcome = { ok: true, old_slug: currentSlug, new_slug: trimmedNewSlug };
     if (backlinksResult) {
-        response.backlinks = {
+        outcome.backlinks = {
             updated: backlinksResult.updated.length,
             skipped: backlinksResult.skipped,
             conflicts: backlinksResult.conflicts,
@@ -3250,8 +3199,37 @@ wiki.post('/w/:slug/move', requireAdmin, async (c) => {
         };
     }
     if (backlinksError) {
-        response.backlinks_error = backlinksError;
+        outcome.backlinks_error = backlinksError;
     }
+    return outcome;
+}
+
+/**
+ * POST /w/:slug/move
+ * 문서 이동 (이름 변경) — 관리자 전용. 핵심 로직은 공유 헬퍼 movePage 에 위임한다.
+ */
+wiki.post('/w/:slug/move', requireAdmin, async (c) => {
+    const currentSlug = c.req.param('slug');
+    const { new_slug, update_backlinks } = await c.req.json<{ new_slug: string; update_backlinks?: boolean }>();
+    const user = c.get('user')!;
+    const rbac = c.get('rbac') as RBAC;
+
+    const outcome = await movePage(c, currentSlug, new_slug, user, rbac, {
+        updateBacklinks: update_backlinks === true,
+    });
+    if (!outcome.ok) {
+        return c.json({ error: outcome.error }, outcome.status ?? 400);
+    }
+
+    const response: {
+        message: string;
+        new_slug: string;
+        backlinks?: { updated: number; skipped: string[]; conflicts: string[]; total: number };
+        backlinks_error?: string;
+    } = { message: '문서가 이동되었습니다.', new_slug: outcome.new_slug! };
+
+    if (outcome.backlinks) response.backlinks = outcome.backlinks;
+    if (outcome.backlinks_error) response.backlinks_error = outcome.backlinks_error;
 
     return c.json(response);
 });
@@ -3350,7 +3328,7 @@ wiki.post('/w/:slug/revert', requireAuth, async (c) => {
         return c.json({ error: '리비전 저장에 실패했습니다. 잠시 후 다시 시도해주세요.' }, 500);
     }
 
-    const enabledExtensionsRevert = (c.env.ENABLED_EXTENSIONS || '').split(',').map((s: string) => s.trim()).filter(Boolean);
+    const enabledExtensionsRevert = getEnabledExtensions(c.env);
     const isR2OnlyRevert = isR2OnlyNamespace(slug, enabledExtensionsRevert);
     const contentToStore = isR2OnlyRevert ? '' : revertContent;
     const revertMetrics = computePageMetricsTracked(revertContent, isR2OnlyRevert);

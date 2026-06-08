@@ -20,11 +20,6 @@
         return ticker.toUpperCase();
     }
 
-    function _isDark() {
-        return document.documentElement.getAttribute('data-theme') === 'dark'
-            || window.matchMedia('(prefers-color-scheme: dark)').matches;
-    }
-
     function _embedTvWidget(containerEl, widgetName, options) {
         const wrap = document.createElement('div');
         wrap.className = 'tradingview-widget-container';
@@ -43,10 +38,10 @@
         containerEl.appendChild(wrap);
     }
 
-    function renderStock(containerDiv, extData) {
+    function renderStock(containerDiv, extData, ctx) {
         const ticker = _extractTicker(extData.slug);
         const tvSymbol = _toTvSymbol(ticker);
-        const colorTheme = _isDark() ? 'dark' : 'light';
+        const colorTheme = ctx.theme.isDark() ? 'dark' : 'light';
 
         const rawMode = (extData.args && extData.args['1']) || '';
         const mode = typeof rawMode === 'string' ? rawMode.trim().toLowerCase() : '';
@@ -110,6 +105,20 @@
         }
     }
 
-    if (!window._extensionRenderers) window._extensionRenderers = {};
-    window._extensionRenderers['stock'] = renderStock;
+    /** 정리 훅 — 주입한 TradingView 위젯 컨테이너 제거(SPA/테마 재렌더 시 잔여 위젯·스크립트 정리). */
+    function destroyStock(containerDiv) {
+        if (!containerDiv) return;
+        const wrap = containerDiv.querySelector('.tradingview-widget-container');
+        if (wrap && wrap.parentNode) wrap.parentNode.removeChild(wrap);
+    }
+
+    // SDK 등록. TradingView 위젯은 in-place 리컬러가 불가하므로 onThemeChange 미정의 →
+    // SDK 가 테마 변경 시 destroy+재임베드로 새 colorTheme 을 적용한다.
+    //
+    // 익스텐션 렌더는 항상 render.ts(= window.defineExtension/ctx 제공) 가 로드된 페이지에서만
+    // 일어나므로, SDK 가 없는 페이지(렌더가 일어나지 않음)에서는 등록하지 않는다. ctx 없이
+    // 레거시 (el,data) 시그니처로 등록하면 ctx 기반 렌더러가 호출 시 throw 하므로 폴백을 두지 않는다.
+    if (typeof window.defineExtension === 'function') {
+        window.defineExtension({ name: 'stock' }, { render: renderStock, destroy: destroyStock });
+    }
 })();

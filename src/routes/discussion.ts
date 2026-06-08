@@ -6,6 +6,7 @@ import { ROLE_CASE_SQL, enrichRoles, enrichRole, RBAC } from '../utils/role';
 import { dispatchDiscord } from '../utils/webhook/discord';
 import { discussionCreate } from '../utils/webhook/events/discussion';
 import { isR2OnlyNamespace } from '../utils/slug';
+import { getEnabledExtensions } from '../utils/extensions';
 import { createNotifications } from '../utils/notification';
 import { extractImageLinks } from '../utils/extractImageLinks';
 import { filterAuthorizedUserIds } from '../utils/pageAccessCleanup';
@@ -164,7 +165,7 @@ discussionRoutes.post('/discussions/:pageId', requireAuth, requirePermission('co
     }
 
     // Discord community 채널에 신규 토론 알림 (R2 전용 ns 는 제외)
-    const enabledExtensions = (c.env.ENABLED_EXTENSIONS || '').split(',').map(s => s.trim()).filter(Boolean);
+    const enabledExtensions = getEnabledExtensions(c.env);
     if (!isR2OnlyNamespace(page.slug, enabledExtensions)) {
         dispatchDiscord(c.env, c.executionCtx, discussionCreate({
             page: { slug: page.slug, title: page.slug },

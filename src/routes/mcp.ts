@@ -5,6 +5,7 @@ import { RBAC } from '../utils/role';
 import { isSuperAdmin } from '../utils/auth';
 import { renderForAI, extractTOC, extractSection, expandTemplates } from '../utils/aiParser';
 import { normalizeSlug, isR2OnlyNamespace, isMcpReadableSlug } from '../utils/slug';
+import { getEnabledExtensions } from '../utils/extensions';
 import { getRevisionContent } from '../utils/r2';
 import { sha256Hex, OAUTH_ACCEPTED_SCOPES, OAUTH_SCOPE_ADMIN_MCP } from '../utils/oauth';
 import {
@@ -415,7 +416,7 @@ async function handleJsonRpc(c: Context<Env>, body: any, user: User | null) {
                 const TREE_DISPLAY_CAP = 500;
                 const raw = args.raw === true;
                 const origin = new URL(c.req.url).origin;
-                const enabledExt = (c.env.ENABLED_EXTENSIONS || '').split(',').map((s: string) => s.trim()).filter(Boolean);
+                const enabledExt = getEnabledExtensions(c.env);
 
                 let mode: 'titles' | 'parent';
                 let targetSlugs: string[] = [];

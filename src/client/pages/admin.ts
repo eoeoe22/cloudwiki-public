@@ -79,9 +79,9 @@
           roleSlot.innerHTML = roleBadge;
         }
 
-        // 문서 대량 삭제는 최고 관리자 전용 — 빠른 링크를 해당 권한자에게만 노출.
+        // 문서 대량 관리는 최고 관리자 전용 — 빠른 링크를 해당 권한자에게만 노출.
         if (window.currentUser.role === 'super_admin') {
-          const bulkLink = document.getElementById("bulkDeleteQuickLink");
+          const bulkLink = document.getElementById("bulkManageQuickLink");
           if (bulkLink) bulkLink.style.display = "";
         }
 

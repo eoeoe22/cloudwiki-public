@@ -61,7 +61,7 @@ export interface Revision {
     page_id: number;
     page_version: number | null;
     content: string;          // 기존 리비전: 본문 직접 저장. 신규 리비전: '' (r2_key 사용)
-    r2_key: string | null;    // R2 저장 경로 (revisions/{pageId}/{pageVersion}.md)
+    r2_key: string | null;    // R2 저장 경로 (revisions/{pageId}/{pageVersion}-{token}.md, 토큰은 동시 저장 충돌 방지용)
     summary: string | null;
     author_id: number | null;
     created_at: number;

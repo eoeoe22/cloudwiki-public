@@ -29,6 +29,7 @@ import blogRoutes from './routes/blog';
 import exploreRoutes from './routes/explore';
 import { trackPageView, trackError, queryAnalytics } from './utils/analytics';
 import { isR2OnlyNamespace, isMapNamespace, normalizeSlug } from './utils/slug';
+import { getEnabledExtensions } from './utils/extensions';
 import { getRevisionContent } from './utils/r2';
 import { renderForAI } from './utils/aiParser';
 import { buildMapDocument, MAP_CACHE_MAX_AGE_SECONDS } from './utils/mapDocument';
@@ -749,7 +750,7 @@ ${contentBlock}
     } else {
         // R2-only 네임스페이스인 경우, 본문이 비어있다면 최신 리비전에서 본문을 가져옵니다.
         const origin = new URL(c.req.url).origin;
-        const enabledExtSSR = (c.env.ENABLED_EXTENSIONS || '').split(',').map((s: string) => s.trim()).filter(Boolean);
+        const enabledExtSSR = getEnabledExtensions(c.env);
         if (isR2OnlyNamespace(page.slug, enabledExtSSR) && (!page.content || page.content === '')) {
             if (page.last_revision_id) {
                 const lastRev = await db.prepare('SELECT content, r2_key FROM revisions WHERE id = ?').bind(page.last_revision_id).first<{ content: string, r2_key: string | null }>();
@@ -928,15 +929,15 @@ app.get('/admin-media', async (c) => {
     return fetchAssetHtml(c, '/admin-media.html');
 });
 
-// /admin-bulk-delete 접근 시 서버사이드 권한 체크 후 admin-bulk-delete.html 서빙
-// (문서 대량 삭제는 최고 관리자 전용 — admin:access 가 아닌 '*' 권한 필요)
-app.get('/admin-bulk-delete', async (c) => {
+// /admin-bulk-manage 접근 시 서버사이드 권한 체크 후 admin-bulk-manage.html 서빙
+// (문서 대량 관리 — 대량 삭제·이동은 최고 관리자 전용 — admin:access 가 아닌 '*' 권한 필요)
+app.get('/admin-bulk-manage', async (c) => {
     const user = c.get('user');
     const rbac = c.get('rbac') as RBAC;
     if (!user || !rbac.can(user.role, '*')) {
         return c.redirect('/');
     }
-    return fetchAssetHtml(c, '/admin-bulk-delete.html');
+    return fetchAssetHtml(c, '/admin-bulk-manage.html');
 });
 
 // /mypage 접근 시 mypage.html 서빙 (SSR 브랜딩)

@@ -10,9 +10,9 @@
 // 브랜드 타입(AclResolvedState)으로 writeRevision 은 resolveAcl 를 거친 state 만 받는다 —
 // ACL 해소를 건너뛴 채 리비전을 쓰는 실수가 컴파일 단계에서 막힌다.
 //
-// 1~2단계 범위: 직접 PUT 의 인라인 update 경로는 아직 본 파이프라인을 채택하지 않는다
-// (watcher 알림 블록만 notifyPageWatchers 로 공유). 승인 경로(pending/mcp)가 본 함수를 거쳐
-// 주시자 알림 누락을 구조적으로 해소한다.
+// 채택 범위: 직접 PUT(wiki.ts PUT /api/w/:slug)의 update·create 와 승인 경로(pending/mcp)가
+// 모두 본 함수를 경유한다 — 과거 직접 PUT 에 인라인 중복돼 있던 코어 라이터를 제거하고
+// 주시자 알림 누락을 구조적으로 해소했다. 직접 PUT 의 revert·move 이행은 후속 과제다.
 
 import type { Context } from 'hono';
 import type { Env } from '../../types';
@@ -75,6 +75,7 @@ async function writeRevision(
             title: input.title,
             editAcl: state.editAcl,
             viewMode: input.viewMode,
+            isPrivate: input.isPrivateWrite,
             slug: input.slug,
             logType: input.logType,
             logMessage: input.logMessage,

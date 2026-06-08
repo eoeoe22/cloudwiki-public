@@ -8,7 +8,7 @@
 import { PAGE_BUNDLES, renderHeadTags, renderBodyScripts } from '../../shared/cdn';
 import type { BundleName } from '../../shared/cdn';
 import { readBranding } from '../../../scripts/branding.mjs';
-import { resolveThemeCss, resolveThemesCss, filterRegisteredThemes, THEME_LABELS } from '../../../scripts/themes/index.mjs';
+import { resolveThemeCss, resolveThemesCss, filterRegisteredThemes, THEME_LABELS, isDarkOnlyTheme, getDarkOnlyThemes } from '../../../scripts/themes/index.mjs';
 
 interface Props {
     title: string;
@@ -37,12 +37,19 @@ const defaultSkin = multiSkin
     ? (skinList.includes(branding.theme) ? branding.theme : skinList[0])
     : 'default';
 const themeCss = multiSkin ? resolveThemesCss(skinList) : resolveThemeCss(branding.theme);
-// 멀티 스킨 모드에서만: 개인 설정 모달에 노출할 스킨 메타(목록/기본/라벨)와 FOUC 부트 스크립트.
+// 다크 모드 전용 스킨(darkOnly: true) — 활성인 동안 밝기를 다크로 고정한다.
+// - 멀티 스킨: 허용 목록 중 다크 전용 키들을 window.__WIKI_SKINS__.darkOnly 로 노출해,
+//   사용자가 그 스킨을 고른 동안에만 강제한다(런타임 reconcile).
+// - 단일 스킨: WIKI_THEME 자체가 다크 전용이면 항상 강제.
+const darkOnlySkins = multiSkin ? getDarkOnlyThemes(skinList) : [];
+const singleDarkOnly = !multiSkin && isDarkOnlyTheme(branding.theme);
+// 멀티 스킨 모드에서만: 개인 설정 모달에 노출할 스킨 메타(목록/기본/라벨/다크전용)와 FOUC 부트 스크립트.
 const skinMeta = multiSkin
     ? JSON.stringify({
           list: skinList,
           default: defaultSkin,
           labels: Object.fromEntries(skinList.map((k) => [k, THEME_LABELS[k] || k])),
+          darkOnly: darkOnlySkins,
       })
     : '';
 const skinBootScript = multiSkin
@@ -50,9 +57,30 @@ const skinBootScript = multiSkin
     : '';
 // SSR 기본 스킨(무JS·초기 페인트). "default" 면 베이스(style.css)가 곧 그 스킨이라 속성 생략.
 const htmlSkinAttr = multiSkin && defaultSkin !== 'default' ? defaultSkin : undefined;
+// SSR 강제 다크: 무JS·초기 페인트 대응. 단일 스킨은 WIKI_THEME, 멀티 스킨은 SSR 기본 스킨이
+// 다크 전용이면 <html data-theme="dark"> 를 빌드 타임에 박는다(color-scheme:dark → light-dark 다크).
+const ssrForceDark = multiSkin ? darkOnlySkins.includes(defaultSkin) : singleDarkOnly;
+const htmlDataTheme = ssrForceDark ? 'dark' : undefined;
+// Bootstrap 5.3 컴포넌트(.dropdown-menu/.modal-content/.form-control 등)는 data-bs-theme 로
+// 다크를 켠다. common.ts 가 런타임에 맞추지만 그 전(무JS·모듈 로드 전 초기 페인트)에는
+// 헤더의 Bootstrap 표면이 라이트로 떠 다크 스킨과 어긋난다. 강제 다크 시 data-theme 과 같이
+// data-bs-theme="dark" 도 SSR 베이킹·부트 스크립트로 함께 맞춘다.
+const htmlBsTheme = ssrForceDark ? 'dark' : undefined;
+// 강제 다크 확정 부트 스크립트 — head 끝(슬롯 뒤)에서 페이지별 themeMode FOUC 스크립트보다
+// 나중에 실행돼 사용자 밝기 선호가 다크 전용을 덮는 것을 막는다(localStorage 'themeMode'='light'
+// 라도 다크 유지). common.ts 모듈은 deferred 라 이보다 늦으므로 window.__WIKI_FORCE_DARK__/
+// __WIKI_SKINS__.darkOnly 를 읽어 동일 판정을 재현한다.
+//  - 단일 스킨: 항상 다크 강제(정적).
+//  - 멀티 스킨: 현재 data-wiki-theme 가 다크 전용 목록에 있을 때만 강제, 아니면 themeMode 복원
+//    (SSR 이 기본 스킨 기준으로 박은 dark 를, 사용자 override 스킨이 비-다크전용이면 되돌린다).
+const forceDarkBootScript = singleDarkOnly
+    ? `window.__WIKI_FORCE_DARK__=true;try{var d=document.documentElement;d.setAttribute('data-theme','dark');d.setAttribute('data-bs-theme','dark');}catch(e){}`
+    : (multiSkin && darkOnlySkins.length
+        ? `(function(){try{var L=window.__WIKI_SKINS__;if(!L||!L.darkOnly||!L.darkOnly.length)return;var d=document.documentElement;var c=d.getAttribute('data-wiki-theme')||'default';if(L.darkOnly.indexOf(c)>=0){d.setAttribute('data-theme','dark');d.setAttribute('data-bs-theme','dark');}else{var t;try{t=localStorage.getItem('themeMode');}catch(e){}var bs;if(t==='light'){d.setAttribute('data-theme','light');bs='light';}else if(t==='dark'){d.setAttribute('data-theme','dark');bs='dark';}else{d.removeAttribute('data-theme');bs=(window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches)?'dark':'light';}d.setAttribute('data-bs-theme',bs);}}catch(e){}})();`
+        : '');
 ---
 <!DOCTYPE html>
-<html lang={lang} data-wiki-theme={htmlSkinAttr}>
+<html lang={lang} data-wiki-theme={htmlSkinAttr} data-theme={htmlDataTheme} data-bs-theme={htmlBsTheme}>
 
 <head>
     <meta charset="UTF-8" />
@@ -64,6 +92,7 @@ const htmlSkinAttr = multiSkin && defaultSkin !== 'default' ? defaultSkin : unde
     {themeCss && <style is:inline set:html={themeCss}></style>}
     {skinBootScript && <script is:inline set:html={skinBootScript}></script>}
     <slot name="head" />
+    {forceDarkBootScript && <script is:inline set:html={forceDarkBootScript}></script>}
     <Fragment set:html={headTags.append} />
 </head>
 

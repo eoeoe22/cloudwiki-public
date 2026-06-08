@@ -661,22 +661,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     selectedIconsOnly = !!(window.appConfig && window.appConfig.selectedIconsOnly);
     window.selectedIconsOnly = selectedIconsOnly; // ESM 모듈에서 읽기 위한 노출
 
+    initTurnstile();
+
     // 편집기에서는 자동완성/모달이 동작하려면 전체 커스텀 팔레트가 필요하다.
     // /api/config 는 더 이상 palettes 를 반환하지 않으므로 /api/palettes 로 별도 로드.
     // (문서 열람 페이지는 SSR 이 사용된 부분집합만 #ssr-data 로 주입한다.)
-    try {
-        const res = await fetch('/api/palettes');
-        if (res.ok) {
-            const data: any = await res.json();
-            if (data && data.palettes && typeof data.palettes === 'object' && window.appConfig) {
-                window.appConfig.palettes = data.palettes;
-            }
-        }
-    } catch (e) {
-        console.error('Failed to load palettes:', e);
-    }
+    // 팔레트와 인증(/api/me)은 서로 독립이므로 병렬로 시작해 직렬 대기(2 RTT)를 1 RTT 로 줄인다.
+    // 결과는 둘 다 에디터 생성 이전에 반영되므로 동작은 기존과 동일하다.
+    const palettePromise = fetch('/api/palettes')
+        .then(res => (res.ok ? res.json() : null))
+        .catch(e => { console.error('Failed to load palettes:', e); return null; });
 
-    initTurnstile();
     // 인증 확인
     try {
         const res = await fetch('/api/me');
@@ -703,6 +698,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     } catch (e) {
         window.location.href = '/login';
         return;
+    }
+
+    // 병렬로 로드한 팔레트 결과를 에디터 생성 전에 반영한다(기존 직렬 흐름과 동일한 시점).
+    const paletteData: any = await palettePromise;
+    if (paletteData && paletteData.palettes && typeof paletteData.palettes === 'object' && window.appConfig) {
+        window.appConfig.palettes = paletteData.palettes;
     }
 
     // slug 파싱

@@ -3135,6 +3135,8 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
         // 코드 블록 안의 {br} 은 placeholder 단계 전에 보호되었기 때문에 영향이 없다.
         html = html.replace(/WIKIBRPHEND/g, '<br>');
 
+        // 기존 렌더된 익스텐션의 정리 훅을 먼저 실행(Chart 인스턴스/리스너 누수 방지) 후 교체.
+        _teardownExtensions(containerEl);
         containerEl.innerHTML = html;
 
         // 테이블 색상 적용
@@ -4222,6 +4224,181 @@ function _updateDocumentStatsCounter(text) {
 
 /** 익스텐션 모듈별 렌더러 맵 (각 익스텐션 파일이 로드 시 자동 등록) */
 if (!window._extensionRenderers) window._extensionRenderers = {};
+/** defineExtension 으로 등록된 익스텐션 정의(라이프사이클 훅 포함) 맵 */
+if (!window._extensionDefs) window._extensionDefs = {};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 익스텐션 SDK 런타임
+//
+// 익스텐션 파일(public/ext/<name>/<name>.js)은 Vite 번들 밖의 raw JS 이지만,
+// 라이프사이클 디스패치(destroy/onThemeChange)와 _processExtensions·테마 이벤트
+// 리스너가 모두 이 번들(render.ts)에 있으므로, SDK 런타임을 여기서 window 로 노출한다.
+// 익스텐션 저작자는 `window.defineExtension(manifest, renderer)` 로 등록하며 타입은
+// public/ext/cloudwiki-ext.d.ts(앰비언트)로 제공된다. 레거시 `_extensionRenderers[name]`
+// 직접 등록도 그대로 동작하도록 SDK 는 그 위에 additive 하게 얹는다.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** ctx.loadScript 중복 로드 가드용 src→Promise 메모이즈 맵 */
+const _extScriptPromises = {};
+
+/** 외부 스크립트를 1회만 로드(중복 가드). opts.global 전역이 이미 있으면 즉시 resolve. */
+function _extLoadScript(src, opts) {
+    opts = opts || {};
+    if (opts.global && window[opts.global]) return Promise.resolve();
+    if (_extScriptPromises[src]) return _extScriptPromises[src];
+    const p = new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        if (opts.id) s.id = opts.id;
+        s.dataset.extSrc = src;
+        s.src = src;
+        s.async = true;
+        s.onload = () => resolve();
+        s.onerror = () => {
+            // 실패한 promise/스크립트를 캐시·DOM 에서 제거해 다음 렌더(재렌더·재방문)가
+            // 재시도할 수 있게 한다. 제거하지 않으면 일시적 CDN/네트워크 실패가 영구 캐시돼
+            // 전체 새로고침 전까지 freq 등이 복구되지 못한다.
+            delete _extScriptPromises[src];
+            if (s.parentNode) s.parentNode.removeChild(s);
+            reject(new Error('익스텐션 스크립트 로드 실패: ' + src));
+        };
+        document.body.appendChild(s);
+    });
+    _extScriptPromises[src] = p;
+    return p;
+}
+
+/** 익스텐션 렌더러에 주입하는 공용 컨텍스트(전역 상태만 담으므로 단일 싱글턴). */
+const _extSdk = {
+    theme: {
+        /** 현재 적용 테마가 다크인지(위키 밝기축 data-theme 기준, mermaid 와 동일 판정). */
+        isDark: () => _mermaidEffectiveDark(),
+        /** 'light' | 'dark' */
+        mode: () => (_mermaidEffectiveDark() ? 'dark' : 'light'),
+    },
+    loadScript: _extLoadScript,
+    /** DOMPurify 래퍼(canvas/svg 허용 안전 프로파일). 미로드 시 escape 폴백. */
+    sanitizeHtml: (html) => (typeof DOMPurify !== 'undefined')
+        ? DOMPurify.sanitize(html, {
+            ADD_TAGS: ['canvas', 'svg', 'use', 'i', 'span', 'details', 'summary'],
+            ADD_ATTR: ['class', 'style', 'data-bg', 'data-color', 'data-size', 'title'],
+        })
+        : escapeHtml(html),
+};
+window._extSdk = _extSdk;
+
+/**
+ * 익스텐션 등록 헬퍼. renderer 는 함수형(레거시 호환) 또는
+ * `{ render, destroy?, onThemeChange? }` 객체형. 내부적으로 항상 함수 래퍼를
+ * `window._extensionRenderers[name]` 에 등록해 _processExtensions 의 기존 호출 규약을 유지하고,
+ * 라이프사이클 훅이 담긴 정의는 `window._extensionDefs[name]` 에 보관한다.
+ */
+function defineExtension(manifest, renderer) {
+    if (!manifest || !manifest.name) {
+        console.error('[ext-sdk] defineExtension: manifest.name 누락');
+        return;
+    }
+    const name = manifest.name;
+    const def = (typeof renderer === 'function') ? { render: renderer } : (renderer || {});
+    if (typeof def.render !== 'function') {
+        console.error('[ext-sdk] defineExtension: render 함수 누락 (' + name + ')');
+        return;
+    }
+    window._extensionDefs[name] = def;
+    const recordDestroy = (el) => {
+        if (typeof def.destroy === 'function') el._extDestroy = () => def.destroy(el);
+    };
+    window._extensionRenderers[name] = function (el, extData) {
+        // 렌더 세대(generation) 토큰을 발급한다. 재렌더(_rerenderExt)·정리(_teardownExtensions)가
+        // 토큰을 무효화(_bumpExtGen)하므로, 비동기 렌더의 늦은 reject 콜백이 자신을 대체한
+        // 더 새로운 렌더의 내용을 덮어쓰지 않는다. 익스텐션 내부의 비동기 작업(예: freq 의
+        // Chart.js 지연 로드)도 `el._extGen` 을 캡처해 동일하게 staleness 를 판정할 수 있다.
+        const gen = (el._extGen = (el._extGen || 0) + 1);
+        // 동기 throw·비동기 reject 모두 .alert 로 격리(레지스트리에 직접 호출하는
+        // 직접 익스텐션 문서 경로 pages/index.ts 까지 자체적으로 보호된다).
+        let ret;
+        try {
+            ret = def.render(el, extData, _extSdk);
+        } catch (e) {
+            console.error('[ext-sdk] 익스텐션 렌더 실패 (' + name + '):', e);
+            el.innerHTML = `<div class="alert alert-danger mb-0">⚠️ 익스텐션 렌더 오류: ${escapeHtml(name)}</div>`;
+            recordDestroy(el);
+            return;
+        }
+        if (ret && typeof ret.then === 'function') {
+            ret.catch((e) => {
+                // 이미 더 새로운 렌더로 교체됐다면(세대 불일치) 그 내용을 덮어쓰지 않는다.
+                if (el._extGen !== gen) return;
+                console.error('[ext-sdk] 익스텐션 비동기 렌더 실패 (' + name + '):', e);
+                el.innerHTML = `<div class="alert alert-danger mb-0">⚠️ 익스텐션 렌더 오류: ${escapeHtml(name)}</div>`;
+            });
+            recordDestroy(el);
+        } else if (typeof ret === 'function') {
+            // render 가 cleanup 함수를 반환하면 그것을 우선 사용.
+            el._extDestroy = ret;
+        } else {
+            recordDestroy(el);
+        }
+    };
+}
+window.defineExtension = defineExtension;
+
+/** 익스텐션 요소의 정리 훅 실행 후 동일 데이터로 재렌더(테마 변경 폴백). */
+function _rerenderExt(el) {
+    const name = el.getAttribute('data-ext-name');
+    const renderer = window._extensionRenderers && window._extensionRenderers[name];
+    const extData = el._extData;
+    if (!renderer || !extData) return;
+    try { if (typeof el._extDestroy === 'function') el._extDestroy(); } catch (e) { /* noop */ }
+    el._extDestroy = null;
+    el.innerHTML = '';
+    try {
+        renderer(el, extData);
+    } catch (e) {
+        console.error('[ext-sdk] 익스텐션 재렌더 실패 (' + name + '):', e);
+        el.innerHTML = `<div class="alert alert-danger mb-0">⚠️ 익스텐션 렌더 오류: ${escapeHtml(name || '')}</div>`;
+    }
+}
+
+// 라이프사이클 셀렉터는 `data-ext-rendered` 속성만으로 매칭한다(`.wiki-ext` 클래스 미요구).
+// 본문 인라인 익스텐션(.wiki-ext 플레이스홀더)뿐 아니라 직접 익스텐션 문서(pages/index.ts
+// 의 #ext-doc-rendered — 클래스 없이 data-ext-name/data-ext-rendered 만 부여)도 포함하기 위함.
+/** 컨테이너 내 이미 렌더된 익스텐션의 정리 훅을 실행(innerHTML 교체 전 호출 — 인스턴스/리스너 누수 방지). */
+function _teardownExtensions(containerEl) {
+    if (!containerEl || !containerEl.querySelectorAll) return;
+    containerEl.querySelectorAll('[data-ext-rendered="1"]').forEach(el => {
+        // 세대 무효화 — 정리 시점에 아직 진행 중인 비동기 렌더 콜백(예: Chart.js 로딩 중)이
+        // 파기된 캔버스에 인스턴스를 만들지 않도록, 익스텐션이 캡처한 세대와 어긋나게 한다.
+        el._extGen = (el._extGen || 0) + 1;
+        try { if (typeof el._extDestroy === 'function') el._extDestroy(); } catch (e) { /* noop */ }
+        el._extDestroy = null;
+    });
+}
+
+/** 테마/스킨 변경 시 렌더된 익스텐션을 onThemeChange 로 갱신(없으면 destroy+재렌더 폴백). */
+function _onExtThemeChange() {
+    document.querySelectorAll('[data-ext-rendered="1"]').forEach(el => {
+        const name = el.getAttribute('data-ext-name');
+        const def = window._extensionDefs && window._extensionDefs[name];
+        if (def && typeof def.onThemeChange === 'function') {
+            try { def.onThemeChange(el, _extSdk); }
+            catch (e) { console.error('[ext-sdk] onThemeChange 실패 (' + name + '):', e); _rerenderExt(el); }
+        } else if (def || typeof el._extDestroy === 'function') {
+            // SDK 등록 익스텐션(def 존재)은 onThemeChange 미정의 시 항상 destroy+재렌더로 테마를
+            // 반영한다(render 에서 ctx.theme 만 쓰고 정리 훅이 없는 확장도 갱신되도록). 레거시
+            // 직접 등록 렌더러(def 없음)는 정리 훅이 있을 때만 갱신하고, 그 외엔 그대로 둔다(기존 동작).
+            _rerenderExt(el);
+        }
+    });
+}
+
+if (typeof window !== 'undefined') {
+    window.addEventListener('wiki:theme-changed', _onExtThemeChange);
+    if (typeof window.matchMedia === 'function') {
+        const _extMq = window.matchMedia('(prefers-color-scheme: dark)');
+        if (_extMq.addEventListener) _extMq.addEventListener('change', _onExtThemeChange);
+        else if (_extMq.addListener) _extMq.addListener(_onExtThemeChange);
+    }
+}
 
 /** 컨테이너 내 모든 익스텐션 요소를 찾아 렌더러 실행.
  *  extensionData 가 명시되면 그 스냅샷을 사용 (동시 렌더 race 방지).
@@ -4258,7 +4435,15 @@ function _processExtensions(containerEl, extensionData) {
 
             const renderer = window._extensionRenderers && window._extensionRenderers[extName];
             if (renderer) {
-                renderer(el, extData);
+                // 재렌더(테마 변경 등)·정리 훅이 동일 데이터를 재사용할 수 있도록 요소에 스냅샷 보관.
+                el._extData = extData;
+                // 렌더러 예외 격리 — 한 익스텐션의 throw 가 형제 요소·재시도 체인을 멈추지 않게 한다.
+                try {
+                    renderer(el, extData);
+                } catch (e) {
+                    console.error('[ext-sdk] 익스텐션 렌더 실패 (' + extName + '):', e);
+                    el.innerHTML = `<div class="alert alert-danger mb-0">⚠️ 익스텐션 렌더 오류: ${escapeHtml(extName)}</div>`;
+                }
                 el.dataset.extRendered = '1';
             } else if (retries > 0) {
                 // 등록 대기 — 재시도 큐에 둔다
@@ -4440,6 +4625,8 @@ window._processTimestampsInHtml = _processTimestampsInHtml;
 window.protectWikiLinks = protectWikiLinks;
 window.restoreWikiLinks = restoreWikiLinks;
 window.renderWikiContent = renderWikiContent;
+// 직접 익스텐션 문서 경로(pages/index.ts)가 컨테이너 교체 전 익스텐션 정리 훅을 호출하기 위해 노출.
+window._teardownExtensions = _teardownExtensions;
 window._extractMarkdownSectionRanges = _extractMarkdownSectionRanges;
 window._extractMarkdownSections = _extractMarkdownSections;
 window._addHeadingCopyButtons = _addHeadingCopyButtons;

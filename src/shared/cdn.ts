@@ -82,7 +82,7 @@ export const PAGE_BUNDLES: Record<string, BundleName[]> = {
     '/blog-edit.html':      ['base', 'markdown', 'editor', 'turnstile'],
     '/admin.html':          ['base'],
     '/admin-media.html':    ['base'],
-    '/admin-bulk-delete.html': ['base'],
+    '/admin-bulk-manage.html': ['base'],
     '/explore.html':        ['base'],
     '/search.html':         ['base'],
     '/setup-profile.html':  ['base'],

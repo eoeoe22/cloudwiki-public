@@ -1,7 +1,11 @@
 // AstroShell — 딥 스페이스 글래스모피즘 디자인 시스템 (WIKI_THEME 키 "astro").
 //
 // 컨셉: "보이드" 다크 배경 + 네뷸라 퍼플 강조 + 글래스 표면 + 퍼플 글로우.
-// 본 위키는 라이트/다크 양 모드를 가지므로, 원본(다크 전용)을 다음과 같이 적응한다:
+// 본 테마는 **다크 모드 전용**(`darkOnly: true`)이다 — 원본 AstroShell 의 보이드 미감은
+// 다크에서만 성립하므로, 이 스킨이 활성인 동안 사이트는 사용자 밝기 선호와 무관하게 항상
+// 다크로 고정된다(BaseLayout 이 `data-theme="dark"` 강제 → `light-dark()` 가 다크로 해소).
+// 아래 `light-dark(L, D)` 쌍의 라이트값(L)은 강제 다크 하에서 사용되지 않는(inert) 잔여이며,
+// 다크값(D)·dark 그룹만 실제로 렌더된다(쌍을 남겨도 플랫 다크값으로 줄여도 결과는 동일).
 //   - 다크 모드 = 진짜 AstroShell 보이드(Space Black #0D0F14 / Void Gray #1B1E26,
 //                 on-surface #e2e2e9, primary #d8b9ff(MCU primary), 퍼플 글로우).
 // primary 는 "채워진 버튼 배경"과 "링크/탭 텍스트" 두 역할을 겸하는데, 다크에서 단일
@@ -17,6 +21,7 @@
 
 /** @type {import('./index.mjs').ThemeDefinition} */
 export default {
+    darkOnly: true,
     root: {
         '--wiki-bg': 'light-dark(#f6f3fc, #0D0F14)',
         '--wiki-card-bg': 'light-dark(#ffffff, #1B1E26)',

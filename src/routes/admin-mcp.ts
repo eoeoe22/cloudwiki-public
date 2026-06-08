@@ -29,6 +29,7 @@ import { uploadRevisionToR2, getRevisionContent } from '../utils/r2';
 import { replaceSection } from '../utils/aiParser';
 import { isR2OnlyNamespace } from '../utils/slug';
 import { normalizeSlug } from '../utils/slug';
+import { getEnabledExtensions } from '../utils/extensions';
 import {
     type McpToolDef,
     type ToolResult,
@@ -619,6 +620,7 @@ export async function applyExistingPageUpdate(
         slug: string;
         editAcl?: string | null;      // undefined → 기존 유지(MCP 기본), null/string → 덮어쓰기 (사람 편집 보류 승인의 카테고리 ACL 머지 적용용).
         viewMode?: string | null;     // undefined → 기존 유지(MCP 기본), null/string → 덮어쓰기 (사람 편집 보류 승인의 view_mode 적용용).
+        isPrivate?: number;           // undefined → 기존 유지(MCP/승인 경로 기본 — 본 저장은 비공개를 바꾸지 않음). 0/1 → 컬럼 덮어쓰기 (직접 PUT 의 wiki:private 토글용).
         summaryRaw?: boolean;         // true 면 withMcpPrefix() 를 건너뛰고 opts.summary 를 그대로 저장 (사람 편집 보류 승인 경로). 기본 false → [MCP] 접두.
         logType?: string;             // admin_log type (예: page_update / page_patch / page_revert) — 생략 시 로그 없음
         logMessage?: string;
@@ -626,7 +628,7 @@ export async function applyExistingPageUpdate(
     }
 ): Promise<{ revision_id: number; new_version: number; rows: number; characters: number }> {
     const db = c.env.DB;
-    const enabledExt = (c.env.ENABLED_EXTENSIONS || '').split(',').map((s: string) => s.trim()).filter(Boolean);
+    const enabledExt = getEnabledExtensions(c.env);
     const isR2Only = isR2OnlyNamespace(opts.slug, enabledExt);
     const metrics = computePageMetricsTracked(content, isR2Only);
     const newVersion = page.version + 1;
@@ -670,6 +672,11 @@ export async function applyExistingPageUpdate(
     if (opts.viewMode !== undefined) {
         setClauses.push('view_mode = ?');
         bindings.push(opts.viewMode);
+    }
+    // isPrivate: undefined → 기존 유지(MCP/승인 경로 기본). 0/1 → 덮어쓰기 (직접 PUT 의 wiki:private 토글).
+    if (opts.isPrivate !== undefined) {
+        setClauses.push('is_private = ?');
+        bindings.push(opts.isPrivate);
     }
     setClauses.push('last_revision_id = ?', 'version = ?', 'rows = ?', 'characters = ?', 'updated_at = unixepoch()');
     bindings.push(revisionId, newVersion, metrics.rows, metrics.characters);
@@ -752,7 +759,7 @@ export async function applyNewPageInsert(
     }
 ): Promise<{ page_id: number; revision_id: number; rows: number; characters: number }> {
     const db = c.env.DB;
-    const enabledExt = (c.env.ENABLED_EXTENSIONS || '').split(',').map((s: string) => s.trim()).filter(Boolean);
+    const enabledExt = getEnabledExtensions(c.env);
     const isR2Only = isR2OnlyNamespace(slug, enabledExt);
     const metrics = computePageMetricsTracked(content, isR2Only);
     const contentToStore = isR2Only ? '' : content;
@@ -873,7 +880,7 @@ async function loadDraftOrSeedFromPage(
     }>();
     if (!page) return { type: 'not_found', content: '' };
 
-    const enabledExt = (c.env.ENABLED_EXTENSIONS || '').split(',').map((s: string) => s.trim()).filter(Boolean);
+    const enabledExt = getEnabledExtensions(c.env);
     const isR2Only = isR2OnlyNamespace(slug, enabledExt);
     let body = page.content;
     if (isR2Only && (!body || body === '') && page.last_revision_id) {
@@ -1382,7 +1389,7 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
             // CRLF→LF 정규화 후 비교해 줄바꿈 형식 차이로 인한 가짜 변경을 제거한다.
             // ⚠️ 이전 본문 로드(D1/R2)가 실패하더라도 본 commit 자체는 막지 않는다 — 새 본문은 이미 검증되어
             // 저장 가능한 상태이며, diff 통계는 부수 정보일 뿐이다. 실패 시 마커/응답 필드만 생략한다.
-            const enabledExtForDiff = (c.env.ENABLED_EXTENSIONS || '').split(',').map((s: string) => s.trim()).filter(Boolean);
+            const enabledExtForDiff = getEnabledExtensions(c.env);
             let diffStats: { added: number; removed: number } | null = null;
             try {
                 let prevContent = page.content || '';
@@ -1722,7 +1729,7 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
             return asTextResult(msg, true);
         }
 
-        const enabledExt = (c.env.ENABLED_EXTENSIONS || '').split(',').map((s: string) => s.trim()).filter(Boolean);
+        const enabledExt = getEnabledExtensions(c.env);
         const isR2Only = isR2OnlyNamespace(oldSlug, enabledExt);
         let currentContent = page.content;
         if (isR2Only && (!currentContent || currentContent === '') && page.last_revision_id) {

@@ -30,6 +30,7 @@ import type { Env, User } from '../types';
 import { requireAuth } from '../middleware/session';
 import { RBAC } from '../utils/role';
 import { isR2OnlyNamespace } from '../utils/slug';
+import { getEnabledExtensions } from '../utils/extensions';
 import { getRevisionContent } from '../utils/r2';
 import { computeLineDiffStats } from '../utils/diff';
 import { findConflictingPage, applyCreatePrefixRulesAndCategoryAcls, isEditRequestEnabled } from './wiki';
@@ -495,7 +496,7 @@ pendingEditsRoutes.get('/pending-edits/:id', requireAuth, async (c) => {
     let hasConflict = false;
     let conflictReason: string | null = null;
 
-    const enabledExt = (c.env.ENABLED_EXTENSIONS || '').split(',').map(s => s.trim()).filter(Boolean);
+    const enabledExt = getEnabledExtensions(c.env);
     const r2Only = isR2OnlyNamespace(pe.slug, enabledExt);
 
     if (pe.action === 'update') {
@@ -728,7 +729,7 @@ pendingEditsRoutes.post('/pending-edits/:id/approve', requireAuth, async (c) => 
             redirectTo: string | null; viewMode: string | null; editAcl: string | null;
         } | null = null;
         if (isStaleBaseMerge) {
-            const enabledExt = (c.env.ENABLED_EXTENSIONS || '').split(',').map(s => s.trim()).filter(Boolean);
+            const enabledExt = getEnabledExtensions(c.env);
             const r2Only = isR2OnlyNamespace(slug, enabledExt);
             let preContent = page.content || '';
             if (r2Only && page.last_revision_id) {

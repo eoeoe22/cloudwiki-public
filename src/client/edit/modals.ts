@@ -2187,6 +2187,12 @@ async function openSubdocInsertModal(): Promise<void> {
     let subdocDebounceTimer: number | undefined;
     let subdocActiveIdx = -1;
 
+    // 비공개 문서 열람 권한(wiki:private)을 가진 사용자(관리자 등)에게만 토글을 노출한다.
+    // 체크 시 일반 유저 권한 기준(비공개 제외)으로 구조를 만들고, 미체크 시 비공개 문서도 포함한다.
+    // 권한이 없는 사용자는 토글 없이 항상 공개 문서만 조회한다.
+    const canSeePrivate = !!(window.currentUser && window.currentUser.permissions
+        && window.currentUser.permissions['wiki:private']);
+
     const result = await Swal.fire<string>({
         title: '<i class="bi bi-diagram-3-fill me-2"></i>하위 문서 구조 삽입',
         html: `
@@ -2196,6 +2202,13 @@ async function openSubdocInsertModal(): Promise<void> {
                         placeholder="문서 제목 입력..." autocomplete="off">
                     <ul id="subdocSuggestions" class="list-unstyled mt-1 mb-0 border rounded"
                         style="display:none; padding:4px 0; max-height:none; background: var(--wiki-card-bg); border-color: var(--wiki-border) !important;"></ul>
+                    ${canSeePrivate ? `
+                    <div class="form-check mt-2">
+                        <input class="form-check-input" type="checkbox" id="subdocPublicOnly">
+                        <label class="form-check-label small text-muted" for="subdocPublicOnly">
+                            일반 유저 권한 기준으로 보기 (비공개 문서 제외)
+                        </label>
+                    </div>` : ''}
                     <div id="subdocPreview" class="mt-3" style="display:none;">
                         <label class="form-label text-muted small">미리보기</label>
                         <pre id="subdocPreviewContent"
@@ -2216,6 +2229,32 @@ async function openSubdocInsertModal(): Promise<void> {
             const sugBox = document.getElementById('subdocSuggestions') as HTMLElement | null;
             if (!input || !sugBox) return;
 
+            const publicOnlyToggle = document.getElementById('subdocPublicOnly') as HTMLInputElement | null;
+            // 권한이 없으면 항상 공개 전용. 권한자는 토글(체크 시 공개 전용)에 따른다.
+            const isPublicOnly = () => !canSeePrivate || !!publicOnlyToggle?.checked;
+
+            // 요청 세대(generation): 토글/검색이 바뀔 때마다 증가시켜, 늦게 도착한 이전
+            // 권한 기준의 응답(자동완성·미리보기)이 최신 결과를 덮어쓰지 못하도록 폐기한다.
+            let subdocReqGen = 0;
+
+            // 토글 변경 시 선택을 초기화한다. /subdocs 응답은 하위 문서만 필터링하고 루트
+            // 자체의 공개 여부는 검증하지 않으므로(미리보기는 항상 [[root]] 를 머리에 붙인다),
+            // 공개 전용으로 바꿔도 비공개 루트가 남는 모순을 막으려면 루트를 다시 고르게 해야 한다.
+            publicOnlyToggle?.addEventListener('change', () => {
+                clearTimeout(subdocDebounceTimer); // 이전 모드 기준의 대기 검색을 취소
+                subdocReqGen++; // 진행 중이던 이전 모드의 응답을 폐기
+                subdocSelectedSlug = null;
+                subdocPreviewText = '';
+                const previewEl = document.getElementById('subdocPreview');
+                if (previewEl) previewEl.style.display = 'none';
+                const cb = window.Swal?.getConfirmButton();
+                if (cb) cb.disabled = true;
+                // 검색어가 있으면 새 권한 기준으로 자동완성을 갱신, 없으면 닫는다.
+                const q = input.value.trim();
+                if (q.length >= 2) fetchSubdocSuggestions(q);
+                else { sugBox.style.display = 'none'; sugBox.innerHTML = ''; }
+            });
+
             input.addEventListener('input', function () {
                 clearTimeout(subdocDebounceTimer);
                 const q = this.value.trim();
@@ -2228,10 +2267,13 @@ async function openSubdocInsertModal(): Promise<void> {
             });
 
             async function fetchSubdocSuggestions(q: string) {
+                const gen = ++subdocReqGen;
                 try {
-                    const res = await fetch('/api/search/suggest?public_only=1&q=' + encodeURIComponent(q));
-                    if (!res.ok) return;
+                    const res = await fetch('/api/search/suggest?'
+                        + (isPublicOnly() ? 'public_only=1&' : '') + 'q=' + encodeURIComponent(q));
+                    if (gen !== subdocReqGen || !res.ok) return; // 더 최신 요청이 있으면 폐기
                     const data = await res.json() as { suggestions?: SubdocSuggestion[] };
+                    if (gen !== subdocReqGen) return;
                     renderSubdocSuggestions(data.suggestions || []);
                 } catch (e) { /* ignore */ }
             }
@@ -2260,6 +2302,9 @@ async function openSubdocInsertModal(): Promise<void> {
             }
 
             function selectSubdocItem(slug: string, title: string) {
+                // 대기 중인 debounce 검색을 취소한다. 선택 후 늦게 실행되면 subdocReqGen 을
+                // 올려 방금 시작한 미리보기 응답을 폐기하고 제안 목록을 되살리는 경쟁이 생긴다.
+                clearTimeout(subdocDebounceTimer);
                 subdocSelectedSlug = slug;
                 input!.value = title;
                 sugBox!.style.display = 'none';
@@ -2295,9 +2340,13 @@ async function openSubdocInsertModal(): Promise<void> {
             input.focus();
 
             async function loadSubdocPreview(slug: string) {
+                const gen = ++subdocReqGen;
                 try {
-                    const res = await fetch('/api/w/' + encodeURIComponent(slug) + '/subdocs?public_only=1');
+                    const res = await fetch('/api/w/' + encodeURIComponent(slug) + '/subdocs'
+                        + (isPublicOnly() ? '?public_only=1' : ''));
+                    if (gen !== subdocReqGen) return; // 더 최신 요청이 있으면 폐기
                     const data = await res.json() as { subdocs?: SubdocItem[] };
+                    if (gen !== subdocReqGen) return;
                     const subdocs = data.subdocs || [];
 
                     const tree: Record<string, SubdocTreeNode> = {};

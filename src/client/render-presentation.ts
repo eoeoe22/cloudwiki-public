@@ -332,6 +332,11 @@ export async function renderPresentation(
     const effective = slides.length > 0 ? slides : [''];
     _slideCount = effective.length;
 
+    // 직전 컨테이너(이전 덱 슬라이드 또는 익스텐션 보유 문서)의 익스텐션 정리 훅을 먼저 실행한다.
+    // renderWikiContent 경로 밖에서 mount 를 직접 교체하므로, 여기서 명시적으로 정리하지 않으면
+    // Chart/TradingView 인스턴스 누수·진행 중 비동기 렌더의 분리된 요소 타게팅이 발생한다.
+    if (typeof window._teardownExtensions === 'function') window._teardownExtensions(mount);
+
     // 본문 컨테이너에 슬라이드 덱 마크업 삽입. 기본은 인라인(레이아웃 보존) — 풀스크린 진입 시
     // body.presentation-fullscreen 이 부여돼 CSS 가 fixed 풀-뷰포트로 전환한다.
     mount.innerHTML = `

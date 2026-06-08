@@ -10,6 +10,7 @@ import type { Context } from 'hono';
 import type { Env } from '../types';
 import { renderForAI, extractTOC, extractSection, findSectionsForQuery, expandTemplates } from './aiParser';
 import { normalizeSlug, isR2OnlyNamespace, isMcpReadableSlug } from './slug';
+import { getEnabledExtensions } from './extensions';
 import { getRevisionContent } from './r2';
 import type { RBAC } from './role';
 
@@ -329,7 +330,7 @@ export async function dispatchReadTool(
         }
 
         const origin = new URL(c.req.url).origin;
-        const enabledExt = (c.env.ENABLED_EXTENSIONS || '').split(',').map((s: string) => s.trim()).filter(Boolean);
+        const enabledExt = getEnabledExtensions(c.env);
         const output = await Promise.all(rows.map(async (row) => {
             let actualContent = row.content;
             if (isR2OnlyNamespace(row.slug, enabledExt) && (!actualContent || actualContent === '')) {
@@ -358,7 +359,7 @@ export async function dispatchReadTool(
 
         let actualContent = page.content;
         const origin = new URL(c.req.url).origin;
-        const enabledExt = (c.env.ENABLED_EXTENSIONS || '').split(',').map((s: string) => s.trim()).filter(Boolean);
+        const enabledExt = getEnabledExtensions(c.env);
         if (isR2OnlyNamespace(page.slug, enabledExt) && (!actualContent || actualContent === '')) {
             if (page.last_revision_id) {
                 const lastRev = await db.prepare('SELECT content, r2_key FROM revisions WHERE id = ?').bind(page.last_revision_id).first<{ content: string, r2_key: string | null }>();
@@ -494,7 +495,7 @@ export async function dispatchReadTool(
         if (catPage) {
             let actualContent = catPage.content;
             const origin = new URL(c.req.url).origin;
-            const enabledExt = (c.env.ENABLED_EXTENSIONS || '').split(',').map((s: string) => s.trim()).filter(Boolean);
+            const enabledExt = getEnabledExtensions(c.env);
             if (isR2OnlyNamespace(catPage.slug, enabledExt) && (!actualContent || actualContent === '')) {
                 if (catPage.last_revision_id) {
                     const lastRev = await db.prepare('SELECT content, r2_key FROM revisions WHERE id = ?').bind(catPage.last_revision_id).first<{ content: string, r2_key: string | null }>();
