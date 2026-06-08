@@ -319,7 +319,9 @@
 
 .wiki-content p {
   margin-bottom: 1.2rem;
-  line-height: 1.8;
+  /* 산문 문단 행간 — 토큰화(기본값 --wiki-lh-spacious = 1.8, 무변화). 테마가 본문 가독
+     행간을 바꾸려면 이 토큰을 덮는다(reader 스킨이 더 여유롭게 상향). */
+  line-height: var(--wiki-lh-spacious);
 }
 
 .wiki-content img {

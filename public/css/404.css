@@ -2,7 +2,9 @@ body,
 html {
     padding: 0;
     margin: 0;
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    /* 글꼴 토큰(BaseLayout 이 style.css 를 로드해 토큰 정의·스킨 베이킹이 닿음) — 에러 셸도
+       테마 서체에 참여한다. 기본값은 'Inter' 스택이라 default 무변화. */
+    font-family: var(--wiki-font-body);
     font-weight: 400;
     overflow: hidden;
 }
@@ -99,7 +101,7 @@ html {
 }
 
 .error h1 {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-family: var(--wiki-font-heading);
     font-size: clamp(40px, 12vw, 125px);
     padding: 0;
     margin: 0;

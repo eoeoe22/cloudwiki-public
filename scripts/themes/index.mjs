@@ -1,6 +1,11 @@
 // 빌드 타임 컬러 테마(스킨) — 엔진 · 토큰 계약 · 레지스트리 (Astro 정적 셸 전용).
 //
-// 모델: `public/css/style.css` 의 `:root` 가 **기본(default) 테마**이자 모든 색 토큰의
+// 스킨은 색뿐 아니라 **글꼴(--wiki-font-body/-heading)·밀도(space/padding/measure/line-height)·
+// 모서리/표면(radius/glass-blur)** 토큰까지 오버라이드할 수 있다(아래 THEMEABLE_TOKENS 참고).
+// 엔진은 셀렉터를 만들지 않고 `:root`(+ 다크 선택자)에 CSS 변수 선언만 직렬화하므로, 이
+// 비-색 토큰들도 색 토큰과 동일한 메커니즘으로 베이킹된다(구조/레이아웃 CSS 는 불가).
+//
+// 모델: `public/css/style.css` 의 `:root` 가 **기본(default) 테마**이자 모든 (색·비색) 토큰의
 // 베이스 레이어다. 각 스킨은 **`scripts/themes/<이름>.mjs` 한 파일**에 `ThemeDefinition`
 // 으로 정의하고, 이 index 의 `THEMES` 에 import 해 등록한다. `wrangler.toml` 의
 // `WIKI_THEME` 가 가리키는 스킨을 `BaseLayout.astro` 가 `/css/style.css` 링크 **뒤** 의
@@ -22,6 +27,8 @@ import { createHash } from 'node:crypto';
 
 import defaultTheme from './default.mjs';
 import astro from './astro.mjs';
+import reader from './reader.mjs';
+import vector from './vector.mjs';
 
 /**
  * @typedef {Object} ThemeDefinition
@@ -50,9 +57,12 @@ import astro from './astro.mjs';
  *  - `dark`  : 트리플렛/그라데이션 등 `light-dark()` 로 표현 불가해 다크 선택자에서
  *              별도로 재정의해야 하는 토큰(style.css 의 @media + html[data-theme=dark] 미러).
  *
- * 이 목록은 **표준 팔레트 토큰** 집합이다. `buildThemeCss` 는 키를 제한하지 않으므로,
- * 여기 없는 다른 `--wiki-*` 토큰(예: 의도적 중립색이라 제외한 `--wiki-scrollbar-thumb`
- * /`-hover`)도 스킨의 `root`/`dark` 에 넣으면 그대로 오버라이드된다.
+ * 이 목록은 **표준 오버라이드 토큰** 집합(팔레트 색 + 비-색 글꼴/밀도/모서리)이다.
+ * 비-색 토큰(글꼴/밀도/모서리)은 라이트·다크 공통 플랫 값이라 `root` 그룹에만 둔다
+ * (`light-dark()` 불요). `buildThemeCss` 는 키를 제한하지 않으므로, 여기 없는 다른
+ * `--wiki-*` 토큰(예: 의도적 중립색이라 제외한 `--wiki-scrollbar-thumb`/`-hover`, 또는
+ * 더 세분한 `--wiki-space-*`/`--wiki-fs-*`/`--wiki-radius-*` 스케일)도 스킨의 `root`/`dark`
+ * 에 넣으면 그대로 오버라이드된다.
  */
 export const THEMEABLE_TOKENS = {
     root: {
@@ -114,6 +124,26 @@ export const THEMEABLE_TOKENS = {
         '--wiki-glass-bg': 'light-dark(rgba(255, 255, 255, 0.75), rgba(0, 0, 0, 0.75))',
         '--wiki-glass-border': 'light-dark(rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0.05))',
         '--wiki-shadow-lg': 'light-dark(0 20px 25px -5px rgba(0, 0, 0, 0.05), 0 20px 25px -5px rgba(0, 0, 0, 0.5))',
+
+        // ── 비-색(non-color) 토큰 — 글꼴/밀도/모서리. 색이 아니므로 라이트·다크 공통
+        // 플랫 값이며 `light-dark()` 가 불필요하다(=root 그룹에만 두고 dark 그룹 불요).
+        // CSS 전반에서 광범위 소비되므로(var(--wiki-space-*)·radius·fs) 이 토큰만 덮어도
+        // 사이트 전역 밀도/모서리/서체가 바뀐다. style.css :root 에 같은 키의 기본값이 있다.
+        // 글꼴: 서체 교체(세리프/디스플레이 등). 웹폰트면 src/shared/cdn.ts FONTS.ui 동기화.
+        '--wiki-font-body': "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+        '--wiki-font-heading': "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+        // 밀도/여백(아래는 실소비처 있는 토큰만 — 여유 ↔ 압축). 더 세분한 --wiki-space-*/
+        // --wiki-lh-* 스케일도 그 토큰을 참조하는 규칙이 있으면 동일하게 오버라이드된다.
+        '--wiki-measure': '66ch',          // 산문 max-width(render.css .wiki-content)
+        '--wiki-article-padding': '2.5rem',// 본문 컨테이너 패딩(.wiki-article)
+        '--wiki-space-4': '1rem',          // 전역 간격(사이트 곳곳 var(--wiki-space-4))
+        '--wiki-lh-loose': '1.7',          // 본문 기본 행간(body)
+        '--wiki-lh-spacious': '1.8',       // 산문 문단 행간(.wiki-content p)
+        // 모서리/표면: 컴포넌트 반경 스케일·글래스 블러(둥근↔각진, 플랫↔글래스).
+        '--wiki-radius-base': '6px',
+        '--wiki-radius-lg': '8px',
+        '--wiki-radius-xl': '10px',
+        '--wiki-glass-blur': 'blur(16px)',
     },
     dark: {
         // style.css @media(prefers-color-scheme:dark):root:not([data-theme=light]) +
@@ -137,6 +167,8 @@ export const THEMEABLE_TOKENS = {
 export const THEMES = {
     default: defaultTheme,
     astro,
+    reader,
+    vector,
 };
 
 /**
@@ -149,6 +181,7 @@ export const THEMES = {
 export const THEME_LABELS = {
     default: 'VIA(기본)',
     astro: 'Astro',
+    vector: '벡터',
 };
 
 /** 객체 토큰 맵을 `--k: v;` 선언 문자열로 직렬화 */
