@@ -1364,7 +1364,7 @@
 
         async function generateMcpApiKey() {
             const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
-            const confirmColor = isDark ? '#38BDF8' : '#006591';
+            const confirmColor = isDark ? '#38BDF8' : '#2a53c4';
             const swalDidOpen = isDark ? (popup: HTMLElement) => {
                 const btn = popup.querySelector('.swal2-confirm') as HTMLButtonElement | null;
                 if (btn) btn.style.color = '#000000';
@@ -1455,7 +1455,7 @@
                 loadMcpApiKey();
             } catch (err) {
                 const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
-                const confirmColor = isDark ? '#38BDF8' : '#006591';
+                const confirmColor = isDark ? '#38BDF8' : '#2a53c4';
                 const swalDidOpen = isDark ? (popup: HTMLElement) => {
                     const btn = popup.querySelector('.swal2-confirm') as HTMLButtonElement | null;
                     if (btn) btn.style.color = '#000000';

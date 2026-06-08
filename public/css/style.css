@@ -1,18 +1,20 @@
 :root {
   color-scheme: light dark;
 
-  /* Palette — light-dark(light, dark) — color-scheme 으로 분기됨 */
-  --wiki-bg: light-dark(#F8F9FF, #000000);
+  /* Palette — light-dark(light, dark) — color-scheme 으로 분기됨.
+     라이트값은 "Streamline Professional"(Corporate Modern) 팔레트 — 옅은 하늘빛 배경 위
+     딥블루 primary(#2a53c4). 다크값은 기존 유지(스펙은 라이트 전용). */
+  --wiki-bg: light-dark(#f5fafe, #000000);
   --wiki-card-bg: light-dark(#FFFFFF, #111111);
-  --wiki-text: light-dark(#1f2937, #f4f4f5);
-  --wiki-text-muted: light-dark(#6b7280, #a1a1aa);
+  --wiki-text: light-dark(#181818, #f4f4f5);
+  --wiki-text-muted: light-dark(#525a66, #a1a1aa);
 
-  --wiki-border: light-dark(#E2E8F0, #27272A);
-  --wiki-border-focus: light-dark(#0ea5e9, #38bdf8);
-  --wiki-hr-color: light-dark(#cbd5e1, #3f3f46);
+  --wiki-border: light-dark(#d6dbdf, #27272A);
+  --wiki-border-focus: light-dark(#2a53c4, #38bdf8);
+  --wiki-hr-color: light-dark(#c4c5d6, #3f3f46);
 
-  --wiki-primary: light-dark(#006591, #38BDF8);
-  --wiki-primary-hover: light-dark(#004c6e, #7dd3fc);
+  --wiki-primary: light-dark(#2a53c4, #38BDF8);
+  --wiki-primary-hover: light-dark(#003bae, #7dd3fc);
   --wiki-accent: #8B5CF6;
   --wiki-success: #10B981;
   --wiki-warning: #F59E0B;
@@ -22,7 +24,7 @@
   /* Misc */
   --wiki-code-bg: light-dark(#f8fafc, #000000);
   --wiki-toc-bg: light-dark(rgba(255, 255, 255, 0.6), rgba(255, 255, 255, 0.08));
-  --wiki-bg-alt: light-dark(#f1f5f9, #0a0a0a);
+  --wiki-bg-alt: light-dark(#edf2f6, #0a0a0a);
   --wiki-sidebar-width: 260px;
 
   --wiki-btn-text: light-dark(#ffffff, #000000);
@@ -46,12 +48,13 @@
   --wiki-ease: cubic-bezier(0.4, 0, 0.2, 1);
   --wiki-ease-elastic: cubic-bezier(0.34, 1.56, 0.64, 1);
 
-  /* Focus ring (사이트 전역 공통) */
-  --wiki-focus-ring-color: rgba(14, 165, 233, 0.15);
+  /* Focus ring (사이트 전역 공통) — 라이트는 딥블루(primary), 다크는 아래 다크 그룹에서
+     밝은 하늘색(56,189,248)으로 재정의(검은 표면 가시성 확보, themes.md 다크 대비 규칙). */
+  --wiki-focus-ring-color: rgba(42, 83, 196, 0.15);
   --wiki-focus-ring: 0 0 0 3px var(--wiki-focus-ring-color);
 
   /* RGB triplet for primary — rgba(var(--c-rgb), α) 패턴용 (light-dark 로는 트리플렛 분기 불가) */
-  --wiki-primary-rgb: 0, 101, 145;
+  --wiki-primary-rgb: 42, 83, 196;
 
   /* Code font stack (위키 본문 + 에디터 공통) */
   --wiki-code-font: 'JetBrains Mono', 'Nanum Gothic Coding', 'D2Coding', 'Cascadia Code', 'Consolas', 'Menlo', 'DejaVu Sans Mono', monospace;
@@ -187,6 +190,7 @@ html[data-theme="dark"] { color-scheme: dark; }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --wiki-primary-rgb: 56, 189, 248;
+    --wiki-focus-ring-color: rgba(56, 189, 248, 0.15);
     --wiki-glass-bg: rgba(10, 10, 10, 0.6);
     --wiki-glass-border: rgba(255, 255, 255, 0.08);
     --wiki-shadow-lg: 0 20px 25px -5px rgba(0, 0, 0, 0.7), 
@@ -195,6 +199,7 @@ html[data-theme="dark"] { color-scheme: dark; }
 }
 html[data-theme="dark"] {
   --wiki-primary-rgb: 56, 189, 248;
+  --wiki-focus-ring-color: rgba(56, 189, 248, 0.15);
   --wiki-glass-bg: rgba(10, 10, 10, 0.6);
   --wiki-glass-border: rgba(255, 255, 255, 0.08);
   --wiki-shadow-lg: 0 20px 25px -5px rgba(0, 0, 0, 0.7), 
@@ -693,7 +698,7 @@ html[data-theme="dark"] .user-dropdown-toggle {
 }
 
 .nav-search-form .input-group:focus-within {
-  box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.15);
+  box-shadow: var(--wiki-focus-ring);
   border-color: var(--wiki-border-focus);
 }
 

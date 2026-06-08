@@ -57,15 +57,15 @@ import astro from './astro.mjs';
 export const THEMEABLE_TOKENS = {
     root: {
         // 팔레트
-        '--wiki-bg': 'light-dark(#F8F9FF, #000000)',
+        '--wiki-bg': 'light-dark(#f5fafe, #000000)',
         '--wiki-card-bg': 'light-dark(#FFFFFF, #111111)',
-        '--wiki-text': 'light-dark(#1f2937, #f4f4f5)',
-        '--wiki-text-muted': 'light-dark(#6b7280, #a1a1aa)',
-        '--wiki-border': 'light-dark(#E2E8F0, #27272A)',
-        '--wiki-border-focus': 'light-dark(#0ea5e9, #38bdf8)',
-        '--wiki-hr-color': 'light-dark(#cbd5e1, #3f3f46)',
-        '--wiki-primary': 'light-dark(#006591, #38BDF8)',
-        '--wiki-primary-hover': 'light-dark(#004c6e, #7dd3fc)',
+        '--wiki-text': 'light-dark(#181818, #f4f4f5)',
+        '--wiki-text-muted': 'light-dark(#525a66, #a1a1aa)',
+        '--wiki-border': 'light-dark(#d6dbdf, #27272A)',
+        '--wiki-border-focus': 'light-dark(#2a53c4, #38bdf8)',
+        '--wiki-hr-color': 'light-dark(#c4c5d6, #3f3f46)',
+        '--wiki-primary': 'light-dark(#2a53c4, #38BDF8)',
+        '--wiki-primary-hover': 'light-dark(#003bae, #7dd3fc)',
         '--wiki-accent': '#8B5CF6',
         '--wiki-success': '#10B981',
         '--wiki-warning': '#F59E0B',
@@ -73,7 +73,7 @@ export const THEMEABLE_TOKENS = {
         // 표면/보조
         '--wiki-code-bg': 'light-dark(#f8fafc, #000000)',
         '--wiki-toc-bg': 'light-dark(rgba(255, 255, 255, 0.6), rgba(255, 255, 255, 0.08))',
-        '--wiki-bg-alt': 'light-dark(#f1f5f9, #0a0a0a)',
+        '--wiki-bg-alt': 'light-dark(#edf2f6, #0a0a0a)',
         '--wiki-btn-text': 'light-dark(#ffffff, #000000)',
         '--wiki-border-muted': 'light-dark(rgba(0, 0, 0, 0.05), rgba(255, 255, 255, 0.04))',
         // 헤더(navbar) 표면 — 기본값은 페이지 표면 토큰을 참조(default 무변화). 스킨이 이
@@ -87,7 +87,7 @@ export const THEMEABLE_TOKENS = {
         // 포커스 링 색(사이트 전역 input/button/pagination/admin 컨트롤이 --wiki-focus-ring
         // 으로 참조). --wiki-primary-rgb 와 독립된 플랫 색이라, 팔레트를 바꾸면 여기도 함께
         // 지정해야 포커스 링이 새 색을 따른다.
-        '--wiki-focus-ring-color': 'rgba(14, 165, 233, 0.15)',
+        '--wiki-focus-ring-color': 'rgba(42, 83, 196, 0.15)',
         // diff
         '--wiki-diff-add-bg': 'light-dark(#dcfce7, rgba(16, 185, 129, 0.2))',
         '--wiki-diff-add-text': 'light-dark(#166534, #a7f3d0)',
@@ -109,7 +109,7 @@ export const THEMEABLE_TOKENS = {
         '--code-editor-block-bg': 'light-dark(#f6f8fa, #111111)',
         '--code-editor-block-fg': 'light-dark(#24292f, #e0e0e0)',
         // primary 트리플렛(라이트 기본값 — 다크는 아래 dark 그룹에서 재정의)
-        '--wiki-primary-rgb': '0, 101, 145',
+        '--wiki-primary-rgb': '42, 83, 196',
         // glass/shadow(라이트 기본값 — 다크는 아래 dark 그룹에서 재정의)
         '--wiki-glass-bg': 'light-dark(rgba(255, 255, 255, 0.75), rgba(0, 0, 0, 0.75))',
         '--wiki-glass-border': 'light-dark(rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0.05))',
@@ -117,8 +117,10 @@ export const THEMEABLE_TOKENS = {
     },
     dark: {
         // style.css @media(prefers-color-scheme:dark):root:not([data-theme=light]) +
-        // html[data-theme=dark] 가 재정의하는 다크 전용 값(트리플렛/glass/shadow).
+        // html[data-theme=dark] 가 재정의하는 다크 전용 값(트리플렛/glass/shadow/포커스링).
         '--wiki-primary-rgb': '56, 189, 248',
+        // 포커스 링은 검은 표면 가시성을 위해 다크에서 밝은 하늘색으로(라이트는 root 의 딥블루).
+        '--wiki-focus-ring-color': 'rgba(56, 189, 248, 0.15)',
         '--wiki-glass-bg': 'rgba(10, 10, 10, 0.6)',
         '--wiki-glass-border': 'rgba(255, 255, 255, 0.08)',
         '--wiki-shadow-lg': '0 20px 25px -5px rgba(0, 0, 0, 0.7), 0 8px 10px -6px rgba(56, 189, 248, 0.15)',

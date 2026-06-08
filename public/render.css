@@ -1125,7 +1125,7 @@ html[data-theme="dark"] .wiki-content pre[class*="language-"] code[class*="langu
 }
 
 .toc-floating-body a.toc-active {
-  background: rgba(0, 101, 145, 0.12);
+  background: rgba(var(--wiki-primary-rgb), 0.12);
   color: var(--wiki-primary);
   font-weight: 600;
   border-left: 3px solid var(--wiki-primary);
