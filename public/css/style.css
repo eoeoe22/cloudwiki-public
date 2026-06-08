@@ -3299,16 +3299,16 @@ html[data-theme="dark"] .push-status-on {
   border-color: var(--bs-secondary-border-subtle, var(--bs-border-color));
 }
 .setting-seg .seg-btn:focus-visible {
-  outline: 2px solid var(--bs-primary);
+  outline: 2px solid var(--wiki-primary);
   outline-offset: 1px;
 }
 .setting-seg .seg-btn.active {
-  background: var(--bs-primary);
-  border-color: var(--bs-primary);
-  color: #fff;
+  background: var(--wiki-primary);
+  border-color: var(--wiki-primary);
+  color: var(--wiki-btn-text);
 }
 .setting-seg .seg-btn.active:hover {
-  background: var(--bs-primary);
+  background: var(--wiki-primary);
 }
 
 /* ───────────────────────────────────────────────────────────────────────────
