@@ -21,8 +21,18 @@ import { commitPageMutation } from '../utils/pagePipeline/commit';
 
 const wiki = new Hono<Env>();
 
-/** 슬러그에 사용할 수 없는 금지 문자 패턴 ({}, [] 는 트랜스클루전/위키링크 문법과 충돌) */
-export const SLUG_FORBIDDEN_CHARS = /[\[\]{}()#%|<>^\x00-\x1F\x7F]/;
+/**
+ * 슬러그에 사용할 수 없는 금지 문자 패턴.
+ * - `{}` / `[]` : 트랜스클루전 `{{...}}` / 위키링크 `[[...]]` 문법과 충돌
+ * - `#` : 섹션 앵커 구분자(`[[slug#1.2]]`)
+ * - `|` : 위키링크 표시명 / 틀 인자 구분자
+ * - `% < > ^` + 제어문자 : URL/HTML/데이터 무결성
+ * 일반 괄호 `()` 는 동음이의 분기(예: `수성(행성)`)에 흔히 쓰이고 식별·파싱 경로
+ * (위키링크 `[^\]]+`/트랜스클루전 `[^}]+?`/`encodeURIComponent`/리네임 `escapeRe`)
+ * 어디에도 끼어들지 않으므로 허용한다. (단, 표준 마크다운 링크 `[..](url)` 에 직접 넣을
+ * 때는 닫는 `)` 가 URL 을 조기 종료하므로 내부 링크는 위키링크 `[[...]]` 를 사용한다.)
+ */
+export const SLUG_FORBIDDEN_CHARS = /[\[\]{}#%|<>^\x00-\x1F\x7F]/;
 
 /** 대체 title 입력 금지 문자 — 제어문자만 차단. 슬러그와 달리 [], {}, # 등 특수문자 허용. */
 export const TITLE_FORBIDDEN_CHARS = /[\x00-\x1F\x7F]/;

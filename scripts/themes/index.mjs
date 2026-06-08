@@ -66,7 +66,7 @@ export const THEMEABLE_TOKENS = {
         '--wiki-hr-color': 'light-dark(#c4c5d6, #3f3f46)',
         '--wiki-primary': 'light-dark(#2a53c4, #38BDF8)',
         '--wiki-primary-hover': 'light-dark(#003bae, #7dd3fc)',
-        '--wiki-accent': '#8B5CF6',
+        '--wiki-accent': 'light-dark(#3d61d6, #6d8ef5)',
         '--wiki-success': '#10B981',
         '--wiki-warning': '#F59E0B',
         '--wiki-danger': '#EF4444',

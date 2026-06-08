@@ -15,7 +15,7 @@ export function normalizeSlug(text: string | null | undefined): string {
  * 슬러그에 사용할 수 없는 문자 집합 — 서버 src/routes/wiki.ts 의 SLUG_FORBIDDEN_CHARS 와 동일.
  * 새 문자/심볼 차단 정책을 바꿀 때 양쪽을 함께 수정해야 한다.
  */
-export const SLUG_FORBIDDEN_CHARS = /[\[\]{}()#%|<>^\x00-\x1F\x7F]/;
+export const SLUG_FORBIDDEN_CHARS = /[\[\]{}#%|<>^\x00-\x1F\x7F]/;
 
 /** 슬러그에 금지 문자가 포함되어 있는지 검사 (서버 SLUG_FORBIDDEN_CHARS 와 동일 정책) */
 export function hasSlugForbiddenChars(slug: string): boolean {

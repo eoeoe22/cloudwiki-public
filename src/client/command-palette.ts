@@ -29,6 +29,10 @@ type GlobalBridge = typeof window & {
     } | null;
     // index.ts 가 문서 렌더 시 노출하는 정식 편집 대상(리다이렉트 canonical·권한 반영). 없으면 편집 불가.
     currentArticleEdit?: { slug: string } | null;
+    // SweetAlert2 CDN 전역. 팔레트가 새 문서 이름을 prompt 할 때 사용.
+    Swal?: {
+        fire: (opts: Record<string, unknown>) => Promise<{ isConfirmed: boolean; value?: string }>;
+    };
 };
 const w = window as GlobalBridge;
 
@@ -66,6 +70,29 @@ function go(url: string): void {
     } else {
         window.location.href = url;
     }
+}
+
+// 새 문서 만들기. 문서 이름(슬러그)만 받아 /edit?slug=<이름> 으로 이동한다.
+// 유효 문자 검증은 팔레트에서 하지 않는다 — 과거 `가-힣` 만 허용하던 정규식이 한글
+// 초성(ㄱ-ㅎ jamo)을 거부해 초성 문서를 만들 수 없었다. 입력값을 그대로 /edit 으로
+// 넘기고, 빈/금지문자 슬러그는 에디터가 페이지 로드 즉시 수행하는 검증
+// (normalizeSlug → 빈 슬러그/SLUG_FORBIDDEN_CHARS 차단)에 위임한다.
+function newDocument(): void {
+    const Swal = w.Swal;
+    if (!Swal || typeof Swal.fire !== 'function') return;
+    Swal.fire({
+        title: '새 문서 만들기',
+        input: 'text',
+        inputLabel: '문서 이름 (URL 경로)',
+        inputPlaceholder: '예: my-first-page',
+        showCancelButton: true,
+        confirmButtonText: '만들기',
+        cancelButtonText: '취소',
+    }).then((result) => {
+        if (result.isConfirmed && result.value) {
+            window.location.href = '/edit?slug=' + encodeURIComponent(result.value);
+        }
+    });
 }
 
 // 현재 조회 중인 문서의 정식 편집 대상 slug (편집 불가/비-위키 페이지면 null).
@@ -179,7 +206,7 @@ const ACTIONS: PaletteAction[] = [
         icon: 'mdi mdi-file-plus-outline',
         keywords: '새문서 작성 new create 만들기',
         canRun: canEditWiki,
-        run: () => go('/edit?slug='),
+        run: () => newDocument(),
     },
     {
         id: 'random',
