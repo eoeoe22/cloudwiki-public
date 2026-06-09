@@ -27,7 +27,6 @@ import { createHash } from 'node:crypto';
 
 import defaultTheme from './default.mjs';
 import astro from './astro.mjs';
-import reader from './reader.mjs';
 import vector from './vector.mjs';
 
 /**
@@ -167,7 +166,6 @@ export const THEMEABLE_TOKENS = {
 export const THEMES = {
     default: defaultTheme,
     astro,
-    reader,
     vector,
 };
 

@@ -3330,6 +3330,97 @@ html[data-theme="dark"] .push-status-on {
   background: var(--wiki-primary);
 }
 
+/* ── 색 테마(스킨) 커스텀 드롭다운 (개인 설정 모달) ── */
+.skin-select {
+  position: relative;
+}
+.skin-select-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--bs-border-color);
+  border-radius: var(--wiki-radius-lg);
+  background: var(--bs-body-bg);
+  color: var(--bs-body-color);
+  font-size: 0.9rem;
+  line-height: 1.3;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--wiki-dur-instant) ease, border-color var(--wiki-dur-instant) ease;
+}
+.skin-select-toggle:hover {
+  background: var(--bs-secondary-bg);
+  border-color: var(--bs-secondary-border-subtle, var(--bs-border-color));
+}
+.skin-select-toggle:focus-visible {
+  outline: 2px solid var(--wiki-primary);
+  outline-offset: 1px;
+}
+.skin-select-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.skin-select-caret {
+  flex: 0 0 auto;
+  font-size: 1.2rem;
+  color: var(--bs-secondary-color);
+  transition: transform var(--wiki-dur-instant) ease;
+}
+.skin-select.open .skin-select-caret {
+  transform: rotate(180deg);
+}
+.skin-select-menu {
+  display: none;
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 4px;
+  position: absolute;
+  inset-inline: 0;
+  top: calc(100% + 2px);
+  z-index: 10;
+  background: var(--bs-body-bg);
+  border: 1px solid var(--bs-border-color);
+  border-radius: var(--wiki-radius-lg);
+  box-shadow: var(--wiki-shadow-md);
+  max-height: 280px;
+  overflow-y: auto;
+}
+.skin-select.open .skin-select-menu {
+  display: block;
+}
+.skin-select-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: var(--wiki-radius-md);
+  font-size: 0.9rem;
+  color: var(--bs-body-color);
+  cursor: pointer;
+}
+.skin-select-option:hover,
+.skin-select-option:focus-visible {
+  background: var(--bs-secondary-bg);
+  outline: none;
+}
+.skin-select-option .skin-select-check {
+  display: inline-flex;
+  flex: 0 0 auto;
+  width: 1.15rem;
+  color: var(--wiki-primary);
+  opacity: 0;
+}
+.skin-select-option.selected .skin-select-check {
+  opacity: 1;
+}
+.skin-select-option.selected {
+  font-weight: 600;
+}
+
 /* ───────────────────────────────────────────────────────────────────────────
    전역 커맨드 팔레트 (Cmd/Ctrl+K) & 단축키 도움말
    ─────────────────────────────────────────────────────────────────────────── */

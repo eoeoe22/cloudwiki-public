@@ -238,9 +238,17 @@
                 <!-- 다크 전용 색 테마(스킨)가 활성일 때 common.ts 가 위 밝기 토글을 숨기고 이 안내를 보인다. -->
                 <p class="text-muted small mb-3" id="settingThemeForcedNote" style="display:none;"><i class="mdi mdi-moon-waxing-crescent me-1"></i>현재 테마는 다크모드 전용입니다.</p>
                 <div class="mb-3" id="settingThemeSkinWrap" style="display:none;">
-                    <label class="form-label d-block" for="settingThemeSkin">색 테마</label>
-                    <!-- option 은 멀티 스킨 모드(window.__WIKI_SKINS__)일 때 common.ts 가 동적 주입한다. -->
-                    <select class="form-select" id="settingThemeSkin" aria-label="색 테마"></select>
+                    <span class="form-label d-block" id="settingThemeSkinLabelText">색 테마</span>
+                    <!-- 네이티브 <select> 대신 앱 디자인에 맞춘 커스텀 드롭다운. 옵션은 멀티 스킨 -->
+                    <!-- 모드(window.__WIKI_SKINS__)일 때 common.ts 가 동적 주입한다. -->
+                    <div class="skin-select" id="settingThemeSkin">
+                        <button type="button" class="skin-select-toggle" id="settingThemeSkinToggle"
+                            aria-haspopup="listbox" aria-expanded="false" aria-labelledby="settingThemeSkinLabelText settingThemeSkinValue">
+                            <span class="skin-select-value" id="settingThemeSkinValue"></span>
+                            <i class="mdi mdi-chevron-down skin-select-caret" aria-hidden="true"></i>
+                        </button>
+                        <ul class="skin-select-menu" id="settingThemeSkinMenu" role="listbox" aria-label="색 테마"></ul>
+                    </div>
                 </div>
                 <div class="mb-2">
                     <span class="form-label d-block">레이아웃 모드</span>

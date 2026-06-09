@@ -146,9 +146,11 @@ function extractLinks(content: string): { target_slug: string; link_type: string
     const templateRegex = /\{\{([^}]+?)\}\}/g;
     for (const m of cleaned.matchAll(templateRegex)) {
         let slug = m[1].trim();
-        // '#' 앞부분만 slug로 사용 — wikilink와 동일한 정규화 정책.
-        // 슬러그 자체는 '#'을 포함할 수 없으므로(이동 API 입력검증 참고) 항상 안전하게 제거.
-        slug = slug.split('#')[0].trim();
+        // '|' 앞부분만 slug로 사용 (파라미터/인자 무시) — {{틀이름|값1|key=값2}} 호출의
+        // 인자가 slug 에 섞여 들어가 역링크가 매칭되지 않던 문제 방지(render.ts _parseTemplateCall
+        // 과 동일하게 첫 토큰이 틀/익스텐션 이름). '#' 앞부분만 slug로 사용 — wikilink와 동일한
+        // 정규화 정책. 슬러그 자체는 '#'을 포함할 수 없으므로(이동 API 입력검증 참고) 항상 안전하게 제거.
+        slug = slug.split('|')[0].split('#')[0].trim();
         if (!slug) continue;
         // 익스텐션 패턴: 첫 번째 ':' 앞이 익스텐션 이름 (틀/template/템플릿 접두사가 아닌 경우)
         const colonIdx = slug.indexOf(':');

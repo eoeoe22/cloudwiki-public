@@ -382,6 +382,95 @@ function setThemeSkin(skin) {
     reconcileThemeControls();
 }
 
+// ── 색 테마(스킨) 커스텀 드롭다운 ──
+// 네이티브 <select> 대신 앱 디자인에 맞춘 커스텀 드롭다운(combobox + listbox)으로 표시한다.
+// 키보드(↑/↓/Home/End/Enter/Esc)·ARIA(listbox/option)·외부 클릭 닫기를 지원하며, 선택 표시는
+// 체크 아이콘과 토글 라벨로 한다. 스킨 수가 늘어도 폭이 일정하다(드롭다운 형태 유지).
+function getSkinOptionEls() {
+    var menu = document.getElementById('settingThemeSkinMenu');
+    return menu ? Array.prototype.slice.call(menu.querySelectorAll('.skin-select-option')) : [];
+}
+
+// 선택 값에 맞춰 토글 라벨과 옵션 aria-selected/selected 표시를 갱신한다.
+function updateSkinDropdownSelection(value) {
+    var valueEl = document.getElementById('settingThemeSkinValue');
+    var opts = getSkinOptionEls();
+    var selectedLabel = '';
+    for (var i = 0; i < opts.length; i++) {
+        var on = opts[i].getAttribute('data-value') === value;
+        opts[i].classList.toggle('selected', on);
+        opts[i].setAttribute('aria-selected', on ? 'true' : 'false');
+        if (on) {
+            var nameEl = opts[i].querySelector('.skin-select-name');
+            selectedLabel = nameEl ? nameEl.textContent : value;
+        }
+    }
+    if (valueEl) valueEl.textContent = selectedLabel;
+}
+
+function isSkinDropdownOpen() {
+    var root = document.getElementById('settingThemeSkin');
+    return !!(root && root.classList.contains('open'));
+}
+
+function openSkinDropdown() {
+    var root = document.getElementById('settingThemeSkin');
+    var toggle = document.getElementById('settingThemeSkinToggle');
+    if (!root || root.classList.contains('open')) return;
+    root.classList.add('open');
+    if (toggle) toggle.setAttribute('aria-expanded', 'true');
+    // 현재 선택 옵션(없으면 첫 옵션)으로 포커스 이동.
+    var opts = getSkinOptionEls();
+    var idx = 0;
+    for (var i = 0; i < opts.length; i++) {
+        if (opts[i].classList.contains('selected')) { idx = i; break; }
+    }
+    if (opts[idx]) opts[idx].focus();
+}
+
+function closeSkinDropdown(refocusToggle) {
+    var root = document.getElementById('settingThemeSkin');
+    var toggle = document.getElementById('settingThemeSkinToggle');
+    if (!root || !root.classList.contains('open')) return;
+    root.classList.remove('open');
+    if (toggle) toggle.setAttribute('aria-expanded', 'false');
+    if (refocusToggle && toggle) toggle.focus();
+}
+
+function commitSkinOption(opt) {
+    if (!opt) return;
+    var value = opt.getAttribute('data-value');
+    if (value) { setThemeSkin(value); updateSkinDropdownSelection(value); }
+    closeSkinDropdown(true);
+}
+
+function onSkinMenuKeydown(e) {
+    var opts = getSkinOptionEls();
+    if (!opts.length) return;
+    var idx = opts.indexOf(document.activeElement);
+    if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        opts[(idx + 1) % opts.length].focus();
+    } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        opts[(idx - 1 + opts.length) % opts.length].focus();
+    } else if (e.key === 'Home') {
+        e.preventDefault();
+        opts[0].focus();
+    } else if (e.key === 'End') {
+        e.preventDefault();
+        opts[opts.length - 1].focus();
+    } else if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        if (idx >= 0) commitSkinOption(opts[idx]);
+    } else if (e.key === 'Escape') {
+        e.preventDefault();
+        closeSkinDropdown(true);
+    } else if (e.key === 'Tab') {
+        closeSkinDropdown(false);
+    }
+}
+
 // 개인 설정 모달의 밝기(자동/다크/라이트) 토글을 강제 다크 여부에 맞춰 노출/숨김한다.
 // 다크 전용 스킨이 활성이면 토글이 무의미하므로 감추고 안내 문구를 보인다.
 function reconcileThemeControls() {
@@ -445,8 +534,8 @@ function openSettingsModal() {
     if (!modalEl || typeof bootstrap === 'undefined' || !bootstrap.Modal) return;
     setSegActive(document.getElementById('settingTheme'), getCurrentTheme());
     if (getSkinMeta()) {
-        var skinSel = document.getElementById('settingThemeSkin');
-        if (skinSel) skinSel.value = getThemeSkin();
+        closeSkinDropdown(false);
+        updateSkinDropdownSelection(getThemeSkin());
     }
     reconcileThemeControls();
     setSegActive(document.getElementById('settingLayoutMode'), getLayoutOverride() || 'site');
@@ -468,26 +557,49 @@ function setupSettingsModal() {
             setTheme(value);
         });
     }
-    // 색 테마(스킨) — 멀티 스킨 모드일 때만 option 을 동적 주입하고 래퍼를 노출한다.
-    // 스킨 수가 늘어도 폭이 일정한 <select> 드롭다운으로 표시한다.
-    var skinSel = document.getElementById('settingThemeSkin');
+    // 색 테마(스킨) — 멀티 스킨 모드일 때만 옵션을 동적 주입하고 래퍼를 노출한다.
+    // 스킨 수가 늘어도 폭이 일정한 커스텀 드롭다운(combobox + listbox)으로 표시한다.
+    var skinRoot = document.getElementById('settingThemeSkin');
     var skinWrap = document.getElementById('settingThemeSkinWrap');
-    if (skinSel && skinWrap && !skinSel.dataset.bound) {
+    var skinToggle = document.getElementById('settingThemeSkinToggle');
+    var skinMenu = document.getElementById('settingThemeSkinMenu');
+    if (skinRoot && skinWrap && skinToggle && skinMenu && !skinRoot.dataset.bound) {
         var skinMeta = getSkinMeta();
         if (skinMeta) {
-            skinSel.dataset.bound = '1';
+            skinRoot.dataset.bound = '1';
             var labels = skinMeta.labels || {};
-            skinSel.innerHTML = skinMeta.list.map(function (k) {
+            skinMenu.innerHTML = skinMeta.list.map(function (k, i) {
                 var label = labels[k] || k;
-                return '<option value="' + escapeHtml(k) + '">' + escapeHtml(label) + '</option>';
+                return '<li class="skin-select-option" role="option" id="settingThemeSkinOpt-' + i + '"'
+                    + ' data-value="' + escapeHtml(k) + '" aria-selected="false" tabindex="-1">'
+                    + '<span class="skin-select-check"><i class="mdi mdi-check" aria-hidden="true"></i></span>'
+                    + '<span class="skin-select-name">' + escapeHtml(label) + '</span>'
+                    + '</li>';
             }).join('');
-            skinSel.value = getThemeSkin();
             skinWrap.style.display = '';
-            skinSel.addEventListener('change', function () {
-                var value = skinSel.value;
-                if (!value) return;
-                // 스킨은 즉시 라이브 적용(리로드 불필요).
-                setThemeSkin(value);
+            updateSkinDropdownSelection(getThemeSkin());
+            // 토글 클릭으로 열고 닫는다.
+            skinToggle.addEventListener('click', function (e) {
+                e.stopPropagation();
+                if (isSkinDropdownOpen()) closeSkinDropdown(false);
+                else openSkinDropdown();
+            });
+            // 토글에서 ↑/↓ 로 바로 열고 포커스 이동(Enter/Space 는 버튼 기본 클릭으로 처리).
+            skinToggle.addEventListener('keydown', function (e) {
+                if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    openSkinDropdown();
+                }
+            });
+            // 옵션 클릭 시 즉시 라이브 적용(리로드 불필요).
+            skinMenu.addEventListener('click', function (e) {
+                var opt = e.target && e.target.closest ? e.target.closest('.skin-select-option') : null;
+                if (opt) commitSkinOption(opt);
+            });
+            skinMenu.addEventListener('keydown', onSkinMenuKeydown);
+            // 외부 클릭 시 닫는다(드롭다운 영역 밖 클릭).
+            document.addEventListener('click', function (e) {
+                if (isSkinDropdownOpen() && !skinRoot.contains(e.target)) closeSkinDropdown(false);
             });
         }
     }

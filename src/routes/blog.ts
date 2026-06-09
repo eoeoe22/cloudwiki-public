@@ -77,7 +77,8 @@ export function extractBlogTemplateLinks(content: string): string[] {
     const seen = new Set<string>();
     const templateRegex = /\{\{([^}]+?)\}\}/g;
     for (const m of cleaned.matchAll(templateRegex)) {
-        let slug = m[1].trim().split('#')[0].trim();
+        // '|' 앞부분만 slug로 사용 (파라미터/인자 무시 — {{틀이름|key=값}} 호출).
+        let slug = m[1].trim().split('|')[0].split('#')[0].trim();
         if (!slug) continue;
         const colonIdx = slug.indexOf(':');
         // 익스텐션 호출 (`freq:foo` 등) 은 트랜스클루전이 아니므로 제외
