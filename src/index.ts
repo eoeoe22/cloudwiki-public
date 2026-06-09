@@ -79,12 +79,12 @@ function decodeSlugFromPath(path: string, prefixLen: number): string {
 function isBannedAllowedRequest(c: Context<Env>): boolean {
     const path = c.req.path;
     const method = c.req.method;
-    // 1) 정적 자산 / 서비스워커 / robots / sitemap / favicon / 컴포넌트 / 아이콘
+    // 1) 정적 자산 / 서비스워커 / robots / sitemap / favicon / 로고 / 컴포넌트 / 아이콘
     if (
         path.startsWith('/dist/') || path.startsWith('/css/') || path.startsWith('/components/') ||
         path === '/sw.js' || path === '/robots.txt' || path === '/sitemap.xml' ||
         path === '/icons.json' || path === '/favicon.ico' || path === '/favicon.jpg' ||
-        path === '/favicon.png' || path === '/favicon.svg'
+        path === '/favicon.png' || path === '/favicon.svg' || path === '/logo.svg'
     ) return true;
     // 2) OAuth / discovery — banned 유저가 굳이 호출할 필요는 없지만 차단할 이유도 없다.
     if (path.startsWith('/.well-known/') || path.startsWith('/oauth/')) return true;

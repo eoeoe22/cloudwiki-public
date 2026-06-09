@@ -13,6 +13,7 @@ import {
     AnnouncementMutationError,
     type Announcement,
 } from '../utils/announcements';
+import { extractTransclusionTargets } from '../shared/transclusion';
 
 const blog = new Hono<Env>();
 
@@ -73,22 +74,13 @@ export function extractBlogPaletteLinks(content: string): string[] {
  * 자동 부착, # 섹션 앵커 제거)을 사용한다.
  */
 export function extractBlogTemplateLinks(content: string): string[] {
+    // stripCodeBlocks 로 ```/~~~ 펜스·인라인 코드를 먼저 제거(공유 스캐너는 백틱만 인식하므로
+    // ~~~ 펜스 보완)한 뒤, 공유 스캐너(src/shared/transclusion.ts)로 추출 — naive 정규식이
+    // 파라미터 값의 `}` 에서 조기 종료하던 문제를 막는다. 익스텐션은 트랜스클루전이 아니므로 제외.
     const cleaned = stripCodeBlocks(content);
     const seen = new Set<string>();
-    const templateRegex = /\{\{([^}]+?)\}\}/g;
-    for (const m of cleaned.matchAll(templateRegex)) {
-        // '|' 앞부분만 slug로 사용 (파라미터/인자 무시 — {{틀이름|key=값}} 호출).
-        let slug = m[1].trim().split('|')[0].split('#')[0].trim();
-        if (!slug) continue;
-        const colonIdx = slug.indexOf(':');
-        // 익스텐션 호출 (`freq:foo` 등) 은 트랜스클루전이 아니므로 제외
-        if (colonIdx > 0 && !slug.startsWith('틀:') && !slug.startsWith('template:') && !slug.startsWith('템플릿:')) {
-            continue;
-        }
-        if (!slug.startsWith('틀:') && !slug.startsWith('template:') && !slug.startsWith('템플릿:')) {
-            slug = '틀:' + slug;
-        }
-        seen.add(slug);
+    for (const t of extractTransclusionTargets(cleaned)) {
+        if (t.type === 'template') seen.add(t.slug);
     }
     return [...seen];
 }

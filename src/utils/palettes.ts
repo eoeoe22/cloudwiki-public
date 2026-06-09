@@ -6,6 +6,8 @@
  * 이 모듈은 그 위에 머지되는 사용자 정의 팔레트만 다룬다.
  */
 
+import { extractTransclusionTargets } from '../shared/transclusion';
+
 export interface PaletteVariant {
     bg?: string;
     color?: string;
@@ -121,20 +123,10 @@ export function extractPaletteNamesFromContent(content: string): string[] {
 export function extractTemplateSlugsFromContent(content: string): string[] {
     if (!content) return [];
     const seen = new Set<string>();
-    const templateRegex = /\{\{([^}]+?)\}\}/g;
-    for (const m of content.matchAll(templateRegex)) {
-        // '|' 앞부분만 slug로 사용 (파라미터/인자 무시 — {{틀이름|key=값}} 호출).
-        let slug = m[1].trim().split('|')[0].split('#')[0].trim();
-        if (!slug) continue;
-        const colonIdx = slug.indexOf(':');
-        // 익스텐션 호출 (`freq:foo` 등) 은 트랜스클루전이 아니므로 제외
-        if (colonIdx > 0 && !slug.startsWith('틀:') && !slug.startsWith('template:') && !slug.startsWith('템플릿:')) {
-            continue;
-        }
-        if (!slug.startsWith('틀:') && !slug.startsWith('template:') && !slug.startsWith('템플릿:')) {
-            slug = '틀:' + slug;
-        }
-        seen.add(slug);
+    // 공유 스캐너(src/shared/transclusion.ts)로 추출 — naive 정규식이 파라미터 값의 `}` 에서
+    // 조기 종료하던 문제를 막는다. 익스텐션(`freq:foo` 등)은 트랜스클루전이 아니므로 제외.
+    for (const t of extractTransclusionTargets(content)) {
+        if (t.type === 'template') seen.add(t.slug);
     }
     return [...seen];
 }

@@ -2118,6 +2118,19 @@ html[data-theme="dark"] .wiki-callout-note    { --callout-bg-tint: rgba(161, 161
   border-color: var(--wiki-border);
   color: var(--wiki-text);
   margin: var(--wiki-space-3) 0;
+  /* Bootstrap 의 카드 반경 변수를 위키 토큰에 맞춰, .card 가 자체 border-radius 로 떨어질
+     때도(.wiki-card 규칙이 어떤 이유로 적용되지 않는 경우) 바깥 모서리가 스킨을 따르게 한다. */
+  --bs-card-border-radius: var(--wiki-radius-lg);
+}
+/* 바깥 모서리는 .wiki-card 의 border-radius(var(--wiki-radius-lg)) + overflow:hidden 클립이
+   전담한다. 헤더/바디가 Bootstrap 의 --bs-card-inner-border-radius(안쪽 모서리)를 따로
+   가지면, 그 반경이 클립 영역보다 작아 색 헤더 모서리가 카드 안쪽으로 말리며 모서리에
+   카드 배경색이 초승달처럼 비친다(=윤곽선과 헤더 모서리가 따로 보임). 안쪽 요소의 자체
+   반경을 0 으로 없애 overflow:hidden 클립만으로 모서리를 만들면, 반경 값과 무관하게 색
+   면이 테두리 안쪽에 빈틈없이 채워진다(스킨 무관). */
+.wiki-card.card > .wiki-card-header.card-header,
+.wiki-card.card > .wiki-card-body.card-body {
+  border-radius: 0;
 }
 .wiki-card.card > .wiki-card-header.card-header {
   background: var(--wiki-card-bg);

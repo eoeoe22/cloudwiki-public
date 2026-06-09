@@ -21,6 +21,16 @@
 import { escapeHtml } from './utils/html';
 import { isSafeUrl } from './utils/url';
 import { CDN_URLS, FONTS } from '../shared/cdn';
+// 트랜스클루전 토큰 스캐너는 서버측 역링크 인덱싱(wiki.ts/blog.ts/palettes.ts)과
+// 공유하는 단일 소스(src/shared/transclusion.ts). 기존 내부 이름(_scanCodeSpan 등)으로
+// 별칭 import 해 호출부와 window.* 노출을 그대로 유지한다.
+import {
+    scanCodeSpan as _scanCodeSpan,
+    findParamRefEnd as _findParamRefEnd,
+    findTemplateCallEnd as _findTemplateCallEnd,
+    findTemplateCalls as _findTemplateCalls,
+    hasTemplatePrefix,
+} from '../shared/transclusion';
 
 // ── Marked 설정 및 렌더링 코어 로직 ──
 // ── Marked 설정 (1회 초기화) ──
@@ -220,50 +230,9 @@ var _wikiExtensionData = [];
 function _isExtensionCall(name) {
     const colonIdx = name.indexOf(':');
     if (colonIdx <= 0) return false;
-    if (name.startsWith('틀:') || name.startsWith('template:') || name.startsWith('템플릿:')) return false;
+    // 틀 접두사(틀:/template:/템플릿:) 판정은 공유 헬퍼 재사용(src/shared/transclusion.ts).
+    if (hasTemplatePrefix(name)) return false;
     return true;
-}
-
-/**
- * text[i] 가 인라인 코드 스팬(`...`, ``...`` 등 매칭 백틱 런) 의 시작이면
- * 닫는 백틱 런 직후의 인덱스를 반환. 아니면 -1.
- *
- * 위키 토큰 파서({{...}}, [[...]], `|`, `=`) 가 백틱 코드 스팬 내부를
- * verbatim 으로 취급하도록 도와준다 — 예: `{{Foo|`a|b`|c}}` 에서 가운데
- * `|` 가 인자 구분자로 잘못 잡히지 않도록 한다.
- *
- * 닫는 백틱 런이 없으면 -1 을 반환해 호출자가 `` ` `` 를 일반 문자로 처리하게 한다.
- */
-function _scanCodeSpan(text, i) {
-    if (text[i] !== '`') return -1;
-    // CommonMark: 코드 스팬 오프너는 "선행/후행 백틱이 없는" 백틱 런이다.
-    // text[i-1] 이 백틱이면 우리는 더 긴 런의 중간에서 시작하는 셈 — 그 런 전체가
-    // 이미 (앞쪽에서 호출된) _scanCodeSpan 에 의해 평가되어 짝이 없다고 결론났을
-    // 수 있으므로 부분 매칭을 거부해 가짜 스팬으로 `|`/`=`/`{{…}}` 를 가리는
-    // 회귀를 막는다. (예: ` `````foo```` ` 의 2번째 백틱부터 4-런 스팬으로 잘못 매칭되는 케이스)
-    if (i > 0 && text[i - 1] === '`') return -1;
-    // CommonMark: 백슬래시로 이스케이프된 백틱(`\``)은 리터럴 문자라 델리미터가 되지 못한다.
-    // 직전 연속 백슬래시 개수가 홀수면 이스케이프된 상태(짝수면 `\\`+`\``... 즉 백슬래시
-    // 자체가 이스케이프되어 백틱은 정상 델리미터). 클로저 측은 검사하지 않는다 — CommonMark
-    // 사양상 코드 스팬 내부에서는 백슬래시 이스케이프가 작동하지 않아 ` `foo\` ` 의 트레일링
-    // ` 도 정상 클로저로 매칭된다.
-    let backslashes = 0;
-    let bk = i - 1;
-    while (bk >= 0 && text[bk] === '\\') { backslashes++; bk--; }
-    if (backslashes % 2 === 1) return -1;
-    let n = 1;
-    while (i + n < text.length && text[i + n] === '`') n++;
-    let j = i + n;
-    while (j < text.length) {
-        if (text[j] !== '`') { j++; continue; }
-        // k 는 j 에서 시작하는 백틱 런의 최대 길이(while 종료 시 다음 문자는 비-백틱).
-        // 따라서 k === n 이면 자동으로 "후행 백틱이 없는" 완전한 클로저 런이다.
-        let k = 1;
-        while (j + k < text.length && text[j + k] === '`') k++;
-        if (k === n) return j + k;
-        j += k;
-    }
-    return -1;
 }
 
 /**
@@ -404,55 +373,6 @@ function _parseTemplateCall(raw) {
 }
 
 /**
- * `{{{` 로 시작하는 파라미터 참조의 닫는 `}}}` 위치를 스택 기반으로 찾는다.
- * 기본값이 {{...}}, {{{...}}}, {...} 등 중첩된 위키 토큰을 포함해도 정확히 매칭한다.
- */
-function _findParamRefEnd(text, contentStart) {
-    const stack = ['tri']; // 외부 {{{ 는 이미 소비
-    let i = contentStart;
-    while (i < text.length) {
-        const ch = text[i];
-        if (ch === '`') {
-            const end = _scanCodeSpan(text, i);
-            if (end > 0) { i = end; continue; }
-        }
-        if (ch === '{') {
-            if (text[i + 1] === '{' && text[i + 2] === '{') { stack.push('tri'); i += 3; continue; }
-            if (text[i + 1] === '{') { stack.push('dbl'); i += 2; continue; }
-            stack.push('sgl');
-            i++;
-            continue;
-        }
-        if (ch === '}') {
-            const top = stack[stack.length - 1];
-            if (top === 'tri' && text[i + 1] === '}' && text[i + 2] === '}') {
-                stack.pop();
-                i += 3;
-                if (stack.length === 0) return { contentEnd: i - 3, fullEnd: i };
-                continue;
-            }
-            if (top === 'dbl' && text[i + 1] === '}') {
-                stack.pop();
-                i += 2;
-                if (stack.length === 0) return { contentEnd: i - 2, fullEnd: i };
-                continue;
-            }
-            if (top === 'sgl') {
-                stack.pop();
-                i++;
-                if (stack.length === 0) return { contentEnd: i - 1, fullEnd: i };
-                continue;
-            }
-            // 매칭 없는 `}` — 그냥 스킵.
-            i++;
-            continue;
-        }
-        i++;
-    }
-    return null;
-}
-
-/**
  * text 에서 최상위 `{{{...}}}` 파라미터 참조를 모두 찾는다.
  */
 function _findParamRefs(text) {
@@ -515,90 +435,6 @@ function _substituteTemplateParams(templateContent, args, depth) {
     }
     result += templateContent.substring(cursor);
     return result;
-}
-
-/**
- * `{{`(contentStart-2 위치) 로 시작하는 틀 호출의 닫는 `}}` 위치를 찾는다.
- * 단일 중괄호 `{...}` 토큰, 삼중 중괄호 `{{{...}}}` 파라미터 참조, 중첩된 `{{...}}` 호출을
- * 모두 올바르게 건너뛰며, 호출 인자 안에 {button:text|url} 같은 `}`-포함 토큰이 있어도
- * 첫 번째 `}` 에서 조기 종료하지 않는다.
- * @returns { contentEnd: number, fullEnd: number } 성공 / null 실패 (짝 없음)
- */
-function _findTemplateCallEnd(text, contentStart) {
-    let dblBrace = 1; // 외부 {{ 는 이미 소비된 상태로 호출됨
-    let sgl = 0;      // 단일 중괄호 {...} 깊이
-    let i = contentStart;
-    while (i < text.length) {
-        const ch = text[i];
-        if (ch === '`') {
-            const end = _scanCodeSpan(text, i);
-            if (end > 0) { i = end; continue; }
-        }
-        if (ch === '}') {
-            // 단일 중괄호 토큰이 열려 있으면 먼저 닫아 준다 ({button:...|...} 내부 `|` 보호와 대칭)
-            if (sgl > 0) {
-                sgl--;
-                i++;
-                continue;
-            }
-            if (text[i + 1] === '}') {
-                dblBrace--;
-                i += 2;
-                if (dblBrace === 0) return { contentEnd: i - 2, fullEnd: i };
-                continue;
-            }
-            // 짝이 없는 `}` — 스킵
-            i++;
-            continue;
-        }
-        if (ch === '{') {
-            if (text[i + 1] === '{') {
-                dblBrace++;
-                i += 2;
-                continue;
-            }
-            sgl++;
-            i++;
-            continue;
-        }
-        i++;
-    }
-    return null;
-}
-
-/**
- * text 에서 최상위 `{{...}}` 호출을 모두 찾아 반환한다.
- * `{{{...}}}` 파라미터 참조는 범위 전체를 건너뛰므로, 그 내부(특히 기본값)의 `{{...}}` 가
- * 최상위 호출로 잘못 인식되지 않는다.
- */
-function _findTemplateCalls(text) {
-    const calls = [];
-    let i = 0;
-    while (i < text.length - 1) {
-        if (text[i] === '`') {
-            const end = _scanCodeSpan(text, i);
-            if (end > 0) { i = end; continue; }
-        }
-        if (text[i] === '{' && text[i + 1] === '{') {
-            if (text[i + 2] === '{') {
-                const refEnd = _findParamRefEnd(text, i + 3);
-                i = refEnd ? refEnd.fullEnd : i + 3;
-                continue;
-            }
-            const end = _findTemplateCallEnd(text, i + 2);
-            if (end) {
-                calls.push({
-                    start: i,
-                    fullEnd: end.fullEnd,
-                    raw: text.substring(i + 2, end.contentEnd)
-                });
-                i = end.fullEnd;
-                continue;
-            }
-        }
-        i++;
-    }
-    return calls;
 }
 
 // ── 틀(Transclusion) 및 익스텐션 처리 ──

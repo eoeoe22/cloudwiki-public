@@ -15,6 +15,7 @@ import { ROLE_CASE_SQL, enrichRoles, RBAC } from '../utils/role';
 import { fetchMediaTags } from '../utils/mediaTags';
 import { createNotifications } from '../utils/notification';
 import { loadAllPalettes, loadPalettesForPage } from '../utils/palettes';
+import { extractTransclusionTargets, findTemplateCalls } from '../shared/transclusion';
 import { cleanupUnauthorizedSubscriptions } from '../utils/pageAccessCleanup';
 import { collectRevisionR2Keys, buildHardDeleteStatements } from '../utils/pageDeletion';
 import { commitPageMutation } from '../utils/pagePipeline/commit';
@@ -143,33 +144,16 @@ function extractLinks(content: string): { target_slug: string; link_type: string
     }
 
     // 2) {{틀 트랜스클루전}} 또는 {{익스텐션:문서}}
-    const templateRegex = /\{\{([^}]+?)\}\}/g;
-    for (const m of cleaned.matchAll(templateRegex)) {
-        let slug = m[1].trim();
-        // '|' 앞부분만 slug로 사용 (파라미터/인자 무시) — {{틀이름|값1|key=값2}} 호출의
-        // 인자가 slug 에 섞여 들어가 역링크가 매칭되지 않던 문제 방지(render.ts _parseTemplateCall
-        // 과 동일하게 첫 토큰이 틀/익스텐션 이름). '#' 앞부분만 slug로 사용 — wikilink와 동일한
-        // 정규화 정책. 슬러그 자체는 '#'을 포함할 수 없으므로(이동 API 입력검증 참고) 항상 안전하게 제거.
-        slug = slug.split('|')[0].split('#')[0].trim();
-        if (!slug) continue;
-        // 익스텐션 패턴: 첫 번째 ':' 앞이 익스텐션 이름 (틀/template/템플릿 접두사가 아닌 경우)
-        const colonIdx = slug.indexOf(':');
-        if (colonIdx > 0 && !slug.startsWith('틀:') && !slug.startsWith('template:') && !slug.startsWith('템플릿:')) {
-            // 익스텐션 링크 (예: freq:AirPods_Pro_2)
-            const key = `extension:${slug}`;
-            if (!seen.has(key)) {
-                seen.add(key);
-                links.push({ target_slug: slug, link_type: 'extension' });
-            }
-        } else {
-            if (!slug.startsWith('틀:') && !slug.startsWith('template:') && !slug.startsWith('템플릿:')) {
-                slug = '틀:' + slug;
-            }
-            const key = `template:${slug}`;
-            if (!seen.has(key)) {
-                seen.add(key);
-                links.push({ target_slug: slug, link_type: 'template' });
-            }
+    // 스택 기반 스캐너(src/shared/transclusion.ts)로 추출 — naive 정규식 /\{\{([^}]+?)\}\}/ 는
+    // 파라미터 값에 든 `}` (예: 색 팔레트 틀의 {bg:#fff}{color:#000})를 만나면 첫 `}` 에서
+    // 조기 종료해 멀티라인/중괄호 포함 트랜스클루전의 역링크를 누락한다. 공유 헬퍼가
+    // render.ts 와 동일하게 슬러그를 정규화(첫 토큰만, 틀:/template:/템플릿: 접두사 부착,
+    // # 섹션 앵커 제거)하고 익스텐션(freq:foo 등)을 분류한다.
+    for (const t of extractTransclusionTargets(cleaned)) {
+        const key = `${t.type}:${t.slug}`;
+        if (!seen.has(key)) {
+            seen.add(key);
+            links.push({ target_slug: t.slug, link_type: t.type });
         }
     }
 
@@ -641,6 +625,44 @@ export async function applyCreatePrefixRulesAndCategoryAcls(
 }
 
 /**
+ * 본문에서 최상위 `{{...}}` 트랜스클루전/익스텐션 호출을 공유 스캐너(findTemplateCalls)로 찾아,
+ * 호출의 "이름 토큰"(첫 `|` 이전 · `#섹션` 제외)이 variants 의 from 과 정확히 일치하면 그 이름만
+ * to 로 치환한다. 파라미터(`|k=v`)·섹션 앵커(`#sec`)·나머지 본문은 그대로 보존하며, 여러 줄·
+ * 파라미터 값의 중괄호(`{bg:#fff}{color:#000}`)가 있어도 닫는 `}}` 를 정확히 찾는다.
+ * (과거 naive 정규식 `\{\{\s*<from>\s*(#...)?\}\}` 은 파라미터 있는 호출을 닫는 `}}` 경계에서
+ *  놓쳐, 파라미터를 쓴 틀 참조가 이름 변경 후에도 옛 슬러그를 가리키는 채로 남았다.)
+ * 코드블록/인라인 코드는 호출 전에 마스킹돼 있다고 가정한다(rewriteContentForRename).
+ */
+function rewriteTransclusionCallNames(
+    text: string,
+    variants: { from: string; to: string }[]
+): string {
+    const calls = findTemplateCalls(text);
+    if (calls.length === 0) return text;
+    let out = '';
+    let cursor = 0;
+    for (const call of calls) {
+        out += text.slice(cursor, call.start);
+        const raw = call.raw;
+        // 이름 토큰 = 첫 `|`(파라미터 시작) 이전, 그 안에서 `#섹션` 분리 — extractTransclusionTargets
+        // 의 `split('|')[0].split('#')[0]` 정규화와 동일.
+        const pipeIdx = raw.indexOf('|');
+        const head = pipeIdx >= 0 ? raw.slice(0, pipeIdx) : raw;
+        const rest = pipeIdx >= 0 ? raw.slice(pipeIdx) : '';
+        const hashIdx = head.indexOf('#');
+        const secPart = hashIdx >= 0 ? head.slice(hashIdx) : '';
+        const name = (hashIdx >= 0 ? head.slice(0, hashIdx) : head).trim();
+        const variant = variants.find(v => v.from === name);
+        out += variant
+            ? `{{${variant.to}${secPart}${rest}}}`
+            : text.slice(call.start, call.fullEnd);
+        cursor = call.fullEnd;
+    }
+    out += text.slice(cursor);
+    return out;
+}
+
+/**
  * 문서 주소 변경 시 사용될 본문 재작성 헬퍼.
  * - 코드블럭(```...```)과 인라인 코드(`...`)는 마스킹하여 보존
  * - `[[oldSlug]]`, `[[oldSlug|표시]]`, `[[oldSlug#섹션]]`, `[[oldSlug#섹션|표시]]`를 새 슬러그로 치환
@@ -692,40 +714,27 @@ export function rewriteContentForRename(
         });
     }
 
-    // 3) {{template}} / {{extension}} 치환
+    // 3) {{template}} / {{extension}} 치환 — 공유 스캐너(rewriteTransclusionCallNames)로 호출의
+    //    이름 부분만 안전하게 치환한다(파라미터·멀티라인·중괄호 포함 호출도 정확히 매칭).
+    const callVariants: { from: string; to: string }[] = [];
     if (isTemplateMove) {
         // 접두사가 다른 `{{template:Foo}}` / `{{템플릿:Foo}}` 등은 각각 다른 문서를 가리키므로
         // 건드리지 않는다. `{{Foo}}`(접두사 없음)는 파서가 항상 `틀:`을 붙여 해석하므로,
         // `틀:` 네임스페이스 내부 이동일 때에만 bare 형태를 함께 갱신한다.
-        const variants: { from: string; to: string }[] = [
-            { from: oldSlug, to: newSlug },
-        ];
+        callVariants.push({ from: oldSlug, to: newSlug });
         if (matchedOldPrefix === '틀:' && matchedNewPrefix === '틀:') {
-            const oldBase = oldSlug.substring(matchedOldPrefix.length);
-            const newBase = newSlug.substring(matchedNewPrefix.length);
-            variants.push({ from: oldBase, to: newBase });
-        }
-        for (const { from, to } of variants) {
-            const re = new RegExp(
-                '\\{\\{\\s*' + escapeRe(from) + '\\s*(#[^}]*)?\\}\\}',
-                'g'
-            );
-            masked = masked.replace(re, (_m, sec) => {
-                const secPart = sec ?? '';
-                return `{{${to}${secPart}}}`;
+            callVariants.push({
+                from: oldSlug.substring(matchedOldPrefix.length),
+                to: newSlug.substring(matchedNewPrefix.length),
             });
         }
     } else if (isExtensionMove) {
-        const re = new RegExp(
-            '\\{\\{\\s*' + escapeRe(oldSlug) + '\\s*(#[^}]*)?\\}\\}',
-            'g'
-        );
-        masked = masked.replace(re, (_m, sec) => {
-            const secPart = sec ?? '';
-            return `{{${newSlug}${secPart}}}`;
-        });
+        callVariants.push({ from: oldSlug, to: newSlug });
     }
-    // 일반 문서 이동(Foo → Bar) 시에는 {{Foo}}는 `틀:Foo`를 의미하므로 변환하지 않음
+    // 일반 문서 이동(Foo → Bar) 시에는 {{Foo}}는 `틀:Foo`를 의미하므로 변환하지 않음(callVariants 비움)
+    if (callVariants.length > 0) {
+        masked = rewriteTransclusionCallNames(masked, callVariants);
+    }
 
     // 4) 마스킹 역순 복원
     masked = masked.replace(/\u0000INLINE(\d+)\u0000/g, (_m, i) => inlines[Number(i)]);

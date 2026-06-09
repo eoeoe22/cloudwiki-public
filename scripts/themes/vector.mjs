@@ -81,11 +81,20 @@ export default {
         '--wiki-lh-spacious': '1.65',
         // 본문 컨테이너 패딩 살짝 압축(2.5rem→2rem).
         '--wiki-article-padding': '2rem',
-        // 각진 표면 — Vector 의 거의 직각 모서리(둥근 6/8/10px → 2px).
+        // 각진 표면 — Vector 의 거의 직각 모서리(둥근 6/8/10px → 2px). 셸(style.css)뿐
+        // 아니라 본문 렌더(render.css)도 같은 토큰을 소비하므로, 본문이 쓰는 xs/md/2xl 까지
+        // **반경 스케일 전체**를 덮어야 한다. 일부만 덮으면 셸 카드(lg=2px 각짐)와 본문 요소
+        // (blockquote·헤딩 버튼 md=5px, .wiki-badge 2xl=20px 등)의 모서리가 섞여 보인다.
+        // (--wiki-radius 는 --wiki-radius-sm 을, --wiki-radius-none 은 0 이라 자동 추종.)
+        '--wiki-radius-xs': '2px',
         '--wiki-radius-sm': '2px',
+        '--wiki-radius-md': '2px',
         '--wiki-radius-base': '2px',
         '--wiki-radius-lg': '2px',
         '--wiki-radius-xl': '3px',
+        // .wiki-badge(본문 배지)는 2xl(20px 알약)을 쓴다 → Vector 의 각진 칩으로(3px).
+        '--wiki-radius-2xl': '3px',
+        // --wiki-radius-full(9999px)은 원형 아바타/진행 바 끝처럼 의도된 알약이라 유지.
         // 플랫(프로스트 글래스 제거) — 거의 불투명한 glass-bg 와 결합해 솔리드 헤더.
         '--wiki-glass-blur': 'blur(0px)',
     },

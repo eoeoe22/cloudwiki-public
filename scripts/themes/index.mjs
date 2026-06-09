@@ -138,10 +138,18 @@ export const THEMEABLE_TOKENS = {
         '--wiki-space-4': '1rem',          // 전역 간격(사이트 곳곳 var(--wiki-space-4))
         '--wiki-lh-loose': '1.7',          // 본문 기본 행간(body)
         '--wiki-lh-spacious': '1.8',       // 산문 문단 행간(.wiki-content p)
-        // 모서리/표면: 컴포넌트 반경 스케일·글래스 블러(둥근↔각진, 플랫↔글래스).
+        // 모서리/표면: 컴포넌트 반경 스케일·글래스 블러(둥근↔각진, 플랫↔글래스). 셸(style.css)
+        // 과 본문 렌더(render.css)가 같은 스케일을 공유하므로, 모서리를 통째로 바꾸는 스킨
+        // (예: 각진 vector)은 본문이 쓰는 xs/md/2xl 까지 전부 덮어야 모서리가 섞이지 않는다.
+        // (--wiki-radius-full=9999px 알약·--wiki-radius-none=0 은 보통 그대로 두고,
+        //  --wiki-radius 는 --wiki-radius-sm 을 참조해 자동 추종한다.)
+        '--wiki-radius-xs': '3px',
+        '--wiki-radius-sm': '4px',
+        '--wiki-radius-md': '5px',
         '--wiki-radius-base': '6px',
         '--wiki-radius-lg': '8px',
         '--wiki-radius-xl': '10px',
+        '--wiki-radius-2xl': '20px',
         '--wiki-glass-blur': 'blur(16px)',
     },
     dark: {
