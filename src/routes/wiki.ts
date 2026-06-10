@@ -16,6 +16,7 @@ import { fetchMediaTags } from '../utils/mediaTags';
 import { createNotifications } from '../utils/notification';
 import { loadAllPalettes, loadPalettesForPage } from '../utils/palettes';
 import { extractTransclusionTargets, findTemplateCalls } from '../shared/transclusion';
+import { extractPageLinks } from '../shared/links';
 import { cleanupUnauthorizedSubscriptions } from '../utils/pageAccessCleanup';
 import { collectRevisionR2Keys, buildHardDeleteStatements } from '../utils/pageDeletion';
 import { commitPageMutation } from '../utils/pagePipeline/commit';
@@ -117,78 +118,6 @@ export function computePageMetricsTracked(
     return computePageMetrics(content);
 }
 
-/**
- * 문서 content에서 링크를 파싱하여 { target_slug, link_type } 배열을 반환
- */
-function extractLinks(content: string): { target_slug: string; link_type: string }[] {
-    const links: { target_slug: string; link_type: string }[] = [];
-    const seen = new Set<string>();
-
-    // 코드블럭 내부 제외를 위해 코드블럭을 먼저 제거
-    const cleaned = content.replace(/```[\s\S]*?```/g, '').replace(/`[^`\n]+`/g, '');
-
-    // 1) [[위키링크]] / [[위키링크|표시명]] / [[위키링크#섹션]]
-    const wikiLinkRegex = /\[\[([^\]]+)\]\]/g;
-    for (const m of cleaned.matchAll(wikiLinkRegex)) {
-        const raw = m[1].trim();
-        // '|' 앞부분만 slug로 사용 (표시명 무시)
-        // '#' 앞부분만 slug로 사용 (섹션 앵커 무시) — page_links는 문서간 참조 그래프이므로
-        // 페이지 내부 섹션 정보를 인덱스에 저장하지 않음
-        const slug = raw.split('|')[0].split('#')[0].trim();
-        if (!slug) continue; // '[[#로컬앵커]]'처럼 대상 문서가 없는 링크는 제외
-        const key = `wikilink:${slug}`;
-        if (!seen.has(key)) {
-            seen.add(key);
-            links.push({ target_slug: slug, link_type: 'wikilink' });
-        }
-    }
-
-    // 2) {{틀 트랜스클루전}} 또는 {{익스텐션:문서}}
-    // 스택 기반 스캐너(src/shared/transclusion.ts)로 추출 — naive 정규식 /\{\{([^}]+?)\}\}/ 는
-    // 파라미터 값에 든 `}` (예: 색 팔레트 틀의 {bg:#fff}{color:#000})를 만나면 첫 `}` 에서
-    // 조기 종료해 멀티라인/중괄호 포함 트랜스클루전의 역링크를 누락한다. 공유 헬퍼가
-    // render.ts 와 동일하게 슬러그를 정규화(첫 토큰만, 틀:/template:/템플릿: 접두사 부착,
-    // # 섹션 앵커 제거)하고 익스텐션(freq:foo 등)을 분류한다.
-    for (const t of extractTransclusionTargets(cleaned)) {
-        const key = `${t.type}:${t.slug}`;
-        if (!seen.has(key)) {
-            seen.add(key);
-            links.push({ target_slug: t.slug, link_type: t.type });
-        }
-    }
-
-    // 3) 이미지 참조: images/로 시작하는 R2 키를 파싱
-    // 마크다운 ![alt](/media/images/...) 또는 HTML <img src="...images/..."> 등
-    // 업로더(media.ts FILENAME_FORBIDDEN)는 한글/영숫자뿐 아니라 일본어/한자/악센트
-    // 라틴 등 임의 유니코드를 허용하므로, 화이트리스트 대신 URL/마크다운/HTML 경계를
-    // 끊는 문자만 블랙리스트로 제외한다. 비탐욕(`+?`)으로 첫 `.확장자`에서 종료.
-    const imageRegex = /images\/[^\s\[\]()<>"'\\?#|^]+?\.\w+/g;
-    for (const m of cleaned.matchAll(imageRegex)) {
-        const r2Key = m[0].trim();
-        const key = `image:${r2Key}`;
-        if (!seen.has(key)) {
-            seen.add(key);
-            links.push({ target_slug: r2Key, link_type: 'image' });
-        }
-    }
-
-    // 4) {palette:이름} 토큰 — 본문이 참조하는 커스텀 팔레트를 page_links 에 인덱싱.
-    // 문서 열람 시 loadPalettesForPage 가 이 인덱스를 참고해 실제로 사용된 팔레트만 SSR 한다.
-    // 트랜스클루전된 틀의 본문이 참조하는 팔레트는 이 함수가 보지 못하지만 (틀 본문은 다른
-    // 문서에 속하므로 그 문서의 page_links 에 자체 인덱싱돼 있음), loadPalettesForPage 가
-    // page_links(link_type='template') 를 통해 합집합으로 끌어온다.
-    const paletteRegex = /\{palette:\s*([A-Za-z0-9_-]+)\s*\}/g;
-    for (const m of cleaned.matchAll(paletteRegex)) {
-        const name = m[1];
-        const key = `palette:${name}`;
-        if (!seen.has(key)) {
-            seen.add(key);
-            links.push({ target_slug: name, link_type: 'palette' });
-        }
-    }
-
-    return links;
-}
 
 // 문서 본문 저장(생성/수정)은 통합 파이프라인 commitPageMutation(src/utils/pagePipeline)으로
 // 위임한다. 직접 PUT 도 승인(pending/mcp) 경로와 동일하게 이 파이프라인을 거치므로 리비전 저장·
@@ -353,7 +282,7 @@ export function buildLinkAndCategoryStatements(
     stmts.push(db.prepare(
         "DELETE FROM page_links WHERE source_page_id = ? AND source_type = 'page' AND blog = 0"
     ).bind(pageId));
-    const links = extractLinks(content);
+    const links = extractPageLinks(content);
     for (const link of links) {
         stmts.push(
             db.prepare(
@@ -391,7 +320,7 @@ export function buildLinksOnlyStatements(
     stmts.push(db.prepare(
         "DELETE FROM page_links WHERE source_page_id = ? AND source_type = 'page' AND blog = 0"
     ).bind(pageId));
-    const links = extractLinks(content);
+    const links = extractPageLinks(content);
     for (const link of links) {
         stmts.push(
             db.prepare(
@@ -677,7 +606,7 @@ export function rewriteContentForRename(
 ): string {
     if (!content || oldSlug === newSlug) return content;
 
-    // 1) 코드블럭 및 인라인 코드 마스킹 (extractLinks의 cleaned 정책과 일치)
+    // 1) 코드블럭 및 인라인 코드 마스킹 (extractPageLinks의 cleaned 정책과 일치)
     const fences: string[] = [];
     let masked = content.replace(/```[\s\S]*?```/g, (m) => {
         fences.push(m);
@@ -764,7 +693,7 @@ async function rewriteBacklinksForRename(
     // 대상 target_slug: 정확히 oldSlug만 사용한다.
     // `틀:`, `template:`, `템플릿:` 접두사는 이 코드베이스에서 별칭이 아니라 서로 다른 문서를
     // 가리키므로(예: `template:Foo`는 `틀:Foo`와 별개 문서), 다른 접두사를 포함시키면 관계 없는
-    // 문서의 링크가 함께 재작성되어 본문이 손상될 수 있다. extractLinks()가 `{{Foo}}`를 항상
+    // 문서의 링크가 함께 재작성되어 본문이 손상될 수 있다. extractPageLinks()가 `{{Foo}}`를 항상
     // `틀:Foo`로 저장하므로 `틀:Foo` 이동 시 bare 형태의 틀 호출도 자연스럽게 포함된다.
     const targetSlugs: string[] = [oldSlug];
 
@@ -2895,7 +2824,7 @@ wiki.get('/w/:slug/backlinks', async (c) => {
     }
 
     const placeholders = targetSlugs.map(() => '?').join(', ');
-    // page_links.target_slug는 extractLinks()가 '#섹션'을 제거한 뒤 저장하므로
+    // page_links.target_slug는 extractPageLinks()가 '#섹션'을 제거한 뒤 저장하므로
     // 단순 IN 매칭만으로 섹션 앵커를 포함한 모든 위키링크가 포착됨
     // 관리자: soft delete된 문서도 is_deleted 플래그와 함께 반환
     // 일반 사용자: soft delete된 문서 제외 (접근 불가 + 메타데이터 노출 방지)

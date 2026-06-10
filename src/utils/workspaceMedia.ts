@@ -35,7 +35,7 @@ export function wsMediaServePath(workspaceId: number, filename: string): string 
  *   - `/wsmedia/{workspaceId}/{filename}` (마크다운 `![alt](/wsmedia/1/a.png)`, 절대 URL 포함)
  *   - bare `wsmedia/{workspaceId}/{filename}` (앞에 단어 문자가 붙은 오탐은 lookbehind 로 차단)
  *
- * 파일명 패턴은 전역 이미지 참조 추출(wiki.ts extractLinks)과 동일 발상 —
+ * 파일명 패턴은 전역 이미지 참조 추출(shared/links.ts extractPageLinks)과 동일 발상 —
  * URL/마크다운/HTML 경계를 끊는 문자만 블랙리스트로 제외하고, 비탐욕(`+?`)으로
  * 첫 `.확장자` 에서 종료한다(업로드 파일명은 항상 `{이름}.{확장자}` 형태).
  * 한글 등 유니코드 파일명이 URL 인코딩된 경우를 위해 디코딩 변형도 함께 수집한다.

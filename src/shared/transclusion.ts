@@ -1,6 +1,6 @@
 /**
  * 위키 트랜스클루전(틀)·익스텐션 호출 토큰 스캐너 — 서버측 역링크/팔레트 인덱싱
- * (`wiki.ts` extractLinks · `blog.ts` extractBlogTemplateLinks · `palettes.ts`
+ * (`shared/links.ts` extractPageLinks · `blog.ts` extractBlogTemplateLinks · `palettes.ts`
  * extractTemplateSlugsFromContent)과 클라이언트 렌더(`render.ts`)가 공유하는 단일 소스.
  *
  * 순수 문자열 로직(브라우저/Worker 의존 없음)이라 서버·클라이언트 양쪽 tsconfig 에서
@@ -222,7 +222,7 @@ export interface TransclusionTarget {
  *   - 콜론 포함 + 틀 접두사 아님(`freq:foo` 등) → 익스텐션(`type:'extension'`, slug 원문)
  *   - 그 외 → 틀(`type:'template'`, 미접두 시 `틀:` 자동 부착)
  *
- * `wiki.ts` extractLinks / `blog.ts` extractBlogTemplateLinks / `palettes.ts`
+ * `shared/links.ts` extractPageLinks / `blog.ts` extractBlogTemplateLinks / `palettes.ts`
  * extractTemplateSlugsFromContent 의 template/extension 분기가 공유하는 단일 소스.
  * 호출 측은 코드블록을 미리 제거해 넘겨도 되고(이중 보호), 넘기지 않아도 scanCodeSpan
  * 이 백틱 코드 스팬을 건너뛴다.

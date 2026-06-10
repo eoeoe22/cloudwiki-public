@@ -104,7 +104,7 @@ export const PAGE_BUNDLES: Record<string, BundleName[]> = {
     '/ws-settings.html':    ['base'],
     '/ws-files.html':       ['base'],
     '/ws-doc.html':         ['base', 'markdown'],
-    '/ws-edit.html':        ['base', 'markdown'],
+    '/ws-edit.html':        ['base', 'markdown', 'editor'],
 };
 
 /**

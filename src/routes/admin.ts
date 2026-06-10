@@ -1567,7 +1567,7 @@ adminRoutes.get('/media', async (c) => {
  * 이미지 사용 여부를 부분문자열 매칭으로 판정할 때 쓰는 SQL 조건과 바인딩.
  * - r2_key(`images/foo.png`): `![alt](/media/images/...)` 마크다운 임베드 등 직접 URL 참조
  * - `[[이미지:foo.png]]` 형태의 wiki-link 네비게이션 링크도 "사용 중"으로 간주한다.
- *   이 형태는 extractLinks()가 link_type='wikilink'로만 기록하므로 page_links 1차 검사에서
+ *   이 형태는 extractPageLinks()가 link_type='wikilink'로만 기록하므로 page_links 1차 검사에서
  *   누락되며, 본문에 r2_key 부분문자열도 없으므로 기존 패턴 1개로도 누락된다.
  *   단순 네비게이션 링크라도 GC가 삭제하면 메타페이지(/w/이미지:foo.png)가 깨지므로 보호한다.
  *   `]]` / `|` / `#` 세 종결 형태를 모두 커버한다(공백 변형은 드물어 미포함).

@@ -28,7 +28,7 @@ function stripCodeBlocks(content: string): string {
 /**
  * 블로그 본문에서 이미지 R2 키(`images/...`) 를 추출해 target_slug 목록 반환.
  * 에디터는 마크다운 `![alt](/media/images/...)` 또는 HTML `<img src=".../images/...">`
- * 형태로 이미지를 삽입하므로 위키의 extractLinks() 와 동일한 정규식으로 추적한다.
+ * 형태로 이미지를 삽입하므로 위키의 extractPageLinks() 와 동일한 정규식으로 추적한다.
  * 미디어 사용 여부 판정(admin.ts:702 의 unused media 체크 등)이 이 행에 의존하므로
  * 누락 시 사용 중인 블로그 이미지가 미사용으로 분류되어 삭제될 수 있다.
  */
@@ -70,7 +70,7 @@ export function extractBlogPaletteLinks(content: string): string[] {
  * 블로그 본문에서 {{틀명}} 트랜스클루전 대상 slug 를 추출.
  * loadPalettesForBlogPost 가 page_links(link_type='template') 를 따라가
  * 트랜스클루전된 틀이 참조하는 팔레트도 합집합으로 끌어오기 위함.
- * wiki.ts extractLinks() 의 template 분기와 동일한 정규화 정책(틀:/template:/템플릿: prefix
+ * shared/links.ts extractPageLinks() 의 template 분기와 동일한 정규화 정책(틀:/template:/템플릿: prefix
  * 자동 부착, # 섹션 앵커 제거)을 사용한다.
  */
 export function extractBlogTemplateLinks(content: string): string[] {

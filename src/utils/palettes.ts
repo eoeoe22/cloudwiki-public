@@ -99,7 +99,7 @@ export async function loadAllPaletteRows(db: D1Database): Promise<PaletteRow[]> 
 }
 
 /**
- * 본문 텍스트에서 {palette:이름} 토큰의 이름을 추출. wiki.ts extractLinks() palette
+ * 본문 텍스트에서 {palette:이름} 토큰의 이름을 추출. shared/links.ts extractPageLinks() palette
  * 분기와 동일한 정규식·정책. 코드블록은 비교적 덜 빈번한 경로라 여기서는 단순화한다
  * (caller 가 raw page 본문을 그대로 넘기는 경우, 코드블록 안의 토큰까지 잡힐 수 있지만
  * 잘못된 매칭이 발생해도 빈 결과보다는 안전 — 미사용 팔레트가 SSR 페이로드에 끼는 정도).
@@ -115,7 +115,7 @@ export function extractPaletteNamesFromContent(content: string): string[] {
 }
 
 /**
- * 본문에서 {{틀명}} 트랜스클루전 대상 slug 를 추출. wiki.ts extractLinks() 와
+ * 본문에서 {{틀명}} 트랜스클루전 대상 slug 를 추출. shared/links.ts extractPageLinks() 와
  * blog.ts extractBlogTemplateLinks 의 template 분기와 동일한 정규화 정책.
  * loadPalettes* 의 폴백에서 page_links template 인덱스가 비어있을 때 (저장 직후
  * 또는 레거시 블로그) content 로부터 직접 트랜스클루전 대상 slug 를 얻기 위함.

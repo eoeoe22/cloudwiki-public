@@ -51,7 +51,7 @@ export async function invalidateBacklinkCaches(c: any, slug: string, db: D1Datab
     const templatePrefixes = ['틀:', 'template:', '템플릿:'];
     const matchedPrefix = templatePrefixes.find(p => slug.startsWith(p));
     if (matchedPrefix) {
-        // extractLinks()는 {{Foo}}를 항상 '틀:Foo'로 저장하므로,
+        // extractPageLinks()는 {{Foo}}를 항상 '틀:Foo'로 저장하므로,
         // template:Foo / 템플릿:Foo 문서 편집 시에도 '틀:Foo' 변형을 포함해야 함 (반대도 동일)
         const baseName = slug.substring(matchedPrefix.length);
         for (const prefix of templatePrefixes) {

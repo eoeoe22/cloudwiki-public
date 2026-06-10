@@ -1,7 +1,7 @@
 import type { Context } from 'hono';
 import type { Env } from '../types';
 import { computePageMetrics } from '../routes/wiki';
-import { extractTransclusionTargets } from '../shared/transclusion';
+import { extractPageLinks } from '../shared/links';
 import { uploadWorkspaceRevisionToR2 } from './r2';
 import { extractWorkspaceMediaRefs, syncWorkspaceMediaVisibility } from './workspaceMedia';
 
@@ -22,68 +22,6 @@ import { extractWorkspaceMediaRefs, syncWorkspaceMediaVisibility } from './works
  *     동일 버전을 계산한 경합 요청의 롤백 delete 가 승리한 리비전 본문을 지우지 못한다.
  */
 
-/**
- * 워크스페이스 문서 본문에서 링크를 추출한다 (workspace_page_links 색인용).
- *
- * wiki.ts 의 비공개 extractLinks 와 동일한 파싱(wikilink/트랜스클루전/이미지/팔레트)을
- * 로컬로 유지한다 — 전역 라우트 내부 함수를 export 해 결합도를 높이는 대신 작은 함수를
- * 복제한다(전역 인덱스와 워크스페이스 인덱스는 독립 진화 가능). 워크스페이스 미디어
- * 참조(`/wsmedia/{wsId}/{filename}`)는 워크스페이스 id 가 필요하므로 이 함수가 아니라
- * saveWorkspacePage 가 extractWorkspaceMediaRefs 로 별도 수집해 link_type='media' 로 합친다.
- */
-function extractWorkspaceLinks(content: string): { target_slug: string; link_type: string }[] {
-    const links: { target_slug: string; link_type: string }[] = [];
-    const seen = new Set<string>();
-
-    // 코드블럭/코드스팬 내부 제외
-    const cleaned = content.replace(/```[\s\S]*?```/g, '').replace(/`[^`\n]+`/g, '');
-
-    // 1) [[위키링크]] / [[위키링크|표시명]] / [[위키링크#섹션]]
-    const wikiLinkRegex = /\[\[([^\]]+)\]\]/g;
-    for (const m of cleaned.matchAll(wikiLinkRegex)) {
-        const raw = m[1].trim();
-        const slug = raw.split('|')[0].split('#')[0].trim();
-        if (!slug) continue;
-        const key = `wikilink:${slug}`;
-        if (!seen.has(key)) {
-            seen.add(key);
-            links.push({ target_slug: slug, link_type: 'wikilink' });
-        }
-    }
-
-    // 2) {{틀 트랜스클루전}} / {{익스텐션:문서}} — 스택 기반 스캐너(공유 단일 소스) 사용.
-    for (const t of extractTransclusionTargets(cleaned)) {
-        const key = `${t.type}:${t.slug}`;
-        if (!seen.has(key)) {
-            seen.add(key);
-            links.push({ target_slug: t.slug, link_type: t.type });
-        }
-    }
-
-    // 3) 전역 이미지 참조 (images/ R2 키) — 인덱스만 워크스페이스 테이블에 남긴다.
-    const imageRegex = /images\/[^\s\[\]()<>"'\\?#|^]+?\.\w+/g;
-    for (const m of cleaned.matchAll(imageRegex)) {
-        const r2Key = m[0].trim();
-        const key = `image:${r2Key}`;
-        if (!seen.has(key)) {
-            seen.add(key);
-            links.push({ target_slug: r2Key, link_type: 'image' });
-        }
-    }
-
-    // 4) {palette:이름} 토큰
-    const paletteRegex = /\{palette:\s*([A-Za-z0-9_-]+)\s*\}/g;
-    for (const m of cleaned.matchAll(paletteRegex)) {
-        const name = m[1];
-        const key = `palette:${name}`;
-        if (!seen.has(key)) {
-            seen.add(key);
-            links.push({ target_slug: name, link_type: 'palette' });
-        }
-    }
-
-    return links;
-}
 
 export interface SaveWorkspacePageInput {
     workspaceId: number;
@@ -284,7 +222,7 @@ export async function saveWorkspacePage(
 
     // ===== 커밋 후 색인/동기화 (best-effort — 본문 커밋은 이미 완료) =====
     try {
-        const links = extractWorkspaceLinks(input.content);
+        const links = extractPageLinks(input.content);
         const mediaSeen = new Set<string>();
         const stmts: D1PreparedStatement[] = [
             db.prepare('DELETE FROM workspace_page_links WHERE source_page_id = ?').bind(pageId),

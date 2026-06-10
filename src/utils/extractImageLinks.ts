@@ -1,7 +1,7 @@
 /**
  * 본문(마크다운/HTML)에서 R2 미디어 키(`images/...`)를 추출한다.
  *
- * 위키 `src/routes/wiki.ts` 의 `extractLinks()` image 분기와 동일한 정규식을
+ * `src/shared/links.ts` 의 `extractPageLinks()` image 분기와 동일한 정규식을
  * 사용한다. 토론·티켓 댓글에서도 동일한 규칙으로 미디어 참조를 인덱싱해
  * 관리자 미디어 GC(`/admin/media/gc`)가 토론·티켓에서만 사용 중인 이미지를
  * 미사용으로 오인 삭제하지 않도록 보호한다.
