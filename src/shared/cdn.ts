@@ -43,8 +43,16 @@ export const CDN_URLS = {
     prismAutoloader:      `${C}/prism/${CDN_VERSIONS.prism}/plugins/autoloader/prism-autoloader.min.js`,
     prismComponentsBase:  `${C}/prism/${CDN_VERSIONS.prism}/components/`,
     // Mermaid 는 번들/번들맵에 넣지 않고 render.ts 에서 다이어그램 블록이 있을 때만
-    // 동적 import() 로 지연 로드한다(다이어그램 없는 문서는 비용 0). esm.sh ESM 진입점.
-    mermaidEsm:           `${E}/mermaid@${CDN_VERSIONS.mermaid}`,
+    // 동적 import() 로 지연 로드한다(다이어그램 없는 문서는 비용 0).
+    // ⚠ esm.sh 의 `/mermaid` 기본 진입점은 package exports 의 `mermaid.core.mjs` 로 해석되는데,
+    // 이 빌드는 d3·dompurify·stylis·es-toolkit·ts-dedent 등을 bare import 로 외부화한다.
+    // esm.sh 는 그 의존성들을 각각 별도 URL 로 서빙하고 d3 등은 다시 수십 개의 하위 패키지로
+    // 전개되므로, 다이어그램 1개를 그리려고 수백 건의 네트워크 요청 워터폴이 발생해 로딩이
+    // 매우 느렸다. 대신 mermaid 가 공식 권장하는 **사전 번들된** 브라우저 ESM 빌드
+    // (`dist/mermaid.esm.min.mjs`)를 jsdelivr 에서 직접 로드한다 — 모든 의존성이 동일 CDN 의
+    // 인접 청크로 번들돼 있어(앞단 8개 정적 + 나머지는 다이어그램 종류별 지연 로드) 요청 수가
+    // 적고 워터폴이 사라진다. 상대 경로 청크는 이 URL 기준으로 해석된다.
+    mermaidEsm:           `${J}/mermaid@${CDN_VERSIONS.mermaid}/dist/mermaid.esm.min.mjs`,
 } as const;
 
 export const FONTS = {

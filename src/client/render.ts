@@ -4394,7 +4394,7 @@ function _mermaidInitConfig() {
 /** mermaid 모듈을 1회 지연 로드(메모이즈). 실패 시 promise 를 비워 재시도를 허용한다. */
 function _loadMermaid() {
     if (_mermaidPromise) return _mermaidPromise;
-    // Vite 가 URL 동적 import 를 번들하지 않도록 @vite-ignore. 런타임 네이티브 ESM 로 esm.sh 에서 로드.
+    // Vite 가 URL 동적 import 를 번들하지 않도록 @vite-ignore. 런타임 네이티브 ESM 로 jsdelivr 사전 번들 빌드에서 로드.
     _mermaidPromise = import(/* @vite-ignore */ CDN_URLS.mermaidEsm)
         .then(mod => {
             const mermaid = mod.default || mod;
