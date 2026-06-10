@@ -1371,6 +1371,17 @@ document.addEventListener('DOMContentLoaded', async () => {
             decoration: (match, view, pos) => {
                 if (isInInlineCode(view.state, pos)) return null;
                 const name = (match[1] || '').trim();
+                // 빌트인 팔레트: 실제 렌더(mark.wiki-palette-NAME 클래스)와 동일하게 토큰 var() 로
+                // 스와치를 표시해 테마/스킨/다크모드를 라이브 반영한다(.cm-palette-badge::after 가
+                // --palette-bg/--palette-color 를 읽는다). var() 는 우리가 통제하는 토큰이라 안전.
+                const builtins = window.WIKI_HARDCODED_PALETTES || {};
+                if (Object.prototype.hasOwnProperty.call(builtins, name)) {
+                    return Decoration.mark({
+                        class: "cm-palette-badge",
+                        attributes: { style: `--palette-bg: var(--wiki-palette-${name}-bg); --palette-color: var(--wiki-palette-${name}-text);` }
+                    });
+                }
+                // 커스텀 팔레트: 모드별 hex 로 표시(임의값이라 인라인 hex 유지).
                 let variant = null;
                 try {
                     const merged = (typeof window.getMergedWikiPalettes === 'function') ? window.getMergedWikiPalettes() : {};
@@ -1405,24 +1416,41 @@ document.addEventListener('DOMContentLoaded', async () => {
         const paramTokenPlugin = makePlugin(paramTokenMatcher);
 
         // ==text== 형광펜 — {color:..} / {bg:..} / {palette:..} 선행 토큰을 0개 이상 흡수하고
-        // render.ts 와 동일하게 (뒤 토큰이 우선) 색을 풀어 본문에만 데코를 적용한다.
-        // 선행 토큰 자체는 colorBadgePlugin / paletteBadgePlugin 이 별도 처리.
-        // {palette:NAME} 은 현재 다크모드에 맞춰 등록 팔레트의 bg/color 를 풀어 그 자리에 삽입한 뒤
-        // bg/color 토큰을 순서대로 스캔한다 (render.ts 의 _resolvePaletteTokens 와 동일 의미).
-        const resolvePalettePrefix = (raw) => {
-            if (!raw || raw.indexOf('{palette:') === -1) return raw;
-            const merged = (typeof window.getMergedWikiPalettes === 'function') ? window.getMergedWikiPalettes() : {};
-            return raw.replace(/\{palette:\s*([^}\s][^}]*?)\s*\}/g, (m, nameRaw) => {
-                const name = (nameRaw || '').trim();
-                const entry = merged[name];
-                if (!entry) return m;
-                const variant = isDarkMode ? (entry.dark || entry.light) : (entry.light || entry.dark);
-                if (!variant) return m;
-                let out = '';
-                if (variant.bg) out += `{bg:${variant.bg}}`;
-                if (variant.color) out += `{color:${variant.color}}`;
-                return out || m;
-            });
+        // render.ts renderer 와 동일한 채널 우선 규칙(뒤 토큰이 우선)으로 최종 bg/color 를 산출해
+        // 본문에만 데코를 적용한다. 선행 토큰 자체는 colorBadgePlugin / paletteBadgePlugin 이 별도 처리.
+        //   - 빌트인 {palette:NAME}: 실제 렌더(클래스)와 동일하게 토큰 var(--wiki-palette-*) 로 풀어
+        //     테마/스킨/다크모드를 반영(우리가 통제하는 토큰이라 _isSafeCssColor 우회).
+        //   - 커스텀 {palette:NAME}: 모드별 hex(안전 검증), {bg:}/{color:}: 리터럴(안전 검증).
+        const resolveHighlightStyle = (prefix) => {
+            const builtins = window.WIKI_HARDCODED_PALETTES || {};
+            const isSafe = (typeof window._isSafeCssColor === 'function') ? window._isSafeCssColor : () => false;
+            let merged = null; // 커스텀은 필요 시에만 조회
+            let bg = '', color = '';
+            const re = /\{(palette|bg|color):\s*([^}]+?)\s*\}/g;
+            let m;
+            while ((m = re.exec(prefix)) !== null) {
+                const kind = m[1];
+                const val = m[2].trim();
+                if (kind === 'bg') { bg = isSafe(val) ? val : ''; }
+                else if (kind === 'color') { color = isSafe(val) ? val : ''; }
+                else { // palette
+                    if (Object.prototype.hasOwnProperty.call(builtins, val)) {
+                        bg = `var(--wiki-palette-${val}-bg)`;
+                        color = `var(--wiki-palette-${val}-text)`;
+                    } else {
+                        if (!merged) merged = (typeof window.getMergedWikiPalettes === 'function') ? window.getMergedWikiPalettes() : {};
+                        const entry = merged[val];
+                        if (entry) {
+                            const variant = isDarkMode ? (entry.dark || entry.light) : (entry.light || entry.dark);
+                            if (variant) {
+                                if (variant.bg && isSafe(variant.bg)) bg = variant.bg;
+                                if (variant.color && isSafe(variant.color)) color = variant.color;
+                            }
+                        }
+                    }
+                }
+            }
+            return { bg, color };
         };
         const highlightMatcher = new MatchDecorator({
             regexp: /((?:\{(?:palette|bg|color):[^}]+\})*)==([^=\n]+)==/g,
@@ -1431,17 +1459,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const prefix = match[1] || '';
                 const innerStart = from + prefix.length;
                 const innerEnd = to;
-                const expanded = resolvePalettePrefix(prefix);
-                let color = '';
-                let bg = '';
-                const colorRe = /\{color:\s*([^}]+)\}/g;
-                const bgRe = /\{bg:\s*([^}]+)\}/g;
-                let pm;
-                while ((pm = colorRe.exec(expanded)) !== null) color = pm[1].trim();
-                while ((pm = bgRe.exec(expanded)) !== null) bg = pm[1].trim();
-                const isSafe = (typeof window._isSafeCssColor === 'function') ? window._isSafeCssColor : () => false;
-                const safeColor = color && isSafe(color) ? color : '';
-                const safeBg = bg && isSafe(bg) ? bg : '';
+                const { bg: safeBg, color: safeColor } = resolveHighlightStyle(prefix);
                 if (!safeColor && !safeBg) {
                     add(innerStart, innerEnd, Decoration.mark({ class: 'cm-highlight' }));
                     return;

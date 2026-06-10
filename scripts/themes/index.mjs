@@ -79,6 +79,24 @@ export const THEMEABLE_TOKENS = {
         '--wiki-success': '#10B981',
         '--wiki-warning': '#F59E0B',
         '--wiki-danger': '#EF4444',
+        // 빌트인 컬러 팔레트({palette:NAME}==text==) — render.css 의 mark.wiki-palette-* 가 소비.
+        // primary/success/warning/danger 의 bg 는 시맨틱 토큰을 var() 참조하므로 위 토큰만 덮어도
+        // 자동 추종한다(이 키를 직접 지정하면 본문 팔레트를 시맨틱색과 독립으로 바꿀 수 있다).
+        // secondary/info/muted 는 대응 시맨틱 토큰이 없어 자체 중립색을 가진다.
+        '--wiki-palette-primary-bg': 'var(--wiki-primary)',
+        '--wiki-palette-primary-text': 'var(--wiki-btn-text)',
+        '--wiki-palette-secondary-bg': 'light-dark(#6C757D, #5A6370)',
+        '--wiki-palette-secondary-text': '#FFFFFF',
+        '--wiki-palette-success-bg': 'var(--wiki-success)',
+        '--wiki-palette-success-text': '#1A1A1A',
+        '--wiki-palette-info-bg': 'light-dark(#0DCAF0, #0A7A9B)',
+        '--wiki-palette-info-text': 'light-dark(#000000, #FFFFFF)',
+        '--wiki-palette-warning-bg': 'var(--wiki-warning)',
+        '--wiki-palette-warning-text': '#1A1A1A',
+        '--wiki-palette-danger-bg': 'var(--wiki-danger)',
+        '--wiki-palette-danger-text': '#1A1A1A',
+        '--wiki-palette-muted-bg': 'light-dark(#ADB5BD, #6C757D)',
+        '--wiki-palette-muted-text': 'light-dark(#212529, #FFFFFF)',
         // 표면/보조
         '--wiki-code-bg': 'light-dark(#f8fafc, #000000)',
         '--wiki-toc-bg': 'light-dark(rgba(255, 255, 255, 0.6), rgba(255, 255, 255, 0.08))',

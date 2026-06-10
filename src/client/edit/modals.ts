@@ -80,6 +80,20 @@ window.iconPickerSavedSelection = null;
 // 아이콘 목록 로더와 filterIcons 는 src/client/iconLib.ts 에서 import 한다.
 // (edit/blog-edit 의 아이콘 피커와 admin/blog 의 standalone iconPicker 가 공유.)
 
+// 팔레트 스와치(여러 삽입 모달이 공유)의 인라인 style 조각(`background:..;color:..;`)을 만든다.
+// 빌트인 이름은 본문 렌더가 mark.wiki-palette-NAME 클래스(= style.css 의 --wiki-palette-* 토큰)로
+// 그리므로 스와치도 토큰 var() 로 칠해 색을 맞춘다(테마/스킨/다크모드 자동 반영, 통제된 토큰이라 안전).
+// 커스텀 팔레트는 임의값이라 모드별 hex 를 _isSafeCssColor 로 검증해 인라인 hex 로 칠한다.
+function paletteSwatchStyle(p: { name: string; variant: { bg?: string; color?: string } }): string {
+    if (window.WIKI_HARDCODED_PALETTES
+        && Object.prototype.hasOwnProperty.call(window.WIKI_HARDCODED_PALETTES, p.name)) {
+        return `background:var(--wiki-palette-${p.name}-bg);color:var(--wiki-palette-${p.name}-text);`;
+    }
+    const bg = window._isSafeCssColor?.(p.variant.bg || '') ? p.variant.bg! : 'transparent';
+    const color = window._isSafeCssColor?.(p.variant.color || '') ? p.variant.color! : 'inherit';
+    return `background:${bg};color:${color};`;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 아이콘 피커 모달
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1086,9 +1100,7 @@ function openCardInsertModal(): void {
                     <span class="card-insert-palette-swatch-none">없음</span>
                 </button>`;
         for (const p of palettes) {
-            const bg = window._isSafeCssColor?.(p.variant.bg || '') ? p.variant.bg! : 'transparent';
-            const color = window._isSafeCssColor?.(p.variant.color || '') ? p.variant.color! : 'inherit';
-            html += `<button type="button" class="card-insert-palette-swatch" data-palette="${escapeHtml(p.name)}" title="${escapeHtml(p.name)}" style="background:${bg};color:${color};">${escapeHtml(p.name)}</button>`;
+            html += `<button type="button" class="card-insert-palette-swatch" data-palette="${escapeHtml(p.name)}" title="${escapeHtml(p.name)}" style="${paletteSwatchStyle(p)}">${escapeHtml(p.name)}</button>`;
         }
         html += `</div>`;
         return html;
@@ -1294,9 +1306,7 @@ function openPaletteColorModal(): void {
 
     let paletteHtml = `<div class="d-flex flex-wrap gap-2 mb-3">`;
     for (const p of palettes) {
-        const bg = window._isSafeCssColor?.(p.variant.bg || '') ? p.variant.bg! : 'transparent';
-        const color = window._isSafeCssColor?.(p.variant.color || '') ? p.variant.color! : 'inherit';
-        paletteHtml += `<button type="button" class="btn btn-sm palette-insert-btn" data-name="${escapeHtml(p.name)}" style="background:${bg};color:${color};border:1px solid var(--wiki-border);">${escapeHtml(p.name)}</button>`;
+        paletteHtml += `<button type="button" class="btn btn-sm palette-insert-btn" data-name="${escapeHtml(p.name)}" style="${paletteSwatchStyle(p)}border:1px solid var(--wiki-border);">${escapeHtml(p.name)}</button>`;
     }
     paletteHtml += `</div>`;
 
@@ -1688,9 +1698,7 @@ function openComponentInsertModal(): void {
                     <span class="badge-insert-palette-swatch-none">없음</span>
                 </button>`;
         for (const p of palettes) {
-            const bg = window._isSafeCssColor?.(p.variant.bg || '') ? p.variant.bg! : 'transparent';
-            const color = window._isSafeCssColor?.(p.variant.color || '') ? p.variant.color! : 'inherit';
-            html += `<button type="button" class="badge-insert-palette-swatch" data-palette="${escapeHtml(p.name)}" title="${escapeHtml(p.name)}" style="background:${bg};color:${color};">${escapeHtml(p.name)}</button>`;
+            html += `<button type="button" class="badge-insert-palette-swatch" data-palette="${escapeHtml(p.name)}" title="${escapeHtml(p.name)}" style="${paletteSwatchStyle(p)}">${escapeHtml(p.name)}</button>`;
         }
         return html;
     }
@@ -2631,10 +2639,8 @@ function openStructureBlockInsertModal(): void {
                     <span class="card-insert-palette-swatch-none">없음</span>
                 </button>`;
         for (const p of palettes) {
-            const bg = window._isSafeCssColor?.(p.variant.bg || '') ? p.variant.bg! : 'transparent';
-            const color = window._isSafeCssColor?.(p.variant.color || '') ? p.variant.color! : 'inherit';
             const active = current === p.name ? ' active' : '';
-            html += `<button type="button" class="card-insert-palette-swatch${active}" data-palette="${escapeHtml(p.name)}" title="${escapeHtml(p.name)}" style="background:${bg};color:${color};">${escapeHtml(p.name)}</button>`;
+            html += `<button type="button" class="card-insert-palette-swatch${active}" data-palette="${escapeHtml(p.name)}" title="${escapeHtml(p.name)}" style="${paletteSwatchStyle(p)}">${escapeHtml(p.name)}</button>`;
         }
         html += `</div><input type="hidden" id="${hiddenId}" value="${escapeHtml(current)}">`;
         return html;

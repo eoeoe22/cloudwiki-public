@@ -68,33 +68,67 @@ function initMarkedConfig() {
                 },
                 childTokens: ['tokens'],
                 renderer(token) {
-                    let bg = '', color = '';
+                    // 채널별 소스 추적: null | { kind:'palette', value:이름 } | { kind:'literal', value:색 }
+                    // prefix 토큰을 좌→우 순회하며 뒤 토큰이 앞을 덮어쓴다(순서 우선 보존).
+                    //   - 빌트인 {palette:NAME} : 두 채널을 모두 그 팔레트로 리셋 → render.css 의
+                    //     mark.wiki-palette-NAME 클래스로 렌더(테마/스킨/다크모드 CSS 자동 반영).
+                    //   - 커스텀 {palette:NAME}  : 모드별 hex 로 풀어 두 채널 literal(현행 의미 유지).
+                    //   - {bg:V}/{color:V}       : 해당 채널만 literal 로 덮음(클래스 위에 인라인 우선).
+                    // 예: {palette:primary}{bg:blue} → bg=blue(인라인), color=primary(클래스).
+                    let bgCh = null, colorCh = null;
                     if (token.prefix) {
-                        // _processInlineLayoutTokens.parseStylePrefix 와 동일하게
-                        // 모든 토큰을 순서대로 소비하며 덮어써, 뒤쪽 토큰이 우선하도록 한다.
-                        // 예: {palette:primary}{bg:blue} → palette 가 풀린 후의 {bg:#CFE2FF}
-                        // 보다 뒤의 {bg:blue} 가 최종값이 된다.
-                        let t = _resolvePaletteTokens(token.prefix);
-                        let replaced = true;
-                        while (replaced) {
-                            replaced = false;
-                            const bm = t.match(/\{bg:\s*([^}]+)\}/);
-                            if (bm) { bg = bm[1].trim(); t = t.replace(bm[0], ''); replaced = true; }
-                            const cm = t.match(/\{color:\s*([^}]+)\}/);
-                            if (cm) { color = cm[1].trim(); t = t.replace(cm[0], ''); replaced = true; }
+                        let merged = null; // 커스텀 팔레트는 필요 시에만 조회
+                        const re = /\{(palette|bg|color):\s*([^}]+?)\s*\}/g;
+                        let m;
+                        while ((m = re.exec(token.prefix)) !== null) {
+                            const kind = m[1];
+                            const val = m[2].trim();
+                            if (kind === 'bg') {
+                                bgCh = { kind: 'literal', value: val };
+                            } else if (kind === 'color') {
+                                colorCh = { kind: 'literal', value: val };
+                            } else { // palette
+                                if (BUILTIN_PALETTE_NAMES.has(val)) {
+                                    bgCh = { kind: 'palette', value: val };
+                                    colorCh = { kind: 'palette', value: val };
+                                } else {
+                                    if (!merged) merged = getMergedWikiPalettes();
+                                    const entry = merged[val];
+                                    if (entry) {
+                                        const variant = _isWikiDarkMode() ? entry.dark : entry.light;
+                                        if (variant) {
+                                            if (variant.bg) bgCh = { kind: 'literal', value: variant.bg };
+                                            if (variant.color) colorCh = { kind: 'literal', value: variant.color };
+                                        }
+                                    }
+                                    // 미등록 이름: 무시 (현행 유지)
+                                }
+                            }
                         }
                     }
-                    const safeBg = bg && _isSafeCssColor(bg) ? bg : '';
-                    const safeColor = color && _isSafeCssColor(color) ? color : '';
-                    // color 만 지정된 경우: 형광펜 강조 없이 글씨색만 변경한 <span> 으로 렌더.
-                    if (safeColor && !safeBg) {
-                        return `<span style="color:${safeColor};">` + this.parser.parseInline(token.tokens) + '</span>';
-                    }
+                    const inner = this.parser.parseInline(token.tokens);
+                    const classes = [];
                     let style = '';
-                    if (safeBg) style += `background-color:${safeBg};`;
-                    if (safeColor) style += `color:${safeColor};`;
+                    let hasBg = false, hasColor = false;
+                    if (bgCh) {
+                        if (bgCh.kind === 'palette') { classes.push('wiki-palette-' + bgCh.value); hasBg = true; }
+                        else if (_isSafeCssColor(bgCh.value)) { style += `background-color:${bgCh.value};`; hasBg = true; }
+                    }
+                    if (colorCh) {
+                        if (colorCh.kind === 'palette') { classes.push('wiki-palette-' + colorCh.value); hasColor = true; }
+                        else if (_isSafeCssColor(colorCh.value)) { style += `color:${colorCh.value};`; hasColor = true; }
+                    }
+                    // color 만 지정(배경 없음): 형광펜 없이 글씨색만 바꾼 <span>.
+                    // literal 채널일 때만 — 빌트인 팔레트는 bg 가 거부돼도(예: {palette:primary}{bg:이상값})
+                    // color 채널이 palette 인 채로 도달할 수 있는데, 그때 colorCh.value 는 색이 아니라
+                    // 팔레트 '이름'(primary 등)이라 span 의 color 로 쓰면 무효 CSS 가 된다. 그 경우는
+                    // 아래 <mark class> 경로로 떨어뜨려 팔레트 클래스(bg+color)가 살아나게 한다.
+                    if (hasColor && !hasBg && colorCh.kind === 'literal') {
+                        return `<span style="color:${colorCh.value};">` + inner + '</span>';
+                    }
+                    const classAttr = classes.length ? ` class="${[...new Set(classes)].join(' ')}"` : '';
                     const styleAttr = style ? ` style="${style}"` : '';
-                    return `<mark${styleAttr}>` + this.parser.parseInline(token.tokens) + '</mark>';
+                    return `<mark${classAttr}${styleAttr}>` + inner + '</mark>';
                 }
             },
             {
@@ -1747,6 +1781,10 @@ function _isSafeCssColor(value) {
     if (!value || typeof value !== 'string') return false;
     // 위험 키워드 차단
     const lower = value.toLowerCase().replace(/\s/g, '');
+    // 예외: 통제된 빌트인 팔레트 토큰 참조만 허용. _resolvePaletteTokens 가 빌트인 {palette:NAME}
+    // 을 이 형태로 풀어 컴포넌트(badge/tag/button/stat/제목/카드)에 인라인하므로 var() 가 필요하다.
+    // 패턴이 --wiki-palette-<영소문자>-(bg|text) 로 고정돼 임의 var() 주입은 불가하다(아래 var( 차단 유지).
+    if (/^var\(--wiki-palette-[a-z]+-(?:bg|text)\)$/.test(lower)) return true;
     if (lower.includes('url(') || lower.includes('expression(') || lower.includes('var(') || lower.includes('env(')) return false;
     // CSS.supports가 있으면 브라우저 네이티브 검증
     if (typeof CSS !== 'undefined' && CSS.supports) {
@@ -1758,8 +1796,16 @@ function _isSafeCssColor(value) {
 
 // ── 컬러 팔레트 하드코딩 프리셋 (단일 소스) ──
 // render.js(렌더링)와 edit.js(에디터 자동완성)가 동일한 정의를 참조하도록 render.js에 둔다.
-// 높은 채도의 배경색 기반. 라이트/다크 모두 자연스럽게 보이도록 모드별 색상을 분리 정의.
-// 이름 충돌 시 커스텀(appConfig.palettes)이 하드코딩을 덮어씌움.
+// 라이트/다크 모두 자연스럽게 보이도록 모드별 색상을 분리 정의.
+// (빌트인 이름은 palettes.ts RESERVED_PALETTE_NAMES 로 커스텀 생성이 차단되고, 본문 renderer 도
+//  BUILTIN_PALETTE_NAMES 를 먼저 가로채므로 "커스텀이 빌트인 이름을 덮는" 시나리오는 발생하지 않는다.)
+//
+// ⚠ 본문 렌더 경로는 빌트인 7종을 더 이상 이 hex 로 인라인하지 않고 render.css 의
+// mark.wiki-palette-NAME 클래스(= style.css :root 의 --wiki-palette-* 토큰 참조)로 렌더해
+// 테마/스킨/다크모드에 자동 반응한다. 따라서 아래 hex 는 (1) 빌트인 이름 집합 enumeration
+// (BUILTIN_PALETTE_NAMES / 에디터 자동완성 목록)과 (2) 커스텀 판정의 소스로만 쓰이며,
+// 빌트인 스와치 미리보기도 클래스를 쓰므로 hex 자체는 표시에 거의 관여하지 않는다.
+// 색을 바꾸려면 style.css 의 --wiki-palette-* 토큰을 수정하고 이 hex 와 동기화한다.
 const WIKI_HARDCODED_PALETTES = {
     primary:   { light: { bg: '#0D65F5', color: '#FFFFFF' }, dark: { bg: '#0D65F5', color: '#FFFFFF' } },
     secondary: { light: { bg: '#6C757D', color: '#FFFFFF' }, dark: { bg: '#5A6370', color: '#FFFFFF' } },
@@ -1769,6 +1815,10 @@ const WIKI_HARDCODED_PALETTES = {
     danger:    { light: { bg: '#DC3545', color: '#FFFFFF' }, dark: { bg: '#DC3545', color: '#FFFFFF' } },
     muted:     { light: { bg: '#ADB5BD', color: '#212529' }, dark: { bg: '#6C757D', color: '#FFFFFF' } },
 };
+
+// 빌트인 팔레트 이름 집합(= 위 테이블 키, palettes.ts RESERVED_PALETTE_NAMES 와 동일 집합).
+// 본문 renderer 가 "빌트인(클래스) vs 커스텀(인라인 hex)" 을 가르는 단일 판정 소스.
+const BUILTIN_PALETTE_NAMES = new Set(Object.keys(WIKI_HARDCODED_PALETTES));
 
 /**
  * 커스텀 팔레트 + 하드코딩을 병합한 팔레트 맵. 커스텀 우선.
@@ -1817,19 +1867,29 @@ function _isWikiDarkMode() {
 }
 
 /**
- * 텍스트에 포함된 {palette:이름} 토큰을 {bg:#...}{color:#...} 토큰으로 치환.
+ * 텍스트에 포함된 {palette:이름} 토큰을 {bg:...}{color:...} 토큰으로 치환.
+ * - 빌트인 7종: --wiki-palette-* 토큰을 var() 로 풀어, ==text== 하이라이트(클래스)와 동일한
+ *   테마/스킨/다크모드 자동 반영을 컴포넌트(badge/tag/button/stat/제목/카드)에도 준다.
+ *   (이 var() 는 _isSafeCssColor 의 통제된 예외로 인라인 style 까지 통과한다.)
+ * - 커스텀: 현재 모드의 hex 로 풀어 인라인(임의값).
  * 존재하지 않는 팔레트는 원본 토큰을 그대로 남겨 { bg:}/{color:} 파서에서 무시되도록 함.
  * 기존 렌더링 파이프라인의 매크로 치환 단계로서 동작하며 새로운 렌더 경로를 만들지 않음.
  */
 function _resolvePaletteTokens(text) {
     if (!text || typeof text !== 'string') return text;
     if (text.indexOf('{palette:') === -1) return text;
-    const merged = getMergedWikiPalettes();
-    const isDark = _isWikiDarkMode();
+    let merged = null; // 커스텀 조회는 필요 시에만
+    let isDark = false, isDarkComputed = false;
     return text.replace(/\{palette:\s*([^}\s][^}]*?)\s*\}/g, (match, nameRaw) => {
         const name = nameRaw.trim();
+        if (BUILTIN_PALETTE_NAMES.has(name)) {
+            // 빌트인: 테마 토큰을 var() 로(라이트/다크/스킨은 토큰 자체가 해소).
+            return `{bg:var(--wiki-palette-${name}-bg)}{color:var(--wiki-palette-${name}-text)}`;
+        }
+        if (!merged) merged = getMergedWikiPalettes();
         const entry = merged[name];
         if (!entry) return match; // 미등록 이름: 원본 유지 (bg/color 파서도 매칭 실패하여 무시됨)
+        if (!isDarkComputed) { isDark = _isWikiDarkMode(); isDarkComputed = true; }
         const variant = isDark ? entry.dark : entry.light;
         if (!variant) return match;
         let out = '';

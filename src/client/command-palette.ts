@@ -83,7 +83,7 @@ function newDocument(): void {
     Swal.fire({
         title: '새 문서 만들기',
         input: 'text',
-        inputLabel: '문서 이름 (URL 경로)',
+        inputLabel: '문서 이름',
         inputPlaceholder: '예: my-first-page',
         showCancelButton: true,
         confirmButtonText: '만들기',

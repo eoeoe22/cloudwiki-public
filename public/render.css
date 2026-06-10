@@ -2295,6 +2295,19 @@ html[data-theme="dark"] .wiki-callout-note    { --callout-bg-tint: rgba(161, 161
 .wiki-accordion-empty,
 .wiki-steps-empty { display: none; }
 
+/* 빌트인 컬러 팔레트 — 본문 {palette:NAME}==text== 가 render.ts 에서
+   <mark class="wiki-palette-NAME"> 로 렌더된다. 색은 style.css :root 의 --wiki-palette-*
+   토큰을 참조하므로 테마/스킨/다크모드 전환이 CSS 캐스케이드로 자동 반영된다.
+   bare 셀렉터(특이성 0,1,1)라 .wiki-content 미사용 렌더 경로(diff/discussions 등)에도 적용되고,
+   인라인 {bg:}/{color:} 오버라이드(style 속성, 특이성 1,0,0)에 진다. !important 금지. */
+mark.wiki-palette-primary   { background-color: var(--wiki-palette-primary-bg);   color: var(--wiki-palette-primary-text); }
+mark.wiki-palette-secondary { background-color: var(--wiki-palette-secondary-bg); color: var(--wiki-palette-secondary-text); }
+mark.wiki-palette-success   { background-color: var(--wiki-palette-success-bg);   color: var(--wiki-palette-success-text); }
+mark.wiki-palette-info      { background-color: var(--wiki-palette-info-bg);      color: var(--wiki-palette-info-text); }
+mark.wiki-palette-warning   { background-color: var(--wiki-palette-warning-bg);   color: var(--wiki-palette-warning-text); }
+mark.wiki-palette-danger    { background-color: var(--wiki-palette-danger-bg);    color: var(--wiki-palette-danger-text); }
+mark.wiki-palette-muted     { background-color: var(--wiki-palette-muted-bg);     color: var(--wiki-palette-muted-text); }
+
 /* 검색 결과(?highlight=)에서 진입했을 때 본문에 동적으로 삽입되는 매칭 단어 하이라이트.
    기본 <mark>(브라우저 노랑)와 구분되도록 위키 강조색 배경 + 진입 시 잠깐 펄스 애니메이션. */
 mark.search-hit {

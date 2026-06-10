@@ -24,6 +24,29 @@
   --wiki-danger: #EF4444;
   --wiki-link: var(--wiki-primary);
 
+  /* 빌트인 컬러 팔레트 토큰 — 본문 {palette:NAME}==text== 가 render.css 의
+     mark.wiki-palette-NAME 클래스로 렌더되며 이 토큰을 소비한다(테마/스킨/다크모드 자동 반영).
+     primary/success/warning/danger 의 bg 는 시맨틱 토큰을 var() 참조 → 스킨이 --wiki-primary
+     등만 바꿔도 팔레트가 자동 추종한다. secondary/info/muted 는 대응 시맨틱 토큰이 없어
+     신규 중립색(과거 render.ts WIKI_HARDCODED_PALETTES 의 모드별 hex 승계)을 둔다.
+     테마(scripts/themes/*.mjs)는 이 토큰을 직접 오버라이드해 7종을 독립 제어할 수 있다.
+     ⚠ -text 는 채움 위 글자색. success(#10B981)·danger(#EF4444) 시맨틱 채움은 밝아 흰 글자가
+     WCAG AA(4.5:1) 미달이므로 warning 과 동일하게 어두운 글자(#1A1A1A)를 쓴다(흰색으로 되돌리지 말 것). */
+  --wiki-palette-primary-bg: var(--wiki-primary);
+  --wiki-palette-primary-text: var(--wiki-btn-text);
+  --wiki-palette-secondary-bg: light-dark(#6C757D, #5A6370);
+  --wiki-palette-secondary-text: #FFFFFF;
+  --wiki-palette-success-bg: var(--wiki-success);
+  --wiki-palette-success-text: #1A1A1A;
+  --wiki-palette-info-bg: light-dark(#0DCAF0, #0A7A9B);
+  --wiki-palette-info-text: light-dark(#000000, #FFFFFF);
+  --wiki-palette-warning-bg: var(--wiki-warning);
+  --wiki-palette-warning-text: #1A1A1A;
+  --wiki-palette-danger-bg: var(--wiki-danger);
+  --wiki-palette-danger-text: #1A1A1A;
+  --wiki-palette-muted-bg: light-dark(#ADB5BD, #6C757D);
+  --wiki-palette-muted-text: light-dark(#212529, #FFFFFF);
+
   /* Misc */
   --wiki-code-bg: light-dark(#f8fafc, #000000);
   --wiki-toc-bg: light-dark(rgba(255, 255, 255, 0.6), rgba(255, 255, 255, 0.08));

@@ -1200,11 +1200,11 @@ function renderPaletteAcResults(): void {
     listEl.innerHTML = '';
 
     paletteAc.results.forEach((p, i) => {
-        const rawBg    = p.variant.bg    || 'transparent';
-        const rawColor = p.variant.color || 'inherit';
-        const bg    = window._isSafeCssColor?.(rawBg)    ? rawBg    : 'transparent';
-        const color = window._isSafeCssColor?.(rawColor) ? rawColor : 'inherit';
         const tag = p.source === 'preset' ? '기본' : p.source === 'override' ? '오버라이드' : '커스텀';
+        // 빌트인 이름은 본문 렌더가 mark.wiki-palette-NAME 클래스(= --wiki-palette-* 토큰)로 그리므로
+        // 스와치도 토큰 var() 로 칠해 색을 일치시킨다(테마/스킨/다크모드 자동 반영, 통제된 토큰이라 안전).
+        const isBuiltin = !!(window.WIKI_HARDCODED_PALETTES
+            && Object.prototype.hasOwnProperty.call(window.WIKI_HARDCODED_PALETTES, p.name));
 
         const itemEl  = document.createElement('div');
         itemEl.className = `palette-ac-item${i === paletteAc.selectedIndex ? ' active' : ''}`;
@@ -1213,8 +1213,15 @@ function renderPaletteAcResults(): void {
         const badgeEl = document.createElement('span');
         badgeEl.className = 'palette-ac-badge';
         badgeEl.textContent = p.name;
-        badgeEl.style.backgroundColor = bg;
-        badgeEl.style.color = color;
+        if (isBuiltin) {
+            badgeEl.style.backgroundColor = `var(--wiki-palette-${p.name}-bg)`;
+            badgeEl.style.color = `var(--wiki-palette-${p.name}-text)`;
+        } else {
+            const rawBg    = p.variant.bg    || 'transparent';
+            const rawColor = p.variant.color || 'inherit';
+            badgeEl.style.backgroundColor = window._isSafeCssColor?.(rawBg)    ? rawBg    : 'transparent';
+            badgeEl.style.color           = window._isSafeCssColor?.(rawColor) ? rawColor : 'inherit';
+        }
 
         const nameEl = document.createElement('span');
         nameEl.className = 'palette-ac-name';
