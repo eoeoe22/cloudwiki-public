@@ -31,12 +31,26 @@ id = ""
 binding = "ANALYTICS"
 dataset = "" # 원하는 이름으로 수정
 
+# === 관리자 잡 러너 Durable Object ===
+# AdminJobDO: 최고 관리자 전용 싱글턴 잡 러너 (역링크 전수 재인덱싱 / 대량 이동 / 대량 삭제).
+# SQLite-backed(new_sqlite_classes) 라 Workers 프리 티어에서도 동작한다. 블록 그대로 사용.
+[[durable_objects.bindings]]
+name = "ADMIN_JOB_DO"
+class_name = "AdminJobDO"
+
+[[migrations]]
+tag = "v3-admin-job"
+new_sqlite_classes = ["AdminJobDO"]
+
 [observability]
 enabled = true
 head_sampling_rate = 1.0
 
 [vars]
 WIKI_HOME_PAGE = "" #위키 홈페이지로 쓸 문서 제목
+# === AdminJobDO 잡 러너 — alarm 틱(=호출 1회)당 서브리퀘스트(D1 쿼리+R2/Cache op) 예산 ===
+# Workers 무료 플랜은 호출당 50 한도라 40, 유료 플랜은 1,000 한도라 950 권장.
+JOB_SUBREQUEST_BUDGET = "40"
 
 # 활성화할 공급자를 쉼표로 구분하여 나열 (예: "google,discord")
 # 주의: 이미 사용자가 가입시 이용한 공급자를 목록에서 제거하면 오류가 발생합니다.

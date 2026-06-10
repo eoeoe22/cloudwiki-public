@@ -16,6 +16,7 @@ import wikiRoutes from './routes/wiki';
 import searchRoutes from './routes/search';
 import mediaRoutes from './routes/media';
 import adminRoutes from './routes/admin';
+import adminJobRoutes from './routes/adminJobs';
 import discussionRoutes from './routes/discussion';
 import notificationRoutes from './routes/notification';
 import pushRoutes from './routes/push';
@@ -139,6 +140,7 @@ app.route('/api', wikiRoutes);
 app.route('/api', searchRoutes);
 app.route('/', mediaRoutes);
 app.route('/api/admin', adminRoutes);
+app.route('/api/admin', adminJobRoutes);
 app.route('/api', discussionRoutes);
 app.route('/api', notificationRoutes);
 app.route('/api', pushRoutes);
@@ -1165,6 +1167,9 @@ app.onError(async (err, c) => {
     });
     return new Response(res.body, { status: 500, headers: res.headers });
 });
+
+// Durable Object 클래스 export (wrangler 가 class_name 으로 요구).
+export { AdminJobDO } from './durable/adminJob';
 
 export default {
     fetch: app.fetch,

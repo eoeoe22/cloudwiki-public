@@ -14,6 +14,10 @@ export type Env = {
         KV: KVNamespace;
         ASSETS: Fetcher;
         ANALYTICS?: AnalyticsEngineDataset;
+        // AdminJobDO 잡 러너 (역링크 재인덱싱/대량 이동/대량 삭제). 바인딩 없으면 잡 API 는 503.
+        ADMIN_JOB_DO?: DurableObjectNamespace;
+        // AdminJobDO alarm 틱당 서브리퀘스트 예산 (유료 950 / 무료 40 권장, 미설정 시 40)
+        JOB_SUBREQUEST_BUDGET?: string;
         AUTH_PROVIDERS: string;            // "google,discord"
         GOOGLE_CLIENT_ID: string;
         GOOGLE_CLIENT_SECRET: string;
