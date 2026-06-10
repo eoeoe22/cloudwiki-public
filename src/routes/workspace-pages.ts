@@ -1,0 +1,542 @@
+import { Hono, type Context } from 'hono';
+import type { Env } from '../types';
+import type { RBAC } from '../utils/role';
+import { requireAuth } from '../middleware/session';
+import { normalizeSlug } from '../utils/slug';
+import { safeJSON } from '../utils/json';
+import { isWorkspacesEnabled } from '../utils/workspace';
+import { getWorkspaceAccessBySlug } from '../utils/workspaceAcl';
+import type { WorkspaceAccess } from '../utils/workspaceAcl';
+import type { Workspace, WorkspacePage } from '../shared/models';
+import { getRevisionContent } from '../utils/r2';
+import { saveWorkspacePage } from '../utils/workspacePagePipeline';
+import { syncWorkspaceMediaVisibility } from '../utils/workspaceMedia';
+import {
+    SLUG_FORBIDDEN_CHARS,
+    TITLE_FORBIDDEN_CHARS,
+    TITLE_MAX_LENGTH,
+    ALLOWED_VIEW_MODES,
+    normalizeTitleInput,
+} from './wiki';
+
+/**
+ * 워크스페이스 문서 API (/api/ws/:wslug/pages...).
+ *
+ * 설계 제약 (워크스페이스 격리 — 데이터 무결성 핵심):
+ *   - workspace_* 테이블만 사용. 전역 pages/media/page_links 를 절대 건드리지 않는다.
+ *   - edit_acl / 카테고리 ACL / 편집 요청 보류 / 주시자 알림 / 전역 캐시 무효화 없음.
+ *   - 모든 응답은 `private, no-store` — 엣지 캐시에 절대 적재하지 않는다(비공개 데이터).
+ *   - 비멤버/게스트는 ws_public=1 문서만 읽기 가능(라우트 레이어에서 적용 — workspaceAcl 주석 참고).
+ *
+ * 문서 슬러그는 슬래시를 포함할 수 있으므로 Hono 정규식 파라미터 `:slug{.+}` 를 사용한다.
+ * 같은 prefix 를 공유하는 더 구체적인 경로(`/revisions`/`/backlinks` 등 suffix)가 먼저
+ * 매칭되도록 등록 순서를 구체 → 일반 순으로 유지한다. 이로 인해 `revisions`/`backlinks`
+ * 등으로 끝나는 슬러그의 문서는 단건 GET 경로와 충돌한다(알려진 제약).
+ */
+
+const wsPages = new Hono<Env>();
+
+// 기능 토글 가드 + 공통 응답 캐시 정책. 비활성 시 모든 워크스페이스 경로가 404.
+wsPages.use('/api/ws/*', async (c, next) => {
+    if (!isWorkspacesEnabled(c.env)) {
+        return c.json({ error: '워크스페이스 기능이 비활성화되어 있습니다.' }, 404);
+    }
+    await next();
+    // 워크스페이스 데이터는 비공개 — 공유/엣지 캐시 적재 금지.
+    c.header('Cache-Control', 'private, no-store');
+});
+
+/** :wslug 로 워크스페이스 + 접근 권한을 해석한다. workspace null 이면 호출 측에서 404. */
+async function resolveWs(c: Context<Env>): Promise<{ workspace: Workspace | null; access: WorkspaceAccess }> {
+    const user = c.get('user');
+    const rbac = c.get('rbac') as RBAC;
+    return getWorkspaceAccessBySlug(c.env.DB, c.req.param('wslug') || '', user, rbac);
+}
+
+/** 읽기 거부 응답 — 게스트는 401(로그인 유도), 로그인 사용자는 403. */
+function denyRead(c: Context<Env>) {
+    if (!c.get('user')) return c.json({ error: '로그인이 필요합니다.' }, 401);
+    return c.json({ error: '이 워크스페이스를 열람할 권한이 없습니다.' }, 403);
+}
+
+/**
+ * 워크스페이스 문서 슬러그 검증.
+ * 전역 슬러그 규칙(SLUG_FORBIDDEN_CHARS)에 더해 `:` 를 금지한다 — 워크스페이스 문서는
+ * 평문 슬러그만 사용하며, 전역의 가상 네임스페이스(`이미지:`/`map:`/익스텐션)와의
+ * 혼동을 구조적으로 차단한다.
+ */
+function validatePageSlug(raw: unknown): { ok: true; slug: string } | { ok: false; error: string } {
+    if (typeof raw !== 'string') return { ok: false, error: '문서 제목이 필요합니다.' };
+    const slug = normalizeSlug(raw);
+    if (!slug) return { ok: false, error: '문서 제목을 입력해주세요.' };
+    if (SLUG_FORBIDDEN_CHARS.test(slug)) {
+        return { ok: false, error: '문서 제목에 사용할 수 없는 문자가 포함되어 있습니다. ([ ] { } # % | < > ^ 등)' };
+    }
+    if (slug.includes(':')) {
+        return { ok: false, error: "워크스페이스 문서 제목에는 ':' 를 사용할 수 없습니다." };
+    }
+    return { ok: true, slug };
+}
+
+/** LIKE 패턴 이스케이프 (ESCAPE '\' 와 함께 사용) */
+function escapeLike(s: string): string {
+    return s.replace(/[\\%_]/g, (ch) => '\\' + ch);
+}
+
+/** (workspace_id, slug) 의 비삭제 문서 조회 */
+async function findPage(db: D1Database, workspaceId: number, slug: string): Promise<WorkspacePage | null> {
+    return db
+        .prepare('SELECT * FROM workspace_pages WHERE workspace_id = ? AND slug = ? AND deleted_at IS NULL')
+        .bind(workspaceId, slug)
+        .first<WorkspacePage>();
+}
+
+// ============================================================
+// 목록
+// ============================================================
+
+/**
+ * GET /api/ws/:wslug/pages — 비삭제 문서 목록 (최근 수정 순).
+ * ?prefix= : 해당 슬러그의 하위 문서만 (slug LIKE 'prefix/%')
+ * ?top=1   : 최상위 문서만 (슬래시 미포함)
+ * 비멤버/게스트(canRead=false)에게는 ws_public=1 문서만 노출한다.
+ */
+wsPages.get('/api/ws/:wslug/pages', async (c) => {
+    const { workspace, access } = await resolveWs(c);
+    if (!workspace) return c.json({ error: '워크스페이스를 찾을 수 없습니다.' }, 404);
+
+    const conds: string[] = ['workspace_id = ?', 'deleted_at IS NULL'];
+    const binds: unknown[] = [workspace.id];
+    if (!access.canRead) conds.push('ws_public = 1');
+
+    const prefixRaw = c.req.query('prefix');
+    if (prefixRaw) {
+        const prefix = normalizeSlug(prefixRaw);
+        if (prefix) {
+            conds.push("slug LIKE ? ESCAPE '\\'");
+            binds.push(escapeLike(prefix) + '/%');
+        }
+    }
+    if (c.req.query('top') === '1') conds.push("slug NOT LIKE '%/%'");
+
+    const rows = await c.env.DB
+        .prepare(
+            `SELECT id, slug, title, updated_at, version, ws_public, rows, characters, redirect_to
+             FROM workspace_pages
+             WHERE ${conds.join(' AND ')}
+             ORDER BY updated_at DESC
+             LIMIT 500`
+        )
+        .bind(...binds)
+        .all();
+    return c.json(safeJSON({ pages: rows.results || [] }));
+});
+
+// ============================================================
+// 문서별 부속 경로 (단건 GET 보다 먼저 등록 — :slug{.+} 가 슬래시를 탐욕 매칭하므로
+// 구체 suffix 경로를 앞에 두어야 한다)
+// ============================================================
+
+/**
+ * GET /api/ws/:wslug/pages/:slug{.+}/revisions — 리비전 목록 (최신순, 최대 50).
+ * 멤버(canRead) 또는 ws_public=1 문서.
+ */
+wsPages.get('/api/ws/:wslug/pages/:slug{.+}/revisions', async (c) => {
+    const { workspace, access } = await resolveWs(c);
+    if (!workspace) return c.json({ error: '워크스페이스를 찾을 수 없습니다.' }, 404);
+    const slug = normalizeSlug(c.req.param('slug'));
+    const page = await findPage(c.env.DB, workspace.id, slug);
+    if (!page) return c.json({ error: '문서를 찾을 수 없습니다.' }, 404);
+    if (!access.canRead && page.ws_public !== 1) return denyRead(c);
+
+    const rows = await c.env.DB
+        .prepare(
+            `SELECT r.id, r.page_version, r.summary, r.author_id, u.name AS author_name, r.created_at
+             FROM workspace_revisions r
+             LEFT JOIN users u ON u.id = r.author_id
+             WHERE r.page_id = ? AND r.deleted_at IS NULL
+             ORDER BY r.page_version DESC, r.id DESC
+             LIMIT 50`
+        )
+        .bind(page.id)
+        .all();
+    return c.json(safeJSON({ slug: page.slug, version: page.version, revisions: rows.results || [] }));
+});
+
+/**
+ * GET /api/ws/:wslug/pages/:slug{.+}/backlinks — 이 문서를 참조하는 비삭제 문서 목록.
+ * 역링크는 다른(비공개일 수 있는) 문서의 존재를 드러내므로 멤버(canRead) 전용.
+ */
+wsPages.get('/api/ws/:wslug/pages/:slug{.+}/backlinks', async (c) => {
+    const { workspace, access } = await resolveWs(c);
+    if (!workspace) return c.json({ error: '워크스페이스를 찾을 수 없습니다.' }, 404);
+    if (!access.canRead) return denyRead(c);
+    const slug = normalizeSlug(c.req.param('slug'));
+
+    const rows = await c.env.DB
+        .prepare(
+            `SELECT DISTINCT p.slug, p.title
+             FROM workspace_page_links l
+             JOIN workspace_pages p ON p.id = l.source_page_id AND p.deleted_at IS NULL
+             WHERE l.workspace_id = ? AND l.target_slug = ?
+             ORDER BY p.slug ASC`
+        )
+        .bind(workspace.id, slug)
+        .all();
+    return c.json(safeJSON({ slug, backlinks: rows.results || [] }));
+});
+
+/**
+ * POST /api/ws/:wslug/pages/:slug{.+}/move — 문서 슬러그 변경 (canWrite).
+ * body: { new_slug }
+ * 행만 이름을 바꾼다 — 리비전을 만들지 않으며, 이 문서를 가리키는 다른 문서의
+ * [[옛슬러그]] 참조 재작성은 범위 밖(역링크는 옛 슬러그를 계속 가리킴).
+ */
+wsPages.post('/api/ws/:wslug/pages/:slug{.+}/move', requireAuth, async (c) => {
+    const { workspace, access } = await resolveWs(c);
+    if (!workspace) return c.json({ error: '워크스페이스를 찾을 수 없습니다.' }, 404);
+    if (!access.canWrite) return c.json({ error: '이 워크스페이스의 문서를 수정할 권한이 없습니다.' }, 403);
+
+    const slug = normalizeSlug(c.req.param('slug'));
+    const body = await c.req.json().catch(() => null) as { new_slug?: unknown } | null;
+    const validated = validatePageSlug(body?.new_slug);
+    if (!validated.ok) return c.json({ error: validated.error }, 400);
+    const newSlug = validated.slug;
+
+    const page = await findPage(c.env.DB, workspace.id, slug);
+    if (!page) return c.json({ error: '문서를 찾을 수 없습니다.' }, 404);
+    if (newSlug === page.slug) return c.json({ error: '현재 제목과 동일합니다.' }, 400);
+
+    const taken = await findPage(c.env.DB, workspace.id, newSlug);
+    if (taken) return c.json({ error: '이미 사용 중인 제목입니다.', code: 'SLUG_TAKEN' }, 409);
+
+    try {
+        await c.env.DB
+            .prepare('UPDATE workspace_pages SET slug = ?, updated_at = unixepoch() WHERE id = ? AND deleted_at IS NULL')
+            .bind(newSlug, page.id)
+            .run();
+    } catch (e: any) {
+        // UNIQUE(workspace_id, slug) — precheck 이후 경합, 또는 같은 slug 의 소프트 삭제 행 점유.
+        const msg = String(e?.message || e);
+        if (/UNIQUE|constraint/i.test(msg)) {
+            return c.json({ error: '이미 사용 중인 제목입니다.', code: 'SLUG_TAKEN' }, 409);
+        }
+        throw e;
+    }
+    return c.json({ ok: true, slug: newSlug });
+});
+
+/**
+ * POST /api/ws/:wslug/pages/:slug{.+}/revert — 지정 리비전 본문으로 되돌리기 (canWrite).
+ * body: { revision_id }
+ * 새 리비전을 만드는 정방향 되돌리기 — 히스토리를 지우지 않는다.
+ */
+wsPages.post('/api/ws/:wslug/pages/:slug{.+}/revert', requireAuth, async (c) => {
+    const { workspace, access } = await resolveWs(c);
+    if (!workspace) return c.json({ error: '워크스페이스를 찾을 수 없습니다.' }, 404);
+    if (!access.canWrite) return c.json({ error: '이 워크스페이스의 문서를 수정할 권한이 없습니다.' }, 403);
+    const user = c.get('user')!;
+
+    const slug = normalizeSlug(c.req.param('slug'));
+    const page = await findPage(c.env.DB, workspace.id, slug);
+    if (!page) return c.json({ error: '문서를 찾을 수 없습니다.' }, 404);
+
+    const body = await c.req.json().catch(() => null) as { revision_id?: unknown } | null;
+    const revisionId = Number(body?.revision_id);
+    if (!Number.isInteger(revisionId) || revisionId <= 0) {
+        return c.json({ error: 'revision_id 가 필요합니다.' }, 400);
+    }
+
+    const rev = await c.env.DB
+        .prepare('SELECT id, page_id, page_version, content, r2_key, deleted_at, purged_at FROM workspace_revisions WHERE id = ?')
+        .bind(revisionId)
+        .first<{ id: number; page_id: number; page_version: number | null; content: string; r2_key: string | null; deleted_at: number | null; purged_at: number | null }>();
+    if (!rev || rev.page_id !== page.id || rev.deleted_at) {
+        return c.json({ error: '리비전을 찾을 수 없습니다.' }, 404);
+    }
+    if (rev.purged_at) {
+        return c.json({ error: '본문이 제거된 리비전으로는 되돌릴 수 없습니다.' }, 400);
+    }
+
+    const origin = new URL(c.req.url).origin;
+    let content = await getRevisionContent(c.env.MEDIA, rev, origin);
+    content = content.replace(/\r\n?/g, '\n');
+
+    try {
+        const result = await saveWorkspacePage(c, {
+            workspaceId: workspace.id,
+            slug: page.slug,
+            content,
+            authorId: user.id,
+            summary: `r${rev.page_version ?? rev.id} 리비전으로 되돌리기`,
+        });
+        return c.json(safeJSON({
+            ok: true,
+            page_id: result.page_id,
+            revision_id: result.revision_id,
+            version: result.new_version,
+        }));
+    } catch (e: any) {
+        if (e?.code === 'CONCURRENT_MODIFICATION') {
+            return c.json({ error: '다른 사용자가 동시에 문서를 수정했습니다. 다시 시도해주세요.', code: 'CONCURRENT_MODIFICATION' }, 409);
+        }
+        throw e;
+    }
+});
+
+/**
+ * PATCH /api/ws/:wslug/pages/:slug{.+}/visibility — 문서 공개 토글 (canWrite).
+ * body: { ws_public: 0 | 1 }
+ * 토글 후 워크스페이스 미디어 공개 연동(ws_public=1 문서가 참조하는 미디어만 공개)을 재계산한다.
+ */
+wsPages.patch('/api/ws/:wslug/pages/:slug{.+}/visibility', requireAuth, async (c) => {
+    const { workspace, access } = await resolveWs(c);
+    if (!workspace) return c.json({ error: '워크스페이스를 찾을 수 없습니다.' }, 404);
+    if (!access.canWrite) return c.json({ error: '이 워크스페이스의 문서를 수정할 권한이 없습니다.' }, 403);
+
+    const slug = normalizeSlug(c.req.param('slug'));
+    const body = await c.req.json().catch(() => null) as { ws_public?: unknown } | null;
+    const raw = body?.ws_public;
+    if (raw !== 0 && raw !== 1) {
+        return c.json({ error: 'ws_public 은 0 또는 1 이어야 합니다.' }, 400);
+    }
+
+    const result = await c.env.DB
+        .prepare('UPDATE workspace_pages SET ws_public = ? WHERE workspace_id = ? AND slug = ? AND deleted_at IS NULL')
+        .bind(raw, workspace.id, slug)
+        .run();
+    if (!result.meta.changes) return c.json({ error: '문서를 찾을 수 없습니다.' }, 404);
+
+    try {
+        await syncWorkspaceMediaVisibility(c.env.DB, workspace.id);
+    } catch (e) {
+        console.error('workspace media visibility sync failed:', e);
+    }
+    return c.json({ ok: true, ws_public: raw });
+});
+
+// ============================================================
+// 리비전 단건 (pages 경로와 prefix 가 다르므로 등록 위치 무관하지만 가독성을 위해 여기)
+// ============================================================
+
+/**
+ * GET /api/ws/:wslug/revisions/:id — 리비전 본문 조회.
+ * 리비전의 문서가 이 워크스페이스 소속이 아니면 404 (워크스페이스 간 열거 차단).
+ * 멤버(canRead) 또는 해당 문서가 ws_public=1 인 경우 허용(목록/본문 경로와 일관).
+ */
+wsPages.get('/api/ws/:wslug/revisions/:id', async (c) => {
+    const { workspace, access } = await resolveWs(c);
+    if (!workspace) return c.json({ error: '워크스페이스를 찾을 수 없습니다.' }, 404);
+    const revisionId = Number(c.req.param('id'));
+    if (!Number.isInteger(revisionId) || revisionId <= 0) {
+        return c.json({ error: '리비전을 찾을 수 없습니다.' }, 404);
+    }
+
+    const rev = await c.env.DB
+        .prepare(
+            `SELECT r.id, r.page_id, r.page_version, r.content, r.r2_key, r.summary, r.author_id, r.created_at,
+                    r.deleted_at, r.purged_at,
+                    p.workspace_id, p.slug, p.ws_public, p.deleted_at AS page_deleted_at
+             FROM workspace_revisions r
+             JOIN workspace_pages p ON p.id = r.page_id
+             WHERE r.id = ?`
+        )
+        .bind(revisionId)
+        .first<{
+            id: number; page_id: number; page_version: number | null; content: string; r2_key: string | null;
+            summary: string | null; author_id: number | null; created_at: number;
+            deleted_at: number | null; purged_at: number | null;
+            workspace_id: number; slug: string; ws_public: number; page_deleted_at: number | null;
+        }>();
+    // 다른 워크스페이스의 리비전은 존재하지 않는 것처럼 404 (id 열거로 격리 우회 차단)
+    if (!rev || rev.workspace_id !== workspace.id) {
+        return c.json({ error: '리비전을 찾을 수 없습니다.' }, 404);
+    }
+    const publicReadable = rev.ws_public === 1 && rev.page_deleted_at === null;
+    if (!access.canRead && !publicReadable) return denyRead(c);
+    if (rev.deleted_at) return c.json({ error: '리비전을 찾을 수 없습니다.' }, 404);
+
+    const origin = new URL(c.req.url).origin;
+    const content = rev.purged_at
+        ? ''
+        : await getRevisionContent(c.env.MEDIA, { content: rev.content, r2_key: rev.r2_key }, origin);
+    return c.json(safeJSON({
+        id: rev.id,
+        page_id: rev.page_id,
+        slug: rev.slug,
+        page_version: rev.page_version,
+        summary: rev.summary,
+        author_id: rev.author_id,
+        created_at: rev.created_at,
+        purged: !!rev.purged_at,
+        content,
+    }));
+});
+
+// ============================================================
+// 문서 단건 CRUD (일반 :slug{.+} — suffix 경로들 뒤에 등록)
+// ============================================================
+
+/**
+ * GET /api/ws/:wslug/pages/:slug{.+} — 문서 단건 조회 (본문 포함).
+ * 멤버(canRead) 또는 ws_public=1 문서(읽기 전용). redirect_to 는 자동 추적하지 않고
+ * 필드로 반환한다 — 클라이언트가 따라간다.
+ */
+wsPages.get('/api/ws/:wslug/pages/:slug{.+}', async (c) => {
+    const { workspace, access } = await resolveWs(c);
+    if (!workspace) return c.json({ error: '워크스페이스를 찾을 수 없습니다.' }, 404);
+    const slug = normalizeSlug(c.req.param('slug'));
+    const page = await findPage(c.env.DB, workspace.id, slug);
+    if (!page) return c.json({ error: '문서를 찾을 수 없습니다.' }, 404);
+    if (!access.canRead && page.ws_public !== 1) return denyRead(c);
+
+    return c.json(safeJSON({
+        ...page,
+        can_write: access.canWrite,
+    }));
+});
+
+/**
+ * PUT /api/ws/:wslug/pages/:slug{.+} — 문서 생성/수정 (canWrite).
+ * body: { content (필수), summary?, title?, redirect_to?, view_mode?, ws_public?, expected_version? }
+ * title/redirect_to/view_mode/ws_public 은 본문에 키가 없으면 기존 값 유지.
+ * expected_version 불일치 / 슬러그 경합 → 409 (code: CONCURRENT_MODIFICATION / SLUG_TAKEN).
+ */
+wsPages.put('/api/ws/:wslug/pages/:slug{.+}', requireAuth, async (c) => {
+    const { workspace, access } = await resolveWs(c);
+    if (!workspace) return c.json({ error: '워크스페이스를 찾을 수 없습니다.' }, 404);
+    if (!access.canWrite) return c.json({ error: '이 워크스페이스의 문서를 수정할 권한이 없습니다.' }, 403);
+    const user = c.get('user')!;
+
+    const validated = validatePageSlug(c.req.param('slug'));
+    if (!validated.ok) return c.json({ error: validated.error }, 400);
+    const slug = validated.slug;
+
+    const body = await c.req.json().catch(() => null) as Record<string, unknown> | null;
+    if (!body || typeof body !== 'object') {
+        return c.json({ error: '유효하지 않은 요청입니다.' }, 400);
+    }
+    if (typeof body.content !== 'string') {
+        return c.json({ error: 'content 가 필요합니다.' }, 400);
+    }
+    const content = body.content.replace(/\r\n?/g, '\n');
+
+    // summary
+    const summary = typeof body.summary === 'string' && body.summary.trim() ? body.summary.trim() : null;
+
+    // title: 키 부재 = 유지(undefined). null/빈 문자열 = 제거. 문자열 = 설정.
+    let title: string | null | undefined = undefined;
+    if ('title' in body) {
+        if (body.title !== null && body.title !== undefined && typeof body.title !== 'string') {
+            return c.json({ error: 'title 형식이 올바르지 않습니다.' }, 400);
+        }
+        title = normalizeTitleInput(body.title);
+        if (title !== null) {
+            if (TITLE_FORBIDDEN_CHARS.test(title)) {
+                return c.json({ error: '제목에 사용할 수 없는 문자가 포함되어 있습니다.' }, 400);
+            }
+            if (title.length > TITLE_MAX_LENGTH) {
+                return c.json({ error: `제목은 최대 ${TITLE_MAX_LENGTH}자까지 입력할 수 있습니다.` }, 400);
+            }
+        }
+    }
+
+    // redirect_to: 키 부재 = 유지. null/빈 문자열 = 제거. 문자열 = 워크스페이스 내 슬러그로 검증.
+    let redirectTo: string | null | undefined = undefined;
+    if ('redirect_to' in body) {
+        if (body.redirect_to === null || body.redirect_to === '') {
+            redirectTo = null;
+        } else {
+            const v = validatePageSlug(body.redirect_to);
+            if (!v.ok) return c.json({ error: `redirect_to: ${v.error}` }, 400);
+            redirectTo = v.slug;
+        }
+    }
+
+    // view_mode: 키 부재 = 유지. null/빈 문자열 = NULL(일반 본문). 그 외 ALLOWED_VIEW_MODES 화이트리스트.
+    let viewMode: string | null | undefined = undefined;
+    if ('view_mode' in body) {
+        if (body.view_mode === null || body.view_mode === '') {
+            viewMode = null;
+        } else if (typeof body.view_mode === 'string' && ALLOWED_VIEW_MODES.has(body.view_mode)) {
+            viewMode = body.view_mode;
+        } else {
+            return c.json({ error: '유효하지 않은 view_mode 입니다.' }, 400);
+        }
+    }
+
+    // ws_public: 키 부재 = 유지. 0/1 만 허용.
+    let wsPublic: number | undefined = undefined;
+    if ('ws_public' in body) {
+        if (body.ws_public !== 0 && body.ws_public !== 1) {
+            return c.json({ error: 'ws_public 은 0 또는 1 이어야 합니다.' }, 400);
+        }
+        wsPublic = body.ws_public;
+    }
+
+    // expected_version: 낙관적 락 base 버전 (수정 시 권장)
+    let expectedVersion: number | undefined = undefined;
+    if ('expected_version' in body && body.expected_version !== null && body.expected_version !== undefined) {
+        const n = Number(body.expected_version);
+        if (!Number.isInteger(n) || n < 1) {
+            return c.json({ error: 'expected_version 형식이 올바르지 않습니다.' }, 400);
+        }
+        expectedVersion = n;
+    }
+
+    try {
+        const result = await saveWorkspacePage(c, {
+            workspaceId: workspace.id,
+            slug,
+            content,
+            authorId: user.id,
+            summary,
+            title,
+            redirectTo,
+            viewMode,
+            wsPublic,
+            expectedVersion,
+        });
+        return c.json(safeJSON({
+            ok: true,
+            page_id: result.page_id,
+            revision_id: result.revision_id,
+            version: result.new_version,
+            created: result.created,
+        }));
+    } catch (e: any) {
+        if (e?.code === 'CONCURRENT_MODIFICATION') {
+            return c.json({ error: '다른 사용자가 동시에 문서를 수정했습니다. 최신 내용을 확인 후 다시 저장해주세요.', code: 'CONCURRENT_MODIFICATION' }, 409);
+        }
+        if (e?.code === 'SLUG_TAKEN') {
+            return c.json({ error: '이미 사용 중인 제목입니다. (삭제된 문서가 점유 중일 수 있습니다)', code: 'SLUG_TAKEN' }, 409);
+        }
+        throw e;
+    }
+});
+
+/**
+ * DELETE /api/ws/:wslug/pages/:slug{.+} — 소프트 삭제 (canWrite).
+ * 리비전/링크 행은 보존한다(복구 여지). 삭제 후 미디어 공개 연동을 재계산한다.
+ */
+wsPages.delete('/api/ws/:wslug/pages/:slug{.+}', requireAuth, async (c) => {
+    const { workspace, access } = await resolveWs(c);
+    if (!workspace) return c.json({ error: '워크스페이스를 찾을 수 없습니다.' }, 404);
+    if (!access.canWrite) return c.json({ error: '이 워크스페이스의 문서를 수정할 권한이 없습니다.' }, 403);
+
+    const slug = normalizeSlug(c.req.param('slug'));
+    const result = await c.env.DB
+        .prepare('UPDATE workspace_pages SET deleted_at = unixepoch() WHERE workspace_id = ? AND slug = ? AND deleted_at IS NULL')
+        .bind(workspace.id, slug)
+        .run();
+    if (!result.meta.changes) return c.json({ error: '문서를 찾을 수 없습니다.' }, 404);
+
+    try {
+        await syncWorkspaceMediaVisibility(c.env.DB, workspace.id);
+    } catch (e) {
+        console.error('workspace media visibility sync failed:', e);
+    }
+    return c.json({ ok: true });
+});
+
+export default wsPages;

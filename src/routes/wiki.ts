@@ -958,6 +958,8 @@ import {
     getEditAclMinAgeDays,
     findPrefixRuleEditAcl,
     isTrustedEditor,
+    loadDocPrefixPrivacyRules,
+    prefixRulesForcePrivate,
     type EditAcl,
 } from '../utils/editAcl';
 import { dispatchDiscord } from '../utils/webhook/discord';
@@ -1814,13 +1816,19 @@ wiki.get('/w/:slug/edit-permission', requireAuth, async (c) => {
         }
         if (acl && acl.flags.length > 0) {
             const ev = await evaluateEditAcl(db, acl, user, page.id, minAge, isAdmin);
-            // ACL 미달이어도 편집 요청 기능이 켜져 있으면 에디터 진입을 허용한다(edit_request).
+            // admin_only(관리자 전용) 실패는 비공개와 동일하게 취급해 편집 요청 모드를 제공하지 않는다(하드 거부).
+            // 그 외 ACL 미달은 편집 요청 기능이 켜져 있으면 에디터 진입을 허용한다(edit_request) —
             // 저장 단계(PUT)에서 편집 요청으로 보류되고, 승인 시 ACL 이 다시 강제된다.
-            const editRequest = !ev.allowed && isEditRequestEnabled(c.env);
+            //
+            // 비관리자는 admin_only 가 포함된 ACL 을 절대 통과할 수 없으므로, decisive(첫 실패 플래그)가
+            // aged/page_editor 등 다른 플래그여도 하드 거부해야 한다 — ev.decisive 순서에 의존하지 않고
+            // 'admin_only 포함 + 비관리자' 로 직접 판정한다(플래그 저장 순서 무관).
+            const isAdminOnlyFail = hasAdminOnly && !isAdmin;
+            const editRequest = !ev.allowed && !isAdminOnlyFail && isEditRequestEnabled(c.env);
             return c.json({
                 allowed: ev.allowed || editRequest,
                 edit_request: editRequest,
-                reason: ev.allowed ? undefined : (ev.decisive === 'admin_only' ? 'admin_only' : 'edit_acl'),
+                reason: ev.allowed ? undefined : (isAdminOnlyFail ? 'admin_only' : 'edit_acl'),
                 decisive: ev.decisive,
                 acl,
                 source: 'page',
@@ -1837,7 +1845,22 @@ wiki.get('/w/:slug/edit-permission', requireAuth, async (c) => {
         });
     }
 
-    // 페이지 미존재 — 신규 생성 케이스. prefix 룰 ACL 평가.
+    // 페이지 미존재 — 신규 생성 케이스. prefix 룰의 비공개/ACL 평가.
+    // 비공개를 강제하는 prefix 룰(하위 문서 일괄 규칙 포함)은 비공개=관리자 전용 동등 취급이므로,
+    // wiki:private 이 없는 사용자는 편집 요청 모드 없이 하드 거부한다(저장 단계 create 가드와 일치).
+    if (!rbac.can(user.role, 'wiki:private')) {
+        const rules = await loadDocPrefixPrivacyRules(db);
+        if (prefixRulesForcePrivate(rules, slug)) {
+            return c.json({
+                allowed: false,
+                reason: 'private',
+                acl: null,
+                source: 'prefix_rule',
+                min_age_days: minAge,
+                is_private: 1,
+            });
+        }
+    }
     const ruleAcl = await findPrefixRuleEditAcl(db, slug);
     const ruleHasAdminOnly = !!ruleAcl && ruleAcl.flags.includes('admin_only');
     if (!ruleAcl || ruleAcl.flags.length === 0 || (isAdmin && !ruleHasAdminOnly)) {
@@ -1851,12 +1874,15 @@ wiki.get('/w/:slug/edit-permission', requireAuth, async (c) => {
     }
     // 신규 문서이므로 page_editor 는 항상 false (pageId=null).
     const ev = await evaluateEditAcl(db, ruleAcl, user, null, minAge, isAdmin);
-    // ACL 미달이어도 편집 요청 기능이 켜져 있으면 진입 허용(저장 시 create 보류).
-    const editRequest = !ev.allowed && isEditRequestEnabled(c.env);
+    // admin_only(관리자 전용) 실패는 비공개와 동일하게 편집 요청 모드 없이 하드 거부.
+    // 그 외 ACL 미달은 편집 요청 기능이 켜져 있으면 진입 허용(저장 시 create 보류).
+    // ev.decisive 순서에 의존하지 않고 'admin_only 포함 + 비관리자' 로 직접 판정한다(플래그 저장 순서 무관).
+    const isAdminOnlyFail = ruleHasAdminOnly && !isAdmin;
+    const editRequest = !ev.allowed && !isAdminOnlyFail && isEditRequestEnabled(c.env);
     return c.json({
         allowed: ev.allowed || editRequest,
         edit_request: editRequest,
-        reason: ev.allowed ? undefined : (ev.decisive === 'admin_only' ? 'admin_only' : 'edit_acl'),
+        reason: ev.allowed ? undefined : (isAdminOnlyFail ? 'admin_only' : 'edit_acl'),
         decisive: ev.decisive,
         acl: ruleAcl,
         source: 'prefix_rule',
@@ -2131,10 +2157,13 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
                 const minAge = await getEditAclMinAgeDays(db);
                 const ev = await evaluateEditAcl(db, aclParsed, user, existing.id, minAge, isAdmin);
                 if (!ev.allowed) {
-                    if (isEditRequestEnabled(c.env)) {
+                    // admin_only(관리자 전용) 실패는 비공개와 동일하게 편집 요청 모드 없이 하드 거부한다 —
+                    // 편집 요청이 켜져 있어도 보류로 돌리지 않는다. 그 외 ACL 미달만 편집 요청으로 보류.
+                    // 비관리자는 admin_only 포함 ACL 을 절대 통과 못 하므로 decisive 순서와 무관하게 하드 거부.
+                    const isAdminOnlyFail = hasAdminOnly && !isAdmin;
+                    if (!isAdminOnlyFail && isEditRequestEnabled(c.env)) {
                         aclHeldForPending = true;
                     } else {
-                        const isAdminOnlyFail = ev.decisive === 'admin_only';
                         return c.json({
                             error: isAdminOnlyFail
                                 ? '이 문서는 관리자만 편집할 수 있습니다.'
@@ -2384,6 +2413,12 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
         finalIsPrivate = prefixed.finalIsPrivate;
         finalEditAcl = prefixed.finalEditAcl;
 
+        // 비공개로 강제되는 신규 문서(하위 문서 일괄 규칙 등 prefix 룰의 is_private)는 비공개=관리자 전용
+        // 동등 취급이므로, wiki:private 이 없는 사용자는 편집 요청 모드 없이 하드 거부한다.
+        if (finalIsPrivate === 1 && !rbac.can(user.role, 'wiki:private')) {
+            return c.json({ error: '비공개로 지정된 문서는 새로 생성할 수 없습니다.', is_private: true }, 403);
+        }
+
         // 새 ACL 이 적용된 신규 페이지를 생성하기 전에, 생성자(비관리자)가 그 ACL 을 통과하는지 검증한다.
         // 신규 페이지이므로 page_editor 플래그는 항상 false 로 평가 (pageId=null).
         // 관리자(admin:access)는 admin_only 가 없는 ACL 을 우회 — admin:access 는 자기 자신이 직접 작성한
@@ -2398,10 +2433,13 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
                     const minAge = await getEditAclMinAgeDays(db);
                     const ev = await evaluateEditAcl(db, aclForCreate, user, null, minAge, isAdmin);
                     if (!ev.allowed) {
-                        if (isEditRequestEnabled(c.env)) {
+                        // admin_only(관리자 전용) 실패는 비공개와 동일하게 편집 요청 모드 없이 하드 거부한다.
+                        // 그 외 생성 ACL 미달만 편집 요청(create 보류)으로 돌린다.
+                        // 비관리자는 admin_only 포함 ACL 을 절대 통과 못 하므로 decisive 순서와 무관하게 하드 거부.
+                        const isAdminOnlyFail = hasAdminOnly && !isAdmin;
+                        if (!isAdminOnlyFail && isEditRequestEnabled(c.env)) {
                             createAclHeldForPending = true;
                         } else {
-                            const isAdminOnlyFail = ev.decisive === 'admin_only';
                             return c.json({
                                 error: isAdminOnlyFail
                                     ? '이 슬러그로 시작하는 문서는 관리자만 새로 생성할 수 있습니다.'

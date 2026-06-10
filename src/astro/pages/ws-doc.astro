@@ -1,0 +1,132 @@
+---
+// 워크스페이스 문서 조회 셸 (/ws/:wslug/w/:slug). index.astro 의 문서 렌더 구조를 따른다.
+// wslug/slug 는 클라이언트(ws-doc.ts)가 location.pathname 에서 파싱한다(서버 SSR 데이터 없음).
+// render.css 를 로드해 renderWikiContent 산출 HTML 이 스타일링되게 한다.
+import BaseLayout from '../layouts/BaseLayout.astro';
+import Header from '../components/Header.astro';
+import Footer from '../components/Footer.astro';
+---
+<BaseLayout pagePath="/ws-doc.html" title="워크스페이스 문서 - CloudWiki">
+    <Fragment slot="head">
+        <link rel="stylesheet" href="/render.css" />
+        <!-- 테마 FOUC 방지: CSS 로드 후 즉시 테마 적용 -->
+        <script is:inline>try{var t=localStorage.getItem('themeMode');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
+    </Fragment>
+
+    <!-- ── 네비게이션 바 ── -->
+    <Header />
+
+    <div class="wiki-layout">
+        <div class="wiki-container">
+            <div class="wiki-article">
+
+                <!-- 워크스페이스 브레드크럼 -->
+                <nav class="mb-3 small" aria-label="breadcrumb">
+                    <a href="/workspaces" class="text-decoration-none"><i class="bi bi-grid"></i> 워크스페이스</a>
+                    <span class="text-muted mx-1">/</span>
+                    <a href="#" id="wsDocCrumbWs" class="text-decoration-none">워크스페이스</a>
+                </nav>
+
+                <!-- 로딩 -->
+                <div id="wsDocLoading" class="wiki-loading">
+                    <div class="spinner-border text-primary" role="status"></div>
+                    <span>불러오는 중...</span>
+                </div>
+
+                <!-- 빈 상태 / 오류 -->
+                <div id="wsDocEmpty" class="d-none"></div>
+
+                <!-- 문서 본문 -->
+                <div id="wsDocBody" class="d-none">
+                    <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
+                        <h1 class="wiki-article-title mb-0" id="wsDocTitle"></h1>
+                        <div class="d-flex gap-2" id="wsDocActions"></div>
+                    </div>
+                    <div id="wsDocRedirect" class="d-none alert alert-info py-2 px-3 mb-3"></div>
+                    <div class="wiki-content" id="wsDocContent"></div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <!-- ── 푸터 ── -->
+    <Footer />
+
+    <!-- 사이드 도구 토글 (플로팅 버튼) -->
+    <button type="button" class="btn btn-wiki position-fixed d-none" id="wsDocSideToggle"
+        style="bottom: 1.5rem; right: 1.5rem; z-index: 1040; border-radius: 50%; width: 3.25rem; height: 3.25rem;"
+        data-bs-toggle="offcanvas" data-bs-target="#wsDocSidebar" aria-controls="wsDocSidebar" title="문서 도구">
+        <i class="bi bi-layout-sidebar-reverse"></i>
+    </button>
+
+    <!-- 오프캔버스 사이드바 -->
+    <div class="offcanvas offcanvas-end" tabindex="-1" id="wsDocSidebar" aria-labelledby="wsDocSidebarLabel">
+        <div class="offcanvas-header">
+            <h5 class="offcanvas-title" id="wsDocSidebarLabel"><i class="bi bi-tools"></i> 문서 도구</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="닫기"></button>
+        </div>
+        <div class="offcanvas-body">
+            <div class="accordion" id="wsDocSidebarAccordion">
+
+                <!-- 1. 이 문서의 미디어 -->
+                <div class="accordion-item">
+                    <h2 class="accordion-header">
+                        <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#wsSecMedia" aria-expanded="true">
+                            <i class="bi bi-image me-2"></i> 이 문서의 미디어
+                        </button>
+                    </h2>
+                    <div id="wsSecMedia" class="accordion-collapse collapse show" data-bs-parent="#wsDocSidebarAccordion">
+                        <div class="accordion-body" id="wsDocMedia"></div>
+                    </div>
+                </div>
+
+                <!-- 2. 리비전 -->
+                <div class="accordion-item">
+                    <h2 class="accordion-header">
+                        <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#wsSecRev" aria-expanded="false">
+                            <i class="bi bi-clock-history me-2"></i> 리비전
+                        </button>
+                    </h2>
+                    <div id="wsSecRev" class="accordion-collapse collapse" data-bs-parent="#wsDocSidebarAccordion">
+                        <div class="accordion-body" id="wsDocRevisions"></div>
+                    </div>
+                </div>
+
+                <!-- 3. 역링크 -->
+                <div class="accordion-item">
+                    <h2 class="accordion-header">
+                        <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#wsSecBacklinks" aria-expanded="false">
+                            <i class="bi bi-link-45deg me-2"></i> 역링크
+                        </button>
+                    </h2>
+                    <div id="wsSecBacklinks" class="accordion-collapse collapse" data-bs-parent="#wsDocSidebarAccordion">
+                        <div class="accordion-body" id="wsDocBacklinks"></div>
+                    </div>
+                </div>
+
+                <!-- 4. 빠른 문서 이동 -->
+                <div class="accordion-item">
+                    <h2 class="accordion-header">
+                        <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#wsSecJump" aria-expanded="false">
+                            <i class="bi bi-search me-2"></i> 빠른 문서 이동
+                        </button>
+                    </h2>
+                    <div id="wsSecJump" class="accordion-collapse collapse" data-bs-parent="#wsDocSidebarAccordion">
+                        <div class="accordion-body">
+                            <input type="text" class="form-control form-control-sm mb-2" id="wsDocJumpInput" placeholder="문서 제목 검색..." autocomplete="off">
+                            <div id="wsDocJumpResults" class="list-group list-group-flush"></div>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <Fragment slot="scripts">
+        <script type="module" src="/dist/common.js" is:inline></script>
+        <script type="module" src="/dist/render.js" is:inline></script>
+        <script type="module" src="/dist/ws-doc.js" is:inline></script>
+    </Fragment>
+</BaseLayout>

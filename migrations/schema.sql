@@ -616,3 +616,103 @@ CREATE TABLE IF NOT EXISTS mcp_api_keys (
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_mcp_api_keys_expires ON mcp_api_keys(expires_at);
+
+-- ──────────────────────────────────────────────────────────────────
+-- 워크스페이스 (개인 워크스페이스 기능)
+-- ──────────────────────────────────────────────────────────────────
+-- 기존 pages/media/page_links 와 완전히 분리된 별도 테이블 세트.
+-- 워크스페이스 스코프 문서/미디어는 전역 위키와 섞이지 않는다.
+
+-- 워크스페이스 본체. owner 는 여기(owner_id)에만 저장된다(workspace_members 에 중복 저장 안 함).
+CREATE TABLE IF NOT EXISTS workspaces (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  slug        TEXT NOT NULL UNIQUE,
+  name        TEXT NOT NULL,
+  owner_id    INTEGER NOT NULL,
+  created_at  INTEGER DEFAULT (unixepoch()),
+  deleted_at  INTEGER,
+  FOREIGN KEY (owner_id) REFERENCES users(id)
+);
+
+-- 워크스페이스 멤버. owner 는 workspaces.owner_id 에서 파생되므로 이 테이블에 넣지 않는다.
+CREATE TABLE IF NOT EXISTS workspace_members (
+  workspace_id  INTEGER NOT NULL,
+  user_id       INTEGER NOT NULL,
+  role          TEXT NOT NULL DEFAULT 'viewer',
+  created_at    INTEGER DEFAULT (unixepoch()),
+  PRIMARY KEY (workspace_id, user_id),
+  CHECK (role IN ('editor','viewer')),
+  FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
+  FOREIGN KEY (user_id) REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS idx_ws_members_user ON workspace_members(user_id);
+
+-- 워크스페이스 문서. slug 는 워크스페이스 내에서만 유일하다 (UNIQUE (workspace_id, slug)).
+-- ws_public: 1 이면 비멤버/게스트에게도 해당 문서 읽기 허용 (라우트 레이어에서 적용).
+CREATE TABLE IF NOT EXISTS workspace_pages (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  workspace_id      INTEGER NOT NULL,
+  slug              TEXT NOT NULL,
+  title             TEXT,
+  content           TEXT NOT NULL DEFAULT '',
+  last_revision_id  INTEGER,
+  version           INTEGER DEFAULT 1,
+  created_at        INTEGER DEFAULT (unixepoch()),
+  updated_at        INTEGER DEFAULT (unixepoch()),
+  deleted_at        INTEGER,
+  redirect_to       TEXT,
+  rows              INTEGER,
+  characters        INTEGER,
+  view_mode         TEXT,
+  ws_public         INTEGER NOT NULL DEFAULT 0,
+  UNIQUE (workspace_id, slug),
+  FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
+);
+CREATE INDEX IF NOT EXISTS idx_ws_pages_workspace_updated ON workspace_pages(workspace_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ws_pages_deleted ON workspace_pages(deleted_at);
+
+-- 워크스페이스 리비전. 구조는 전역 revisions 와 동일 (R2 본문/소프트 삭제/퍼지 포함).
+CREATE TABLE IF NOT EXISTS workspace_revisions (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  page_id      INTEGER NOT NULL,
+  page_version INTEGER,
+  content      TEXT NOT NULL DEFAULT '',
+  r2_key       TEXT,
+  summary      TEXT,
+  author_id    INTEGER,
+  created_at   INTEGER DEFAULT (unixepoch()),
+  deleted_at   INTEGER,
+  purged_at    INTEGER,
+  FOREIGN KEY (page_id) REFERENCES workspace_pages(id),
+  FOREIGN KEY (author_id) REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS idx_ws_revisions_page ON workspace_revisions(page_id, page_version DESC);
+CREATE INDEX IF NOT EXISTS idx_ws_revisions_created ON workspace_revisions(created_at DESC);
+
+-- 워크스페이스 미디어. ws_public: 1 이면 비멤버에게도 노출 허용 (라우트 레이어에서 적용).
+CREATE TABLE IF NOT EXISTS workspace_media (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  workspace_id  INTEGER NOT NULL,
+  r2_key        TEXT NOT NULL UNIQUE,
+  filename      TEXT NOT NULL,
+  mime_type     TEXT NOT NULL,
+  size          INTEGER NOT NULL,
+  uploader_id   INTEGER,
+  ws_public     INTEGER NOT NULL DEFAULT 0,
+  created_at    INTEGER DEFAULT (unixepoch()),
+  FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
+  FOREIGN KEY (uploader_id) REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS idx_ws_media_workspace ON workspace_media(workspace_id);
+
+-- 워크스페이스 내부 링크 인덱스 (전역 page_links 와 분리, 워크스페이스 내 역링크 용).
+CREATE TABLE IF NOT EXISTS workspace_page_links (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  source_page_id  INTEGER NOT NULL,
+  target_slug     TEXT NOT NULL,
+  link_type       TEXT NOT NULL DEFAULT 'wikilink',
+  workspace_id    INTEGER NOT NULL,
+  FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
+);
+CREATE INDEX IF NOT EXISTS idx_ws_page_links_source ON workspace_page_links(source_page_id);
+CREATE INDEX IF NOT EXISTS idx_ws_page_links_target ON workspace_page_links(target_slug);

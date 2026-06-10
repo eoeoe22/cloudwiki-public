@@ -28,16 +28,6 @@ import Footer from '../components/Footer.astro';
                     <span class="placeholder-glow"><span class="placeholder col-12 d-inline-block" style="width: 320px; height: 2.4rem; border-radius: 6px;"></span></span>
                 </div>
 
-                <!-- 검토 대기 편집 요청 (검토자에게만, 카운트>0 시 노출) -->
-                <div id="pendingEditsCard" class="alert alert-info d-none align-items-center mb-4" role="alert">
-                    <i class="bi bi-pencil-square fs-4 me-3"></i>
-                    <div class="flex-grow-1">
-                        <strong>검토 대기 편집 요청 <span id="pendingEditsCount">0</span>건</strong>
-                        <div class="small text-muted">검토는 각 문서 열람 페이지에서 진행할 수 있습니다.</div>
-                    </div>
-                    <a href="#docActivity" class="btn btn-sm btn-outline-primary ms-2">최근 수정 내역 보기</a>
-                </div>
-
                 <!-- 위젯 카드 그리드 -->
                 <div class="row g-3">
                     <!-- 고아 문서 -->
@@ -51,12 +41,12 @@ import Footer from '../components/Footer.astro';
                         </div>
                     </div>
 
-                    <!-- 작성 요청 (빨간 링크) -->
+                    <!-- 미작성 문서 (빨간 링크) -->
                     <div class="col-lg-4">
                         <div class="card h-100 shadow-sm">
                             <div class="card-header bg-transparent fw-bold">
-                                <i class="bi bi-pencil-fill text-danger"></i> 작성 요청
-                                <span class="text-muted small fw-normal">— 링크됐지만 아직 없는 문서</span>
+                                <i class="bi bi-pencil-fill text-danger"></i> 미작성 문서
+                                <span class="text-muted small fw-normal">— 참조가 있지만 작성되지 않은 문서</span>
                             </div>
                             <div class="card-body p-2" id="wantedList"></div>
                         </div>
@@ -71,6 +61,16 @@ import Footer from '../components/Footer.astro';
                             <div class="card-body p-2" id="recentDiscussionsList"></div>
                         </div>
                     </div>
+                </div>
+
+                <!-- 검토 대기 편집 요청 (검토 가능한 사용자에게만, 항목>0 시 노출) -->
+                <div id="pendingEditsSection" class="card shadow-sm mt-3 d-none">
+                    <div class="card-header bg-transparent fw-bold">
+                        <i class="bi bi-pencil-square text-primary"></i> 검토 대기 편집 요청
+                        <span id="pendingEditsCount" class="badge bg-primary ms-1">0</span>
+                        <span class="text-muted small fw-normal">— 검토는 각 문서 열람 페이지에서 진행할 수 있습니다</span>
+                    </div>
+                    <div class="card-body p-2" id="pendingEditsList"></div>
                 </div>
 
                 <!-- 랜덤 탐색 (슬림 배너 — 그리드 stretch 로 인한 PC 여백 제거) -->

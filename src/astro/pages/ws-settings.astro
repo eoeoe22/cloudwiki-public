@@ -1,0 +1,143 @@
+---
+// 워크스페이스 설정 셸 (/ws/:wslug/settings). search.astro 와 동일한 구조를 따른다.
+// canManage 가 아닌 사용자는 ws-settings.ts 가 안내 후 대시보드로 돌려보낸다.
+import BaseLayout from '../layouts/BaseLayout.astro';
+import Header from '../components/Header.astro';
+import Footer from '../components/Footer.astro';
+---
+<BaseLayout pagePath="/ws-settings.html" title="워크스페이스 설정 - CloudWiki">
+    <Fragment slot="head">
+        <!-- 테마 FOUC 방지: CSS 로드 후 즉시 테마 적용 -->
+        <script is:inline>try{var t=localStorage.getItem('themeMode');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
+    </Fragment>
+
+    <!-- ── 네비게이션 바 ── -->
+    <Header />
+
+    <div class="wiki-layout">
+        <div class="wiki-container">
+            <div class="wiki-article">
+
+                <!-- 로딩 -->
+                <div id="wsLoading" class="wiki-loading">
+                    <div class="spinner-border text-primary" role="status"></div>
+                    <span>불러오는 중...</span>
+                </div>
+
+                <!-- 본문 -->
+                <div id="wsContent" class="d-none">
+                    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+                        <h2 class="mb-0"><i class="bi bi-gear"></i> <span id="wsSettingsTitle">워크스페이스 설정</span></h2>
+                        <a href="#" class="btn btn-wiki-outline btn-sm" id="backToWsBtn"><i class="bi bi-arrow-left"></i> 대시보드</a>
+                    </div>
+
+                    <!-- 1. 참가자 관리 -->
+                    <div class="card mb-4">
+                        <div class="card-header"><i class="bi bi-people"></i> 참가자 관리</div>
+                        <div class="card-body" id="membersManage"></div>
+                    </div>
+
+                    <!-- 2. 초대 -->
+                    <div class="card mb-4">
+                        <div class="card-header"><i class="bi bi-person-plus"></i> 멤버 초대</div>
+                        <div class="card-body">
+                            <div class="row g-2 align-items-end mb-2">
+                                <div class="col-12 col-md">
+                                    <label class="form-label small mb-1" for="inviteSearch">사용자 검색</label>
+                                    <input type="text" id="inviteSearch" class="form-control form-control-sm" placeholder="닉네임으로 검색" autocomplete="off" oninput="onInviteSearch()">
+                                </div>
+                                <div class="col-auto">
+                                    <label class="form-label small mb-1" for="inviteRole">역할</label>
+                                    <select id="inviteRole" class="form-select form-select-sm">
+                                        <option value="viewer">viewer (읽기)</option>
+                                        <option value="editor">editor (편집)</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div id="inviteResults" class="list-group"></div>
+                        </div>
+                    </div>
+
+                    <!-- 3. 소유권 이전 -->
+                    <div class="card mb-4">
+                        <div class="card-header"><i class="bi bi-arrow-left-right"></i> 소유권 이전</div>
+                        <div class="card-body">
+                            <p class="text-muted small">현재 멤버 중 한 명에게 소유권을 이전합니다. 이전 후 본인은 editor 로 강등됩니다.</p>
+                            <div class="row g-2 align-items-end">
+                                <div class="col-12 col-md">
+                                    <select id="transferTarget" class="form-select form-select-sm"></select>
+                                </div>
+                                <div class="col-auto">
+                                    <button type="button" class="btn btn-warning btn-sm" onclick="doTransfer()">
+                                        <i class="bi bi-arrow-left-right"></i> 소유권 이전
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 4. 미디어 가비지 컬렉터 -->
+                    <div class="card mb-4">
+                        <div class="card-header"><i class="bi bi-trash3"></i> 미디어 정리 (가비지 컬렉터)</div>
+                        <div class="card-body">
+                            <p class="text-muted small">어떤 문서에서도 참조하지 않는 미디어를 찾아 삭제합니다.</p>
+                            <div class="d-flex gap-2 mb-3 flex-wrap">
+                                <button type="button" class="btn btn-wiki-outline btn-sm" onclick="scanGc()">
+                                    <i class="bi bi-search"></i> 미참조 미디어 검색
+                                </button>
+                                <button type="button" class="btn btn-danger btn-sm d-none" id="gcDeleteSelectedBtn" onclick="deleteGcSelected()">
+                                    <i class="bi bi-trash"></i> 선택 삭제
+                                </button>
+                                <button type="button" class="btn btn-outline-danger btn-sm d-none" id="gcDeleteAllBtn" onclick="deleteGcAll()">
+                                    <i class="bi bi-trash3"></i> 전체 삭제
+                                </button>
+                            </div>
+                            <div id="gcList"></div>
+                        </div>
+                    </div>
+
+                    <!-- 5. 워크스페이스 정보 -->
+                    <div class="card mb-4">
+                        <div class="card-header"><i class="bi bi-info-circle"></i> 워크스페이스 정보</div>
+                        <div class="card-body">
+                            <div class="row g-2">
+                                <div class="col-12 col-md-6">
+                                    <label class="form-label small mb-1" for="wsSlugInput">제목</label>
+                                    <input type="text" id="wsSlugInput" class="form-control form-control-sm" maxlength="64">
+                                </div>
+                                <div class="col-12 col-md-6">
+                                    <label class="form-label small mb-1" for="wsNameInput">대체 제목</label>
+                                    <input type="text" id="wsNameInput" class="form-control form-control-sm" maxlength="100">
+                                </div>
+                            </div>
+                            <div class="mt-3">
+                                <button type="button" class="btn btn-wiki btn-sm" onclick="saveWsInfo()">
+                                    <i class="bi bi-save"></i> 저장
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 6. 위험 구역 -->
+                    <div class="card border-danger mb-4">
+                        <div class="card-header text-danger"><i class="bi bi-exclamation-octagon"></i> 위험 구역</div>
+                        <div class="card-body">
+                            <p class="text-muted small mb-2">워크스페이스를 삭제하면 소속 문서와 미디어에 접근할 수 없게 됩니다.</p>
+                            <button type="button" class="btn btn-danger btn-sm" onclick="deleteWorkspace()">
+                                <i class="bi bi-trash"></i> 워크스페이스 삭제
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── 푸터 ── -->
+    <Footer />
+
+    <Fragment slot="scripts">
+        <script type="module" src="/dist/common.js" is:inline></script>
+        <script type="module" src="/dist/ws-settings.js" is:inline></script>
+    </Fragment>
+</BaseLayout>

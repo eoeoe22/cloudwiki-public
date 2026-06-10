@@ -28,6 +28,31 @@ export async function uploadRevisionToR2(
 }
 
 /**
+ * 워크스페이스 리비전 본문을 R2에 업로드하고 r2_key를 반환.
+ * Key 형식: ws-revisions/{workspaceId}/{pageId}/{pageVersion}-{token}.md
+ *
+ * 전역 리비전(`revisions/...`)과 키 네임스페이스를 분리해 워크스페이스 격리를 저장소
+ * 레벨에서도 보장한다. 토큰의 동시성 안전 근거는 uploadRevisionToR2 와 동일하다 —
+ * 같은 base 버전을 읽은 두 저장 요청이 동일 pageVersion 을 계산해도 키가 유일하므로
+ * 낙관적 락(version-CAS) 패배 측의 롤백 delete 가 승리한 리비전 본문을 지우지 못한다.
+ * 읽기 경로는 항상 DB 의 workspace_revisions.r2_key 값을 사용한다(getRevisionContent 재사용).
+ */
+export async function uploadWorkspaceRevisionToR2(
+    bucket: R2Bucket,
+    workspaceId: number,
+    pageId: number,
+    pageVersion: number,
+    content: string
+): Promise<string> {
+    const token = crypto.randomUUID().slice(0, 8);
+    const r2Key = `ws-revisions/${workspaceId}/${pageId}/${pageVersion}-${token}.md`;
+    await bucket.put(r2Key, content, {
+        httpMetadata: { contentType: 'text/markdown; charset=utf-8' },
+    });
+    return r2Key;
+}
+
+/**
  * R2에서 리비전 본문을 가져오며 Cache API로 영구 캐시.
  * 리비전은 불변(Immutable)이므로 max-age=31536000, immutable 적용.
  */

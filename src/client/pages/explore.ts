@@ -24,7 +24,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   window.loadRecentChanges();
 
   loadSummary();
-  loadPendingEditsCount();
+  loadPendingEdits();
 
   // 문서 활동: 최근 수정 내역은 즉시, 모든 문서 목록은 탭 최초 진입 시 로드
   loadRecentRevisions();
@@ -95,10 +95,10 @@ function renderOrphans(el, items) {
     </a>`).join('');
 }
 
-// ── 작성 요청 (빨간 링크) ──
+// ── 미작성 문서 (빨간 링크) ──
 function renderWanted(el, items) {
   if (!items.length) {
-    el.innerHTML = window.uiEmptyState({ compact: true, icon: 'bi bi-check2-circle', title: '작성 요청 문서가 없습니다' });
+    el.innerHTML = window.uiEmptyState({ compact: true, icon: 'bi bi-check2-circle', title: '미작성 문서가 없습니다' });
     return;
   }
   el.innerHTML = items.map(it => `
@@ -124,21 +124,47 @@ function renderDiscussions(el, items) {
     </a>`).join('');
 }
 
-// ── 검토 대기 편집 요청 카운트 (검토자에게만 >0) ──
-async function loadPendingEditsCount() {
+// ── 검토 대기 편집 요청 목록 (검토 가능한 사용자에게만 노출) ──
+// 서버가 검토 권한자에게 actionable 한(본인 작성 제외·ACL 통과) 요청만 내려주므로(자연 게이팅)
+// 별도 권한 체크 없이 목록을 그대로 렌더한다. 검토는 각 문서 열람 페이지에서 진행한다.
+async function loadPendingEdits() {
   try {
-    const res = await fetch('/api/pending-edits/count');
-    if (!res.ok) return; // 비로그인(401) 등 → 카드 숨김 유지
+    const res = await fetch('/api/pending-edits');
+    if (!res.ok) return; // 비로그인(401)/비검토자 등 → 섹션 숨김 유지
     const data = await res.json();
-    const count = Number(data.count || 0);
-    if (count > 0) {
-      document.getElementById('pendingEditsCount').textContent = count.toLocaleString();
-      document.getElementById('pendingEditsCard').classList.remove('d-none');
-      document.getElementById('pendingEditsCard').classList.add('d-flex');
-    }
+    const subs = Array.isArray(data.submissions) ? data.submissions : [];
+    if (!subs.length) return; // 검토 대기 없음 → 섹션 숨김 유지
+
+    document.getElementById('pendingEditsCount').textContent = subs.length.toLocaleString();
+    document.getElementById('pendingEditsList').innerHTML = subs.map(renderPendingEditRow).join('');
+    document.getElementById('pendingEditsSection').classList.remove('d-none');
   } catch (e) {
-    // 무시 — 카드 숨김 유지
+    // 무시 — 섹션 숨김 유지
   }
+}
+
+function renderPendingEditRow(it) {
+  // updated_at 은 ISO 문자열 → getRelativeTime 은 unix 초를 받으므로 변환한다.
+  const unix = Math.floor(new Date(it.updated_at).getTime() / 1000);
+  const when = Number.isFinite(unix) ? window.getRelativeTime(unix) : '';
+  const actionBadge = it.action === 'create'
+    ? '<span class="badge bg-success bg-opacity-10 text-success border flex-shrink-0">새 문서</span>'
+    : '<span class="badge bg-primary bg-opacity-10 text-primary border flex-shrink-0">수정</span>';
+  const conflict = it.has_conflict
+    ? '<span class="badge bg-warning bg-opacity-10 text-warning border flex-shrink-0"><i class="bi bi-exclamation-triangle"></i> 충돌</span>'
+    : '';
+  const meta = `${esc(it.author_name || '알 수 없음')} 님의 편집 요청${it.summary ? ' · ' + esc(it.summary) : ''}`;
+  return `
+    <a href="${wikiHref(it.slug)}" class="d-block text-decoration-none text-body px-2 py-2 border-bottom explore-row">
+      <div class="d-flex align-items-center justify-content-between gap-2">
+        <span class="text-truncate me-2 fw-medium">${esc(it.slug)}</span>
+        <span class="d-flex align-items-center gap-1 flex-shrink-0">
+          ${actionBadge}${conflict}
+          <span class="text-muted small">${when}</span>
+        </span>
+      </div>
+      <div class="small text-muted text-truncate">${meta}</div>
+    </a>`;
 }
 
 // ──────────────────────────────────────────────────────────────────────────

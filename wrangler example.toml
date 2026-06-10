@@ -11,7 +11,7 @@ command = "npm run build"
 [assets]
 directory = "public"
 binding = "ASSETS"
-run_worker_first = ["/", "/w/*", "/wiki/*", "/mypage", "/edit", "/profile/*", "/search", "/admin", "/admin-media", "/admin-bulk-manage", "/tickets", "/tickets/*", "/setup-profile", "/error", "/sitemap.xml", "/robots.txt", "/login", "/recent-changes", "/explore", "/auth/discord", "/auth/discord/callback", "/auth/refresh-picture", "/blog", "/blog/*", "/blog-edit", "/sw.js"]
+run_worker_first = ["/", "/w/*", "/wiki/*", "/mypage", "/edit", "/profile/*", "/search", "/admin", "/admin-media", "/admin-bulk-manage", "/tickets", "/tickets/*", "/setup-profile", "/error", "/sitemap.xml", "/robots.txt", "/login", "/recent-changes", "/explore", "/auth/discord", "/auth/discord/callback", "/auth/refresh-picture", "/blog", "/blog/*", "/blog-edit", "/sw.js", "/workspaces", "/ws/*", "/wsmedia/*"]
 
 
 [[d1_databases]]
@@ -94,6 +94,11 @@ WIKI_THEMES = "" # 사용자 선택형 멀티 스킨 허용 목록(콤마 구분
 EMAIL_RESTRICTION = "" # 이메일 도메인 가입 제한 설정: "" 또는 "none" (제한 없음), "whitelist" (허용 도메인만), "blacklist" (차단 도메인 제외)
 EMAIL_LIST = "example.com, example.example.com" # 콤마로 구분된 도메인 목록 (EMAIL_RESTRICTION이 whitelist 또는 blacklist일 때 사용)
 ENABLED_EXTENSIONS = "" # 확장 기능 활성화, 쉼표로 구분. 예 : "freq,extension1,extension2"
+
+WORKSPACES_ENABLED = "false" # 개인 워크스페이스 기능 전역 토글: "true" 시 활성
+WORKSPACE_CREATOR = "user" # 워크스페이스 생성 가능 주체: "user" (일반 사용자도 생성 가능, 기본값), "admin" (관리자만 생성)
+WORKSPACE_MAX_PER_USER = "1" # 사용자당 소유 가능한 워크스페이스 상한 (숫자 문자열, 기본 1)
+
 
 # 로그인 페이지에서 노출할 메시지 및 약관
 LOGIN_MESSAGE = ""

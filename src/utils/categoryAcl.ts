@@ -11,6 +11,7 @@
 import {
     parseEditAcl,
     serializeEditAcl,
+    EDIT_ACL_FLAGS,
     type EditAcl,
     type EditAclFlag,
 } from './editAcl';
@@ -133,13 +134,9 @@ export function mergeEditAclFlags(
 ): EditAcl | null {
     if (!a) return b ? { flags: [...b.flags] } : null;
     if (!b) return { flags: [...a.flags] };
-    const seen = new Set<EditAclFlag>();
-    const out: EditAclFlag[] = [];
-    for (const f of [...a.flags, ...b.flags]) {
-        if (seen.has(f)) continue;
-        seen.add(f);
-        out.push(f);
-    }
+    const present = new Set<EditAclFlag>([...a.flags, ...b.flags]);
+    // EDIT_ACL_FLAGS 정렬 순서로 직렬화해 합집합 결과의 플래그 순서를 안정화한다(중복 제거 포함).
+    const out = EDIT_ACL_FLAGS.filter(f => present.has(f));
     if (out.length === 0) return null;
     return { flags: out };
 }

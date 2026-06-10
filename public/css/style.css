@@ -3646,3 +3646,24 @@ html[data-theme="dark"] .push-status-on {
     gap: 10px;
   }
 }
+
+/* 문서 단위 카드형 배너 (MCP draft / 편집요청 검토 대기 / 미작성 안내 / 편집요청 surface).
+   과거 index.ts 에 색만 바꿔 복붙되던 인라인 cssText 를 renderDocBanner 헬퍼 + 이 클래스로 일원화.
+   기존 리터럴 색을 그대로 유지(--wiki-palette-* 토큰은 light-dark() 라 다크모드 외관이 바뀌므로 미사용). */
+.doc-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.65rem 1rem;
+  margin: 0.5rem 0 1rem;
+  border: 1px solid;
+  border-radius: 10px;
+  font-size: 0.95rem;
+}
+.doc-banner--warning { border-color: #ffc107; background: rgba(255, 193, 7, 0.10); }
+.doc-banner--sky     { border-color: #38BDF8; background: rgba(56, 189, 248, 0.10); }
+.doc-banner--info    { border-color: #0dcaf0; background: rgba(13, 202, 240, 0.10); }
+.doc-banner--flush   { margin: 0; }
+.doc-banner__action  { white-space: nowrap; }
+.doc-banner--sky .doc-banner__action { background: #38BDF8; color: #06283d; }

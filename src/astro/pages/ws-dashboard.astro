@@ -1,0 +1,100 @@
+---
+// 워크스페이스 대시보드 셸 (/ws/:wslug). search.astro 와 동일한 구조를 따른다.
+// wslug 는 클라이언트(ws-dashboard.ts)가 location.pathname 에서 파싱한다.
+import BaseLayout from '../layouts/BaseLayout.astro';
+import Header from '../components/Header.astro';
+import Footer from '../components/Footer.astro';
+---
+<BaseLayout pagePath="/ws-dashboard.html" title="워크스페이스 - CloudWiki">
+    <Fragment slot="head">
+        <!-- 테마 FOUC 방지: CSS 로드 후 즉시 테마 적용 -->
+        <script is:inline>try{var t=localStorage.getItem('themeMode');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
+    </Fragment>
+
+    <!-- ── 네비게이션 바 ── -->
+    <Header />
+
+    <div class="wiki-layout">
+        <div class="wiki-container">
+            <div class="wiki-article">
+
+                <!-- 로딩 -->
+                <div id="wsLoading" class="wiki-loading">
+                    <div class="spinner-border text-primary" role="status"></div>
+                    <span>불러오는 중...</span>
+                </div>
+
+                <!-- 접근 오류 -->
+                <div id="wsError" class="d-none">
+                    <div class="empty-state">
+                        <i class="empty-state-icon bi bi-exclamation-triangle" aria-hidden="true"></i>
+                        <p class="empty-state-title" id="wsErrorTitle">워크스페이스를 찾을 수 없습니다</p>
+                        <p class="empty-state-text">존재하지 않거나 접근 권한이 없는 워크스페이스입니다.</p>
+                        <div class="empty-state-cta">
+                            <a href="/workspaces" class="btn btn-wiki btn-sm"><i class="bi bi-arrow-left"></i> 내 워크스페이스로</a>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 본문 -->
+                <div id="wsContent" class="d-none">
+                    <!-- 헤더: 이름 + 툴바 -->
+                    <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
+                        <div>
+                            <h2 class="mb-1" id="wsName"></h2>
+                            <p class="text-muted small mb-0" id="wsSlug"></p>
+                        </div>
+                        <div class="d-flex gap-2 flex-wrap" id="wsToolbar"></div>
+                    </div>
+
+                    <!-- 통계 -->
+                    <div class="d-flex flex-wrap gap-2 mb-4" id="wsStats"></div>
+
+                    <div class="row g-4">
+                        <!-- 문서 목록 -->
+                        <div class="col-12 col-lg-6">
+                            <div class="card h-100">
+                                <div class="card-header d-flex align-items-center justify-content-between">
+                                    <span><i class="bi bi-file-earmark-text"></i> 문서</span>
+                                </div>
+                                <div class="card-body" id="wsPagesList"></div>
+                            </div>
+                        </div>
+
+                        <!-- 참가자 목록 -->
+                        <div class="col-12 col-lg-6">
+                            <div class="card h-100">
+                                <div class="card-header"><i class="bi bi-people"></i> 참가자</div>
+                                <div class="card-body" id="wsMembersList"></div>
+                            </div>
+                        </div>
+
+                        <!-- 미디어 목록 -->
+                        <div class="col-12 col-lg-6">
+                            <div class="card h-100">
+                                <div class="card-header"><i class="bi bi-image"></i> 미디어</div>
+                                <div class="card-body" id="wsMediaList"></div>
+                            </div>
+                        </div>
+
+                        <!-- 최근 활동 -->
+                        <div class="col-12 col-lg-6">
+                            <div class="card h-100">
+                                <div class="card-header"><i class="bi bi-clock-history"></i> 최근 활동</div>
+                                <div class="card-body" id="wsActivityList"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── 푸터 ── -->
+    <Footer />
+
+    <Fragment slot="scripts">
+        <script type="module" src="/dist/common.js" is:inline></script>
+        <script type="module" src="/dist/ws-dashboard.js" is:inline></script>
+    </Fragment>
+</BaseLayout>

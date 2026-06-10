@@ -28,6 +28,11 @@ import oauthRoutes from './routes/oauth';
 import analyticsRoutes from './routes/analytics';
 import blogRoutes from './routes/blog';
 import exploreRoutes from './routes/explore';
+import workspaceRoutes from './routes/workspace';
+import workspacePagesRoutes from './routes/workspace-pages';
+import workspaceMediaRoutes from './routes/workspace-media';
+import wsMcpRoutes from './routes/ws-mcp';
+import { isWorkspacesEnabled } from './utils/workspace';
 import { trackPageView, trackError, queryAnalytics } from './utils/analytics';
 import { isR2OnlyNamespace, isMapNamespace, normalizeSlug } from './utils/slug';
 import { getEnabledExtensions } from './utils/extensions';
@@ -50,6 +55,7 @@ app.use('*', secureHeaders());
 app.use('*', (c, next) => {
     const path = c.req.path;
     if (path === '/api/mcp' || path.startsWith('/api/mcp/')) return next();
+    if (path === '/api/ws-mcp' || path.startsWith('/api/ws-mcp/')) return next();
     if (path === '/oauth/token' || path === '/oauth/register' || path === '/oauth/revoke') return next();
     return csrf()(c, next);
 });
@@ -152,6 +158,11 @@ app.route('/', oauthRoutes); // /.well-known/* + /oauth/*
 app.route('/api/admin/analytics', analyticsRoutes);
 app.route('/api', blogRoutes);
 app.route('/api', exploreRoutes);
+// 개인 워크스페이스 (라우트 모듈이 전체 경로 /api/ws/... · /api/workspaces 를 직접 선언하므로 루트에 마운트)
+app.route('/', workspaceRoutes);
+app.route('/', workspacePagesRoutes);
+app.route('/', workspaceMediaRoutes);
+app.route('/', wsMcpRoutes); // /api/ws-mcp (워크스페이스 전용 MCP)
 
 // ── Service Worker (/sw.js) ──
 // Vite 빌드 산출물을 /dist/sw.js 로 두고, 루트 스코프 부여를 위해 /sw.js 로 위임한다.
@@ -426,6 +437,44 @@ app.get('/explore', async (c) => {
         return c.redirect('/login');
     }
     return fetchAssetHtml(c, '/explore.html');
+});
+
+// ── 개인 워크스페이스 페이지 셸 (WORKSPACES_ENABLED off 면 404) ──
+// 모두 client 측에서 /api/ws/* 로 데이터를 적재하는 정적 셸이다. 문서 뷰(ws-doc)는
+// ws_public 링크 공유를 위해 게스트도 허용하고(권한은 API 가 강제), 나머지 관리/편집
+// 셸은 closed 위키에서 비로그인 시 로그인으로 보낸다.
+function wsClosedGuard(c: Context<Env>): Response | null {
+    if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) return c.redirect('/login');
+    return null;
+}
+app.get('/workspaces', async (c) => {
+    if (!isWorkspacesEnabled(c.env)) return c.notFound();
+    const g = wsClosedGuard(c); if (g) return g;
+    return fetchAssetHtml(c, '/workspaces.html');
+});
+app.get('/ws/:wslug/settings', async (c) => {
+    if (!isWorkspacesEnabled(c.env)) return c.notFound();
+    const g = wsClosedGuard(c); if (g) return g;
+    return fetchAssetHtml(c, '/ws-settings.html');
+});
+app.get('/ws/:wslug/files', async (c) => {
+    if (!isWorkspacesEnabled(c.env)) return c.notFound();
+    const g = wsClosedGuard(c); if (g) return g;
+    return fetchAssetHtml(c, '/ws-files.html');
+});
+app.get('/ws/:wslug/edit', async (c) => {
+    if (!isWorkspacesEnabled(c.env)) return c.notFound();
+    const g = wsClosedGuard(c); if (g) return g;
+    return fetchAssetHtml(c, '/ws-edit.html');
+});
+app.get('/ws/:wslug/w/*', async (c) => {
+    if (!isWorkspacesEnabled(c.env)) return c.notFound();
+    return fetchAssetHtml(c, '/ws-doc.html');
+});
+app.get('/ws/:wslug', async (c) => {
+    if (!isWorkspacesEnabled(c.env)) return c.notFound();
+    const g = wsClosedGuard(c); if (g) return g;
+    return fetchAssetHtml(c, '/ws-dashboard.html');
 });
 
 // /w/* → 와일드카드 라우트: 슬래시 포함 슬러그를 지원하기 위해 경로 전체를 슬러그로 처리

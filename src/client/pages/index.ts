@@ -144,7 +144,6 @@
       document.getElementById('spaProgressBar').classList.add('d-none');
       document.getElementById('homePage').classList.add('d-none');
       document.getElementById('articlePage').classList.add('d-none');
-      document.getElementById('notFoundPage').classList.add('d-none');
       document.getElementById('deletedPage').classList.add('d-none');
       document.getElementById('privatePage').classList.add('d-none');
       document.getElementById('categoryPage').classList.add('d-none');
@@ -163,6 +162,10 @@
         docsPageNav.classList.add('d-none');
         docsPageNav.innerHTML = '';
       }
+      // 미작성 문서 배너(#articlePage 내부)는 전환 시 일단 숨긴다 — showMissingArticle 은 이 호출 뒤에
+      // 다시 렌더하고, 다른 경로(실문서/카테고리/이미지/map)는 잔재가 남지 않도록 정리된 상태로 진입한다.
+      document.getElementById('missingDocBanner')?.classList.add('d-none');
+      document.getElementById('missingDocEditRequest')?.classList.add('d-none');
       // 진행 중인 그룹 nav 요청을 무효화한다. 모든 페이지 전환(article/home/404/map/image)이
       // hideAllPages 를 거치므로, 느린 /nav-tree 응답이 전환 후 도착해 숨긴 사이드바를 다시
       // 노출(paintGroupNav)하는 race 를 막는다.
@@ -657,6 +660,41 @@
       bannerEl.classList.remove('d-none');
     }
 
+    // 문서 단위 카드형 배너 렌더 헬퍼 — 과거 MCP/편집요청/미작성 배너에 색만 바꿔 복붙되던 인라인 cssText 를
+    // .doc-banner 클래스(style.css)로 일원화. variant: 'warning'|'sky'|'info', icon: bootstrap 아이콘 클래스,
+    // message: HTML(호출측이 이스케이프 책임), action(optional): { label, iconClass, href } 또는
+    // { label, iconClass, onClick }, flush: 마진 제거(컨테이너가 별도 마진을 가질 때).
+    function renderDocBanner(targetEl, { variant = 'info', icon, message, action, flush = false } = {}) {
+      const el = typeof targetEl === 'string' ? document.getElementById(targetEl) : targetEl;
+      if (!el) return null;
+      el.style.cssText = '';
+      el.className = 'doc-banner doc-banner--' + variant + (flush ? ' doc-banner--flush' : '');
+      const iconHtml = icon ? `<i class="${icon}"></i> ` : '';
+      let actionHtml = '';
+      if (action) {
+        const btnVariantClass = variant === 'warning' ? ' btn-warning' : variant === 'info' ? ' btn-info' : '';
+        const cls = `btn btn-sm doc-banner__action${btnVariantClass}`;
+        const inner = `${action.iconClass ? `<i class="${action.iconClass}"></i> ` : ''}${action.label || ''}`;
+        actionHtml = action.href
+          ? `<a class="${cls}" href="${action.href}">${inner}</a>`
+          : `<button type="button" class="${cls}">${inner}</button>`;
+      }
+      el.innerHTML = `<span>${iconHtml}${message}</span>${actionHtml}`;
+      if (action && !action.href && typeof action.onClick === 'function') {
+        const btn = el.querySelector('.doc-banner__action');
+        if (btn) btn.addEventListener('click', action.onClick);
+      }
+      el.classList.remove('d-none');
+      el.style.display = '';
+      return el;
+    }
+
+    // 카드형 배너 숨김(리셋 경로 공용). 레거시 배너는 style.display='none' 으로 숨겼으므로 둘 다 정리.
+    function hideDocBanner(targetEl) {
+      const el = typeof targetEl === 'string' ? document.getElementById(targetEl) : targetEl;
+      if (el) { el.classList.add('d-none'); el.style.display = 'none'; }
+    }
+
     function renderSlugLabel(slug) {
       const el = document.getElementById('articleSlugLabel');
       if (!el) return;
@@ -698,6 +736,54 @@
       });
       el.appendChild(code);
       el.appendChild(btn);
+    }
+
+    // 문서 구조(브레드크럼) 네비게이션 렌더 — 일반 문서(showArticle)와 미작성 문서(showMissingArticle)가 공유.
+    // actionSlug 의 '/' 분할만으로 동작하므로 문서 존재 여부와 무관하다(콜론 슬러그는 하위문서 생성 버튼 억제).
+    function renderParentDocsNav(actionSlug) {
+      const parentDocsEl = document.getElementById('parentDocsNav');
+      closeParentDocsSiblings();
+      const parts = actionSlug.split('/');
+      const segments = [];
+      for (let i = 0; i < parts.length; i++) {
+        const isCurrent = (i === parts.length - 1);
+        const segSlug = parts.slice(0, i + 1).join('/');
+        const parentSlug = i === 0 ? '' : parts.slice(0, i).join('/');
+        const labelHtml = isCurrent
+          ? `<span class="parent-docs-current fw-semibold">${window.escapeHtml(parts[i])}</span>`
+          : `<a href="/w/${encodeURIComponent(segSlug)}" class="text-decoration-none wiki-spa-link">${window.escapeHtml(parts[i])}</a>`;
+        // 최상위(i=0)는 화살표 없음. 그 외(중간/현재)에는 chevron 토글 부착
+        const chevronHtml = i === 0
+          ? ''
+          : ` <button type="button" class="btn btn-link btn-sm p-0 align-baseline parent-docs-chevron" data-parent="${window.escapeHtml(parentSlug)}" data-current="${window.escapeHtml(parts[i])}" data-level="${i}" title="동일 단계 문서 보기" aria-label="동일 단계 문서 보기" aria-expanded="false"><i class="bi bi-chevron-down"></i></button>`;
+        segments.push(`<span class="parent-docs-segment">${labelHtml}${chevronHtml}</span>`);
+      }
+
+      const canCreateSubdoc = !!(window.currentUser && window.currentUser.permissions && window.currentUser.permissions['wiki:edit']) && !actionSlug.includes(':');
+      const subdocButtonHtml = canCreateSubdoc
+        ? ` <span class="text-muted mx-1">/</span> <button type="button" class="btn btn-link btn-sm p-0 align-baseline parent-docs-create" data-slug="${window.escapeHtml(actionSlug)}" title="하위 문서 생성" aria-label="하위 문서 생성"><i class="bi bi-pencil-square"></i></button>`
+        : '';
+
+      parentDocsEl.innerHTML = `<span class="text-muted me-1">문서 구조:</span>${segments.join(' <span class="text-muted mx-1">/</span> ')}${subdocButtonHtml}`;
+      parentDocsEl.querySelectorAll('.wiki-spa-link').forEach(link => {
+        link.addEventListener('click', function (event) {
+          event.preventDefault();
+          navigateTo(this.getAttribute('href'));
+        });
+      });
+      const createSubdocBtn = parentDocsEl.querySelector('.parent-docs-create');
+      if (createSubdocBtn) {
+        createSubdocBtn.addEventListener('click', function () {
+          createSubdoc(this.dataset.slug);
+        });
+      }
+      parentDocsEl.querySelectorAll('.parent-docs-chevron').forEach(btn => {
+        btn.addEventListener('click', function () {
+          toggleParentDocsSiblings(this);
+        });
+      });
+      parentDocsEl.classList.remove('d-none');
+      document.getElementById('parentDocsNavDivider').classList.remove('d-none');
     }
 
     async function showArticle(slug) {
@@ -761,15 +847,7 @@
               return;
             }
 
-            hideAllPages();
-            document.getElementById('notFoundPage').classList.remove('d-none');
-            document.getElementById('notFoundSlug').textContent =
-              `"${decodeURIComponent(slug)}" 문서가 아직 존재하지 않습니다.`;
-            document.getElementById('createPageBtn').onclick = () => {
-              window.location.href = `/edit?slug=${encodeURIComponent(slug)}`;
-            };
-            surfaceEditRequestsOn('notFoundEditRequest', slug);
-            document.title = `문서 없음 - ${window.appConfig.wikiName}`;
+            await showMissingArticle(slug);
             return;
           }
           page = ssrData;
@@ -800,15 +878,7 @@
               return;
             }
 
-            hideAllPages();
-            document.getElementById('notFoundPage').classList.remove('d-none');
-            document.getElementById('notFoundSlug').textContent =
-              `"${decodeURIComponent(slug)}" 문서가 아직 존재하지 않습니다.`;
-            document.getElementById('createPageBtn').onclick = () => {
-              window.location.href = `/edit?slug=${encodeURIComponent(slug)}`;
-            };
-            surfaceEditRequestsOn('notFoundEditRequest', slug);
-            document.title = `문서 없음 - ${window.appConfig.wikiName}`;
+            await showMissingArticle(slug);
             return;
           }
 
@@ -965,11 +1035,12 @@
             .then(data => {
               if (!data || !data.count) return;
               if (!currentPage || currentPage.slug !== _bannerSlug) return;
-              _mcpBanner.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:0.75rem;padding:0.65rem 1rem;margin:0.5rem 0 1rem;border:1px solid #ffc107;background:rgba(255,193,7,0.10);border-radius:10px;font-size:0.95rem;';
-              _mcpBanner.innerHTML = `
-                <span><i class="bi bi-plug"></i> MCP 서버로 제출된 편집안이 존재합니다.</span>
-                <a href="/mypage#mcp-submissions" class="btn btn-sm btn-warning"><i class="bi bi-eye"></i> 검토하기</a>
-              `;
+              renderDocBanner(_mcpBanner, {
+                variant: 'warning',
+                icon: 'bi bi-plug',
+                message: 'MCP 서버로 제출된 편집안이 존재합니다.',
+                action: { label: '검토하기', iconClass: 'bi bi-eye', href: '/mypage#mcp-submissions' },
+              });
             })
             .catch(() => { });
         }
@@ -1025,13 +1096,12 @@
               if (!data || !data.count) return;
               if (!currentPage || currentPage.slug !== _pendingSlug) return;
               if (_pendingBanner) {
-                _pendingBanner.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:0.75rem;padding:0.65rem 1rem;margin:0.5rem 0 1rem;border:1px solid #38BDF8;background:rgba(56,189,248,0.10);border-radius:10px;font-size:0.95rem;';
-                _pendingBanner.innerHTML = `
-                  <span><i class="bi bi-hourglass-split"></i> 검토 대기 중인 편집 요청이 ${data.count}건 있습니다.</span>
-                  <button type="button" class="btn btn-sm" style="background:#38BDF8;color:#06283d;"><i class="bi bi-eye"></i> 검토하기</button>
-                `;
-                const bannerBtn = _pendingBanner.querySelector('button');
-                if (bannerBtn) bannerBtn.addEventListener('click', () => reviewEditRequests(_pendingSlug));
+                renderDocBanner(_pendingBanner, {
+                  variant: 'sky',
+                  icon: 'bi bi-hourglass-split',
+                  message: `검토 대기 중인 편집 요청이 ${data.count}건 있습니다.`,
+                  action: { label: '검토하기', iconClass: 'bi bi-eye', onClick: () => reviewEditRequests(_pendingSlug) },
+                });
               }
               // 편집 버튼 → 드롭다운(문서 편집하기 / 편집 요청 확인하기 N건). 하늘색 배지.
               const editBtn = document.getElementById('articleEditBtn');
@@ -1297,50 +1367,8 @@
         // 정책 문서 안내 배너: 현재 문서가 이용약관/개인정보처리방침이면 표시
         renderPolicyDocBanner(page.slug);
 
-        // 문서 구조 네비게이션 (최상위 문서 포함, 하위 문서 생성 버튼 노출)
-        const parentDocsEl = document.getElementById('parentDocsNav');
-        closeParentDocsSiblings();
-        const parts = actionSlug.split('/');
-        const segments = [];
-        for (let i = 0; i < parts.length; i++) {
-          const isCurrent = (i === parts.length - 1);
-          const segSlug = parts.slice(0, i + 1).join('/');
-          const parentSlug = i === 0 ? '' : parts.slice(0, i).join('/');
-          const labelHtml = isCurrent
-            ? `<span class="parent-docs-current fw-semibold">${window.escapeHtml(parts[i])}</span>`
-            : `<a href="/w/${encodeURIComponent(segSlug)}" class="text-decoration-none wiki-spa-link">${window.escapeHtml(parts[i])}</a>`;
-          // 최상위(i=0)는 화살표 없음. 그 외(중간/현재)에는 chevron 토글 부착
-          const chevronHtml = i === 0
-            ? ''
-            : ` <button type="button" class="btn btn-link btn-sm p-0 align-baseline parent-docs-chevron" data-parent="${window.escapeHtml(parentSlug)}" data-current="${window.escapeHtml(parts[i])}" data-level="${i}" title="동일 단계 문서 보기" aria-label="동일 단계 문서 보기" aria-expanded="false"><i class="bi bi-chevron-down"></i></button>`;
-          segments.push(`<span class="parent-docs-segment">${labelHtml}${chevronHtml}</span>`);
-        }
-
-        const canCreateSubdoc = !!(window.currentUser && window.currentUser.permissions && window.currentUser.permissions['wiki:edit']) && !actionSlug.includes(':');
-        const subdocButtonHtml = canCreateSubdoc
-          ? ` <span class="text-muted mx-1">/</span> <button type="button" class="btn btn-link btn-sm p-0 align-baseline parent-docs-create" data-slug="${window.escapeHtml(actionSlug)}" title="하위 문서 생성" aria-label="하위 문서 생성"><i class="bi bi-pencil-square"></i></button>`
-          : '';
-
-        parentDocsEl.innerHTML = `<span class="text-muted me-1">문서 구조:</span>${segments.join(' <span class="text-muted mx-1">/</span> ')}${subdocButtonHtml}`;
-        parentDocsEl.querySelectorAll('.wiki-spa-link').forEach(link => {
-          link.addEventListener('click', function (event) {
-            event.preventDefault();
-            navigateTo(this.getAttribute('href'));
-          });
-        });
-        const createSubdocBtn = parentDocsEl.querySelector('.parent-docs-create');
-        if (createSubdocBtn) {
-          createSubdocBtn.addEventListener('click', function () {
-            createSubdoc(this.dataset.slug);
-          });
-        }
-        parentDocsEl.querySelectorAll('.parent-docs-chevron').forEach(btn => {
-          btn.addEventListener('click', function () {
-            toggleParentDocsSiblings(this);
-          });
-        });
-        parentDocsEl.classList.remove('d-none');
-        document.getElementById('parentDocsNavDivider').classList.remove('d-none');
+        // 문서 구조 네비게이션 (최상위 문서 포함, 하위 문서 생성 버튼 노출) — 미작성 문서 경로와 공유.
+        renderParentDocsNav(actionSlug);
 
         hideAllPages();
         document.getElementById('articlePage').classList.remove('d-none');
@@ -1824,6 +1852,81 @@
         console.error(err);
         Swal.fire('오류', err.message || '저장에 실패했습니다.', 'error');
       }
+    }
+
+    // ── 미작성(존재하지 않는) 문서 ──
+    // 일반 문서 페이지(#articlePage)를 재사용해 탐색 흐름(브레드크럼/문서 구조·docs 레이아웃 사이드바)을 유지한다.
+    // 본문은 "존재하지 않는 문서입니다" 한 줄, 상단에 "아직 작성되지 않은 문서입니다" 안내 배너(만들기 액션).
+    // 역링크는 문서 도구(더보기) 메뉴에서 클릭 시 온디맨드 로드(레드링크 대상 발견용).
+    async function showMissingArticle(slug) {
+      const decodedSlug = decodeURIComponent(slug);
+      const _hasColon = decodedSlug.includes(':');
+      currentPage = null;                       // 실문서 없음 — in-flight 배너 fetch 가드가 bail
+      window.currentArticleEdit = null;         // 편집 단축키 비활성
+      // 본문/AI 의존 공유 항목 숨김 — 문서가 없어 텍스트/마크다운 복사·인쇄·AI 질문이 무의미하고
+      // currentPage 가 null 이라 동작 시 오류. "공유하기"/"링크 복사하기"(URL 기반)만 남긴다.
+      ['shareItemCopyText', 'shareItemCopyMarkdown', 'shareItemPrint',
+        'shareAiDivider', 'shareItemAskClaude', 'shareItemAskChatGPT'].forEach(id => {
+        document.getElementById(id)?.classList.add('d-none');
+      });
+
+      document.title = `${decodedSlug} - ${window.appConfig.wikiName}`;
+      document.getElementById('articleTitle').textContent = decodedSlug;
+      renderSlugLabel(null);
+      document.getElementById('redirectMessage').innerHTML = '';
+      document.getElementById('articleMeta').innerHTML = '';
+
+      // 실문서 배너 잔재 정리 (실문서 → 미작성 SPA 이동 시 누출 방지)
+      document.getElementById('discussionBanner').classList.add('d-none');
+      renderPolicyDocBanner(decodedSlug);       // 미작성 슬러그는 정책 매칭 안 됨 → 자체 숨김
+      hideDocBanner('mcpSubmissionBanner');
+      hideDocBanner('pendingEditBanner');
+
+      // 본문: 플레인 텍스트 한 줄
+      document.getElementById('articleContent').textContent = '존재하지 않는 문서입니다';
+      const _raw = document.getElementById('articleRawContent');
+      if (_raw) _raw.textContent = '';
+
+      // 메인 액션 없음(편집/이력/토론 — 만들기는 배너가 담당)
+      document.getElementById('articleMainActions').innerHTML = '';
+      // 더보기 메뉴: 역링크(온디맨드 로드) + 문서 구조 보기(slug 기반, 콜론 슬러그는 비활성)
+      document.getElementById('articleMoreActions').innerHTML = `
+        <li><button class="dropdown-item" type="button" onclick="scrollToBacklinks(); return false;">
+          <i class="bi bi-link-45deg"></i> 역링크
+        </button></li>
+        <li><button class="dropdown-item${_hasColon ? ' disabled' : ''}" ${_hasColon ? 'disabled' : `data-slug="${window.escapeHtml(decodedSlug)}" onclick="showSubdocs(this.dataset.slug); return false;"`}>
+          <i class="bi bi-diagram-3"></i> 문서 구조 보기
+        </button></li>
+      `;
+
+      // TOC/통계/백링크 숨김(문서 미존재)
+      document.getElementById('wikiAccordion').classList.add('d-none');
+      const _fab = document.getElementById('tocFabBtn');
+      if (_fab) _fab.classList.add('d-none');
+      document.getElementById('docStatsCounter')?.classList.add('d-none');
+      document.getElementById('backlinksSection').classList.add('d-none');
+      document.getElementById('backlinksList').innerHTML = '';
+
+      // 브레드크럼/문서 구조 — 일반 경로와 공유 헬퍼
+      renderParentDocsNav(decodedSlug);
+
+      hideAllPages();
+      document.getElementById('articlePage').classList.remove('d-none');
+      // 사이드바 동기화는 hideAllPages 이후 (hideAllPages 가 레이아웃 사이드바에 d-none 재부여하므로)
+      syncSidebarsForLayout();
+      if (typeof window.__sidebarLayoutUpdate === 'function') window.__sidebarLayoutUpdate();
+
+      // "아직 작성되지 않은 문서입니다" 안내 배너 (MCP/토론 알림과 동일한 카드형, 만들기 액션).
+      // hideAllPages 가 #missingDocBanner 를 숨기므로 그 이후에 렌더한다.
+      renderDocBanner('missingDocBanner', {
+        variant: 'info',
+        icon: 'bi bi-info-circle',
+        message: '아직 작성되지 않은 문서입니다.',
+        action: { label: '만들기', iconClass: 'bi bi-pencil-square', href: `/edit?slug=${encodeURIComponent(slug)}` },
+      });
+
+      // 검토 권한자: 이 제목으로 제출된 편집 요청(create/충돌) 검토 동선 노출(서버 count>0 게이팅)
+      surfaceEditRequestsOn('missingDocEditRequest', slug);
     }
 
     // ── 카테고리 문서 (문서가 없는 경우) ──
@@ -3066,14 +3169,20 @@ async function surfaceEditRequestsOn(boxId, slug) {
     const res = await fetch('/api/pending-edits/count?slug=' + encodeURIComponent(slug));
     const data = res.ok ? await res.json() : { count: 0 };
     if (!data || !data.count) return;
-    box.innerHTML = `
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:0.75rem;padding:0.65rem 1rem;border:1px solid #38BDF8;background:rgba(56,189,248,0.10);border-radius:10px;font-size:0.95rem;">
-        <span><i class="bi bi-hourglass-split"></i> 이 제목으로 제출된 편집 요청이 ${data.count}건 있습니다.</span>
-        <button type="button" class="btn btn-sm" style="background:#38BDF8;color:#06283d;white-space:nowrap;"><i class="bi bi-list-check"></i> 편집 요청 확인하기</button>
-      </div>
-    `;
-    const btn = box.querySelector('button');
-    if (btn) btn.addEventListener('click', () => reviewEditRequests(slug));
+    // stale-guard: 늦게 도착한 응답이 이미 다른 문서로 이동한 화면에 박스를 띄우지 않도록 한다.
+    // (#missingDocEditRequest 는 #articlePage 내부라, 미작성→실문서 이동 후 stale count 가 뜰 수 있음)
+    if (currentSlug !== slug) return;
+    // 배너는 box 의 자식으로 렌더해 box 의 mt-2/mt-3 마진(컨테이너 여백)을 보존(flush 로 배너 자체 마진 제거).
+    box.innerHTML = '';
+    const banner = document.createElement('div');
+    box.appendChild(banner);
+    renderDocBanner(banner, {
+      variant: 'sky',
+      flush: true,
+      icon: 'bi bi-hourglass-split',
+      message: `이 제목으로 제출된 편집 요청이 ${data.count}건 있습니다.`,
+      action: { label: '편집 요청 확인하기', iconClass: 'bi bi-list-check', onClick: () => reviewEditRequests(slug) },
+    });
     box.classList.remove('d-none');
   } catch { /* 무시 */ }
 }

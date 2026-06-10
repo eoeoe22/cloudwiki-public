@@ -162,3 +162,80 @@ export interface Settings {
     // pages.edit_acl 의 'aged' 플래그가 참조하는 전역 임계값(일). 0=비활성.
     edit_acl_min_age_days: number;
 }
+
+// ── 워크스페이스 (개인 워크스페이스 기능) ──────────────────────────
+// 기존 Page/Revision/Media 와 완전히 분리된 별도 테이블 세트의 row 모델.
+
+// 멤버 역할은 'editor' | 'viewer' 만 저장된다.
+// owner 는 workspaces.owner_id 에서 파생되며 workspace_members 에 저장하지 않는다.
+export type WorkspaceRole = 'owner' | 'editor' | 'viewer';
+
+export interface Workspace {
+    id: number;
+    slug: string;
+    name: string;
+    owner_id: number;
+    created_at: number;
+    deleted_at: number | null;
+}
+
+export interface WorkspaceMember {
+    workspace_id: number;
+    user_id: number;
+    role: 'editor' | 'viewer';
+    created_at: number;
+}
+
+export interface WorkspacePage {
+    id: number;
+    workspace_id: number;
+    slug: string;
+    title: string | null;
+    content: string;
+    last_revision_id: number | null;
+    version: number;
+    created_at: number;
+    updated_at: number;
+    deleted_at: number | null;
+    redirect_to: string | null;
+    rows: number | null;
+    characters: number | null;
+    // 문서별 본문 보기 모드. NULL = 일반 본문. (전역 pages.view_mode 와 동일 시맨틱)
+    view_mode: string | null;
+    // 1 이면 비멤버/게스트에게도 이 문서 읽기 허용 (라우트 레이어에서 적용)
+    ws_public: number;
+}
+
+export interface WorkspaceRevision {
+    id: number;
+    page_id: number;
+    page_version: number | null;
+    content: string;          // r2_key 가 있으면 '' (전역 Revision 과 동일 시맨틱)
+    r2_key: string | null;
+    summary: string | null;
+    author_id: number | null;
+    created_at: number;
+    deleted_at: number | null;
+    purged_at: number | null;
+}
+
+export interface WorkspaceMedia {
+    id: number;
+    workspace_id: number;
+    r2_key: string;
+    filename: string;
+    mime_type: string;
+    size: number;
+    uploader_id: number | null;
+    // 1 이면 비멤버에게도 노출 허용 (라우트 레이어에서 적용)
+    ws_public: number;
+    created_at: number;
+}
+
+export interface WorkspacePageLink {
+    id: number;
+    source_page_id: number;
+    target_slug: string;
+    link_type: string;
+    workspace_id: number;
+}

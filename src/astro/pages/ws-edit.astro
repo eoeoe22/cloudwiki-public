@@ -1,0 +1,112 @@
+---
+// 워크스페이스 문서 편집 셸 (/ws/:wslug/edit?slug=...). 좌측 textarea + 우측 라이브 프리뷰.
+// wslug 는 클라이언트(ws-edit.ts)가 location.pathname 에서, slug 는 ?slug= 쿼리에서 파싱한다.
+// render.css 를 로드해 프리뷰 패널의 renderWikiContent 산출 HTML 이 스타일링되게 한다.
+import BaseLayout from '../layouts/BaseLayout.astro';
+import Header from '../components/Header.astro';
+import Footer from '../components/Footer.astro';
+---
+<BaseLayout pagePath="/ws-edit.html" title="워크스페이스 편집 - CloudWiki">
+    <Fragment slot="head">
+        <link rel="stylesheet" href="/render.css" />
+        <!-- 테마 FOUC 방지: CSS 로드 후 즉시 테마 적용 -->
+        <script is:inline>try{var t=localStorage.getItem('themeMode');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
+    </Fragment>
+
+    <!-- ── 네비게이션 바 ── -->
+    <Header />
+
+    <div class="wiki-layout">
+        <div class="wiki-container">
+            <div class="wiki-article">
+
+                <!-- 워크스페이스 브레드크럼 -->
+                <nav class="mb-3 small" aria-label="breadcrumb">
+                    <a href="/workspaces" class="text-decoration-none"><i class="bi bi-grid"></i> 워크스페이스</a>
+                    <span class="text-muted mx-1">/</span>
+                    <a href="#" id="wsEditCrumbWs" class="text-decoration-none">워크스페이스</a>
+                </nav>
+
+                <!-- 로딩 -->
+                <div id="wsEditLoading" class="wiki-loading">
+                    <div class="spinner-border text-primary" role="status"></div>
+                    <span>불러오는 중...</span>
+                </div>
+
+                <!-- 편집 영역 -->
+                <div id="wsEditMain" class="d-none">
+
+                    <!-- 메타 입력 행 -->
+                    <div class="row g-2 mb-2">
+                        <div class="col-12 col-md-5">
+                            <label class="form-label small mb-1" for="wsEditSlug">제목</label>
+                            <div class="input-group input-group-sm">
+                                <input type="text" id="wsEditSlug" class="form-control form-control-sm" placeholder="문서 제목" autocomplete="off">
+                                <button type="button" class="btn btn-wiki-outline d-none" id="wsEditMoveBtn" onclick="wsEditMove()" title="제목 변경">
+                                    <i class="bi bi-pencil"></i> 제목 변경
+                                </button>
+                            </div>
+                            <div id="wsEditSlugError" class="invalid-feedback d-block d-none small"></div>
+                        </div>
+                        <div class="col-12 col-md-4">
+                            <label class="form-label small mb-1" for="wsEditTitle">대체 제목 <span class="text-muted fw-normal">(선택)</span></label>
+                            <input type="text" id="wsEditTitle" class="form-control form-control-sm" placeholder="대체 제목" autocomplete="off">
+                        </div>
+                        <div class="col-12 col-md-3 d-flex align-items-end">
+                            <div class="form-check mb-1">
+                                <input class="form-check-input" type="checkbox" id="wsEditPublic">
+                                <label class="form-check-label small" for="wsEditPublic">공개 문서</label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mb-2">
+                        <label class="form-label small mb-1" for="wsEditSummary">편집 요약 (선택)</label>
+                        <input type="text" id="wsEditSummary" class="form-control form-control-sm" placeholder="변경 사항을 간단히..." autocomplete="off">
+                    </div>
+
+                    <!-- 툴바 -->
+                    <div class="d-flex flex-wrap gap-2 mb-2 align-items-center">
+                        <button type="button" class="btn btn-wiki btn-sm" id="wsEditSaveBtn" onclick="wsEditSave()">
+                            <i class="bi bi-check-lg"></i> 저장
+                        </button>
+                        <button type="button" class="btn btn-wiki-outline btn-sm" id="wsEditMediaBtn" onclick="wsEditPickMedia()">
+                            <i class="bi bi-image"></i> 이미지 업로드
+                        </button>
+                        <input type="file" id="wsEditMediaInput" accept="image/*" class="d-none">
+                        <button type="button" class="btn btn-outline-danger btn-sm d-none" id="wsEditDeleteBtn" onclick="wsEditDelete()">
+                            <i class="bi bi-trash"></i> 삭제
+                        </button>
+                        <a href="#" id="wsEditCancel" class="btn btn-wiki-outline btn-sm ms-auto">
+                            <i class="bi bi-x-lg"></i> 취소
+                        </a>
+                    </div>
+
+                    <!-- 2분할 편집/프리뷰 -->
+                    <div class="row g-3">
+                        <div class="col-12 col-lg-6">
+                            <label class="form-label small mb-1" for="wsEditBody">본문</label>
+                            <textarea id="wsEditBody" class="form-control" style="min-height: 60vh; font-family: var(--bs-font-monospace, monospace); resize: vertical;" placeholder="위키 문법으로 작성하세요..."></textarea>
+                        </div>
+                        <div class="col-12 col-lg-6">
+                            <label class="form-label small mb-1">미리보기</label>
+                            <div class="card">
+                                <div class="card-body wiki-content" id="wsEditPreview" style="min-height: 60vh;"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── 푸터 ── -->
+    <Footer />
+
+    <Fragment slot="scripts">
+        <script type="module" src="/dist/common.js" is:inline></script>
+        <script type="module" src="/dist/render.js" is:inline></script>
+        <script type="module" src="/dist/ws-edit.js" is:inline></script>
+    </Fragment>
+</BaseLayout>

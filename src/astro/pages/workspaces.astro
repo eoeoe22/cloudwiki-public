@@ -1,0 +1,59 @@
+---
+// 내 워크스페이스 목록 셸. search.astro 와 동일한 구조(BaseLayout + Header/Footer)를 따른다.
+// header/footer 는 빌드 타임에 컴포넌트로 인라인되고, base CDN 은 BaseLayout 이 베이킹한다.
+import BaseLayout from '../layouts/BaseLayout.astro';
+import Header from '../components/Header.astro';
+import Footer from '../components/Footer.astro';
+---
+<BaseLayout pagePath="/workspaces.html" title="내 워크스페이스 - CloudWiki">
+    <Fragment slot="head">
+        <!-- 테마 FOUC 방지: CSS 로드 후 즉시 테마 적용 -->
+        <script is:inline>try{var t=localStorage.getItem('themeMode');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
+    </Fragment>
+
+    <!-- ── 네비게이션 바 ── -->
+    <Header />
+
+    <div class="wiki-layout">
+        <div class="wiki-container">
+            <div class="wiki-article">
+
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h2 class="mb-0">
+                        <i class="mdi mdi-folder-account-outline"></i> 내 워크스페이스
+                    </h2>
+                    <button type="button" class="btn btn-wiki btn-sm d-none" id="createWsBtn" onclick="openCreateWorkspace()">
+                        <i class="bi bi-plus-lg"></i> 새 워크스페이스
+                    </button>
+                </div>
+
+                <!-- 로딩 -->
+                <div id="wsLoading" class="wiki-loading">
+                    <div class="spinner-border text-primary" role="status"></div>
+                    <span>불러오는 중...</span>
+                </div>
+
+                <!-- 본문 (로드 후 표시) -->
+                <div id="wsContent" class="d-none">
+                    <section class="mb-4">
+                        <h5 class="mb-2"><i class="bi bi-person-badge"></i> 소유한 워크스페이스</h5>
+                        <div id="ownedList" class="row g-3"></div>
+                    </section>
+
+                    <section class="mb-4">
+                        <h5 class="mb-2"><i class="bi bi-people"></i> 참가 중인 워크스페이스</h5>
+                        <div id="joinedList" class="row g-3"></div>
+                    </section>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── 푸터 ── -->
+    <Footer />
+
+    <Fragment slot="scripts">
+        <script type="module" src="/dist/common.js" is:inline></script>
+        <script type="module" src="/dist/ws-list.js" is:inline></script>
+    </Fragment>
+</BaseLayout>
