@@ -111,6 +111,15 @@ import BaseLayout from '../layouts/BaseLayout.astro';
             <div id="statusMessage" class="warning-text"></div>
         </div>
 
+        <!-- 프로필 사진 비공개 옵션 (모든 모드 공통) -->
+        <div class="form-group">
+            <label class="form-label" style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                <input type="checkbox" id="picturePrivateOptIn" style="width: 1.1rem; height: 1.1rem;">
+                <span style="color: var(--wiki-text);">프로필 사진 비공개</span>
+            </label>
+            <div class="warning-text"><i class="mdi mdi-information-outline"></i> 켜면 OAuth 공급자의 사진 대신 기본 아바타가 표시됩니다. 마이페이지에서 언제든 변경할 수 있습니다.</div>
+        </div>
+
         <!-- 승인제 모드: 가입 메시지 입력 -->
         <div class="form-group" id="signupMessageGroup" style="display: none;">
             <label for="signupMessage" class="form-label fw-bold" style="color: var(--wiki-text);">가입 신청 메시지 <span

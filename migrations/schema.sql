@@ -10,6 +10,9 @@ CREATE TABLE IF NOT EXISTS users (
   email      TEXT NOT NULL UNIQUE,
   name       TEXT NOT NULL,
   picture    TEXT,
+  -- 프로필 사진 비공개 여부. 1 이면 picture 가 지정된 정적 기본 아바타(/avatar-default.svg)로 고정되고
+  -- OAuth 재로그인/사진 갱신이 picture 를 덮어쓰지 않는다(공급자 사진 누설 방지).
+  picture_private INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER DEFAULT (unixepoch()),
   role TEXT DEFAULT 'user',  -- 'user', 'discussion_manager', 'admin', 'super_admin', 'banned', 'deleted'
   banned_until INTEGER,
@@ -425,6 +428,8 @@ CREATE TABLE IF NOT EXISTS signup_requests (
   email       TEXT NOT NULL,
   name        TEXT NOT NULL,
   picture     TEXT,
+  -- 가입 신청 시 선택한 프로필 사진 비공개 여부. 승인 시 users.picture_private 로 이관된다.
+  picture_private INTEGER NOT NULL DEFAULT 0,
   message     TEXT DEFAULT '',
   status      TEXT NOT NULL DEFAULT 'pending',  -- 'pending', 'approved', 'rejected', 'blocked'
   reviewed_by INTEGER,

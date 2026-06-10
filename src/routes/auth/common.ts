@@ -37,9 +37,10 @@ export async function handleOAuthLogin(c: Context<Env>, profile: OAuthProfile, r
         }
 
         // 기존 유저: 이름은 유지 (수동으로 변경한 이름이 로그인마다 초기화되지 않도록)
+        // picture_private=1 인 경우 공급자 사진으로 picture 를 덮어쓰지 않아 비공개 설정을 보존한다.
         try {
             await db
-                .prepare('UPDATE users SET email = ?, picture = ? WHERE provider = ? AND uid = ?')
+                .prepare('UPDATE users SET email = ?, picture = CASE WHEN picture_private = 1 THEN picture ELSE ? END WHERE provider = ? AND uid = ?')
                 .bind(profile.email, profile.picture || null, profile.provider, profile.uid)
                 .run();
         } catch (error) {

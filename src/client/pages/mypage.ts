@@ -87,6 +87,7 @@
                 account_mismatch: '재인증한 계정이 현재 로그인 계정과 일치하지 않습니다. 동일한 계정으로 다시 인증해주세요.',
                 invalid_state: '요청이 만료되었거나 올바르지 않습니다. 다시 시도해주세요.',
                 user_not_found: '사용자 정보를 찾을 수 없습니다.',
+                private: '프로필 사진이 비공개로 설정되어 있어 갱신할 수 없습니다. 먼저 비공개를 해제해주세요.',
             };
             Swal.fire({
                 icon: 'error',
@@ -136,15 +137,20 @@
                 ? `<img src="${window.currentUser.picture}" class="profile-avatar" alt="프로필" loading="lazy">`
                 : `<div class="profile-avatar-placeholder">${window.escapeHtml(window.currentUser.name.charAt(0))}</div>`;
 
-            const avatarHtml = `
-                <div class="profile-avatar-wrap">
-                    ${avatarInner}
-                    <button type="button" class="profile-avatar-refresh"
+            // 사진 비공개 상태에서는 공급자 사진 갱신 버튼을 숨긴다(갱신이 서버에서 거부됨).
+            const refreshBtn = window.currentUser.picture_private
+                ? ''
+                : `<button type="button" class="profile-avatar-refresh"
                             onclick="refreshProfilePicture()"
                             aria-label="프로필 사진 갱신"
                             title="OAuth 재인증으로 프로필 사진 갱신">
                         <i class="mdi mdi-refresh" aria-hidden="true"></i>
-                    </button>
+                    </button>`;
+
+            const avatarHtml = `
+                <div class="profile-avatar-wrap">
+                    ${avatarInner}
+                    ${refreshBtn}
                 </div>
             `;
 
@@ -159,7 +165,41 @@
 
             // 설정 섹션 표시
             document.getElementById('nameInput').value = window.currentUser.name;
+            const privToggle = document.getElementById('picturePrivateToggle');
+            if (privToggle) privToggle.checked = !!window.currentUser.picture_private;
             document.getElementById('settingsSection').style.display = '';
+        }
+
+        async function togglePicturePrivacy(el) {
+            const makePrivate = !!el.checked;
+            el.disabled = true;
+            try {
+                const res = await fetch('/api/me/picture-privacy', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ private: makePrivate })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || '변경 실패');
+
+                window.currentUser.picture_private = data.private ? 1 : 0;
+                window.currentUser.picture = data.picture;
+                renderProfile();
+
+                Swal.fire({
+                    icon: 'success',
+                    title: makePrivate ? '프로필 사진을 비공개로 설정했습니다.' : '프로필 사진 비공개를 해제했습니다.',
+                    toast: true,
+                    position: 'top-end',
+                    showConfirmButton: false,
+                    timer: 1800,
+                });
+            } catch (err) {
+                el.checked = !makePrivate; // 롤백
+                Swal.fire('오류', err.message, 'error');
+            } finally {
+                el.disabled = false;
+            }
         }
 
         async function loadContributions() {
@@ -1711,6 +1751,7 @@
 // HTML(정적 + innerHTML)의 on* 속성에서 호출되므로 window 로 노출한다.
 // (viewMessage 는 common.ts 전역이라 노출 대상이 아니다.)
 window.updateName = updateName;
+window.togglePicturePrivacy = togglePicturePrivacy;
 window.loadMoreMessages = loadMoreMessages;
 window.loadMoreSentMessages = loadMoreSentMessages;
 window.loadMoreMyDiscussions = loadMoreMyDiscussions;

@@ -103,7 +103,7 @@ async function tryAuthenticateBearer(c: Context<Env>): Promise<McpAuthContext | 
 
     let userRow: {
         uid: number; provider: string; provider_uid: string; email: string;
-        name: string; picture: string | null; role: string; banned_until: number | null;
+        name: string; picture: string | null; picture_private: number; role: string; banned_until: number | null;
         last_namechange: number | null; created_at: number;
     } | null = null;
     let tokenId: number | null = null;
@@ -117,7 +117,7 @@ async function tryAuthenticateBearer(c: Context<Env>): Promise<McpAuthContext | 
             const row = await c.env.DB
                 .prepare(
                     `SELECT k.user_id, k.expires_at,
-                            u.id AS uid, u.provider, u.uid AS provider_uid, u.email, u.name, u.picture, u.role, u.banned_until, u.last_namechange, u.created_at
+                            u.id AS uid, u.provider, u.uid AS provider_uid, u.email, u.name, u.picture, u.picture_private, u.role, u.banned_until, u.last_namechange, u.created_at
                      FROM mcp_api_keys k
                      JOIN users u ON k.user_id = u.id
                      WHERE k.key_hash = ?`
@@ -125,7 +125,7 @@ async function tryAuthenticateBearer(c: Context<Env>): Promise<McpAuthContext | 
                 .bind(tokenHash)
                 .first<{
                     user_id: number; expires_at: number;
-                    uid: number; provider: string; provider_uid: string; email: string; name: string; picture: string | null;
+                    uid: number; provider: string; provider_uid: string; email: string; name: string; picture: string | null; picture_private: number;
                     role: string; banned_until: number | null; last_namechange: number | null; created_at: number;
                 }>();
 
@@ -147,7 +147,7 @@ async function tryAuthenticateBearer(c: Context<Env>): Promise<McpAuthContext | 
         const row = await c.env.DB
             .prepare(
                 `SELECT t.id, t.user_id, t.scope, t.access_expires_at, t.revoked_at,
-                        u.id AS uid, u.provider, u.uid AS provider_uid, u.email, u.name, u.picture, u.role, u.banned_until, u.last_namechange, u.created_at
+                        u.id AS uid, u.provider, u.uid AS provider_uid, u.email, u.name, u.picture, u.picture_private, u.role, u.banned_until, u.last_namechange, u.created_at
                  FROM oauth_tokens t
                  JOIN users u ON t.user_id = u.id
                  WHERE t.access_token_hash = ?`
@@ -155,7 +155,7 @@ async function tryAuthenticateBearer(c: Context<Env>): Promise<McpAuthContext | 
             .bind(tokenHash)
             .first<{
                 id: number; user_id: number; scope: string | null; access_expires_at: number; revoked_at: number | null;
-                uid: number; provider: string; provider_uid: string; email: string; name: string; picture: string | null;
+                uid: number; provider: string; provider_uid: string; email: string; name: string; picture: string | null; picture_private: number;
                 role: string; banned_until: number | null; last_namechange: number | null; created_at: number;
             }>();
 
@@ -213,6 +213,7 @@ async function tryAuthenticateBearer(c: Context<Env>): Promise<McpAuthContext | 
         email: userRow.email,
         name: userRow.name,
         picture: userRow.picture,
+        picture_private: userRow.picture_private,
         role: effectiveRole as User['role'],
         banned_until: userRow.banned_until,
         last_namechange: userRow.last_namechange,

@@ -3,7 +3,7 @@ import type { Context } from 'hono';
 import { getCookie } from 'hono/cookie';
 import type { Env } from '../../types';
 import { requireAuth, requireAuthAllowBanned } from '../../middleware/session';
-import { getSuperAdmins } from '../../utils/auth';
+import { getSuperAdmins, PRIVATE_AVATAR_PATH } from '../../utils/auth';
 import type { OAuthProvider, OAuthProfile, OAuthStateData } from './providers/base';
 import { googleProvider } from './providers/google';
 import { discordProvider } from './providers/discord';
@@ -113,15 +113,19 @@ async function handleRefreshPicture(
 
     const db = c.env.DB;
     const userRow = await db
-        .prepare('SELECT id, provider, uid, role FROM users WHERE id = ?')
+        .prepare('SELECT id, provider, uid, role, picture_private FROM users WHERE id = ?')
         .bind(stateData.userId)
-        .first<{ id: number; provider: string; uid: string; role: string }>();
+        .first<{ id: number; provider: string; uid: string; role: string; picture_private: number }>();
 
     if (!userRow || userRow.role === 'deleted') {
         return c.redirect('/mypage?picture_error=user_not_found');
     }
     if (userRow.provider !== profile.provider || userRow.uid !== profile.uid) {
         return c.redirect('/mypage?picture_error=account_mismatch');
+    }
+    // 프로필 사진을 비공개로 설정한 사용자는 갱신을 거부한다(공급자 사진 누설 방지).
+    if (userRow.picture_private) {
+        return c.redirect('/mypage?picture_error=private');
     }
 
     await db
@@ -160,10 +164,11 @@ auth.get('/api/auth/providers', (c) => {
  */
 auth.post('/api/auth/signup-request', async (c) => {
     const db = c.env.DB;
-    const { token, name, message } = await c.req.json<{
+    const { token, name, message, picture_private: picturePrivate } = await c.req.json<{
         token: string;
         name: string;
         message?: string;
+        picture_private?: boolean;
     }>();
 
     if (!token) {
@@ -221,13 +226,14 @@ auth.post('/api/auth/signup-request', async (c) => {
 
     // 가입 신청 INSERT
     const result = await db.prepare(
-        'INSERT INTO signup_requests (provider, uid, email, name, picture, message) VALUES (?, ?, ?, ?, ?, ?)'
+        'INSERT INTO signup_requests (provider, uid, email, name, picture, picture_private, message) VALUES (?, ?, ?, ?, ?, ?, ?)'
     ).bind(
         userInfo.provider,
         userInfo.uid,
         userInfo.email,
         name.trim(),
         userInfo.picture || null,
+        picturePrivate ? 1 : 0,
         (message || '').trim()
     ).run();
 
@@ -357,6 +363,7 @@ auth.get('/api/me', (c) => {
         name: user.name,
         email: user.email,
         picture: user.picture,
+        picture_private: !!user.picture_private,
         role: user.role,
         created_at: user.created_at,
         permissions,
@@ -428,6 +435,38 @@ auth.put('/api/me/profile', requireAuth, async (c) => {
     }
 
     return c.json({ success: true, name: trimmedName });
+});
+
+/**
+ * PUT /api/me/picture-privacy
+ * 프로필 사진 비공개 토글.
+ *  - private=true  : picture_private=1, picture 를 정적 기본 아바타로 박제(공급자 사진 제거)
+ *  - private=false : picture_private=0, picture 를 NULL 로(이후 재로그인/사진 갱신으로 공급자 사진 복원)
+ */
+auth.put('/api/me/picture-privacy', requireAuth, async (c) => {
+    const user = c.get('user')!;
+    // 엄격한 boolean 검증: 누락/문자열 등 잘못된 값이 마스킹된 아바타를 의도치 않게 되돌리지 않도록 한다.
+    const body = await c.req.json<{ private?: unknown }>().catch(() => ({} as { private?: unknown }));
+    if (typeof body.private !== 'boolean') {
+        return c.json({ error: 'private 값은 boolean 이어야 합니다.' }, 400);
+    }
+    const isPrivate = body.private;
+    const db = c.env.DB;
+
+    const nextPicture = isPrivate ? PRIVATE_AVATAR_PATH : null;
+    await db
+        .prepare('UPDATE users SET picture_private = ?, picture = ? WHERE id = ?')
+        .bind(isPrivate ? 1 : 0, nextPicture, user.id)
+        .run();
+
+    // 세션 KV 캐시 무효화 (변경된 picture/picture_private 반영).
+    // 응답 직후 /mypage 가 재조회되므로 동기 삭제로 이전 값 노출을 방지한다.
+    const sessionId = getCookie(c, 'wiki_session');
+    if (sessionId) {
+        await c.env.KV.delete(`session:${sessionId}`);
+    }
+
+    return c.json({ success: true, private: !!isPrivate, picture: nextPicture });
 });
 
 /**

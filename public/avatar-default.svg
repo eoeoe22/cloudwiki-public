@@ -1,0 +1,12 @@
+<svg width="240" height="240" viewBox="0 0 240 240" role="img" xmlns="http://www.w3.org/2000/svg">
+  <title>기본 프로필 아바타</title>
+  <desc>파란 배경 위에 흰색 인물 실루엣이 있는 더미 프로필 이미지</desc>
+  <defs>
+    <clipPath id="round"><rect x="0" y="0" width="240" height="240" rx="20"/></clipPath>
+  </defs>
+  <g clip-path="url(#round)">
+    <rect x="0" y="0" width="240" height="240" fill="#2a53c4"/>
+    <circle cx="120" cy="96" r="42" fill="#ffffff"/>
+    <path d="M44 232 C44 174 76 150 120 150 C164 150 196 174 196 232 Z" fill="#ffffff"/>
+  </g>
+</svg>

@@ -18,7 +18,7 @@
 //   1) `scripts/themes/<이름>.mjs` 생성 (`scripts/themes/astro.mjs` 가 정식 예시).
 //   2) 아래 import 한 줄 + `THEMES` 에 한 줄 등록.
 //   3) `wrangler.toml` `WIKI_THEME = "<이름>"` (+ `wrangler example.toml` 더미 동기화).
-// 작성 지식·AA 함정·검증 체크리스트는 `agents/rules/themes.md` 참고.
+// 작성 지식·AA 함정·검증 체크리스트는 `docs/themes.md` 참고.
 //
 // branding.mjs 와 마찬가지로 tsconfig include 밖의 plain .mjs 라 Worker/클라이언트
 // 타입체크와 분리되며, astro build 의 프런트매터에서만 import 된다.

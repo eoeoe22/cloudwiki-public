@@ -77,6 +77,8 @@ async function saveProfile() {
         return;
     }
 
+    const picturePrivate = !!document.getElementById('picturePrivateOptIn')?.checked;
+
     const btn = document.getElementById('submitBtn');
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> 처리 중...';
@@ -102,7 +104,7 @@ async function saveProfile() {
             const res = await fetch('/api/auth/signup-request', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ token: signupToken, name, message })
+                body: JSON.stringify({ token: signupToken, name, message, picture_private: picturePrivate })
             });
 
             const data = await res.json();
@@ -131,6 +133,19 @@ async function saveProfile() {
 
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || '저장에 실패했습니다.');
+
+            // 사진 비공개를 선택했으면 별도 엔드포인트로 반영 (실패해도 가입 자체는 완료된 것으로 처리)
+            if (picturePrivate) {
+                try {
+                    await fetch('/api/me/picture-privacy', {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ private: true })
+                    });
+                } catch (e) {
+                    console.warn('picture privacy set failed', e);
+                }
+            }
 
             Swal.fire({
                 icon: 'success',

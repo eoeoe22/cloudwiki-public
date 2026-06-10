@@ -12,7 +12,7 @@ import {
     invalidatePaletteUsers,
 } from '../utils/cacheInvalidation';
 import { requireAdmin } from '../middleware/session';
-import { isSuperAdmin, getSuperAdmins } from '../utils/auth';
+import { isSuperAdmin, getSuperAdmins, PRIVATE_AVATAR_PATH } from '../utils/auth';
 import { RBAC, ROLE_CASE_SQL, enrichRoles } from '../utils/role';
 import { fetchMediaTagMap, sanitizeTags } from '../utils/mediaTags';
 import type { Env, User } from '../types';
@@ -746,8 +746,14 @@ adminRoutes.get('/signup-requests', async (c) => {
         db.prepare(countQueryStr).bind(...params).first<{ count: number }>()
     ]);
 
+    // 사진 비공개를 선택한 신청자의 실제 공급자 사진은 검토 화면에도 노출하지 않고 기본 아바타로 마스킹한다.
+    const requests = (requestsResult.results || []).map((r: Record<string, unknown>) => ({
+        ...r,
+        picture: r.picture_private ? PRIVATE_AVATAR_PATH : r.picture,
+    }));
+
     return c.json({
-        requests: requestsResult.results,
+        requests,
         total: countResult?.count || 0,
         hasMore: offset + limit < (countResult?.count || 0)
     });
@@ -764,7 +770,7 @@ adminRoutes.put('/signup-requests/:id/approve', async (c) => {
 
     const request = await db.prepare('SELECT * FROM signup_requests WHERE id = ?')
         .bind(requestId)
-        .first<{ id: number; provider: string; uid: string; email: string; name: string; picture: string | null; status: string }>();
+        .first<{ id: number; provider: string; uid: string; email: string; name: string; picture: string | null; picture_private: number; status: string }>();
 
     if (!request) {
         return c.json({ error: '가입 신청을 찾을 수 없습니다.' }, 404);
@@ -806,9 +812,11 @@ adminRoutes.put('/signup-requests/:id/approve', async (c) => {
     }
 
     // users 테이블에 유저 생성
+    // 가입 신청 시 사진 비공개를 선택했으면 picture 를 정적 기본 아바타로 박제한다.
+    const approvedPicture = request.picture_private ? PRIVATE_AVATAR_PATH : request.picture;
     const insertResult = await db.prepare(
-        'INSERT INTO users (provider, uid, email, name, picture) VALUES (?, ?, ?, ?, ?)'
-    ).bind(request.provider, request.uid, request.email, finalName, request.picture).run();
+        'INSERT INTO users (provider, uid, email, name, picture, picture_private) VALUES (?, ?, ?, ?, ?, ?)'
+    ).bind(request.provider, request.uid, request.email, finalName, approvedPicture, request.picture_private ? 1 : 0).run();
 
     // 신청 상태 업데이트
     const now = Math.floor(Date.now() / 1000);
@@ -825,7 +833,7 @@ adminRoutes.put('/signup-requests/:id/approve', async (c) => {
     const newUserId = Number(insertResult.meta?.last_row_id ?? 0);
     if (newUserId > 0) {
         dispatchDiscord(c.env, c.executionCtx, userJoined({
-            user: { id: newUserId, name: finalName, picture: request.picture },
+            user: { id: newUserId, name: finalName, picture: approvedPicture },
             env: c.env,
         }));
 

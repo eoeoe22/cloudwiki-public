@@ -16,6 +16,8 @@ export interface User {
     email: string;
     name: string;
     picture: string | null;
+    /** 프로필 사진 비공개 여부(1=비공개, picture 가 정적 기본 아바타로 고정됨) */
+    picture_private: number;
     role: 'user' | 'discussion_manager' | 'admin' | 'super_admin' | 'banned' | 'deleted';
     banned_until: number | null;
     last_namechange: number | null;

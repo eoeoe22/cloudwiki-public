@@ -1,6 +1,14 @@
 import type { Env } from '../types';
 
 /**
+ * 프로필 사진 비공개 시 users.picture 컬럼에 박제되는 정적 기본 아바타 경로.
+ * public/avatar-default.svg 가 ASSETS 바인딩으로 직접 서빙된다(run_worker_first 밖).
+ * 이 컬럼을 정적 경로로 덮어쓰면 헤더/토론/티켓/리비전 등 picture 를 읽는 모든 경로가
+ * 별도 처리 없이 동일한 기본 아바타로 마스킹된다.
+ */
+export const PRIVATE_AVATAR_PATH = '/avatar-default.svg';
+
+/**
  * 이메일 도메인이 가입 가능한지 확인합니다.
  * @param email 사용자 이메일
  * @param restriction "whitelist" | "blacklist" | 그 외 (none으로 취급)
