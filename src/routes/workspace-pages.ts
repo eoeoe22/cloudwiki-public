@@ -187,6 +187,46 @@ wsPages.get('/api/ws/:wslug/pages/:slug{.+}/backlinks', async (c) => {
 });
 
 /**
+ * GET /api/ws/:wslug/pages/:slug{.+}/subdocs — 하위 문서 목록 (slug LIKE '{slug}/%').
+ * - ?immediate=1 → 바로 아래 단계 자식만 (slug/A 만, slug/A/B 제외)
+ * 전역 위키 `/w/:slug/subdocs` 와 동일한 응답 형태(`{ subdocs: [{slug, title}] }`)를 돌려준다 —
+ * 브레드크럼 형제 내비·문서 구조 보기 모달이 전역 위키와 같은 클라이언트 경로를 공유하기 위함.
+ * 하위 문서 구조는 (비공개일 수 있는) 다른 문서의 존재를 드러내므로 멤버(canRead) 전용이되,
+ * 게스트/비멤버에게는 목록 엔드포인트와 동일하게 ws_public=1 문서만 노출한다.
+ */
+wsPages.get('/api/ws/:wslug/pages/:slug{.+}/subdocs', async (c) => {
+    const { workspace, access } = await resolveWs(c);
+    if (!workspace) return c.json({ error: '워크스페이스를 찾을 수 없습니다.' }, 404);
+    const slug = normalizeSlug(c.req.param('slug'));
+    const immediate = c.req.query('immediate') === '1';
+
+    const conds: string[] = ['workspace_id = ?', 'deleted_at IS NULL'];
+    const binds: unknown[] = [workspace.id];
+    if (!access.canRead) conds.push('ws_public = 1');
+
+    const escaped = escapeLike(slug);
+    if (immediate) {
+        conds.push("slug LIKE ? ESCAPE '\\'");
+        conds.push("slug NOT LIKE ? ESCAPE '\\'");
+        binds.push(escaped + '/%', escaped + '/%/%');
+    } else {
+        conds.push("slug LIKE ? ESCAPE '\\'");
+        binds.push(escaped + '/%');
+    }
+
+    const rows = await c.env.DB
+        .prepare(
+            `SELECT slug, title, updated_at
+             FROM workspace_pages
+             WHERE ${conds.join(' AND ')}
+             ORDER BY slug ASC LIMIT 200`
+        )
+        .bind(...binds)
+        .all();
+    return c.json(safeJSON({ subdocs: rows.results || [] }));
+});
+
+/**
  * POST /api/ws/:wslug/pages/:slug{.+}/move — 문서 슬러그 변경 (canWrite).
  * body: { new_slug }
  *

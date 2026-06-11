@@ -16,6 +16,12 @@
 //    (원본 classic 스크립트에서도 모듈 함수라 false 로 평가되어 fallback 이 돌던 동작 보존).
 //  - HTML 의 on* 속성에서 호출되는, 이 블록이 정의한 함수들은 파일 끝에서 window.* 로 노출한다.
 
+import { createBreadcrumbNav } from '../article/breadcrumb';
+import { createStructureModal } from '../article/structure';
+import { createShareActions } from '../article/share';
+import { renderBacklinks } from '../article/backlinks';
+import { createTocController } from '../article/toc';
+
     // ── SSR 데이터 로드 ──
     let ssrData = null;
     (function () {
@@ -28,6 +34,37 @@
     // ── 전역 상태 ──
     let currentSlug = null;
     let currentPage = null;
+
+    // ── 공유 문서 조회 모듈(전역 위키 컨텍스트) ──
+    // 브레드크럼/문서 구조/공유/역링크/목차·읽기·Raw 모드는 src/client/article/* 로 추출되어
+    // 워크스페이스 문서 조회(ws-doc.ts)와 단일 소스를 공유한다. 전역 위키는 SPA 네비게이션·
+    // `/w/<slug>`(슬러그 풀 인코딩) 경로·`/api/w/...` API·AI 공유 노출로 구성한다.
+    const wikiArticleCtx = {
+      docHref: (slug) => `/w/${encodeURIComponent(slug)}`,
+      subdocsUrl: (slug, immediate) => `/api/w/${encodeURIComponent(slug)}/subdocs${immediate ? '?immediate=1' : ''}`,
+      backlinksUrl: (slug) => `/api/w/${encodeURIComponent(slug)}/backlinks`,
+      navigate: (href) => navigateTo(href),
+      getDoc: () => currentPage,
+      getSlug: () => currentSlug || '',
+      wikiName: () => (window.appConfig && window.appConfig.wikiName) || 'CloudWiki',
+      canCreateSubdoc: (slug) => !!(window.currentUser && window.currentUser.permissions && window.currentUser.permissions['wiki:edit']) && !slug.includes(':'),
+      onCreateSubdoc: (slug) => createSubdoc(slug),
+      includeAi: true,
+    };
+    const wikiBreadcrumb = createBreadcrumbNav(wikiArticleCtx);
+    const wikiStructure = createStructureModal(wikiArticleCtx);
+    const wikiShare = createShareActions(wikiArticleCtx);
+    const wikiToc = createTocController({
+      onReadingModeToggled: () => {
+        // 프레젠테이션 문서는 모드 전환 시 본문 렌더 경로가 갈리므로 재렌더가 필요.
+        if (currentPage && currentPage.view_mode === 'presentation' && currentSlug) {
+          if (typeof window.teardownPresentation === 'function') {
+            try { window.teardownPresentation(); } catch (e) { /* noop */ }
+          }
+          showArticle(currentSlug);
+        }
+      },
+    });
 
     // ── 초기화 ──
     document.addEventListener('DOMContentLoaded', async () => {
@@ -83,15 +120,8 @@
         route();
       });
 
-      // 스크롤 FAB 표시/숨김
-      const scrollFabGroup = document.getElementById('scrollFabGroup');
-      window.addEventListener('scroll', () => {
-        if (window.scrollY > 200) {
-          scrollFabGroup.classList.add('visible');
-        } else if (!document.body.classList.contains('reading-mode') && !document.body.classList.contains('raw-mode')) {
-          scrollFabGroup.classList.remove('visible');
-        }
-      }, { passive: true });
+      // 스크롤 FAB 표시/숨김은 wikiToc.attachSpy()(src/client/article/toc.ts)가 처리한다
+      // (DOMContentLoaded 에서 부착, 워크스페이스 ws-doc.ts 와 공유).
     });
 
     // ── 라우팅 ──
@@ -217,44 +247,9 @@
       _rightSidebarRelocated = true;
     }
 
-    // 렌더된 본문(#articleContent)의 헤딩 번호를 포함한 목차 HTML 을 지정한 목차 사이드바에 채운다.
-    // 헤딩이 없으면 사이드바를 숨기고 false 반환. (left-toc 좌측 사이드바·docs 우측 사이드바 공용)
+    // 목차 사이드바 채우기는 src/client/article/toc.ts(wikiToc)로 추출됨. 동작 보존 위임 래퍼.
     function populateTocSidebar(sidebarId: string, navId: string): boolean {
-      const sidebar = document.getElementById(sidebarId);
-      const nav = document.getElementById(navId);
-      if (!sidebar || !nav) return false;
-      // 목차 사이드바는 헤딩 번호를 포함해 생성한다(#tocNav 는 번호가 없으므로 복제하지 않는다).
-      // 렌더된 본문(articleContent)의 .wiki-heading-num 스팬을 읽어 번호 prefix 를 붙인다.
-      const contentEl = document.getElementById('articleContent');
-      // 각주 섹션 헤딩(<h4>각주</h4>, .wiki-footnotes 내부)은 자동 생성되는 것이므로 실제 목차
-      // 항목으로 치지 않는다. 각주 헤딩만 있고 다른 헤딩이 없으면 목차 없음으로 간주해 사이드바를 숨긴다.
-      // (buildTocOlHtml 와 동일하게 .accordion-header 도 제외하고 h1~h4 만 센다.)
-      const realHeadings = contentEl
-        ? Array.from(contentEl.querySelectorAll(
-            'h1:not(.accordion-header), h2:not(.accordion-header), h3:not(.accordion-header), h4:not(.accordion-header)'))
-            .filter(h => !h.closest('.wiki-footnotes'))
-        : [];
-      if (!realHeadings.length) {
-        sidebar.classList.add('d-none');
-        nav.innerHTML = '';
-        return false;
-      }
-      let html = (contentEl && typeof window.buildTocOlHtml === 'function')
-        ? window.buildTocOlHtml(contentEl, true)
-        : '';
-      if (!html) {
-        // 헬퍼 미가용 등 예외 상황에서는 번호 없는 #tocNav 복제로 폴백.
-        const src = document.getElementById('tocNav');
-        html = src ? src.innerHTML.trim() : '';
-      }
-      if (!html) {
-        sidebar.classList.add('d-none');
-        nav.innerHTML = '';
-        return false;
-      }
-      nav.innerHTML = html;
-      sidebar.classList.remove('d-none');
-      return true;
+      return wikiToc.populateSidebar(sidebarId, navId);
     }
 
     // 문서 렌더 후 #tocNav 내용을 좌측 사이드바에 복제하고 노출 여부를 결정.
@@ -469,172 +464,10 @@
       }
     }
 
+    // 문서 구조 보기(하위 문서 트리) 모달은 src/client/article/structure.ts(wikiStructure)로 추출됨.
+    // 동작 보존을 위해 기존 함수명을 얇은 위임 래퍼로 유지한다(onclick="showSubdocs(...)" 무변경).
     async function showSubdocs(slug) {
-      // 하위 문서인 경우 최상위 문서를 기준으로 탐색
-      const topSlug = slug.includes('/') ? slug.split('/')[0] : slug;
-
-      try {
-        const res = await fetch(`/api/w/${encodeURIComponent(topSlug)}/subdocs`);
-        const data = await res.json();
-        const subdocs = data.subdocs || [];
-
-        if (subdocs.length === 0) {
-          Swal.fire('문서 구조', '하위 문서가 없습니다.', 'info');
-          return;
-        }
-
-        // 트리 구조 빌드
-        const tree = {};
-        for (const doc of subdocs) {
-          // slug에서 최상위 문서 prefix 제거
-          const relative = doc.slug.substring(topSlug.length + 1); // "스마트폰/갤럭시S"
-          const parts = relative.split('/');
-          let node = tree;
-          for (const part of parts) {
-            if (!node[part]) node[part] = { _children: {}, _doc: null };
-            node = node[part]._children;
-          }
-          // 마지막 노드에 문서 정보 저장
-          let target = tree;
-          for (let i = 0; i < parts.length; i++) {
-            if (i === parts.length - 1) {
-              target[parts[i]]._doc = doc;
-            } else {
-              target = target[parts[i]]._children;
-            }
-          }
-        }
-
-        function annotateDescendants(children) {
-          let total = 0;
-          for (const key of Object.keys(children)) {
-            const sub = annotateDescendants(children[key]._children);
-            children[key]._descendants = sub;
-            total += 1 + sub;
-          }
-          return total;
-        }
-        annotateDescendants(tree);
-
-        function sortEntries(nodes) {
-          return Object.keys(nodes).sort((a, b) => {
-            const ca = nodes[a]._descendants;
-            const cb = nodes[b]._descendants;
-            if (ca !== cb) return ca - cb;
-            return a.localeCompare(b);
-          });
-        }
-
-        function renderTree(nodes, parentPrefix) {
-          const entries = sortEntries(nodes);
-          let html = '';
-          entries.forEach((key, idx) => {
-            const node = nodes[key];
-            const isLast = idx === entries.length - 1;
-            const hasChildren = Object.keys(node._children).length > 0;
-            const connector = isLast ? '└── ' : '├── ';
-            const childPrefix = parentPrefix + (isLast ? '    ' : '│   ');
-
-            if (node._doc) {
-              html += `<div style="font-family:monospace;white-space:pre;line-height:1.6;">${parentPrefix}${connector}` +
-                `<a href="/w/${encodeURIComponent(node._doc.slug)}" onclick="Swal.close();navigateTo(this.href);return false;" class="text-decoration-none">${window.escapeHtml(key)}</a></div>`;
-            } else {
-              html += `<div style="font-family:monospace;white-space:pre;line-height:1.6;">${parentPrefix}${connector}${window.escapeHtml(key)}</div>`;
-            }
-
-            if (hasChildren) {
-              html += renderTree(node._children, childPrefix);
-            }
-          });
-          return html;
-        }
-
-        function renderPlain(nodes, parentPrefix) {
-          const entries = sortEntries(nodes);
-          let text = '';
-          entries.forEach((key, idx) => {
-            const node = nodes[key];
-            const isLast = idx === entries.length - 1;
-            const hasChildren = Object.keys(node._children).length > 0;
-            const connector = isLast ? '└── ' : '├── ';
-            const childPrefix = parentPrefix + (isLast ? '    ' : '│   ');
-            text += parentPrefix + connector + key + '\n';
-            if (hasChildren) {
-              text += renderPlain(node._children, childPrefix);
-            }
-          });
-          return text;
-        }
-
-        function renderMarkdown(nodes, parentPrefix) {
-          const entries = sortEntries(nodes);
-          let md = '';
-          entries.forEach((key, idx) => {
-            const node = nodes[key];
-            const isLast = idx === entries.length - 1;
-            const hasChildren = Object.keys(node._children).length > 0;
-            const connector = isLast ? '└── ' : '├── ';
-            const childPrefix = parentPrefix + (isLast ? '    ' : '│   ');
-            if (node._doc) {
-              md += `${parentPrefix}${connector}[[${node._doc.slug}|${key}]]\n`;
-            } else {
-              md += `${parentPrefix}${connector}${key}\n`;
-            }
-            if (hasChildren) {
-              md += renderMarkdown(node._children, childPrefix);
-            }
-          });
-          return md;
-        }
-
-        const topTitle = decodeURIComponent(topSlug);
-
-        // 루트 문서 포함
-        let treeHtml = `<div style="font-family:monospace;white-space:pre;line-height:1.6;"><a href="/w/${encodeURIComponent(topSlug)}" onclick="Swal.close();navigateTo(this.href);return false;" class="text-decoration-none fw-bold">${window.escapeHtml(topTitle)}</a></div>`;
-        treeHtml += renderTree(tree, '');
-
-        const plainText = topTitle + '\n' + renderPlain(tree, '');
-        const markdown = `[[${topSlug}]]\n` + renderMarkdown(tree, '');
-
-        window.__subdocsCopyData = { plain: plainText, md: markdown };
-
-        const buttonsHtml = `
-          <div class="d-flex gap-2 mb-3 justify-content-end">
-            <button type="button" class="btn btn-sm btn-outline-secondary" onclick="copySubdocsPopup(this, 'plain')"><i class="bi bi-copy"></i> 텍스트 복사</button>
-            <button type="button" class="btn btn-sm btn-outline-secondary" onclick="copySubdocsPopup(this, 'md')"><i class="bi bi-markdown"></i> 마크다운 복사</button>
-          </div>`;
-
-        Swal.fire({
-          title: '문서 구조',
-          html: `${buttonsHtml}<div class="text-start">${treeHtml}</div>`,
-          width: 600,
-          confirmButtonText: '닫기',
-          customClass: { htmlContainer: 'text-start' }
-        });
-      } catch (err) {
-        console.error(err);
-        Swal.fire('오류', '하위 문서를 불러오는 데 실패했습니다.', 'error');
-      }
-    }
-
-    async function copySubdocsPopup(btn, format) {
-      const data = window.__subdocsCopyData;
-      if (!data) return;
-      const text = format === 'md' ? data.md : data.plain;
-      try {
-        await navigator.clipboard.writeText(text);
-        const original = btn.innerHTML;
-        btn.innerHTML = '<i class="bi bi-check2"></i> 복사됨';
-        btn.classList.remove('btn-outline-secondary');
-        btn.classList.add('btn-success');
-        setTimeout(() => {
-          btn.innerHTML = original;
-          btn.classList.remove('btn-success');
-          btn.classList.add('btn-outline-secondary');
-        }, 1500);
-      } catch (err) {
-        console.error('복사 실패:', err);
-      }
+      return wikiStructure.show(slug);
     }
 
     // 대체 title 이 설정된 문서에서 h1 아래에 표시되는 실제 슬러그 라벨.
@@ -740,50 +573,13 @@
 
     // 문서 구조(브레드크럼) 네비게이션 렌더 — 일반 문서(showArticle)와 미작성 문서(showMissingArticle)가 공유.
     // actionSlug 의 '/' 분할만으로 동작하므로 문서 존재 여부와 무관하다(콜론 슬러그는 하위문서 생성 버튼 억제).
+    // 문서 구조(브레드크럼)·형제 패널은 src/client/article/breadcrumb.ts(wikiBreadcrumb)로 추출됨.
+    // 동작 보존을 위해 기존 함수명을 얇은 위임 래퍼로 유지한다(호출부 무변경).
     function renderParentDocsNav(actionSlug) {
-      const parentDocsEl = document.getElementById('parentDocsNav');
-      closeParentDocsSiblings();
-      const parts = actionSlug.split('/');
-      const segments = [];
-      for (let i = 0; i < parts.length; i++) {
-        const isCurrent = (i === parts.length - 1);
-        const segSlug = parts.slice(0, i + 1).join('/');
-        const parentSlug = i === 0 ? '' : parts.slice(0, i).join('/');
-        const labelHtml = isCurrent
-          ? `<span class="parent-docs-current fw-semibold">${window.escapeHtml(parts[i])}</span>`
-          : `<a href="/w/${encodeURIComponent(segSlug)}" class="text-decoration-none wiki-spa-link">${window.escapeHtml(parts[i])}</a>`;
-        // 최상위(i=0)는 화살표 없음. 그 외(중간/현재)에는 chevron 토글 부착
-        const chevronHtml = i === 0
-          ? ''
-          : ` <button type="button" class="btn btn-link btn-sm p-0 align-baseline parent-docs-chevron" data-parent="${window.escapeHtml(parentSlug)}" data-current="${window.escapeHtml(parts[i])}" data-level="${i}" title="동일 단계 문서 보기" aria-label="동일 단계 문서 보기" aria-expanded="false"><i class="bi bi-chevron-down"></i></button>`;
-        segments.push(`<span class="parent-docs-segment">${labelHtml}${chevronHtml}</span>`);
-      }
-
-      const canCreateSubdoc = !!(window.currentUser && window.currentUser.permissions && window.currentUser.permissions['wiki:edit']) && !actionSlug.includes(':');
-      const subdocButtonHtml = canCreateSubdoc
-        ? ` <span class="text-muted mx-1">/</span> <button type="button" class="btn btn-link btn-sm p-0 align-baseline parent-docs-create" data-slug="${window.escapeHtml(actionSlug)}" title="하위 문서 생성" aria-label="하위 문서 생성"><i class="bi bi-pencil-square"></i></button>`
-        : '';
-
-      parentDocsEl.innerHTML = `<span class="text-muted me-1">문서 구조:</span>${segments.join(' <span class="text-muted mx-1">/</span> ')}${subdocButtonHtml}`;
-      parentDocsEl.querySelectorAll('.wiki-spa-link').forEach(link => {
-        link.addEventListener('click', function (event) {
-          event.preventDefault();
-          navigateTo(this.getAttribute('href'));
-        });
-      });
-      const createSubdocBtn = parentDocsEl.querySelector('.parent-docs-create');
-      if (createSubdocBtn) {
-        createSubdocBtn.addEventListener('click', function () {
-          createSubdoc(this.dataset.slug);
-        });
-      }
-      parentDocsEl.querySelectorAll('.parent-docs-chevron').forEach(btn => {
-        btn.addEventListener('click', function () {
-          toggleParentDocsSiblings(this);
-        });
-      });
-      parentDocsEl.classList.remove('d-none');
-      document.getElementById('parentDocsNavDivider').classList.remove('d-none');
+      wikiBreadcrumb.render(actionSlug);
+    }
+    function closeParentDocsSiblings() {
+      wikiBreadcrumb.close();
     }
 
     async function showArticle(slug) {
@@ -1425,139 +1221,6 @@
       window.location.href = `/edit?slug=${encodeURIComponent(newSlug)}`;
     }
 
-    // ── 문서 구조 chevron 토글: 동일 단계 문서 드롭다운 ──
-    // 패널은 breadcrumb 와 wrapper 안에서 형제 노드로 둔다 (wrapper 가
-    // position: relative). breadcrumb 의 innerHTML 가 재구성될 때 패널이
-    // 함께 지워지지 않도록 별도 노드로 유지한다. wrapper 가 스크롤/리플로우
-    // 될 때 함께 움직이므로 별도의 scroll 추적 로직은 필요 없다.
-    let __parentDocsSiblingsReqSeq = 0;
-    let __parentDocsSiblingsActiveBtn = null;
-    function positionParentDocsSiblings(btn) {
-      const panelEl = document.getElementById('parentDocsSiblings');
-      const wrapperEl = document.getElementById('parentDocsNavWrapper');
-      if (!panelEl || !wrapperEl) return;
-      // 드롭다운의 좌측은 chevron 이 아니라 해당 breadcrumb 노드(세그먼트)
-      // 시작점과 정렬한다.
-      const anchorEl = btn.closest('.parent-docs-segment') || btn;
-      const wrapperRect = wrapperEl.getBoundingClientRect();
-      const btnRect = btn.getBoundingClientRect();
-      const anchorRect = anchorEl.getBoundingClientRect();
-
-      panelEl.style.position = 'absolute';
-      // 세로 위치는 chevron 바로 아래로 유지
-      panelEl.style.top = `${Math.round(btnRect.bottom - wrapperRect.top + 4)}px`;
-
-      // 화면 우측을 벗어나지 않도록 좌측 좌표를 viewport 기준으로 제한
-      const desiredLeft = anchorRect.left - wrapperRect.left;
-      const panelW = panelEl.offsetWidth || 192;
-      const viewportW = document.documentElement.clientWidth;
-      const maxLeftViewport = viewportW - panelW - 8; // viewport 우측 8px 여백
-      const maxLeftRelative = Math.max(0, maxLeftViewport - wrapperRect.left);
-      panelEl.style.left = `${Math.round(Math.min(desiredLeft, maxLeftRelative))}px`;
-    }
-    function closeParentDocsSiblings() {
-      const panelEl = document.getElementById('parentDocsSiblings');
-      const parentDocsEl = document.getElementById('parentDocsNav');
-      if (parentDocsEl) {
-        parentDocsEl.querySelectorAll('.parent-docs-chevron').forEach(b => {
-          b.classList.remove('active');
-          b.setAttribute('aria-expanded', 'false');
-        });
-      }
-      if (panelEl) {
-        panelEl.classList.add('d-none');
-        panelEl.innerHTML = '';
-      }
-      __parentDocsSiblingsActiveBtn = null;
-      __parentDocsSiblingsReqSeq++; // 진행 중 응답 무효화
-      document.removeEventListener('click', onParentDocsSiblingsOutsideClick, true);
-      document.removeEventListener('keydown', onParentDocsSiblingsKeydown, true);
-      window.removeEventListener('resize', onParentDocsSiblingsViewportChange);
-    }
-    function onParentDocsSiblingsOutsideClick(ev) {
-      const panelEl = document.getElementById('parentDocsSiblings');
-      if (panelEl && panelEl.contains(ev.target)) return;
-      if (__parentDocsSiblingsActiveBtn && __parentDocsSiblingsActiveBtn.contains(ev.target)) return;
-      closeParentDocsSiblings();
-    }
-    function onParentDocsSiblingsKeydown(ev) {
-      if (ev.key === 'Escape') {
-        // closeParentDocsSiblings() 호출 시 활성 버튼 참조가 사라지므로
-        // 포커스를 되돌릴 트리거를 먼저 캡쳐해둔다.
-        const triggerBtn = __parentDocsSiblingsActiveBtn;
-        closeParentDocsSiblings();
-        if (triggerBtn) triggerBtn.focus();
-      }
-    }
-    function onParentDocsSiblingsViewportChange() {
-      // 리사이즈 등으로 breadcrumb 가 리플로우되면 chevron 위치도 바뀌므로 재배치
-      if (__parentDocsSiblingsActiveBtn) positionParentDocsSiblings(__parentDocsSiblingsActiveBtn);
-    }
-
-    async function toggleParentDocsSiblings(btn) {
-      const panelEl = document.getElementById('parentDocsSiblings');
-      if (!panelEl) return;
-      const parentSlug = btn.dataset.parent || '';
-      const currentName = btn.dataset.current || '';
-      const wasActive = btn.classList.contains('active');
-
-      // 일단 닫기 (다른 chevron 도 함께 비활성화)
-      closeParentDocsSiblings();
-
-      if (wasActive) return; // 같은 chevron 재클릭 → 닫기만
-
-      const reqId = ++__parentDocsSiblingsReqSeq;
-      __parentDocsSiblingsActiveBtn = btn;
-      btn.classList.add('active');
-      btn.setAttribute('aria-expanded', 'true');
-
-      panelEl.classList.remove('d-none');
-      panelEl.setAttribute('role', 'menu');
-      panelEl.innerHTML = `<span class="parent-docs-siblings-status"><span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>불러오는 중...</span>`;
-      positionParentDocsSiblings(btn);
-
-      document.addEventListener('click', onParentDocsSiblingsOutsideClick, true);
-      document.addEventListener('keydown', onParentDocsSiblingsKeydown, true);
-      window.addEventListener('resize', onParentDocsSiblingsViewportChange);
-
-      try {
-        const res = await fetch(`/api/w/${encodeURIComponent(parentSlug)}/subdocs?immediate=1`);
-        if (reqId !== __parentDocsSiblingsReqSeq) return;
-        if (!res.ok) throw new Error('failed');
-        const data = await res.json();
-        if (reqId !== __parentDocsSiblingsReqSeq) return;
-        const docs = (data.subdocs || []).filter(d => {
-          const rel = d.slug.substring(parentSlug.length + 1);
-          return rel !== currentName;
-        });
-
-        if (docs.length === 0) {
-          panelEl.innerHTML = `<span class="parent-docs-siblings-status fst-italic">동일 단계 문서가 없습니다</span>`;
-          positionParentDocsSiblings(btn);
-          return;
-        }
-
-        const items = docs.map(d => {
-          const rel = d.slug.substring(parentSlug.length + 1);
-          return `<a href="/w/${encodeURIComponent(d.slug)}" role="menuitem" class="parent-docs-sibling-item wiki-spa-link" title="${window.escapeHtml(d.slug)}">${window.escapeHtml(rel)}</a>`;
-        }).join('');
-        panelEl.innerHTML = items;
-        panelEl.querySelectorAll('.wiki-spa-link').forEach(link => {
-          link.addEventListener('click', function (event) {
-            event.preventDefault();
-            const href = this.getAttribute('href');
-            closeParentDocsSiblings();
-            navigateTo(href);
-          });
-        });
-        positionParentDocsSiblings(btn);
-      } catch (err) {
-        if (reqId !== __parentDocsSiblingsReqSeq) return;
-        console.error(err);
-        panelEl.innerHTML = `<span class="parent-docs-siblings-status">불러오기 실패</span>`;
-        positionParentDocsSiblings(btn);
-      }
-    }
 
     // ── 이미지 문서 (미디어 기반) ──
     async function showImageDocument(slug, page) {
@@ -1979,84 +1642,10 @@
     }
 
     // ── 백링크 로드 ──
+    // 역링크 섹션 렌더는 src/client/article/backlinks.ts(renderBacklinks)로 추출됨.
     // url 인자로 fetch 엔드포인트를 다르게 지정할 수 있다 (이미지 문서 역링크 등).
     async function loadBacklinks(slug, url) {
-      const section = document.getElementById('backlinksSection');
-      const list = document.getElementById('backlinksList');
-      const fetchUrl = url || `/api/w/${encodeURIComponent(slug)}/backlinks`;
-
-      try {
-        const res = await fetch(fetchUrl);
-        if (!res.ok) {
-          section.classList.add('d-none');
-          return false;
-        }
-
-        const data = await res.json();
-
-        if (data.backlinks && data.backlinks.length > 0) {
-          list.innerHTML = data.backlinks.map(bl => {
-            const date = bl.updated_at ? new Date(bl.updated_at * 1000).toLocaleString('ko-KR') : '';
-            const deletedBadge = bl.is_deleted ? ' <span class="badge bg-secondary ms-1">삭제됨</span>' : '';
-            if (bl.type === 'blog') {
-              const blogTitle = bl.title || `#${bl.id}`;
-              return `
-                <a href="/blog/${encodeURIComponent(bl.id)}" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center">
-                    <div>
-                        <span class="badge bg-info me-2">블로그</span>
-                        <span class="fw-bold">${window.escapeHtml(blogTitle)}</span>${deletedBadge}
-                    </div>
-                    <small class="text-muted">${date}</small>
-                </a>
-              `;
-            }
-            if (bl.type === 'discussion_comment') {
-              const dTitle = bl.discussion_title || `#${bl.discussion_id}`;
-              const href = `/w/${encodeURIComponent(bl.page_slug)}?mode=discussions&id=${encodeURIComponent(bl.discussion_id)}`;
-              return `
-                <a href="${href}" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center">
-                    <div>
-                        <span class="badge bg-warning text-dark me-2">토론</span>
-                        <span class="fw-bold">${window.escapeHtml(dTitle)}</span>
-                        <small class="text-muted ms-2">${window.escapeHtml(bl.page_slug)}</small>${deletedBadge}
-                    </div>
-                    <small class="text-muted">${date}</small>
-                </a>
-              `;
-            }
-            if (bl.type === 'ticket_comment') {
-              const tTitle = bl.ticket_title || `#${bl.ticket_id}`;
-              return `
-                <a href="/tickets/${encodeURIComponent(bl.ticket_id)}" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center">
-                    <div>
-                        <span class="badge bg-success me-2">티켓</span>
-                        <span class="fw-bold">${window.escapeHtml(tTitle)}</span>${deletedBadge}
-                    </div>
-                    <small class="text-muted">${date}</small>
-                </a>
-              `;
-            }
-            return `
-              <a href="/w/${encodeURIComponent(bl.slug)}" onclick="navigateTo(this.href); return false;" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center">
-                  <div>
-                      <span class="fw-bold">${window.escapeHtml(bl.slug)}</span>
-                      ${deletedBadge}
-                  </div>
-                  <small class="text-muted">${date}</small>
-              </a>
-            `;
-          }).join('');
-          section.classList.remove('d-none');
-          return true;
-        } else {
-          list.innerHTML = '<div class="text-muted text-center py-3">이 문서를 참조하는 문서가 없습니다.</div>';
-          section.classList.add('d-none');
-          return false;
-        }
-      } catch (e) {
-        section.classList.add('d-none');
-        return false;
-      }
+      return renderBacklinks(wikiArticleCtx, { slug, url });
     }
 
     // ── 이미지 문서 역링크 로드 (열람 즉시 자동 호출) ──
@@ -2347,98 +1936,16 @@
     }
 
     // ── 공유하기 기능 ──
-    async function shareNative() {
-      const cleanUrl = window.location.origin + window.location.pathname;
-      const wikiName = typeof window.appConfig !== 'undefined' && window.appConfig.wikiName ? window.appConfig.wikiName : 'CloudWiki';
-      const pageTitle = currentPage && currentPage.slug ? currentPage.slug : document.title;
-      try {
-        await navigator.share({
-          title: `${wikiName} - ${pageTitle}`,
-          text: `${wikiName} - ${pageTitle}`,
-          url: cleanUrl
-        });
-      } catch (err) {
-        if (err.name !== 'AbortError') {
-          console.error('공유 실패:', err);
-        }
-      }
-    }
-
-    async function shareCopyLink() {
-      const cleanUrl = window.location.origin + window.location.pathname;
-      try {
-        await navigator.clipboard.writeText(cleanUrl);
-        Swal.fire({ icon: 'success', title: '복사 완료', text: '문서 링크가 클립보드에 복사되었습니다.', toast: true, position: 'top-end', timer: 1500, showConfirmButton: false });
-      } catch (err) {
-        console.error('복사 실패:', err);
-        Swal.fire('오류', '클립보드 복사에 실패했습니다.', 'error');
-      }
-    }
-
-    async function shareCopyText() {
-      const content = document.getElementById('articleContent');
-      if (!content) return;
-      try {
-        const text = typeof window.extractPlainTextWithFootnotes === 'function'
-          ? window.extractPlainTextWithFootnotes(content)
-          : content.innerText;
-        await navigator.clipboard.writeText(text);
-        Swal.fire({ icon: 'success', title: '복사 완료', text: '문서 내용이 클립보드에 복사되었습니다.', toast: true, position: 'top-end', timer: 1500, showConfirmButton: false });
-      } catch (err) {
-        console.error('복사 실패:', err);
-        Swal.fire('오류', '클립보드 복사에 실패했습니다.', 'error');
-      }
-    }
-
-    async function shareCopyMarkdown() {
-      if (!currentPage || !currentPage.content) {
-        Swal.fire('오류', '문서 내용을 가져올 수 없습니다.', 'error');
-        return;
-      }
-      try {
-        const resolvedContent = await window.resolveTransclusionsForMarkdown(
-          currentPage.content,
-          currentPage.slug || currentSlug
-        );
-        const pageTitle = currentPage.slug ? currentPage.slug : '';
-        const markdownWithTitle = pageTitle ? pageTitle + '\n\n' + resolvedContent : resolvedContent;
-        await navigator.clipboard.writeText(markdownWithTitle);
-        Swal.fire({ icon: 'success', title: '복사 완료', text: '마크다운 원문이 클립보드에 복사되었습니다.', toast: true, position: 'top-end', timer: 1500, showConfirmButton: false });
-      } catch (err) {
-        console.error('복사 실패:', err);
-        Swal.fire('오류', '클립보드 복사에 실패했습니다.', 'error');
-      }
-    }
-
-    function sharePrint() {
-      window.print();
-    }
-
-    // AI 질문 옵션(Claude/ChatGPT)은 해당 문서를 비회원이 열람할 수 있을 때만 노출한다.
-    // 위키 전체가 closed 상태(로그인 필수)이거나 페이지가 관리자용 비공개(is_private)면
-    // 외부 AI 가 URL 을 가져올 수 없으므로 숨긴다.
-    function applyShareAiVisibility(page) {
-      const wikiOpen = !window.appConfig || window.appConfig.wikiVisibility !== 'closed';
-      const isPrivate = !!(page && page.is_private);
-      const canGuestRead = wikiOpen && !isPrivate;
-      ['shareAiDivider', 'shareItemAskClaude', 'shareItemAskChatGPT'].forEach(id => {
-        const el = document.getElementById(id);
-        if (!el) return;
-        el.classList.toggle('d-none', !canGuestRead);
-      });
-    }
-
-    function shareAskClaude() {
-      const cleanUrl = window.location.origin + window.location.pathname;
-      const prompt = '다음 위키 페이지를 읽고 내용에 대한 질문에 답해줘: ' + cleanUrl;
-      window.open('https://claude.ai/new?q=' + encodeURIComponent(prompt), '_blank');
-    }
-
-    function shareAskChatGPT() {
-      const cleanUrl = window.location.origin + window.location.pathname;
-      const prompt = '다음 위키 페이지를 읽고 내용에 대한 질문에 답해줘: ' + cleanUrl;
-      window.open('https://chatgpt.com/?q=' + encodeURIComponent(prompt), '_blank');
-    }
+    // 공유 메뉴는 src/client/article/share.ts(wikiShare)로 추출됨. 동작 보존을 위해
+    // 기존 함수명을 얇은 위임 래퍼로 유지한다(HTML onclick="shareNative()" 등 무변경).
+    const shareNative = () => wikiShare.shareNative();
+    const shareCopyLink = () => wikiShare.shareCopyLink();
+    const shareCopyText = () => wikiShare.shareCopyText();
+    const shareCopyMarkdown = () => wikiShare.shareCopyMarkdown();
+    const sharePrint = () => wikiShare.sharePrint();
+    const shareAskClaude = () => wikiShare.shareAskClaude();
+    const shareAskChatGPT = () => wikiShare.shareAskChatGPT();
+    const applyShareAiVisibility = (page) => wikiShare.applyAiVisibility(page);
 
     // ── 네비게이션 ──
     function navigateTo(url) {
@@ -2796,40 +2303,10 @@
     }
 
     // ── 읽기 모드 ──
-    function _applyReadingModeUi(active) {
-      const exitBtn = document.getElementById('readingModeExitFab');
-      const fabGroup = document.getElementById('scrollFabGroup');
-      if (!exitBtn || !fabGroup) return;
-      if (active) {
-        exitBtn.classList.remove('d-none');
-        fabGroup.classList.add('visible');
-      } else {
-        exitBtn.classList.add('d-none');
-        if (window.scrollY <= 200 && !document.body.classList.contains('raw-mode')) {
-          fabGroup.classList.remove('visible');
-        }
-      }
-    }
-
+    // 읽기/Raw/플로팅 목차/스크롤 스파이는 src/client/article/toc.ts(wikiToc)로 추출됨.
+    // 프레젠테이션 재렌더는 wikiToc 생성 시 onReadingModeToggled 콜백으로 위임한다.
     function toggleReadingMode() {
-      // 읽기 모드와 Raw 보기는 함께 사용 불가 — Raw 모드 활성 시 먼저 해제
-      if (document.body.classList.contains('raw-mode')) {
-        _exitRawMode();
-      }
-      const active = document.body.classList.toggle('reading-mode');
-      _applyReadingModeUi(active);
-      try {
-        if (active) localStorage.setItem('readingMode', '1');
-        else localStorage.removeItem('readingMode');
-      } catch (e) { }
-      // 프레젠테이션 문서는 모드 전환 시 본문 렌더 경로가 갈리므로 재렌더가 필요.
-      // 읽기 모드 ON → 일반 문서처럼 합쳐서 표시 / OFF → 슬라이드 덱 복원.
-      if (currentPage && currentPage.view_mode === 'presentation' && currentSlug) {
-        if (typeof window.teardownPresentation === 'function') {
-          try { window.teardownPresentation(); } catch (e) { /* noop */ }
-        }
-        showArticle(currentSlug);
-      }
+      wikiToc.toggleReadingMode();
     }
 
     // ── 조회수 지연 로드 ──
@@ -2871,250 +2348,21 @@
       }
     }
 
-    // ── Raw 보기 모드 ──
-    function _applyRawModeUi(active) {
-      const exitBtn = document.getElementById('rawModeExitFab');
-      const fabGroup = document.getElementById('scrollFabGroup');
-      if (!exitBtn || !fabGroup) return;
-      if (active) {
-        exitBtn.classList.remove('d-none');
-        fabGroup.classList.add('visible');
-      } else {
-        exitBtn.classList.add('d-none');
-        if (window.scrollY <= 200 && !document.body.classList.contains('reading-mode')) {
-          fabGroup.classList.remove('visible');
-        }
-      }
-    }
-
-    // Raw 모드 표시 상태만 해제 — #articleRawContent 의 textContent 는 의도적으로 보존
-    // (재진입 시 즉시 표시 가능; 원본 내용은 새 문서 로드 시 showArticle 에서 교체됨)
+    // ── Raw 보기 / 플로팅 목차 / 스크롤 스파이 ──
+    // 전부 src/client/article/toc.ts(wikiToc)로 추출됨. 외부에서 호출되는 함수명만 얇은
+    // 위임 래퍼로 유지하고, 초기 읽기 모드 복원·스파이 부착은 wikiToc 메서드로 위임한다.
     function _exitRawMode() {
-      if (document.body.classList.contains('raw-mode')) {
-        document.body.classList.remove('raw-mode');
-      }
-      _applyRawModeUi(false);
+      wikiToc.exitRawMode();
     }
-
     function toggleRawMode() {
-      // 읽기 모드와 Raw 보기는 함께 사용 불가 — 읽기 모드 활성 시 먼저 해제
-      if (document.body.classList.contains('reading-mode')) {
-        document.body.classList.remove('reading-mode');
-        _applyReadingModeUi(false);
-        try { localStorage.removeItem('readingMode'); } catch (e) { }
-      }
-      const active = document.body.classList.toggle('raw-mode');
-      _applyRawModeUi(active);
-      // Raw 모드 진입 시 페이지 상단으로 스크롤
-      if (active) window.scrollTo({ top: 0, behavior: 'auto' });
+      wikiToc.toggleRawMode();
     }
-
-    // 초기 상태 복원 — 사이드바 숨김과 FAB 노출이 동시에 반영되도록 동기 적용
-    try {
-      if (localStorage.getItem('readingMode') === '1') {
-        document.body.classList.add('reading-mode');
-        _applyReadingModeUi(true);
-      }
-    } catch (e) { }
-
     function toggleFloatingToc() {
-      const panel = document.getElementById('tocFloatingPanel');
-      const tocSource = document.getElementById('tocNav');
-      const floatingNav = document.getElementById('tocFloatingNav');
-      const isVisible = panel.classList.contains('visible');
-
-      if (!isVisible) {
-        // 목차 내용이 없으면 표시하지 않음
-        if (!tocSource || !tocSource.innerHTML.trim()) return;
-        // 기존 tocNav 내용을 복제하여 표시
-        floatingNav.innerHTML = tocSource.innerHTML;
-        // 클릭 시 해당 위치로 이동 후 패널 닫기
-        floatingNav.querySelectorAll('a').forEach(a => {
-          a.addEventListener('click', () => {
-            panel.classList.remove('visible');
-          });
-        });
-        // 현재 스크롤 위치에 맞춰 활성 항목 표시
-        _tocSpyLastId = null;
-        _updateTocActive();
-      }
-
-      panel.classList.toggle('visible');
+      wikiToc.toggleFloating();
     }
+    wikiToc.restoreReadingMode();
+    document.addEventListener('DOMContentLoaded', () => wikiToc.attachSpy());
 
-    // ── 목차 스크롤 스파이 ──
-    let _tocSpyAttached = false;
-    let _tocSpyLastId = null;
-
-    function _findCurrentHeadingId() {
-      const articleContent = document.getElementById('articleContent');
-      if (!articleContent) return null;
-      const headings = articleContent.querySelectorAll('h1, h2, h3, h4');
-      if (!headings.length) return null;
-
-      const offset = 120;
-      let currentId = null;
-      for (const h of headings) {
-        if (!h.id) continue;
-        const rect = h.getBoundingClientRect();
-        if (rect.top - offset <= 0) {
-          currentId = h.id;
-        } else {
-          break;
-        }
-      }
-      if (!currentId) {
-        for (const h of headings) {
-          if (h.id) { currentId = h.id; break; }
-        }
-      }
-      return currentId;
-    }
-
-    function _updateTocActive() {
-      const articlePage = document.getElementById('articlePage');
-      if (!articlePage || articlePage.classList.contains('d-none')) return;
-      const currentId = _findCurrentHeadingId();
-      if (!currentId) return;
-      if (currentId === _tocSpyLastId) return;
-      _tocSpyLastId = currentId;
-
-      ['tocNav', 'tocFloatingNav', 'wikiTocSidebarNav', 'wikiTocSidebarRightNav'].forEach(navId => {
-        const nav = document.getElementById(navId);
-        if (!nav) return;
-        nav.querySelectorAll('a.toc-active').forEach(a => a.classList.remove('toc-active'));
-        nav.querySelectorAll('a').forEach(a => {
-          const href = a.getAttribute('href') || '';
-          if (href.slice(1) === currentId) a.classList.add('toc-active');
-        });
-      });
-
-      // 플로팅 패널이 열려 있으면 활성 항목이 보이도록 스크롤
-      const floatingNav = document.getElementById('tocFloatingNav');
-      const panel = document.getElementById('tocFloatingPanel');
-      if (floatingNav && panel && panel.classList.contains('visible')) {
-        const activeLink = floatingNav.querySelector('a.toc-active');
-        if (activeLink) {
-          const navRect = floatingNav.getBoundingClientRect();
-          const linkRect = activeLink.getBoundingClientRect();
-          if (linkRect.top < navRect.top || linkRect.bottom > navRect.bottom) {
-            activeLink.scrollIntoView({ block: 'nearest' });
-          }
-        }
-      }
-    }
-
-    function _attachTocSpy() {
-      if (_tocSpyAttached) return;
-      _tocSpyAttached = true;
-      let ticking = false;
-      const handler = () => {
-        if (ticking) return;
-        ticking = true;
-        requestAnimationFrame(() => {
-          _updateTocActive();
-          ticking = false;
-        });
-      };
-      window.addEventListener('scroll', handler, { passive: true });
-      window.addEventListener('resize', handler, { passive: true });
-
-      // 섹션 접기/펼치기(.wiki-section-body grid 전환), 자체 문법 fold(<details>),
-      // 사이드바 목차 아코디언(#collapseTOC) 토글 시 레이아웃이 변하므로
-      // 스크롤스파이를 재계산한다. 애니메이션 진행 중 중간 프레임도 보정.
-      const refreshSpy = () => {
-        _tocSpyLastId = null;
-        _updateTocActive();
-        [90, 200, 340, 450].forEach(d => setTimeout(() => {
-          _tocSpyLastId = null;
-          _updateTocActive();
-        }, d));
-      };
-
-      // .wiki-section-body 는 grid-template-rows 에 CSS transition 을 걸어 접히므로
-      // transitionend 가 접기/펼치기 완료 신호가 된다.
-      document.addEventListener('transitionend', (e) => {
-        const t = e.target;
-        if (!(t instanceof Element)) return;
-        if (e.propertyName && e.propertyName !== 'grid-template-rows') return;
-        if (t.classList && t.classList.contains('wiki-section-body')) refreshSpy();
-      });
-
-      // <details> 는 toggle 이벤트가 버블링되지 않으므로 capture 단계에서 수신.
-      document.addEventListener('toggle', (e) => {
-        const t = e.target;
-        if (t && t.tagName === 'DETAILS') refreshSpy();
-      }, true);
-
-      // 본문과 별도의 목차 아코디언 — Bootstrap collapse 이벤트로 감지.
-      const tocCollapse = document.getElementById('collapseTOC');
-      if (tocCollapse) {
-        tocCollapse.addEventListener('show.bs.collapse', refreshSpy);
-        tocCollapse.addEventListener('hide.bs.collapse', refreshSpy);
-        tocCollapse.addEventListener('shown.bs.collapse', refreshSpy);
-        tocCollapse.addEventListener('hidden.bs.collapse', refreshSpy);
-      }
-
-      _updateTocActive();
-    }
-
-    // 목차(사이드바 / 플로팅 패널) 링크 클릭 시 접힌 조상을 먼저 펼친 뒤 스크롤.
-    // TOC 링크는 기본적으로 `<a href="#id">` 이므로 브라우저 기본 동작이 접힌 섹션을
-    // 무시한 채 현재(접힌) 좌표로 점프하는 문제를 막는다.
-    function _interceptTocLinkClick(e) {
-      const a = e.target.closest && e.target.closest('a[href^="#"]');
-      if (!a) return;
-      const hash = a.getAttribute('href');
-      if (!hash || hash.length < 2) return;
-      let id;
-      try { id = decodeURIComponent(hash.slice(1)); } catch (_) { id = hash.slice(1); }
-      const target = id ? document.getElementById(id) : null;
-      if (!target) return;
-      e.preventDefault();
-      history.pushState(null, '', hash);
-      if (typeof window._scrollToElementWithAncestors === 'function') {
-        window._scrollToElementWithAncestors(target, { behavior: 'smooth', block: 'start' });
-      } else {
-        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      }
-    }
-
-    function _attachTocLinkInterceptors() {
-      const tocNav = document.getElementById('tocNav');
-      const floatingNav = document.getElementById('tocFloatingNav');
-      const sidebarNav = document.getElementById('wikiTocSidebarNav');
-      if (tocNav && !tocNav._tocLinkIntercepted) {
-        tocNav.addEventListener('click', _interceptTocLinkClick);
-        tocNav._tocLinkIntercepted = true;
-      }
-      if (floatingNav && !floatingNav._tocLinkIntercepted) {
-        floatingNav.addEventListener('click', _interceptTocLinkClick);
-        floatingNav._tocLinkIntercepted = true;
-      }
-      if (sidebarNav && !sidebarNav._tocLinkIntercepted) {
-        sidebarNav.addEventListener('click', _interceptTocLinkClick);
-        sidebarNav._tocLinkIntercepted = true;
-      }
-    }
-
-    document.addEventListener('DOMContentLoaded', _attachTocSpy);
-    document.addEventListener('DOMContentLoaded', _attachTocLinkInterceptors);
-
-    // 문서 페이지가 아닐 때 TOC FAB 숨기기
-    const _origHideAllPages = typeof hideAllPages === 'function' ? hideAllPages : null;
-    document.addEventListener('DOMContentLoaded', () => {
-      const observer = new MutationObserver(() => {
-        const tocBtn = document.getElementById('tocFabBtn');
-        const tocSource = document.getElementById('tocNav');
-        const articlePage = document.getElementById('articlePage');
-        if (tocBtn) {
-          const hasToc = tocSource && tocSource.innerHTML.trim();
-          const isArticle = articlePage && !articlePage.classList.contains('d-none');
-          tocBtn.style.display = (hasToc && isArticle) ? '' : 'none';
-        }
-      });
-      observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
-    });
 
 // ── 편집 요청 검토(문서 페이지) ──
 // 편집 버튼 드롭다운 "편집 요청 확인하기"/상단 배너 "검토하기" 에서 호출. 서버가 검토 권한자에게만
@@ -3343,7 +2591,6 @@ window.shareAskClaude = shareAskClaude;
 window.shareAskChatGPT = shareAskChatGPT;
 window.scrollToBacklinks = scrollToBacklinks;
 window.showSubdocs = showSubdocs;
-window.copySubdocsPopup = copySubdocsPopup;
 window.showCategory = showCategory;
 window.navigateTo = navigateTo;
 window.promptMove = promptMove;

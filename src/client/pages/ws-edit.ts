@@ -8,6 +8,16 @@
 // 을 통해 그대로 재사용한다.
 
 import { apiGet } from '../utils/api';
+import {
+  makeMarkdownHighlightStyles,
+  makeLightTheme,
+  makeDarkBgTheme,
+  createToolbarBtn,
+  createToolbarSep,
+  makeFormatHelpers,
+  buildEditorLayoutHTML,
+  setupTabSwitcher,
+} from '../edit/cm-shared';
 
 const esc = (s) => window.escapeHtml(String(s ?? ''));
 
@@ -139,21 +149,27 @@ function wireEditor() {
 async function renderPreview() {
   const md = window.editor?.getMarkdown() || '';
   try {
-    await window.renderWikiContent(md, TARGET_SLUG || 'preview', 'wsEditPreview', {
+    await window.renderWikiContent(md, TARGET_SLUG || 'preview', 'custom-wiki-preview', {
       showCategory: false,
       canEdit: false,
       enableSectionEdit: false,
     });
   } catch {
-    const p = $('wsEditPreview');
+    const p = $('custom-wiki-preview');
     if (p) p.textContent = md;
   }
 }
 
 // ── CodeMirror6 에디터 초기화 ──
-// 위키 에디터(main.ts)와 동일한 엔진/하이라이트를 쓰되, 워크스페이스용으로 경량 구성한다.
-// window.editor 셰임 계약을 채워 자동완성/자동요약/이미지/표 모듈이 그대로 동작하게 한다.
+// 위키 에디터(main.ts)와 동일한 레이아웃/하이라이트/테마/툴바 빌딩 블록(cm-shared.ts)을
+// 그대로 재사용한다. window.editor 셰임 계약을 채워 자동완성/자동요약/이미지/표 모듈이
+// 위키 에디터와 동일하게 동작하게 한다. 워크스페이스 전용 차이는 미디어 업로드 경로뿐이다.
 async function initWSEditor() {
+  // 위키 에디터와 동일한 레이아웃(전폭 툴바 + 좌우 분할 + 모바일 탭)을 #editor 에 주입.
+  // 슬라이드 존/플로팅 목차는 워크스페이스에 없으므로 비활성.
+  const host = document.getElementById('editor');
+  if (host) host.innerHTML = buildEditorLayoutHTML({ slideZones: false, tocFab: false });
+
   const [cmState, cmViewMod, cmCommands, cmMarkdown, cmLangData, cmOneDark, cmLanguage, cmLezer] = await Promise.all([
     import('@codemirror/state'),
     import('@codemirror/view'),
@@ -175,57 +191,24 @@ async function initWSEditor() {
   const { tags: t } = cmLezer;
 
   // 다크모드 감지
-  const isDarkMode = window.getIsDarkMode ? window.getIsDarkMode() : (document.documentElement.getAttribute('data-theme') === 'dark');
+  const isDark = () => window.getIsDarkMode ? window.getIsDarkMode() : (document.documentElement.getAttribute('data-theme') === 'dark');
+  const isDarkMode = isDark();
 
   // 워드랩 설정
   const wordWrap = localStorage.getItem('editor_word_wrap') !== 'false';
 
-  // 마크다운 라이트 스타일 (main.ts 와 동일)
-  const markdownLightStyle = HighlightStyle.define([
-    { tag: t.heading1, color: "#0550ae", fontWeight: "700" },
-    { tag: t.heading2, color: "#0550ae", fontWeight: "700" },
-    { tag: t.heading3, color: "#0a3069", fontWeight: "700" },
-    { tag: t.heading4, color: "#0a3069", fontWeight: "600" },
-    { tag: t.heading5, color: "#0a3069", fontWeight: "600" },
-    { tag: t.heading6, color: "#0a3069", fontWeight: "600" },
-    { tag: t.strong, fontWeight: "700" },
-    { tag: t.emphasis, fontStyle: "italic" },
-    { tag: t.strikethrough, textDecoration: "line-through", color: "#6e7781" },
-    { tag: t.link, color: "#0969da" },
-    { tag: t.url, color: "#0969da" },
-    { tag: t.monospace, class: "cm-inline-code" },
-    { tag: t.quote, color: "inherit", fontStyle: "normal" },
-    { tag: t.meta, color: "#6e7781" },
-    { tag: t.processingInstruction, color: "#6e7781" },
-    { tag: t.contentSeparator, color: "#6e7781" },
-    { tag: t.list, color: "inherit" },
-    { tag: t.keyword, color: "#cf222e", fontWeight: "500" },
-    { tag: [t.atom, t.bool], color: "#0550ae" },
-    { tag: t.number, color: "#0550ae" },
-    { tag: t.string, color: "#0a3069" },
-    { tag: [t.regexp, t.escape], color: "#e36209" },
-    { tag: t.comment, color: "#6e7781", fontStyle: "italic" },
-    { tag: t.variableName, color: "#953800" },
-    { tag: t.definition(t.variableName), color: "#116329" },
-    { tag: t.typeName, color: "#116329" },
-    { tag: t.tagName, color: "#116329" },
-    { tag: t.attributeName, color: "#953800" },
-    { tag: t.operator, color: "#cf222e" },
-  ]);
-
-  // 라이트 테마
-  const lightTheme = EditorView.theme({
-    '&': { background: 'var(--wiki-bg)', color: 'var(--wiki-text)', height: '100%', minHeight: '60vh' },
-    '.cm-content': { fontFamily: 'var(--bs-font-monospace, monospace)', fontSize: '0.875rem', padding: '8px 12px' },
-    '.cm-gutters': { background: 'var(--wiki-bg-alt)', borderRight: '1px solid var(--wiki-border)', color: 'var(--wiki-text-muted)' },
-    '.cm-activeLineGutter': { background: 'var(--wiki-bg-alt2, var(--wiki-bg-alt))' },
-    '.cm-activeLine': { background: 'rgba(0,0,0,0.03)' },
-    '.cm-selectionBackground, ::selection': { background: 'rgba(0,100,200,0.2) !important' },
-    '.cm-cursor': { borderLeftColor: 'var(--wiki-text)' },
-  });
+  // 위키 에디터와 동일한 마크다운 하이라이트 스타일/테마(cm-shared 단일 소스).
+  const { light: markdownLightStyle, dark: markdownDarkStyle } = makeMarkdownHighlightStyles(HighlightStyle, t);
+  const lightTheme = makeLightTheme(EditorView);
+  const darkBgTheme = makeDarkBgTheme(EditorView);
 
   const themeCompartment = new Compartment();
+  const darkBgCompartment = new Compartment();
+  const syntaxHighlightCompartment = new Compartment();
   const lineWrappingCompartment = new Compartment();
+
+  const buildSyntaxHighlightExts = () => syntaxHighlighting(isDark() ? markdownDarkStyle : markdownLightStyle);
+  const buildDarkBgExt = () => isDark() ? darkBgTheme : [];
 
   // window.editor 셰임 계약상 on('change'|'blur') 핸들러를 등록받는 레지스트리.
   const editorEventHandlers = { change: [], blur: [] };
@@ -273,8 +256,8 @@ async function initWSEditor() {
         history(),
         cmKeymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
         themeCompartment.of(isDarkMode ? oneDark : lightTheme),
-        // 다크일 때는 oneDark 가 토큰 색을 담당하므로 라이트 스타일을 등록하지 않는다.
-        syntaxHighlighting(isDarkMode ? [] : markdownLightStyle),
+        darkBgCompartment.of(buildDarkBgExt()),
+        syntaxHighlightCompartment.of(buildSyntaxHighlightExts()),
         markdown({ base: markdownLanguage, codeLanguages: languages }),
         lineWrappingCompartment.of(wordWrap ? EditorView.lineWrapping : []),
         updateListener,
@@ -286,7 +269,7 @@ async function initWSEditor() {
         }),
       ]
     }),
-    parent: document.getElementById('editor')
+    parent: document.getElementById('cm-editor')
   });
 
   cmView = cmEditorView;
@@ -337,10 +320,16 @@ async function initWSEditor() {
     },
   };
 
-  // 다크모드 변경 시 테마 reconfigure.
+  // 다크모드 변경 시 테마/하이라이트/배경 보정을 위키 에디터와 동일하게 reconfigure.
   document.addEventListener('wiki:theme-changed', () => {
-    const dark = window.getIsDarkMode ? window.getIsDarkMode() : (document.documentElement.getAttribute('data-theme') === 'dark');
-    cmEditorView.dispatch({ effects: themeCompartment.reconfigure(dark ? oneDark : lightTheme) });
+    const dark = isDark();
+    cmEditorView.dispatch({
+      effects: [
+        themeCompartment.reconfigure(dark ? oneDark : lightTheme),
+        darkBgCompartment.reconfigure(buildDarkBgExt()),
+        syntaxHighlightCompartment.reconfigure(buildSyntaxHighlightExts()),
+      ],
+    });
   });
 
   // 텍스트 카운터 초기화.
@@ -351,6 +340,16 @@ async function initWSEditor() {
   // 툴바 생성.
   buildToolbar(cmEditorView);
 
+  // 모바일 탭(에디터/프리뷰) + PC 보기 모드(일반/작성/보기) 스위처(위키 에디터와 동일 UX).
+  const layoutEl = host?.querySelector('.wiki-editor-layout');
+  const toolbarEl = document.getElementById('cm-toolbar');
+  if (layoutEl && toolbarEl) {
+    setupTabSwitcher(layoutEl, toolbarEl, {
+      onPreviewShown: () => { renderPreview(); },
+      onModeChange: () => { cmView?.requestMeasure(); },
+    });
+  }
+
   // 에디터 셰임이 준비됐으니 자동완성 부착을 결정적으로 트리거한다.
   window.dispatchEvent(new Event('wiki-editor-ready'));
   if (typeof window.ensureAutocompleteAttached === 'function') {
@@ -360,47 +359,16 @@ async function initWSEditor() {
   return cmEditorView;
 }
 
-// ── 위키 에디터와 동일한 툴바(main.ts 의 핵심 버튼 구성) ──
+// ── 툴바(위키 에디터와 동일한 팩토리/서식 헬퍼 공유, ws 가 로드한 모듈 범위의 버튼만) ──
+// 위키 전용 모달(하위 문서/아이콘 피커/카드·구조·팔레트·배지·지도 등 edit-modals)은 ws 가
+// 로드하지 않으므로 툴바 버튼에서 제외한다. 다만 인라인 자동완성(`{bi:`/`{palette:`/`[[`/
+// 타임스탬프 등)은 edit-autocomplete 로 동일하게 동작한다. 이미지 업로드는 워크스페이스
+// 전용 미디어 엔드포인트를 쓰므로 ws 자체 핸들러(wsEditPickMedia)를 연결한다.
 function buildToolbar(view) {
   const toolbar = document.getElementById('cm-toolbar');
   if (!toolbar) return;
 
-  function createToolbarBtn(icon, tooltip, onClick) {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'cm-toolbar-btn';
-    btn.innerHTML = icon;
-    btn.title = tooltip;
-    btn.addEventListener('click', onClick);
-    return btn;
-  }
-  function createToolbarSep() {
-    const sep = document.createElement('span');
-    sep.className = 'cm-toolbar-sep';
-    return sep;
-  }
-
-  function insertText(text) {
-    const sel = view.state.selection.main;
-    view.dispatch({ changes: { from: sel.from, to: sel.to, insert: text } });
-    view.focus();
-  }
-  function wrapSelection(before, after) {
-    const sel = view.state.selection.main;
-    const selected = view.state.sliceDoc(sel.from, sel.to);
-    view.dispatch({ changes: { from: sel.from, to: sel.to, insert: before + selected + after } });
-    view.focus();
-  }
-  function insertPrefix(prefix) {
-    const sel = view.state.selection.main;
-    const line = view.state.doc.lineAt(sel.from);
-    if (line.text.startsWith(prefix)) {
-      view.dispatch({ changes: { from: line.from, to: line.from + prefix.length, insert: '' } });
-    } else {
-      view.dispatch({ changes: { from: line.from, insert: prefix } });
-    }
-    view.focus();
-  }
+  const { wrapSelection, insertPrefix, insertOrWrapWikiBlock, insertText } = makeFormatHelpers(view);
 
   toolbar.appendChild(createToolbarBtn('<b>H</b>', '제목', () => insertPrefix('## ')));
   toolbar.appendChild(createToolbarBtn('<b>B</b>', '굵게', () => wrapSelection('**', '**')));
@@ -416,14 +384,23 @@ function buildToolbar(view) {
   toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-format-list-numbered"></i>', '번호 목록', () => insertPrefix('1. ')));
   toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-checkbox-marked-outline"></i>', '체크리스트', () => insertPrefix('- [ ] ')));
   toolbar.appendChild(createToolbarSep());
-  toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-view-grid-outline"></i>', '그리드', () => insertText('\n:::grid\n내용\n:::')));
+  toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-view-grid-outline"></i>', '그리드', () => insertOrWrapWikiBlock('grid')));
+  toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-view-week-outline"></i>', 'row(가로 배치)', () => insertOrWrapWikiBlock('row')));
   toolbar.appendChild(createToolbarSep());
+  toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-table"></i>', '표', () => insertText('\n| 머리글1 | 머리글2 |\n| --- | --- |\n| 셀1 | 셀2 |\n')));
   toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-link-variant"></i>', '링크', () => wrapSelection('[', '](url)')));
   toolbar.appendChild(createToolbarSep());
   toolbar.appendChild(createToolbarBtn('[[ ]]', '위키 링크 삽입', () => insertText('[[문서제목]]')));
   toolbar.appendChild(createToolbarBtn('{{ }}', '틀 삽입', () => insertText('{{틀제목}}')));
   toolbar.appendChild(createToolbarBtn('[*]', '각주 삽입', () => insertText('[* 각주 내용]')));
   toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-form-dropdown"></i>', '펼치기 접기', () => insertText('[+ 펼치기/접기 제목]\n여기에 숨겨진 내용이 들어갑니다.\n[-]')));
+  toolbar.appendChild(createToolbarSep());
+  toolbar.appendChild(createToolbarBtn('<code>&lt;/&gt;</code>', '인라인 코드', () => wrapSelection('`', '`')));
+  toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-code-braces"></i>', '코드 블록', () => wrapSelection('\n```\n', '\n```\n')));
+  toolbar.appendChild(createToolbarSep());
+  const imgBtn = createToolbarBtn('<i class="mdi mdi-image-plus"></i>', '이미지 업로드', () => wsEditPickMedia());
+  imgBtn.id = 'wsEditMediaBtn'; // onMediaSelected 가 업로드 중 비활성화 토글에 사용
+  toolbar.appendChild(imgBtn);
 }
 
 // ── 저장 ──

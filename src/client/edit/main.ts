@@ -27,6 +27,16 @@ import { CDN_URLS } from '../../shared/cdn';
 import { snapshotPreviewState, restorePreviewState } from './preview-state';
 import { splitSlides } from '../render-presentation';
 import type { CMEditor, CMSelection, PageMeta, SectionRange } from './types';
+// 워크스페이스 에디터(pages/ws-edit.ts)와 공유하는 CodeMirror6 빌딩 블록 단일 소스.
+import {
+    makeMarkdownHighlightStyles,
+    makeLightTheme,
+    makeDarkBgTheme,
+    createToolbarBtn as sharedCreateToolbarBtn,
+    createToolbarSep as sharedCreateToolbarSep,
+    makeFormatHelpers,
+    buildEditorLayoutHTML,
+} from './cm-shared';
 
 declare global {
     interface Window {
@@ -1001,53 +1011,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         // 에디터 레이아웃 구성 (PC: 툴바 전체폭 + 좌우 스플릿 / 모바일: 탭)
         const editorContainer = document.getElementById('editor');
-        editorContainer.innerHTML = `
-            <div class="wiki-editor-layout">
-                <div class="cm-mobile-tabs" id="cm-mobile-tabs">
-                    <button class="cm-tab-btn active" data-tab="editor"><i class="mdi mdi-pencil"></i> 에디터</button>
-                    <button class="cm-tab-btn" data-tab="preview"><i class="mdi mdi-eye"></i> 프리뷰</button>
-                </div>
-                <div id="cm-toolbar" class="cm-toolbar"></div>
-                <div class="wiki-editor-split-row" id="wiki-editor-split-row">
-                    <div class="wiki-editor-pane" id="cm-editor-pane">
-                        <div class="slide-add-zone slide-add-zone-top" id="slideAddZoneTop" hidden>
-                            <i class="mdi mdi-plus-circle-outline"></i>
-                            <div class="slide-add-main">위에 새 슬라이드</div>
-                            <div class="slide-add-sub">현재 슬라이드 앞에 빈 슬라이드 추가</div>
-                        </div>
-                        <div id="cm-editor"></div>
-                        <div class="slide-add-zone slide-add-zone-bottom" id="slideAddZoneBottom" hidden>
-                            <i class="mdi mdi-plus-circle-outline"></i>
-                            <div class="slide-add-main">아래에 새 슬라이드</div>
-                            <div class="slide-add-sub">현재 슬라이드 뒤에 빈 슬라이드 추가</div>
-                        </div>
-                        <!-- 통합 슬라이드 편집용 하단 내비게이션 바(에디터 폭 전체). 프리뷰 탭 없이도
-                             슬라이드 이동/전체보기/전체화면을 제어한다. slideCtl.active 일 때만 노출. -->
-                        <div class="slide-edit-nav" id="slideEditNav" hidden role="toolbar" aria-label="슬라이드 이동">
-                            <button type="button" class="slide-edit-nav-btn" data-slide-nav="prev" aria-label="이전 슬라이드"><i class="bi bi-chevron-left"></i></button>
-                            <span class="slide-edit-nav-indicator" id="slideEditNavIndicator" aria-live="polite">1 / 1</span>
-                            <button type="button" class="slide-edit-nav-btn" data-slide-nav="next" aria-label="다음 슬라이드"><i class="bi bi-chevron-right"></i></button>
-                            <button type="button" class="slide-edit-nav-btn slide-edit-nav-btn-overview" data-slide-nav="overview" title="전체 보기 (그리드)" aria-label="전체 슬라이드 그리드 보기" aria-pressed="false"><i class="bi bi-grid-3x3-gap"></i></button>
-                            <button type="button" class="slide-edit-nav-btn slide-edit-nav-btn-fullscreen" data-slide-nav="fullscreen" title="전체 화면" aria-label="전체 화면 전환"><i class="bi bi-arrows-fullscreen"></i></button>
-                        </div>
-                    </div>
-                    <div class="wiki-preview-pane" id="custom-wiki-preview"></div>
-                    <!-- 에디터 전용 플로팅 TOC 패널 -->
-                    <div class="toc-floating-panel" id="editorTocFloatingPanel">
-                        <div class="toc-floating-header">
-                            <span><i class="mdi mdi-format-list-bulleted-square me-1"></i> 목차</span>
-                        </div>
-                        <nav class="toc-floating-body" id="editorTocFloatingNav"></nav>
-                    </div>
-                    <!-- 에디터 전용 스크롤 FAB -->
-                    <div class="scroll-fab-group" id="editorScrollFabGroup">
-                        <button class="scroll-fab" id="editorTocFabBtn" onclick="toggleEditorFloatingToc()" title="목차">
-                            <i class="mdi mdi-format-list-bulleted-square"></i>
-                        </button>
-                    </div>
-                </div>
-            </div>
-        `;
+        // 레이아웃 HTML 은 워크스페이스 에디터와 공유한다(cm-shared).
+        // 슬라이드 편집 존/플로팅 목차 FAB 는 위키 에디터 전용이므로 활성화.
+        editorContainer.innerHTML = buildEditorLayoutHTML({ slideZones: true, tocFab: true });
 
         // CM6 모듈 동적 import — CM6 가 필요한 이 경로에서만 네트워크를 기다린다.
         // (importmap 으로 해석되며 vite.config.ts 의 rollupOptions.external 가
@@ -1126,121 +1092,11 @@ document.addEventListener('DOMContentLoaded', async () => {
             provide: f => EditorView.decorations.from(f)
         });
 
-        // ── 마크다운 문법 하이라이트 스타일 ──
-        const markdownLightStyle = HighlightStyle.define([
-            // 헤딩 (레벨별 구분) — 폰트 크기는 cm-md-h* 라인 클래스(public/css/edit.css)에서
-            // 줄 단위로 적용. 인라인 fontSize 를 함께 두면 라인 클래스의 em 위에 다시
-            // 곱해져 과대 확대되므로 여기서는 색/굵기만 지정한다.
-            { tag: t.heading1, color: "#0550ae", fontWeight: "700" },
-            { tag: t.heading2, color: "#0550ae", fontWeight: "700" },
-            { tag: t.heading3, color: "#0a3069", fontWeight: "700" },
-            { tag: t.heading4, color: "#0a3069", fontWeight: "600" },
-            { tag: t.heading5, color: "#0a3069", fontWeight: "600" },
-            { tag: t.heading6, color: "#0a3069", fontWeight: "600" },
-            // 인라인 서식
-            { tag: t.strong, fontWeight: "700" },
-            { tag: t.emphasis, fontStyle: "italic" },
-            { tag: t.strikethrough, textDecoration: "line-through", color: "#6e7781" },
-            // 링크 & URL
-            { tag: t.link, color: "#0969da" },
-            { tag: t.url, color: "#0969da" },
-            // 인라인 코드
-            { tag: t.monospace, class: "cm-inline-code" },
-            // 인용
-            { tag: t.quote, color: "inherit", fontStyle: "normal" },
-            // 마크업 메타문자 (# * _ ~ ` > - 등)
-            { tag: t.meta, color: "#6e7781" },
-            { tag: t.processingInstruction, color: "#6e7781" },
-            // 구분선 / 리스트 마커
-            { tag: t.contentSeparator, color: "#6e7781" },
-            { tag: t.list, color: "inherit" },
-            // 코드 블록 내부 토큰
-            { tag: t.keyword, color: "#cf222e", fontWeight: "500" },
-            { tag: [t.atom, t.bool], color: "#0550ae" },
-            { tag: t.number, color: "#0550ae" },
-            { tag: t.string, color: "#0a3069" },
-            { tag: [t.regexp, t.escape], color: "#e36209" },
-            { tag: t.comment, color: "#6e7781", fontStyle: "italic" },
-            { tag: t.variableName, color: "#953800" },
-            { tag: t.definition(t.variableName), color: "#116329" },
-            { tag: t.typeName, color: "#116329" },
-            { tag: t.tagName, color: "#116329" },
-            { tag: t.attributeName, color: "#953800" },
-            { tag: t.operator, color: "#cf222e" },
-            { tag: t.invalid, color: "#f85149" },
-        ]);
-
-        const markdownDarkStyle = HighlightStyle.define([
-            { tag: t.heading1, color: "#79c0ff", fontWeight: "700" },
-            { tag: t.heading2, color: "#79c0ff", fontWeight: "700" },
-            { tag: t.heading3, color: "#79c0ff", fontWeight: "700" },
-            { tag: t.heading4, color: "#58a6ff", fontWeight: "600" },
-            { tag: t.heading5, color: "#58a6ff", fontWeight: "600" },
-            { tag: t.heading6, color: "#58a6ff", fontWeight: "600" },
-            { tag: t.strong, fontWeight: "700" },
-            { tag: t.emphasis, fontStyle: "italic" },
-            { tag: t.strikethrough, textDecoration: "line-through", color: "#8b949e" },
-            { tag: t.link, color: "#58a6ff" },
-            { tag: t.url, color: "#58a6ff" },
-            { tag: t.monospace, class: "cm-inline-code" },
-            { tag: t.quote, color: "inherit", fontStyle: "normal" },
-            { tag: t.meta, color: "#8b949e" },
-            { tag: t.processingInstruction, color: "#8b949e" },
-            { tag: t.contentSeparator, color: "#8b949e" },
-            { tag: t.list, color: "inherit" },
-            { tag: t.keyword, color: "#ff7b72", fontWeight: "500" },
-            { tag: [t.atom, t.bool], color: "#79c0ff" },
-            { tag: t.number, color: "#79c0ff" },
-            { tag: t.string, color: "#a5d6ff" },
-            { tag: [t.regexp, t.escape], color: "#ffa657" },
-            { tag: t.comment, color: "#8b949e", fontStyle: "italic" },
-            { tag: t.variableName, color: "#ffa657" },
-            { tag: t.definition(t.variableName), color: "#7ee787" },
-            { tag: t.typeName, color: "#7ee787" },
-            { tag: t.tagName, color: "#7ee787" },
-            { tag: t.attributeName, color: "#ffa657" },
-            { tag: t.operator, color: "#ff7b72" },
-            { tag: t.invalid, color: "#f85149" },
-        ]);
-
-        // 라이트 모드 테마 (라이트 전용 색상 및 스타일)
-        const lightTheme = EditorView.theme({
-            "&": {
-                backgroundColor: "#ffffff",
-                color: "#24292f",
-                height: "100%",
-                fontSize: "14px",
-                fontFamily: "ui-monospace, SFMono-Regular, 'SF Mono', Consolas, 'Liberation Mono', Menlo, monospace"
-            },
-            ".cm-content": {
-                caretColor: "#24292f",
-                paddingBottom: "25vh"
-            },
-            ".cm-cursor, .cm-dropCursor": { borderLeftColor: "#24292f" },
-            "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection": {
-                backgroundColor: "#b4d5fe"
-            },
-            ".cm-gutters": {
-                backgroundColor: "#f6f8fa",
-                color: "#6e7781",
-                border: "none",
-                borderRight: "1px solid #d0d7de"
-            },
-            ".cm-activeLineGutter": { backgroundColor: "#dbeafe" },
-            ".cm-activeLine": { backgroundColor: "#f0f7ff" },
-            ".cm-scroller": { overflow: "auto" },
-            ".cm-lineNumbers .cm-gutterElement": { padding: "0 8px" },
-            ".cm-foldGutter .cm-gutterElement": { padding: "0 4px" },
-        }, { dark: false });
-
-        const buildDarkBgExt = () => isDarkMode ? EditorView.theme({
-            "&": { height: "100%", fontSize: "14px", backgroundColor: "#000000" },
-            ".cm-scroller": { overflow: "auto" },
-            ".cm-content": { paddingBottom: "25vh", caretColor: "#ffffff" },
-            ".cm-cursor, .cm-dropCursor": { borderLeftColor: "#ffffff", borderLeftWidth: "2px" },
-            ".cm-gutters": { backgroundColor: "#000000", borderRight: "1px solid #333" },
-            ".cm-activeLineGutter": { backgroundColor: "#2d2d2d" }
-        }) : [];
+        // ── 마크다운 문법 하이라이트 스타일 / 테마 (cm-shared 단일 소스, ws-edit 와 공유) ──
+        const { light: markdownLightStyle, dark: markdownDarkStyle } = makeMarkdownHighlightStyles(HighlightStyle, t);
+        const lightTheme = makeLightTheme(EditorView);
+        const darkBgTheme = makeDarkBgTheme(EditorView);
+        const buildDarkBgExt = () => isDarkMode ? darkBgTheme : [];
 
         // ── 위키 문법 에디터 내 하이라이팅 플러그인 ──
         const makePlugin = (matcher) => ViewPlugin.fromClass(class {
@@ -2196,61 +2052,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         // ── 커스텀 툴바 구성 ──
         const toolbar = document.getElementById('cm-toolbar');
 
-        function createToolbarBtn(icon, tooltip, onClick) {
-            const btn = document.createElement('button');
-            btn.type = 'button';
-            btn.className = 'cm-toolbar-btn';
-            btn.innerHTML = icon;
-            btn.title = tooltip;
-            btn.addEventListener('click', onClick);
-            return btn;
-        }
-
-        function createToolbarSep() {
-            const sep = document.createElement('span');
-            sep.className = 'cm-toolbar-sep';
-            return sep;
-        }
-
-        // 마크다운 서식 삽입 헬퍼
-        function wrapSelection(prefix, suffix) {
-            const { main } = cmEditorView.state.selection;
-            const selected = cmEditorView.state.sliceDoc(main.from, main.to);
-            const wrapped = prefix + (selected || '텍스트') + suffix;
-            cmEditorView.dispatch({
-                changes: { from: main.from, to: main.to, insert: wrapped },
-                selection: { anchor: main.from + prefix.length, head: main.from + wrapped.length - suffix.length }
-            });
-            cmEditorView.focus();
-        }
-
-        function insertPrefix(prefix) {
-            const { main } = cmEditorView.state.selection;
-            const line = cmEditorView.state.doc.lineAt(main.from);
-            cmEditorView.dispatch({
-                changes: { from: line.from, to: line.from, insert: prefix }
-            });
-            cmEditorView.focus();
-        }
-
-        // 그리드/row 같은 블록 위키 문법 인라인 삽입.
-        // 선택이 없으면 예시(stat 3개) 삽입, 있으면 선택을 ::: 블록으로 감쌈.
-        // 시작/끝이 라인 경계가 아니면 줄바꿈을 자동 보정.
-        function insertOrWrapWikiBlock(blockType) {
-            const { main } = cmEditorView.state.selection;
-            const selected = cmEditorView.state.sliceDoc(main.from, main.to);
-            const inner = selected || `{palette:primary}{stat:값1|라벨1}\n{palette:secondary}{stat:값2|라벨2}\n{palette:success}{stat:값3|라벨3}`;
-            const lineStart = cmEditorView.state.doc.lineAt(main.from);
-            const lineEnd = cmEditorView.state.doc.lineAt(main.to);
-            const prefix = (main.from === lineStart.from) ? '' : '\n';
-            const suffix = (main.to === lineEnd.to) ? '' : '\n';
-            const wrapped = `${prefix}:::${blockType}\n${inner}\n:::${suffix}`;
-            cmEditorView.dispatch({
-                changes: { from: main.from, to: main.to, insert: wrapped },
-                selection: { anchor: main.from + wrapped.length }
-            });
-            cmEditorView.focus();
-        }
+        // 툴바 버튼/구분선 팩토리와 서식 삽입 헬퍼는 워크스페이스 에디터와 공유한다(cm-shared).
+        const createToolbarBtn = sharedCreateToolbarBtn;
+        const createToolbarSep = sharedCreateToolbarSep;
+        const { wrapSelection, insertPrefix, insertOrWrapWikiBlock } = makeFormatHelpers(cmEditorView);
 
         // 포맷 버튼
         toolbar.appendChild(createToolbarBtn('<b>H</b>', '제목', () => insertPrefix('## ')));

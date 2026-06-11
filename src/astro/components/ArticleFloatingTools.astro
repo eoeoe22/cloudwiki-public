@@ -1,0 +1,39 @@
+---
+// 문서 조회 화면 공유 플로팅 도구(목차 패널 + 스크롤 FAB). 전역 위키(index.astro)와
+// 워크스페이스(ws-doc.astro) 셸이 동일 마커(#tocFloatingPanel·#tocFloatingNav·
+// #scrollFabGroup·#tocFabBtn·읽기/Raw 종료 FAB)를 공유하므로 하나의 컴포넌트로 둔다.
+// 동작은 src/client/article/toc.ts(TocController)가 제어한다. 마크업은 손으로 쓴 HTML 과
+// 동일 결과(빌드 타임 인라인).
+---
+<!-- 플로팅 목차 패널 -->
+<div class="toc-floating-panel" id="tocFloatingPanel">
+  <div class="toc-floating-header">
+    <span><i class="mdi mdi-format-list-bulleted-square me-1"></i> 목차</span>
+    <button class="toc-floating-close" onclick="toggleFloatingToc()" title="닫기">
+      <i class="bi bi-x-lg"></i>
+    </button>
+  </div>
+  <nav class="toc-floating-body" id="tocFloatingNav"></nav>
+</div>
+
+<!-- 스크롤 FAB (뷰포트 고정, body 직전) -->
+<div class="scroll-fab-group" id="scrollFabGroup">
+  <button class="scroll-fab reading-mode-exit-fab d-none" id="readingModeExitFab" onclick="toggleReadingMode()"
+    title="읽기 모드 나가기" aria-label="읽기 모드 나가기">
+    <i class="bi bi-x-lg"></i>
+  </button>
+  <button class="scroll-fab raw-mode-exit-fab d-none" id="rawModeExitFab" onclick="toggleRawMode()" title="Raw 보기 나가기"
+    aria-label="Raw 보기 나가기">
+    <i class="bi bi-x-lg"></i>
+  </button>
+  <button class="scroll-fab" id="tocFabBtn" onclick="toggleFloatingToc()" title="목차">
+    <i class="mdi mdi-format-list-bulleted-square"></i>
+  </button>
+  <button class="scroll-fab" id="scrollToTopBtn" onclick="window.scrollTo({top:0,behavior:'smooth'})" title="맨 위로">
+    <i class="bi bi-chevron-up"></i>
+  </button>
+  <button class="scroll-fab" id="scrollToBottomBtn"
+    onclick="window.scrollTo({top:document.body.scrollHeight,behavior:'smooth'})" title="맨 아래로">
+    <i class="bi bi-chevron-down"></i>
+  </button>
+</div>

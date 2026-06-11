@@ -210,9 +210,7 @@ import Footer from '../components/Footer.astro';
                         <button type="button" class="btn btn-wiki btn-sm" id="wsEditSaveBtn" onclick="wsEditSave()">
                             <i class="bi bi-check-lg"></i> 저장
                         </button>
-                        <button type="button" class="btn btn-wiki-outline btn-sm" id="wsEditMediaBtn" onclick="wsEditPickMedia()">
-                            <i class="bi bi-image"></i> 이미지 업로드
-                        </button>
+                        <!-- 이미지 업로드는 에디터 툴바로 이관됨(위키 에디터와 동일). 파일 입력만 유지. -->
                         <input type="file" id="wsEditMediaInput" accept="image/*" class="d-none">
                         <button type="button" class="btn btn-wiki btn-wiki-danger btn-sm d-none" id="wsEditDeleteBtn" onclick="wsEditDelete()">
                             <i class="bi bi-trash"></i> 삭제
@@ -222,25 +220,14 @@ import Footer from '../components/Footer.astro';
                         </a>
                     </div>
 
-                    <!-- 2분할 편집/프리뷰 -->
-                    <div class="row g-3">
-                        <div class="col-12 col-lg-6">
-                            <label class="form-label small mb-1">본문</label>
-                            <div id="cm-toolbar" class="cm-toolbar"></div>
-                            <div id="editor" style="min-height: 60vh; border: 1px solid var(--wiki-border); border-radius: 4px;"></div>
-                            <div id="editorTextCounter" class="editor-text-counter" aria-live="off">
-                                <span data-counter="lines">1줄</span>
-                                <span data-counter="chars">0자</span>
-                                <span data-counter="charsWithSpaces">0자(공백포함)</span>
-                                <span data-counter="words">0단어</span>
-                            </div>
-                        </div>
-                        <div class="col-12 col-lg-6">
-                            <label class="form-label small mb-1">미리보기</label>
-                            <div class="card">
-                                <div class="card-body wiki-content" id="wsEditPreview" style="min-height: 60vh;"></div>
-                            </div>
-                        </div>
+                    <!-- 본문 에디터 — ws-edit.ts 가 #editor 안에 위키 에디터와 동일한
+                         .wiki-editor-layout(전폭 툴바 + 좌우 분할 + 모바일 탭)을 주입한다. -->
+                    <div id="editor"></div>
+                    <div id="editorTextCounter" class="editor-text-counter" aria-live="off">
+                        <span data-counter="lines">1줄</span>
+                        <span data-counter="chars">0자</span>
+                        <span data-counter="charsWithSpaces">0자(공백포함)</span>
+                        <span data-counter="words">0단어</span>
                     </div>
 
                 </div>
