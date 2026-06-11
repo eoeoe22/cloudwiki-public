@@ -24,7 +24,6 @@ import Footer from '../components/Footer.astro';
                 <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
                     <nav aria-label="breadcrumb">
                         <ol class="breadcrumb mb-0">
-                            <li class="breadcrumb-item"><a href="/workspaces"><i class="bi bi-grid"></i> 워크스페이스</a></li>
                             <li class="breadcrumb-item" id="bcrWs">
                                 <a href="#" id="bcrWsLink"><span id="bcrWsName">...</span></a>
                             </li>
@@ -98,6 +97,7 @@ import Footer from '../components/Footer.astro';
                         </div>
                         <div class="card-body">
                             <div id="mediaList"></div>
+                            <nav id="mediaPager" class="d-flex justify-content-center mt-2"></nav>
                             <div id="mediaTotalInfo" class="text-muted small text-center mt-2"></div>
                         </div>
                     </div>

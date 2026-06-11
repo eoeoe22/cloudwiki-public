@@ -26,10 +26,12 @@ const wbase = () => '/api/ws/' + encodeURIComponent(WSLUG);
 let canWrite = false;
 let canManage = false;
 
-// 미디어 목록 상태 (클라이언트 검색/정렬)
+// 미디어 목록 상태 (클라이언트 검색/정렬/페이지네이션)
 let mediaItems = []; // 서버에서 받은 원본 목록
 let mediaSearch = '';
 let mediaSort = 'date_desc';
+let mediaPage = 1; // 1-기반 현재 페이지
+const MEDIA_PAGE_SIZE = 20; // 한 페이지에 표시할 미디어 수
 
 function humanBytes(n) {
   const v = Number(n || 0);
@@ -185,7 +187,9 @@ function filteredSortedMedia() {
 
 function renderMedia() {
   const listEl = document.getElementById('mediaList');
+  const pagerEl = document.getElementById('mediaPager');
   const totalInfo = document.getElementById('mediaTotalInfo');
+  pagerEl.innerHTML = '';
 
   if (!mediaItems.length) {
     listEl.innerHTML = window.uiEmptyState({ icon: 'bi bi-image', title: '미디어가 없습니다' });
@@ -200,7 +204,14 @@ function renderMedia() {
     return;
   }
 
-  listEl.innerHTML = list.map((m) => {
+  // 페이지네이션: 최대 MEDIA_PAGE_SIZE 개씩 표시.
+  const totalPages = Math.max(1, Math.ceil(list.length / MEDIA_PAGE_SIZE));
+  if (mediaPage > totalPages) mediaPage = totalPages;
+  if (mediaPage < 1) mediaPage = 1;
+  const start = (mediaPage - 1) * MEDIA_PAGE_SIZE;
+  const pageItems = list.slice(start, start + MEDIA_PAGE_SIZE);
+
+  listEl.innerHTML = pageItems.map((m) => {
     const id = Number(m.id);
     const uploadDate = m.created_at
       ? new Date(Number(m.created_at) * 1000).toLocaleString('ko-KR')
@@ -208,22 +219,28 @@ function renderMedia() {
     const pubBadge = m.ws_public
       ? '<span class="badge bg-success bg-opacity-10 text-success border flex-shrink-0">공개</span>'
       : '<span class="badge bg-secondary bg-opacity-10 text-secondary border flex-shrink-0">비공개</span>';
+    const linkBtn =
+      `<button type="button" class="btn btn-sm btn-wiki-outline flex-shrink-0" onclick="window.showMediaBacklinks(${id}, this.dataset.filename)" data-filename="${esc(m.filename)}" title="이 이미지를 참조하는 문서"><i class="mdi mdi-link-variant"></i></button>`;
     const delBtn = canWrite
       ? `<button type="button" class="btn btn-sm btn-wiki btn-wiki-danger flex-shrink-0" onclick="window.deleteMedia(${id}, this.dataset.filename)" data-filename="${esc(m.filename)}" title="삭제"><i class="bi bi-trash"></i></button>`
       : '';
+    // 화면 폭이 좁을 때 줄바꿈 대신 가로 스크롤(overflow-x). 각 요소는 축소/줄바꿈하지 않는다.
     return `
-      <div class="d-flex align-items-center gap-2 px-1 py-2 border-bottom" id="ws-media-item-${id}">
+      <div class="d-flex align-items-center gap-2 px-1 py-2 border-bottom" id="ws-media-item-${id}" style="overflow-x:auto;">
         <a href="${esc(m.url)}" target="_blank" rel="noopener" class="flex-shrink-0" title="${esc(m.filename)} 원본 열기">
           <img src="${esc(m.url)}" alt="${esc(m.filename)}" loading="lazy" style="width:56px;height:56px;object-fit:cover;border-radius:var(--wiki-radius-base);border:1px solid var(--bs-border-color,#dee2e6);display:block;">
         </a>
-        <div class="me-auto" style="min-width:0;">
-          <div class="text-truncate fw-medium">${esc(m.filename)}</div>
-          <div class="text-muted small">${humanBytes(m.size)} · ${uploadDate}</div>
+        <div class="me-auto flex-shrink-0">
+          <div class="fw-medium" style="white-space:nowrap;">${esc(m.filename)}</div>
+          <div class="text-muted small" style="white-space:nowrap;">${humanBytes(m.size)} · ${uploadDate}</div>
         </div>
         ${pubBadge}
+        ${linkBtn}
         ${delBtn}
       </div>`;
   }).join('');
+
+  renderMediaPager(pagerEl, totalPages);
 
   totalInfo.textContent =
     mediaSearch && list.length !== mediaItems.length
@@ -231,14 +248,117 @@ function renderMedia() {
       : `총 ${mediaItems.length}개`;
 }
 
+// 페이지네이션 컨트롤 렌더링. 페이지가 1개면 표시하지 않는다.
+function renderMediaPager(pagerEl, totalPages) {
+  if (totalPages <= 1) {
+    pagerEl.innerHTML = '';
+    return;
+  }
+  // 현재 페이지 주변 윈도우(±2)만 번호로 노출.
+  const win = [];
+  const from = Math.max(1, mediaPage - 2);
+  const to = Math.min(totalPages, mediaPage + 2);
+  for (let p = from; p <= to; p++) win.push(p);
+
+  const item = (label, page, opts = {}) => {
+    const disabled = opts.disabled ? ' disabled' : '';
+    const active = opts.active ? ' active' : '';
+    const inner = opts.disabled || opts.active
+      ? `<span class="page-link">${label}</span>`
+      : `<button type="button" class="page-link" onclick="window.gotoMediaPage(${page})">${label}</button>`;
+    return `<li class="page-item${disabled}${active}">${inner}</li>`;
+  };
+
+  let html = '<ul class="pagination pagination-sm mb-0">';
+  html += item('이전', mediaPage - 1, { disabled: mediaPage <= 1 });
+  if (from > 1) {
+    html += item('1', 1);
+    if (from > 2) html += item('…', 0, { disabled: true });
+  }
+  for (const p of win) html += item(String(p), p, { active: p === mediaPage });
+  if (to < totalPages) {
+    if (to < totalPages - 1) html += item('…', 0, { disabled: true });
+    html += item(String(totalPages), totalPages);
+  }
+  html += item('다음', mediaPage + 1, { disabled: mediaPage >= totalPages });
+  html += '</ul>';
+  pagerEl.innerHTML = html;
+}
+
+function gotoMediaPage(page) {
+  mediaPage = Number(page) || 1;
+  renderMedia();
+  document.getElementById('mediaList')?.scrollIntoView({ block: 'nearest' });
+}
+
 function searchMedia() {
   mediaSearch = (document.getElementById('mediaSearchInput').value || '').trim();
+  mediaPage = 1; // 검색어 변경 시 첫 페이지로
   renderMedia();
 }
 
 function changeMediaSort() {
   mediaSort = document.getElementById('mediaSortSelect').value;
+  mediaPage = 1; // 정렬 변경 시 첫 페이지로
   renderMedia();
+}
+
+// 역링크 요청 일련번호 — 빠르게 다른 미디어의 역링크를 여는 경우, 늦게 도착한
+// 이전 요청의 응답이 현재 모달을 다른 미디어 내용으로 덮어쓰지 않도록 최신 요청만 렌더한다.
+let backlinksReqSeq = 0;
+
+// 미디어 역링크: 이 이미지를 참조하는 문서 목록을 모달로 표시.
+async function showMediaBacklinks(id, filename) {
+  const seq = ++backlinksReqSeq;
+  // 이 요청 전용 로딩 팝업이 (렌더 전에) 닫혔는지 추적한다. 전역 Swal.isVisible() 은
+  // 사용자가 로딩을 닫고 연 다른 팝업(삭제/GC 확인 등)까지 "떠 있음"으로 보므로,
+  // 이 팝업의 didClose 로만 닫힘을 판정해 무관한 모달을 덮어쓰지 않게 한다.
+  let dismissed = false;
+  Swal.fire({
+    title: '참조 문서',
+    html: '<div class="text-muted small py-3">불러오는 중...</div>',
+    showConfirmButton: false,
+    showCloseButton: true,
+    didOpen: () => Swal.showLoading(),
+    // 렌더 전에 이 로딩 팝업이 닫히는 경우는 (1) 사용자가 직접 닫음,
+    // (2) 더 새로운 역링크 요청이 새 팝업으로 교체 — 어느 쪽이든 이 응답은 폐기 대상.
+    didClose: () => { dismissed = true; },
+  });
+
+  // 응답을 모달로 렌더해도 되는지: 더 새로운 요청이 없고(seq 최신) 이 팝업이 닫히지 않았어야 한다.
+  const stillCurrent = () => !dismissed && seq === backlinksReqSeq;
+
+  let backlinks;
+  try {
+    const data = await apiGet(wbase() + '/media/' + Number(id) + '/backlinks');
+    backlinks = Array.isArray(data.backlinks) ? data.backlinks : [];
+  } catch (e) {
+    if (stillCurrent()) Swal.fire('오류', '참조 문서를 불러오지 못했습니다.', 'error');
+    return;
+  }
+
+  // 다른 미디어를 새로 열었거나 사용자가 로딩 모달을 닫았다면 이 응답은 폐기.
+  if (!stillCurrent()) return;
+
+  const wsPrefix = '/ws/' + encodeURIComponent(WSLUG) + '/w/';
+  const body = backlinks.length
+    ? '<ul class="list-group list-group-flush text-start">' +
+        backlinks.map((b) => {
+          const slug = String(b.slug || '');
+          const label = b.title ? esc(b.title) : esc(slug);
+          const href = wsPrefix + slug.split('/').map(encodeURIComponent).join('/');
+          return `<li class="list-group-item px-2 py-2"><a href="${href}" target="_blank" rel="noopener"><i class="mdi mdi-file-document-outline me-1"></i>${label}</a><div class="text-muted small">${esc(slug)}</div></li>`;
+        }).join('') +
+      '</ul>'
+    : '<div class="text-muted small py-3"><i class="bi bi-info-circle"></i> 이 이미지를 참조하는 문서가 없습니다.</div>';
+
+  Swal.fire({
+    title: esc(filename),
+    html: body,
+    showConfirmButton: false,
+    showCloseButton: true,
+    width: 480,
+  });
 }
 
 async function deleteMedia(id, filename) {
@@ -287,10 +407,12 @@ async function scanGc() {
 
   el.innerHTML = items.map((m) => {
     const id = Number(m.id);
+    // 화면 폭이 좁을 때 줄바꿈 대신 가로 스크롤(overflow-x).
     return `
-      <label class="d-flex align-items-center gap-2 px-1 py-2 border-bottom" style="cursor:pointer;">
+      <label class="d-flex align-items-center gap-2 px-1 py-2 border-bottom" style="cursor:pointer;overflow-x:auto;">
         <input type="checkbox" class="form-check-input gc-check flex-shrink-0" value="${id}">
-        <span class="text-truncate me-auto">${esc(m.filename)}</span>
+        <img src="${esc(m.url)}" alt="${esc(m.filename)}" loading="lazy" class="flex-shrink-0" style="width:48px;height:48px;object-fit:cover;border-radius:var(--wiki-radius-base);border:1px solid var(--bs-border-color,#dee2e6);display:block;">
+        <span class="me-auto flex-shrink-0" style="white-space:nowrap;">${esc(m.filename)}</span>
         <span class="text-muted small flex-shrink-0">${humanBytes(m.size)}</span>
       </label>`;
   }).join('');
@@ -349,6 +471,8 @@ async function runGcDelete(payload) {
 // HTML on* 핸들러에서 호출되므로 window 로 노출.
 window.searchMedia = searchMedia;
 window.changeMediaSort = changeMediaSort;
+window.gotoMediaPage = gotoMediaPage;
+window.showMediaBacklinks = showMediaBacklinks;
 window.deleteMedia = deleteMedia;
 window.scanGc = scanGc;
 window.deleteGcSelected = deleteGcSelected;

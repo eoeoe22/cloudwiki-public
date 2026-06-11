@@ -250,6 +250,40 @@ wsMedia.get('/api/ws/:wslug/media', async (c) => {
 });
 
 /**
+ * GET /api/ws/:wslug/media/:id/backlinks
+ * 이 미디어를 참조하는 비삭제 워크스페이스 문서 목록 (canRead 필요).
+ * 역링크는 (비공개일 수 있는) 다른 문서의 존재를 드러내므로 멤버(canRead) 전용 —
+ * 페이지 역링크(workspace-pages.ts)와 동일한 가시성 정책을 따른다.
+ *
+ * workspace_page_links 인덱스(link_type='media', target_slug=파일명)를 사용한다.
+ * 파이프라인이 extractWorkspaceMediaRefs 로 추출한 (디코딩된) 정규 파일명을 색인하므로
+ * workspace_media.filename(정규 파일명)과 직접 매칭된다.
+ */
+wsMedia.get('/api/ws/:wslug/media/:id/backlinks', async (c) => {
+    const { workspace, access } = await resolveWs(c);
+    if (!workspace) return c.json({ error: '워크스페이스를 찾을 수 없습니다.' }, 404);
+    if (!access.canRead) return denyRead(c);
+
+    const id = parseInt(c.req.param('id') || '', 10);
+    if (!Number.isFinite(id)) return c.json({ error: '잘못된 요청입니다.' }, 400);
+
+    const media = await c.env.DB.prepare(
+        'SELECT filename FROM workspace_media WHERE id = ? AND workspace_id = ?'
+    ).bind(id, workspace.id).first<{ filename: string }>();
+    if (!media) return c.json({ error: '미디어를 찾을 수 없습니다.' }, 404);
+
+    const rows = await c.env.DB.prepare(
+        `SELECT DISTINCT p.slug, p.title
+         FROM workspace_page_links l
+         JOIN workspace_pages p ON p.id = l.source_page_id AND p.deleted_at IS NULL
+         WHERE l.workspace_id = ? AND l.link_type = 'media' AND l.target_slug = ?
+         ORDER BY p.slug ASC`
+    ).bind(workspace.id, media.filename).all<{ slug: string; title: string | null }>();
+
+    return c.json({ ok: true, filename: media.filename, backlinks: rows.results || [] });
+});
+
+/**
  * DELETE /api/ws/:wslug/media/:id
  * 워크스페이스 미디어 단건 삭제 (canWrite 필요). R2 객체 + DB 행 삭제.
  */
