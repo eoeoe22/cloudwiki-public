@@ -23,6 +23,7 @@ async function loadWorkspaces() {
       document.getElementById('createWsBtn').classList.remove('d-none');
     }
 
+    renderInvites(data.invites || []);
     renderOwned(data.owned || []);
     renderJoined(data.joined || []);
 
@@ -78,6 +79,77 @@ function renderJoined(items) {
     return wsCard(ws, badge);
   }).join('');
 }
+
+// ── 받은 초대 (수락/거절) ──
+function renderInvites(items) {
+  const section = document.getElementById('invitesSection');
+  const el = document.getElementById('invitesList');
+  if (!section || !el) return;
+  if (!items.length) {
+    section.classList.add('d-none');
+    el.innerHTML = '';
+    return;
+  }
+  section.classList.remove('d-none');
+  el.innerHTML = items.map((ws) => {
+    const iconCls = esc(workspaceIconClass(ws.icon));
+    const slug = encodeURIComponent(ws.slug);
+    const role = ws.my_role === 'editor' ? 'editor' : 'viewer';
+    const color = ws.my_role === 'editor' ? 'primary' : 'secondary';
+    const roleBadge = `<span class="badge bg-${color} bg-opacity-10 text-${color} border flex-shrink-0">${esc(role)}</span>`;
+    const owner = ws.owner_name ? `<p class="card-text text-muted small mb-2 text-truncate">${esc(ws.owner_name)}님의 초대</p>` : '';
+    return `
+      <div class="col-12 col-sm-6 col-lg-4">
+        <div class="card h-100 workspace-card" data-invite-slug="${slug}">
+          <div class="card-body d-flex flex-column">
+            <div class="d-flex align-items-center gap-2 mb-1">
+              <i class="${iconCls} text-primary flex-shrink-0" style="font-size:1.1rem;" aria-hidden="true"></i>
+              <h6 class="card-title mb-0 text-truncate flex-grow-1">${esc(ws.name || ws.slug)}</h6>
+              ${roleBadge}
+            </div>
+            ${owner}
+            <div class="d-flex gap-2 mt-auto">
+              <button type="button" class="btn btn-wiki btn-sm flex-fill" onclick="window.acceptWsInvite('${slug}')">
+                <i class="bi bi-check-lg"></i> 수락
+              </button>
+              <button type="button" class="btn btn-wiki-outline btn-sm flex-fill" onclick="window.declineWsInvite('${slug}')">
+                <i class="bi bi-x-lg"></i> 거절
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+async function respondInvite(slug, action) {
+  try {
+    const res = await fetch('/api/ws/' + slug + '/invite/' + action, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      Swal.fire('처리 실패', body.error || '초대를 처리하지 못했습니다.', 'error');
+      return;
+    }
+    if (action === 'accept') {
+      location.href = '/ws/' + slug;
+      return;
+    }
+    Swal.fire({
+      toast: true, position: 'top-end', icon: 'success',
+      title: '초대를 거절했습니다.', showConfirmButton: false, timer: 2000, timerProgressBar: true,
+    });
+    loadWorkspaces();
+  } catch (e) {
+    Swal.fire('오류', '요청 중 문제가 발생했습니다.', 'error');
+  }
+}
+
+function acceptWsInvite(slug) { return respondInvite(slug, 'accept'); }
+function declineWsInvite(slug) { return respondInvite(slug, 'decline'); }
 
 // ── 새 워크스페이스 생성 ──
 // 생성 모달에서 고른 아이콘(class 문자열, null = 기본). pickWikiIcon 은 별도 Bootstrap
@@ -147,3 +219,5 @@ async function openCreateWorkspace() {
 
 // HTML onclick 에서 호출되므로 window 로 노출.
 window.openCreateWorkspace = openCreateWorkspace;
+window.acceptWsInvite = acceptWsInvite;
+window.declineWsInvite = declineWsInvite;

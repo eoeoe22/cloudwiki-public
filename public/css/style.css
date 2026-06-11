@@ -1816,6 +1816,14 @@ html[data-theme="dark"] .btn-close {
   padding: var(--wiki-space-1) var(--wiki-space-2);
 }
 
+/* 워크스페이스 문서 에디터: 대체 제목 입력은 단독 .form-control-sm 이라 전역 .form-control
+   패딩(0.7rem)이 적용돼 input-group-sm 안에 있는 제목 입력보다 높아진다. small 패딩으로
+   맞춰 제목 입력 칸과 높이를 동일하게 정렬한다. (위키 에디터의 #alternateTitleInput 은
+   -sm 이 아니므로 영향받지 않는다.) */
+#alternateTitleInput.form-control-sm {
+  padding: var(--wiki-space-1) var(--wiki-space-2);
+}
+
 /* 카테고리 필터 자동완성 드롭다운 (에디터 #category-autocomplete 과 동일 스타일 이식) */
 #searchCategoryAutocomplete {
   position: fixed;
@@ -3682,4 +3690,21 @@ html[data-theme="dark"] .push-status-on {
 }
 .ws-file-folder {
   cursor: pointer;
+}
+
+/* 워크스페이스 TODO 리스트 상세(/ws/:wslug/todos) — 좁은 화면 가로 스크롤.
+   행마다 개별로 스크롤하지 않고 리스트 전체를 하나의 스크롤 컨테이너로 묶는다.
+   래퍼(.todo-list-detail)가 overflow-x 를 갖고, 안쪽 .list-group 은 가장 넓은 행
+   기준(max-content)으로 늘어나 모든 행이 같은 너비로 정렬된 채 함께 스크롤된다. */
+.todo-list-detail {
+  overflow-x: auto;
+}
+.todo-list-detail .list-group {
+  min-width: max-content;
+}
+.todo-list-detail .list-group-item {
+  flex-wrap: nowrap;
+}
+.todo-list-detail .list-group-item > .flex-grow-1 {
+  white-space: nowrap;
 }

@@ -227,7 +227,9 @@ wsMedia.post('/api/ws/:wslug/media', requireAuth, async (c) => {
 
 /**
  * GET /api/ws/:wslug/media
- * 워크스페이스 미디어 목록 (canRead 필요), 최신순. ?limit (기본 100, 최대 200).
+ * 워크스페이스 미디어 목록 (canRead 필요), 최신순. ?limit (기본 100, 최대 200), ?offset (기본 0).
+ * 미디어 관리 페이지(ws-media)는 200개를 초과하는 워크스페이스에서도 전체를 다뤄야 하므로
+ * offset 으로 페이지를 끝까지 순회해 모든 미디어를 가져올 수 있다(한 페이지가 limit 미만이면 끝).
  */
 wsMedia.get('/api/ws/:wslug/media', async (c) => {
     const { workspace, access } = await resolveWs(c);
@@ -235,9 +237,10 @@ wsMedia.get('/api/ws/:wslug/media', async (c) => {
     if (!access.canRead) return denyRead(c);
 
     const limit = Math.min(200, Math.max(1, Number(c.req.query('limit')) || 100));
+    const offset = Math.max(0, Number(c.req.query('offset')) || 0);
     const rows = await c.env.DB.prepare(
-        'SELECT id, filename, mime_type, size, ws_public, created_at FROM workspace_media WHERE workspace_id = ? ORDER BY id DESC LIMIT ?'
-    ).bind(workspace.id, limit).all<Omit<WorkspaceMedia, 'workspace_id' | 'r2_key' | 'uploader_id'>>();
+        'SELECT id, filename, mime_type, size, ws_public, created_at FROM workspace_media WHERE workspace_id = ? ORDER BY id DESC LIMIT ? OFFSET ?'
+    ).bind(workspace.id, limit, offset).all<Omit<WorkspaceMedia, 'workspace_id' | 'r2_key' | 'uploader_id'>>();
 
     const items = (rows.results || []).map((m) => ({
         ...m,

@@ -21,6 +21,8 @@ import { extractPageLinks } from '../shared/links';
 import { cleanupUnauthorizedSubscriptions } from '../utils/pageAccessCleanup';
 import { collectRevisionR2Keys, buildHardDeleteStatements } from '../utils/pageDeletion';
 import { commitPageMutation } from '../utils/pagePipeline/commit';
+import { mergeEditSummary, capUserSummary } from '../utils/editSummary';
+import { ensurePendingEditsSummaryMigration } from '../utils/pendingEditsSummaryMigration';
 
 const wiki = new Hono<Env>();
 
@@ -40,12 +42,6 @@ export const SLUG_FORBIDDEN_CHARS = /[\[\]{}#%|<>^\x00-\x1F\x7F]/;
 /** 대체 title 입력 금지 문자 — 제어문자만 차단. 슬러그와 달리 [], {}, # 등 특수문자 허용. */
 export const TITLE_FORBIDDEN_CHARS = /[\x00-\x1F\x7F]/;
 export const TITLE_MAX_LENGTH = 100;
-
-/**
- * 문서별 view_mode 화이트리스트(본문 보기 모드 — 전역 LAYOUT_MODE 페이지 레이아웃과 별개).
- * 빈 문자열/null 은 NULL(일반 본문). PUT /w/:slug 본문 저장 경로에서 사용.
- */
-export const ALLOWED_VIEW_MODES = new Set<string>(['presentation']);
 
 /**
  * 클라이언트가 보낸 title 입력을 정규화한다.
@@ -155,24 +151,25 @@ async function holdPendingEdit(
         redirectTo: string | null;
         title: string | null;
         hasTitleChange: boolean;
-        summary: string | null;
+        summary: string | null;       // 요청자 사용자 입력분(≤255자). 자동요약은 autoSummary 에 분리 보관.
+        autoSummary: string | null;   // 요청자 자동요약분(길이 제한 없음). 승인 시 summary 와 병합.
         isPrivate: boolean;       // 검토자 접근 게이팅용 (현재 또는 결과가 비공개면 true)
         editAcl: string | null;   // applyEditAcl=true 일 때 승인 시 적용할 직렬화 edit_acl (update 전용)
         applyEditAcl: boolean;    // 이 편집이 edit_acl 을 바꾸려는 경우만 true (direct-save 의 willUpdateEditAcl 과 동일)
-        viewMode: string | null; // applyView=true 일 때 승인 시 적용할 view_mode
-        applyView: boolean;       // 편집이 view_mode 를 지정한 경우만 true (direct-save 의 hasViewInBody 와 동일; create 는 항상 true)
         categoryAclChoices: string | null; // create 보류본의 원본 category_acl_choices(JSON 문자열). 승인 시 재생용. update 는 불필요(null).
     },
 ): Promise<number> {
     const db = c.env.DB;
+    // 레거시 DB(auto_summary 컬럼 부재) 대비 idempotent 마이그레이션 보장 후 INSERT.
+    await ensurePendingEditsSummaryMigration(db);
     // (author_id, slug) UNIQUE 충돌 시 최신 내용으로 교체 (UPSERT).
     const row = await db
         .prepare(
             `INSERT INTO pending_edits
                 (page_id, slug, action, author_id, base_revision_id, base_version,
-                 content, category, redirect_to, title, has_title_change, summary,
-                 is_private, edit_acl, apply_edit_acl, view_mode, apply_view, category_acl_choices, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())
+                 content, category, redirect_to, title, has_title_change, summary, auto_summary,
+                 is_private, edit_acl, apply_edit_acl, category_acl_choices, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())
              ON CONFLICT(author_id, slug) DO UPDATE SET
                 page_id = excluded.page_id,
                 action = excluded.action,
@@ -184,11 +181,10 @@ async function holdPendingEdit(
                 title = excluded.title,
                 has_title_change = excluded.has_title_change,
                 summary = excluded.summary,
+                auto_summary = excluded.auto_summary,
                 is_private = excluded.is_private,
                 edit_acl = excluded.edit_acl,
                 apply_edit_acl = excluded.apply_edit_acl,
-                view_mode = excluded.view_mode,
-                apply_view = excluded.apply_view,
                 category_acl_choices = excluded.category_acl_choices,
                 updated_at = unixepoch()
              RETURNING id`
@@ -206,11 +202,13 @@ async function holdPendingEdit(
             input.title,
             input.hasTitleChange ? 1 : 0,
             input.summary,
+            // 신규 포맷 보류본은 auto_summary 를 항상 non-null(자동요약 없으면 빈 문자열)로 저장한다.
+            // 그래야 마이그레이션 이전 레거시 행(auto_summary IS NULL — summary 에 자동요약이 이미 합쳐짐)
+            // 과 구분되어, 승인 시 자동요약을 다시 합치는 중복을 피할 수 있다(pending-edits approve 참고).
+            input.autoSummary ?? '',
             input.isPrivate ? 1 : 0,
             input.editAcl,
             input.applyEditAcl ? 1 : 0,
-            input.viewMode,
-            input.applyView ? 1 : 0,
             input.categoryAclChoices,
         )
         .first<{ id: number }>();
@@ -1840,6 +1838,8 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
     const body = await c.req.json<{
         content: string;
         summary?: string;
+        /** 자동요약분(클라이언트가 백그라운드에서 생성). 사용자 입력분(summary)과 분리 전송 — 길이 제한 없음. */
+        auto_summary?: string;
         category?: string;
         is_private?: number;
         edit_acl?: unknown;
@@ -1847,12 +1847,6 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
         expected_version?: number;
         turnstileToken?: string;
         title?: string | null;
-        /**
-         * 문서 본문 보기 모드(전역 LAYOUT_MODE 페이지 레이아웃과 별개). 'presentation' 등 화이트리스트 값 또는 null(일반 본문).
-         * 본문 저장과 함께 동일 PUT 으로 전송되며, 일반 사용자도 설정할 수 있다(권한 게이트 없음 — 표시 전용).
-         * 키 자체가 누락되면 기존 값을 유지한다.
-         */
-        view_mode?: string | null;
         /**
          * 신규 적용 카테고리에 대한 ACL 머지 모드.
          * 키: 카테고리명, 값: 'overwrite' | 'merge' | 'ignore'.
@@ -1876,22 +1870,6 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
     }
     if (requestedTitle && requestedTitle.length > TITLE_MAX_LENGTH) {
         return c.json({ error: `대체 제목은 ${TITLE_MAX_LENGTH}자 이하여야 합니다.` }, 400);
-    }
-
-    // view_mode 검증 — body 에 키가 명시된 경우에만 변경 의도로 해석한다(undefined = 기존값 유지).
-    // 빈 문자열/null 은 NULL(일반 본문). 그 외엔 화이트리스트(PRESENTATION 등) 만 허용.
-    // 표시 전용 메타이므로 별도 권한 게이트 없이 편집 권한자(wiki:edit) 면 누구나 설정 가능하다.
-    const hasViewInBody = Object.prototype.hasOwnProperty.call(body, 'view_mode');
-    let requestedView: string | null | undefined;
-    if (hasViewInBody) {
-        const v = body.view_mode;
-        if (v === null || v === '' || typeof v === 'undefined') {
-            requestedView = null;
-        } else if (typeof v === 'string' && ALLOWED_VIEW_MODES.has(v)) {
-            requestedView = v;
-        } else {
-            return c.json({ error: `view_mode 허용 값: null | ${[...ALLOWED_VIEW_MODES].join(' | ')}` }, 400);
-        }
     }
 
     // Turnstile 검증
@@ -2005,10 +1983,22 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
         }
     }
 
-    // 보안: 편집 요약 최대 255자 제한
-    if (body.summary && body.summary.length > 255) {
-        return c.json({ error: '편집 요약은 최대 255자까지 입력할 수 있습니다.' }, 400);
+    // 편집 요약: 클라이언트가 사용자 입력분(body.summary)과 자동요약분(body.auto_summary)을 분리 전송한다.
+    // 직접 저장(리비전)은 둘을 "<사용자입력> / <자동요약>" 으로 병합하고, 편집 요청 보류는 두 부분을
+    // 분리 보관한다(승인 시점에 병합 — 승인 편집기가 자동요약을 사용자 입력으로 오인해 다시 합치는 중복 방지).
+    // 사용자 입력분만 길이 제한(255자)을 적용하고, 자동요약분 길이 때문에 정상 편집을 거부하지 않는다.
+    // 잘못된 타입(문자열/null 외)은 정규화 시 문자열 메서드 호출로 500 이 되지 않도록 400 으로 막는다.
+    if (body.summary !== undefined && body.summary !== null && typeof body.summary !== 'string') {
+        return c.json({ error: '편집 요약은 문자열이어야 합니다.' }, 400);
     }
+    if (body.auto_summary !== undefined && body.auto_summary !== null && typeof body.auto_summary !== 'string') {
+        return c.json({ error: '자동 편집 요약은 문자열이어야 합니다.' }, 400);
+    }
+    const userSummary = capUserSummary(body.summary);
+    const autoSummary = (typeof body.auto_summary === 'string' && body.auto_summary.trim())
+        ? body.auto_summary.trim()
+        : null;
+    const mergedSummary = mergeEditSummary(userSummary, autoSummary);
 
     const existing = await db
         .prepare('SELECT id, version, is_private, edit_acl, redirect_to, content, deleted_at, title, last_revision_id, category FROM pages WHERE slug = ?')
@@ -2227,15 +2217,14 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
                     redirectTo: body.redirect_to || null,
                     title: finalTitleHold,
                     hasTitleChange: hasTitleInBody,
-                    summary: body.summary ?? null,
+                    // 보류본은 사용자 입력분/자동요약분을 분리 보관한다(승인 시점에 병합).
+                    summary: userSummary,
+                    autoSummary,
                     // 현재 페이지 또는 이번 편집 결과가 비공개면 비공개로 게이팅(둘 중 하나라도 비공개면 비공개 문서 본문 노출 방지).
                     isPrivate: existing.is_private === 1 || finalIsPrivate === 1,
                     // direct-save 가 edit_acl 을 쓰는 경우(willUpdateEditAcl: 카테고리 ACL 머지 등)만 승인 시 적용.
                     editAcl: finalEditAcl,
                     applyEditAcl: willUpdateEditAcl,
-                    // direct-save 는 body 에 view_mode 키가 있을 때만 view_mode 를 쓴다(hasViewInBody).
-                    viewMode: hasViewInBody ? (requestedView ?? null) : null,
-                    applyView: hasViewInBody,
                     // update 의 카테고리 ACL 머지 결과는 edit_acl 로 이미 캡처되므로 choices 재생 불필요.
                     categoryAclChoices: null,
                 });
@@ -2251,7 +2240,6 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
         // 컬럼 쓰기 규칙은 인라인 구현과 동일하게 유지한다:
         //   - title: body 에 키가 명시된 경우만 변경, 그 외 기존값(existing.title) 유지.
         //   - edit_acl: admin 명시 변경 또는 카테고리 ACL 머지(willUpdateEditAcl) 일 때만 갱신.
-        //   - view_mode: body 에 키가 명시된 경우(hasViewInBody)만 갱신.
         //   - is_private: wiki:private 권한 게이트를 거친 최종값(finalIsPrivate)으로 항상 갱신.
         const finalTitle = hasTitleInBody ? requestedTitle ?? null : existing.title;
         let updateResult;
@@ -2262,14 +2250,14 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
                 actor: user,
                 slug,
                 content: body.content,
-                summary: body.summary ?? null,
+                // 직접 저장 리비전은 사용자 입력분 + 자동요약분 병합본을 요약으로 쓴다.
+                summary: mergedSummary,
                 summaryRaw: true,
                 category: body.category || null,
                 redirectTo: body.redirect_to || null,
                 title: finalTitle,
                 // willUpdateEditAcl 이 아니면 undefined → 컬럼을 손대지 않아 다른 경로의 갱신을 stale 값으로 덮어쓰지 않는다.
                 editAcl: willUpdateEditAcl ? finalEditAcl : undefined,
-                viewMode: hasViewInBody ? (requestedView ?? null) : undefined,
                 isPrivateWrite: finalIsPrivate,
                 page: { id: existing.id, version: existing.version, category: existing.category, title: existing.title },
                 isPrivate: finalIsPrivate === 1,
@@ -2403,14 +2391,13 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
                     redirectTo: body.redirect_to || null,
                     title: requestedTitle ?? null,
                     hasTitleChange: !!requestedTitle,
-                    summary: body.summary ?? null,
+                    // 보류본은 사용자 입력분/자동요약분을 분리 보관한다(승인 시점에 병합).
+                    summary: userSummary,
+                    autoSummary,
                     isPrivate: finalIsPrivate === 1,
                     // create 승인은 applyNewPageInsert 가 prefix/카테고리 ACL 을 재평가하므로 저장된 edit_acl 을 쓰지 않는다.
                     editAcl: null,
                     applyEditAcl: false,
-                    // direct-create 는 항상 view_mode 를 INSERT 하므로 보류 create 도 항상 적용한다.
-                    viewMode: requestedView ?? null,
-                    applyView: true,
                     // direct-create 가 받은 category_acl_choices 를 그대로 저장해 승인 시 재생(ignore/merge 등 보존).
                     categoryAclChoices: categoryAclChoicesRaw ? JSON.stringify(categoryAclChoicesRaw) : null,
                 });
@@ -2430,13 +2417,13 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
                 actor: user,
                 slug,
                 content: body.content,
-                summary: body.summary ?? null,
+                // 직접 생성 리비전은 사용자 입력분 + 자동요약분 병합본을 요약으로 쓴다.
+                summary: mergedSummary,
                 summaryRaw: true,
                 category: effectiveCategory ?? null,
                 editAcl: finalEditAcl,
                 redirectTo: body.redirect_to || null,
                 title: requestedTitle ?? null,
-                viewMode: requestedView ?? null,
                 isPrivate: finalIsPrivate === 1,
                 rbac,
                 notify: false,

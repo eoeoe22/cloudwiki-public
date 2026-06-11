@@ -25,19 +25,6 @@ function parseWslug() {
 let WSLUG = parseWslug();
 const wbase = () => '/api/ws/' + encodeURIComponent(WSLUG);
 
-function humanBytes(n) {
-  const v = Number(n || 0);
-  if (v < 1024) return v + ' B';
-  const units = ['KB', 'MB', 'GB', 'TB'];
-  let val = v / 1024;
-  let i = 0;
-  while (val >= 1024 && i < units.length - 1) {
-    val /= 1024;
-    i++;
-  }
-  return val.toFixed(val >= 10 || i === 0 ? 0 : 1) + ' ' + units[i];
-}
-
 // 공통 변이 헬퍼: JSON 본문 fetch → {ok, body}
 async function send(path, method, payload) {
   const init = {
@@ -128,14 +115,15 @@ async function loadMembers() {
     ? rows.join('')
     : window.uiEmptyState({ compact: true, icon: 'bi bi-people', title: '소유자 외 참가자가 없습니다' });
 
-  // 소유권 이전 드롭다운 (멤버만 대상)
+  // 소유권 이전 드롭다운 (정식 멤버 active 만 대상 — 대기중 초대는 제외)
   const sel = document.getElementById('transferTarget');
-  if (!members.length) {
+  const activeMembers = members.filter((m) => m.status !== 'pending');
+  if (!activeMembers.length) {
     sel.innerHTML = '<option value="">이전 가능한 멤버가 없습니다</option>';
     sel.disabled = true;
   } else {
     sel.disabled = false;
-    sel.innerHTML = members
+    sel.innerHTML = activeMembers
       .map((m) => `<option value="${Number(m.id)}">${esc(m.name || '알 수 없음')} (${esc(m.role)})</option>`)
       .join('');
   }
@@ -159,17 +147,26 @@ function ownerRow(owner) {
 function manageRow(m) {
   const id = Number(m.id);
   const name = String(m.name || '알 수 없음');
+  const isPending = m.status === 'pending';
+  // 대기중(pending) 초대는 '초대 대기중' 배지를 달고, 추방 버튼은 '초대 취소' 로 표기한다.
+  const pendingBadge = isPending
+    ? `<span class="badge bg-warning bg-opacity-10 text-warning border flex-shrink-0">초대 대기중</span>`
+    : '';
+  const removeLabel = isPending
+    ? `<i class="bi bi-x-circle"></i> 초대 취소`
+    : `<i class="bi bi-person-x"></i> 추방`;
   // 이름은 data-name 속성에 담고(이중 이스케이프), kickMember 는 id 로 행에서 읽는다.
   return `
-    <div class="d-flex align-items-center gap-2 px-1 py-2 border-bottom" data-member-id="${id}" data-member-name="${esc(name)}">
+    <div class="d-flex align-items-center gap-2 px-1 py-2 border-bottom" data-member-id="${id}" data-member-name="${esc(name)}" data-member-pending="${isPending ? '1' : '0'}">
       ${avatarHtml(m.picture)}
       <a href="/profile/${id}" class="text-decoration-none text-body text-truncate me-auto">${esc(name)}</a>
+      ${pendingBadge}
       <select class="form-select form-select-sm flex-shrink-0" style="width:auto;" onchange="changeMemberRole(${id}, this.value)">
         <option value="viewer" ${m.role === 'viewer' ? 'selected' : ''}>viewer</option>
         <option value="editor" ${m.role === 'editor' ? 'selected' : ''}>editor</option>
       </select>
       <button type="button" class="btn btn-wiki btn-wiki-danger btn-sm flex-shrink-0" onclick="kickMember(${id})">
-        <i class="bi bi-person-x"></i> 추방
+        ${removeLabel}
       </button>
     </div>`;
 }
@@ -187,22 +184,25 @@ async function changeMemberRole(userId, role) {
 async function kickMember(userId) {
   const row = document.querySelector(`[data-member-id="${Number(userId)}"]`);
   const name = row ? row.getAttribute('data-member-name') : '';
+  const isPending = row ? row.getAttribute('data-member-pending') === '1' : false;
   const confirm = await Swal.fire({
-    title: '멤버 추방',
-    text: (name || '이 멤버') + ' 님을 워크스페이스에서 추방하시겠습니까?',
+    title: isPending ? '초대 취소' : '멤버 추방',
+    text: isPending
+      ? (name || '이 사용자') + ' 님에게 보낸 초대를 취소하시겠습니까?'
+      : (name || '이 멤버') + ' 님을 워크스페이스에서 추방하시겠습니까?',
     icon: 'warning',
     showCancelButton: true,
-    confirmButtonText: '추방',
+    confirmButtonText: isPending ? '초대 취소' : '추방',
     cancelButtonText: '취소',
     confirmButtonColor: '#dc3545',
   });
   if (!confirm.isConfirmed) return;
   const r = await send(wbase() + '/members/' + Number(userId), 'DELETE');
   if (!r.ok) {
-    Swal.fire('추방 실패', r.body.error || '멤버를 추방하지 못했습니다.', 'error');
+    Swal.fire(isPending ? '취소 실패' : '추방 실패', r.body.error || '요청을 처리하지 못했습니다.', 'error');
     return;
   }
-  toast('멤버를 추방했습니다.');
+  toast(isPending ? '초대를 취소했습니다.' : '멤버를 추방했습니다.');
   loadMembers();
 }
 
@@ -255,10 +255,10 @@ async function inviteUser(userId) {
   const role = document.getElementById('inviteRole').value === 'editor' ? 'editor' : 'viewer';
   const r = await send(wbase() + '/members', 'POST', { user_id: Number(userId), role });
   if (!r.ok) {
-    Swal.fire('초대 실패', r.body.error || '멤버를 추가하지 못했습니다.', 'error');
+    Swal.fire('초대 실패', r.body.error || '초대를 보내지 못했습니다.', 'error');
     return;
   }
-  toast('멤버를 추가했습니다.');
+  toast('초대를 보냈습니다. 상대가 수락하면 멤버가 됩니다.');
   document.getElementById('inviteSearch').value = '';
   document.getElementById('inviteResults').innerHTML = '';
   loadMembers();
@@ -295,90 +295,8 @@ async function doTransfer() {
 }
 
 // ──────────────────────────────────────────────────────────────
-// 4. 미디어 가비지 컬렉터
-// ──────────────────────────────────────────────────────────────
-async function scanGc() {
-  const el = document.getElementById('gcList');
-  el.innerHTML = window.uiSkeletonList(3);
-  let items;
-  try {
-    const data = await apiGet(wbase() + '/media/gc');
-    items = Array.isArray(data.items) ? data.items : [];
-  } catch (e) {
-    el.innerHTML = window.uiEmptyState({ compact: true, icon: 'bi bi-exclamation-triangle', title: '불러오지 못했습니다' });
-    return;
-  }
-
-  document.getElementById('gcDeleteSelectedBtn').classList.toggle('d-none', items.length === 0);
-  document.getElementById('gcDeleteAllBtn').classList.toggle('d-none', items.length === 0);
-
-  if (!items.length) {
-    el.innerHTML = window.uiEmptyState({ compact: true, icon: 'bi bi-check2-circle', title: '미참조 미디어가 없습니다' });
-    return;
-  }
-
-  el.innerHTML = items.map((m) => {
-    const id = Number(m.id);
-    return `
-      <label class="d-flex align-items-center gap-2 px-1 py-2 border-bottom" style="cursor:pointer;">
-        <input type="checkbox" class="form-check-input gc-check flex-shrink-0" value="${id}">
-        <span class="text-truncate me-auto">${esc(m.filename)}</span>
-        <span class="text-muted small flex-shrink-0">${humanBytes(m.size)}</span>
-      </label>`;
-  }).join('');
-}
-
-function selectedGcIds() {
-  return Array.from(document.querySelectorAll('.gc-check'))
-    .filter((c) => c.checked)
-    .map((c) => Number(c.value));
-}
-
-async function deleteGcSelected() {
-  const ids = selectedGcIds();
-  if (!ids.length) {
-    Swal.fire('선택 없음', '삭제할 미디어를 선택해주세요.', 'info');
-    return;
-  }
-  const confirm = await Swal.fire({
-    title: '선택 미디어 삭제',
-    text: `${ids.length}개의 미참조 미디어를 삭제합니다. 되돌릴 수 없습니다.`,
-    icon: 'warning',
-    showCancelButton: true,
-    confirmButtonText: '삭제',
-    cancelButtonText: '취소',
-    confirmButtonColor: '#dc3545',
-  });
-  if (!confirm.isConfirmed) return;
-  await runGcDelete({ ids });
-}
-
-async function deleteGcAll() {
-  const confirm = await Swal.fire({
-    title: '전체 미디어 삭제',
-    text: '미참조 미디어를 모두 삭제합니다. 되돌릴 수 없습니다.',
-    icon: 'warning',
-    showCancelButton: true,
-    confirmButtonText: '전체 삭제',
-    cancelButtonText: '취소',
-    confirmButtonColor: '#dc3545',
-  });
-  if (!confirm.isConfirmed) return;
-  await runGcDelete({});
-}
-
-async function runGcDelete(payload) {
-  const r = await send(wbase() + '/media/gc', 'POST', payload);
-  if (!r.ok) {
-    Swal.fire('삭제 실패', r.body.error || '미디어를 삭제하지 못했습니다.', 'error');
-    return;
-  }
-  toast(`${Number(r.body.deleted || 0)}개의 미디어를 삭제했습니다.`);
-  scanGc();
-}
-
-// ──────────────────────────────────────────────────────────────
-// 5. 워크스페이스 정보 (이름/주소/아이콘 변경)
+// 4. 워크스페이스 정보 (이름/주소/아이콘 변경)
+// 미디어 가비지 컬렉터는 미디어 관리 페이지(/ws/:wslug/media, ws-media.ts)로 이관됨.
 // ──────────────────────────────────────────────────────────────
 function renderWsIconBtn() {
   const btn = document.getElementById('wsIconBtn');
@@ -420,7 +338,7 @@ async function saveWsInfo() {
 }
 
 // ──────────────────────────────────────────────────────────────
-// 6. 워크스페이스 삭제
+// 5. 워크스페이스 삭제
 // ──────────────────────────────────────────────────────────────
 async function deleteWorkspace() {
   const confirm = await Swal.fire({
@@ -470,9 +388,6 @@ window.kickMember = kickMember;
 window.onInviteSearch = onInviteSearch;
 window.inviteUser = inviteUser;
 window.doTransfer = doTransfer;
-window.scanGc = scanGc;
-window.deleteGcSelected = deleteGcSelected;
-window.deleteGcAll = deleteGcAll;
 window.saveWsInfo = saveWsInfo;
 window.pickWsIcon = pickWsIcon;
 window.deleteWorkspace = deleteWorkspace;

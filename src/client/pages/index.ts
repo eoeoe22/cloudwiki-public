@@ -54,17 +54,7 @@ import { createTocController } from '../article/toc';
     const wikiBreadcrumb = createBreadcrumbNav(wikiArticleCtx);
     const wikiStructure = createStructureModal(wikiArticleCtx);
     const wikiShare = createShareActions(wikiArticleCtx);
-    const wikiToc = createTocController({
-      onReadingModeToggled: () => {
-        // 프레젠테이션 문서는 모드 전환 시 본문 렌더 경로가 갈리므로 재렌더가 필요.
-        if (currentPage && currentPage.view_mode === 'presentation' && currentSlug) {
-          if (typeof window.teardownPresentation === 'function') {
-            try { window.teardownPresentation(); } catch (e) { /* noop */ }
-          }
-          showArticle(currentSlug);
-        }
-      },
-    });
+    const wikiToc = createTocController({});
 
     // ── 초기화 ──
     document.addEventListener('DOMContentLoaded', async () => {
@@ -127,13 +117,6 @@ import { createTocController } from '../article/toc';
     // ── 라우팅 ──
     function route() {
       const path = window.location.pathname;
-      // SPA 네비게이션(다른 문서/페이지) 진입 시 이전 프레젠테이션 덱을 해체한다.
-      // 같은 문서 내 슬라이드 해시(#/N) 이동은 popstate early-return 으로 route() 를
-      // 호출하지 않으므로, 여기서 정리해도 활성 덱의 body 클래스/키보드·해시 상태가 보존된다.
-      // (hideAllPages() 는 정상 로드 경로에서 렌더 이후 호출되므로 거기서 해체하면 안 된다.)
-      if (typeof window.teardownPresentation === 'function') {
-        try { window.teardownPresentation(); } catch (e) { /* noop */ }
-      }
       if (!_initialLoadDone) hideAllPages();
 
       if (path === '/' || path === '') {
@@ -1101,17 +1084,6 @@ import { createTocController } from '../article/toc';
             }
           }
           _tryRenderExtDoc(15);
-        } else if (
-          page.view_mode === 'presentation'
-          && !document.body.classList.contains('reading-mode')
-          && typeof window.renderPresentation === 'function'
-        ) {
-          // 프레젠테이션 문서: 본문을 `---` 기준으로 슬라이드 분할해 위키 레이아웃 안에서 인라인 덱으로 표시.
-          // 헤더/사이드바/푸터는 그대로 유지되며, 컨트롤 바의 "전체화면" 버튼으로 풀스크린 발표 모드 진입.
-          // 읽기 모드가 활성이면(위 조건에서 제외) 일반 렌더 경로로 폴백해 단일 문서처럼 본다.
-          await window.renderPresentation(page.content || '', slug, 'articleContent', {
-            palettes: page.used_palettes || null,
-          });
         } else {
           await window.renderWikiContent(page.content || '', slug, 'articleContent', {
             showCategory: true,

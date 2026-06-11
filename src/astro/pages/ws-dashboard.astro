@@ -1,14 +1,16 @@
 ---
-// 워크스페이스 대시보드 셸 (/ws/:wslug). search.astro 와 동일한 구조를 따른다.
-// wslug 는 클라이언트(ws-dashboard.ts)가 location.pathname 에서 파싱한다.
+// 워크스페이스 대시보드 셸 (/ws/:wslug).
+// 탭 없는 단일 스크롤 페이지. 그리드 레이아웃으로 구성됨.
 import BaseLayout from '../layouts/BaseLayout.astro';
 import Header from '../components/Header.astro';
 import Footer from '../components/Footer.astro';
 ---
 <BaseLayout pagePath="/ws-dashboard.html" title="워크스페이스 - CloudWiki">
     <Fragment slot="head">
-        <!-- 테마 FOUC 방지: CSS 로드 후 즉시 테마 적용 -->
+        <!-- 테마 FOUC 방지 -->
         <script is:inline>try{var t=localStorage.getItem('themeMode');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
+        <!-- 게시판 본문 위키 렌더링용 -->
+        <link rel="stylesheet" href="/render.css" />
     </Fragment>
 
     <!-- ── 네비게이션 바 ── -->
@@ -31,46 +33,108 @@ import Footer from '../components/Footer.astro';
                         <p class="empty-state-title" id="wsErrorTitle">워크스페이스를 찾을 수 없습니다</p>
                         <p class="empty-state-text">존재하지 않거나 접근 권한이 없는 워크스페이스입니다.</p>
                         <div class="empty-state-cta">
-                            <a href="/workspaces" class="btn btn-wiki btn-sm"><i class="bi bi-arrow-left"></i> 내 워크스페이스로</a>
+                            <a href="/workspaces" class="btn btn-wiki btn-sm">
+                                <i class="bi bi-arrow-left"></i> 내 워크스페이스로
+                            </a>
                         </div>
                     </div>
                 </div>
 
-                <!-- 본문 -->
+                <!-- 본문 (로드 완료 후 노출) -->
                 <div id="wsContent" class="d-none">
-                    <!-- 헤더: 아이콘 + 이름 + 툴바 -->
-                    <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
+                    <!-- 공통 헤더: 아이콘 + 이름 + 툴바 -->
+                    <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
                         <div class="d-flex align-items-center gap-3">
                             <i id="wsIcon" class="text-primary" style="font-size:2rem;" aria-hidden="true"></i>
                             <div>
-                                <h2 class="mb-1" id="wsName"></h2>
+                                <h2 class="mb-0" id="wsName"></h2>
                                 <p class="text-muted small mb-0" id="wsSlug"></p>
                             </div>
                         </div>
                         <div class="d-flex gap-2 flex-wrap" id="wsToolbar"></div>
                     </div>
 
-                    <!-- 통계 -->
+                    <!-- 통계 배지 -->
                     <div class="d-flex flex-wrap gap-2 mb-4" id="wsStats"></div>
 
-                    <div class="row g-4">
-                        <!-- 빠른 최근 문서 -->
-                        <div class="col-12 col-lg-6">
+                    <!-- 그리드 1: Todo + 게시판 -->
+                    <div class="row g-3 mb-4">
+                        <div class="col-md-6">
+                            <div class="card h-100">
+                                <div class="card-header d-flex align-items-center justify-content-between gap-2">
+                                    <!-- 섹션 제목: 클릭 시 TODO 상세 페이지로 이동 -->
+                                    <a href="#" id="todoDetailLink" class="fw-semibold text-decoration-none text-body d-flex align-items-center gap-1" title="TODO 리스트 전체 보기">
+                                        <i class="bi bi-check2-square"></i> TODO
+                                        <i class="bi bi-chevron-right small"></i>
+                                    </a>
+                                    <!-- 선택 토글 -->
+                                    <button type="button" id="todoSelectToggle" class="btn btn-sm btn-outline-secondary d-none" aria-pressed="false">
+                                        <i class="bi bi-check2-square"></i> 선택
+                                    </button>
+                                </div>
+                                <div class="card-body p-2" id="todoSection">
+                                    <!-- 추가 영역 (canWrite 시 노출) -->
+                                    <div id="todoAddArea" class="d-none mb-3">
+                                        <div class="input-group">
+                                            <input type="text" id="todoAddInput" class="form-control"
+                                                   placeholder="할 일을 입력하고 Enter" maxlength="2000" autocomplete="off">
+                                            <button type="button" class="btn btn-wiki" onclick="window.addTodo()">
+                                                <i class="bi bi-plus-lg"></i> 추가
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    <!-- 일괄 작업 바 (선택 모드 + 선택 시 노출) -->
+                                    <div id="todoBulkBar" class="d-none d-flex flex-wrap gap-1 align-items-center mb-3">
+                                        <span id="todoBulkCount" class="badge bg-secondary"></span>
+                                        <button type="button" class="btn btn-sm btn-outline-secondary" onclick="window.todoCopy('selected')">
+                                            <i class="bi bi-clipboard"></i> 복사하기
+                                        </button>
+                                        <button type="button" class="btn btn-sm btn-outline-warning" id="todoBulkArchiveBtn" onclick="window.todoBulkAction('archive')">
+                                            <i class="bi bi-archive"></i> 보관
+                                        </button>
+                                    </div>
+
+                                    <!-- TODO 목록 (미완료 우선 최대 10개) -->
+                                    <div id="todoList"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="card h-100">
+                                <div class="card-header d-flex align-items-center justify-content-between gap-2">
+                                    <span class="fw-semibold"><i class="bi bi-layout-text-sidebar-reverse me-1"></i> 게시판</span>
+                                    <span id="boardEditArea"></span>
+                                </div>
+                                <div class="card-body" id="boardSection">
+                                    <!-- JS로 채움 -->
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 그리드 2: 최근 문서 + 참가자 + 미디어 -->
+                    <div class="row g-3" id="wsDetailGrid">
+                        <!-- 최근 문서 -->
+                        <div class="col-md-4" id="recentDocsSection">
                             <div class="card h-100">
                                 <div class="card-header d-flex align-items-center justify-content-between">
                                     <span><i class="bi bi-clock-history"></i> 최근 문서</span>
-                                    <a href="#" id="wsAllDocsBtn" class="btn btn-wiki btn-sm"><i class="bi bi-folder2-open"></i> 전체 문서 보기</a>
+                                    <a href="#" id="wsAllDocsBtn" class="btn btn-wiki btn-sm">
+                                        <i class="bi bi-folder2-open"></i> 전체 문서 보기
+                                    </a>
                                 </div>
-                                <div class="card-body" id="wsPagesList"></div>
+                                <div class="card-body p-0" id="wsPagesList"></div>
                             </div>
                         </div>
 
-                        <!-- 참가자 목록 (+ 초대) -->
-                        <div class="col-12 col-lg-6">
+                        <!-- 참가자 -->
+                        <div class="col-md-4" id="membersSection">
                             <div class="card h-100">
                                 <div class="card-header d-flex align-items-center justify-content-between">
                                     <span><i class="bi bi-people"></i> 참가자</span>
-                                    <button type="button" id="wsInviteToggle" class="btn btn-wiki btn-sm d-none" onclick="toggleWsInvite()">
+                                    <button type="button" id="wsInviteToggle" class="btn btn-wiki btn-sm d-none"
+                                            onclick="window.toggleWsInvite()">
                                         <i class="bi bi-person-plus"></i> 멤버 초대
                                     </button>
                                 </div>
@@ -80,7 +144,9 @@ import Footer from '../components/Footer.astro';
                                         <div class="row g-2 align-items-end mb-2">
                                             <div class="col-12 col-md">
                                                 <label class="form-label small mb-1" for="wsInviteSearch">사용자 검색</label>
-                                                <input type="text" id="wsInviteSearch" class="form-control form-control-sm" placeholder="닉네임으로 검색" autocomplete="off" oninput="onWsInviteSearch()">
+                                                <input type="text" id="wsInviteSearch" class="form-control form-control-sm"
+                                                       placeholder="닉네임으로 검색" autocomplete="off"
+                                                       oninput="window.onWsInviteSearch()">
                                             </div>
                                             <div class="col-auto">
                                                 <label class="form-label small mb-1" for="wsInviteRole">역할</label>
@@ -97,15 +163,22 @@ import Footer from '../components/Footer.astro';
                             </div>
                         </div>
 
-                        <!-- 미디어 목록 -->
-                        <div class="col-12">
+                        <!-- 미디어 -->
+                        <div class="col-md-4" id="mediaSection">
                             <div class="card h-100">
-                                <div class="card-header"><i class="bi bi-image"></i> 미디어</div>
+                                <div class="card-header">
+                                    <!-- 섹션 제목: 클릭 시 미디어 관리 페이지로 이동 -->
+                                    <a href="#" id="mediaDetailLink" class="fw-semibold text-decoration-none text-body d-flex align-items-center gap-1" title="미디어 관리">
+                                        <i class="bi bi-image"></i> 미디어
+                                        <i class="bi bi-chevron-right small"></i>
+                                    </a>
+                                </div>
                                 <div class="card-body" id="wsMediaList"></div>
                             </div>
                         </div>
                     </div>
                 </div>
+
             </div>
         </div>
     </div>
@@ -115,6 +188,7 @@ import Footer from '../components/Footer.astro';
 
     <Fragment slot="scripts">
         <script type="module" src="/dist/common.js" is:inline></script>
+        <script type="module" src="/dist/render.js" is:inline></script>
         <script type="module" src="/dist/ws-dashboard.js" is:inline></script>
     </Fragment>
 </BaseLayout>

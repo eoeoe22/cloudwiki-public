@@ -37,6 +37,8 @@ import { findConflictingPage, applyCreatePrefixRulesAndCategoryAcls, isEditReque
 import { commitPageMutation } from '../utils/pagePipeline/commit';
 import { notifyPageWatchers } from '../utils/pagePipeline/notifyWatchers';
 import { createNotification } from '../utils/notification';
+import { mergeEditSummary, SUMMARY_DB_MAX } from '../utils/editSummary';
+import { ensurePendingEditsSummaryMigration } from '../utils/pendingEditsSummaryMigration';
 import {
     parseEditAcl,
     evaluateEditAcl,
@@ -48,8 +50,6 @@ import {
 } from '../utils/editAcl';
 
 const pendingEditsRoutes = new Hono<Env>();
-
-const SUMMARY_MAX_LENGTH = 255;
 
 interface PendingEditRow {
     id: number;
@@ -64,12 +64,11 @@ interface PendingEditRow {
     redirect_to: string | null;
     title: string | null;
     has_title_change: number;
-    summary: string | null;
+    summary: string | null;       // 요청자 사용자 입력분(≤255자)
+    auto_summary: string | null;  // 요청자 자동요약분(길이 제한 없음). 승인 시 summary 와 병합.
     is_private: number;
     edit_acl: string | null;
     apply_edit_acl: number;
-    view_mode: string | null;
-    apply_view: number;
     category_acl_choices: string | null;
     created_at: number;
     updated_at: number;
@@ -81,14 +80,16 @@ function unixToIso(sec: number | null): string | null {
 }
 
 // 편집 요청 승인 시, 요청자 명의 리비전의 요약 끝에 승인자(검토자) 닉네임+숫자 id 를 강제 박제한다.
-// 255자 초과 시 작성자 요약만 말줄임표(…)로 잘라 한도를 맞추되, 승인 접미는 항상 보존한다.
+// 한도는 직접 저장과 동일한 SUMMARY_DB_MAX 를 쓴다 — 자동요약분이 옛 255자 한도를 무시하도록
+// 완화됐으므로(요청 사양), 승인 경로에서만 다시 255자로 되돌리지 않는다. 초과 시 작성자 요약만
+// 말줄임표(…)로 잘라 한도를 맞추되, 승인 접미는 항상 보존한다.
 function buildApprovalSuffix(authorSummary: string | null, reviewer: { name: string; id: number }): string {
     const suffix = ` (요청 승인 : [${reviewer.name}|${reviewer.id}])`;
     const base = (authorSummary ?? '').trim();
     if (!base) return suffix.trimStart();
     const combined = `${base}${suffix}`;
-    if (combined.length <= SUMMARY_MAX_LENGTH) return combined;
-    const room = SUMMARY_MAX_LENGTH - suffix.length - 1; // '…' 1자
+    if (combined.length <= SUMMARY_DB_MAX) return combined;
+    const room = SUMMARY_DB_MAX - suffix.length - 1; // '…' 1자
     if (room <= 0) return suffix.trimStart();
     return `${base.slice(0, room)}…${suffix}`;
 }
@@ -220,12 +221,14 @@ async function loadReviewablePendingEdit(
     id: number,
     cap: ReviewerCapability,
 ): Promise<PendingEditRow | null> {
+    // 레거시 DB(auto_summary 컬럼 부재) 대비 — 아래 SELECT 가 auto_summary 를 참조하므로 먼저 보장.
+    await ensurePendingEditsSummaryMigration(db);
     let row: PendingEditRow | null;
     try {
         row = await db.prepare(
         `SELECT id, page_id, slug, action, author_id, base_revision_id, base_version,
-                content, category, redirect_to, title, has_title_change, summary,
-                is_private, edit_acl, apply_edit_acl, view_mode, apply_view, category_acl_choices, created_at, updated_at
+                content, category, redirect_to, title, has_title_change, summary, auto_summary,
+                is_private, edit_acl, apply_edit_acl, category_acl_choices, created_at, updated_at
          FROM pending_edits WHERE id = ?`
     ).bind(id).first<PendingEditRow>();
     } catch (e) {
@@ -567,11 +570,9 @@ pendingEditsRoutes.get('/pending-edits/:id', requireAuth, async (c) => {
         base_version: pe.base_version,
         category: pe.category,
         redirect_to: pe.redirect_to,
-        // 요청이 제안한 대체 제목/레이아웃 — 에디터 승인 시 메타 입력칸/프레젠테이션 토글 프리로드용.
+        // 요청이 제안한 대체 제목 — 에디터 승인 시 메타 입력칸 프리로드용.
         title: pe.title,
         has_title_change: pe.has_title_change === 1,
-        view_mode: pe.view_mode,
-        apply_view: pe.apply_view === 1,
         proposed_content: pe.content,
         current_content: currentContent,
         base_content: baseContent,
@@ -635,11 +636,11 @@ pendingEditsRoutes.post('/pending-edits/:id/approve', requireAuth, async (c) => 
     // body.content 가 있으면 = 승인자가 에디터에서 추가 편집한 최종 본문 → 2-리비전 경로
     //   (rev1: 원 요청분=요청자 명의, rev2: 추가 편집분=승인자 명의). 없으면 현행 단일 리비전.
     const body = await c.req.json<{
-        summary?: string; content?: string; expected_version?: number;
-        category?: string; redirect_to?: string; title?: string | null; view_mode?: string | null;
+        summary?: string; auto_summary?: string; content?: string; expected_version?: number;
+        category?: string; redirect_to?: string; title?: string | null;
     }>().catch(() => ({} as {
-        summary?: string; content?: string; expected_version?: number;
-        category?: string; redirect_to?: string; title?: string | null; view_mode?: string | null;
+        summary?: string; auto_summary?: string; content?: string; expected_version?: number;
+        category?: string; redirect_to?: string; title?: string | null;
     }));
     const hasApproverContent = typeof body.content === 'string';
     const approverContent = hasApproverContent ? (body.content as string) : '';
@@ -648,17 +649,32 @@ pendingEditsRoutes.post('/pending-edits/:id/approve', requireAuth, async (c) => 
         ? body.expected_version
         : null;
     // 승인자가 에디터에서 바꾼 메타데이터를 rev2 에 반영(미전송 시 요청 메타로 폴백). rev1 은 항상 요청 메타.
-    // (에디터는 content 모드에서 title/view_mode 를 string|null 로 명시 전송 — undefined 면 요청값 유지.)
+    // (에디터는 content 모드에서 title 을 string|null 로 명시 전송 — undefined 면 요청값 유지.)
     const rev2Category = (typeof body.category === 'string') ? body.category : pe.category;
     const rev2Redirect = (typeof body.redirect_to === 'string') ? body.redirect_to : pe.redirect_to;
     const rev2Title = (body.title !== undefined) ? body.title : (pe.has_title_change ? pe.title : undefined);
-    const rev2View = (body.view_mode !== undefined) ? body.view_mode : (pe.apply_view ? pe.view_mode : undefined);
-    const baseSummary = (typeof body.summary === 'string') ? body.summary : (pe.summary ?? '');
-    // 요청자 명의 리비전(단일 승인=baseSummary, 2-리비전 rev1=원 요청 요약)의 요약 끝에 승인자 박제.
-    // 2-리비전에서 baseSummary(body.summary)는 승인자의 추가 편집 요약(rev2)이므로, rev1 은 pe.summary 를 쓴다.
+    // 마이그레이션 이전 레거시 보류본은 auto_summary 가 NULL 이고 summary 에 옛 포맷의 자동요약이
+    // 이미 합쳐져 있다(신규 포맷 보류본은 auto_summary 를 항상 non-null='' 이상으로 저장 — wiki.ts).
+    // 레거시 행은 승인 편집기 prefill 이 합쳐진 값을 통째로 넣으므로, 클라이언트가 함께 보낸 새 자동요약을
+    // 다시 합치면 "<자동> / <사용자> / <자동>" 처럼 중복된다. 레거시 행에서는 자동요약 재병합을 생략한다.
+    const isLegacyPending = pe.auto_summary === null;
+    // 요약은 사용자 입력분(summary)과 자동요약분(auto_summary)을 분리 전송받아 병합한다.
+    // rev1(요청자) base: 요청자 사용자 입력분 + 요청자 자동요약(pe.auto_summary) 병합(레거시면 합본 그대로).
+    //   - 2-리비전(hasApproverContent): 요청자 입력분은 pe.summary (body.summary 는 승인자 rev2 용).
+    //   - 단일 승인(no content): 검토자가 모달에서 사용자 입력분을 수정해 보낼 수 있어 body.summary 우선.
+    const requesterUser = hasApproverContent
+        ? pe.summary
+        : (typeof body.summary === 'string' ? body.summary : pe.summary);
+    // 요청자 명의 리비전 요약 끝에 승인자(검토자) 박제(buildApprovalSuffix 가 SUMMARY_DB_MAX 로 맞춤).
     const requesterSummary = buildApprovalSuffix(
-        hasApproverContent ? (pe.summary ?? '') : baseSummary,
+        mergeEditSummary(requesterUser, pe.auto_summary),
         { name: user.name, id: user.id },
+    );
+    // rev2(승인자) 요약: 승인자 사용자 입력분(body.summary) + 승인자 자동요약(body.auto_summary) 병합.
+    // 레거시 행은 body.summary 가 이미 자동요약 합본이므로 새 자동요약을 다시 합치지 않는다.
+    const approverSummary = mergeEditSummary(
+        typeof body.summary === 'string' ? body.summary : null,
+        isLegacyPending ? null : (typeof body.auto_summary === 'string' ? body.auto_summary : null),
     );
     const slug = pe.slug;
 
@@ -672,8 +688,8 @@ pendingEditsRoutes.post('/pending-edits/:id/approve', requireAuth, async (c) => 
 
     if (pe.action === 'update') {
         const page = await c.env.DB.prepare(
-            'SELECT id, version, content, category, last_revision_id, title, edit_acl, redirect_to, view_mode, is_private FROM pages WHERE slug = ? AND deleted_at IS NULL'
-        ).bind(slug).first<{ id: number; version: number; content: string; category: string | null; last_revision_id: number | null; title: string | null; edit_acl: string | null; redirect_to: string | null; view_mode: string | null; is_private: number }>();
+            'SELECT id, version, content, category, last_revision_id, title, edit_acl, redirect_to, is_private FROM pages WHERE slug = ? AND deleted_at IS NULL'
+        ).bind(slug).first<{ id: number; version: number; content: string; category: string | null; last_revision_id: number | null; title: string | null; edit_acl: string | null; redirect_to: string | null; is_private: number }>();
         if (!page) return c.json({ error: 'conflict', reason: 'page_missing' }, 409);
         // 충돌 사전체크:
         //  - 단일 승인(no content): 제출 시점 base 와 현재가 동일해야 한다(pe.base_version).
@@ -726,7 +742,7 @@ pendingEditsRoutes.post('/pending-edits/:id/approve', requireAuth, async (c) => 
             && (page.last_revision_id !== pe.base_revision_id || page.version !== pe.base_version);
         let preApproval: {
             content: string; category: string | null; title: string | null;
-            redirectTo: string | null; viewMode: string | null; editAcl: string | null;
+            redirectTo: string | null; editAcl: string | null;
         } | null = null;
         if (isStaleBaseMerge) {
             const enabledExt = getEnabledExtensions(c.env);
@@ -742,14 +758,14 @@ pendingEditsRoutes.post('/pending-edits/:id/approve', requireAuth, async (c) => 
             }
             preApproval = {
                 content: preContent, category: page.category, title: page.title,
-                redirectTo: page.redirect_to, viewMode: page.view_mode, editAcl: page.edit_acl,
+                redirectTo: page.redirect_to, editAcl: page.edit_acl,
             };
         }
 
         try {
             // rev1: 원 요청분을 요청자 명의로 반영(요약 끝에 승인자 박제).
-            // editAcl/viewMode/title/category/redirect 적용은 단일 승인 경로와 1:1 동일해야 한다
-            // (카테고리 ACL 머지·presentation 토글 등 누락 방지). 변경 시 양쪽을 함께 수정할 것.
+            // editAcl/title/category/redirect 적용은 단일 승인 경로와 1:1 동일해야 한다
+            // (카테고리 ACL 머지 등 누락 방지). 변경 시 양쪽을 함께 수정할 것.
             const rev1 = await commitPageMutation(c, {
                 kind: 'update',
                 origin: 'pending_approve',
@@ -765,7 +781,6 @@ pendingEditsRoutes.post('/pending-edits/:id/approve', requireAuth, async (c) => 
                 // 제목을 고쳤는데도 승인이 막힌다(검사는 위에서 최종 제목 기준으로 이미 통과).
                 title: hasApproverContent ? rev2Title : (pe.has_title_change ? pe.title : undefined),
                 editAcl: pe.apply_edit_acl ? pe.edit_acl : undefined,
-                viewMode: pe.apply_view ? pe.view_mode : undefined,
                 page,
                 isPrivate: page.is_private === 1,
                 // 2-리비전이면 rev1 재색인을 await 해 rev2(최종 본문) 재색인보다 먼저 끝나도록 한다.
@@ -807,12 +822,11 @@ pendingEditsRoutes.post('/pending-edits/:id/approve', requireAuth, async (c) => 
                     actor: user,
                     slug,
                     content: approverContent,
-                    summary: baseSummary,
+                    summary: approverSummary,
                     summaryRaw: true,
                     category: rev2Category,
                     redirectTo: rev2Redirect,
                     title: rev2Title,
-                    viewMode: rev2View,
                     page: pageAfterRev1,
                     isPrivate: page.is_private === 1,
                     rbac,
@@ -841,7 +855,6 @@ pendingEditsRoutes.post('/pending-edits/:id/approve', requireAuth, async (c) => 
                                 redirectTo: preApproval.redirectTo,
                                 title: preApproval.title ?? null,
                                 editAcl: preApproval.editAcl,
-                                viewMode: preApproval.viewMode,
                                 isPrivate: page.is_private === 1,
                                 rbac,
                                 logType: 'pending_edit_rollback',
@@ -991,7 +1004,6 @@ pendingEditsRoutes.post('/pending-edits/:id/approve', requireAuth, async (c) => 
                 title: hasApproverContent ? (rev2Title ?? null) : (pe.has_title_change ? pe.title : null),
                 editAcl: createEditAclSerialized,
                 isPrivate: createIsPrivate === 1,
-                viewMode: pe.apply_view ? pe.view_mode : null,
                 // 2-리비전이면 rev1 재색인을 await 해 rev2(최종 본문) 재색인보다 먼저 끝나도록 한다.
                 awaitLinkCategoryIndex: hasApproverContent,
                 rbac,
@@ -1017,7 +1029,7 @@ pendingEditsRoutes.post('/pending-edits/:id/approve', requireAuth, async (c) => 
             // rev2: 승인자의 추가 편집을 승인자 명의로 반영(방금 생성된 v1 페이지에 CAS → v2).
             // 카테고리는 createCategory(프리픽스 룰 머지 결과)를 유지해 신규 생성 ACL/머지를 보존한다
             // (신규 문서에서 승인자의 카테고리 변경은 무시 — 필요 시 게시 후 일반 편집으로 조정).
-            // redirect/title/layout 은 승인자 값(rev2*)을 반영한다. editAcl 은 rev1 설정 유지(생략).
+            // redirect/title 은 승인자 값(rev2*)을 반영한다. editAcl 은 rev1 설정 유지(생략).
             const createdPage = {
                 id: rev1.page_id,
                 version: 1,
@@ -1032,12 +1044,11 @@ pendingEditsRoutes.post('/pending-edits/:id/approve', requireAuth, async (c) => 
                     actor: user,
                     slug,
                     content: approverContent,
-                    summary: baseSummary,
+                    summary: approverSummary,
                     summaryRaw: true,
                     category: createCategory,
                     redirectTo: rev2Redirect,
                     title: rev2Title,
-                    viewMode: rev2View,
                     page: createdPage,
                     isPrivate: createIsPrivate === 1,
                     rbac,

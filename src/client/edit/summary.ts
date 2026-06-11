@@ -1,8 +1,12 @@
 /**
  * 편집 요약 자동 작성 (기존 public/js/edit-summary.js 의 ES 모듈 이전).
  *
- * summaryInput 입력 칸을 자동 prefix + 사용자 입력 형태로 유지한다.
- * 형식: "<자동요약> / <사용자입력>" (둘 중 하나만 있으면 해당 부분만 표시)
+ * 자동요약은 더 이상 summaryInput 입력 칸에 표시하지 않는다. refreshAutoSummary 가
+ * 백그라운드에서 자동요약을 재계산해 모듈 변수(currentAutoSummary)에 보관하고,
+ * 저장 시점에 main.ts / ws-edit.ts 가 getAutoEditSummary() 로 읽어
+ * "<사용자입력> / <자동요약>" 형식으로 병합한다(둘 중 하나만 있으면 해당 부분만).
+ * 입력 칸(summaryInput)은 사용자 입력 전용이며 maxlength 길이 제한은 사용자
+ * 입력분에만 적용된다. 병합되는 자동요약분에는 길이 제한을 적용하지 않는다.
  *
  * 자동요약 규칙:
  *   - 섹션 편집 모드: "'<섹션 헤딩 텍스트>' 편집"
@@ -17,10 +21,10 @@
  *                    공통 섹션 본문 편집("섹션 'X' 편집") 을 합성
  *
  * 사용자가 에디터 설정에서 자동 작성을 끄면(localStorage editor_auto_summary = "false")
- * refreshAutoSummary 가 직전 prefix 만 정리하고 즉시 종료한다.
+ * refreshAutoSummary 가 보관된 자동요약을 비우고 즉시 종료한다(병합 없음).
  *
  * 브리지 (raw script ↔ ESM):
- *   - 출력: window.refreshAutoSummary 로 함수를 노출 → edit.js (raw) 가 호출.
+ *   - 출력: window.refreshAutoSummary(백그라운드 재계산) / window.getAutoEditSummary(병합용 읽기) 노출.
  *   - 입력: edit-utils 모듈이 초기화한 window.X 상태(originalContent, editor,
  *     sectionMode, sectionRange, originalPageMeta) + edit-autocomplete.js 의
  *     var 글로벌(categoryTags) + render.js 의 _extractMarkdownSectionRanges
@@ -33,8 +37,10 @@ import './types';
 
 declare global {
     interface Window {
-        /** 본 모듈이 노출하는 브리지 — edit.js (raw) 가 호출. */
+        /** 본 모듈이 노출하는 브리지 — 자동요약을 백그라운드에서 재계산해 보관. */
         refreshAutoSummary?: () => void;
+        /** 본 모듈이 노출하는 브리지 — 저장 시점 병합용 최신 자동요약 문자열 반환. */
+        getAutoEditSummary?: () => string;
     }
 }
 
@@ -57,13 +63,11 @@ interface BuildHeadingDiffOptions {
     includeBodyEdits?: boolean;
 }
 
-let lastAutoSummaryPrefix = '';
+// 백그라운드에서 계산된 최신 자동 편집 요약. 입력 칸에는 표시하지 않고
+// 저장 시점에 getAutoEditSummary() 로 읽어 사용자 입력과 병합한다.
+let currentAutoSummary = '';
 
-// 사용자가 summaryInput 에 직접 타이핑 중일 때 prefix 강제 갱신으로 커서가
-// 튀는 것을 방지하기 위한 보호 타임스탬프.
-let lastUserSummaryEditAt = 0;
-
-// 헤딩 목록 표시 상한. 초과 시 "외 N개" 로 잘라 255자 제한 안에 들어오게 한다.
+// 헤딩 목록 표시 상한. 초과 시 "외 N개" 로 잘라 요약 길이를 적정 수준으로 유지한다.
 const HEADING_LIST_CAP = 3;
 
 function extractHeadingsForSummary(text: string): HeadingForSummary[] {
@@ -391,11 +395,6 @@ function buildAutoEditSummary(): string {
     const redirectEl = document.getElementById('redirectInput') as HTMLInputElement | null;
     const currRedirect = redirectEl ? redirectEl.value.trim() : '';
 
-    // 프레젠테이션 모드(view_mode) — 'presentation' vs ''. 체크박스 상태를 직접 읽는다.
-    const origLayout = originalPageMeta.view_mode === 'presentation' ? 'presentation' : '';
-    const presoEl = document.getElementById('presentationModeToggle') as HTMLInputElement | null;
-    const currLayout = presoEl && presoEl.checked ? 'presentation' : '';
-
     // 잠금/비공개 토글은 에디터에서 제거되어 자동 요약 후보에서도 빠진다.
     // 권한 관리 모달은 본문 리비전과 분리된 별도 엔드포인트(PATCH /pages/:slug/flags) 를 사용.
 
@@ -409,9 +408,6 @@ function buildAutoEditSummary(): string {
     if (removed.length) parts.push(`분류 ${removed.map(c => `'${c}'`).join(', ')} 삭제`);
     if (origRedirect !== currRedirect) {
         parts.push(currRedirect ? `넘겨주기 '${currRedirect}' 설정` : '넘겨주기 해제');
-    }
-    if (origLayout !== currLayout) {
-        parts.push(currLayout === 'presentation' ? '프레젠테이션 모드 설정' : '프레젠테이션 모드 해제');
     }
 
     if (editorAvailable) {
@@ -440,16 +436,6 @@ function buildAutoEditSummary(): string {
     return appendLineStats(summary, stats);
 }
 
-// 자동 prefix 만 떼어내고 사용자 입력 부분만 반환.
-function stripAutoPrefix(value: string): string {
-    if (!lastAutoSummaryPrefix) return value;
-    if (value.startsWith(lastAutoSummaryPrefix + ' / ')) {
-        return value.slice((lastAutoSummaryPrefix + ' / ').length);
-    }
-    if (value === lastAutoSummaryPrefix) return '';
-    return value;
-}
-
 function isAutoSummaryEnabled(): boolean {
     try {
         return localStorage.getItem('editor_auto_summary') !== 'false';
@@ -458,60 +444,28 @@ function isAutoSummaryEnabled(): boolean {
     }
 }
 
-// 사용자가 직접 입력한 텍스트(자동 prefix 뒤 ' / ')는 보존한 채 prefix만 갱신.
+// 자동 요약을 백그라운드에서 재계산해 currentAutoSummary 에 보관한다.
+// summaryInput 입력 칸은 더 이상 건드리지 않으며(사용자 입력 전용), 병합은
+// 저장 시점에 main.ts / ws-edit.ts 가 getAutoEditSummary() 로 수행한다.
 function refreshAutoSummary(): void {
-    const summaryEl = document.getElementById('summaryInput') as HTMLInputElement | null;
-    if (!summaryEl) return;
-
-    // 자동 작성 토글 OFF: 직전 prefix 만 정리하고 사용자 입력은 보존.
-    // 직전 prefix 가 없거나 이미 정리되어 있으면 입력값을 건드리지 않는다.
+    // 자동 작성 토글 OFF: 보관된 자동요약을 비워 저장 시 병합되지 않게 한다.
     if (!isAutoSummaryEnabled()) {
-        if (lastAutoSummaryPrefix) {
-            summaryEl.value = stripAutoPrefix(summaryEl.value);
-            lastAutoSummaryPrefix = '';
-        }
+        currentAutoSummary = '';
         return;
     }
+    currentAutoSummary = buildAutoEditSummary();
+}
 
-    // 사용자가 summaryInput 에 직접 타이핑 중이라면 prefix 가 동일할 때만 갱신해
-    // 커서 점프를 방지한다(헤딩 변경이 prefix 길이를 바꾸지 않을 때만 통과).
-    const userTypingNow = document.activeElement === summaryEl
-        && (Date.now() - lastUserSummaryEditAt) < 1500;
-
-    const newAutoSummary = buildAutoEditSummary();
-
-    if (userTypingNow && newAutoSummary === lastAutoSummaryPrefix) {
-        return;
-    }
-
-    // 현재 값에서 직전 자동 prefix를 떼어내 사용자 입력 부분만 추출
-    const userPart = stripAutoPrefix(summaryEl.value);
-
-    let combined: string;
-    if (newAutoSummary && userPart) {
-        combined = `${newAutoSummary} / ${userPart}`;
-    } else {
-        combined = newAutoSummary || userPart;
-    }
-    if (combined.length > 255) combined = combined.slice(0, 255);
-
-    summaryEl.value = combined;
-    lastAutoSummaryPrefix = newAutoSummary;
+// 저장 시점에 호출 — 백그라운드에서 보관 중인 최신 자동 요약을 반환한다.
+function getAutoEditSummary(): string {
+    return currentAutoSummary;
 }
 
 // 브리지: classic script edit.js 가 bare reference 또는 typeof 가드로 호출한다.
 // 모듈 평가 시점이 classic 스크립트의 DOMContentLoaded 핸들러 실행 시점보다
 // 앞서므로, 라이프사이클 상 이 시점에 노출하면 모든 호출처가 안전하게 본다.
 window.refreshAutoSummary = refreshAutoSummary;
-
-// summaryInput 에 직접 타이핑하는 시점을 기록한다. edit.js 초기화 시 한 번만 등록.
-document.addEventListener('DOMContentLoaded', () => {
-    const summaryEl = document.getElementById('summaryInput') as HTMLInputElement | null;
-    if (!summaryEl) return;
-    summaryEl.addEventListener('input', () => {
-        lastUserSummaryEditAt = Date.now();
-    });
-});
+window.getAutoEditSummary = getAutoEditSummary;
 
 console.log('[edit/summary] module loaded');
 

@@ -82,8 +82,6 @@ export interface PageMeta {
     category?: string | null;
     redirect_to?: string | null;
     is_private?: number | boolean | null;
-    /** 문서 본문 보기 모드. 'presentation' 또는 ''(일반 본문). 프레젠테이션 체크박스 변경 비교용. */
-    view_mode?: string | null;
 }
 
 /** localStorage 에 저장되는 초안 페이로드 */
@@ -257,8 +255,10 @@ declare global {
         getMergedWikiPalettes?: () => Record<string, PaletteDefinition>;
         /** render.js 가 정의 (function 선언으로 자동 window 노출) */
         resolveTransclusions?: (content: string, slug: string) => Promise<string>;
-        /** edit/summary.ts 가 노출 */
+        /** edit/summary.ts 가 노출 — 자동 요약을 백그라운드에서 재계산해 보관(입력 칸은 건드리지 않음) */
         refreshAutoSummary?: () => void;
+        /** edit/summary.ts 가 노출 — 저장 시점에 병합할 최신 자동 편집 요약 문자열을 반환 */
+        getAutoEditSummary?: () => string;
         /**
          * edit/main.ts 의 scroll sync 캐시 무효화 / 레이아웃 관찰 헬퍼.
          * render.js 등 외부 스크립트가 프리뷰 재렌더 시 호출.

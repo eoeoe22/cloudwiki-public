@@ -31,6 +31,8 @@ import exploreRoutes from './routes/explore';
 import workspaceRoutes from './routes/workspace';
 import workspacePagesRoutes from './routes/workspace-pages';
 import workspaceMediaRoutes from './routes/workspace-media';
+import workspaceTodosRoutes from './routes/workspace-todos';
+import workspaceBoardRoutes from './routes/workspace-board';
 import wsMcpRoutes from './routes/ws-mcp';
 import { isWorkspacesEnabled } from './utils/workspace';
 import { trackPageView, trackError, queryAnalytics } from './utils/analytics';
@@ -55,7 +57,7 @@ app.use('*', secureHeaders());
 app.use('*', (c, next) => {
     const path = c.req.path;
     if (path === '/api/mcp' || path.startsWith('/api/mcp/')) return next();
-    if (path === '/api/ws-mcp' || path.startsWith('/api/ws-mcp/')) return next();
+    if (path.match(/^\/api\/ws\/[^/]+\/mcp(\/.*)?$/)) return next();
     if (path === '/oauth/token' || path === '/oauth/register' || path === '/oauth/revoke') return next();
     return csrf()(c, next);
 });
@@ -162,7 +164,9 @@ app.route('/api', exploreRoutes);
 app.route('/', workspaceRoutes);
 app.route('/', workspacePagesRoutes);
 app.route('/', workspaceMediaRoutes);
-app.route('/', wsMcpRoutes); // /api/ws-mcp (워크스페이스 전용 MCP)
+app.route('/', workspaceTodosRoutes);
+app.route('/', workspaceBoardRoutes);
+app.route('/', wsMcpRoutes); // /api/ws/:wslug/mcp (워크스페이스별 MCP)
 
 // ── Service Worker (/sw.js) ──
 // Vite 빌드 산출물을 /dist/sw.js 로 두고, 루트 스코프 부여를 위해 /sw.js 로 위임한다.
@@ -462,6 +466,11 @@ app.get('/ws/:wslug/files', async (c) => {
     const g = wsClosedGuard(c); if (g) return g;
     return fetchAssetHtml(c, '/ws-files.html');
 });
+app.get('/ws/:wslug/media', async (c) => {
+    if (!isWorkspacesEnabled(c.env)) return c.notFound();
+    const g = wsClosedGuard(c); if (g) return g;
+    return fetchAssetHtml(c, '/ws-media.html');
+});
 app.get('/ws/:wslug/edit', async (c) => {
     if (!isWorkspacesEnabled(c.env)) return c.notFound();
     const g = wsClosedGuard(c); if (g) return g;
@@ -469,7 +478,28 @@ app.get('/ws/:wslug/edit', async (c) => {
 });
 app.get('/ws/:wslug/w/*', async (c) => {
     if (!isWorkspacesEnabled(c.env)) return c.notFound();
+    // ?mode=revisions → 편집 이력(리비전) 셸. 그 외는 문서 조회 셸.
+    // 문서 조회 셸과 동일하게 wsClosedGuard 를 적용하지 않는다 — ws_public 공유 링크의 게스트가
+    // 문서를 읽고 이력 링크를 따라갈 수 있어야 한다(권한은 리비전 API 가 ws_public 기준으로 강제).
+    if (c.req.query('mode') === 'revisions') {
+        return fetchAssetHtml(c, '/ws-revisions.html');
+    }
     return fetchAssetHtml(c, '/ws-doc.html');
+});
+app.get('/ws/:wslug/todos', async (c) => {
+    if (!isWorkspacesEnabled(c.env)) return c.notFound();
+    const g = wsClosedGuard(c); if (g) return g;
+    return fetchAssetHtml(c, '/ws-todo.html');
+});
+app.get('/ws/:wslug/board/:postId', async (c) => {
+    if (!isWorkspacesEnabled(c.env)) return c.notFound();
+    const g = wsClosedGuard(c); if (g) return g;
+    return fetchAssetHtml(c, '/ws-dashboard.html');
+});
+app.get('/ws/:wslug/board', async (c) => {
+    if (!isWorkspacesEnabled(c.env)) return c.notFound();
+    const g = wsClosedGuard(c); if (g) return g;
+    return fetchAssetHtml(c, '/ws-dashboard.html');
 });
 app.get('/ws/:wslug', async (c) => {
     if (!isWorkspacesEnabled(c.env)) return c.notFound();
@@ -885,8 +915,6 @@ ${contentBlock}
             _ssrTitle: `${page.title || page.slug} - ${wikiName}`,
             _ssrDescription: desc,
             _usedPalettes: usedPalettes,
-            // 문서별 본문 보기 모드 — 클라이언트가 'presentation' 등 본문 렌더 모드를 판정하는 데 사용.
-            _ssrViewMode: page.view_mode ?? null,
         };
     }
 

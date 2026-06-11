@@ -72,10 +72,13 @@ export default defineConfig({
                 'admin-palettes': resolve(__dirname, 'src/client/admin/palettes.ts'),
                 'ws-list': resolve(__dirname, 'src/client/pages/ws-list.ts'),
                 'ws-dashboard': resolve(__dirname, 'src/client/pages/ws-dashboard.ts'),
+                'ws-todo': resolve(__dirname, 'src/client/pages/ws-todo.ts'),
                 'ws-settings': resolve(__dirname, 'src/client/pages/ws-settings.ts'),
                 'ws-files': resolve(__dirname, 'src/client/pages/ws-files.ts'),
+                'ws-media': resolve(__dirname, 'src/client/pages/ws-media.ts'),
                 'ws-doc': resolve(__dirname, 'src/client/pages/ws-doc.ts'),
                 'ws-edit': resolve(__dirname, 'src/client/pages/ws-edit.ts'),
+                'ws-revisions': resolve(__dirname, 'src/client/pages/ws-revisions.ts'),
             },
             // CodeMirror 6 / Lezer 패키지는 npm 으로 설치하지 않고 HTML 의
             // <script type="importmap"> 으로 esm.sh CDN 을 통해 직접 해석한다.

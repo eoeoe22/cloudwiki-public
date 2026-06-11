@@ -27,7 +27,6 @@ interface CommonMutationInput {
     summaryRaw?: boolean;         // true 면 withMcpPrefix() 생략(승인 경로 박제 요약)
     redirectTo?: string | null;   // undefined → 기존 유지
     title?: string | null;        // undefined → 기존 유지, null → 제거, string → 설정
-    viewMode?: string | null;     // undefined → 기존 유지
     logType?: string;
     logMessage?: string;
     awaitLinkCategoryIndex?: boolean; // 2-리비전 rev1 의 재색인을 await 해 rev2 와의 경합 방지

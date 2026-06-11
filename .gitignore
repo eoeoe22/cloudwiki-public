@@ -34,10 +34,13 @@
 /public/blog-edit.html
 /public/workspaces.html
 /public/ws-dashboard.html
+/public/ws-todo.html
 /public/ws-settings.html
 /public/ws-files.html
+/public/ws-media.html
 /public/ws-doc.html
 /public/ws-edit.html
+/public/ws-revisions.html
 
 # 멀티 스킨 색 테마 외부 CSS (scripts/build-skins-css.mjs 가 빌드 타임에 생성)
 /public/css/skins-*.css

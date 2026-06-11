@@ -11,7 +11,7 @@ const STAGING = resolve(root, '.astro-dist');
 const PUBLIC = resolve(root, 'public');
 
 // 복사 대상(증분 도입 시 이 배열만 확장). Astro build.format:'file' 산출물 기준.
-const PAGES = ['error.html', 'login.html', 'search.html', 'explore.html', 'revisions.html', 'user-profile.html', 'setup-profile.html', 'admin-media.html', 'admin-bulk-manage.html', 'discussions.html', 'tickets.html', 'mypage.html', 'index.html', 'edit.html', 'blog.html', 'admin.html', 'blog-edit.html', 'workspaces.html', 'ws-dashboard.html', 'ws-settings.html', 'ws-files.html', 'ws-doc.html', 'ws-edit.html'];
+const PAGES = ['error.html', 'login.html', 'search.html', 'explore.html', 'revisions.html', 'user-profile.html', 'setup-profile.html', 'admin-media.html', 'admin-bulk-manage.html', 'discussions.html', 'tickets.html', 'mypage.html', 'index.html', 'edit.html', 'blog.html', 'admin.html', 'blog-edit.html', 'workspaces.html', 'ws-dashboard.html', 'ws-todo.html', 'ws-settings.html', 'ws-files.html', 'ws-media.html', 'ws-doc.html', 'ws-edit.html', 'ws-revisions.html'];
 
 for (const page of PAGES) {
     const src = resolve(STAGING, page);

@@ -3,7 +3,7 @@
 // wslug 는 클라이언트(ws-edit.ts)가 location.pathname 에서, slug 는 ?slug= 쿼리에서 파싱한다.
 // render.css 를 로드해 프리뷰 패널의 renderWikiContent 산출 HTML 이 스타일링되게 한다.
 // 위키 에디터(edit.astro)와 동일한 툴바·자동완성 드롭다운·이미지/아이콘 모달을 제공하되,
-// 워크스페이스 전용 메타(공개 토글/이름 변경/삭제)는 그대로 둔다.
+// 워크스페이스 전용 메타(이름 변경/삭제/프레젠테이션 모드)는 그대로 둔다.
 import BaseLayout from '../layouts/BaseLayout.astro';
 import Header from '../components/Header.astro';
 import Footer from '../components/Footer.astro';
@@ -12,6 +12,8 @@ import Footer from '../components/Footer.astro';
     <Fragment slot="head">
         <link rel="stylesheet" href="/render.css" />
         <link rel="stylesheet" href="/css/edit.css" />
+        <!-- 프레젠테이션 문서의 슬라이드/보기 모드 프리뷰(인라인 덱 + 전체화면)용 -->
+        <link rel="stylesheet" href="/css/presentation.css" />
         <!-- 테마 FOUC 방지: CSS 로드 후 즉시 테마 적용 -->
         <script is:inline>try{var t=localStorage.getItem('themeMode');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
     </Fragment>
@@ -193,9 +195,12 @@ import Footer from '../components/Footer.astro';
                             <input type="text" id="alternateTitleInput" class="form-control form-control-sm" placeholder="대체 제목" autocomplete="off">
                         </div>
                         <div class="col-12 col-md-3 d-flex align-items-end">
-                            <div class="form-check mb-1">
-                                <input class="form-check-input" type="checkbox" id="wsEditPublic">
-                                <label class="form-check-label small" for="wsEditPublic">공개 문서</label>
+                            <div class="d-flex flex-column gap-1 mb-1">
+                                <!-- 프레젠테이션 모드 — 본문을 --- 로 분할해 슬라이드로 표시(문서 저장 시 반영). -->
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="wsEditPresentation">
+                                    <label class="form-check-label small" for="wsEditPresentation"><i class="mdi mdi-presentation"></i> 프레젠테이션</label>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -203,21 +208,6 @@ import Footer from '../components/Footer.astro';
                     <div class="mb-2">
                         <label class="form-label small mb-1" for="summaryInput">편집 요약 (선택)</label>
                         <input type="text" id="summaryInput" class="form-control form-control-sm" placeholder="변경 사항을 간단히..." autocomplete="off" maxlength="255">
-                    </div>
-
-                    <!-- 액션 버튼 -->
-                    <div class="d-flex flex-wrap gap-2 mb-2 align-items-center">
-                        <button type="button" class="btn btn-wiki btn-sm" id="wsEditSaveBtn" onclick="wsEditSave()">
-                            <i class="bi bi-check-lg"></i> 저장
-                        </button>
-                        <!-- 이미지 업로드는 에디터 툴바로 이관됨(위키 에디터와 동일). 파일 입력만 유지. -->
-                        <input type="file" id="wsEditMediaInput" accept="image/*" class="d-none">
-                        <button type="button" class="btn btn-wiki btn-wiki-danger btn-sm d-none" id="wsEditDeleteBtn" onclick="wsEditDelete()">
-                            <i class="bi bi-trash"></i> 삭제
-                        </button>
-                        <a href="#" id="wsEditCancel" class="btn btn-wiki-outline btn-sm ms-auto">
-                            <i class="bi bi-x-lg"></i> 취소
-                        </a>
                     </div>
 
                     <!-- 본문 에디터 — ws-edit.ts 가 #editor 안에 위키 에디터와 동일한
@@ -228,6 +218,19 @@ import Footer from '../components/Footer.astro';
                         <span data-counter="chars">0자</span>
                         <span data-counter="charsWithSpaces">0자(공백포함)</span>
                         <span data-counter="words">0단어</span>
+                    </div>
+
+                    <!-- 액션 버튼 (에디터 하단) -->
+                    <div class="edit-actions d-flex flex-wrap gap-2 mt-3 align-items-center">
+                        <button type="button" class="btn btn-wiki btn-sm" id="wsEditSaveBtn" onclick="wsEditSave()">
+                            <i class="bi bi-check-lg"></i> 저장
+                        </button>
+                        <button type="button" class="btn btn-wiki btn-wiki-danger btn-sm d-none" id="wsEditDeleteBtn" onclick="wsEditDelete()">
+                            <i class="bi bi-trash"></i> 삭제
+                        </button>
+                        <a href="#" id="wsEditCancel" class="btn btn-wiki-outline btn-sm ms-auto">
+                            <i class="bi bi-x-lg"></i> 취소
+                        </a>
                     </div>
 
                 </div>
@@ -310,7 +313,10 @@ import Footer from '../components/Footer.astro';
     <Fragment slot="scripts">
         <script type="module" src="/dist/common.js" is:inline></script>
         <script type="module" src="/dist/render.js" is:inline></script>
+        <!-- 프레젠테이션 슬라이드/보기 모드 프리뷰용 renderPresentation/teardownPresentation 제공 -->
+        <script type="module" src="/dist/render-presentation.js" is:inline></script>
         <script type="module" src="/dist/edit-utils.js" is:inline></script>
+        <script type="module" src="/dist/edit-modals.js" is:inline></script>
         <script type="module" src="/dist/edit-autocomplete.js" is:inline></script>
         <script type="module" src="/dist/edit-image.js" is:inline></script>
         <script type="module" src="/dist/edit-summary.js" is:inline></script>

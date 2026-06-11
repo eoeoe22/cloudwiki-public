@@ -203,6 +203,222 @@ export function makeFormatHelpers(view: any): FormatHelpers {
     return { wrapSelection, insertPrefix, insertOrWrapWikiBlock, insertText };
 }
 
+// ── 공유 툴바 빌더 ──
+// 위키 에디터(edit/main.ts)와 워크스페이스 에디터(pages/ws-edit.ts)가 동일한 본문
+// 삽입 버튼(포맷/구분선/인용/목록/그리드/표/링크/위키링크/틀/각주/펼치기·접기/
+// 인라인코드/코드블록)과 위키 전용 모달 버튼(타임스탬프/특수문자/아이콘/카드·구조·
+// 팔레트·배지/지도 등)을 갖도록 단일 소스에서 생성한다. 우측 정렬되는 보기 모드/
+// 설정 드롭다운은 각 에디터가 별도로 부착한다(setupTabSwitcher / main.ts 자체 구현).
+export interface SharedToolbarOpts {
+    /** 커서 위치에 raw 텍스트를 삽입한다(window.editor 셰임과 동일 동작이면 그쪽을 넘겨도 됨). */
+    insertText: (text: string) => void;
+    /** 이미지 버튼 동작. 'wiki-popup' 은 드래그앤드롭 + 기존 이미지 검색 팝업(위키),
+     *  'ws-upload' 는 워크스페이스 미디어 업로드 핸들러를 직접 호출한다.
+     *  'ws-upload' 모드에서만 handler 가 필요하다. */
+    imageButton: { mode: 'wiki-popup' } | { mode: 'ws-upload'; handler: () => void };
+    /** true 이면 위키 전용 모달 버튼(타임스탬프/특수문자/아이콘/카드·구조·팔레트·배지/지도)을
+     *  추가한다. 해당 버튼은 edit-modals.js 가 노출하는 window.* 함수에 의존한다. */
+    enableWikiModals: boolean;
+}
+
+export function buildSharedToolbar(
+    toolbar: HTMLElement,
+    view: any, // EditorView
+    opts: SharedToolbarOpts
+): void {
+    const w = window as any;
+    const { wrapSelection, insertPrefix, insertOrWrapWikiBlock } = makeFormatHelpers(view);
+    const insertText = opts.insertText;
+
+    // ── 포맷 ──
+    toolbar.appendChild(createToolbarBtn('<b>H</b>', '제목', () => insertPrefix('## ')));
+    toolbar.appendChild(createToolbarBtn('<b>B</b>', '굵게', () => wrapSelection('**', '**')));
+    toolbar.appendChild(createToolbarBtn('<i>I</i>', '기울임', () => wrapSelection('*', '*')));
+    toolbar.appendChild(createToolbarBtn('<s>S</s>', '취소선', () => wrapSelection('~~', '~~')));
+    toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-format-underline"></i>', '밑줄', () => wrapSelection('__', '__')));
+    toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-marker"></i>', '형광펜', () => wrapSelection('==', '==')));
+    toolbar.appendChild(createToolbarSep());
+    // ── 구분선/인용 ──
+    toolbar.appendChild(createToolbarBtn('─', '구분선', () => insertText('\n---\n')));
+    toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-format-quote-close"></i>', '인용', () => insertPrefix('> ')));
+    toolbar.appendChild(createToolbarSep());
+    // ── 목록 ──
+    toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-format-list-bulleted"></i>', '목록', () => insertPrefix('- ')));
+    toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-format-list-numbered"></i>', '번호 목록', () => insertPrefix('1. ')));
+    toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-checkbox-marked-outline"></i>', '체크리스트', () => insertPrefix('- [ ] ')));
+    toolbar.appendChild(createToolbarSep());
+    // ── 그리드/row ──
+    toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-view-grid-outline"></i>', '그리드', () => insertOrWrapWikiBlock('grid')));
+    toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-view-week-outline"></i>', 'row(가로 배치)', () => insertOrWrapWikiBlock('row')));
+    toolbar.appendChild(createToolbarSep());
+    // ── 표 ──
+    // setupTableInsertPopover(edit-modals.js)이 로드돼 있으면 팝오버를, 아니면 기본 스니펫을 삽입한다.
+    // edit-modals.js 는 위키 에디터와 워크스페이스 에디터 모두 로드하므로 enableWikiModals 와 무관하다.
+    const tableBtn = createToolbarBtn('<i class="mdi mdi-table"></i>', '표', () => { });
+    toolbar.appendChild(tableBtn);
+    if (typeof w.setupTableInsertPopover === 'function') {
+        w.setupTableInsertPopover(tableBtn);
+    } else {
+        tableBtn.addEventListener('click', () => insertText('\n| 머리글1 | 머리글2 |\n| --- | --- |\n| 셀1 | 셀2 |\n'));
+    }
+    toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-link-variant"></i>', '링크', () => wrapSelection('[', '](url)')));
+    toolbar.appendChild(createToolbarSep());
+
+    // ── 위키 문법 버튼(모달 비의존) ──
+    toolbar.appendChild(createToolbarBtn('[[ ]]', '위키 링크 삽입', () => insertText('[[문서제목]]')));
+    toolbar.appendChild(createToolbarBtn('{{ }}', '틀 삽입', () => insertText('{{틀제목}}')));
+    toolbar.appendChild(createToolbarBtn('[*]', '각주 삽입', () => insertText('[* 각주 내용]')));
+    toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-form-dropdown"></i>', '펼치기 접기', () => insertText('[+ 펼치기/접기 제목]\n여기에 숨겨진 내용이 들어갑니다.\n[-]')));
+
+    // ── edit-modals.js 에 의존하되 API 독립적인 버튼(위키·워크스페이스 공용) ──
+    // window.* 함수가 아직 로드되지 않은 경우 optional chain 으로 no-op 처리한다.
+    toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-calendar-clock"></i>', '타임스탬프 삽입', () => w.openTimestampInsertModal?.()));
+    toolbar.appendChild(createToolbarSep());
+    const specialCharBtn = createToolbarBtn('<span class="cm-toolbar-omega">Ω</span>', '특수문자 삽입', () => { });
+    toolbar.appendChild(specialCharBtn);
+    if (typeof w.setupSpecialCharPicker === 'function') w.setupSpecialCharPicker(specialCharBtn);
+    toolbar.appendChild(createToolbarSep());
+    if (w.selectedIconsOnly) {
+        toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-vector-square"></i>', '아이콘 삽입', () => w.openSelectedIconsPicker?.()));
+    } else {
+        toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-vector-square"></i>', 'MDI 아이콘', () => w.openIconPicker?.('mdi')));
+        toolbar.appendChild(createToolbarBtn('<i class="bi bi-bootstrap-fill"></i>', 'Bootstrap 아이콘', () => w.openIconPicker?.('bi')));
+    }
+    toolbar.appendChild(createToolbarSep());
+    toolbar.appendChild(createToolbarBtn('<i class="bi bi-card-heading"></i>', '카드 블록', () => w.openCardInsertModal?.()));
+    toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-view-dashboard-outline"></i>', '탭 / 아코디언 / 진행상황', () => w.openStructureBlockInsertModal?.()));
+    toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-palette-outline"></i>', '색상 삽입', () => w.openPaletteColorModal?.()));
+    toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-label-outline"></i>', '배지', () => w.openBadgeInsertModal?.()));
+
+    // ── 위키 전용 버튼(워크스페이스 문서 목록 / 검색 API 의존) ──
+    if (opts.enableWikiModals) {
+        toolbar.appendChild(createToolbarBtn('<i class="bi bi-diagram-3-fill"></i>', '하위 문서', () => w.openSubdocInsertModal?.()));
+    }
+    toolbar.appendChild(createToolbarSep());
+    // ── 코드 ──
+    toolbar.appendChild(createToolbarBtn('<code>&lt;/&gt;</code>', '인라인 코드', () => wrapSelection('`', '`')));
+    toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-code-braces"></i>', '코드 블록', () => wrapSelection('\n```\n', '\n```\n')));
+
+    toolbar.appendChild(createToolbarSep());
+    toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-google-maps"></i>', '구글 지도 삽입', () => w.openGoogleMapsEmbedModal?.()));
+
+    // ── 이미지 ──
+    toolbar.appendChild(createToolbarSep());
+    const imgBtn = opts.imageButton;
+    if (imgBtn.mode === 'wiki-popup') {
+        buildImageUploadPopupButton(toolbar, insertText);
+    } else {
+        const btn = createToolbarBtn('<i class="mdi mdi-image-plus"></i>', '이미지 업로드', () => imgBtn.handler());
+        btn.id = 'wsEditMediaBtn';
+        toolbar.appendChild(btn);
+    }
+}
+
+// 위키 에디터용 이미지 업로드 버튼 + 드래그앤드롭/기존 이미지 검색 팝업.
+// window.handleImageUpload / window.openExistingImageSearch(edit-modals.js)에 의존한다.
+function buildImageUploadPopupButton(toolbar: HTMLElement, insertText: (text: string) => void): void {
+    const w = window as any;
+    const imageUploadBtn = createToolbarBtn('<i class="mdi mdi-image-plus"></i>', '이미지 업로드', () => { });
+    toolbar.appendChild(imageUploadBtn);
+
+    const insertImage = (url: string, alt: string, size?: string) => {
+        let insertTxt = `![${alt}](${url})`;
+        if (size && size !== 'full') insertTxt += `{size:${size}}`;
+        insertTxt += '\n';
+        insertText(insertTxt);
+    };
+
+    const imgUploadPopup = document.createElement('div');
+    imgUploadPopup.className = 'img-upload-popup';
+    imgUploadPopup.innerHTML = `
+        <div class="img-upload-dropzone">
+            <i class="mdi mdi-cloud-upload-outline"></i>
+            <div class="drop-main-text">이미지를 여기에 드래그하세요</div>
+            <div class="drop-sub-text">또는 클릭하여 파일 선택</div>
+        </div>
+        <button type="button" class="img-upload-search-btn">
+            <i class="mdi mdi-magnify"></i> 기존 이미지 검색
+        </button>
+    `;
+    document.body.appendChild(imgUploadPopup);
+
+    const imgDropzone = imgUploadPopup.querySelector('.img-upload-dropzone') as HTMLElement;
+    const imgSearchBtn = imgUploadPopup.querySelector('.img-upload-search-btn') as HTMLElement;
+
+    imgSearchBtn.addEventListener('click', async () => {
+        imgUploadPopup.classList.remove('active');
+        await w.openExistingImageSearch?.((url: string, alt: string, size: string) => insertImage(url, alt, size));
+    });
+
+    const imgFileInput = document.createElement('input');
+    imgFileInput.type = 'file';
+    imgFileInput.accept = 'image/jpeg,image/png,image/gif,image/webp,image/svg+xml';
+    imgFileInput.style.display = 'none';
+    imgUploadPopup.appendChild(imgFileInput);
+
+    imageUploadBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const isActive = imgUploadPopup.classList.contains('active');
+        imgUploadPopup.classList.toggle('active');
+        if (!isActive) {
+            const rect = imageUploadBtn.getBoundingClientRect();
+            const popupW = imgUploadPopup.offsetWidth;
+            const popupH = imgUploadPopup.offsetHeight;
+            const viewportW = document.documentElement.clientWidth;
+            const viewportH = document.documentElement.clientHeight;
+            const margin = 8;
+            const triggerCenterX = rect.left + (rect.width / 2);
+
+            let left = triggerCenterX - (popupW / 2);
+            left = Math.max(margin, Math.min(left, viewportW - popupW - margin));
+
+            let top = rect.bottom + 6;
+            if (top + popupH + margin > viewportH && rect.top - popupH - 6 >= margin) {
+                top = rect.top - popupH - 6;
+            }
+            top = Math.max(margin, Math.min(top, viewportH - popupH - margin));
+
+            imgUploadPopup.style.left = (left + window.scrollX) + 'px';
+            imgUploadPopup.style.top = (top + window.scrollY) + 'px';
+        }
+    });
+
+    document.addEventListener('click', (e) => {
+        if (!imgUploadPopup.contains(e.target as Node) && !imageUploadBtn.contains(e.target as Node)) {
+            imgUploadPopup.classList.remove('active');
+        }
+    });
+
+    imgDropzone.addEventListener('click', () => { imgFileInput.click(); });
+
+    imgFileInput.addEventListener('change', async (e) => {
+        const file = (e.target as HTMLInputElement).files?.[0];
+        if (!file) return;
+        imgUploadPopup.classList.remove('active');
+        await w.handleImageUpload?.(file, (url: string, alt: string, size: string) => insertImage(url, alt, size));
+        imgFileInput.value = '';
+    });
+
+    imgDropzone.addEventListener('dragenter', (e) => { e.preventDefault(); imgDropzone.classList.add('dragover'); });
+    imgDropzone.addEventListener('dragover', (e) => { e.preventDefault(); (e as DragEvent).dataTransfer!.dropEffect = 'copy'; });
+    imgDropzone.addEventListener('dragleave', (e) => { e.preventDefault(); imgDropzone.classList.remove('dragover'); });
+    imgDropzone.addEventListener('drop', async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        imgDropzone.classList.remove('dragover');
+        const files = (e as DragEvent).dataTransfer?.files;
+        if (!files || files.length === 0) return;
+        const file = files[0];
+        const acceptTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml'];
+        if (!acceptTypes.includes(file.type)) {
+            w.Swal?.fire('오류', '지원하지 않는 파일 형식입니다.', 'warning');
+            return;
+        }
+        imgUploadPopup.classList.remove('active');
+        await w.handleImageUpload?.(file, (url: string, alt: string, size: string) => insertImage(url, alt, size));
+    });
+}
+
 // ── 에디터 레이아웃 HTML (전폭 툴바 + 좌우 분할 + 모바일 탭) ──
 // 위키 에디터와 워크스페이스 에디터가 동일한 .wiki-editor-layout 구조/CSS 를 공유한다.
 // CM 마운트 지점은 #cm-editor, 프리뷰 컨테이너는 #custom-wiki-preview(.wiki-content) 이다.

@@ -63,8 +63,22 @@ declare global {
         openExistingImageSearch?: (callback: ImageInsertCallback) => Promise<void>;
         /** 이미지 업로드 처리 — edit.js 의 파일 input / 드롭 핸들러가 호출 */
         handleImageUpload?: (blob: File | Blob | null, callback: ImageInsertCallback) => Promise<void>;
+        /** 미디어 엔드포인트 및 검색 동작을 워크스페이스 등 컨텍스트별로 재설정 */
+        configureImageUpload?: (opts: {
+            uploadUrl?: string;
+            searchFetcher?: ((q: string, tags: string[], limit: number, offset: number) => Promise<{ total: number; items: MediaItem[] }>) | null;
+        }) => void;
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 미디어 컨텍스트 설정 (워크스페이스 등 커스텀 엔드포인트 지원)
+// ─────────────────────────────────────────────────────────────────────────────
+
+type SearchFetcher = (q: string, tags: string[], limit: number, offset: number) => Promise<{ total: number; items: MediaItem[] }>;
+
+let _uploadUrl: string = '/api/media';
+let _searchFetcher: SearchFetcher | null = null;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HTML 이스케이프 (이미지 검색 결과 안전 출력)
@@ -98,6 +112,16 @@ async function openExistingImageSearch(callback: ImageInsertCallback): Promise<v
 
     let pickedItem: MediaItem | null = null;
 
+    const tagFilterHtml = _searchFetcher ? '' : `
+                <div class="existing-img-tag-filter" style="margin-top:8px;">
+                    <label style="display:block; font-size:0.82rem; color:var(--wiki-text-muted,#888); margin-bottom:4px; text-align:left;">
+                        <i class="mdi mdi-tag-multiple-outline"></i> 태그 검색
+                    </label>
+                    <div class="category-tag-container" id="existingImgTagContainer" style="max-width:100%;">
+                        <input type="text" id="existingImgTagInput" class="category-tag-input" placeholder="(엔터/쉼표로 추가)">
+                    </div>
+                </div>`;
+
     await Swal.fire({
         title: '기존 이미지 검색',
         width: 720,
@@ -113,14 +137,7 @@ async function openExistingImageSearch(callback: ImageInsertCallback): Promise<v
                         <i class="mdi mdi-magnify"></i>
                     </button>
                 </div>
-                <div class="existing-img-tag-filter" style="margin-top:8px;">
-                    <label style="display:block; font-size:0.82rem; color:var(--wiki-text-muted,#888); margin-bottom:4px; text-align:left;">
-                        <i class="mdi mdi-tag-multiple-outline"></i> 태그 검색
-                    </label>
-                    <div class="category-tag-container" id="existingImgTagContainer" style="max-width:100%;">
-                        <input type="text" id="existingImgTagInput" class="category-tag-input" placeholder="(엔터/쉼표로 추가)">
-                    </div>
-                </div>
+                ${tagFilterHtml}
                 <div id="existingImgSearchInfo" class="existing-img-search-info"></div>
                 <div id="existingImgSearchGrid" class="existing-img-search-grid"></div>
                 <div id="existingImgSearchMore" class="existing-img-search-more" style="display:none;">
@@ -134,9 +151,7 @@ async function openExistingImageSearch(callback: ImageInsertCallback): Promise<v
             const input = document.getElementById('existingImgSearchInput') as HTMLInputElement | null;
             const searchBtn = document.getElementById('existingImgSearchBtn');
             const moreBtn = document.getElementById('existingImgMoreBtn');
-            const tagContainer = document.getElementById('existingImgTagContainer');
-            const tagInput = document.getElementById('existingImgTagInput') as HTMLInputElement | null;
-            if (!input || !searchBtn || !moreBtn || !tagContainer || !tagInput) return;
+            if (!input || !searchBtn || !moreBtn) return;
 
             const doSearch = (reset: boolean): void => {
                 if (reset) {
@@ -149,14 +164,16 @@ async function openExistingImageSearch(callback: ImageInsertCallback): Promise<v
                 void loadPage();
             };
 
-            const mount = window.mountMediaTagInput;
-            if (mount) {
-                tagWidget = mount({
-                    container: tagContainer,
-                    input: tagInput,
-                    initial: [],
-                });
-                tagWidget.setOnChange(() => doSearch(true));
+            if (!_searchFetcher) {
+                const tagContainer = document.getElementById('existingImgTagContainer');
+                const tagInput = document.getElementById('existingImgTagInput') as HTMLInputElement | null;
+                if (tagContainer && tagInput) {
+                    const mount = window.mountMediaTagInput;
+                    if (mount) {
+                        tagWidget = mount({ container: tagContainer, input: tagInput, initial: [] });
+                        tagWidget.setOnChange(() => doSearch(true));
+                    }
+                }
             }
 
             searchBtn.addEventListener('click', () => doSearch(true));
@@ -174,30 +191,44 @@ async function openExistingImageSearch(callback: ImageInsertCallback): Promise<v
     async function loadPage(): Promise<void> {
         if (loading || finished) return;
         loading = true;
+        // 로딩 시작 시점의 검색 조건을 스냅샷 — 비동기 대기 중 doSearch 가 조건을 바꿔도 올바른 값으로 요청한다.
+        const querySnapshot = currentQuery;
+        const tagsSnapshot = currentTags.slice();
+        const offsetSnapshot = offset;
         const grid = document.getElementById('existingImgSearchGrid');
         const info = document.getElementById('existingImgSearchInfo');
         const moreWrap = document.getElementById('existingImgSearchMore') as HTMLElement | null;
         if (!grid || !info || !moreWrap) { loading = false; return; }
 
-        if (offset === 0) {
+        if (offsetSnapshot === 0) {
             grid.innerHTML = '<div class="existing-img-search-empty">' + window.uiInlineLoading() + '</div>';
         }
         try {
-            const params = new URLSearchParams();
-            if (currentQuery) params.set('q', currentQuery);
-            if (currentTags && currentTags.length > 0) params.set('tags', currentTags.join(','));
-            params.set('limit', String(limit));
-            params.set('offset', String(offset));
-
-            const res = await fetch(`/api/media/search?${params.toString()}`);
-            if (!res.ok) {
-                const data = await res.json().catch(() => ({})) as MediaSearchResponse;
-                throw new Error(data.error || '검색 실패');
+            let resultTotal: number;
+            let fetched: MediaItem[];
+            if (_searchFetcher) {
+                const result = await _searchFetcher(querySnapshot, tagsSnapshot, limit, offsetSnapshot);
+                resultTotal = result.total || 0;
+                fetched = result.items || [];
+            } else {
+                const params = new URLSearchParams();
+                if (querySnapshot) params.set('q', querySnapshot);
+                if (tagsSnapshot && tagsSnapshot.length > 0) params.set('tags', tagsSnapshot.join(','));
+                params.set('limit', String(limit));
+                params.set('offset', String(offsetSnapshot));
+                const res = await fetch(`/api/media/search?${params.toString()}`);
+                if (!res.ok) {
+                    const data = await res.json().catch(() => ({})) as MediaSearchResponse;
+                    throw new Error(data.error || '검색 실패');
+                }
+                const data = await res.json() as MediaSearchResponse;
+                resultTotal = data.total || 0;
+                fetched = data.items || [];
             }
-            const data = await res.json() as MediaSearchResponse;
-            total = data.total || 0;
-            const fetched = data.items || [];
-            if (offset === 0) items = [];
+            // 로딩 중 새 검색이 제출된 경우 결과를 버리고 새 요청에 위임한다.
+            if (currentQuery !== querySnapshot) return;
+            total = resultTotal;
+            if (offsetSnapshot === 0) items = [];
             items = items.concat(fetched);
             offset += fetched.length;
             if (fetched.length < limit || items.length >= total) finished = true;
@@ -212,6 +243,8 @@ async function openExistingImageSearch(callback: ImageInsertCallback): Promise<v
             grid.innerHTML = `<div class="existing-img-search-empty text-danger">${escapeHtml(msg)}</div>`;
         } finally {
             loading = false;
+            // 로딩 중 새 검색이 제출됐으면 이제 실행한다.
+            if (currentQuery !== querySnapshot) void loadPage();
         }
     }
 
@@ -368,6 +401,14 @@ async function handleImageUpload(
         '<code>[</code> <code>]</code> <code>(</code> <code>)</code> <code>#</code> <code>%</code> <code>|</code> ' +
         '<code>&lt;</code> <code>&gt;</code> <code>^</code> <code>/</code> <code>\\</code> <code>.</code> <code>?</code> 는 사용할 수 없습니다.';
 
+    const showTags = !_searchFetcher;
+    const tagSectionHtml = showTags ? `
+                <label class="form-label fw-bold" style="display:block; margin-bottom:4px;">태그 (선택)</label>
+                <div class="category-tag-container" id="uploadTagContainer" style="max-width:100%;">
+                    <input type="text" id="uploadTagInput" class="category-tag-input" placeholder="태그 입력 후 엔터나 쉼표">
+                </div>
+                <div class="form-text text-muted" style="margin-top:4px; font-size:0.82rem;">한글/영문/숫자/공백/_/./- 만 사용 가능 · 최대 20개</div>` : '';
+
     let tagWidget: MediaTagWidget | null = null;
     const result = await (Swal?.fire<{ filename: string; tags: string[] }>({
         title: '이미지 업로드',
@@ -376,11 +417,7 @@ async function handleImageUpload(
                 <label for="uploadFilenameInput" class="form-label fw-bold" style="display:block; margin-bottom:4px;">파일명 (확장자 제외)</label>
                 <input type="text" id="uploadFilenameInput" class="swal2-input" style="margin:0; width:100%;" placeholder="파일명을 입력하세요" value="${nameDefaultAttr}" maxlength="120">
                 <div id="uploadFilenameFeedback" class="form-text text-muted" style="margin:4px 0 14px 0; font-size:0.82rem; min-height:1.2em;">${FILENAME_HELP_DEFAULT}</div>
-                <label class="form-label fw-bold" style="display:block; margin-bottom:4px;">태그 (선택)</label>
-                <div class="category-tag-container" id="uploadTagContainer" style="max-width:100%;">
-                    <input type="text" id="uploadTagInput" class="category-tag-input" placeholder="태그 입력 후 엔터나 쉼표">
-                </div>
-                <div class="form-text text-muted" style="margin-top:4px; font-size:0.82rem;">한글/영문/숫자/공백/_/./- 만 사용 가능 · 최대 20개</div>
+                ${tagSectionHtml}
             </div>
         `,
         showCancelButton: true,
@@ -390,9 +427,7 @@ async function handleImageUpload(
         didOpen: () => {
             const fnInput = document.getElementById('uploadFilenameInput') as HTMLInputElement | null;
             const fnFeedback = document.getElementById('uploadFilenameFeedback');
-            const tagContainer = document.getElementById('uploadTagContainer');
-            const tagInput = document.getElementById('uploadTagInput') as HTMLInputElement | null;
-            if (!fnInput || !tagContainer || !tagInput) return;
+            if (!fnInput) return;
             fnInput.focus();
             fnInput.select();
 
@@ -421,13 +456,13 @@ async function handleImageUpload(
             fnInput.addEventListener('input', updateFnFeedback);
             updateFnFeedback();
 
-            const mount = window.mountMediaTagInput;
-            if (mount) {
-                tagWidget = mount({
-                    container: tagContainer,
-                    input: tagInput,
-                    initial: [],
-                });
+            if (showTags) {
+                const tagContainer = document.getElementById('uploadTagContainer');
+                const tagInput = document.getElementById('uploadTagInput') as HTMLInputElement | null;
+                const mount = window.mountMediaTagInput;
+                if (mount && tagContainer && tagInput) {
+                    tagWidget = mount({ container: tagContainer, input: tagInput, initial: [] });
+                }
             }
         },
         willClose: () => { if (tagWidget) tagWidget.destroy(); },
@@ -455,8 +490,9 @@ async function handleImageUpload(
     }
 
     try {
-        const res = await fetch('/api/media', {
+        const res = await fetch(_uploadUrl, {
             method: 'POST',
+            credentials: 'same-origin',
             body: formData,
         });
 
@@ -829,5 +865,9 @@ const ImageEditor = (() => {
 
 window.openExistingImageSearch = openExistingImageSearch;
 window.handleImageUpload = handleImageUpload;
+window.configureImageUpload = (opts) => {
+    if (opts.uploadUrl !== undefined) _uploadUrl = opts.uploadUrl;
+    if (opts.searchFetcher !== undefined) _searchFetcher = opts.searchFetcher;
+};
 
 console.log('[edit/image] module loaded');

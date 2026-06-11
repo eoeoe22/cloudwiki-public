@@ -35,6 +35,12 @@ import Footer from '../components/Footer.astro';
 
                 <!-- 본문 (로드 후 표시) -->
                 <div id="wsContent" class="d-none">
+                    <!-- 받은 초대 (대기중일 때만 표시) -->
+                    <section id="invitesSection" class="mb-4 d-none">
+                        <h5 class="mb-2"><i class="bi bi-envelope-paper"></i> 받은 초대</h5>
+                        <div id="invitesList" class="row g-3"></div>
+                    </section>
+
                     <section class="mb-4">
                         <h5 class="mb-2"><i class="bi bi-person-badge"></i> 소유한 워크스페이스</h5>
                         <div id="ownedList" class="row g-3"></div>

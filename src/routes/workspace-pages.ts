@@ -15,9 +15,17 @@ import {
     SLUG_FORBIDDEN_CHARS,
     TITLE_FORBIDDEN_CHARS,
     TITLE_MAX_LENGTH,
-    ALLOWED_VIEW_MODES,
     normalizeTitleInput,
 } from './wiki';
+import { mergeEditSummary } from '../utils/editSummary';
+
+/**
+ * 워크스페이스 문서의 doc_type(본문 표시 유형) 화이트리스트.
+ * 빈 문자열/null 은 NULL(일반 문서). 'presentation' 은 슬라이드 덱(프레젠테이션).
+ * 프레젠테이션 모드는 워크스페이스 전용 — 전역 위키 문서에는 존재하지 않는다.
+ * 추후 다른 표시 유형(칸반/타임라인 등)을 추가하려면 이 집합에 값을 더한다.
+ */
+export const ALLOWED_DOC_TYPES = new Set<string>(['presentation']);
 
 /**
  * 워크스페이스 문서 API (/api/ws/:wslug/pages...).
@@ -138,8 +146,11 @@ wsPages.get('/api/ws/:wslug/pages', async (c) => {
 // ============================================================
 
 /**
- * GET /api/ws/:wslug/pages/:slug{.+}/revisions — 리비전 목록 (최신순, 최대 50).
- * 멤버(canRead) 또는 ws_public=1 문서.
+ * GET /api/ws/:wslug/pages/:slug{.+}/revisions — 리비전 목록 (최신순, 페이지네이션).
+ * Query: offset (기본 0), limit (기본 10, 최대 50). 전역 위키 /w/:slug/revisions 와 동일한
+ * 응답 형태(`{ revisions, total, last_revision_id }`)를 돌려줘 리비전 페이지 클라이언트를 공유한다.
+ * 멤버(canRead) 또는 ws_public=1 문서. 워크스페이스는 리비전 소프트/하드 삭제 개념이 없으므로
+ * is_admin_view/can_hard_delete 는 노출하지 않는다.
  */
 wsPages.get('/api/ws/:wslug/pages/:slug{.+}/revisions', async (c) => {
     const { workspace, access } = await resolveWs(c);
@@ -149,18 +160,38 @@ wsPages.get('/api/ws/:wslug/pages/:slug{.+}/revisions', async (c) => {
     if (!page) return c.json({ error: '문서를 찾을 수 없습니다.' }, 404);
     if (!access.canRead && page.ws_public !== 1) return denyRead(c);
 
-    const rows = await c.env.DB
-        .prepare(
+    // 비정상 입력(?offset=abc 등)은 parseInt → NaN 이 LIMIT/OFFSET 바인딩으로 흘러 D1 500 을 유발하므로
+    // Number.isFinite 로 검증 후 기본값(offset 0, limit 10)으로 폴백한다.
+    const offsetRaw = parseInt(c.req.query('offset') || '0', 10);
+    const limitRaw = parseInt(c.req.query('limit') || '10', 10);
+    const offset = Number.isFinite(offsetRaw) ? Math.max(0, offsetRaw) : 0;
+    const limit = Number.isFinite(limitRaw) ? Math.min(50, Math.max(1, limitRaw)) : 10;
+
+    const [countResult, listResult] = await c.env.DB.batch([
+        c.env.DB.prepare('SELECT COUNT(*) as total FROM workspace_revisions WHERE page_id = ? AND deleted_at IS NULL').bind(page.id),
+        c.env.DB.prepare(
             `SELECT r.id, r.page_version, r.summary, r.author_id, u.name AS author_name, r.created_at
              FROM workspace_revisions r
              LEFT JOIN users u ON u.id = r.author_id
              WHERE r.page_id = ? AND r.deleted_at IS NULL
              ORDER BY r.page_version DESC, r.id DESC
-             LIMIT 50`
-        )
-        .bind(page.id)
-        .all();
-    return c.json(safeJSON({ slug: page.slug, version: page.version, revisions: rows.results || [] }));
+             LIMIT ? OFFSET ?`
+        ).bind(page.id, limit, offset),
+    ]);
+
+    const rawTotal = (countResult.results[0] as any)?.total;
+    const parsedTotal = Number(rawTotal);
+    const total = Number.isFinite(parsedTotal) ? parsedTotal : 0;
+
+    return c.json(safeJSON({
+        slug: page.slug,
+        version: page.version,
+        revisions: listResult.results || [],
+        total,
+        last_revision_id: page.last_revision_id ?? null,
+        // 되돌리기 버튼 노출 게이팅용 — 되돌리기 엔드포인트는 canWrite 를 요구한다.
+        can_write: access.canWrite,
+    }));
 });
 
 /**
@@ -459,6 +490,67 @@ wsPages.get('/api/ws/:wslug/revisions/:id', async (c) => {
     }));
 });
 
+/**
+ * GET /api/ws/:wslug/revisions/:id/diff — 지정 리비전과 직전 리비전 본문 비교용 반환.
+ * 전역 위키 /w/:slug/revisions/:id/diff 와 동일한 응답 형태로, 리비전 페이지의 비교(diff) 모달이
+ * 같은 클라이언트 경로를 공유한다. 멤버(canRead) 또는 해당 문서가 ws_public=1 인 경우 허용.
+ */
+wsPages.get('/api/ws/:wslug/revisions/:id/diff', async (c) => {
+    const { workspace, access } = await resolveWs(c);
+    if (!workspace) return c.json({ error: '워크스페이스를 찾을 수 없습니다.' }, 404);
+    const revisionId = Number(c.req.param('id'));
+    if (!Number.isInteger(revisionId) || revisionId <= 0) {
+        return c.json({ error: '리비전을 찾을 수 없습니다.' }, 404);
+    }
+
+    const rev = await c.env.DB
+        .prepare(
+            `SELECT r.id, r.page_id, r.page_version, r.content, r.r2_key, r.deleted_at, r.purged_at,
+                    p.workspace_id, p.ws_public, p.deleted_at AS page_deleted_at
+             FROM workspace_revisions r
+             JOIN workspace_pages p ON p.id = r.page_id
+             WHERE r.id = ?`
+        )
+        .bind(revisionId)
+        .first<{
+            id: number; page_id: number; page_version: number | null; content: string; r2_key: string | null;
+            deleted_at: number | null; purged_at: number | null;
+            workspace_id: number; ws_public: number; page_deleted_at: number | null;
+        }>();
+    if (!rev || rev.workspace_id !== workspace.id || rev.deleted_at) {
+        return c.json({ error: '리비전을 찾을 수 없습니다.' }, 404);
+    }
+    const publicReadable = rev.ws_public === 1 && rev.page_deleted_at === null;
+    if (!access.canRead && !publicReadable) return denyRead(c);
+
+    // 직전 리비전(같은 문서, 더 낮은 id 중 최신).
+    const prevRev = await c.env.DB
+        .prepare(
+            `SELECT id, page_version, content, r2_key, purged_at FROM workspace_revisions
+             WHERE page_id = ? AND id < ? AND deleted_at IS NULL
+             ORDER BY id DESC LIMIT 1`
+        )
+        .bind(rev.page_id, revisionId)
+        .first<{ id: number; page_version: number | null; content: string; r2_key: string | null; purged_at: number | null }>();
+
+    const origin = new URL(c.req.url).origin;
+    const fetchContent = (r: { content: string; r2_key: string | null; purged_at: number | null }) =>
+        r.purged_at ? Promise.resolve('') : getRevisionContent(c.env.MEDIA, { content: r.content, r2_key: r.r2_key }, origin);
+    const [newContent, oldContent] = await Promise.all([
+        fetchContent(rev),
+        prevRev ? fetchContent(prevRev) : Promise.resolve(''),
+    ]);
+
+    return c.json(safeJSON({
+        old_content: oldContent,
+        new_content: newContent,
+        old_revision_id: prevRev?.id ?? null,
+        new_revision_id: rev.id,
+        old_page_version: prevRev?.page_version ?? null,
+        new_page_version: rev.page_version ?? null,
+    }));
+});
+
 // ============================================================
 // 문서 단건 CRUD (일반 :slug{.+} — suffix 경로들 뒤에 등록)
 // ============================================================
@@ -479,13 +571,14 @@ wsPages.get('/api/ws/:wslug/pages/:slug{.+}', async (c) => {
     return c.json(safeJSON({
         ...page,
         can_write: access.canWrite,
+        can_read: access.canRead,
     }));
 });
 
 /**
  * PUT /api/ws/:wslug/pages/:slug{.+} — 문서 생성/수정 (canWrite).
- * body: { content (필수), summary?, title?, redirect_to?, view_mode?, ws_public?, expected_version? }
- * title/redirect_to/view_mode/ws_public 은 본문에 키가 없으면 기존 값 유지.
+ * body: { content (필수), summary?, title?, redirect_to?, doc_type?, ws_public?, expected_version? }
+ * title/redirect_to/doc_type/ws_public 은 본문에 키가 없으면 기존 값 유지.
  * expected_version 불일치 / 슬러그 경합 → 409 (code: CONCURRENT_MODIFICATION / SLUG_TAKEN).
  */
 wsPages.put('/api/ws/:wslug/pages/:slug{.+}', requireAuth, async (c) => {
@@ -507,8 +600,13 @@ wsPages.put('/api/ws/:wslug/pages/:slug{.+}', requireAuth, async (c) => {
     }
     const content = body.content.replace(/\r\n?/g, '\n');
 
-    // summary
-    const summary = typeof body.summary === 'string' && body.summary.trim() ? body.summary.trim() : null;
+    // summary: 사용자 입력분(body.summary)과 자동요약분(body.auto_summary)을 분리 전송받아
+    // "<사용자입력> / <자동요약>" 으로 병합한다(위키 직접 저장과 동일 규칙). 사용자 입력분만 255자
+    // 제한, 자동요약분은 제한 없음, 최종 병합 결과는 SUMMARY_DB_MAX 에서 잘라낸다.
+    const summary = mergeEditSummary(
+        typeof body.summary === 'string' ? body.summary : null,
+        typeof body.auto_summary === 'string' ? body.auto_summary : null,
+    );
 
     // title: 키 부재 = 유지(undefined). null/빈 문자열 = 제거. 문자열 = 설정.
     let title: string | null | undefined = undefined;
@@ -539,15 +637,15 @@ wsPages.put('/api/ws/:wslug/pages/:slug{.+}', requireAuth, async (c) => {
         }
     }
 
-    // view_mode: 키 부재 = 유지. null/빈 문자열 = NULL(일반 본문). 그 외 ALLOWED_VIEW_MODES 화이트리스트.
-    let viewMode: string | null | undefined = undefined;
-    if ('view_mode' in body) {
-        if (body.view_mode === null || body.view_mode === '') {
-            viewMode = null;
-        } else if (typeof body.view_mode === 'string' && ALLOWED_VIEW_MODES.has(body.view_mode)) {
-            viewMode = body.view_mode;
+    // doc_type: 키 부재 = 유지. null/빈 문자열 = NULL(일반 문서). 그 외 ALLOWED_DOC_TYPES 화이트리스트.
+    let docType: string | null | undefined = undefined;
+    if ('doc_type' in body) {
+        if (body.doc_type === null || body.doc_type === '') {
+            docType = null;
+        } else if (typeof body.doc_type === 'string' && ALLOWED_DOC_TYPES.has(body.doc_type)) {
+            docType = body.doc_type;
         } else {
-            return c.json({ error: '유효하지 않은 view_mode 입니다.' }, 400);
+            return c.json({ error: '유효하지 않은 doc_type 입니다.' }, 400);
         }
     }
 
@@ -579,7 +677,7 @@ wsPages.put('/api/ws/:wslug/pages/:slug{.+}', requireAuth, async (c) => {
             summary,
             title,
             redirectTo,
-            viewMode,
+            docType,
             wsPublic,
             expectedVersion,
         });

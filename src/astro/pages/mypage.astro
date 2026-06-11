@@ -640,24 +640,10 @@ import Footer from '../components/Footer.astro';
                 <div class="profile-section" id="wsMcpSection" style="display:none;">
                     <h4><i class="mdi mdi-folder-network-outline"></i> 워크스페이스 MCP</h4>
                     <small class="text-muted d-block mb-3">
-                        개인 워크스페이스에 MCP로 연결합니다. 위키 MCP와 동일한 인증 토큰(OAuth 또는 API 키)을 사용합니다.
+                        각 워크스페이스마다 고유한 MCP 엔드포인트가 있습니다. 위키 MCP와 동일한 인증 토큰(OAuth 또는 API 키)을 사용합니다.
                     </small>
 
-                    <!-- 엔드포인트 -->
-                    <div class="p-3 rounded mb-3" style="background: var(--wiki-toc-bg); border: 1px solid var(--wiki-border);">
-                        <div class="d-flex align-items-center gap-2 flex-wrap mb-1">
-                            <code class="flex-grow-1" id="wsMcpEndpointUrl" style="word-break: break-all; color: var(--wiki-primary); background: transparent; padding: 0;"></code>
-                            <button class="btn btn-sm btn-wiki-outline flex-shrink-0" onclick="copyWsMcpEndpoint()">
-                                <i class="mdi mdi-content-copy"></i> 복사
-                            </button>
-                        </div>
-                        <small class="text-muted">
-                            도구 인자의 <code>workspace</code> 파라미터에 워크스페이스의 slug(식별자)를 지정해 특정 워크스페이스에 접근합니다.
-                        </small>
-                    </div>
-
-                    <!-- 워크스페이스 목록 -->
-                    <h5 class="mb-2 fs-6 fw-semibold"><i class="mdi mdi-folder-multiple"></i> 내 워크스페이스</h5>
+                    <!-- 워크스페이스 목록 (엔드포인트 포함) -->
                     <div id="wsMcpWorkspacesList">
                         <div class="text-center text-muted py-2">불러오는 중...</div>
                     </div>

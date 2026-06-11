@@ -54,8 +54,6 @@ export interface Page {
     characters: number | null;
     // 편집 ACL (JSON). NULL=비활성. 형식: {"flags":["aged"|"page_editor"|"any_editor"|"admin_only"]} (AND 평가)
     edit_acl: string | null;
-    // 문서별 본문 보기 모드(전역 LAYOUT_MODE 와 별개). NULL = 일반 본문. 'presentation' = 슬라이드 뷰.
-    view_mode: string | null;
 }
 
 export interface Revision {
@@ -184,6 +182,8 @@ export interface WorkspaceMember {
     workspace_id: number;
     user_id: number;
     role: 'editor' | 'viewer';
+    // 초대-수락 모델: 'pending' = 초대됐으나 수락 전(권한 없음), 'active' = 수락한 정식 멤버.
+    status: 'pending' | 'active';
     created_at: number;
 }
 
@@ -201,8 +201,8 @@ export interface WorkspacePage {
     redirect_to: string | null;
     rows: number | null;
     characters: number | null;
-    // 문서별 본문 보기 모드. NULL = 일반 본문. (전역 pages.view_mode 와 동일 시맨틱)
-    view_mode: string | null;
+    // 문서별 본문 표시 유형. NULL = 일반 문서. 'presentation' = 슬라이드 덱(프레젠테이션, 워크스페이스 전용).
+    doc_type: string | null;
     // 1 이면 비멤버/게스트에게도 이 문서 읽기 허용 (라우트 레이어에서 적용)
     ws_public: number;
 }

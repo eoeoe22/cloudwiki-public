@@ -23,7 +23,6 @@ import ArticleFloatingTools from '../components/ArticleFloatingTools.astro';
         <link rel="stylesheet" href="/render.css" />
         <link rel="stylesheet" href="/css/wiki-nav.css" />
         <link rel="stylesheet" href="/css/bulk-modal.css" />
-        <link rel="stylesheet" href="/css/presentation.css" />
         <!-- 편집 요청 검토 모달(showDiffModal)의 diff 하이라이트 스타일. -->
         <link rel="stylesheet" href="/css/diff.css" />
         <!-- 테마 FOUC 방지: CSS 로드 후 즉시 테마 적용 -->
@@ -299,7 +298,6 @@ import ArticleFloatingTools from '../components/ArticleFloatingTools.astro';
     <Fragment slot="scripts">
         <script type="module" src="/dist/common.js" is:inline></script>
         <script type="module" src="/dist/render.js" is:inline></script>
-        <script type="module" src="/dist/render-presentation.js" is:inline></script>
         <script type="module" src="/dist/permissions-modal.js" is:inline></script>
         <script type="module" src="/dist/category-acl-modal.js" is:inline></script>
         <!-- 편집 요청 검토 모달(window.showDiffModal)을 문서 페이지에서 사용하므로 diff 번들을 로드한다. -->

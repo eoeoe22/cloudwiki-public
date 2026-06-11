@@ -24,8 +24,6 @@ const ssrJson = JSON.stringify({ _wikiSyntax: branding.wikiSyntax })
         <link rel="stylesheet" href="/css/diff.css" />
         <link rel="stylesheet" href="/css/edit.css" />
         <link rel="stylesheet" href="/css/bulk-modal.css" />
-        <!-- 프레젠테이션 문서의 슬라이드/보기 모드 프리뷰(인라인 덱 + 전체화면)용 -->
-        <link rel="stylesheet" href="/css/presentation.css" />
         <!-- 테마 FOUC 방지: CSS 로드 후 즉시 테마 적용 -->
         <script is:inline>try { var t = localStorage.getItem('themeMode'); if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t); } catch (e) { }</script>
         <!-- 문법 가이드 슬러그를 빌드 타임에 베이킹한 SSR 데이터 -->
@@ -343,18 +341,6 @@ const ssrJson = JSON.stringify({ _wikiSyntax: branding.wikiSyntax })
                 </div>
             </div>
 
-            <!-- 프레젠테이션 모드 — 모든 편집자가 설정 가능(표시 전용 메타). 즉시 적용하지 않고
-                 문서 저장 시 본문 리비전과 함께 반영된다. 섹션 편집 모드에서는 숨겨진다. -->
-            <div class="mb-3" id="presentationModeSetting">
-                <div class="form-check">
-                    <input class="form-check-input" type="checkbox" id="presentationModeToggle">
-                    <label class="form-check-label fw-bold" for="presentationModeToggle">
-                        <i class="mdi mdi-presentation"></i> 프레젠테이션 모드
-                    </label>
-                </div>
-                <div class="form-text text-muted">본문을 <code>---</code> 로 분할해 슬라이드로 표시합니다. 문서 저장 시 반영됩니다.</div>
-            </div>
-
             <div class="mb-3">
                 <label for="redirectInput" class="form-label fw-bold">문서 넘겨주기 (Redirect)</label>
                 <input type="text" id="redirectInput" class="form-control"
@@ -502,8 +488,6 @@ const ssrJson = JSON.stringify({ _wikiSyntax: branding.wikiSyntax })
     <Fragment slot="scripts">
         <script type="module" src="/dist/common.js" is:inline></script>
         <script type="module" src="/dist/render.js" is:inline></script>
-        <!-- 프레젠테이션 슬라이드/보기 모드 프리뷰용 renderPresentation/teardownPresentation 제공 -->
-        <script type="module" src="/dist/render-presentation.js" is:inline></script>
         <!-- 렌더링 미리 보기(변경 사항 렌더 diff)용 buildRichDiffHtml 제공 -->
         <script type="module" src="/dist/diff.js" is:inline></script>
         <script type="module" src="/dist/edit-utils.js" is:inline></script>

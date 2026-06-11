@@ -4,6 +4,8 @@ import { requireAuth } from '../middleware/session';
 import { RBAC } from '../utils/role';
 import { isWorkspacesEnabled, getWorkspaceCreator, getWorkspaceMaxPerUser } from '../utils/workspace';
 import { getWorkspaceAccessBySlug } from '../utils/workspaceAcl';
+import { ensureWorkspaceMembersStatusMigration } from '../utils/workspaceMembersStatusMigration';
+import { createNotification } from '../utils/notification';
 import { SLUG_FORBIDDEN_CHARS } from './wiki';
 import { normalizeWorkspaceIcon } from '../shared/workspaceIcon';
 import type { Workspace } from '../shared/models';
@@ -56,6 +58,7 @@ workspace.get('/api/workspaces', requireAuth, async (c) => {
     const gate = ensureEnabled(c); if (gate) return gate;
     const user = c.get('user')!;
     const db = c.env.DB;
+    await ensureWorkspaceMembersStatusMigration(db);
 
     const owned = await db.prepare(
         `SELECT id, slug, name, owner_id, icon, created_at
@@ -64,13 +67,25 @@ workspace.get('/api/workspaces', requireAuth, async (c) => {
          ORDER BY created_at DESC`
     ).bind(user.id).all<Workspace>();
 
+    // 참가 중(수락 완료)인 워크스페이스만 노출한다 — 'pending' 은 아래 invites 로 분리.
     const joined = await db.prepare(
         `SELECT w.id, w.slug, w.name, w.owner_id, w.icon, w.created_at, m.role AS my_role
          FROM workspace_members m
          JOIN workspaces w ON w.id = m.workspace_id
-         WHERE m.user_id = ? AND w.deleted_at IS NULL AND w.owner_id != ?
+         WHERE m.user_id = ? AND m.status = 'active' AND w.deleted_at IS NULL AND w.owner_id != ?
          ORDER BY w.created_at DESC`
     ).bind(user.id, user.id).all<Workspace & { my_role: string }>();
+
+    // 받은 초대(대기중) — 수락/거절 대상. 소유자 이름·아이콘과 함께 노출한다.
+    const invites = await db.prepare(
+        `SELECT w.id, w.slug, w.name, w.owner_id, w.icon, w.created_at, m.role AS my_role,
+                u.name AS owner_name
+         FROM workspace_members m
+         JOIN workspaces w ON w.id = m.workspace_id
+         JOIN users u ON u.id = w.owner_id
+         WHERE m.user_id = ? AND m.status = 'pending' AND w.deleted_at IS NULL AND w.owner_id != ?
+         ORDER BY m.created_at DESC`
+    ).bind(user.id, user.id).all<Workspace & { my_role: string; owner_name: string }>();
 
     const creator = getWorkspaceCreator(c.env);
     const rbac = c.get('rbac') as RBAC;
@@ -82,6 +97,7 @@ workspace.get('/api/workspaces', requireAuth, async (c) => {
     return c.json({
         owned: owned.results ?? [],
         joined: joined.results ?? [],
+        invites: invites.results ?? [],
         can_create: canCreate,
         max_per_user: maxPerUser,
     });
@@ -159,11 +175,15 @@ workspace.get('/api/ws/:wslug', requireAuth, async (c) => {
     const stats = await db.batch([
         db.prepare('SELECT COUNT(*) AS n FROM workspace_pages WHERE workspace_id = ? AND deleted_at IS NULL').bind(ws.id),
         db.prepare('SELECT COUNT(*) AS n, COALESCE(SUM(size),0) AS bytes FROM workspace_media WHERE workspace_id = ?').bind(ws.id),
-        db.prepare('SELECT COUNT(*) AS n FROM workspace_members WHERE workspace_id = ?').bind(ws.id),
+        db.prepare("SELECT COUNT(*) AS n FROM workspace_members WHERE workspace_id = ? AND status = 'active'").bind(ws.id),
+        db.prepare('SELECT COALESCE(SUM(LENGTH(CAST(content AS BLOB))),0) AS bytes FROM workspace_pages WHERE workspace_id = ? AND deleted_at IS NULL').bind(ws.id),
+        db.prepare('SELECT COALESCE(SUM(LENGTH(CAST(r.content AS BLOB))),0) AS bytes FROM workspace_revisions r JOIN workspace_pages p ON p.id = r.page_id WHERE p.workspace_id = ? AND p.deleted_at IS NULL AND r.deleted_at IS NULL').bind(ws.id),
     ]);
     const pageCount = (stats[0].results?.[0] as any)?.n ?? 0;
     const mediaRow = (stats[1].results?.[0] as any) ?? { n: 0, bytes: 0 };
     const memberCount = (stats[2].results?.[0] as any)?.n ?? 0;
+    const pageTextBytes = (stats[3].results?.[0] as any)?.bytes ?? 0;
+    const revTextBytes = (stats[4].results?.[0] as any)?.bytes ?? 0;
 
     return c.json({
         workspace: { id: ws.id, slug: ws.slug, name: ws.name, owner_id: ws.owner_id, icon: ws.icon ?? null, created_at: ws.created_at },
@@ -172,6 +192,7 @@ workspace.get('/api/ws/:wslug', requireAuth, async (c) => {
             pages: pageCount,
             media: mediaRow.n,
             media_bytes: mediaRow.bytes,
+            text_bytes: Number(pageTextBytes) + Number(revTextBytes),
             members: memberCount + 1, // owner 포함
         },
     });
@@ -230,6 +251,13 @@ workspace.delete('/api/ws/:wslug', requireAuth, async (c) => {
     if (!ws) return c.json({ error: '워크스페이스를 찾을 수 없습니다.' }, 404);
     if (!access.canManage) return c.json({ error: '관리 권한이 없습니다.' }, 403);
 
+    // soft-delete 후 남은 대기중 초대와 그 알림을 정리한다 — 그대로 두면 초대받았던 사용자의
+    // 알림함에 dead link(이동해도 수락할 ws 가 없는 ws_invite)가 남는다. 정식 멤버(active)
+    // 행은 기존 패턴대로 보존(접근은 deleted_at 으로 차단)하고, pending 잔여물만 제거한다.
+    await db.batch([
+        db.prepare("DELETE FROM notifications WHERE type = 'ws_invite' AND ref_id = ?").bind(ws.id),
+        db.prepare("DELETE FROM workspace_members WHERE workspace_id = ? AND status = 'pending'").bind(ws.id),
+    ]);
     await db.prepare('UPDATE workspaces SET deleted_at = unixepoch() WHERE id = ?').bind(ws.id).run();
     return c.json({ ok: true });
 });
@@ -249,15 +277,22 @@ workspace.get('/api/ws/:wslug/members', requireAuth, async (c) => {
     if (!access.canRead) return c.json({ error: '접근 권한이 없습니다.' }, 403);
 
     const owner = await db.prepare('SELECT id, name, picture FROM users WHERE id = ?').bind(ws.owner_id).first<{ id: number; name: string; picture: string | null }>();
+    // status 를 함께 노출해 관리 UI 가 '참가중'(active)과 '초대 대기중'(pending)을 구분한다.
+    // 대기중(pending) 초대는 관리 정보이므로 canManage 에게만 노출하고, 일반 멤버에게는 active 만 보여준다.
     const members = await db.prepare(
-        `SELECT m.user_id AS id, u.name, u.picture, m.role, m.created_at
-         FROM workspace_members m JOIN users u ON u.id = m.user_id
-         WHERE m.workspace_id = ?
-         ORDER BY m.created_at ASC`
-    ).bind(ws.id).all<{ id: number; name: string; picture: string | null; role: string; created_at: number }>();
+        access.canManage
+            ? `SELECT m.user_id AS id, u.name, u.picture, m.role, m.status, m.created_at
+               FROM workspace_members m JOIN users u ON u.id = m.user_id
+               WHERE m.workspace_id = ?
+               ORDER BY m.status DESC, m.created_at ASC`
+            : `SELECT m.user_id AS id, u.name, u.picture, m.role, m.status, m.created_at
+               FROM workspace_members m JOIN users u ON u.id = m.user_id
+               WHERE m.workspace_id = ? AND m.status = 'active'
+               ORDER BY m.created_at ASC`
+    ).bind(ws.id).all<{ id: number; name: string; picture: string | null; role: string; status: string; created_at: number }>();
 
     return c.json({
-        owner: owner ? { ...owner, role: 'owner' } : null,
+        owner: owner ? { ...owner, role: 'owner', status: 'active' } : null,
         members: members.results ?? [],
         can_manage: access.canManage,
     });
@@ -286,7 +321,11 @@ workspace.get('/api/ws/:wslug/members/search', requireAuth, async (c) => {
 });
 
 /**
- * POST /api/ws/:wslug/members — 멤버 추가/초대 (canManage). body {user_id, role}.
+ * POST /api/ws/:wslug/members — 멤버 초대 (canManage). body {user_id, role}.
+ *
+ * 초대-수락(invite-accept) 모델: 즉시 멤버가 되는 대신 status='pending' 으로 초대만 생성하고
+ * 대상에게 알림을 발송한다. 대상이 `/invite/accept` 로 수락해야 status='active' 가 되어
+ * 실제 접근 권한을 얻는다. 이미 'active' 멤버인 경우 역할 변경(PATCH)을 쓰도록 거절한다.
  */
 workspace.post('/api/ws/:wslug/members', requireAuth, async (c) => {
     const gate = ensureEnabled(c); if (gate) return gate;
@@ -306,11 +345,91 @@ workspace.post('/api/ws/:wslug/members', requireAuth, async (c) => {
     const target = await db.prepare("SELECT id FROM users WHERE id = ? AND role NOT IN ('banned','deleted')").bind(targetId).first();
     if (!target) return c.json({ error: '대상 사용자를 찾을 수 없습니다.' }, 404);
 
+    // 이미 정식 멤버면 초대 대신 역할 변경(PATCH)을 쓰도록 거절한다.
+    const existing = await db.prepare(
+        'SELECT status FROM workspace_members WHERE workspace_id = ? AND user_id = ?'
+    ).bind(ws.id, targetId).first<{ status: string }>();
+    if (existing && existing.status === 'active') {
+        return c.json({ error: '이미 이 워크스페이스의 멤버입니다.' }, 409);
+    }
+
+    // 신규 초대(또는 대기중 초대의 역할 변경) — 항상 'pending' 으로 둔다.
     await db.prepare(
-        `INSERT INTO workspace_members (workspace_id, user_id, role) VALUES (?, ?, ?)
-         ON CONFLICT(workspace_id, user_id) DO UPDATE SET role = excluded.role`
+        `INSERT INTO workspace_members (workspace_id, user_id, role, status) VALUES (?, ?, ?, 'pending')
+         ON CONFLICT(workspace_id, user_id) DO UPDATE SET role = excluded.role, status = 'pending'`
     ).bind(ws.id, targetId, role).run();
-    return c.json({ ok: true, user_id: targetId, role });
+
+    // 재초대(role 갱신) 시 이전 ws_invite 알림이 누적되지 않도록 먼저 정리한 뒤 1건만 발송한다.
+    await db.prepare("DELETE FROM notifications WHERE user_id = ? AND type = 'ws_invite' AND ref_id = ?")
+        .bind(targetId, ws.id).run();
+    // 대상에게 초대 알림 발송. 링크는 수락/거절 가능한 내 워크스페이스 목록으로.
+    await createNotification(c.env, c.executionCtx, {
+        userId: targetId,
+        type: 'ws_invite',
+        content: `'${ws.name}' 워크스페이스에 초대되었습니다.`,
+        link: '/workspaces',
+        refId: ws.id,
+        push: { title: '워크스페이스 초대', body: `'${ws.name}' 워크스페이스에 초대되었습니다.`, url: '/workspaces' },
+    });
+
+    return c.json({ ok: true, user_id: targetId, role, status: 'pending' });
+});
+
+/**
+ * POST /api/ws/:wslug/invite/accept — 받은 초대 수락 (대상 본인).
+ * 본인의 status='pending' 행을 'active' 로 전환해 정식 멤버가 된다. canManage/canRead 게이트를
+ * 거치지 않는다 — 대기중 초대 대상은 아직 멤버가 아니므로(role=null) 자신의 초대만 처리한다.
+ */
+workspace.post('/api/ws/:wslug/invite/accept', requireAuth, async (c) => {
+    const gate = ensureEnabled(c); if (gate) return gate;
+    const user = c.get('user')!;
+    const rbac = c.get('rbac') as RBAC;
+    const db = c.env.DB;
+    const { workspace: ws } = await getWorkspaceAccessBySlug(db, c.req.param('wslug'), user, rbac);
+    if (!ws) return c.json({ error: '워크스페이스를 찾을 수 없습니다.' }, 404);
+
+    const res = await db.prepare(
+        "UPDATE workspace_members SET status = 'active' WHERE workspace_id = ? AND user_id = ? AND status = 'pending'"
+    ).bind(ws.id, user.id).run();
+    if (!res.meta?.changes) return c.json({ error: '받은 초대를 찾을 수 없습니다.' }, 404);
+
+    // 처리된 초대 알림 정리 — dead link 로 남지 않게 한다(best-effort).
+    await db.prepare("DELETE FROM notifications WHERE user_id = ? AND type = 'ws_invite' AND ref_id = ?")
+        .bind(user.id, ws.id).run().catch(() => {});
+
+    // 소유자에게 수락 알림(best-effort).
+    c.executionCtx.waitUntil(createNotification(c.env, c.executionCtx, {
+        userId: ws.owner_id,
+        type: 'ws_invite_accepted',
+        content: `'${user.name}'님이 '${ws.name}' 워크스페이스 초대를 수락했습니다.`,
+        link: `/ws/${encodeURIComponent(ws.slug)}/settings`,
+        refId: ws.id,
+    }));
+
+    return c.json({ ok: true, slug: ws.slug });
+});
+
+/**
+ * POST /api/ws/:wslug/invite/decline — 받은 초대 거절 (대상 본인).
+ * 본인의 status='pending' 행을 삭제한다. 이미 'active' 인 행은 건드리지 않는다(탈퇴는 DELETE).
+ */
+workspace.post('/api/ws/:wslug/invite/decline', requireAuth, async (c) => {
+    const gate = ensureEnabled(c); if (gate) return gate;
+    const user = c.get('user')!;
+    const rbac = c.get('rbac') as RBAC;
+    const db = c.env.DB;
+    const { workspace: ws } = await getWorkspaceAccessBySlug(db, c.req.param('wslug'), user, rbac);
+    if (!ws) return c.json({ error: '워크스페이스를 찾을 수 없습니다.' }, 404);
+
+    const res = await db.prepare(
+        "DELETE FROM workspace_members WHERE workspace_id = ? AND user_id = ? AND status = 'pending'"
+    ).bind(ws.id, user.id).run();
+    if (!res.meta?.changes) return c.json({ error: '받은 초대를 찾을 수 없습니다.' }, 404);
+
+    await db.prepare("DELETE FROM notifications WHERE user_id = ? AND type = 'ws_invite' AND ref_id = ?")
+        .bind(user.id, ws.id).run().catch(() => {});
+
+    return c.json({ ok: true });
 });
 
 /**
@@ -352,7 +471,13 @@ workspace.delete('/api/ws/:wslug/members/:userId', requireAuth, async (c) => {
     if (!access.canManage && !isSelfLeave) return c.json({ error: '관리 권한이 없습니다.' }, 403);
     if (targetId === ws.owner_id) return c.json({ error: '소유자는 멤버 목록에서 제거할 수 없습니다. 소유권을 먼저 이전하세요.' }, 400);
 
-    await db.prepare('DELETE FROM workspace_members WHERE workspace_id = ? AND user_id = ?').bind(ws.id, targetId).run();
+    // 멤버 행 삭제 + 남아있을 수 있는 ws_invite 알림 정리(초대 취소/추방/탈퇴 모두 동일 처리).
+    // 정리하지 않으면 대기중 초대를 취소당한 사용자의 알림이 dead link 로 남는다
+    // (accept/decline 경로와 대칭을 맞춘다).
+    await db.batch([
+        db.prepare('DELETE FROM workspace_members WHERE workspace_id = ? AND user_id = ?').bind(ws.id, targetId),
+        db.prepare("DELETE FROM notifications WHERE user_id = ? AND type = 'ws_invite' AND ref_id = ?").bind(targetId, ws.id),
+    ]);
     return c.json({ ok: true });
 });
 
@@ -375,17 +500,19 @@ workspace.post('/api/ws/:wslug/transfer', requireAuth, async (c) => {
     if (!Number.isInteger(newOwnerId) || newOwnerId <= 0) return c.json({ error: '대상 사용자가 유효하지 않습니다.' }, 400);
     if (newOwnerId === ws.owner_id) return c.json({ error: '이미 소유자입니다.' }, 400);
 
-    const member = await db.prepare('SELECT user_id FROM workspace_members WHERE workspace_id = ? AND user_id = ?')
+    const member = await db.prepare("SELECT user_id FROM workspace_members WHERE workspace_id = ? AND user_id = ? AND status = 'active'")
         .bind(ws.id, newOwnerId).first();
-    if (!member) return c.json({ error: '새 소유자는 먼저 멤버로 추가되어 있어야 합니다.' }, 400);
+    if (!member) return c.json({ error: '새 소유자는 먼저 정식 멤버(초대 수락 완료)여야 합니다.' }, 400);
 
     const prevOwnerId = ws.owner_id;
     await db.batch([
         db.prepare('UPDATE workspaces SET owner_id = ? WHERE id = ?').bind(newOwnerId, ws.id),
         db.prepare('DELETE FROM workspace_members WHERE workspace_id = ? AND user_id = ?').bind(ws.id, newOwnerId),
+        // 이전 소유자를 active editor 로 강등한다. status 를 명시해, 비정상적으로 pending
+        // 행이 남아있던 경우에도 강등 후 곧바로 정식 멤버가 되도록 보장한다.
         db.prepare(
-            `INSERT INTO workspace_members (workspace_id, user_id, role) VALUES (?, ?, 'editor')
-             ON CONFLICT(workspace_id, user_id) DO UPDATE SET role = 'editor'`
+            `INSERT INTO workspace_members (workspace_id, user_id, role, status) VALUES (?, ?, 'editor', 'active')
+             ON CONFLICT(workspace_id, user_id) DO UPDATE SET role = 'editor', status = 'active'`
         ).bind(ws.id, prevOwnerId),
     ]);
     return c.json({ ok: true, owner_id: newOwnerId });

@@ -42,6 +42,8 @@ function encodeSlugPath(slug) {
 const WS_BASE = '/api/ws/' + encodeURIComponent(WSLUG);
 const wsDocUrl = (slug) => '/ws/' + encodeURIComponent(WSLUG) + '/w/' + encodeSlugPath(slug);
 const wsEditUrl = (slug) => '/ws/' + encodeURIComponent(WSLUG) + '/edit?slug=' + encodeURIComponent(slug);
+// 편집 이력(리비전) 페이지 — 전역 위키와 동일하게 ?mode=revisions 로 분기해 ws-revisions 셸을 서빙한다.
+const wsRevisionsUrl = (slug) => wsDocUrl(slug) + '?mode=revisions';
 
 let currentPage = null;
 
@@ -64,7 +66,7 @@ const wsShare = createShareActions(wsArticleCtx);
 const wsToc = createTocController({
   onReadingModeToggled: () => {
     // 프레젠테이션 문서는 모드 전환 시 본문 렌더 경로가 갈리므로 재렌더가 필요.
-    if (currentPage && currentPage.view_mode === 'presentation') {
+    if (currentPage && currentPage.doc_type === 'presentation') {
       if (typeof window.teardownPresentation === 'function') {
         try { window.teardownPresentation(); } catch (e) { /* noop */ }
       }
@@ -102,13 +104,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   await window.loadConfig();
   await window.checkAuth();
 
-  // 워크스페이스 상단 브레드크럼: 대시보드로
-  const crumb = document.getElementById('wsDocCrumbWs');
-  if (crumb) {
-    crumb.setAttribute('href', '/ws/' + encodeURIComponent(WSLUG));
-    crumb.textContent = WSLUG;
-  }
-
   wsToc.attachSpy();
   wsToc.restoreReadingMode();
 
@@ -135,6 +130,13 @@ async function loadPage() {
   currentPage = data;
   hide('wsDocLoading');
   show('articlePage');
+
+  // 돌아가기 버튼: 워크스페이스 멤버(canRead)에게만 노출
+  if (data.can_read) {
+    const backBtn = document.getElementById('wsBackBtn');
+    if (backBtn) backBtn.setAttribute('href', '/ws/' + encodeURIComponent(WSLUG));
+    document.getElementById('wsBackBtnArea')?.classList.remove('d-none');
+  }
 
   // 제목
   const titleEl = document.getElementById('articleTitle');
@@ -172,7 +174,7 @@ async function renderBody() {
   const rawEl = document.getElementById('articleRawContent');
   if (rawEl) rawEl.textContent = data.content || '';
 
-  const isPresentation = data.view_mode === 'presentation' && !document.body.classList.contains('reading-mode');
+  const isPresentation = data.doc_type === 'presentation' && !document.body.classList.contains('reading-mode');
   try {
     if (isPresentation && typeof window.renderPresentation === 'function') {
       await window.renderPresentation(data.content || '', data.slug, 'articleContent', {});
@@ -242,13 +244,20 @@ function renderActions(data) {
   if (!el) return;
   let html = '';
   if (data.can_write) {
-    html += '<a class="btn btn-wiki btn-sm" href="' + esc(wsEditUrl(data.slug)) +
-      '"><i class="bi bi-pencil-square"></i> 편집</a>';
+    html += '<a class="btn btn-outline-secondary" href="' + esc(wsEditUrl(data.slug)) +
+      '"><i class="bi bi-pencil" aria-hidden="true"></i><span class="d-none d-sm-inline"> 편집</span></a>';
   }
-  // 공유 드롭다운 (AI 질문 제외)
+  // 공유 드롭다운 (AI 질문 제외). 편집자/관리자(can_write)에게는 공개 링크 관리 옵션 추가.
+  const publicLinkItems = data.can_write ? `
+        <li><hr class="dropdown-divider"></li>
+        ${data.ws_public === 1
+          ? `<li><button class="dropdown-item" onclick="wsCopyPublicLink()"><i class="bi bi-globe"></i> 공개 링크 복사</button></li>
+        <li><button class="dropdown-item text-danger" onclick="wsRevokePublicLink()"><i class="bi bi-globe-x"></i> 공개 링크 해제</button></li>`
+          : `<li><button class="dropdown-item" onclick="wsCreatePublicLink()"><i class="bi bi-globe"></i> 공개 링크 만들기</button></li>`
+        }` : '';
   html += `
     <div class="dropdown">
-      <button class="btn btn-secondary btn-sm dropdown-toggle no-caret" type="button" data-bs-toggle="dropdown" data-bs-display="static" aria-expanded="false" title="공유하기"><i class="bi bi-share"></i></button>
+      <button class="btn btn-secondary dropdown-toggle no-caret" type="button" data-bs-toggle="dropdown" data-bs-display="static" aria-expanded="false" title="공유하기"><i class="bi bi-share"></i></button>
       <ul class="dropdown-menu dropdown-menu-end">
         <li><button class="dropdown-item" onclick="shareNative()"><i class="bi bi-share"></i> 공유하기</button></li>
         <li><hr class="dropdown-divider"></li>
@@ -256,6 +265,7 @@ function renderActions(data) {
         <li><button class="dropdown-item" onclick="shareCopyText()"><i class="bi bi-copy"></i> 문서 텍스트 복사</button></li>
         <li><button class="dropdown-item" onclick="shareCopyMarkdown()"><i class="bi bi-markdown"></i> 문서 복사 (마크다운)</button></li>
         <li><button class="dropdown-item" onclick="sharePrint()"><i class="bi bi-printer"></i> 인쇄하기</button></li>
+        ${publicLinkItems}
       </ul>
     </div>`;
   // 도구 드롭다운 (대상 슬러그는 항상 현재 문서이므로 wsShowStructure 가 currentPage 에서 읽는다)
@@ -263,12 +273,12 @@ function renderActions(data) {
   const structureItem = `<li><button class="dropdown-item" onclick="wsShowStructure(); return false;"><i class="bi bi-diagram-3"></i> ${structureLabel}</button></li>`;
   html += `
     <div class="dropdown">
-      <button class="btn btn-secondary btn-sm dropdown-toggle no-caret" type="button" data-bs-toggle="dropdown" data-bs-display="static" aria-expanded="false" title="문서 도구"><i class="bi bi-three-dots-vertical"></i></button>
+      <button class="btn btn-secondary dropdown-toggle no-caret" type="button" data-bs-toggle="dropdown" data-bs-display="static" aria-expanded="false" title="문서 도구"><i class="bi bi-three-dots-vertical"></i></button>
       <ul class="dropdown-menu dropdown-menu-end">
         <li><button class="dropdown-item" onclick="wsScrollToBacklinks(); return false;"><i class="bi bi-link-45deg"></i> 역링크 보기</button></li>
         <li><button class="dropdown-item" onclick="toggleRawMode(); return false;"><i class="bi bi-code-slash"></i> Raw 보기</button></li>
         ${structureItem}
-        <li><button class="dropdown-item" onclick="wsShowRevisions(); return false;"><i class="bi bi-clock-history"></i> 리비전</button></li>
+        <li><a class="dropdown-item" href="${esc(wsRevisionsUrl(data.slug))}"><i class="bi bi-clock-history"></i> 편집 이력</a></li>
       </ul>
     </div>`;
   el.innerHTML = html;
@@ -344,52 +354,86 @@ async function wsScrollToBacklinks() {
   }
 }
 
-// ── 리비전 목록/본문 보기 (Swal) ──
-async function wsShowRevisions() {
-  let revs = [];
+// ── 공개 링크 관리 (편집자/관리자 전용) ──
+const WS_DOC_VISIBILITY_URL = () => WS_BASE + '/pages/' + encodeSlugPath(SLUG) + '/visibility';
+
+async function wsSetPublicLink(value: 0 | 1): Promise<boolean> {
   try {
-    const data = await apiGet(WS_BASE + '/pages/' + encodeSlugPath(SLUG) + '/revisions');
-    revs = (data.revisions || []).slice(0, 30);
+    const res = await fetch(WS_DOC_VISIBILITY_URL(), {
+      method: 'PATCH',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ws_public: value }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      Swal.fire('오류', esc(data.error || ('오류 ' + res.status)), 'error');
+      return false;
+    }
+    return true;
   } catch {
-    Swal.fire('오류', '리비전을 불러오지 못했습니다.', 'error');
-    return;
+    Swal.fire('오류', '네트워크 오류가 발생했습니다.', 'error');
+    return false;
   }
-  if (!revs.length) {
-    Swal.fire('리비전', '리비전이 없습니다.', 'info');
-    return;
+}
+
+async function wsCreatePublicLink() {
+  const result = await Swal.fire({
+    icon: 'question',
+    title: '공개 링크 만들기',
+    html: '이 문서를 워크스페이스 비회원도 열람할 수 있는 공개 링크를 만듭니다.<br>계속하시겠습니까?',
+    showCancelButton: true,
+    confirmButtonText: '만들기',
+    cancelButtonText: '취소',
+  });
+  if (!result.isConfirmed) return;
+  const ok = await wsSetPublicLink(1);
+  if (!ok) return;
+  if (currentPage) {
+    currentPage.ws_public = 1;
+    renderMeta(currentPage);
+    renderActions(currentPage);
   }
-  const itemsHtml = revs.map((r) =>
-    `<button type="button" class="list-group-item list-group-item-action text-start" data-rev="${Number(r.id)}">
-       <div class="small fw-medium">${r.summary ? esc(r.summary) : '<span class="text-muted">(요약 없음)</span>'}</div>
-       <div class="small text-muted">r${esc(r.page_version)} · ${esc(r.author_name || '익명')} · ${esc(window.getRelativeTime(r.created_at))}</div>
-     </button>`).join('');
+  const url = window.location.origin + window.location.pathname;
+  let copied = false;
+  try { await navigator.clipboard.writeText(url); copied = true; } catch { /* 무시 */ }
   Swal.fire({
-    title: '리비전',
-    html: `<div class="list-group list-group-flush text-start" style="max-height:60vh;overflow:auto;">${itemsHtml}</div>`,
-    width: '40rem',
-    showConfirmButton: false,
-    showCloseButton: true,
-    didOpen: (popup) => {
-      popup.querySelectorAll('button[data-rev]').forEach((b) => {
-        b.addEventListener('click', () => wsViewRevision(Number(b.dataset.rev)));
-      });
-    },
+    icon: 'success',
+    title: '공개 링크가 생성되었습니다',
+    html: (copied ? '링크가 클립보드에 복사되었습니다:<br>' : '공개 링크:') + '<code>' + esc(url) + '</code>',
+    confirmButtonText: '확인',
   });
 }
 
-async function wsViewRevision(id) {
+async function wsCopyPublicLink() {
+  const url = window.location.origin + window.location.pathname;
   try {
-    const rev = await apiGet(WS_BASE + '/revisions/' + Number(id));
-    Swal.fire({
-      title: 'r' + esc(rev.page_version) + ' 리비전',
-      html: '<pre style="text-align:left;white-space:pre-wrap;word-break:break-word;max-height:60vh;overflow:auto;font-size:0.85rem;">' +
-        esc(rev.content || '(본문 없음)') + '</pre>',
-      width: '48rem',
-      confirmButtonText: '닫기',
-    });
+    await navigator.clipboard.writeText(url);
+    Swal.fire({ icon: 'success', title: '링크 복사됨', toast: true, position: 'top-end', timer: 1500, showConfirmButton: false });
   } catch {
-    Swal.fire('오류', '리비전을 불러오지 못했습니다.', 'error');
+    Swal.fire({ icon: 'info', title: '공개 링크', html: '<code>' + esc(url) + '</code>', confirmButtonText: '확인' });
   }
+}
+
+async function wsRevokePublicLink() {
+  const result = await Swal.fire({
+    icon: 'warning',
+    title: '공개 링크 해제',
+    text: '비회원의 문서 열람 권한이 삭제됩니다. 계속하시겠습니까?',
+    showCancelButton: true,
+    confirmButtonText: '해제',
+    cancelButtonText: '취소',
+    confirmButtonColor: '#d33',
+  });
+  if (!result.isConfirmed) return;
+  const ok = await wsSetPublicLink(0);
+  if (!ok) return;
+  if (currentPage) {
+    currentPage.ws_public = 0;
+    renderMeta(currentPage);
+    renderActions(currentPage);
+  }
+  Swal.fire({ icon: 'success', title: '공개 링크가 해제되었습니다.', toast: true, position: 'top-end', timer: 2000, showConfirmButton: false });
 }
 
 // ── HTML on* 핸들러용 window 노출 (공유 모듈 래퍼) ──
@@ -403,4 +447,6 @@ window.toggleRawMode = () => wsToc.toggleRawMode();
 window.toggleFloatingToc = () => wsToc.toggleFloating();
 window.wsShowStructure = () => { if (currentPage) wsStructure.show(currentPage.slug); };
 window.wsScrollToBacklinks = wsScrollToBacklinks;
-window.wsShowRevisions = wsShowRevisions;
+window.wsCreatePublicLink = wsCreatePublicLink;
+window.wsCopyPublicLink = wsCopyPublicLink;
+window.wsRevokePublicLink = wsRevokePublicLink;

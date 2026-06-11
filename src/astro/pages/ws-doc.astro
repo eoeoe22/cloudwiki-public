@@ -45,25 +45,23 @@ import ArticleFloatingTools from '../components/ArticleFloatingTools.astro';
             <!-- 문서 보기 페이지 (#articlePage — 스크롤 스파이/FAB 가시성 판정에 사용) -->
             <div id="articlePage" class="d-none">
 
-                <!-- 워크스페이스 브레드크럼 -->
-                <nav class="mb-3 small" aria-label="breadcrumb">
-                    <a href="/workspaces" class="text-decoration-none"><i class="bi bi-grid"></i> 워크스페이스</a>
-                    <span class="text-muted mx-1">/</span>
-                    <a href="#" id="wsDocCrumbWs" class="text-decoration-none">워크스페이스</a>
-                </nav>
+                <!-- 워크스페이스 돌아가기 버튼 (멤버 전용, JS 로 노출) -->
+                <div id="wsBackBtnArea" class="mb-3 d-none">
+                    <a href="#" id="wsBackBtn" class="btn btn-sm btn-outline-secondary">
+                        <i class="bi bi-arrow-left"></i> 돌아가기
+                    </a>
+                </div>
 
                 <div class="wiki-article">
-                    <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
-                        <h1 class="wiki-article-title mb-0" id="articleTitle"></h1>
-                        <!-- 문서 도구: 편집 / 공유 / 도구 드롭다운 -->
-                        <div class="d-flex gap-2" id="wsDocActions"></div>
-                    </div>
+                    <h1 class="wiki-article-title" id="articleTitle"></h1>
                     <!-- 대체 title 라벨(슬러그) -->
                     <div id="articleSlugLabel" class="wiki-article-slug-label" hidden></div>
                     <!-- 리다이렉트 안내 -->
                     <div id="redirectMessage"></div>
                     <!-- 문서 메타(수정 시각·버전) -->
                     <div class="wiki-article-meta" id="articleMeta"></div>
+                    <!-- 문서 도구 -->
+                    <div class="d-flex justify-content-end mb-2 gap-2" id="wsDocActions"></div>
 
                     <!-- 상위/형제 문서 네비 (문서 구조 브레드크럼) -->
                     <div id="parentDocsNavWrapper" class="parent-docs-nav-wrapper">

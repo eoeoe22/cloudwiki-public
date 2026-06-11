@@ -1,21 +1,24 @@
-// 프레젠테이션(슬라이드) 뷰어.
+// 프레젠테이션(슬라이드) 뷰어. (프레젠테이션 모드는 워크스페이스 문서 전용 — `doc_type='presentation'`)
 //
-// 문서별 view_mode='presentation' 인 문서를 본문 마크다운의 `---` 수평선 기준으로
+// `doc_type='presentation'` 인 워크스페이스 문서를 본문 마크다운의 `---` 수평선 기준으로
 // 슬라이드 단위로 분할해 표시한다. 슬라이드 본문 렌더링은 기존 window.renderWikiContent
 // 를 그대로 재사용해 위키 문법·트랜스클루전·팔레트가 전부 동일하게 동작한다.
 //
 // 표시 모드:
-//   1) 기본 — 일반 위키 레이아웃(헤더/사이드바/푸터) 안에 슬라이드 덱 카드로 인라인 렌더.
+//   1) 기본 — 일반 레이아웃(헤더/사이드바/푸터) 안에 슬라이드 덱 카드로 인라인 렌더.
 //   2) 전체화면 — 컨트롤 바의 "전체화면" 버튼을 누르면 덱 컨테이너에 requestFullscreen()
 //      을 걸고 <body class="presentation-fullscreen"> 을 부여해 레이아웃 chrome 을 숨긴다.
-//   3) 읽기 모드 — 호출 측(src/client/pages/index.ts)에서 `body.reading-mode` 가 활성이면
-//      이 뷰어를 호출하지 않고 일반 `renderWikiContent` 경로로 폴백한다.
+//   3) 읽기 모드 — 호출 측(워크스페이스 문서 조회/에디터 프리뷰)에서 `body.reading-mode` 가
+//      활성이면 이 뷰어를 호출하지 않고 일반 `renderWikiContent` 경로로 폴백한다.
 //
 // 분할 규칙(사용자 확정):
 // - `---` 만 슬라이드 분할에 사용. `***`/`___` 등 다른 hr 변형은 무시한다.
 // - 라인 전체가 정확히 `---` (앞뒤 공백만 허용) 이어야 한다.
 // - 코드 펜스(``` 또는 ~~~) 내부의 `---` 는 분할하지 않는다.
 // - 컨테이너 블록(`:::type` … `:::`) 내부의 `---` 는 분할하지 않는다.
+//
+// 에디터 통합 슬라이드 편집(워크스페이스 에디터)은 splitSlides 와 onSlideChange/
+// onOverviewChange/keepEmptySlides 옵션을 재사용한다(src/client/edit/slide-edit.ts).
 
 // window.renderWikiContent 의 전역 타입은 src/client/edit/types.ts 의 declare global 가 이미 제공.
 

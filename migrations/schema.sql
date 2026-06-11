@@ -54,11 +54,7 @@ CREATE TABLE IF NOT EXISTS pages (
   -- 형식: {"flags":["aged","page_editor","any_editor","admin_only"]} (AND 평가 — 모든 플래그 통과 필요).
   -- 'admin_only' 플래그: 해당 문서는 관리자(admin:access)만 편집 가능.
   -- 'admin_only' 가 없는 경우 관리자(admin:access)는 ACL 우회.
-  edit_acl          TEXT,
-  -- 문서별 본문 보기 모드(전역 LAYOUT_MODE 페이지 레이아웃과 별개). NULL = 일반 본문 렌더.
-  -- 허용 값: 'presentation' (현재 슬라이드 덱). 향후 다른 본문 표시 모드 확장 여지.
-  -- 미지/잘못된 값은 클라이언트·SSR 모두 NULL 로 취급.
-  view_mode         TEXT
+  edit_acl          TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_pages_updated ON pages(updated_at DESC);
@@ -373,7 +369,11 @@ CREATE TABLE IF NOT EXISTS pending_edits (
   redirect_to       TEXT,
   title             TEXT,
   has_title_change  INTEGER NOT NULL DEFAULT 0,
+  -- summary: 요청자가 입력한 편집 요약(사용자 입력분, ≤255자). auto_summary: 클라이언트가 분석한
+  -- 자동 요약분(길이 제한 없음). 둘을 분리 보관해 승인 편집기가 사용자 입력만 미리 채우고,
+  -- 승인 저장 시 자동요약이 한 번 더 합쳐지는 중복을 방지한다(utils/editSummary.ts 참고).
   summary           TEXT,
+  auto_summary      TEXT,
   -- 검토자 접근 게이팅용 비공개 플래그. update=현재 페이지 또는 이번 편집 결과가 비공개면 1,
   -- create=prefix 룰 적용 후 결과 비공개면 1. is_private=1 인 보류본은 wiki:private 권한자만 검토 가능.
   is_private        INTEGER NOT NULL DEFAULT 0,
@@ -381,10 +381,6 @@ CREATE TABLE IF NOT EXISTS pending_edits (
   -- create 는 승인 시 applyNewPageInsert 가 prefix/카테고리 ACL 을 재평가하므로 사용하지 않는다.
   edit_acl          TEXT,
   apply_edit_acl    INTEGER NOT NULL DEFAULT 0,
-  -- apply_view=1 일 때 승인 시 적용할 view_mode(프레젠테이션 모드 등). 'presentation' 또는 NULL(자동).
-  -- update 는 편집 본문에 view_mode 키가 있을 때만(=direct-save 의 hasViewInBody) 적용, create 는 항상 적용.
-  view_mode         TEXT,
-  apply_view        INTEGER NOT NULL DEFAULT 0,
   -- create 보류본의 원본 category_acl_choices (JSON 문자열, 없으면 NULL). 승인 시 그대로 재생해
   -- direct-save 의 카테고리 ACL 적용 시맨틱(ignore/merge 등)을 보존한다. update 는 edit_acl 로 캡처돼 미사용.
   category_acl_choices TEXT,
@@ -637,17 +633,23 @@ CREATE TABLE IF NOT EXISTS workspaces (
 );
 
 -- 워크스페이스 멤버. owner 는 workspaces.owner_id 에서 파생되므로 이 테이블에 넣지 않는다.
+-- status: 초대-수락(invite-accept) 모델. 'pending' = 소유자가 초대했으나 아직 수락 전(권한 없음),
+--         'active' = 초대를 수락한 정식 멤버(role 권한 부여). 비어있던 기존 행은 'active' 로 본다.
 CREATE TABLE IF NOT EXISTS workspace_members (
   workspace_id  INTEGER NOT NULL,
   user_id       INTEGER NOT NULL,
   role          TEXT NOT NULL DEFAULT 'viewer',
+  status        TEXT NOT NULL DEFAULT 'active',
   created_at    INTEGER DEFAULT (unixepoch()),
   PRIMARY KEY (workspace_id, user_id),
   CHECK (role IN ('editor','viewer')),
+  CHECK (status IN ('pending','active')),
   FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
   FOREIGN KEY (user_id) REFERENCES users(id)
 );
 CREATE INDEX IF NOT EXISTS idx_ws_members_user ON workspace_members(user_id);
+-- 사용자별 대기중 초대 조회용 부분 인덱스 (내 워크스페이스 목록의 invites 섹션).
+CREATE INDEX IF NOT EXISTS idx_ws_members_pending ON workspace_members(user_id) WHERE status = 'pending';
 
 -- 워크스페이스 문서. slug 는 워크스페이스 내에서만 유일하다 (UNIQUE (workspace_id, slug)).
 -- ws_public: 1 이면 비멤버/게스트에게도 해당 문서 읽기 허용 (라우트 레이어에서 적용).
@@ -665,7 +667,10 @@ CREATE TABLE IF NOT EXISTS workspace_pages (
   redirect_to       TEXT,
   rows              INTEGER,
   characters        INTEGER,
-  view_mode         TEXT,
+  -- 문서별 본문 표시 유형. NULL = 일반 문서. 'presentation' = 슬라이드 덱(프레젠테이션).
+  -- 향후 다른 표시 유형(예: 칸반/타임라인 등)으로 확장 가능하도록 자유 텍스트 컬럼으로 둔다.
+  -- 미지/잘못된 값은 클라이언트가 NULL(일반 문서)로 취급한다. (프레젠테이션 모드는 워크스페이스 전용)
+  doc_type          TEXT,
   ws_public         INTEGER NOT NULL DEFAULT 0,
   UNIQUE (workspace_id, slug),
   FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
@@ -718,3 +723,53 @@ CREATE TABLE IF NOT EXISTS workspace_page_links (
 );
 CREATE INDEX IF NOT EXISTS idx_ws_page_links_source ON workspace_page_links(source_page_id);
 CREATE INDEX IF NOT EXISTS idx_ws_page_links_target ON workspace_page_links(target_slug);
+
+-- ──────────────────────────────────────────────────────────────────
+-- 워크스페이스 TODO 리스트
+-- ──────────────────────────────────────────────────────────────────
+-- 워크스페이스당 단순 TODO 항목 목록. 리비전·링크 인덱싱 없음.
+CREATE TABLE IF NOT EXISTS workspace_todos (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  workspace_id  INTEGER NOT NULL,
+  content       TEXT NOT NULL,
+  checked       INTEGER NOT NULL DEFAULT 0,
+  created_by    INTEGER,
+  created_at    INTEGER DEFAULT (unixepoch()),
+  updated_at    INTEGER DEFAULT (unixepoch()),
+  deleted_at    INTEGER,
+  archived_at   INTEGER,
+  FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
+  FOREIGN KEY (created_by) REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS idx_ws_todos_workspace ON workspace_todos(workspace_id, created_at ASC);
+CREATE INDEX IF NOT EXISTS idx_ws_todos_archived ON workspace_todos(workspace_id, archived_at);
+
+-- ──────────────────────────────────────────────────────────────────
+-- 워크스페이스 게시판 (단일 게시판, 리비전 없음)
+-- ──────────────────────────────────────────────────────────────────
+-- 워크스페이스당 단일 게시판. 게시글·댓글 CRUD만 있으며 리비전 없음.
+CREATE TABLE IF NOT EXISTS workspace_board_posts (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  workspace_id  INTEGER NOT NULL,
+  title         TEXT NOT NULL,
+  content       TEXT NOT NULL DEFAULT '',
+  author_id     INTEGER,
+  created_at    INTEGER DEFAULT (unixepoch()),
+  updated_at    INTEGER DEFAULT (unixepoch()),
+  deleted_at    INTEGER,
+  FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
+  FOREIGN KEY (author_id) REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS idx_ws_board_posts_workspace ON workspace_board_posts(workspace_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS workspace_board_comments (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  post_id       INTEGER NOT NULL,
+  author_id     INTEGER,
+  content       TEXT NOT NULL,
+  created_at    INTEGER DEFAULT (unixepoch()),
+  deleted_at    INTEGER,
+  FOREIGN KEY (post_id) REFERENCES workspace_board_posts(id),
+  FOREIGN KEY (author_id) REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS idx_ws_board_comments_post ON workspace_board_comments(post_id, created_at ASC);

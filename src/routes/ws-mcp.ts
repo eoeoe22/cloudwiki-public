@@ -9,13 +9,17 @@ import { sha256Hex, OAUTH_ACCEPTED_SCOPES, OAUTH_SCOPE_ADMIN_MCP } from '../util
 import { isWorkspacesEnabled } from '../utils/workspace';
 import { getWorkspaceAccessBySlug } from '../utils/workspaceAcl';
 import type { WorkspaceAccess } from '../utils/workspaceAcl';
+import { ensureWorkspaceMembersStatusMigration } from '../utils/workspaceMembersStatusMigration';
 import type { Workspace } from '../shared/models';
 import { saveWorkspacePage } from '../utils/workspacePagePipeline';
 import { syncWorkspaceMediaVisibility } from '../utils/workspaceMedia';
 import { SLUG_FORBIDDEN_CHARS } from './wiki';
 
 /**
- * 워크스페이스 전용 MCP 엔드포인트 (POST /api/ws-mcp).
+ * 워크스페이스별 MCP 엔드포인트 (POST /api/ws/:wslug/mcp).
+ *
+ * 엔드포인트는 워크스페이스마다 고유하다 — URL 의 :wslug 가 워크스페이스 컨텍스트를
+ * 제공하므로 도구 인자에 workspace 슬러그를 별도로 지정할 필요가 없다.
  *
  * 전역 MCP(/api/mcp, src/routes/mcp.ts)의 JSON-RPC 외피·Bearer 인증 규약을 그대로
  * 따르되, 노출 도구는 **워크스페이스 스코프 전용**이다. 전역 위키 MCP 와 달리
@@ -34,7 +38,7 @@ import { SLUG_FORBIDDEN_CHARS } from './wiki';
 const wsMcp = new Hono<Env>();
 
 // CORS — mcp.ts 와 동일 정책.
-wsMcp.use('/api/ws-mcp', cors({
+wsMcp.use('/api/ws/:wslug/mcp', cors({
     origin: '*',
     allowMethods: ['GET', 'POST', 'OPTIONS'],
     allowHeaders: ['Content-Type', 'Authorization', 'X-Hono-CSRF', 'MCP-Protocol-Version'],
@@ -184,48 +188,46 @@ interface WsMcpToolDef {
     inputSchema: any;
 }
 
-const WS_ARG = { type: 'string', description: '워크스페이스 슬러그' };
-
 const WS_MCP_TOOL_DEFS: WsMcpToolDef[] = [
     {
         name: 'ws_list_workspaces',
-        description: '현재 사용자가 소유하거나 멤버로 참여 중인 워크스페이스 목록을 반환합니다. 각 항목에 slug/name/role 이 포함되며, 다른 모든 도구의 workspace 인자에는 이 slug 를 사용합니다.',
+        description: '현재 사용자가 소유하거나 멤버로 참여 중인 워크스페이스 목록을 반환합니다. 각 항목에 slug/name/role 이 포함됩니다.',
         inputSchema: { type: 'object', properties: {}, required: [] },
     },
     {
         name: 'ws_list_pages',
         description: '워크스페이스의 비삭제 문서 목록을 반환합니다(최근 수정 순). prefix 를 주면 해당 슬러그의 하위 문서만 반환합니다.',
-        inputSchema: { type: 'object', properties: { workspace: WS_ARG, prefix: { type: 'string', description: '하위 문서 필터용 슬러그 prefix (선택)' } }, required: ['workspace'] },
+        inputSchema: { type: 'object', properties: { prefix: { type: 'string', description: '하위 문서 필터용 슬러그 prefix (선택)' } }, required: [] },
     },
     {
         name: 'ws_read_page',
         description: '워크스페이스 문서 한 건의 본문을 읽어옵니다(title/version/ws_public/redirect_to 포함).',
-        inputSchema: { type: 'object', properties: { workspace: WS_ARG, slug: { type: 'string', description: '문서 슬러그' } }, required: ['workspace', 'slug'] },
+        inputSchema: { type: 'object', properties: { slug: { type: 'string', description: '문서 슬러그' } }, required: ['slug'] },
     },
     {
         name: 'ws_list_revisions',
         description: '워크스페이스 문서의 최근 리비전 목록(최대 30개)을 반환합니다.',
-        inputSchema: { type: 'object', properties: { workspace: WS_ARG, slug: { type: 'string', description: '문서 슬러그' } }, required: ['workspace', 'slug'] },
+        inputSchema: { type: 'object', properties: { slug: { type: 'string', description: '문서 슬러그' } }, required: ['slug'] },
     },
     {
         name: 'ws_read_revision',
-        description: '워크스페이스 리비전 한 건의 본문을 읽어옵니다. 리비전이 지정한 워크스페이스 소속이 아니면 오류를 반환합니다.',
-        inputSchema: { type: 'object', properties: { workspace: WS_ARG, revision_id: { type: 'number', description: '리비전 ID' } }, required: ['workspace', 'revision_id'] },
+        description: '워크스페이스 리비전 한 건의 본문을 읽어옵니다. 리비전이 이 워크스페이스 소속이 아니면 오류를 반환합니다.',
+        inputSchema: { type: 'object', properties: { revision_id: { type: 'number', description: '리비전 ID' } }, required: ['revision_id'] },
     },
     {
         name: 'ws_get_backlinks',
         description: '워크스페이스 안에서 지정 문서를 참조(링크)하는 문서 목록을 반환합니다.',
-        inputSchema: { type: 'object', properties: { workspace: WS_ARG, slug: { type: 'string', description: '대상 문서 슬러그' } }, required: ['workspace', 'slug'] },
+        inputSchema: { type: 'object', properties: { slug: { type: 'string', description: '대상 문서 슬러그' } }, required: ['slug'] },
     },
     {
         name: 'ws_list_media',
         description: '워크스페이스의 미디어 목록을 반환합니다(filename/mime_type/size/ws_public/url).',
-        inputSchema: { type: 'object', properties: { workspace: WS_ARG }, required: ['workspace'] },
+        inputSchema: { type: 'object', properties: {}, required: [] },
     },
     {
         name: 'ws_list_members',
         description: '워크스페이스의 소유자와 멤버 목록을 반환합니다(name/role). 읽기 전용입니다.',
-        inputSchema: { type: 'object', properties: { workspace: WS_ARG }, required: ['workspace'] },
+        inputSchema: { type: 'object', properties: {}, required: [] },
     },
     {
         name: 'ws_create_or_update_page',
@@ -233,31 +235,128 @@ const WS_MCP_TOOL_DEFS: WsMcpToolDef[] = [
         inputSchema: {
             type: 'object',
             properties: {
-                workspace: WS_ARG,
                 slug: { type: 'string', description: '문서 슬러그 (콜론 사용 불가)' },
                 content: { type: 'string', description: '문서 본문' },
                 title: { type: 'string', description: '표시 전용 대체 제목 (선택)' },
                 summary: { type: 'string', description: '편집 요약 (선택)' },
                 ws_public: { type: 'number', description: '0 또는 1 — 비멤버 공개 여부 (선택)' },
             },
-            required: ['workspace', 'slug', 'content'],
+            required: ['slug', 'content'],
         },
     },
     {
         name: 'ws_delete_page',
         description: '워크스페이스 문서를 소프트 삭제합니다(리비전/링크는 보존). 승인 흐름 없이 즉시 반영됩니다.',
-        inputSchema: { type: 'object', properties: { workspace: WS_ARG, slug: { type: 'string', description: '문서 슬러그' } }, required: ['workspace', 'slug'] },
+        inputSchema: { type: 'object', properties: { slug: { type: 'string', description: '문서 슬러그' } }, required: ['slug'] },
     },
     {
         name: 'ws_move_page',
         description: '워크스페이스 문서의 슬러그를 변경합니다(행 이름 변경, 리비전 생성 안 함). 대상 슬러그가 이미 사용 중이면 오류를 반환합니다.',
-        inputSchema: { type: 'object', properties: { workspace: WS_ARG, slug: { type: 'string', description: '현재 슬러그' }, new_slug: { type: 'string', description: '새 슬러그 (콜론 사용 불가)' } }, required: ['workspace', 'slug', 'new_slug'] },
+        inputSchema: { type: 'object', properties: { slug: { type: 'string', description: '현재 슬러그' }, new_slug: { type: 'string', description: '새 슬러그 (콜론 사용 불가)' } }, required: ['slug', 'new_slug'] },
+    },
+    // ── Todo 도구 ──
+    {
+        name: 'ws_list_todos',
+        description: '워크스페이스 TODO 목록을 반환합니다. archived 가 true 면 보관된 항목만, 생략/false 면 보관되지 않은 항목만 반환합니다. sort 로 생성순(기본 created_asc), filter 로 체크 상태를 거를 수 있습니다.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                archived: { type: 'boolean', description: 'true 면 보관된 항목만, 생략 시 비보관 항목만 (선택)' },
+                sort: { type: 'string', enum: ['created_asc', 'created_desc'], description: '정렬 순서 (선택, 기본 created_asc)' },
+                filter: { type: 'string', enum: ['checked', 'unchecked'], description: '체크 상태 필터 (선택)' },
+            },
+            required: [],
+        },
+    },
+    {
+        name: 'ws_create_todo',
+        description: '워크스페이스에 TODO 항목을 추가합니다.',
+        inputSchema: {
+            type: 'object',
+            properties: { content: { type: 'string', description: 'TODO 내용 (최대 2000자)' } },
+            required: ['content'],
+        },
+    },
+    {
+        name: 'ws_update_todo',
+        description: 'TODO 항목을 수정합니다. checked/content/archived 중 제공된 필드만 변경합니다.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                id: { type: 'number', description: 'TODO ID' },
+                checked: { type: 'boolean', description: '체크 여부 (선택)' },
+                content: { type: 'string', description: '내용 (선택, 최대 2000자)' },
+                archived: { type: 'boolean', description: '보관 여부 (선택)' },
+            },
+            required: ['id'],
+        },
+    },
+    {
+        name: 'ws_delete_todo',
+        description: 'TODO 항목을 소프트 삭제합니다.',
+        inputSchema: {
+            type: 'object',
+            properties: { id: { type: 'number', description: 'TODO ID' } },
+            required: ['id'],
+        },
+    },
+    // ── 게시판 도구 ──
+    {
+        name: 'ws_list_board_posts',
+        description: '워크스페이스 게시판의 게시글 목록을 페이지 단위(페이지당 20개, 최신순)로 반환합니다. 각 글에 댓글 수(comment_count)가 포함됩니다.',
+        inputSchema: {
+            type: 'object',
+            properties: { page: { type: 'number', description: '페이지 번호 (1-based, 선택, 기본 1)' } },
+            required: [],
+        },
+    },
+    {
+        name: 'ws_read_board_post',
+        description: '게시글 한 건의 본문과 댓글 목록을 함께 반환합니다.',
+        inputSchema: {
+            type: 'object',
+            properties: { id: { type: 'number', description: '게시글 ID' } },
+            required: ['id'],
+        },
+    },
+    {
+        name: 'ws_create_board_post',
+        description: '워크스페이스 게시판에 게시글을 작성합니다.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                title: { type: 'string', description: '제목 (최대 200자)' },
+                content: { type: 'string', description: '본문 (선택, 최대 50000자)' },
+            },
+            required: ['title'],
+        },
+    },
+    {
+        name: 'ws_delete_board_post',
+        description: '게시글을 소프트 삭제합니다(작성자 본인 또는 관리 권한 필요).',
+        inputSchema: {
+            type: 'object',
+            properties: { id: { type: 'number', description: '게시글 ID' } },
+            required: ['id'],
+        },
+    },
+    {
+        name: 'ws_create_board_comment',
+        description: '게시글에 댓글을 작성합니다.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                post_id: { type: 'number', description: '게시글 ID' },
+                content: { type: 'string', description: '댓글 내용 (최대 5000자)' },
+            },
+            required: ['post_id', 'content'],
+        },
     },
 ];
 
 const INFORMATION_TOOL: WsMcpToolDef = {
     name: 'information',
-    description: `Cloudwiki 워크스페이스 MCP — 사용자가 소유/참여 중인 개인 워크스페이스의 문서·미디어·리비전을 다룹니다. 전역 위키 MCP(/api/mcp)와 달리 편집은 승인 절차 없이 사용자 명의로 즉시 반영됩니다. 모든 도구는 workspace 슬러그로 대상 워크스페이스를 지정하며, ws_list_workspaces 로 접근 가능한 워크스페이스 목록을 먼저 확인하세요. 사용 가능한 도구: ${WS_MCP_TOOL_DEFS.map(t => t.name).join(', ')}.`,
+    description: `Cloudwiki 워크스페이스 MCP — 엔드포인트가 /api/ws/{wslug}/mcp 형식으로 워크스페이스마다 고유합니다. 사용자가 소유/참여 중인 개인 워크스페이스의 문서·미디어·리비전·TODO·게시판을 다룹니다. 전역 위키 MCP(/api/mcp)와 달리 편집은 승인 절차 없이 사용자 명의로 즉시 반영됩니다. 워크스페이스 컨텍스트는 URL 에서 자동으로 결정되므로 도구 인자에 workspace 를 별도 지정하지 않습니다. 접근 가능한 다른 워크스페이스를 보려면 ws_list_workspaces 를 사용하세요. 사용 가능한 도구: ${WS_MCP_TOOL_DEFS.map(t => t.name).join(', ')}.`,
     inputSchema: { type: 'object', properties: {}, required: [] },
 };
 
@@ -298,7 +397,7 @@ function validatePageSlug(raw: unknown): { ok: true; slug: string } | { ok: fals
 }
 
 /**
- * 워크스페이스 + 접근 권한 해석. workspace 인자(슬러그)로 조회한다.
+ * URL 의 :wslug 파라미터로 워크스페이스와 접근 권한을 해석한다.
  * 반환:
  *   - error: 도구 오류 결과(워크스페이스 미존재 또는 권한 부족) — 호출 측은 그대로 반환.
  *   - workspace/access: 정상 해석.
@@ -306,11 +405,11 @@ function validatePageSlug(raw: unknown): { ok: true; slug: string } | { ok: fals
 async function resolveScope(
     c: Context<Env>,
     user: User,
-    args: any,
     need: 'read' | 'write'
 ): Promise<{ error: ReturnType<typeof errorResult> } | { workspace: Workspace; access: WorkspaceAccess }> {
-    const wslug = typeof args?.workspace === 'string' ? args.workspace.trim() : '';
-    if (!wslug) return { error: errorResult('workspace 슬러그가 필요합니다.') };
+    const param = c.req.param('wslug');
+    const wslug = typeof param === 'string' ? param.trim() : '';
+    if (!wslug) return { error: errorResult('URL 에 워크스페이스 슬러그가 없습니다.') };
     const rbac = c.get('rbac') as RBAC;
     const { workspace, access } = await getWorkspaceAccessBySlug(c.env.DB, wslug, user, rbac);
     if (!workspace) return { error: errorResult('workspace not found') };
@@ -346,13 +445,16 @@ async function dispatchTool(c: Context<Env>, user: User, toolName: string, args:
 
     // ── ws_list_workspaces (워크스페이스 무관) ──
     if (toolName === 'ws_list_workspaces') {
+        // 이 경로는 resolveScope(=ACL)를 거치지 않으므로 status 컬럼을 직접 보장한다.
+        await ensureWorkspaceMembersStatusMigration(db);
         const owned = await db.prepare(
             `SELECT slug, name FROM workspaces WHERE owner_id = ? AND deleted_at IS NULL ORDER BY created_at DESC`
         ).bind(user.id).all<{ slug: string; name: string }>();
+        // 참가(수락 완료)한 워크스페이스만 노출한다 — 대기중(pending) 초대는 멤버가 아니다.
         const joined = await db.prepare(
             `SELECT w.slug, w.name, m.role AS role
              FROM workspace_members m JOIN workspaces w ON w.id = m.workspace_id
-             WHERE m.user_id = ? AND w.deleted_at IS NULL AND w.owner_id != ?
+             WHERE m.user_id = ? AND m.status = 'active' AND w.deleted_at IS NULL AND w.owner_id != ?
              ORDER BY w.created_at DESC`
         ).bind(user.id, user.id).all<{ slug: string; name: string; role: string }>();
         const list = [
@@ -364,7 +466,7 @@ async function dispatchTool(c: Context<Env>, user: User, toolName: string, args:
 
     // ── 읽기 도구 ──
     if (toolName === 'ws_list_pages') {
-        const scope = await resolveScope(c, user, args, 'read');
+        const scope = await resolveScope(c, user, 'read');
         if ('error' in scope) return scope.error;
         const conds: string[] = ['workspace_id = ?', 'deleted_at IS NULL'];
         const binds: unknown[] = [scope.workspace.id];
@@ -384,7 +486,7 @@ async function dispatchTool(c: Context<Env>, user: User, toolName: string, args:
     }
 
     if (toolName === 'ws_read_page') {
-        const scope = await resolveScope(c, user, args, 'read');
+        const scope = await resolveScope(c, user, 'read');
         if ('error' in scope) return scope.error;
         const slug = normalizeSlug(String(args?.slug || ''));
         if (!slug) return errorResult('slug 가 필요합니다.');
@@ -401,7 +503,7 @@ async function dispatchTool(c: Context<Env>, user: User, toolName: string, args:
     }
 
     if (toolName === 'ws_list_revisions') {
-        const scope = await resolveScope(c, user, args, 'read');
+        const scope = await resolveScope(c, user, 'read');
         if ('error' in scope) return scope.error;
         const slug = normalizeSlug(String(args?.slug || ''));
         if (!slug) return errorResult('slug 가 필요합니다.');
@@ -419,7 +521,7 @@ async function dispatchTool(c: Context<Env>, user: User, toolName: string, args:
     }
 
     if (toolName === 'ws_read_revision') {
-        const scope = await resolveScope(c, user, args, 'read');
+        const scope = await resolveScope(c, user, 'read');
         if ('error' in scope) return scope.error;
         const revisionId = Number(args?.revision_id);
         if (!Number.isInteger(revisionId) || revisionId <= 0) {
@@ -456,7 +558,7 @@ async function dispatchTool(c: Context<Env>, user: User, toolName: string, args:
     }
 
     if (toolName === 'ws_get_backlinks') {
-        const scope = await resolveScope(c, user, args, 'read');
+        const scope = await resolveScope(c, user, 'read');
         if ('error' in scope) return scope.error;
         const slug = normalizeSlug(String(args?.slug || ''));
         if (!slug) return errorResult('slug 가 필요합니다.');
@@ -471,7 +573,7 @@ async function dispatchTool(c: Context<Env>, user: User, toolName: string, args:
     }
 
     if (toolName === 'ws_list_media') {
-        const scope = await resolveScope(c, user, args, 'read');
+        const scope = await resolveScope(c, user, 'read');
         if ('error' in scope) return scope.error;
         const rows = await db.prepare(
             `SELECT filename, mime_type, size, ws_public
@@ -488,25 +590,31 @@ async function dispatchTool(c: Context<Env>, user: User, toolName: string, args:
     }
 
     if (toolName === 'ws_list_members') {
-        const scope = await resolveScope(c, user, args, 'read');
+        const scope = await resolveScope(c, user, 'read');
         if ('error' in scope) return scope.error;
         const owner = await db.prepare('SELECT name FROM users WHERE id = ?')
             .bind(scope.workspace.owner_id).first<{ name: string }>();
+        // 대기중(pending) 초대는 관리 정보이므로 canManage 에게만 노출하고(web /members 와 대칭),
+        // 일반 reader 에게는 active 멤버만 보여준다.
         const members = await db.prepare(
-            `SELECT u.name, m.role
-             FROM workspace_members m JOIN users u ON u.id = m.user_id
-             WHERE m.workspace_id = ? ORDER BY m.created_at ASC`
-        ).bind(scope.workspace.id).all<{ name: string; role: string }>();
+            scope.access.canManage
+                ? `SELECT u.name, m.role, m.status
+                   FROM workspace_members m JOIN users u ON u.id = m.user_id
+                   WHERE m.workspace_id = ? ORDER BY m.status DESC, m.created_at ASC`
+                : `SELECT u.name, m.role, m.status
+                   FROM workspace_members m JOIN users u ON u.id = m.user_id
+                   WHERE m.workspace_id = ? AND m.status = 'active' ORDER BY m.created_at ASC`
+        ).bind(scope.workspace.id).all<{ name: string; role: string; status: string }>();
         const list = [
-            { name: owner?.name ?? '(unknown)', role: 'owner' },
-            ...(members.results || []).map(m => ({ name: m.name, role: m.role })),
+            { name: owner?.name ?? '(unknown)', role: 'owner', status: 'active' },
+            ...(members.results || []).map(m => ({ name: m.name, role: m.role, status: m.status })),
         ];
         return jsonResult({ members: list });
     }
 
     // ── 쓰기 도구 ──
     if (toolName === 'ws_create_or_update_page') {
-        const scope = await resolveScope(c, user, args, 'write');
+        const scope = await resolveScope(c, user, 'write');
         if ('error' in scope) return scope.error;
         const validated = validatePageSlug(args?.slug);
         if (!validated.ok) return errorResult(validated.error);
@@ -557,7 +665,7 @@ async function dispatchTool(c: Context<Env>, user: User, toolName: string, args:
     }
 
     if (toolName === 'ws_delete_page') {
-        const scope = await resolveScope(c, user, args, 'write');
+        const scope = await resolveScope(c, user, 'write');
         if ('error' in scope) return scope.error;
         const slug = normalizeSlug(String(args?.slug || ''));
         if (!slug) return errorResult('slug 가 필요합니다.');
@@ -574,7 +682,7 @@ async function dispatchTool(c: Context<Env>, user: User, toolName: string, args:
     }
 
     if (toolName === 'ws_move_page') {
-        const scope = await resolveScope(c, user, args, 'write');
+        const scope = await resolveScope(c, user, 'write');
         if ('error' in scope) return scope.error;
         const slug = normalizeSlug(String(args?.slug || ''));
         if (!slug) return errorResult('slug 가 필요합니다.');
@@ -601,6 +709,233 @@ async function dispatchTool(c: Context<Env>, user: User, toolName: string, args:
             return errorResult(msg);
         }
         return jsonResult({ ok: true, slug: newSlug });
+    }
+
+    // ── Todo 도구 ──
+    // (제약값은 workspace-todos.ts 와 동일)
+    const TODO_MAX_LENGTH = 2000;
+
+    if (toolName === 'ws_list_todos') {
+        const scope = await resolveScope(c, user, 'read');
+        if ('error' in scope) return scope.error;
+
+        const conds: string[] = ['workspace_id = ?', 'deleted_at IS NULL'];
+        const binds: unknown[] = [scope.workspace.id];
+
+        // archived: true → 보관된 항목만, 그 외(생략/false) → 비보관 항목만.
+        if (args?.archived === true) {
+            conds.push('archived_at IS NOT NULL');
+        } else {
+            conds.push('archived_at IS NULL');
+        }
+
+        if (args?.filter === 'checked') conds.push('checked = 1');
+        else if (args?.filter === 'unchecked') conds.push('checked = 0');
+
+        const order = args?.sort === 'created_desc'
+            ? 't.created_at DESC, t.id DESC'
+            : 't.created_at ASC, t.id ASC';
+
+        const rows = await db.prepare(
+            `SELECT t.id, t.content, t.checked, t.archived_at, t.created_by, t.created_at, t.updated_at, u.name AS created_by_name
+             FROM workspace_todos t
+             LEFT JOIN users u ON u.id = t.created_by
+             WHERE ${conds.join(' AND ')}
+             ORDER BY ${order}
+             LIMIT 1000`
+        ).bind(...binds).all();
+        const todos = rows.results || [];
+        return jsonResult({ todos, has_more: todos.length === 1000 });
+    }
+
+    if (toolName === 'ws_create_todo') {
+        const scope = await resolveScope(c, user, 'write');
+        if ('error' in scope) return scope.error;
+        const content = typeof args?.content === 'string' ? args.content.trim() : '';
+        if (!content) return errorResult('content 가 필요합니다.');
+        if (content.length > TODO_MAX_LENGTH) {
+            return errorResult(`내용은 최대 ${TODO_MAX_LENGTH}자까지 입력할 수 있습니다.`);
+        }
+        const res = await db.prepare(
+            'INSERT INTO workspace_todos (workspace_id, content, checked, created_by) VALUES (?, ?, 0, ?)'
+        ).bind(scope.workspace.id, content, user.id).run();
+        return jsonResult({ ok: true, id: Number(res.meta.last_row_id) });
+    }
+
+    if (toolName === 'ws_update_todo') {
+        const scope = await resolveScope(c, user, 'write');
+        if ('error' in scope) return scope.error;
+        const id = Number(args?.id);
+        if (!Number.isInteger(id) || id <= 0) return errorResult('id 는 양의 정수여야 합니다.');
+
+        const sets: string[] = [];
+        const binds: unknown[] = [];
+
+        if ('checked' in (args || {}) && args.checked !== undefined) {
+            if (typeof args.checked !== 'boolean') return errorResult('checked 는 true/false 여야 합니다.');
+            sets.push('checked = ?');
+            binds.push(args.checked ? 1 : 0);
+        }
+        if ('content' in (args || {}) && args.content !== undefined) {
+            const content = typeof args.content === 'string' ? args.content.trim() : '';
+            if (!content) return errorResult('content 를 입력해주세요.');
+            if (content.length > TODO_MAX_LENGTH) {
+                return errorResult(`내용은 최대 ${TODO_MAX_LENGTH}자까지 입력할 수 있습니다.`);
+            }
+            sets.push('content = ?');
+            binds.push(content);
+        }
+        if ('archived' in (args || {}) && args.archived !== undefined) {
+            if (typeof args.archived !== 'boolean') return errorResult('archived 는 true/false 여야 합니다.');
+            sets.push('archived_at = ?');
+            binds.push(args.archived ? Math.floor(Date.now() / 1000) : null);
+        }
+        if (!sets.length) return errorResult('변경할 내용이 없습니다.');
+
+        sets.push('updated_at = unixepoch()');
+        binds.push(id, scope.workspace.id);
+
+        const res = await db.prepare(
+            `UPDATE workspace_todos SET ${sets.join(', ')} WHERE id = ? AND workspace_id = ? AND deleted_at IS NULL`
+        ).bind(...binds).run();
+        if (!res.meta.changes) return errorResult('항목을 찾을 수 없습니다.');
+        return jsonResult({ ok: true });
+    }
+
+    if (toolName === 'ws_delete_todo') {
+        const scope = await resolveScope(c, user, 'write');
+        if ('error' in scope) return scope.error;
+        const id = Number(args?.id);
+        if (!Number.isInteger(id) || id <= 0) return errorResult('id 는 양의 정수여야 합니다.');
+        const res = await db.prepare(
+            'UPDATE workspace_todos SET deleted_at = unixepoch() WHERE id = ? AND workspace_id = ? AND deleted_at IS NULL'
+        ).bind(id, scope.workspace.id).run();
+        if (!res.meta.changes) return errorResult('항목을 찾을 수 없습니다.');
+        return jsonResult({ ok: true });
+    }
+
+    // ── 게시판 도구 ──
+    // (제약값은 workspace-board.ts 와 동일)
+    const BOARD_PAGE_SIZE = 20;
+    const TITLE_MAX_LENGTH = 200;
+    const CONTENT_MAX_LENGTH = 50000;
+    const COMMENT_MAX_LENGTH = 5000;
+
+    if (toolName === 'ws_list_board_posts') {
+        const scope = await resolveScope(c, user, 'read');
+        if ('error' in scope) return scope.error;
+
+        let page = Number(args?.page) || 1;
+        if (!Number.isInteger(page) || page < 1) page = 1;
+        const offset = (page - 1) * BOARD_PAGE_SIZE;
+
+        const countRow = await db.prepare(
+            'SELECT COUNT(*) AS n FROM workspace_board_posts WHERE workspace_id = ? AND deleted_at IS NULL'
+        ).bind(scope.workspace.id).first<{ n: number }>();
+        const total = Number(countRow?.n || 0);
+
+        const rows = await db.prepare(
+            `SELECT p.id, p.title, p.author_id, p.created_at, p.updated_at,
+                    u.name AS author_name,
+                    (SELECT COUNT(*) FROM workspace_board_comments cm
+                       WHERE cm.post_id = p.id AND cm.deleted_at IS NULL) AS comment_count
+             FROM workspace_board_posts p
+             LEFT JOIN users u ON u.id = p.author_id
+             WHERE p.workspace_id = ? AND p.deleted_at IS NULL
+             ORDER BY p.created_at DESC, p.id DESC
+             LIMIT ? OFFSET ?`
+        ).bind(scope.workspace.id, BOARD_PAGE_SIZE, offset).all();
+
+        return jsonResult({ posts: rows.results || [], total, page, pageSize: BOARD_PAGE_SIZE });
+    }
+
+    if (toolName === 'ws_read_board_post') {
+        const scope = await resolveScope(c, user, 'read');
+        if ('error' in scope) return scope.error;
+        const postId = Number(args?.id);
+        if (!Number.isInteger(postId) || postId <= 0) return errorResult('id 는 양의 정수여야 합니다.');
+
+        const post = await db.prepare(
+            `SELECT p.id, p.title, p.content, p.author_id, p.created_at, p.updated_at, u.name AS author_name
+             FROM workspace_board_posts p
+             LEFT JOIN users u ON u.id = p.author_id
+             WHERE p.id = ? AND p.workspace_id = ? AND p.deleted_at IS NULL`
+        ).bind(postId, scope.workspace.id).first();
+        if (!post) return errorResult('게시글을 찾을 수 없습니다.');
+
+        const comments = await db.prepare(
+            `SELECT cm.id, cm.post_id, cm.author_id, cm.content, cm.created_at, u.name AS author_name
+             FROM workspace_board_comments cm
+             JOIN workspace_board_posts p ON p.id = cm.post_id
+             LEFT JOIN users u ON u.id = cm.author_id
+             WHERE cm.post_id = ? AND p.workspace_id = ? AND cm.deleted_at IS NULL
+             ORDER BY cm.created_at ASC, cm.id ASC`
+        ).bind(postId, scope.workspace.id).all();
+
+        return jsonResult({ post, comments: comments.results || [] });
+    }
+
+    if (toolName === 'ws_create_board_post') {
+        const scope = await resolveScope(c, user, 'write');
+        if ('error' in scope) return scope.error;
+        const title = typeof args?.title === 'string' ? args.title.trim() : '';
+        if (!title) return errorResult('title 이 필요합니다.');
+        if (title.length > TITLE_MAX_LENGTH) {
+            return errorResult(`제목은 최대 ${TITLE_MAX_LENGTH}자까지 입력할 수 있습니다.`);
+        }
+        if ('content' in (args || {}) && args.content != null && typeof args.content !== 'string') {
+            return errorResult('content 형식이 올바르지 않습니다.');
+        }
+        const content = typeof args?.content === 'string' ? args.content.replace(/\r\n?/g, '\n') : '';
+        if (content.length > CONTENT_MAX_LENGTH) {
+            return errorResult(`본문은 최대 ${CONTENT_MAX_LENGTH}자까지 입력할 수 있습니다.`);
+        }
+        const res = await db.prepare(
+            'INSERT INTO workspace_board_posts (workspace_id, title, content, author_id) VALUES (?, ?, ?, ?)'
+        ).bind(scope.workspace.id, title, content, user.id).run();
+        return jsonResult({ ok: true, id: Number(res.meta.last_row_id) });
+    }
+
+    if (toolName === 'ws_delete_board_post') {
+        const scope = await resolveScope(c, user, 'write');
+        if ('error' in scope) return scope.error;
+        const postId = Number(args?.id);
+        if (!Number.isInteger(postId) || postId <= 0) return errorResult('id 는 양의 정수여야 합니다.');
+
+        const post = await db.prepare(
+            'SELECT id, author_id FROM workspace_board_posts WHERE id = ? AND workspace_id = ? AND deleted_at IS NULL'
+        ).bind(postId, scope.workspace.id).first<{ id: number; author_id: number | null }>();
+        if (!post) return errorResult('게시글을 찾을 수 없습니다.');
+        // 작성자 본인 또는 관리 권한(owner/super_admin)만 삭제 가능.
+        if (post.author_id !== user.id && !scope.access.canManage) {
+            return errorResult('이 게시글을 삭제할 권한이 없습니다.');
+        }
+        await db.prepare(
+            'UPDATE workspace_board_posts SET deleted_at = unixepoch() WHERE id = ? AND workspace_id = ? AND deleted_at IS NULL'
+        ).bind(postId, scope.workspace.id).run();
+        return jsonResult({ ok: true });
+    }
+
+    if (toolName === 'ws_create_board_comment') {
+        const scope = await resolveScope(c, user, 'write');
+        if ('error' in scope) return scope.error;
+        const postId = Number(args?.post_id);
+        if (!Number.isInteger(postId) || postId <= 0) return errorResult('post_id 는 양의 정수여야 합니다.');
+
+        const post = await db.prepare(
+            'SELECT id FROM workspace_board_posts WHERE id = ? AND workspace_id = ? AND deleted_at IS NULL'
+        ).bind(postId, scope.workspace.id).first<{ id: number }>();
+        if (!post) return errorResult('게시글을 찾을 수 없습니다.');
+
+        const content = typeof args?.content === 'string' ? args.content.replace(/\r\n?/g, '\n').trim() : '';
+        if (!content) return errorResult('content 가 필요합니다.');
+        if (content.length > COMMENT_MAX_LENGTH) {
+            return errorResult(`댓글은 최대 ${COMMENT_MAX_LENGTH}자까지 입력할 수 있습니다.`);
+        }
+        const res = await db.prepare(
+            'INSERT INTO workspace_board_comments (post_id, author_id, content) VALUES (?, ?, ?)'
+        ).bind(postId, user.id, content).run();
+        return jsonResult({ ok: true, id: Number(res.meta.last_row_id) });
     }
 
     return null; // 호출 측에서 Tool not found 처리
@@ -658,20 +993,21 @@ async function handleJsonRpc(c: Context<Env>, body: any, user: User) {
 }
 
 // ────────────────────────────────────────────────────────────────
-// 라우트
+// 라우트 (/api/ws/:wslug/mcp)
 // ────────────────────────────────────────────────────────────────
 
-// GET — 브라우저/디스커버리용 안내 (mcp.ts 와 유사하게 간단 정보 JSON).
-wsMcp.get('/api/ws-mcp', (c) => {
+// GET — 디스커버리 JSON.
+wsMcp.get('/api/ws/:wslug/mcp', (c) => {
     if (!isWorkspacesEnabled(c.env)) {
         return c.json({ jsonrpc: '2.0', error: { code: -32000, message: 'Workspaces are disabled by administrator.' }, id: null }, 403);
     }
     const origin = new URL(c.req.url).origin;
-    return c.json({ mcp: true, scope: 'workspace', version: '1.0.0', transport: 'http', endpoint: `${origin}/api/ws-mcp` });
+    const wslug = c.req.param('wslug');
+    return c.json({ mcp: true, scope: 'workspace', workspace: wslug, version: '1.0.0', transport: 'http', endpoint: `${origin}/api/ws/${wslug}/mcp` });
 });
 
 // POST — JSON-RPC 엔드포인트 (Bearer 인증 필수).
-wsMcp.post('/api/ws-mcp', async (c) => {
+wsMcp.post('/api/ws/:wslug/mcp', async (c) => {
     if (!isWorkspacesEnabled(c.env)) {
         return c.json({ jsonrpc: '2.0', error: { code: -32000, message: 'Workspaces are disabled by administrator.' }, id: null }, 403);
     }

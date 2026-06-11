@@ -1,5 +1,7 @@
 import type { RBAC } from './role';
 import type { Workspace } from '../shared/models';
+import { ensureWorkspaceMembersStatusMigration } from './workspaceMembersStatusMigration';
+import { ensureWorkspaceDocTypeMigration } from './workspaceDocTypeMigration';
 
 /**
  * 워크스페이스 접근 제어(ACL) 평가 유틸.
@@ -56,10 +58,18 @@ async function resolveAccess(
     rbac: RBAC
 ): Promise<WorkspaceAccess> {
     const isSuperAdmin = !!user && rbac.can(user.role, '*');
+    // workspace_pages.doc_type 컬럼을 보장한다(레거시 view_mode→doc_type 이름 변경). 게스트의
+    // ws_public 문서 읽기(doc_type 기반 프레젠테이션 판정)도 정상 동작하도록 !user early-return
+    // 전에 수행한다. 자동 배포-수동 ALTER 사이의 `no such column: doc_type` 실패 창을 막는다.
+    await ensureWorkspaceDocTypeMigration(db);
     if (!user) return buildAccess(null, false);
+    // status 컬럼을 먼저 보장한다. owner/early-return 경로의 호출자(멤버 목록·통계 등)도
+    // status 를 참조하므로, owner 분기 전에 마이그레이션을 수행해야 레거시 D1 에서 안전하다.
+    await ensureWorkspaceMembersStatusMigration(db);
     if (ownerId === user.id) return buildAccess('owner', isSuperAdmin);
+    // status='active' 멤버만 권한을 부여한다. 'pending'(초대 수락 전)은 비멤버(role=null)로 평가.
     const member = await db.prepare(
-        'SELECT role FROM workspace_members WHERE workspace_id = ? AND user_id = ?'
+        "SELECT role FROM workspace_members WHERE workspace_id = ? AND user_id = ? AND status = 'active'"
     ).bind(workspaceId, user.id).first<{ role: string }>();
     const role: WorkspaceRole =
         member && (member.role === 'editor' || member.role === 'viewer') ? member.role : null;

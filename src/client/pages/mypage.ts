@@ -1425,9 +1425,6 @@
             const listEl = document.getElementById('wsMcpWorkspacesList');
             if (!section || !listEl) return;
 
-            const endpointEl = document.getElementById('wsMcpEndpointUrl');
-            if (endpointEl) endpointEl.textContent = window.location.origin + '/api/ws-mcp';
-
             section.style.display = '';
 
             try {
@@ -1444,6 +1441,8 @@
                 listEl.innerHTML = all.map(ws => {
                     const slug = window.escapeHtml(ws.slug);
                     const name = window.escapeHtml(ws.name || ws.slug);
+                    const endpointUrl = window.location.origin + '/api/ws/' + ws.slug + '/mcp';
+                    const endpointUrlEscaped = window.escapeHtml(endpointUrl);
                     const role = ws.my_role
                         ? `<span class="badge bg-secondary bg-opacity-10 text-secondary border ms-1">${window.escapeHtml(ws.my_role)}</span>`
                         : '<span class="badge bg-primary bg-opacity-10 text-primary border ms-1">owner</span>';
@@ -1453,8 +1452,11 @@
                                 <div class="session-ua">
                                     <i class="bi bi-folder-fill text-primary"></i> ${name} ${role}
                                 </div>
-                                <div class="session-ua-raw text-muted">
-                                    slug: <code>${slug}</code>
+                                <div class="d-flex align-items-center gap-2 mt-1 flex-wrap">
+                                    <code class="small" style="word-break: break-all; color: var(--wiki-primary); background: transparent; padding: 0;">${endpointUrlEscaped}</code>
+                                    <button class="btn btn-sm btn-wiki-outline flex-shrink-0" data-endpoint="${endpointUrlEscaped}" onclick="copyWsMcpEndpoint(this)">
+                                        <i class="mdi mdi-content-copy"></i>
+                                    </button>
                                 </div>
                             </div>
                             <div class="flex-shrink-0">
@@ -1470,8 +1472,8 @@
             }
         }
 
-        function copyWsMcpEndpoint() {
-            const url = (document.getElementById('wsMcpEndpointUrl') as HTMLElement)?.textContent || '';
+        function copyWsMcpEndpoint(btn: HTMLElement) {
+            const url = btn.dataset.endpoint || '';
             navigator.clipboard.writeText(url).then(() => {
                 Swal.fire({ icon: 'success', title: '복사됨', toast: true, position: 'top-end', showConfirmButton: false, timer: 1500 });
             }).catch(() => {

@@ -1278,7 +1278,9 @@ async function loadNotifications(append = false) {
                 'message': 'mdi mdi-email-outline',
                 'ticket_created': 'mdi mdi-ticket-outline',
                 'ticket_comment': 'mdi mdi-ticket-confirmation-outline',
-                'mention': 'mdi mdi-at'
+                'mention': 'mdi mdi-at',
+                'ws_invite': 'mdi mdi-account-multiple-plus-outline',
+                'ws_invite_accepted': 'mdi mdi-account-check-outline'
             };
             const icon = iconMap[n.type] || 'mdi mdi-bell';
             const timeAgo = _formatTimeAgo(n.created_at);

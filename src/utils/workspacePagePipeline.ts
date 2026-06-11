@@ -35,8 +35,8 @@ export interface SaveWorkspacePageInput {
     title?: string | null;
     /** undefined = 유지, null/string = 덮어쓰기 */
     redirectTo?: string | null;
-    /** undefined = 유지, null/string = 덮어쓰기 (호출자가 ALLOWED_VIEW_MODES 검증) */
-    viewMode?: string | null;
+    /** undefined = 유지, null/string = 덮어쓰기 (호출자가 ALLOWED_DOC_TYPES 검증) */
+    docType?: string | null;
     /** undefined = 유지, 0/1 = 설정 (신규 생성 시 누락이면 0) */
     wsPublic?: number;
     /** 낙관적 락 — 제공됐고 현재 version 과 불일치하면 CONCURRENT_MODIFICATION throw */
@@ -103,7 +103,7 @@ export async function saveWorkspacePage(
             pageResult = await db
                 .prepare(
                     `INSERT INTO workspace_pages
-                        (workspace_id, slug, title, content, version, redirect_to, view_mode, ws_public, rows, characters)
+                        (workspace_id, slug, title, content, version, redirect_to, doc_type, ws_public, rows, characters)
                      VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?)`
                 )
                 .bind(
@@ -112,7 +112,7 @@ export async function saveWorkspacePage(
                     input.title === undefined ? null : input.title,
                     input.content,
                     input.redirectTo === undefined ? null : input.redirectTo,
-                    input.viewMode === undefined ? null : input.viewMode,
+                    input.docType === undefined ? null : input.docType,
                     input.wsPublic === undefined ? 0 : (input.wsPublic ? 1 : 0),
                     metrics.rows,
                     metrics.characters
@@ -176,7 +176,7 @@ export async function saveWorkspacePage(
             throw e;
         }
 
-        // title/redirect_to/view_mode/ws_public: undefined 면 SET 절 자체를 생략해 기존 값 유지.
+        // title/redirect_to/doc_type/ws_public: undefined 면 SET 절 자체를 생략해 기존 값 유지.
         const setClauses: string[] = ['content = ?'];
         const bindings: unknown[] = [input.content];
         if (input.title !== undefined) {
@@ -187,9 +187,9 @@ export async function saveWorkspacePage(
             setClauses.push('redirect_to = ?');
             bindings.push(input.redirectTo);
         }
-        if (input.viewMode !== undefined) {
-            setClauses.push('view_mode = ?');
-            bindings.push(input.viewMode);
+        if (input.docType !== undefined) {
+            setClauses.push('doc_type = ?');
+            bindings.push(input.docType);
         }
         if (input.wsPublic !== undefined) {
             setClauses.push('ws_public = ?');
