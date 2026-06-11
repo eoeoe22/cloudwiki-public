@@ -175,6 +175,7 @@ export interface Workspace {
     slug: string;
     name: string;
     owner_id: number;
+    icon: string | null;
     created_at: number;
     deleted_at: number | null;
 }

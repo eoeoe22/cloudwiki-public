@@ -3667,3 +3667,19 @@ html[data-theme="dark"] .push-status-on {
 .doc-banner--flush   { margin: 0; }
 .doc-banner__action  { white-space: nowrap; }
 .doc-banner--sky .doc-banner__action { background: #38BDF8; color: #06283d; }
+
+/* 워크스페이스 폴더 뷰(/ws/:wslug/files) — 문서명/폴더명 라벨.
+   문서명은 클릭으로 바로 열리는 링크지만, 트리 안에서 과한 링크색을 피하려고
+   본문색을 상속하고 hover 시에만 강조한다. */
+.ws-file-name {
+  color: var(--wiki-text, inherit);
+  text-decoration: none;
+  cursor: pointer;
+}
+.ws-file-name:hover {
+  color: var(--wiki-primary, #0d6efd);
+  text-decoration: underline;
+}
+.ws-file-folder {
+  cursor: pointer;
+}

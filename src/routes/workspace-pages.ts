@@ -189,8 +189,17 @@ wsPages.get('/api/ws/:wslug/pages/:slug{.+}/backlinks', async (c) => {
 /**
  * POST /api/ws/:wslug/pages/:slug{.+}/move — 문서 슬러그 변경 (canWrite).
  * body: { new_slug }
- * 행만 이름을 바꾼다 — 리비전을 만들지 않으며, 이 문서를 가리키는 다른 문서의
- * [[옛슬러그]] 참조 재작성은 범위 밖(역링크는 옛 슬러그를 계속 가리킴).
+ *
+ * 대상 문서와 그 하위 문서(`slug LIKE 'old/%'`)를 **함께** 이동한다(폴더 이름변경).
+ * D1 은 다중 문서를 묶는 트랜잭션을 지원하지 않으므로 "사전검증 → batch 적용" 방식이다:
+ *   1) 대상 + 하위 문서를 수집하고 각 목적 슬러그를 계산·검증한다(서로 중복도 차단).
+ *   2) 자기 자신/하위 경로로의 이동을 차단한다.
+ *   3) 얕은 깊이(슬러그 세그먼트 수) 오름차순으로 정렬한 뒤 `batch`(암시적 트랜잭션)로
+ *      일괄 UPDATE 한다. 잔여 UNIQUE 위반(무관한 기존 문서·소프트 삭제 행 점유)은 409.
+ * 별도 IN(...) 충돌 사전확인은 두지 않는다 — 하위 문서가 많으면 D1 의 bound-parameter
+ * 한도(~100)에 걸리고, batch 의 원자적 롤백이 동일하게 충돌을 409 로 보장하기 때문이다.
+ * 리비전을 만들지 않으며, 이 문서를 가리키는 다른 문서의 [[옛슬러그]] 참조 재작성은
+ * 범위 밖이다(역링크는 옛 슬러그를 계속 가리킴 — 단건 move 와 동일 정책).
  */
 wsPages.post('/api/ws/:wslug/pages/:slug{.+}/move', requireAuth, async (c) => {
     const { workspace, access } = await resolveWs(c);
@@ -205,25 +214,62 @@ wsPages.post('/api/ws/:wslug/pages/:slug{.+}/move', requireAuth, async (c) => {
 
     const page = await findPage(c.env.DB, workspace.id, slug);
     if (!page) return c.json({ error: '문서를 찾을 수 없습니다.' }, 404);
-    if (newSlug === page.slug) return c.json({ error: '현재 제목과 동일합니다.' }, 400);
+    if (newSlug === slug) return c.json({ error: '현재 제목과 동일합니다.' }, 400);
+    // 자기 자신의 하위 경로로 이동 불가 — 옛/새 슬러그 공간이 겹쳐 중간 상태 충돌이 생긴다.
+    if (newSlug.startsWith(slug + '/')) {
+        return c.json({ error: '문서를 자기 자신의 하위 경로로 이동할 수 없습니다.' }, 400);
+    }
 
-    const taken = await findPage(c.env.DB, workspace.id, newSlug);
-    if (taken) return c.json({ error: '이미 사용 중인 제목입니다.', code: 'SLUG_TAKEN' }, 409);
+    // ① 대상 + 하위 문서 수집 (slug 자신 또는 'slug/' prefix).
+    const subPattern = escapeLike(slug) + '/%';
+    const affectedRes = await c.env.DB
+        .prepare("SELECT id, slug FROM workspace_pages WHERE workspace_id = ? AND (slug = ? OR slug LIKE ? ESCAPE '\\') AND deleted_at IS NULL")
+        .bind(workspace.id, slug, subPattern)
+        .all<{ id: number; slug: string }>();
+    const affected = affectedRes.results || [];
+    if (!affected.length) return c.json({ error: '문서를 찾을 수 없습니다.' }, 404);
 
+    // 얕은 깊이 먼저 처리되도록 정렬. 목적지가 조상인 "상위로 이동"(예: a/rest → a, 자식
+    // a/rest/rest 포함)에서는 일부 목적 슬러그가 다른 대상의 *옛* 슬러그와 겹치는데, 부모를
+    // 먼저 비워야 자식이 그 자리를 재점유할 때 UNIQUE 위반(거짓 409)이 나지 않는다. 겹침은
+    // 항상 이 상위 이동에서만 생기므로(목적지가 자기 하위인 경우는 위에서 차단) 오름차순이면 충분.
+    affected.sort((a, b) => a.slug.split('/').length - b.slug.split('/').length);
+
+    // ② 각 목적 슬러그 계산·검증 (prefix 치환).
+    const updates: { id: number; to: string }[] = [];
+    const targetSet = new Set<string>();
+    for (const row of affected) {
+        const suffix = row.slug.slice(slug.length); // 대상 자신은 '', 하위 문서는 '/...'
+        const v = validatePageSlug(newSlug + suffix);
+        if (!v.ok) {
+            return c.json({ error: `'${row.slug}' 의 새 경로가 유효하지 않습니다: ${v.error}` }, 400);
+        }
+        if (targetSet.has(v.slug)) {
+            return c.json({ error: '이동 결과 슬러그가 서로 중복됩니다.' }, 400);
+        }
+        targetSet.add(v.slug);
+        updates.push({ id: row.id, to: v.slug });
+    }
+
+    // ③ batch 일괄 UPDATE(위에서 얕은 깊이 순으로 정렬됨). 대상 간 자리 겹침은 정렬로
+    //    해소되므로, 남는 UNIQUE 위반은 무관한 기존 문서(또는 같은 slug 의 소프트 삭제 행)와의
+    //    충돌뿐 — batch 의 암시적 트랜잭션(부분 적용 없이 전체 롤백)에 의존해 409 로 매핑한다.
     try {
-        await c.env.DB
-            .prepare('UPDATE workspace_pages SET slug = ?, updated_at = unixepoch() WHERE id = ? AND deleted_at IS NULL')
-            .bind(newSlug, page.id)
-            .run();
+        await c.env.DB.batch(
+            updates.map((u) =>
+                c.env.DB
+                    .prepare('UPDATE workspace_pages SET slug = ?, updated_at = unixepoch() WHERE id = ? AND deleted_at IS NULL')
+                    .bind(u.to, u.id)
+            )
+        );
     } catch (e: any) {
-        // UNIQUE(workspace_id, slug) — precheck 이후 경합, 또는 같은 slug 의 소프트 삭제 행 점유.
         const msg = String(e?.message || e);
         if (/UNIQUE|constraint/i.test(msg)) {
             return c.json({ error: '이미 사용 중인 제목입니다.', code: 'SLUG_TAKEN' }, 409);
         }
         throw e;
     }
-    return c.json({ ok: true, slug: newSlug });
+    return c.json({ ok: true, slug: newSlug, moved: updates.length });
 });
 
 /**

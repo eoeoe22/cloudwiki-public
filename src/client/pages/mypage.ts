@@ -32,6 +32,7 @@
             loadSessions();
             loadMcpClients();
             loadMcpApiKey();
+            loadWsMcpSection();
             loadMcpSubmissions();
             checkNameChangeStatus();
             showPictureUpdateResult();
@@ -1232,8 +1233,14 @@
         }
 
         async function loadMcpClients() {
-            const section = document.getElementById('mcpClientsSection');
+            const section = document.getElementById('wikiMcpSection');
             const listEl = document.getElementById('mcpClientsList');
+            if (!section || !listEl) return;
+
+            // 위키 MCP 엔드포인트 URL 세팅 (origin + /api/mcp)
+            const wikiEndpointEl = document.getElementById('wikiMcpEndpointUrl');
+            if (wikiEndpointEl) wikiEndpointEl.textContent = window.location.origin + '/api/mcp';
+
             try {
                 const res = await fetch('/api/me/mcp-clients');
                 if (!res.ok) throw new Error();
@@ -1305,6 +1312,15 @@
             }
         }
 
+        function copyWikiMcpEndpoint() {
+            const url = (document.getElementById('wikiMcpEndpointUrl') as HTMLElement)?.textContent || '';
+            navigator.clipboard.writeText(url).then(() => {
+                Swal.fire({ icon: 'success', title: '복사됨', toast: true, position: 'top-end', showConfirmButton: false, timer: 1500 });
+            }).catch(() => {
+                Swal.fire({ icon: 'error', title: '복사 실패', toast: true, position: 'top-end', showConfirmButton: false, timer: 1500 });
+            });
+        }
+
         async function revokeMcpClient(clientId) {
             if (!clientId) return;
             const result = await Swal.fire({
@@ -1362,10 +1378,10 @@
         }
 
         async function loadMcpApiKey() {
-            const section = document.getElementById('mcpApiKeySection');
+            const section = document.getElementById('wikiMcpSection');
             const container = document.getElementById('mcpApiKeyContainer');
             const deleteBtn = document.getElementById('deleteMcpApiKeyBtn');
-            if (!section || !container || !deleteBtn) return;
+            if (!container || !deleteBtn) return;
 
             try {
                 const res = await fetch('/api/me/mcp-api-key');
@@ -1373,7 +1389,7 @@
                 const data = await res.json();
                 const apiKey = data.apiKey;
 
-                section.style.display = '';
+                if (section) section.style.display = '';
 
                 if (!apiKey) {
                     container.innerHTML = '<div class="text-center text-muted py-2">발급된 API 키가 없습니다.</div>';
@@ -1397,9 +1413,70 @@
                 `;
                 deleteBtn.classList.remove('d-none');
             } catch (e) {
-                section.style.display = '';
+                if (section) section.style.display = '';
                 container.innerHTML = '<div class="text-center text-danger py-2">API 키 정보를 불러오지 못했습니다.</div>';
             }
+        }
+
+        async function loadWsMcpSection() {
+            if (!window.appConfig?.workspacesEnabled) return;
+
+            const section = document.getElementById('wsMcpSection');
+            const listEl = document.getElementById('wsMcpWorkspacesList');
+            if (!section || !listEl) return;
+
+            const endpointEl = document.getElementById('wsMcpEndpointUrl');
+            if (endpointEl) endpointEl.textContent = window.location.origin + '/api/ws-mcp';
+
+            section.style.display = '';
+
+            try {
+                const res = await fetch('/api/workspaces');
+                if (!res.ok) throw new Error();
+                const data = await res.json();
+                const all = [...(data.owned || []), ...(data.joined || [])];
+
+                if (all.length === 0) {
+                    listEl.innerHTML = window.uiEmptyState({ compact: true, icon: 'bi bi-folder', title: '접근 가능한 워크스페이스가 없습니다' });
+                    return;
+                }
+
+                listEl.innerHTML = all.map(ws => {
+                    const slug = window.escapeHtml(ws.slug);
+                    const name = window.escapeHtml(ws.name || ws.slug);
+                    const role = ws.my_role
+                        ? `<span class="badge bg-secondary bg-opacity-10 text-secondary border ms-1">${window.escapeHtml(ws.my_role)}</span>`
+                        : '<span class="badge bg-primary bg-opacity-10 text-primary border ms-1">owner</span>';
+                    return `
+                        <div class="session-item">
+                            <div class="session-meta">
+                                <div class="session-ua">
+                                    <i class="bi bi-folder-fill text-primary"></i> ${name} ${role}
+                                </div>
+                                <div class="session-ua-raw text-muted">
+                                    slug: <code>${slug}</code>
+                                </div>
+                            </div>
+                            <div class="flex-shrink-0">
+                                <a href="/ws/${encodeURIComponent(ws.slug)}/settings" class="btn btn-sm btn-wiki-outline">
+                                    <i class="bi bi-gear"></i> 설정
+                                </a>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            } catch (e) {
+                listEl.innerHTML = window.uiEmptyState({ compact: true, icon: 'bi bi-exclamation-triangle', title: '워크스페이스 목록을 불러오지 못했습니다' });
+            }
+        }
+
+        function copyWsMcpEndpoint() {
+            const url = (document.getElementById('wsMcpEndpointUrl') as HTMLElement)?.textContent || '';
+            navigator.clipboard.writeText(url).then(() => {
+                Swal.fire({ icon: 'success', title: '복사됨', toast: true, position: 'top-end', showConfirmButton: false, timer: 1500 });
+            }).catch(() => {
+                Swal.fire({ icon: 'error', title: '복사 실패', toast: true, position: 'top-end', showConfirmButton: false, timer: 1500 });
+            });
         }
 
         async function generateMcpApiKey() {
@@ -1439,8 +1516,8 @@
                                 <code id="rawApiKeyText" style="color: var(--wiki-primary); background: transparent; padding: 0;">${window.escapeHtml(data.rawKey)}</code>
                             </div>
                             <div class="text-center">
-                                <button class="btn btn-wiki btn-sm" onclick="navigator.clipboard.writeText('${data.rawKey}').then(() => { 
-                                    Swal.showValidationMessage('클립보드에 복사되었습니다.'); 
+                                <button class="btn btn-wiki btn-sm" onclick="navigator.clipboard.writeText(document.getElementById('rawApiKeyText')?.textContent||'').then(() => {
+                                    Swal.showValidationMessage('클립보드에 복사되었습니다.');
                                     setTimeout(() => Swal.resetValidationMessage(), 2000);
                                 })">
                                     <i class="mdi mdi-content-copy"></i> 복사하기
@@ -1767,3 +1844,5 @@ window.markAllNotificationsReadArchive = markAllNotificationsReadArchive;
 window.deleteAllNotificationsArchive = deleteAllNotificationsArchive;
 window.generateMcpApiKey = generateMcpApiKey;
 window.deleteMcpApiKey = deleteMcpApiKey;
+window.copyWikiMcpEndpoint = copyWikiMcpEndpoint;
+window.copyWsMcpEndpoint = copyWsMcpEndpoint;

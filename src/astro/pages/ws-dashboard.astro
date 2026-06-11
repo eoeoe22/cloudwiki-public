@@ -38,11 +38,14 @@ import Footer from '../components/Footer.astro';
 
                 <!-- 본문 -->
                 <div id="wsContent" class="d-none">
-                    <!-- 헤더: 이름 + 툴바 -->
+                    <!-- 헤더: 아이콘 + 이름 + 툴바 -->
                     <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
-                        <div>
-                            <h2 class="mb-1" id="wsName"></h2>
-                            <p class="text-muted small mb-0" id="wsSlug"></p>
+                        <div class="d-flex align-items-center gap-3">
+                            <i id="wsIcon" class="text-primary" style="font-size:2rem;" aria-hidden="true"></i>
+                            <div>
+                                <h2 class="mb-1" id="wsName"></h2>
+                                <p class="text-muted small mb-0" id="wsSlug"></p>
+                            </div>
                         </div>
                         <div class="d-flex gap-2 flex-wrap" id="wsToolbar"></div>
                     </div>
@@ -51,37 +54,54 @@ import Footer from '../components/Footer.astro';
                     <div class="d-flex flex-wrap gap-2 mb-4" id="wsStats"></div>
 
                     <div class="row g-4">
-                        <!-- 문서 목록 -->
+                        <!-- 빠른 최근 문서 -->
                         <div class="col-12 col-lg-6">
                             <div class="card h-100">
                                 <div class="card-header d-flex align-items-center justify-content-between">
-                                    <span><i class="bi bi-file-earmark-text"></i> 문서</span>
+                                    <span><i class="bi bi-clock-history"></i> 최근 문서</span>
+                                    <a href="#" id="wsAllDocsBtn" class="btn btn-wiki btn-sm"><i class="bi bi-folder2-open"></i> 전체 문서 보기</a>
                                 </div>
                                 <div class="card-body" id="wsPagesList"></div>
                             </div>
                         </div>
 
-                        <!-- 참가자 목록 -->
+                        <!-- 참가자 목록 (+ 초대) -->
                         <div class="col-12 col-lg-6">
                             <div class="card h-100">
-                                <div class="card-header"><i class="bi bi-people"></i> 참가자</div>
-                                <div class="card-body" id="wsMembersList"></div>
+                                <div class="card-header d-flex align-items-center justify-content-between">
+                                    <span><i class="bi bi-people"></i> 참가자</span>
+                                    <button type="button" id="wsInviteToggle" class="btn btn-wiki btn-sm d-none" onclick="toggleWsInvite()">
+                                        <i class="bi bi-person-plus"></i> 멤버 초대
+                                    </button>
+                                </div>
+                                <div class="card-body">
+                                    <!-- 초대 영역 (canManage 일 때만 노출) -->
+                                    <div id="wsInviteArea" class="d-none mb-3 pb-3 border-bottom">
+                                        <div class="row g-2 align-items-end mb-2">
+                                            <div class="col-12 col-md">
+                                                <label class="form-label small mb-1" for="wsInviteSearch">사용자 검색</label>
+                                                <input type="text" id="wsInviteSearch" class="form-control form-control-sm" placeholder="닉네임으로 검색" autocomplete="off" oninput="onWsInviteSearch()">
+                                            </div>
+                                            <div class="col-auto">
+                                                <label class="form-label small mb-1" for="wsInviteRole">역할</label>
+                                                <select id="wsInviteRole" class="form-select form-select-sm">
+                                                    <option value="viewer">viewer (읽기)</option>
+                                                    <option value="editor">editor (편집)</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                        <div id="wsInviteResults" class="list-group"></div>
+                                    </div>
+                                    <div id="wsMembersList"></div>
+                                </div>
                             </div>
                         </div>
 
                         <!-- 미디어 목록 -->
-                        <div class="col-12 col-lg-6">
+                        <div class="col-12">
                             <div class="card h-100">
                                 <div class="card-header"><i class="bi bi-image"></i> 미디어</div>
                                 <div class="card-body" id="wsMediaList"></div>
-                            </div>
-                        </div>
-
-                        <!-- 최근 활동 -->
-                        <div class="col-12 col-lg-6">
-                            <div class="card h-100">
-                                <div class="card-header"><i class="bi bi-clock-history"></i> 최근 활동</div>
-                                <div class="card-body" id="wsActivityList"></div>
                             </div>
                         </div>
                     </div>

@@ -629,6 +629,8 @@ CREATE TABLE IF NOT EXISTS workspaces (
   slug        TEXT NOT NULL UNIQUE,
   name        TEXT NOT NULL,
   owner_id    INTEGER NOT NULL,
+  -- 워크스페이스 표시 아이콘 (예: 'bi bi-folder-fill' / 'mdi mdi-...'). NULL 이면 기본 아이콘 사용.
+  icon        TEXT,
   created_at  INTEGER DEFAULT (unixepoch()),
   deleted_at  INTEGER,
   FOREIGN KEY (owner_id) REFERENCES users(id)

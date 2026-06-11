@@ -11,6 +11,10 @@ let pages = []; // { id, slug, title, updated_at, version, ws_public, rows, char
 const expanded = {};
 
 const esc = (s) => window.escapeHtml(String(s ?? ''));
+/** 인라인 on* 핸들러 인자용 — JSON 직렬화 후 HTML 이스케이프해 속성에 안전하게 넣는다.
+ *  워크스페이스 slug 는 따옴표(`"`/`'`)를 허용하므로 JSON.stringify 만으로는 속성을
+ *  탈출당할 수 있다(이중 인용 속성 안의 `"` 가 속성을 조기 종료). */
+const attrJson = (v) => esc(JSON.stringify(v));
 
 /** slug 의 각 세그먼트를 encodeURIComponent 로 인코딩해 URL 경로로 반환 */
 function encodeSlugPath(slug) {
@@ -145,7 +149,7 @@ function renderNode(node, depth) {
   const isFolder = !node.page; // 중간 경로만 있고 실제 문서 없는 경우
 
   const chevron = hasChildren
-    ? `<button class="btn btn-sm p-0 me-1 border-0 text-muted" style="width:1.2em;" onclick="window.wsFileToggle(${JSON.stringify(node.key)})" aria-expanded="${isExpanded}" aria-label="폴더 열기/닫기">
+    ? `<button class="btn btn-sm p-0 me-1 border-0 text-muted" style="width:1.2em;" onclick="window.wsFileToggle(${attrJson(node.key)})" aria-expanded="${isExpanded}" aria-label="폴더 열기/닫기">
         <i class="bi bi-chevron-${isExpanded ? 'down' : 'right'}" style="font-size:0.75rem;"></i>
        </button>`
     : `<span style="width:1.2em;display:inline-block;"></span>`;
@@ -156,11 +160,23 @@ function renderNode(node, depth) {
 
   const actions = node.page ? renderActions(node.page) : '';
 
+  // 실제 문서가 있는 노드는 제목 클릭으로 바로 열린다. 문서 없는 가상 폴더는
+  // 클릭 시 펼침/접기(자식이 있을 때)하거나 비활성 텍스트로 둔다.
+  let labelHtml;
+  if (node.page) {
+    const href = `/ws/${encodeURIComponent(wslug)}/w/${encodeSlugPath(node.page.slug)}`;
+    labelHtml = `<a href="${href}" class="flex-grow-1 text-truncate small ws-file-name" title="${esc(node.key)}">${esc(node.label)}</a>`;
+  } else if (hasChildren) {
+    labelHtml = `<span class="flex-grow-1 text-truncate small ws-file-folder" role="button" title="${esc(node.key)}" onclick="window.wsFileToggle(${attrJson(node.key)})">${esc(node.label)}</span>`;
+  } else {
+    labelHtml = `<span class="flex-grow-1 text-truncate small text-muted" title="${esc(node.key)}">${esc(node.label)}</span>`;
+  }
+
   const html = `
     <div class="d-flex align-items-center py-1 border-bottom" style="padding-left:${indent + 8}px;">
       ${chevron}
       ${icon}
-      <span class="flex-grow-1 text-truncate small" title="${esc(node.key)}">${esc(node.label)}</span>
+      ${labelHtml}
       ${actions}
     </div>`;
 
@@ -175,15 +191,12 @@ function renderNode(node, depth) {
 
 function renderActions(page) {
   const slug = page.slug;
-  const encodedSlug = encodeSlugPath(slug);
   const wslugEnc = encodeURIComponent(wslug);
-  const slugJ = JSON.stringify(slug);
+  const slugJ = attrJson(slug);
 
+  // '열기' 버튼은 제거됨 — 제목 클릭으로 문서를 연다.
   return `
     <div class="d-flex gap-1 flex-shrink-0 ms-1">
-      <a href="/ws/${wslugEnc}/w/${encodedSlug}" class="btn btn-sm btn-wiki-outline py-0 px-1" title="열기">
-        <i class="bi bi-box-arrow-up-right" style="font-size:0.75rem;"></i>
-      </a>
       <a href="/ws/${wslugEnc}/edit?slug=${encodeURIComponent(slug)}" class="btn btn-sm btn-wiki-outline py-0 px-1" title="편집">
         <i class="bi bi-pencil" style="font-size:0.75rem;"></i>
       </a>
@@ -220,19 +233,27 @@ window.wsFileNew = async function () {
   location.href = `/ws/${encodeURIComponent(wslug)}/edit?slug=${encodeURIComponent(slug.trim())}`;
 };
 
-// ── 이름 변경 ─────────────────────────────────────────────────────────────────
+// ── 이름 변경 (하위 문서 일괄 이동) ─────────────────────────────────────────────
 window.wsFileRename = async function (slug) {
+  // 하위 문서가 함께 이동됨을 미리 알려준다(slug/ 로 시작하는 문서 수).
+  const subCount = pages.filter((p) => p.slug && p.slug.startsWith(slug + '/')).length;
+  const note = subCount > 0
+    ? `<div class="small text-muted mt-2">하위 문서 <strong>${subCount}</strong>개도 새 경로로 함께 이동합니다.</div>`
+    : '';
+
   const { value: newSlug } = await Swal.fire({
     title: '제목 변경',
     input: 'text',
     inputLabel: '새 제목',
     inputValue: slug,
+    html: note || undefined,
     showCancelButton: true,
     confirmButtonText: '변경',
     cancelButtonText: '취소',
     inputValidator: (v) => {
       if (!v || !v.trim()) return '제목을 입력해주세요.';
       if (v.trim() === slug) return '현재 제목과 동일합니다.';
+      if (v.trim().startsWith(slug + '/')) return '문서를 자기 자신의 하위 경로로 이동할 수 없습니다.';
     },
   });
   if (!newSlug) return;
@@ -255,6 +276,16 @@ window.wsFileRename = async function (slug) {
         : (body.error || '제목을 변경하지 못했습니다.');
       Swal.fire('오류', msg, 'error');
       return;
+    }
+    // 펼침 상태(expanded)의 키는 옛 slug 를 가리키므로, 이동된 prefix 를 새 경로로
+    // remap 해 재로드 후에도 펼친 폴더가 접히지 않게 한다.
+    const dest = (body.slug || newSlug.trim());
+    for (const key of Object.keys(expanded)) {
+      if (key === slug || key.startsWith(slug + '/')) {
+        const remapped = dest + key.slice(slug.length);
+        if (expanded[key]) expanded[remapped] = true;
+        delete expanded[key];
+      }
     }
     await loadTree();
   } catch (e) {

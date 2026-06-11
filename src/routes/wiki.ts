@@ -3,6 +3,7 @@ import type { Env, Page, Revision, User } from '../types';
 import { requireAuth, requireAdmin, requirePermission } from '../middleware/session';
 import { normalizeSlug, isR2OnlyNamespace, isMapNamespace } from '../utils/slug';
 import { getEnabledExtensions } from '../utils/extensions';
+import { isWorkspacesEnabled } from '../utils/workspace';
 import { buildMapDocument, buildGroupTree, MAP_CACHE_MAX_AGE_SECONDS } from '../utils/mapDocument';
 import { safeJSON } from '../utils/json';
 import {
@@ -949,6 +950,7 @@ wiki.get('/config', async (c) => {
         turnstileSiteKey: c.env.TURNSTILE_SITE_KEY || '',
         enabledExtensions: getEnabledExtensions(c.env),
         mediaPublicUrl: c.env.MEDIA_PUBLIC_URL || '',
+        workspacesEnabled: isWorkspacesEnabled(c.env),
         announcements,
         palettes,
     });

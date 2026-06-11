@@ -4,6 +4,7 @@
 // any 형태 fetch 응답이라 타입 검사를 끈다.
 
 import { apiGet } from '../utils/api';
+import { workspaceIconClass } from '../../shared/workspaceIcon';
 
 const esc = (s) => window.escapeHtml(String(s ?? ''));
 
@@ -75,7 +76,7 @@ async function initDashboard() {
   contentEl.classList.remove('d-none');
 
   // 각 섹션 독립 로드 (한 섹션 실패가 나머지를 막지 않도록)
-  loadPagesAndActivity();
+  loadRecentDocs();
   loadMedia();
   loadMembers();
 }
@@ -85,6 +86,7 @@ function renderHeader(meta) {
   const access = meta.access || {};
   const stats = meta.stats || {};
 
+  document.getElementById('wsIcon').className = workspaceIconClass(ws.icon) + ' text-primary';
   document.getElementById('wsName').textContent = ws.name || ws.slug || '워크스페이스';
   document.getElementById('wsSlug').textContent = ws.slug || '';
 
@@ -100,64 +102,53 @@ function renderHeader(meta) {
     badge('bi-people', 'success', '멤버', n(stats.members)),
   ].join('');
 
-  // 툴바
+  // 툴바 — 폴더 뷰 진입은 '전체 문서 보기' 버튼으로 이관, 여기엔 새 문서/설정만 둔다.
   const wenc = encodeURIComponent(WSLUG);
   const tools = [];
   if (access.canWrite) {
     tools.push(`<a href="/ws/${wenc}/edit" class="btn btn-wiki btn-sm"><i class="bi bi-plus-lg"></i> 새 문서</a>`);
   }
-  tools.push(`<a href="/ws/${wenc}/files" class="btn btn-wiki-outline btn-sm"><i class="bi bi-folder2-open"></i> 폴더 뷰</a>`);
   if (access.canManage) {
     tools.push(`<a href="/ws/${wenc}/settings" class="btn btn-wiki-outline btn-sm"><i class="bi bi-gear"></i> 설정</a>`);
   }
   document.getElementById('wsToolbar').innerHTML = tools.join('');
+
+  // '전체 문서 보기' → 폴더 뷰
+  document.getElementById('wsAllDocsBtn').setAttribute('href', '/ws/' + wenc + '/files');
+
+  // 멤버 초대 토글 (canManage 만)
+  if (access.canManage) {
+    document.getElementById('wsInviteToggle').classList.remove('d-none');
+  }
 }
 
-// ── 문서 목록 + 최근 활동 (한 번의 fetch 를 공유) ──
-async function loadPagesAndActivity() {
+// ── 빠른 최근 문서 (updated_at DESC 상위 8) ──
+async function loadRecentDocs() {
   const pagesEl = document.getElementById('wsPagesList');
-  const activityEl = document.getElementById('wsActivityList');
   pagesEl.innerHTML = window.uiSkeletonList(5);
-  activityEl.innerHTML = window.uiSkeletonList(5);
 
   let pages;
   try {
     const data = await apiGet('/api/ws/' + encodeURIComponent(WSLUG) + '/pages?top=1');
     pages = Array.isArray(data.pages) ? data.pages : [];
   } catch (e) {
-    const err = window.uiEmptyState({ compact: true, icon: 'bi bi-exclamation-triangle', title: '불러오지 못했습니다' });
-    pagesEl.innerHTML = err;
-    activityEl.innerHTML = err;
+    pagesEl.innerHTML = window.uiEmptyState({ compact: true, icon: 'bi bi-exclamation-triangle', title: '불러오지 못했습니다' });
     return;
   }
 
   const wenc = encodeURIComponent(WSLUG);
   const docHref = (slug) => '/ws/' + wenc + '/w/' + encodeURIComponent(slug);
 
-  // 문서 목록
-  if (!pages.length) {
-    pagesEl.innerHTML = window.uiEmptyState({ compact: true, icon: 'bi bi-file-earmark-plus', title: '문서가 없습니다', text: '첫 문서를 작성해 보세요.' });
-  } else {
-    pagesEl.innerHTML = pages.map((p) => `
-      <a href="${docHref(p.slug)}" class="d-flex align-items-center justify-content-between text-decoration-none text-body px-2 py-2 border-bottom">
-        <span class="text-truncate me-2">${esc(p.title || p.slug)}</span>
-        <span class="text-muted small flex-shrink-0">${rel(p.updated_at)}</span>
-      </a>`).join('');
-  }
-
-  // 최근 활동 (updated_at DESC 상위 10 — 목록이 이미 최근 수정 순)
-  const recent = pages.slice(0, 10);
+  const recent = pages.slice(0, 8);
   if (!recent.length) {
-    activityEl.innerHTML = window.uiEmptyState({ compact: true, icon: 'bi bi-clock-history', title: '최근 활동이 없습니다' });
-  } else {
-    activityEl.innerHTML = recent.map((p) => `
-      <a href="${docHref(p.slug)}" class="d-block text-decoration-none text-body px-2 py-2 border-bottom">
-        <div class="d-flex align-items-center justify-content-between gap-2">
-          <span class="text-truncate me-2 fw-medium">${esc(p.title || p.slug)}</span>
-          <span class="text-muted small flex-shrink-0">${rel(p.updated_at)}</span>
-        </div>
-      </a>`).join('');
+    pagesEl.innerHTML = window.uiEmptyState({ compact: true, icon: 'bi bi-file-earmark-plus', title: '문서가 없습니다', text: '첫 문서를 작성해 보세요.' });
+    return;
   }
+  pagesEl.innerHTML = recent.map((p) => `
+    <a href="${docHref(p.slug)}" class="d-flex align-items-center justify-content-between text-decoration-none text-body px-2 py-2 border-bottom">
+      <span class="text-truncate me-2 fw-medium">${esc(p.title || p.slug)}</span>
+      <span class="text-muted small flex-shrink-0">${rel(p.updated_at)}</span>
+    </a>`).join('');
 }
 
 // ── 미디어 목록 (썸네일 그리드) ──
@@ -232,3 +223,81 @@ function memberRow(m) {
       ${roleBadge(m.role)}
     </div>`;
 }
+
+// ── 멤버 초대 (canManage) — 설정 페이지의 초대 흐름을 대시보드에 이식 ──
+let inviteSearchTimer = null;
+let inviteSearchSeq = 0;
+
+function toggleWsInvite() {
+  const area = document.getElementById('wsInviteArea');
+  if (!area) return;
+  const willShow = area.classList.contains('d-none');
+  area.classList.toggle('d-none', !willShow);
+  if (willShow) {
+    const input = document.getElementById('wsInviteSearch');
+    if (input) input.focus();
+  }
+}
+
+function onWsInviteSearch() {
+  if (inviteSearchTimer) clearTimeout(inviteSearchTimer);
+  inviteSearchTimer = setTimeout(runWsInviteSearch, 250);
+}
+
+async function runWsInviteSearch() {
+  const q = (document.getElementById('wsInviteSearch').value || '').trim();
+  const el = document.getElementById('wsInviteResults');
+  if (q.length < 1) {
+    el.innerHTML = '';
+    return;
+  }
+  const seq = ++inviteSearchSeq;
+  try {
+    const data = await apiGet('/api/ws/' + encodeURIComponent(WSLUG) + '/members/search?q=' + encodeURIComponent(q));
+    if (seq !== inviteSearchSeq) return; // stale guard
+    const results = data.results || [];
+    if (!results.length) {
+      el.innerHTML = '<div class="list-group-item text-muted small">검색 결과가 없습니다.</div>';
+      return;
+    }
+    el.innerHTML = results.map((u) => {
+      const id = Number(u.id);
+      const avatar = u.picture
+        ? `<img src="${esc(u.picture)}" alt="" class="rounded-circle" style="width:24px;height:24px;object-fit:cover;">`
+        : `<i class="bi bi-person-circle text-muted"></i>`;
+      return `
+        <button type="button" class="list-group-item list-group-item-action d-flex align-items-center gap-2" onclick="wsInviteUser(${id})">
+          ${avatar}
+          <span class="text-truncate">${esc(u.name || '이름 없음')}</span>
+          <i class="bi bi-plus-lg ms-auto"></i>
+        </button>`;
+    }).join('');
+  } catch (e) {
+    if (seq !== inviteSearchSeq) return;
+    el.innerHTML = '<div class="list-group-item text-danger small">검색 중 오류가 발생했습니다.</div>';
+  }
+}
+
+async function wsInviteUser(userId) {
+  const role = document.getElementById('wsInviteRole').value === 'editor' ? 'editor' : 'viewer';
+  const res = await fetch('/api/ws/' + encodeURIComponent(WSLUG) + '/members', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ user_id: Number(userId), role }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    Swal.fire('초대 실패', body.error || '멤버를 추가하지 못했습니다.', 'error');
+    return;
+  }
+  Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: '멤버를 추가했습니다.', showConfirmButton: false, timer: 2000, timerProgressBar: true });
+  document.getElementById('wsInviteSearch').value = '';
+  document.getElementById('wsInviteResults').innerHTML = '';
+  loadMembers();
+}
+
+// HTML on* 핸들러에서 호출되므로 window 로 노출.
+window.toggleWsInvite = toggleWsInvite;
+window.onWsInviteSearch = onWsInviteSearch;
+window.wsInviteUser = wsInviteUser;

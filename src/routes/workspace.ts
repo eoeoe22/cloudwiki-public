@@ -5,6 +5,7 @@ import { RBAC } from '../utils/role';
 import { isWorkspacesEnabled, getWorkspaceCreator, getWorkspaceMaxPerUser } from '../utils/workspace';
 import { getWorkspaceAccessBySlug } from '../utils/workspaceAcl';
 import { SLUG_FORBIDDEN_CHARS } from './wiki';
+import { normalizeWorkspaceIcon } from '../shared/workspaceIcon';
 import type { Workspace } from '../shared/models';
 
 /**
@@ -57,14 +58,14 @@ workspace.get('/api/workspaces', requireAuth, async (c) => {
     const db = c.env.DB;
 
     const owned = await db.prepare(
-        `SELECT id, slug, name, owner_id, created_at
+        `SELECT id, slug, name, owner_id, icon, created_at
          FROM workspaces
          WHERE owner_id = ? AND deleted_at IS NULL
          ORDER BY created_at DESC`
     ).bind(user.id).all<Workspace>();
 
     const joined = await db.prepare(
-        `SELECT w.id, w.slug, w.name, w.owner_id, w.created_at, m.role AS my_role
+        `SELECT w.id, w.slug, w.name, w.owner_id, w.icon, w.created_at, m.role AS my_role
          FROM workspace_members m
          JOIN workspaces w ON w.id = m.workspace_id
          WHERE m.user_id = ? AND w.deleted_at IS NULL AND w.owner_id != ?
@@ -101,12 +102,13 @@ workspace.post('/api/workspaces', requireAuth, async (c) => {
         return c.json({ error: '워크스페이스 생성 권한이 없습니다. (관리자 전용)' }, 403);
     }
 
-    const body = await c.req.json().catch(() => null) as { slug?: string; name?: string } | null;
+    const body = await c.req.json().catch(() => null) as { slug?: string; name?: string; icon?: string } | null;
     if (!body) return c.json({ error: '유효하지 않은 요청입니다.' }, 400);
 
     const slugV = validateWorkspaceSlug(body.slug || '');
     if (!slugV.ok) return c.json({ error: slugV.error }, 400);
     const name = normalizeWorkspaceName(body.name) ?? slugV.value;
+    const icon = normalizeWorkspaceIcon(body.icon);
 
     const db = c.env.DB;
     const max = getWorkspaceMaxPerUser(c.env);
@@ -121,19 +123,19 @@ workspace.post('/api/workspaces', requireAuth, async (c) => {
         // 비-admin: 현재 소유 수가 max 미만일 때만 INSERT(아니면 0행 → 상한 초과).
         const res = isAdmin
             ? await db.prepare(
-                'INSERT INTO workspaces (slug, name, owner_id) VALUES (?, ?, ?)'
-            ).bind(slugV.value, name, user.id).run()
+                'INSERT INTO workspaces (slug, name, owner_id, icon) VALUES (?, ?, ?, ?)'
+            ).bind(slugV.value, name, user.id, icon).run()
             : await db.prepare(
-                `INSERT INTO workspaces (slug, name, owner_id)
-                 SELECT ?, ?, ?
+                `INSERT INTO workspaces (slug, name, owner_id, icon)
+                 SELECT ?, ?, ?, ?
                  WHERE (SELECT COUNT(*) FROM workspaces WHERE owner_id = ? AND deleted_at IS NULL) < ?`
-            ).bind(slugV.value, name, user.id, user.id, max).run();
+            ).bind(slugV.value, name, user.id, icon, user.id, max).run();
         if (!res.meta?.changes) {
             // 비-admin 이면서 조건(WHERE)이 거짓 → 상한 초과로 0행 삽입.
             return c.json({ error: `소유할 수 있는 워크스페이스는 최대 ${max}개입니다.` }, 403);
         }
         const id = Number(res.meta?.last_row_id ?? 0);
-        return c.json({ ok: true, id, slug: slugV.value, name });
+        return c.json({ ok: true, id, slug: slugV.value, name, icon });
     } catch (e: any) {
         if (String(e?.message || '').includes('UNIQUE')) {
             return c.json({ error: '이미 사용 중인 워크스페이스 제목입니다.' }, 409);
@@ -164,7 +166,7 @@ workspace.get('/api/ws/:wslug', requireAuth, async (c) => {
     const memberCount = (stats[2].results?.[0] as any)?.n ?? 0;
 
     return c.json({
-        workspace: { id: ws.id, slug: ws.slug, name: ws.name, owner_id: ws.owner_id, created_at: ws.created_at },
+        workspace: { id: ws.id, slug: ws.slug, name: ws.name, owner_id: ws.owner_id, icon: ws.icon ?? null, created_at: ws.created_at },
         access: { role: access.role, canRead: access.canRead, canWrite: access.canWrite, canManage: access.canManage },
         stats: {
             pages: pageCount,
@@ -187,7 +189,7 @@ workspace.put('/api/ws/:wslug', requireAuth, async (c) => {
     if (!ws) return c.json({ error: '워크스페이스를 찾을 수 없습니다.' }, 404);
     if (!access.canManage) return c.json({ error: '관리 권한이 없습니다.' }, 403);
 
-    const body = await c.req.json().catch(() => null) as { slug?: string; name?: string } | null;
+    const body = await c.req.json().catch(() => null) as { slug?: string; name?: string; icon?: string | null } | null;
     if (!body) return c.json({ error: '유효하지 않은 요청입니다.' }, 400);
 
     let newSlug = ws.slug;
@@ -204,10 +206,15 @@ workspace.put('/api/ws/:wslug', requireAuth, async (c) => {
         if (!n) return c.json({ error: '워크스페이스 대체 제목이 유효하지 않습니다.' }, 400);
         newName = n;
     }
+    // icon 은 키가 있을 때만 갱신한다(유효하지 않으면 null = 기본 아이콘으로 정규화).
+    let newIcon = ws.icon ?? null;
+    if (body.icon !== undefined) {
+        newIcon = normalizeWorkspaceIcon(body.icon);
+    }
 
-    await db.prepare('UPDATE workspaces SET slug = ?, name = ? WHERE id = ?')
-        .bind(newSlug, newName, ws.id).run();
-    return c.json({ ok: true, slug: newSlug, name: newName });
+    await db.prepare('UPDATE workspaces SET slug = ?, name = ?, icon = ? WHERE id = ?')
+        .bind(newSlug, newName, newIcon, ws.id).run();
+    return c.json({ ok: true, slug: newSlug, name: newName, icon: newIcon });
 });
 
 /**

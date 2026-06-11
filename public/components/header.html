@@ -68,6 +68,10 @@
         <button class="btn border-0 px-1 ms-2" type="button" id="navSettings" onclick="openSettingsModal()" title="개인 설정" aria-label="개인 설정">
             <i class="mdi mdi-cog-outline text-body"></i>
         </button>
+        <!-- 워크스페이스 진입 버튼 (로그인 + workspacesEnabled 시 checkAuth 가 노출) -->
+        <button class="btn border-0 px-1 ms-2 d-none" type="button" id="navWorkspaces" onclick="navigateToWorkspace()" title="워크스페이스" aria-label="워크스페이스">
+            <i class="mdi mdi-briefcase-outline text-body"></i>
+        </button>
         <a class="btn border-0 px-1 ms-2" id="navLogin" href="/login" title="로그인"><i class="mdi mdi-login text-body"></i></a>
 
         <!-- 햄버거 버튼 (사이드바 토글) -->
@@ -284,6 +288,39 @@
                         </button>
                     </div>
                     <p class="text-muted small mb-0 mt-1"><i class="mdi mdi-information-outline me-1"></i>끄면 <kbd>/</kbd> <kbd>g</kbd> <kbd>e</kbd> <kbd>?</kbd> 등 한 글자 단축키가 비활성화됩니다 (<kbd>Ctrl/⌘+K</kbd> 는 항상 동작).</p>
+                </div>
+                <!-- 워크스페이스 버튼 대상 — common.ts 가 workspacesEnabled 시만 노출 -->
+                <div class="mb-2 d-none" id="settingWsWrap">
+                    <span class="form-label d-block">워크스페이스 버튼</span>
+                    <div class="setting-seg" id="settingWsButton" role="group" aria-label="워크스페이스 버튼 대상">
+                        <button type="button" class="seg-btn" data-value="home" aria-pressed="false" title="워크스페이스 홈">
+                            <i class="mdi mdi-home-outline" aria-hidden="true"></i><span>홈</span>
+                        </button>
+                        <button type="button" class="seg-btn" data-value="specific" aria-pressed="false" title="특정 워크스페이스">
+                            <i class="mdi mdi-briefcase-outline" aria-hidden="true"></i><span>특정 워크스페이스</span>
+                        </button>
+                    </div>
+                    <div id="settingWsButtonSlugWrap" class="mt-2 d-none">
+                        <select id="settingWsButtonSlug" class="form-select form-select-sm"></select>
+                    </div>
+                </div>
+                <!-- 시작 페이지 — common.ts 가 workspacesEnabled 시만 노출 -->
+                <div class="mb-2 d-none" id="settingEntryWrap">
+                    <span class="form-label d-block">시작 페이지</span>
+                    <div class="setting-seg" id="settingEntryPage" role="group" aria-label="시작 페이지">
+                        <button type="button" class="seg-btn" data-value="wiki" aria-pressed="false" title="위키 홈">
+                            <i class="mdi mdi-book-open-outline" aria-hidden="true"></i><span>위키 홈</span>
+                        </button>
+                        <button type="button" class="seg-btn" data-value="workspaces" aria-pressed="false" title="워크스페이스 홈">
+                            <i class="mdi mdi-home-outline" aria-hidden="true"></i><span>워크스페이스 홈</span>
+                        </button>
+                        <button type="button" class="seg-btn" data-value="specific" aria-pressed="false" title="특정 워크스페이스">
+                            <i class="mdi mdi-briefcase-outline" aria-hidden="true"></i><span>특정 워크스페이스</span>
+                        </button>
+                    </div>
+                    <div id="settingEntryPageSlugWrap" class="mt-2 d-none">
+                        <select id="settingEntryPageSlug" class="form-select form-select-sm"></select>
+                    </div>
                 </div>
                 <p class="text-muted small mb-0"><i class="mdi mdi-information-outline me-1"></i>설정은 이 브라우저에만 저장됩니다. 레이아웃 변경 시 페이지가 새로고침됩니다.</p>
             </div>

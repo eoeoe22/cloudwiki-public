@@ -68,7 +68,7 @@ import Footer from '../components/Footer.astro';
                                     <select id="transferTarget" class="form-select form-select-sm"></select>
                                 </div>
                                 <div class="col-auto">
-                                    <button type="button" class="btn btn-warning btn-sm" onclick="doTransfer()">
+                                    <button type="button" class="btn btn-wiki btn-sm" onclick="doTransfer()">
                                         <i class="bi bi-arrow-left-right"></i> 소유권 이전
                                     </button>
                                 </div>
@@ -85,10 +85,10 @@ import Footer from '../components/Footer.astro';
                                 <button type="button" class="btn btn-wiki-outline btn-sm" onclick="scanGc()">
                                     <i class="bi bi-search"></i> 미참조 미디어 검색
                                 </button>
-                                <button type="button" class="btn btn-danger btn-sm d-none" id="gcDeleteSelectedBtn" onclick="deleteGcSelected()">
+                                <button type="button" class="btn btn-wiki btn-wiki-danger btn-sm d-none" id="gcDeleteSelectedBtn" onclick="deleteGcSelected()">
                                     <i class="bi bi-trash"></i> 선택 삭제
                                 </button>
-                                <button type="button" class="btn btn-outline-danger btn-sm d-none" id="gcDeleteAllBtn" onclick="deleteGcAll()">
+                                <button type="button" class="btn btn-wiki btn-wiki-danger btn-sm d-none" id="gcDeleteAllBtn" onclick="deleteGcAll()">
                                     <i class="bi bi-trash3"></i> 전체 삭제
                                 </button>
                             </div>
@@ -111,6 +111,10 @@ import Footer from '../components/Footer.astro';
                                 </div>
                             </div>
                             <div class="mt-3">
+                                <label class="form-label small mb-1 d-block">아이콘</label>
+                                <button type="button" id="wsIconBtn" class="btn btn-wiki btn-sm" onclick="pickWsIcon()"></button>
+                            </div>
+                            <div class="mt-3">
                                 <button type="button" class="btn btn-wiki btn-sm" onclick="saveWsInfo()">
                                     <i class="bi bi-save"></i> 저장
                                 </button>
@@ -123,7 +127,7 @@ import Footer from '../components/Footer.astro';
                         <div class="card-header text-danger"><i class="bi bi-exclamation-octagon"></i> 위험 구역</div>
                         <div class="card-body">
                             <p class="text-muted small mb-2">워크스페이스를 삭제하면 소속 문서와 미디어에 접근할 수 없게 됩니다.</p>
-                            <button type="button" class="btn btn-danger btn-sm" onclick="deleteWorkspace()">
+                            <button type="button" class="btn btn-wiki btn-wiki-danger btn-sm" onclick="deleteWorkspace()">
                                 <i class="bi bi-trash"></i> 워크스페이스 삭제
                             </button>
                         </div>
@@ -133,11 +137,53 @@ import Footer from '../components/Footer.astro';
         </div>
     </div>
 
+    <!-- 아이콘 피커 모달 (iconPicker.ts 모듈이 사용) — body 레벨에 두어
+         Bootstrap 모달이 부모 컨테이너 stacking context 의 영향을 받지 않도록 함. -->
+    <div class="modal fade" id="iconPickerModal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title">
+              <i id="iconPickerTypeIcon" class="mdi mdi-material-design me-2"></i>
+              <span id="iconPickerTitle">아이콘 선택</span>
+            </h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+          </div>
+          <div class="modal-body">
+            <div class="icon-picker-toolbar mb-2">
+              <div class="icon-picker-tabs" role="tablist" aria-label="아이콘 라이브러리">
+                <button type="button" id="iconPickerTabMdi" class="icon-picker-tab active" role="tab" aria-selected="true">
+                  <i class="mdi mdi-material-design"></i><span>MDI</span>
+                </button>
+                <button type="button" id="iconPickerTabBi" class="icon-picker-tab" role="tab" aria-selected="false">
+                  <i class="bi bi-bootstrap"></i><span>Bootstrap</span>
+                </button>
+              </div>
+              <button type="button" id="iconPickerNoneBtn" class="icon-picker-none-btn">
+                <i class="bi bi-x-lg"></i><span>아이콘 없음</span>
+              </button>
+            </div>
+            <input type="text" id="iconSearchInput" class="form-control mb-3" placeholder="아이콘 이름 검색..." />
+            <div id="iconLoadingSpinner" class="text-center py-4" style="display: none">
+              <span class="spinner-border text-primary" role="status"></span>
+              <p class="mt-2 text-muted small">아이콘 목록 로딩 중...</p>
+            </div>
+            <div id="iconPickerGrid" class="icon-grid-modal"></div>
+            <div id="iconPickerEmpty" class="text-center text-muted py-3" style="display: none">
+              <i class="mdi mdi-magnify-close" style="font-size: 2rem"></i>
+              <p class="mt-1">검색 결과가 없습니다.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- ── 푸터 ── -->
     <Footer />
 
     <Fragment slot="scripts">
         <script type="module" src="/dist/common.js" is:inline></script>
+        <script type="module" src="/dist/icon-picker.js" is:inline></script>
         <script type="module" src="/dist/ws-settings.js" is:inline></script>
     </Fragment>
 </BaseLayout>

@@ -5,8 +5,12 @@
 // any 형태 fetch 응답이라 타입 검사를 끈다.
 
 import { apiGet } from '../utils/api';
+import { workspaceIconClass } from '../../shared/workspaceIcon';
 
 const esc = (s) => window.escapeHtml(String(s ?? ''));
+
+// 현재 편집 중인 워크스페이스 아이콘(class 문자열, null = 기본). 저장 시 PUT 본문에 포함.
+let currentIcon = null;
 
 function parseWslug() {
   const parts = location.pathname.split('/').filter(Boolean); // ['ws', '<wslug>', 'settings']
@@ -89,6 +93,8 @@ async function initSettings() {
   document.getElementById('wsSettingsTitle').textContent = (ws.name || ws.slug) + ' 설정';
   document.getElementById('wsNameInput').value = ws.name || '';
   document.getElementById('wsSlugInput').value = ws.slug || '';
+  currentIcon = ws.icon || null;
+  renderWsIconBtn();
   document.getElementById('backToWsBtn').setAttribute('href', '/ws/' + encodeURIComponent(WSLUG));
 
   loadingEl.classList.add('d-none');
@@ -162,7 +168,7 @@ function manageRow(m) {
         <option value="viewer" ${m.role === 'viewer' ? 'selected' : ''}>viewer</option>
         <option value="editor" ${m.role === 'editor' ? 'selected' : ''}>editor</option>
       </select>
-      <button type="button" class="btn btn-outline-danger btn-sm flex-shrink-0" onclick="kickMember(${id})">
+      <button type="button" class="btn btn-wiki btn-wiki-danger btn-sm flex-shrink-0" onclick="kickMember(${id})">
         <i class="bi bi-person-x"></i> 추방
       </button>
     </div>`;
@@ -372,8 +378,22 @@ async function runGcDelete(payload) {
 }
 
 // ──────────────────────────────────────────────────────────────
-// 5. 워크스페이스 정보 (이름/주소 변경)
+// 5. 워크스페이스 정보 (이름/주소/아이콘 변경)
 // ──────────────────────────────────────────────────────────────
+function renderWsIconBtn() {
+  const btn = document.getElementById('wsIconBtn');
+  if (!btn) return;
+  const cls = esc(workspaceIconClass(currentIcon));
+  btn.innerHTML = `<i class="${cls}" aria-hidden="true"></i> <span>아이콘 변경</span>`;
+}
+
+async function pickWsIcon() {
+  const picked = window.pickWikiIcon ? await window.pickWikiIcon() : null;
+  // '아이콘 없음'(null) → 기본 아이콘으로 되돌림.
+  currentIcon = picked || null;
+  renderWsIconBtn();
+}
+
 async function saveWsInfo() {
   const name = (document.getElementById('wsNameInput').value || '').trim();
   const slug = (document.getElementById('wsSlugInput').value || '').trim();
@@ -385,7 +405,7 @@ async function saveWsInfo() {
     Swal.fire('제목 필요', '워크스페이스 제목을 입력해주세요.', 'info');
     return;
   }
-  const r = await send(wbase(), 'PUT', { name, slug });
+  const r = await send(wbase(), 'PUT', { name, slug, icon: currentIcon });
   if (!r.ok) {
     Swal.fire('저장 실패', r.body.error || '저장하지 못했습니다.', 'error');
     return;
@@ -454,4 +474,5 @@ window.scanGc = scanGc;
 window.deleteGcSelected = deleteGcSelected;
 window.deleteGcAll = deleteGcAll;
 window.saveWsInfo = saveWsInfo;
+window.pickWsIcon = pickWsIcon;
 window.deleteWorkspace = deleteWorkspace;

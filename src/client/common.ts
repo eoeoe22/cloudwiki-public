@@ -529,6 +529,78 @@ function getKeyboardShortcutsPref() {
     }
 }
 
+// ── 워크스페이스 진입/시작 페이지 (브라우저 로컬 설정) ──
+// wsButtonDest : 헤더 워크스페이스 버튼 대상 — 'home'(기본) | 'ws:SLUG'
+// wsEntryPage  : 루트('/') 진입 시 시작 페이지 — 'wiki'(기본) | 'workspaces' | 'ws:SLUG'
+var WS_BUTTON_KEY = 'wsButtonDest';
+var WS_ENTRY_KEY = 'wsEntryPage';
+var _wsListCache = null;   // null = 미로드, [] = 로드됨(빈 목록 포함)
+var _wsListLoading = null; // 진행 중 fetch Promise — 동시 중복 요청 방지
+
+function getWsButtonDest() {
+    try { return localStorage.getItem(WS_BUTTON_KEY) || 'home'; } catch (e) { return 'home'; }
+}
+function getWsEntryPage() {
+    try { return localStorage.getItem(WS_ENTRY_KEY) || 'wiki'; } catch (e) { return 'wiki'; }
+}
+function resolveWsUrl(pref) {
+    if (!pref || pref === 'wiki') return '/';
+    if (pref === 'workspaces' || pref === 'home') return '/workspaces';
+    if (pref.indexOf('ws:') === 0) {
+        var slug = pref.slice(3);
+        return slug ? '/ws/' + encodeURIComponent(slug) : '/workspaces';
+    }
+    return '/workspaces';
+}
+function navigateToWorkspace() {
+    var url = resolveWsUrl(getWsButtonDest());
+    if (typeof navigateTo === 'function') navigateTo(url);
+    else window.location.href = url;
+}
+async function loadUserWorkspaces() {
+    if (_wsListCache !== null) return _wsListCache;
+    // 동시 호출 중복 방지: 진행 중 Promise 를 반환한다.
+    if (_wsListLoading) return _wsListLoading;
+    _wsListLoading = (async function () {
+        try {
+            var res = await fetch('/api/workspaces');
+            if (!res.ok) return []; // 오류는 캐시하지 않음 — 다음 호출에서 재시도
+            var data = await res.json();
+            _wsListCache = (data.owned || []).concat(data.joined || []);
+            return _wsListCache;
+        } catch (e) { return []; } // 오류는 캐시하지 않음
+        finally { _wsListLoading = null; }
+    })();
+    return _wsListLoading;
+}
+// 무효/빈 선택일 때는 placeholder("워크스페이스 선택...")를 앞세워, 저장값 없이 seg 만 'specific'
+// 으로 바꾼 상태에서 첫 항목이 표시상 선택된 것처럼 보이는(실제 저장은 안 된) 불일치를 막는다.
+// 사용자가 드롭다운에서 실제로 항목을 고르면 change 핸들러가 ws:SLUG 를 저장한다.
+function populateWsSelect(selectEl, currentValue) {
+    if (!selectEl) return;
+    // 실제 fetch 직전에만 캐시를 초기화한다(select 가 표시되지 않을 때 불필요한 무효화 방지).
+    _wsListCache = null;
+    selectEl.innerHTML = '<option value="" disabled>불러오는 중...</option>';
+    loadUserWorkspaces().then(function (list) {
+        if (!list || list.length === 0) {
+            selectEl.innerHTML = '<option value="" disabled selected>워크스페이스가 없습니다</option>';
+            return;
+        }
+        var hasSelection = false;
+        var html = list.map(function (ws) {
+            var sel = currentValue === ('ws:' + ws.slug) ? ' selected' : '';
+            if (sel) hasSelection = true;
+            var label = ws.name || ws.slug;
+            return '<option value="' + escapeHtml(ws.slug) + '"' + sel + '>' + escapeHtml(label) + '</option>';
+        }).join('');
+        // 저장된 slug 가 더 이상 목록에 없거나 아직 미선택이면 placeholder 를 앞세워 무효 선택을 방지한다.
+        if (!hasSelection) {
+            html = '<option value="" disabled selected>워크스페이스 선택...</option>' + html;
+        }
+        selectEl.innerHTML = html;
+    });
+}
+
 function openSettingsModal() {
     var modalEl = document.getElementById('settingsModal');
     if (!modalEl || typeof bootstrap === 'undefined' || !bootstrap.Modal) return;
@@ -540,6 +612,38 @@ function openSettingsModal() {
     reconcileThemeControls();
     setSegActive(document.getElementById('settingLayoutMode'), getLayoutOverride() || 'site');
     setSegActive(document.getElementById('settingKeyboardShortcuts'), getKeyboardShortcutsPref());
+
+    // 워크스페이스 설정 섹션 — workspacesEnabled 시만 노출(로그인 사용자 한정).
+    var wsWrap = document.getElementById('settingWsWrap');
+    var entryWrap = document.getElementById('settingEntryWrap');
+    if (wsWrap && entryWrap && appConfig && appConfig.workspacesEnabled && currentUser) {
+        wsWrap.classList.remove('d-none');
+        entryWrap.classList.remove('d-none');
+        // 워크스페이스 버튼 대상 세그 동기화
+        var wsDest = getWsButtonDest();
+        setSegActive(document.getElementById('settingWsButton'), wsDest === 'home' ? 'home' : 'specific');
+        var wsButtonSlugWrap = document.getElementById('settingWsButtonSlugWrap');
+        var wsButtonSlugEl = document.getElementById('settingWsButtonSlug');
+        if (wsDest !== 'home') {
+            if (wsButtonSlugWrap) wsButtonSlugWrap.classList.remove('d-none');
+            populateWsSelect(wsButtonSlugEl, wsDest);
+        } else if (wsButtonSlugWrap) {
+            wsButtonSlugWrap.classList.add('d-none');
+        }
+        // 시작 페이지 세그 동기화
+        var entryPref = getWsEntryPage();
+        var entrySegVal = (entryPref === 'wiki' || entryPref === 'workspaces') ? entryPref : 'specific';
+        setSegActive(document.getElementById('settingEntryPage'), entrySegVal);
+        var entrySlugWrap = document.getElementById('settingEntryPageSlugWrap');
+        var entrySlugEl = document.getElementById('settingEntryPageSlug');
+        if (entrySegVal === 'specific') {
+            if (entrySlugWrap) entrySlugWrap.classList.remove('d-none');
+            populateWsSelect(entrySlugEl, entryPref);
+        } else if (entrySlugWrap) {
+            entrySlugWrap.classList.add('d-none');
+        }
+    }
+
     bootstrap.Modal.getOrCreateInstance(modalEl).show();
 }
 
@@ -639,6 +743,62 @@ function setupSettingsModal() {
             } catch (e2) { /* ignore */ }
             // command-palette.ts 가 keydown 마다 라이브로 읽으므로 새로고침 불필요.
         });
+    }
+    // 워크스페이스 버튼 대상 세그 — 'home' | 'specific'(→ ws:SLUG, slug select 로 확정)
+    var wsButtonSeg = document.getElementById('settingWsButton');
+    if (wsButtonSeg && !wsButtonSeg.dataset.bound) {
+        wsButtonSeg.dataset.bound = '1';
+        wsButtonSeg.addEventListener('click', function (e) {
+            var btn = e.target && e.target.closest ? e.target.closest('.seg-btn') : null;
+            if (!btn || !wsButtonSeg.contains(btn)) return;
+            var value = btn.getAttribute('data-value');
+            if (!value) return;
+            setSegActive(wsButtonSeg, value);
+            var slotWrap = document.getElementById('settingWsButtonSlugWrap');
+            var slotEl = document.getElementById('settingWsButtonSlug');
+            if (value === 'home') {
+                try { localStorage.setItem(WS_BUTTON_KEY, 'home'); } catch (e2) { /* ignore */ }
+                if (slotWrap) slotWrap.classList.add('d-none');
+            } else if (slotWrap) {
+                slotWrap.classList.remove('d-none');
+                populateWsSelect(slotEl, getWsButtonDest());
+            }
+        });
+        var wsButtonSlugEl = document.getElementById('settingWsButtonSlug');
+        if (wsButtonSlugEl) {
+            wsButtonSlugEl.addEventListener('change', function () {
+                var slug = this.value;
+                if (slug) { try { localStorage.setItem(WS_BUTTON_KEY, 'ws:' + slug); } catch (e2) { /* ignore */ } }
+            });
+        }
+    }
+    // 시작 페이지 세그 — 'wiki' | 'workspaces' | 'specific'(→ ws:SLUG, slug select 로 확정)
+    var entryPageSeg = document.getElementById('settingEntryPage');
+    if (entryPageSeg && !entryPageSeg.dataset.bound) {
+        entryPageSeg.dataset.bound = '1';
+        entryPageSeg.addEventListener('click', function (e) {
+            var btn = e.target && e.target.closest ? e.target.closest('.seg-btn') : null;
+            if (!btn || !entryPageSeg.contains(btn)) return;
+            var value = btn.getAttribute('data-value');
+            if (!value) return;
+            setSegActive(entryPageSeg, value);
+            var slotWrap = document.getElementById('settingEntryPageSlugWrap');
+            var slotEl = document.getElementById('settingEntryPageSlug');
+            if (value === 'wiki' || value === 'workspaces') {
+                try { localStorage.setItem(WS_ENTRY_KEY, value); } catch (e2) { /* ignore */ }
+                if (slotWrap) slotWrap.classList.add('d-none');
+            } else if (slotWrap) {
+                slotWrap.classList.remove('d-none');
+                populateWsSelect(slotEl, getWsEntryPage());
+            }
+        });
+        var entryPageSlugEl = document.getElementById('settingEntryPageSlug');
+        if (entryPageSlugEl) {
+            entryPageSlugEl.addEventListener('change', function () {
+                var slug = this.value;
+                if (slug) { try { localStorage.setItem(WS_ENTRY_KEY, 'ws:' + slug); } catch (e2) { /* ignore */ } }
+            });
+        }
     }
 }
 
@@ -925,6 +1085,33 @@ async function checkAuth() {
             loadNotificationCount();
             // 60초마다 알림 폴링 (탭 비활성 시 자동 중단)
             startNotifPolling();
+
+            // 워크스페이스 진입 버튼 노출 (로그인 + workspacesEnabled 시).
+            if (appConfig && appConfig.workspacesEnabled) {
+                document.querySelectorAll('#navWorkspaces').forEach(el => el.classList.remove('d-none'));
+            }
+
+            // 루트('/') 진입 시 시작 페이지 사용자 설정으로 리다이렉트.
+            // 'wiki'(기본) 가 아니고 유효한 대상이면 해당 URL 로 교체한다.
+            if (appConfig && appConfig.workspacesEnabled && window.location.pathname === '/') {
+                var entryPref = getWsEntryPage();
+                if (entryPref !== 'wiki') {
+                    var targetUrl = resolveWsUrl(entryPref);
+                    if (targetUrl && targetUrl !== '/') {
+                        // 특정 워크스페이스 지정 시, 목록에 없으면 /workspaces 로 폴백한다.
+                        // (삭제된 워크스페이스로 영구 리다이렉트되는 함정 방지)
+                        if (entryPref.indexOf('ws:') === 0) {
+                            var wsList = await loadUserWorkspaces();
+                            var wsSlug = entryPref.slice(3);
+                            if (!wsList.some(function (ws) { return ws.slug === wsSlug; })) {
+                                targetUrl = '/workspaces';
+                            }
+                        }
+                        window.location.replace(targetUrl);
+                        return;
+                    }
+                }
+            }
         }
     } catch (e) {
         // 로그인 안 됨
@@ -1827,6 +2014,7 @@ window.getCurrentTheme = getCurrentTheme;
 window.setThemeSkin = setThemeSkin;
 window.getThemeSkin = getThemeSkin;
 window.openSettingsModal = openSettingsModal;
+window.navigateToWorkspace = navigateToWorkspace;
 window.goRandomPage = goRandomPage;
 window.applyAnnouncementBanner = applyAnnouncementBanner;
 window.loadConfig = loadConfig;

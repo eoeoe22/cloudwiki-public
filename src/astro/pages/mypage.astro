@@ -580,36 +580,50 @@ import Footer from '../components/Footer.astro';
                     </div>
                 </div>
 
-                <!-- MCP 클라이언트 관리 -->
-                <div class="profile-section" id="mcpClientsSection" style="display:none;">
-                    <div class="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2">
-                        <h4 class="mb-0"><i class="mdi mdi-api"></i> MCP 서버 등록된 클라이언트</h4>
+                <!-- 위키 MCP -->
+                <div class="profile-section" id="wikiMcpSection" style="display:none;">
+                    <h4><i class="mdi mdi-api"></i> 위키 MCP</h4>
+                    <small class="text-muted d-block mb-3">
+                        Claude Desktop, Claude Code 등 MCP 클라이언트를 이 위키에 연결합니다.
+                    </small>
+
+                    <!-- 엔드포인트 -->
+                    <div class="p-3 rounded mb-4" style="background: var(--wiki-toc-bg); border: 1px solid var(--wiki-border);">
+                        <div class="d-flex align-items-center gap-2 flex-wrap mb-1">
+                            <code class="flex-grow-1" id="wikiMcpEndpointUrl" style="word-break: break-all; color: var(--wiki-primary); background: transparent; padding: 0;"></code>
+                            <button class="btn btn-sm btn-wiki-outline flex-shrink-0" onclick="copyWikiMcpEndpoint()">
+                                <i class="mdi mdi-content-copy"></i> 복사
+                            </button>
+                        </div>
+                        <small class="text-muted">
+                            OAuth 자동 검색을 지원하는 MCP 클라이언트(Claude Desktop 등)에서 이 URL을 서버 주소로 입력하세요.
+                        </small>
+                    </div>
+
+                    <!-- 등록된 OAuth 클라이언트 -->
+                    <div class="d-flex justify-content-between align-items-center mb-1 flex-wrap gap-2">
+                        <h5 class="mb-0 fs-6 fw-semibold"><i class="mdi mdi-application-brackets-outline"></i> 등록된 클라이언트</h5>
                         <button class="btn btn-sm btn-outline-danger" id="revokeAllMcpClientsBtn" onclick="revokeAllMcpClients()">
                             <i class="mdi mdi-logout-variant"></i> 모든 연결 해제
                         </button>
                     </div>
-                    <small class="text-muted d-block mb-3">
-                        외부 MCP 클라이언트(Claude Desktop, Claude Code 등) 가 이 계정에 접근 권한을 가진 등록된 클라이언트 목록입니다.
-                        본인이 연결한 적 없는 클라이언트가 있다면 즉시 연결을 해제해주세요. 해제된 클라이언트는 7일간 기록으로 표시된 뒤 자동 삭제됩니다.
+                    <small class="text-muted d-block mb-2">
+                        OAuth 인증을 통해 연결된 클라이언트 목록입니다. 연결한 적 없는 클라이언트가 있다면 즉시 해제하세요. 해제된 클라이언트는 7일간 기록으로 표시된 뒤 자동 삭제됩니다.
                     </small>
-                    <div id="mcpClientsList">
+                    <div id="mcpClientsList" class="mb-4">
                         <div class="text-center text-muted py-3">불러오는 중...</div>
                     </div>
-                </div>
 
-                <!-- MCP API 키 관리 -->
-                <div class="profile-section" id="mcpApiKeySection" style="display:none;">
-                    <div class="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2">
-                        <h4 class="mb-0"><i class="mdi mdi-key-outline"></i> MCP API 키 관리</h4>
-                    </div>
-                    <small class="text-muted d-block mb-3">
-                        외부 MCP 클라이언트가 브라우저 인증(OAuth) 대신 직접 헤더에 API 키를 실어 인증할 수 있게 합니다.
+                    <!-- API 키 -->
+                    <h5 class="mb-1 fs-6 fw-semibold"><i class="mdi mdi-key-outline"></i> API 키</h5>
+                    <small class="text-muted d-block mb-2">
+                        OAuth 대신 직접 API 키를 헤더에 실어 인증하는 대안 방식입니다.
                     </small>
                     <div class="alert alert-warning py-2 mb-3">
-                        <i class="mdi mdi-alert-decagram-outline"></i> <strong>보안 경고:</strong> 
-                        API 키 방식은 OAuth 방식에 비해 보안상 권장되지 않습니다. 유출 시 에이전트 권한이 탈취될 수 있으므로, 반드시 로컬 신뢰 환경에서만 사용하고 유출 시 즉시 삭제하거나 재발급하십시오.
+                        <i class="mdi mdi-alert-decagram-outline"></i> <strong>보안 경고:</strong>
+                        API 키 방식은 OAuth에 비해 권장되지 않습니다. 유출 시 에이전트 권한이 탈취될 수 있으므로, 반드시 로컬 신뢰 환경에서만 사용하고 유출 시 즉시 삭제하거나 재발급하십시오.
                     </div>
-                    <div id="mcpApiKeyContainer" class="mcp-api-key-container">
+                    <div id="mcpApiKeyContainer" class="mcp-api-key-container mb-2">
                         <div class="text-center text-muted py-2">불러오는 중...</div>
                     </div>
                     <div class="d-flex gap-2">
@@ -619,6 +633,33 @@ import Footer from '../components/Footer.astro';
                         <button class="btn btn-sm btn-outline-danger d-none" id="deleteMcpApiKeyBtn" onclick="deleteMcpApiKey()">
                             <i class="mdi mdi-key-remove"></i> API 키 삭제
                         </button>
+                    </div>
+                </div>
+
+                <!-- 워크스페이스 MCP -->
+                <div class="profile-section" id="wsMcpSection" style="display:none;">
+                    <h4><i class="mdi mdi-folder-network-outline"></i> 워크스페이스 MCP</h4>
+                    <small class="text-muted d-block mb-3">
+                        개인 워크스페이스에 MCP로 연결합니다. 위키 MCP와 동일한 인증 토큰(OAuth 또는 API 키)을 사용합니다.
+                    </small>
+
+                    <!-- 엔드포인트 -->
+                    <div class="p-3 rounded mb-3" style="background: var(--wiki-toc-bg); border: 1px solid var(--wiki-border);">
+                        <div class="d-flex align-items-center gap-2 flex-wrap mb-1">
+                            <code class="flex-grow-1" id="wsMcpEndpointUrl" style="word-break: break-all; color: var(--wiki-primary); background: transparent; padding: 0;"></code>
+                            <button class="btn btn-sm btn-wiki-outline flex-shrink-0" onclick="copyWsMcpEndpoint()">
+                                <i class="mdi mdi-content-copy"></i> 복사
+                            </button>
+                        </div>
+                        <small class="text-muted">
+                            도구 인자의 <code>workspace</code> 파라미터에 워크스페이스의 slug(식별자)를 지정해 특정 워크스페이스에 접근합니다.
+                        </small>
+                    </div>
+
+                    <!-- 워크스페이스 목록 -->
+                    <h5 class="mb-2 fs-6 fw-semibold"><i class="mdi mdi-folder-multiple"></i> 내 워크스페이스</h5>
+                    <div id="wsMcpWorkspacesList">
+                        <div class="text-center text-muted py-2">불러오는 중...</div>
                     </div>
                 </div>
 
