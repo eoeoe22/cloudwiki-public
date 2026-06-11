@@ -615,10 +615,8 @@ function openSettingsModal() {
 
     // 워크스페이스 설정 섹션 — workspacesEnabled 시만 노출(로그인 사용자 한정).
     var wsWrap = document.getElementById('settingWsWrap');
-    var entryWrap = document.getElementById('settingEntryWrap');
-    if (wsWrap && entryWrap && appConfig && appConfig.workspacesEnabled && currentUser) {
+    if (wsWrap && appConfig && appConfig.workspacesEnabled && currentUser) {
         wsWrap.classList.remove('d-none');
-        entryWrap.classList.remove('d-none');
         // 워크스페이스 버튼 대상 세그 동기화
         var wsDest = getWsButtonDest();
         setSegActive(document.getElementById('settingWsButton'), wsDest === 'home' ? 'home' : 'specific');
@@ -629,18 +627,6 @@ function openSettingsModal() {
             populateWsSelect(wsButtonSlugEl, wsDest);
         } else if (wsButtonSlugWrap) {
             wsButtonSlugWrap.classList.add('d-none');
-        }
-        // 시작 페이지 세그 동기화
-        var entryPref = getWsEntryPage();
-        var entrySegVal = (entryPref === 'wiki' || entryPref === 'workspaces') ? entryPref : 'specific';
-        setSegActive(document.getElementById('settingEntryPage'), entrySegVal);
-        var entrySlugWrap = document.getElementById('settingEntryPageSlugWrap');
-        var entrySlugEl = document.getElementById('settingEntryPageSlug');
-        if (entrySegVal === 'specific') {
-            if (entrySlugWrap) entrySlugWrap.classList.remove('d-none');
-            populateWsSelect(entrySlugEl, entryPref);
-        } else if (entrySlugWrap) {
-            entrySlugWrap.classList.add('d-none');
         }
     }
 
@@ -769,34 +755,6 @@ function setupSettingsModal() {
             wsButtonSlugEl.addEventListener('change', function () {
                 var slug = this.value;
                 if (slug) { try { localStorage.setItem(WS_BUTTON_KEY, 'ws:' + slug); } catch (e2) { /* ignore */ } }
-            });
-        }
-    }
-    // 시작 페이지 세그 — 'wiki' | 'workspaces' | 'specific'(→ ws:SLUG, slug select 로 확정)
-    var entryPageSeg = document.getElementById('settingEntryPage');
-    if (entryPageSeg && !entryPageSeg.dataset.bound) {
-        entryPageSeg.dataset.bound = '1';
-        entryPageSeg.addEventListener('click', function (e) {
-            var btn = e.target && e.target.closest ? e.target.closest('.seg-btn') : null;
-            if (!btn || !entryPageSeg.contains(btn)) return;
-            var value = btn.getAttribute('data-value');
-            if (!value) return;
-            setSegActive(entryPageSeg, value);
-            var slotWrap = document.getElementById('settingEntryPageSlugWrap');
-            var slotEl = document.getElementById('settingEntryPageSlug');
-            if (value === 'wiki' || value === 'workspaces') {
-                try { localStorage.setItem(WS_ENTRY_KEY, value); } catch (e2) { /* ignore */ }
-                if (slotWrap) slotWrap.classList.add('d-none');
-            } else if (slotWrap) {
-                slotWrap.classList.remove('d-none');
-                populateWsSelect(slotEl, getWsEntryPage());
-            }
-        });
-        var entryPageSlugEl = document.getElementById('settingEntryPageSlug');
-        if (entryPageSlugEl) {
-            entryPageSlugEl.addEventListener('change', function () {
-                var slug = this.value;
-                if (slug) { try { localStorage.setItem(WS_ENTRY_KEY, 'ws:' + slug); } catch (e2) { /* ignore */ } }
             });
         }
     }

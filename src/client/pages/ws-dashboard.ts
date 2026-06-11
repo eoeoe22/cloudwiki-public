@@ -159,7 +159,6 @@ function renderHeader(meta): void {
     // 툴바 버튼
     const wenc = encodeURIComponent(WSLUG);
     const tools: string[] = [];
-    tools.push(`<a href="/workspaces" class="btn btn-sm btn-outline-secondary"><i class="bi bi-grid"></i> 모든 워크스페이스</a>`);
     if (access.canWrite) {
         tools.push(`<a href="/ws/${wenc}/edit" class="btn btn-wiki btn-sm"><i class="bi bi-plus-lg"></i> 새 문서</a>`);
         tools.push(`<a href="/ws/${wenc}/files" class="btn btn-wiki-outline btn-sm"><i class="bi bi-folder2-open"></i> 파일</a>`);
@@ -248,11 +247,15 @@ async function loadMedia(): Promise<void> {
     }
 
     const grid = items.slice(0, 12).map((m) =>
-        `<div style="width:72px;height:72px;border-radius:var(--wiki-radius-base);overflow:hidden;border:1px solid var(--bs-border-color,#dee2e6);flex:0 0 auto;">` +
+        `<button type="button" data-media-url="${esc(m.url)}" data-media-name="${esc(m.filename)}"` +
+        ` style="width:72px;height:72px;border-radius:var(--wiki-radius-base);overflow:hidden;border:1px solid var(--bs-border-color,#dee2e6);flex:0 0 auto;padding:0;background:none;cursor:pointer;">` +
         `<img src="${esc(m.url)}" alt="${esc(m.filename)}" title="${esc(m.filename)}" loading="lazy" style="width:100%;height:100%;object-fit:cover;display:block;">` +
-        `</div>`
+        `</button>`
     ).join('');
     el.innerHTML = `<div class="d-flex flex-wrap gap-2">${grid}</div>`;
+    el.querySelectorAll<HTMLElement>('[data-media-url]').forEach((btn) => {
+        btn.addEventListener('click', () => showMediaPreview(btn.dataset.mediaUrl, btn.dataset.mediaName));
+    });
 }
 
 async function loadMembers(): Promise<void> {
@@ -376,6 +379,62 @@ async function wsInviteUser(userId: number): Promise<void> {
     (document.getElementById('wsInviteSearch') as HTMLInputElement).value = '';
     document.getElementById('wsInviteResults').innerHTML = '';
     loadMembers();
+}
+
+// ── 미디어 미리보기 오버레이 ──
+
+function showMediaPreview(url: string, name: string): void {
+    document.getElementById('wsMediaPreviewLayer')?.remove();
+
+    const layer = document.createElement('div');
+    layer.id = 'wsMediaPreviewLayer';
+    layer.style.cssText =
+        'position:fixed;inset:0;' +
+        'z-index:var(--wiki-z-offcanvas-backdrop);' +
+        'background:rgba(0,0,0,0.5);' +
+        'opacity:0;transition:opacity var(--wiki-dur-enter) var(--wiki-ease);';
+
+    const panel = document.createElement('div');
+    panel.style.cssText =
+        'position:fixed;top:0;right:0;bottom:0;' +
+        'width:min(520px,100vw);' +
+        'background:var(--bs-body-bg);' +
+        'z-index:var(--wiki-z-offcanvas);' +
+        'display:flex;flex-direction:column;' +
+        'box-shadow:-4px 0 24px rgba(0,0,0,0.18);' +
+        'transform:translateX(100%);' +
+        'transition:transform var(--wiki-dur-enter) var(--wiki-ease);';
+
+    panel.innerHTML =
+        `<div style="padding:var(--wiki-space-4);border-bottom:1px solid var(--bs-border-color);display:flex;align-items:center;justify-content:space-between;gap:var(--wiki-space-4);">` +
+        `<span style="font-size:var(--wiki-fs-md);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(name)}">${esc(name)}</span>` +
+        `<button type="button" class="btn-close flex-shrink-0" aria-label="닫기"></button>` +
+        `</div>` +
+        `<div style="flex:1;overflow:auto;display:flex;align-items:center;justify-content:center;padding:var(--wiki-space-6);">` +
+        `<img src="${esc(url)}" alt="${esc(name)}" style="max-width:100%;max-height:100%;object-fit:contain;border-radius:var(--wiki-radius-lg);">` +
+        `</div>`;
+
+    layer.appendChild(panel);
+    document.body.appendChild(layer);
+
+    requestAnimationFrame(() => {
+        layer.style.opacity = '1';
+        panel.style.transform = 'translateX(0)';
+    });
+
+    const close = () => {
+        layer.style.opacity = '0';
+        panel.style.transform = 'translateX(100%)';
+        setTimeout(() => layer.remove(), 400);
+    };
+
+    layer.addEventListener('click', (e) => { if (e.target === layer) close(); });
+    panel.querySelector('.btn-close')?.addEventListener('click', close);
+
+    const onKey = (e: KeyboardEvent) => {
+        if (e.key === 'Escape') { close(); document.removeEventListener('keydown', onKey); }
+    };
+    document.addEventListener('keydown', onKey);
 }
 
 // window 노출 (HTML on* 핸들러 / 서브모듈에서 호출)
