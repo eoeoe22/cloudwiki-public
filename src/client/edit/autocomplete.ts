@@ -71,6 +71,14 @@ declare global {
          * 설정 토글 등 외부에서 호출할 진입점으로 노출한다.
          */
         hideAllSyntaxAutocompletes?: () => void;
+        /**
+         * `[[`/`{{` 자동완성의 검색·틀 본문 fetch 베이스를 컨텍스트별로 재설정한다.
+         * 워크스페이스 에디터(ws-edit.ts)가 자체 공간 엔드포인트로 주입한다. 미호출 시 메인 위키.
+         */
+        configureAutocomplete?: (opts: {
+            searchUrl?: string;       // 제목/틀 검색 베이스 (q/type/exclude 쿼리는 내부에서 부착)
+            templateApiBase?: string; // 틀 본문 fetch 베이스 (`{base}/{slug}`)
+        }) => void;
     }
 }
 
@@ -1622,6 +1630,14 @@ if (categoryTagInput) {
 // 위키 링크 / 틀 자동완성
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ── 자동완성 컨텍스트 (위키 vs 워크스페이스) ──
+// `[[`/`{{` 검색과 틀 본문(파라미터 스키마) fetch 의 베이스를 컨텍스트별로 주입한다.
+// 기본값은 메인 위키 — 컨텍스트 미주입 시 기존 동작 그대로. 워크스페이스 에디터(ws-edit.ts)는
+// 로드 시 `window.configureAutocomplete(...)` 로 자체 공간 엔드포인트를 가리키게 한다.
+// (편집기 이미지 업로드의 window.configureImageUpload 와 동일한 페이지-당-1회 주입 패턴.)
+let _acSearchBase = '/api/w/search-titles';  // 제목/틀 검색 베이스 (q/type/exclude 쿼리는 호출부가 부착)
+let _acTemplateBase = '/api/w';              // 틀 본문 fetch 베이스 (`{base}/{slug}`)
+
 const wikiAc = {
     visible: false,
     type: 'link' as 'link' | 'template',
@@ -1655,7 +1671,7 @@ function showAutocomplete(query: string, type: 'link' | 'template'): void {
     wikiAc.debounceTimer = setTimeout(async () => {
         if (!wikiAc.visible) return;
         try {
-            let acUrl = `/api/w/search-titles?q=${encodeURIComponent(wikiAc.query)}&type=${wikiAc.type}`;
+            let acUrl = `${_acSearchBase}?q=${encodeURIComponent(wikiAc.query)}&type=${wikiAc.type}`;
             if (wikiAc.type === 'template' && window.slug) {
                 acUrl += `&exclude=${encodeURIComponent(window.slug)}`;
             }
@@ -1763,7 +1779,7 @@ async function _autoInsertTemplateParamSchema(slug: string, line: number, insert
 
     let data: { content?: string } | null = null;
     try {
-        const res = await fetch(`/api/w/${encodeURIComponent(slug)}`);
+        const res = await fetch(`${_acTemplateBase}/${encodeURIComponent(slug)}`);
         if (!res.ok) return;
         data = await res.json() as { content?: string };
     } catch (_) { return; }
@@ -2222,5 +2238,12 @@ window.renderCategoryTags       = renderCategoryTags;
 
 // edit.js 가 .replaceRange 를 직접 기록하는 상태 객체
 window.paletteAc = paletteAc;
+
+// 자동완성 컨텍스트 주입(워크스페이스 등). 미호출 시 메인 위키 기본값 유지.
+window.configureAutocomplete = (opts) => {
+    if (!opts) return;
+    if (opts.searchUrl !== undefined) _acSearchBase = opts.searchUrl;
+    if (opts.templateApiBase !== undefined) _acTemplateBase = opts.templateApiBase;
+};
 
 console.log('[edit/autocomplete] module loaded');

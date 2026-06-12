@@ -258,6 +258,19 @@ initMarkedConfig();
 // ── 익스텐션 데이터 임시 저장소 (렌더링 시 render.js에서 참조) ──
 var _wikiExtensionData = [];
 
+// ── 렌더 컨텍스트 (위키 vs 워크스페이스) ──
+// 트랜스클루전 틀 본문 fetch 경로와 익스텐션 활성 여부를 컨텍스트별로 주입한다.
+// 기본값은 메인 위키(`/api/w/{slug}`, 익스텐션 활성) — 컨텍스트 미주입 시 기존 동작 그대로.
+// 워크스페이스 페이지(ws-doc/ws-edit 등)는 로드 시 `window.configureWikiRender(...)` 로
+// 자체 공간(`/api/ws/<wslug>/pages/{slug}`)을 가리키게 하고 익스텐션을 비활성화한다.
+// 모듈 전역으로 두는 이유: renderWikiContent/renderPresentation/diff/conflict 시그니처를
+// 바꾸지 않고도 모든 렌더 경로(프레젠테이션 per-slide 포함)가 동일 컨텍스트를 읽도록 한다.
+// (편집기 이미지 업로드의 window.configureImageUpload 와 동일한 페이지-당-1회 주입 패턴.)
+var _renderCtx = {
+    templateApiBase: '/api/w',  // 틀 본문 fetch 베이스
+    disableExtensions: false,   // true 면 콜론 네임스페이스 익스텐션 호출을 확장하지 않음
+};
+
 /**
  * 이름에 ':'가 포함되어 있고 틀 접두사(틀:/template:/템플릿:)가 아닌 경우 → 익스텐션 호출
  */
@@ -538,7 +551,9 @@ async function _resolveTransclusionsCore(text, depth, cache, pageSlug, options) 
     calls.forEach(c => {
         const { name, args } = _parseTemplateCall(c.raw.trim());
         if (_isExtensionCall(name)) {
-            if (options.expandExtensions) {
+            // 익스텐션 비활성 컨텍스트(워크스페이스)에서는 fetch 대상에 넣지 않는다 —
+            // 메인 위키 `/api/w/` 로 새지 않도록. 치환 단계에서 안내 메시지로 처리한다.
+            if (options.expandExtensions && !_renderCtx.disableExtensions) {
                 // 익스텐션: slug를 그대로 사용 (예: "freq:AirPods_Pro_2")
                 extensionSlugs.add(name);
                 slugsToFetch.add(name);
@@ -579,7 +594,7 @@ async function _resolveTransclusionsCore(text, depth, cache, pageSlug, options) 
             }
 
             fetchPromises.push(
-                fetch(`/api/w/${encodeURIComponent(slug)}`)
+                fetch(`${_renderCtx.templateApiBase}/${encodeURIComponent(slug)}`)
                     .then(res => res.ok ? res.json() : null)
                     .then(data => {
                         if (extensionSlugs.has(slug)) {
@@ -658,6 +673,11 @@ async function _resolveTransclusionsCore(text, depth, cache, pageSlug, options) 
         if (_isExtensionCall(trimmed)) {
             if (!options.expandExtensions) {
                 replacement = match;
+            } else if (_renderCtx.disableExtensions) {
+                // 워크스페이스 등 익스텐션 미지원 컨텍스트: 메인 위키로 새지 않도록 안내로 치환.
+                const colonIdx = trimmed.indexOf(':');
+                const extName = colonIdx > 0 ? trimmed.substring(0, colonIdx) : trimmed;
+                replacement = `⚠️ [이 공간에서는 익스텐션을 사용할 수 없습니다: ${extName}]`;
             } else {
                 const cached = cache.get(trimmed);
                 if (!cached) {
@@ -4521,6 +4541,12 @@ window._processTimestampsInHtml = _processTimestampsInHtml;
 window.protectWikiLinks = protectWikiLinks;
 window.restoreWikiLinks = restoreWikiLinks;
 window.renderWikiContent = renderWikiContent;
+// 렌더 컨텍스트 주입(워크스페이스 등). 미호출 시 메인 위키 기본값 유지.
+window.configureWikiRender = (opts) => {
+    if (!opts) return;
+    if (opts.templateApiBase !== undefined) _renderCtx.templateApiBase = opts.templateApiBase;
+    if (opts.disableExtensions !== undefined) _renderCtx.disableExtensions = !!opts.disableExtensions;
+};
 // 직접 익스텐션 문서 경로(pages/index.ts)가 컨테이너 교체 전 익스텐션 정리 훅을 호출하기 위해 노출.
 window._teardownExtensions = _teardownExtensions;
 window._extractMarkdownSectionRanges = _extractMarkdownSectionRanges;

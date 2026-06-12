@@ -72,6 +72,8 @@ function toast(msg) {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
+  // 대시보드 돌아가기 링크는 비동기 로드 전에 즉시 설정한다 (로딩 중 클릭 대비).
+  if (WSLUG) document.getElementById('backToWsBtn')?.setAttribute('href', '/ws/' + encodeURIComponent(WSLUG));
   await window.loadConfig();
   await window.checkAuth();
   initMediaPage();
@@ -107,12 +109,9 @@ async function initMediaPage() {
   canWrite = !!access.canWrite;
   canManage = !!access.canManage;
 
-  // 헤더/브레드크럼
+  // 헤더 + 대시보드 돌아가기 링크
   const wsLabel = ws.name || ws.slug || WSLUG;
   document.getElementById('wsMediaTitle').textContent = wsLabel + ' 미디어';
-  document.getElementById('bcrWsName').textContent = wsLabel;
-  document.getElementById('bcrWsLink').setAttribute('href', '/ws/' + encodeURIComponent(WSLUG));
-  document.getElementById('backToWsBtn').setAttribute('href', '/ws/' + encodeURIComponent(WSLUG));
 
   // 가비지 컬렉터는 canManage 만 노출
   if (canManage) document.getElementById('gcCard')?.classList.remove('d-none');

@@ -80,6 +80,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     Swal.fire('오류', '문서를 찾을 수 없습니다.', 'error');
     return;
   }
+  // 트랜스클루전({{틀}})을 워크스페이스 자체 틀로 해석하도록 렌더 컨텍스트를 1회 주입.
+  // 리비전 본문 보기·Raw 복귀·diff 비교(showDiffModal) 등 모든 renderWikiContent 경로가
+  // 공유하므로 여기서 한 번만 설정하면 충분하다(익스텐션은 워크스페이스에서 비활성).
+  if (typeof window.configureWikiRender === 'function') {
+    window.configureWikiRender({ templateApiBase: WS_BASE + '/pages', disableExtensions: true });
+  }
+
   // 상단 워크스페이스 브레드크럼
   const crumb = document.getElementById('wsRevCrumbWs');
   if (crumb) { crumb.setAttribute('href', '/ws/' + encodeURIComponent(WSLUG)); crumb.textContent = WSLUG; }

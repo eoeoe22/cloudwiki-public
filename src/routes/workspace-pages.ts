@@ -68,10 +68,21 @@ function denyRead(c: Context<Env>) {
 }
 
 /**
+ * 워크스페이스 틀 네임스페이스 접두사. 워크스페이스 틀 문서는 전역 위키와 동일하게
+ * `틀:이름` 슬러그로 저장한다 — 본문 `{{이름}}` 트랜스클루전이 `extractPageLinks`(shared/links.ts)
+ * 에서 `틀:이름` 으로 정규화되어 `workspace_page_links`/검색/본문 fetch 가 일관되게 동작한다.
+ */
+const WS_TEMPLATE_PREFIX = '틀:';
+
+/**
  * 워크스페이스 문서 슬러그 검증.
  * 전역 슬러그 규칙(SLUG_FORBIDDEN_CHARS)에 더해 `:` 를 금지한다 — 워크스페이스 문서는
  * 평문 슬러그만 사용하며, 전역의 가상 네임스페이스(`이미지:`/`map:`/익스텐션)와의
  * 혼동을 구조적으로 차단한다.
+ *
+ * 예외: `틀:` 네임스페이스 1개는 허용한다(워크스페이스 자체 틀 저작). `틀:` 로 시작하고
+ * 그 이후에 추가 `:` 가 없을 때만 통과시켜, 익스텐션/기타 가상 네임스페이스와의 혼동은
+ * 계속 차단한다(`틀:이름`, `틀:이름/하위` 는 허용; `틀:freq:x`, `이미지:x` 는 거부).
  */
 function validatePageSlug(raw: unknown): { ok: true; slug: string } | { ok: false; error: string } {
     if (typeof raw !== 'string') return { ok: false, error: '문서 제목이 필요합니다.' };
@@ -80,8 +91,14 @@ function validatePageSlug(raw: unknown): { ok: true; slug: string } | { ok: fals
     if (SLUG_FORBIDDEN_CHARS.test(slug)) {
         return { ok: false, error: '문서 제목에 사용할 수 없는 문자가 포함되어 있습니다. ([ ] { } # % | < > ^ 등)' };
     }
-    if (slug.includes(':')) {
-        return { ok: false, error: "워크스페이스 문서 제목에는 ':' 를 사용할 수 없습니다." };
+    // `틀:` 접두 1개만 예외 허용 — 접두사를 떼어낸 나머지에 `:` 가 없어야 한다.
+    const isTemplate = slug.startsWith(WS_TEMPLATE_PREFIX);
+    const rest = isTemplate ? slug.slice(WS_TEMPLATE_PREFIX.length) : slug;
+    if (rest.includes(':')) {
+        return { ok: false, error: "워크스페이스 문서 제목에는 ':' 를 사용할 수 없습니다. (틀: 네임스페이스만 예외)" };
+    }
+    if (isTemplate && !rest) {
+        return { ok: false, error: '틀 이름을 입력해주세요.' };
     }
     return { ok: true, slug };
 }
@@ -104,9 +121,13 @@ async function findPage(db: D1Database, workspaceId: number, slug: string): Prom
 // ============================================================
 
 /**
- * GET /api/ws/:wslug/pages — 비삭제 문서 목록 (최근 수정 순).
+ * GET /api/ws/:wslug/pages — 비삭제 문서 목록.
  * ?prefix= : 해당 슬러그의 하위 문서만 (slug LIKE 'prefix/%')
  * ?top=1   : 최상위 문서만 (슬래시 미포함)
+ * ?q=      : slug 부분 일치 검색 (slug-only — title 은 매칭에 참여하지 않음)
+ * ?sort=   : 'slug'(이름 오름차순) | 그 외/미지정 = 'updated_at'(최근 수정 내림차순)
+ * ?limit=  : 페이지 크기(1~500, 기본 500), ?offset= : 시작 오프셋(기본 0)
+ * 응답에 전체 매칭 개수 total 을 함께 반환해 클라이언트 페이지네이션을 지원한다.
  * 비멤버/게스트(canRead=false)에게는 ws_public=1 문서만 노출한다.
  */
 wsPages.get('/api/ws/:wslug/pages', async (c) => {
@@ -127,17 +148,100 @@ wsPages.get('/api/ws/:wslug/pages', async (c) => {
     }
     if (c.req.query('top') === '1') conds.push("slug NOT LIKE '%/%'");
 
+    // 검색: slug 부분 일치. 식별·호출 경로 일관성을 위해 title 은 매칭에 넣지 않는다.
+    const qRaw = (c.req.query('q') || '').trim();
+    if (qRaw) {
+        conds.push("slug LIKE ? ESCAPE '\\'");
+        binds.push('%' + escapeLike(qRaw) + '%');
+    }
+
+    // 정렬: slug 오름차순 또는 최근 수정 내림차순(기본). 둘 다 slug tie-breaker 로 안정 정렬.
+    const orderBy = c.req.query('sort') === 'slug'
+        ? 'slug ASC'
+        : 'updated_at DESC, slug ASC';
+
+    // 페이지네이션: limit 1~500, offset >= 0.
+    const limitRaw = parseInt(c.req.query('limit') || '', 10);
+    const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, 500) : 500;
+    const offsetRaw = parseInt(c.req.query('offset') || '', 10);
+    const offset = Number.isFinite(offsetRaw) && offsetRaw > 0 ? offsetRaw : 0;
+
+    const whereSql = conds.join(' AND ');
+
+    const countRow = await c.env.DB
+        .prepare(`SELECT COUNT(*) AS n FROM workspace_pages WHERE ${whereSql}`)
+        .bind(...binds)
+        .first<{ n: number }>();
+    const total = countRow?.n ?? 0;
+
     const rows = await c.env.DB
         .prepare(
-            `SELECT id, slug, title, updated_at, version, ws_public, rows, characters, redirect_to
+            `SELECT id, slug, title, updated_at, version, ws_public, rows, characters, redirect_to, doc_type
              FROM workspace_pages
+             WHERE ${whereSql}
+             ORDER BY ${orderBy}
+             LIMIT ? OFFSET ?`
+        )
+        .bind(...binds, limit, offset)
+        .all();
+    return c.json(safeJSON({ pages: rows.results || [], total }));
+});
+
+/**
+ * GET /api/ws/:wslug/search-titles — 인라인 자동완성용 제목/틀 검색 (최대 5개).
+ * 전역 위키 `GET /w/search-titles` (routes/wiki.ts) 의 워크스페이스 대응판으로, 자동완성
+ * 클라이언트(edit/autocomplete.ts)가 컨텍스트만 바꿔 그대로 재사용할 수 있도록 동일한
+ * 응답 형태(`{ results: [{ slug }] }`)를 돌려준다.
+ *
+ * Query:
+ *   q       : slug 부분 일치(slug-only — title 은 매칭에 넣지 않는다, 식별·호출 경로 일관성).
+ *   type    : 'template' → `틀:%` 만 / 그 외(기본 'link') → `틀:%` 제외. 워크스페이스는 익스텐션
+ *             설정이 없으므로 전역과 달리 익스텐션 네임스페이스는 검색 대상에 넣지 않는다.
+ *   exclude : 자기 자신 슬러그 제외(틀 자동완성에서 자기 참조 방지).
+ * 비멤버/게스트(canRead=false)에게는 ws_public=1 문서만 노출(목록 엔드포인트와 동일 게이팅).
+ */
+wsPages.get('/api/ws/:wslug/search-titles', async (c) => {
+    const { workspace, access } = await resolveWs(c);
+    if (!workspace) return c.json({ error: '워크스페이스를 찾을 수 없습니다.' }, 404);
+
+    const conds: string[] = ['workspace_id = ?', 'deleted_at IS NULL'];
+    const binds: unknown[] = [workspace.id];
+    if (!access.canRead) conds.push('ws_public = 1');
+
+    const type = c.req.query('type') === 'template' ? 'template' : 'link';
+    if (type === 'template') {
+        conds.push("slug LIKE ? ESCAPE '\\'");
+        binds.push(escapeLike(WS_TEMPLATE_PREFIX) + '%');
+    } else {
+        conds.push("slug NOT LIKE ? ESCAPE '\\'");
+        binds.push(escapeLike(WS_TEMPLATE_PREFIX) + '%');
+    }
+
+    const exclude = (c.req.query('exclude') || '').trim();
+    if (exclude) {
+        conds.push('slug != ?');
+        binds.push(normalizeSlug(exclude));
+    }
+
+    const qRaw = (c.req.query('q') || '').trim();
+    if (qRaw) {
+        conds.push("slug LIKE ? ESCAPE '\\'");
+        binds.push('%' + escapeLike(qRaw) + '%');
+    }
+
+    // 빈 쿼리: 최근 수정 순. 검색어 있으면 slug 오름차순(전역 search-titles 와 동일 정책).
+    const orderBy = qRaw ? 'slug ASC' : 'updated_at DESC, slug ASC';
+
+    const rows = await c.env.DB
+        .prepare(
+            `SELECT slug FROM workspace_pages
              WHERE ${conds.join(' AND ')}
-             ORDER BY updated_at DESC
-             LIMIT 500`
+             ORDER BY ${orderBy}
+             LIMIT 5`
         )
         .bind(...binds)
         .all();
-    return c.json(safeJSON({ pages: rows.results || [] }));
+    return c.json(safeJSON({ results: rows.results || [] }));
 });
 
 // ============================================================

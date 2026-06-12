@@ -6,14 +6,18 @@ import { apiGet } from '../utils/api';
 
 // ── 상태 ──────────────────────────────────────────────────────────────────────
 let wslug = '';
-let pages = []; // { id, slug, title, updated_at, version, ws_public, rows, characters, redirect_to }[]
-// 확장 상태: slug → boolean (메모리에만 유지)
-const expanded = {};
+let pages = []; // 현재 페이지(서버가 반환한 문서) { id, slug, title, updated_at, version, ws_public, rows, characters, redirect_to, doc_type }[]
+let total = 0; // 서버 기준 전체 매칭 문서 수
+// 접힘 상태: slug → false 면 접힘(기본은 펼침). 페이지 내 모든 문서를 보이게 하기 위함.
+const collapsed = {};
+// 검색 / 정렬 / 페이지 (서버에 전달)
+let searchQuery = '';
+let sortKey = 'updated_at'; // 'updated_at' | 'slug'
+let currentPage = 0;
+const PAGE_SIZE = 50;
 
 const esc = (s) => window.escapeHtml(String(s ?? ''));
-/** 인라인 on* 핸들러 인자용 — JSON 직렬화 후 HTML 이스케이프해 속성에 안전하게 넣는다.
- *  워크스페이스 slug 는 따옴표(`"`/`'`)를 허용하므로 JSON.stringify 만으로는 속성을
- *  탈출당할 수 있다(이중 인용 속성 안의 `"` 가 속성을 조기 종료). */
+/** 인라인 on* 핸들러 인자용 — JSON 직렬화 후 HTML 이스케이프해 속성에 안전하게 넣는다. */
 const attrJson = (v) => esc(JSON.stringify(v));
 
 /** slug 의 각 세그먼트를 encodeURIComponent 로 인코딩해 URL 경로로 반환 */
@@ -35,42 +39,66 @@ document.addEventListener('DOMContentLoaded', async () => {
     return;
   }
 
-  // 브레드크럼 워크스페이스 링크 업데이트
-  const bcrWsLink = document.getElementById('bcrWsLink');
-  const bcrWsName = document.getElementById('bcrWsName');
-  if (bcrWsLink) bcrWsLink.href = '/ws/' + encodeURIComponent(wslug);
-  if (bcrWsName) bcrWsName.textContent = wslug;
+  // 돌아가기 버튼 링크 업데이트
+  const btnBack = document.getElementById('btnBackToWs');
+  if (btnBack) (btnBack as HTMLAnchorElement).href = '/ws/' + encodeURIComponent(wslug);
 
   await loadTree();
 });
 
 // ── 데이터 로드 ───────────────────────────────────────────────────────────────
+// 검색어/정렬/페이지를 빠르게 바꾸면 요청이 순서대로 끝나지 않을 수 있다. 시퀀스 가드로
+// 가장 최근 요청의 응답만 상태에 반영해, 늦게 도착한 옛 응답이 덮어쓰지 못하게 한다.
+let loadSeq = 0;
 async function loadTree() {
   const loadingEl = document.getElementById('wsFilesLoading');
   const treeEl = document.getElementById('wsFileTree');
   const emptyEl = document.getElementById('wsFilesEmpty');
   const errorEl = document.getElementById('wsFilesError');
+  const toolbarEl = document.getElementById('wsFilesToolbar');
+
+  const seq = ++loadSeq;
 
   // 재로드 시 상태 초기화
   loadingEl.classList.remove('d-none');
   treeEl.classList.add('d-none');
   emptyEl.classList.add('d-none');
   errorEl.classList.add('d-none');
+  toolbarEl.classList.add('d-none');
 
   try {
-    const data = await apiGet(`/api/ws/${encodeURIComponent(wslug)}/pages`);
+    const params = new URLSearchParams();
+    params.set('sort', sortKey);
+    params.set('limit', String(PAGE_SIZE));
+    params.set('offset', String(currentPage * PAGE_SIZE));
+    if (searchQuery.trim()) params.set('q', searchQuery.trim());
+
+    const data = await apiGet(`/api/ws/${encodeURIComponent(wslug)}/pages?${params.toString()}`);
+    // 더 새로운 요청이 시작됐다면 이 응답은 폐기한다.
+    if (seq !== loadSeq) return;
     pages = data.pages || [];
+    total = data.total ?? pages.length;
+
+    // 삭제/검색으로 전체 수가 줄어 현재 페이지가 범위를 벗어났다면 마지막 유효 페이지로 보정 후 1회 재로드.
+    const lastPage = Math.max(0, Math.ceil(total / PAGE_SIZE) - 1);
+    if (currentPage > lastPage && total > 0) {
+      currentPage = lastPage;
+      return loadTree();
+    }
 
     loadingEl.classList.add('d-none');
 
-    if (!pages.length) {
+    // 검색어가 없고 전체가 비었을 때만 빈 상태. 검색 결과 없음은 트리 영역에서 안내.
+    if (total === 0 && !searchQuery.trim()) {
       emptyEl.classList.remove('d-none');
       return;
     }
 
+    toolbarEl.classList.remove('d-none');
     renderTree();
     treeEl.classList.remove('d-none');
   } catch (e) {
+    if (seq !== loadSeq) return;
     console.error('워크스페이스 파일 목록 로드 실패:', e);
     loadingEl.classList.add('d-none');
     showError('파일 목록을 불러오지 못했습니다.');
@@ -86,17 +114,16 @@ function showError(msg) {
 }
 
 // ── 트리 빌드 & 렌더 ──────────────────────────────────────────────────────────
+// 검색·정렬·페이지네이션은 서버(/api/ws/:wslug/pages 의 q/sort/limit/offset)가 처리한다.
+// 클라이언트는 서버가 반환한 현재 페이지 문서로 계층 트리를 구성하고, 같은 페이지에
+// 함께 온 조상 경로를 가상 폴더로 표시한다(페이지 경계를 넘는 펼침은 없음).
 /**
- * pages 배열(평면 슬러그 목록)로부터 트리를 빌드한다.
- * 노드 구조:
- *   { key: string (slug prefix), label: string (마지막 세그먼트),
- *     page: object|null (실제 문서 데이터, 없으면 가상 폴더),
- *     children: Map<string, Node> }
+ * pagesArr(평면 슬러그 목록)로부터 트리를 빌드한다.
  */
-function buildTree() {
-  const root = new Map(); // key → Node
+function buildTree(pagesArr) {
+  const root = new Map();
 
-  for (const page of pages) {
+  for (const page of pagesArr) {
     const segs = page.slug.split('/');
     let current = root;
 
@@ -116,7 +143,6 @@ function buildTree() {
       const node = current.get(label);
 
       if (i === segs.length - 1) {
-        // 마지막 세그먼트 — 실제 문서
         node.page = page;
       }
 
@@ -129,8 +155,25 @@ function buildTree() {
 
 function renderTree() {
   const treeEl = document.getElementById('wsFileTree');
-  const root = buildTree();
-  treeEl.innerHTML = renderNodes(root, 0);
+
+  // 결과 없음(검색 매칭 0건 등)
+  if (!pages.length) {
+    treeEl.innerHTML = `<p class="text-muted small mt-2">검색 결과가 없습니다.</p>`;
+    return;
+  }
+
+  const root = buildTree(pages);
+
+  // 최소 너비를 보장해 행이 줄바꿈되지 않도록 (가로 스크롤)
+  let html = `<div style="min-width:max-content;">`;
+  html += renderNodes(root, 0);
+  html += `</div>`;
+
+  if (total > PAGE_SIZE) {
+    html += renderPagination(total);
+  }
+
+  treeEl.innerHTML = html;
 }
 
 /** Map<label, Node> → HTML 문자열 */
@@ -142,11 +185,46 @@ function renderNodes(nodes, depth) {
   return html;
 }
 
+/** 문서 slug/title 에 따른 아이콘 클래스 반환 */
+function getDocIcon(node) {
+  const slug = node.page?.slug ?? node.key;
+  const title = node.page?.title ?? '';
+  const lastSeg = slug.split('/').pop() || '';
+
+  if (!node.page) {
+    // 가상 폴더 (실제 문서 없음)
+    return 'bi-folder text-warning';
+  }
+  if (lastSeg === '_board') {
+    return 'bi-layout-kanban text-info';
+  }
+  if (title.startsWith('틀:') || lastSeg.startsWith('틀:')) {
+    return 'bi-file-earmark-code text-secondary';
+  }
+  if (node.page?.doc_type === 'presentation') {
+    return 'bi-easel2 text-primary';
+  }
+  return 'bi-file-earmark-text text-secondary';
+}
+
+/** 문서 속성 배지 HTML */
+function renderBadges(page) {
+  if (!page) return '';
+  let badges = '';
+  if (page.ws_public === 1) {
+    badges += `<span class="badge rounded-pill ms-1 small" style="font-size:0.65rem;background:var(--wiki-success-subtle,#d1e7dd);color:var(--wiki-success,#198754);">공개</span>`;
+  }
+  if (page.doc_type === 'presentation') {
+    badges += `<span class="badge rounded-pill ms-1 small" style="font-size:0.65rem;background:var(--wiki-primary-subtle,#cfe2ff);color:var(--wiki-primary,#0d6efd);">프레젠테이션</span>`;
+  }
+  return badges;
+}
+
 function renderNode(node, depth) {
   const hasChildren = node.children.size > 0;
-  const isExpanded = !!expanded[node.key];
+  // 현재 페이지에 함께 온 문서가 모두 보이도록 기본 펼침. 사용자가 접으면 collapsed[key]=true.
+  const isExpanded = !collapsed[node.key];
   const indent = depth * 20;
-  const isFolder = !node.page; // 중간 경로만 있고 실제 문서 없는 경우
 
   const chevron = hasChildren
     ? `<button class="btn btn-sm p-0 me-1 border-0 text-muted" style="width:1.2em;" onclick="window.wsFileToggle(${attrJson(node.key)})" aria-expanded="${isExpanded}" aria-label="폴더 열기/닫기">
@@ -154,36 +232,33 @@ function renderNode(node, depth) {
        </button>`
     : `<span style="width:1.2em;display:inline-block;"></span>`;
 
-  const icon = (hasChildren || isFolder)
-    ? `<i class="bi bi-folder${isExpanded ? '-open' : ''} text-warning me-1"></i>`
-    : `<i class="bi bi-file-earmark-text text-secondary me-1"></i>`;
+  const iconClass = getDocIcon(node);
+  const icon = `<i class="bi ${iconClass} me-1" style="flex-shrink:0;"></i>`;
 
   const actions = node.page ? renderActions(node.page) : '';
+  const badges = renderBadges(node.page);
 
-  // 실제 문서가 있는 노드는 제목 클릭으로 바로 열린다. 문서 없는 가상 폴더는
-  // 클릭 시 펼침/접기(자식이 있을 때)하거나 비활성 텍스트로 둔다.
   let labelHtml;
   if (node.page) {
     const href = `/ws/${encodeURIComponent(wslug)}/w/${encodeSlugPath(node.page.slug)}`;
-    labelHtml = `<a href="${href}" class="flex-grow-1 text-truncate small ws-file-name" title="${esc(node.key)}">${esc(node.label)}</a>`;
+    labelHtml = `<a href="${href}" class="text-truncate small ws-file-name" style="min-width:0;" title="${esc(node.key)}">${esc(node.page.title || node.label)}</a>${badges}`;
   } else if (hasChildren) {
-    labelHtml = `<span class="flex-grow-1 text-truncate small ws-file-folder" role="button" title="${esc(node.key)}" onclick="window.wsFileToggle(${attrJson(node.key)})">${esc(node.label)}</span>`;
+    labelHtml = `<span class="text-truncate small ws-file-folder" style="min-width:0;" role="button" title="${esc(node.key)}" onclick="window.wsFileToggle(${attrJson(node.key)})">${esc(node.label)}</span>`;
   } else {
-    labelHtml = `<span class="flex-grow-1 text-truncate small text-muted" title="${esc(node.key)}">${esc(node.label)}</span>`;
+    labelHtml = `<span class="text-truncate small text-muted" style="min-width:0;" title="${esc(node.key)}">${esc(node.label)}</span>`;
   }
 
   const html = `
-    <div class="d-flex align-items-center py-1 border-bottom" style="padding-left:${indent + 8}px;">
+    <div class="d-flex align-items-center py-1 border-bottom" style="padding-left:${indent + 8}px;gap:0.25rem;">
       ${chevron}
       ${icon}
       ${labelHtml}
+      <span style="flex:1 1 auto;min-width:0.5rem;"></span>
       ${actions}
     </div>`;
 
-  const childrenHtml = hasChildren && isExpanded
-    ? `<div id="ws-children-${CSS.escape(node.key)}">${renderNodes(node.children, depth + 1)}</div>`
-    : hasChildren
-    ? `<div id="ws-children-${CSS.escape(node.key)}" class="d-none">${renderNodes(node.children, depth + 1)}</div>`
+  const childrenHtml = hasChildren
+    ? `<div id="ws-children-${CSS.escape(node.key)}" ${isExpanded ? '' : 'class="d-none"'}>${renderNodes(node.children, depth + 1)}</div>`
     : '';
 
   return html + childrenHtml;
@@ -194,9 +269,8 @@ function renderActions(page) {
   const wslugEnc = encodeURIComponent(wslug);
   const slugJ = attrJson(slug);
 
-  // '열기' 버튼은 제거됨 — 제목 클릭으로 문서를 연다.
   return `
-    <div class="d-flex gap-1 flex-shrink-0 ms-1">
+    <div class="d-flex gap-1 flex-shrink-0">
       <a href="/ws/${wslugEnc}/edit?slug=${encodeURIComponent(slug)}" class="btn btn-sm btn-wiki-outline py-0 px-1" title="편집">
         <i class="bi bi-pencil" style="font-size:0.75rem;"></i>
       </a>
@@ -209,10 +283,78 @@ function renderActions(page) {
     </div>`;
 }
 
-// ── 트리 토글 ──────────────────────────────────────────────────────────────────
+// ── 페이지네이션 ──────────────────────────────────────────────────────────────
+function renderPagination(totalRootCount) {
+  const totalPages = Math.ceil(totalRootCount / PAGE_SIZE);
+  const start = currentPage * PAGE_SIZE + 1;
+  const end = Math.min((currentPage + 1) * PAGE_SIZE, totalRootCount);
+
+  let html = `<div class="d-flex align-items-center justify-content-between mt-2 flex-wrap gap-2">
+    <small class="text-muted">${start}–${end} / 총 ${totalRootCount}개</small>
+    <div class="d-flex gap-1">`;
+
+  // 이전 버튼
+  if (currentPage > 0) {
+    html += `<button class="btn btn-wiki-outline btn-sm" onclick="window.wsFilePage(${currentPage - 1})"><i class="bi bi-chevron-left"></i></button>`;
+  }
+
+  // 페이지 번호 (최대 7개 표시)
+  const maxBtns = 7;
+  let lo = Math.max(0, currentPage - Math.floor(maxBtns / 2));
+  let hi = Math.min(totalPages - 1, lo + maxBtns - 1);
+  lo = Math.max(0, hi - maxBtns + 1);
+
+  if (lo > 0) {
+    html += `<button class="btn btn-wiki-outline btn-sm" onclick="window.wsFilePage(0)">1</button>`;
+    if (lo > 1) html += `<span class="btn btn-sm disabled px-1">…</span>`;
+  }
+  for (let i = lo; i <= hi; i++) {
+    const active = i === currentPage ? ' btn-wiki active' : ' btn-wiki-outline';
+    html += `<button class="btn btn-sm${active}" onclick="window.wsFilePage(${i})">${i + 1}</button>`;
+  }
+  if (hi < totalPages - 1) {
+    if (hi < totalPages - 2) html += `<span class="btn btn-sm disabled px-1">…</span>`;
+    html += `<button class="btn btn-wiki-outline btn-sm" onclick="window.wsFilePage(${totalPages - 1})">${totalPages}</button>`;
+  }
+
+  // 다음 버튼
+  if (currentPage < totalPages - 1) {
+    html += `<button class="btn btn-wiki-outline btn-sm" onclick="window.wsFilePage(${currentPage + 1})"><i class="bi bi-chevron-right"></i></button>`;
+  }
+
+  html += `</div></div>`;
+  return html;
+}
+
+// ── 트리 토글 (현재 페이지 내 폴더 접기/펼치기) ────────────────────────────────
 window.wsFileToggle = function (key) {
-  expanded[key] = !expanded[key];
+  collapsed[key] = !collapsed[key];
   renderTree();
+};
+
+// ── 검색 (서버 재조회) ─────────────────────────────────────────────────────────
+let _searchTimer;
+window.wsFileSearch = function (val) {
+  clearTimeout(_searchTimer);
+  _searchTimer = setTimeout(() => {
+    searchQuery = val;
+    currentPage = 0;
+    loadTree();
+  }, 300);
+};
+
+// ── 정렬 (서버 재조회) ─────────────────────────────────────────────────────────
+window.wsFileSort = function (val) {
+  sortKey = val;
+  currentPage = 0;
+  loadTree();
+};
+
+// ── 페이지 이동 (서버 재조회) ──────────────────────────────────────────────────
+window.wsFilePage = function (page) {
+  currentPage = page;
+  loadTree();
+  document.getElementById('wsFileTree')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 };
 
 // ── 새 문서 ───────────────────────────────────────────────────────────────────
@@ -235,11 +377,9 @@ window.wsFileNew = async function () {
 
 // ── 이름 변경 (하위 문서 일괄 이동) ─────────────────────────────────────────────
 window.wsFileRename = async function (slug) {
-  // 하위 문서가 함께 이동됨을 미리 알려준다(slug/ 로 시작하는 문서 수).
-  const subCount = pages.filter((p) => p.slug && p.slug.startsWith(slug + '/')).length;
-  const note = subCount > 0
-    ? `<div class="small text-muted mt-2">하위 문서 <strong>${subCount}</strong>개도 새 경로로 함께 이동합니다.</div>`
-    : '';
+  // 하위 문서는 서버 move 가 일괄 이동한다. (페이지네이션으로 전체 하위 수를 알 수 없어
+  // 카운트 대신 일반 안내를 표시한다.)
+  const note = `<div class="small text-muted mt-2">이 문서의 하위 문서가 있다면 새 경로로 함께 이동합니다.</div>`;
 
   const { value: newSlug } = await Swal.fire({
     title: '제목 변경',
@@ -277,14 +417,13 @@ window.wsFileRename = async function (slug) {
       Swal.fire('오류', msg, 'error');
       return;
     }
-    // 펼침 상태(expanded)의 키는 옛 slug 를 가리키므로, 이동된 prefix 를 새 경로로
-    // remap 해 재로드 후에도 펼친 폴더가 접히지 않게 한다.
+    // 접힘 상태 키를 이동된 새 경로로 remap 해 재로드 후에도 접힘 상태가 유지되게 한다.
     const dest = (body.slug || newSlug.trim());
-    for (const key of Object.keys(expanded)) {
+    for (const key of Object.keys(collapsed)) {
       if (key === slug || key.startsWith(slug + '/')) {
         const remapped = dest + key.slice(slug.length);
-        if (expanded[key]) expanded[remapped] = true;
-        delete expanded[key];
+        if (collapsed[key]) collapsed[remapped] = true;
+        delete collapsed[key];
       }
     }
     await loadTree();

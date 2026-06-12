@@ -425,6 +425,20 @@ div:where(.swal2-container) .swal2-validation-message {
   color: var(--wiki-header-brand);
 }
 
+/* 워크스페이스 페이지에서 워크스페이스 대시보드로 분리된 네이티브 브랜드 링크.
+   .navbar-brand 를 함께 부여해 브랜드 글꼴/색/크기를 그대로 따른다. */
+.navbar-brand-ws-name {
+  text-decoration: none;
+}
+.navbar-brand-ws-name:hover {
+  text-decoration: underline;
+}
+.navbar-brand-ws-name:focus-visible {
+  outline: 2px solid var(--wiki-border-focus);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
 /* 헤더에 직접 얹힌 .text-body 아이콘(햄버거·설정·로그인·랜덤 등)도 헤더 전경색을 따른다.
    기본값(--wiki-header-text = --wiki-text)이라 default 테마는 무변화. */
 .navbar .text-body {

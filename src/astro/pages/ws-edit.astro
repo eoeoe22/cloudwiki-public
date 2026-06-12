@@ -162,12 +162,12 @@ import Footer from '../components/Footer.astro';
         <div class="wiki-container">
             <div class="wiki-article">
 
-                <!-- 워크스페이스 브레드크럼 -->
-                <nav class="mb-3 small" aria-label="breadcrumb">
-                    <a href="/workspaces" class="text-decoration-none"><i class="bi bi-grid"></i> 워크스페이스</a>
-                    <span class="text-muted mx-1">/</span>
-                    <a href="#" id="wsEditCrumbWs" class="text-decoration-none">워크스페이스</a>
-                </nav>
+                <!-- 툴바: 대시보드로 돌아가기 -->
+                <div class="d-flex mb-3">
+                    <a href="#" id="btnBackToWs" class="btn btn-wiki-outline btn-sm">
+                        <i class="bi bi-arrow-left"></i> 대시보드
+                    </a>
+                </div>
 
                 <!-- 로딩 -->
                 <div id="wsEditLoading" class="wiki-loading">

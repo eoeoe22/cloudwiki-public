@@ -174,6 +174,13 @@ async function renderBody() {
   const rawEl = document.getElementById('articleRawContent');
   if (rawEl) rawEl.textContent = data.content || '';
 
+  // 트랜스클루전({{틀}})을 워크스페이스 자체 `틀:` 문서로 해석하도록 렌더 컨텍스트 주입.
+  // 익스텐션은 비활성(메인 위키로 새지 않음). renderPresentation 의 per-slide 렌더도
+  // 동일 전역을 읽으므로 프레젠테이션 문서의 슬라이드 내 {{틀}} 까지 워크스페이스로 해석된다.
+  if (typeof window.configureWikiRender === 'function') {
+    window.configureWikiRender({ templateApiBase: WS_BASE + '/pages', disableExtensions: true });
+  }
+
   const isPresentation = data.doc_type === 'presentation' && !document.body.classList.contains('reading-mode');
   try {
     if (isPresentation && typeof window.renderPresentation === 'function') {
@@ -243,10 +250,16 @@ function renderActions(data) {
   const el = document.getElementById('wsDocActions');
   if (!el) return;
   let html = '';
+  // 메인 액션 (편집·이력) — 전역 위키 문서 도구와 동일하게 btn-group 으로 묶는다.
+  // 워크스페이스에는 토론이 없으므로 위키의 (편집|이력|토론) 중 토론만 제외한다.
+  let mainActions = '';
   if (data.can_write) {
-    html += '<a class="btn btn-outline-secondary" href="' + esc(wsEditUrl(data.slug)) +
-      '"><i class="bi bi-pencil" aria-hidden="true"></i><span class="d-none d-sm-inline"> 편집</span></a>';
+    mainActions += '<a class="btn btn-outline-secondary" href="' + esc(wsEditUrl(data.slug)) +
+      '" aria-label="편집"><i class="bi bi-pencil" aria-hidden="true"></i><span class="d-none d-sm-inline"> 편집</span></a>';
   }
+  mainActions += '<a class="btn btn-outline-secondary" href="' + esc(wsRevisionsUrl(data.slug)) +
+    '" aria-label="이력"><i class="bi bi-clock-history" aria-hidden="true"></i><span class="d-none d-sm-inline"> 이력</span></a>';
+  html += '<div class="btn-group">' + mainActions + '</div>';
   // 공유 드롭다운 (AI 질문 제외). 편집자/관리자(can_write)에게는 공개 링크 관리 옵션 추가.
   const publicLinkItems = data.can_write ? `
         <li><hr class="dropdown-divider"></li>
@@ -278,7 +291,6 @@ function renderActions(data) {
         <li><button class="dropdown-item" onclick="wsScrollToBacklinks(); return false;"><i class="bi bi-link-45deg"></i> 역링크 보기</button></li>
         <li><button class="dropdown-item" onclick="toggleRawMode(); return false;"><i class="bi bi-code-slash"></i> Raw 보기</button></li>
         ${structureItem}
-        <li><a class="dropdown-item" href="${esc(wsRevisionsUrl(data.slug))}"><i class="bi bi-clock-history"></i> 편집 이력</a></li>
       </ul>
     </div>`;
   el.innerHTML = html;

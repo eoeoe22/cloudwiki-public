@@ -60,6 +60,9 @@ let deckWasActive = false;
 let tabSwitcher = null;
 
 document.addEventListener('DOMContentLoaded', async () => {
+  // 대시보드 돌아가기 링크는 비동기 로드/로그인 리다이렉트 전에 즉시 설정한다 (로딩 중 클릭 대비).
+  if (WSLUG) $('btnBackToWs')?.setAttribute('href', wsDashUrl());
+
   await window.loadConfig();
   await window.checkAuth();
 
@@ -70,9 +73,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     return;
   }
 
-  // 브레드크럼 / 취소 링크
-  const crumb = $('wsEditCrumbWs');
-  if (crumb) { crumb.setAttribute('href', wsDashUrl()); crumb.textContent = WSLUG; }
+  // 취소 링크 (대시보드 돌아가기 링크는 위에서 이미 설정함)
   const cancel = $('wsEditCancel');
   if (cancel) cancel.setAttribute('href', TARGET_SLUG ? wsDocUrl(TARGET_SLUG) : wsDashUrl());
 
@@ -442,6 +443,23 @@ function buildToolbar(view) {
     window.configureImageUpload({
       uploadUrl: WS_BASE + '/media',
       searchFetcher: wsImageSearchFetcher,
+    });
+  }
+
+  // 트랜스클루전({{틀}}) 본문 fetch 와 익스텐션 활성 여부를 워크스페이스 컨텍스트로 주입한다.
+  // 틀은 워크스페이스 자체 `틀:` 문서(`/api/ws/:wslug/pages/틀:이름`)로만 해석하고,
+  // 익스텐션은 비활성(메인 위키 `/api/w/` 로 새지 않음). buildToolbar 는 첫 프리뷰 렌더 전에
+  // 실행되므로 여기서 1회 주입하면 충분하다.
+  if (typeof window.configureWikiRender === 'function') {
+    window.configureWikiRender({ templateApiBase: WS_BASE + '/pages', disableExtensions: true });
+  }
+
+  // 인라인 자동완성([[ / {{)의 검색·틀 본문 fetch 를 워크스페이스 엔드포인트로 주입한다.
+  // 검색은 신규 `/api/ws/:wslug/search-titles`, 틀 본문은 단건 페이지 GET 을 사용한다.
+  if (typeof window.configureAutocomplete === 'function') {
+    window.configureAutocomplete({
+      searchUrl: WS_BASE + '/search-titles',
+      templateApiBase: WS_BASE + '/pages',
     });
   }
 

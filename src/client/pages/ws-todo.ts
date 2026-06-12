@@ -15,6 +15,11 @@ function parseWslug(): string {
 const WSLUG = parseWslug();
 
 document.addEventListener('DOMContentLoaded', async () => {
+    // 대시보드 돌아가기 링크는 비동기 로드 전에 즉시 설정한다 (로딩 중 클릭 대비).
+    if (WSLUG) {
+        const btnBack = document.getElementById('btnBackToWs');
+        if (btnBack) btnBack.setAttribute('href', '/ws/' + encodeURIComponent(WSLUG));
+    }
     await window.loadConfig();
     await window.checkAuth();
     await init();
@@ -44,15 +49,8 @@ async function init(): Promise<void> {
         return;
     }
 
-    const ws = meta.workspace || {};
     const access = meta.access || {};
     const canWrite = !!access.canWrite;
-
-    // 브레드크럼 워크스페이스 링크
-    const bcrWsLink = document.getElementById('bcrWsLink');
-    const bcrWsName = document.getElementById('bcrWsName');
-    if (bcrWsLink) bcrWsLink.setAttribute('href', '/ws/' + encodeURIComponent(WSLUG));
-    if (bcrWsName) bcrWsName.textContent = ws.name || ws.slug || WSLUG;
 
     loadingEl?.classList.add('d-none');
     contentEl?.classList.remove('d-none');

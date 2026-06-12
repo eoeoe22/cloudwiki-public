@@ -6,7 +6,6 @@ const __dirname = fileURLToPath(new URL('.', import.meta.url));
 
 /**
  * Vite 빌드 파이프라인.
- *
  * - 입력: src/client/<entry>.ts
  * - 출력: public/dist/<entry>.js (예측 가능한 파일명, 해시 없음)
  *

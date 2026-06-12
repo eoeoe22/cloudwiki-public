@@ -289,6 +289,22 @@
                     </div>
                     <p class="text-muted small mb-0 mt-1"><i class="mdi mdi-information-outline me-1"></i>끄면 <kbd>/</kbd> <kbd>g</kbd> <kbd>e</kbd> <kbd>?</kbd> 등 한 글자 단축키가 비활성화됩니다 (<kbd>Ctrl/⌘+K</kbd> 는 항상 동작).</p>
                 </div>
+                <!-- 홈 페이지 (루트 '/' 진입 시작 페이지) — common.ts 가 workspacesEnabled 시만 노출 -->
+                <div class="mb-2 d-none" id="settingHomeWrap">
+                    <span class="form-label d-block">홈 페이지</span>
+                    <div class="setting-seg" id="settingHomePage" role="group" aria-label="홈 페이지">
+                        <button type="button" class="seg-btn" data-value="wiki" aria-pressed="false" title="위키 홈">
+                            <i class="mdi mdi-book-open-page-variant" aria-hidden="true"></i><span>위키</span>
+                        </button>
+                        <button type="button" class="seg-btn" data-value="workspace" aria-pressed="false" title="특정 워크스페이스">
+                            <i class="mdi mdi-briefcase-outline" aria-hidden="true"></i><span>워크스페이스</span>
+                        </button>
+                    </div>
+                    <div id="settingHomePageSlugWrap" class="mt-2 d-none">
+                        <select id="settingHomePageSlug" class="form-select form-select-sm" aria-label="홈 워크스페이스 선택"></select>
+                    </div>
+                    <p class="text-muted small mb-0 mt-1"><i class="mdi mdi-information-outline me-1"></i>사이트 루트(<code>/</code>) 진입 시 이동할 시작 페이지입니다.</p>
+                </div>
                 <!-- 워크스페이스 버튼 대상 — common.ts 가 workspacesEnabled 시만 노출 -->
                 <div class="mb-2 d-none" id="settingWsWrap">
                     <span class="form-label d-block">워크스페이스 버튼</span>

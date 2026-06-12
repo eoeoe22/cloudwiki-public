@@ -95,6 +95,10 @@ async function loadBoardSection(): Promise<void> {
             }
             el.innerHTML = '<div class="ws-board-content rendered-content" id="wsBoardContent"></div>';
             try {
+                // 보드 글의 {{틀}} 도 워크스페이스 자체 틀로 해석(익스텐션 비활성).
+                if (typeof window.configureWikiRender === 'function') {
+                    window.configureWikiRender({ templateApiBase: '/api/ws/' + encodeURIComponent(WSLUG) + '/pages', disableExtensions: true });
+                }
                 await window.renderWikiContent(page.content, '_board', 'wsBoardContent', {
                     showCategory: false, canEdit: false, enableSectionEdit: false,
                 });
@@ -381,7 +385,7 @@ async function wsInviteUser(userId: number): Promise<void> {
     loadMembers();
 }
 
-// ── 미디어 미리보기 오버레이 ──
+// ── 미디어 미리보기 라이트박스 (중앙 확대) ──
 
 function showMediaPreview(url: string, name: string): void {
     document.getElementById('wsMediaPreviewLayer')?.remove();
@@ -391,44 +395,42 @@ function showMediaPreview(url: string, name: string): void {
     layer.style.cssText =
         'position:fixed;inset:0;' +
         'z-index:var(--wiki-z-offcanvas-backdrop);' +
-        'background:rgba(0,0,0,0.5);' +
+        'background:rgba(0,0,0,0.8);' +
+        'display:flex;align-items:center;justify-content:center;' +
+        'padding:var(--wiki-space-6);' +
         'opacity:0;transition:opacity var(--wiki-dur-enter) var(--wiki-ease);';
 
     const panel = document.createElement('div');
     panel.style.cssText =
-        'position:fixed;top:0;right:0;bottom:0;' +
-        'width:min(520px,100vw);' +
-        'background:var(--bs-body-bg);' +
-        'z-index:var(--wiki-z-offcanvas);' +
-        'display:flex;flex-direction:column;' +
-        'box-shadow:-4px 0 24px rgba(0,0,0,0.18);' +
-        'transform:translateX(100%);' +
+        'position:relative;' +
+        'display:flex;align-items:center;justify-content:center;' +
+        'max-width:100%;max-height:100%;' +
+        'transform:scale(0.92);' +
         'transition:transform var(--wiki-dur-enter) var(--wiki-ease);';
 
     panel.innerHTML =
-        `<div style="padding:var(--wiki-space-4);border-bottom:1px solid var(--bs-border-color);display:flex;align-items:center;justify-content:space-between;gap:var(--wiki-space-4);">` +
-        `<span style="font-size:var(--wiki-fs-md);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(name)}">${esc(name)}</span>` +
-        `<button type="button" class="btn-close flex-shrink-0" aria-label="닫기"></button>` +
-        `</div>` +
-        `<div style="flex:1;overflow:auto;display:flex;align-items:center;justify-content:center;padding:var(--wiki-space-6);">` +
-        `<img src="${esc(url)}" alt="${esc(name)}" style="max-width:100%;max-height:100%;object-fit:contain;border-radius:var(--wiki-radius-lg);">` +
-        `</div>`;
+        `<button type="button" class="btn-close flex-shrink-0" aria-label="닫기" ` +
+        `style="position:absolute;top:calc(-1 * var(--wiki-space-6));right:0;filter:invert(1) grayscale(1) brightness(2);"></button>` +
+        `<img src="${esc(url)}" alt="${esc(name)}" title="${esc(name)}" ` +
+        `style="max-width:100%;max-height:calc(100vh - var(--wiki-space-6) * 2);object-fit:contain;` +
+        `border-radius:var(--wiki-radius-lg);box-shadow:0 8px 40px rgba(0,0,0,0.5);">`;
 
     layer.appendChild(panel);
     document.body.appendChild(layer);
 
     requestAnimationFrame(() => {
         layer.style.opacity = '1';
-        panel.style.transform = 'translateX(0)';
+        panel.style.transform = 'scale(1)';
     });
 
     const close = () => {
         layer.style.opacity = '0';
-        panel.style.transform = 'translateX(100%)';
+        panel.style.transform = 'scale(0.92)';
         setTimeout(() => layer.remove(), 400);
     };
 
-    layer.addEventListener('click', (e) => { if (e.target === layer) close(); });
+    // 여백(이미지·닫기 버튼 외) 클릭 시 닫기
+    layer.addEventListener('click', (e) => { if (e.target === layer || e.target === panel) close(); });
     panel.querySelector('.btn-close')?.addEventListener('click', close);
 
     const onKey = (e: KeyboardEvent) => {

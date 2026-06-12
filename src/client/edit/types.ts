@@ -305,6 +305,14 @@ declare global {
             containerId: string,
             options?: Record<string, unknown>,
         ) => Promise<void> | void;
+        /**
+         * render.ts 가 노출 — 트랜스클루전 틀 본문 fetch 베이스와 익스텐션 활성 여부를
+         * 컨텍스트별(위키/워크스페이스)로 주입한다. 미호출 시 메인 위키 기본값(`/api/w`, 익스텐션 활성).
+         */
+        configureWikiRender?: (opts: {
+            templateApiBase?: string;
+            disableExtensions?: boolean;
+        }) => void;
         /** render.ts 가 노출하는 익스텐션 정리 헬퍼(컨테이너 직접 교체 전 호출) */
         _teardownExtensions?: (containerEl: HTMLElement) => void;
         /** edit.js 의 var 글로벌 — SELECTED_ICONS_ONLY 환경변수 반영 */
