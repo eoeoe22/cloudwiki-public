@@ -211,6 +211,9 @@ function getDocIcon(node) {
 function renderBadges(page) {
   if (!page) return '';
   let badges = '';
+  if (page.pinned_at) {
+    badges += `<i class="bi bi-star-fill text-warning ms-1" style="font-size:0.7rem;" title="상단 고정"></i>`;
+  }
   if (page.ws_public === 1) {
     badges += `<span class="badge rounded-pill ms-1 small" style="font-size:0.65rem;background:var(--wiki-success-subtle,#d1e7dd);color:var(--wiki-success,#198754);">공개</span>`;
   }
@@ -268,9 +271,13 @@ function renderActions(page) {
   const slug = page.slug;
   const wslugEnc = encodeURIComponent(wslug);
   const slugJ = attrJson(slug);
+  const isPinned = !!page.pinned_at;
 
   return `
     <div class="d-flex gap-1 flex-shrink-0">
+      <button class="btn btn-sm btn-wiki-outline py-0 px-1 ${isPinned ? 'text-warning' : ''}" title="${isPinned ? '상단 고정 해제' : '상단 고정'}" aria-pressed="${isPinned}" onclick="window.wsFilePin(${slugJ}, ${isPinned ? 'false' : 'true'})">
+        <i class="bi ${isPinned ? 'bi-star-fill' : 'bi-star'}" style="font-size:0.75rem;"></i>
+      </button>
       <a href="/ws/${wslugEnc}/edit?slug=${encodeURIComponent(slug)}" class="btn btn-sm btn-wiki-outline py-0 px-1" title="편집">
         <i class="bi bi-pencil" style="font-size:0.75rem;"></i>
       </a>
@@ -355,6 +362,32 @@ window.wsFilePage = function (page) {
   currentPage = page;
   loadTree();
   document.getElementById('wsFileTree')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+};
+
+// ── 상단 고정(별표) 토글 ───────────────────────────────────────────────────────
+// 워크스페이스 공용 고정 — canWrite 권한 필요(서버 강제). 토글 후 목록을 재조회해
+// 고정 문서가 상단으로 재정렬되도록 한다.
+window.wsFilePin = async function (slug, pin) {
+  try {
+    const encodedSlug = encodeSlugPath(slug);
+    const res = await fetch(
+      `/api/ws/${encodeURIComponent(wslug)}/pages/${encodedSlug}/pin`,
+      {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pinned: !!pin }),
+      }
+    );
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      Swal.fire('오류', body.error || '고정 상태를 변경하지 못했습니다.', 'error');
+      return;
+    }
+    await loadTree();
+  } catch (e) {
+    Swal.fire('오류', '요청 중 문제가 발생했습니다.', 'error');
+  }
 };
 
 // ── 새 문서 ───────────────────────────────────────────────────────────────────

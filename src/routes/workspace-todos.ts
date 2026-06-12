@@ -15,13 +15,15 @@ import type { Workspace } from '../shared/models';
  *   - workspace_todos 테이블만 사용. 전역 데이터를 건드리지 않는다.
  *   - 리비전·링크 인덱싱·주시자 알림·캐시 무효화 없음(편집기 없는 단순 목록).
  *   - 모든 응답은 `private, no-store` — 비공개 데이터.
- *   - PATCH 로 checked/content/archived 부분 업데이트.
+ *   - PATCH 로 checked/content/archived/pinned 부분 업데이트.
  */
 
 const wsTodos = new Hono<Env>();
 
 const TODO_MAX_LENGTH = 2000;
 const BULK_MAX_IDS = 200;
+// 페이지네이션 페이지 크기. page 쿼리가 있을 때만 적용된다(보관 항목 탐색용).
+const TODO_PAGE_SIZE = 20;
 
 // 기능 토글 가드 + 공통 응답 캐시 정책. 비활성 시 모든 경로가 404.
 wsTodos.use('/api/ws/:wslug/todos', async (c, next) => {
@@ -62,6 +64,9 @@ function denyRead(c: Context<Env>) {
  *   archived=1  : 보관된 항목만 (기본: 활성 항목만)
  *   sort=created_asc|created_desc  : 정렬 순서 (기본: created_asc)
  *   filter=checked|unchecked  : 완료 상태 필터
+ *   q=...  : 내용 부분 일치 검색 (LIKE)
+ *   page=N : 1-기반 페이지네이션. 지정 시 페이지당 TODO_PAGE_SIZE 개만 반환하고
+ *            total/page/page_size 를 함께 반환한다. 미지정 시 기존 LIMIT 1000 동작.
  */
 wsTodos.get('/api/ws/:wslug/todos', requireAuth, async (c) => {
     const { workspace, access } = await resolveWs(c);
@@ -71,6 +76,8 @@ wsTodos.get('/api/ws/:wslug/todos', requireAuth, async (c) => {
     const archived = c.req.query('archived') === '1';
     const sort = c.req.query('sort');
     const filter = c.req.query('filter');
+    const q = (c.req.query('q') || '').trim();
+    const pageRaw = c.req.query('page');
 
     const sortDir = sort === 'created_desc' ? 'DESC' : 'ASC';
 
@@ -89,14 +96,59 @@ wsTodos.get('/api/ws/:wslug/todos', requireAuth, async (c) => {
         conditions.push('t.checked = 0');
     }
 
+    if (q) {
+        // LIKE 메타문자(%, _, \) escape — 사용자 입력 그대로만 매치.
+        const likeEscaped = q.replace(/[\\%_]/g, '\\$&');
+        conditions.push("t.content LIKE ? ESCAPE '\\'");
+        binds.push(`%${likeEscaped}%`);
+    }
+
+    const whereSql = conditions.join(' AND ');
+    const selectCols = `t.id, t.content, t.checked, t.archived_at, t.pinned_at, t.created_by, t.created_at, t.updated_at,
+                        u.name AS created_by_name`;
+    // 활성 목록에서는 고정(pinned_at) 항목을 정렬 기준과 무관하게 항상 먼저 노출한다('상단 고정' 별표).
+    // 보관 목록은 고정 개념이 무의미하므로 기존 정렬을 그대로 둔다.
+    const pinnedFirst = archived ? '' : '(t.pinned_at IS NULL), ';
+
+    // 페이지네이션: page 쿼리가 있을 때만 활성화. 없으면 기존 LIMIT 1000 동작 유지.
+    if (pageRaw != null && pageRaw !== '') {
+        const reqPage = Math.max(1, Math.floor(Number(pageRaw)) || 1);
+        const countRow = await c.env.DB
+            .prepare(`SELECT COUNT(*) AS n FROM workspace_todos t WHERE ${whereSql}`)
+            .bind(...binds)
+            .first<{ n: number }>();
+        const total = Number(countRow?.n || 0);
+        const totalPages = Math.max(1, Math.ceil(total / TODO_PAGE_SIZE));
+        const page = Math.min(reqPage, totalPages);
+        const offset = (page - 1) * TODO_PAGE_SIZE;
+
+        const rows = await c.env.DB
+            .prepare(
+                `SELECT ${selectCols}
+                 FROM workspace_todos t
+                 LEFT JOIN users u ON u.id = t.created_by
+                 WHERE ${whereSql}
+                 ORDER BY ${pinnedFirst}t.created_at ${sortDir}, t.id ${sortDir}
+                 LIMIT ${TODO_PAGE_SIZE} OFFSET ${offset}`
+            )
+            .bind(...binds)
+            .all();
+        return c.json(safeJSON({
+            todos: rows.results || [],
+            can_write: access.canWrite,
+            total,
+            page,
+            page_size: TODO_PAGE_SIZE,
+        }));
+    }
+
     const rows = await c.env.DB
         .prepare(
-            `SELECT t.id, t.content, t.checked, t.archived_at, t.created_by, t.created_at, t.updated_at,
-                    u.name AS created_by_name
+            `SELECT ${selectCols}
              FROM workspace_todos t
              LEFT JOIN users u ON u.id = t.created_by
-             WHERE ${conditions.join(' AND ')}
-             ORDER BY t.created_at ${sortDir}, t.id ${sortDir}
+             WHERE ${whereSql}
+             ORDER BY ${pinnedFirst}t.created_at ${sortDir}, t.id ${sortDir}
              LIMIT 1000`
         )
         .bind(...binds)
@@ -138,7 +190,7 @@ wsTodos.post('/api/ws/:wslug/todos', requireAuth, async (c) => {
 
 /**
  * PATCH /api/ws/:wslug/todos/:id — TODO 수정 (canWrite).
- * body: { checked?: boolean, content?: string, archived?: boolean }
+ * body: { checked?: boolean, content?: string, archived?: boolean, pinned?: boolean }
  */
 wsTodos.patch('/api/ws/:wslug/todos/:id', requireAuth, async (c) => {
     const { workspace, access } = await resolveWs(c);
@@ -148,7 +200,7 @@ wsTodos.patch('/api/ws/:wslug/todos/:id', requireAuth, async (c) => {
     const id = Number(c.req.param('id'));
     if (!Number.isInteger(id) || id <= 0) return c.json({ error: '항목을 찾을 수 없습니다.' }, 404);
 
-    const body = await c.req.json().catch(() => null) as { checked?: unknown; content?: unknown; archived?: unknown } | null;
+    const body = await c.req.json().catch(() => null) as { checked?: unknown; content?: unknown; archived?: unknown; pinned?: unknown } | null;
     if (!body || typeof body !== 'object') return c.json({ error: '유효하지 않은 요청입니다.' }, 400);
 
     const sets: string[] = [];
@@ -176,6 +228,14 @@ wsTodos.patch('/api/ws/:wslug/todos/:id', requireAuth, async (c) => {
         }
         sets.push('archived_at = CASE WHEN ? THEN unixepoch() ELSE NULL END');
         binds.push(body.archived ? 1 : 0);
+    }
+    // 상단 고정(별표) 토글 — 워크스페이스 공용 상태(개인 즐겨찾기 아님), 정렬 우선용.
+    if ('pinned' in body) {
+        if (typeof body.pinned !== 'boolean') {
+            return c.json({ error: 'pinned 는 true/false 여야 합니다.' }, 400);
+        }
+        sets.push('pinned_at = CASE WHEN ? THEN unixepoch() ELSE NULL END');
+        binds.push(body.pinned ? 1 : 0);
     }
     if (!sets.length) return c.json({ error: '변경할 내용이 없습니다.' }, 400);
 

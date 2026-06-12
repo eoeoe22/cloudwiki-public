@@ -8,6 +8,8 @@ import { workspaceIconClass } from '../../shared/workspaceIcon';
 import { initTodoPanel } from '../workspace/todo';
 
 const esc = (s) => window.escapeHtml(String(s ?? ''));
+/** 인라인 on* 핸들러 인자용 — JSON 직렬화 후 HTML 이스케이프해 속성에 안전하게 넣는다. */
+const attrJson = (v) => esc(JSON.stringify(v));
 
 // ── URL 파싱 ──
 
@@ -220,12 +222,44 @@ async function loadRecentDocs(): Promise<void> {
         });
         return;
     }
-    pagesEl.innerHTML = recent.map((p) =>
-        `<a href="${docHref(p.slug)}" class="d-flex align-items-center justify-content-between text-decoration-none text-body px-2 py-2 border-bottom">` +
-        `<span class="text-truncate me-2 fw-medium">${esc(p.title || p.slug)}</span>` +
-        `<span class="text-muted small flex-shrink-0">${rel(p.updated_at)}</span>` +
-        `</a>`
-    ).join('');
+    pagesEl.innerHTML = recent.map((p) => {
+        const pinned = !!p.pinned_at;
+        // canWrite 면 토글 버튼, 아니면 고정 문서에만 정적 별표 표시(미고정은 표시 없음).
+        const star = canWrite
+            ? `<button type="button" class="btn btn-sm border-0 p-0 ms-1 flex-shrink-0 ${pinned ? 'text-warning' : 'text-muted'}" title="${pinned ? '상단 고정 해제' : '상단 고정'}" aria-pressed="${pinned}" onclick="window.wsTogglePin(event, ${attrJson(p.slug)}, ${pinned ? 'false' : 'true'})"><i class="bi ${pinned ? 'bi-star-fill' : 'bi-star'}"></i></button>`
+            : (pinned ? `<i class="bi bi-star-fill text-warning ms-1 flex-shrink-0" title="상단 고정"></i>` : '');
+        return `<div class="d-flex align-items-center px-2 py-2 border-bottom gap-1">` +
+            `<a href="${docHref(p.slug)}" class="d-flex align-items-center justify-content-between text-decoration-none text-body flex-grow-1" style="min-width:0;">` +
+            `<span class="text-truncate me-2 fw-medium">${esc(p.title || p.slug)}</span>` +
+            `<span class="text-muted small flex-shrink-0">${rel(p.updated_at)}</span>` +
+            `</a>` +
+            star +
+            `</div>`;
+    }).join('');
+}
+
+// ── 상단 고정(별표) 토글 ──
+// 워크스페이스 공용 고정 — canWrite 권한 필요(서버 강제). 행 전체가 링크이므로 버튼 클릭이
+// 문서 이동으로 이어지지 않도록 이벤트 전파를 막는다. 토글 후 최근 문서를 재조회한다.
+async function wsTogglePin(ev: Event, slug: string, pin: boolean): Promise<void> {
+    ev.preventDefault();
+    ev.stopPropagation();
+    try {
+        const res = await fetch('/api/ws/' + encodeURIComponent(WSLUG) + '/pages/' + slug.split('/').map(encodeURIComponent).join('/') + '/pin', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ pinned: !!pin }),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+            Swal.fire('오류', body.error || '고정 상태를 변경하지 못했습니다.', 'error');
+            return;
+        }
+        await loadRecentDocs();
+    } catch {
+        Swal.fire('오류', '요청 중 문제가 발생했습니다.', 'error');
+    }
 }
 
 async function loadMedia(): Promise<void> {
@@ -443,3 +477,4 @@ function showMediaPreview(url: string, name: string): void {
 window.toggleWsInvite = toggleWsInvite;
 window.onWsInviteSearch = onWsInviteSearch;
 window.wsInviteUser = wsInviteUser;
+window.wsTogglePin = wsTogglePin;

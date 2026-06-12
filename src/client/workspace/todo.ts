@@ -31,6 +31,19 @@ let _archivedOpen = false;
 let _archivedSelectedIds = new Set<number>();
 let _archivedSelectMode = false;
 
+// 보관 항목 탐색 상태 (검색·정렬·페이지네이션). full 모드 전용.
+const ARCHIVED_PAGE_SIZE = 20;
+let _archivedSort = 'created_asc';
+let _archivedQuery = '';
+let _archivedPage = 1;
+let _archivedTotal = 0;
+let _archivedSearchTimer: ReturnType<typeof setTimeout> | null = null;
+// 보관 목록 요청 시퀀스 — 검색/정렬/페이지를 빠르게 바꿀 때 늦게 도착한
+// 이전 요청 응답이 최신 상태를 덮어쓰지 않도록 최신 요청만 반영한다.
+let _archivedReqSeq = 0;
+// 보관 목록 로드 실패 상태 — true 면 섹션을 접었다 펴도 재시도 UI 를 유지한다.
+let _archivedError = false;
+
 export interface TodoPanelCtx {
     wslug: string;
     canWrite: boolean;
@@ -101,11 +114,44 @@ export function initTodoPanel(ctx: TodoPanelCtx): void {
         });
     });
 
+    // 보관 섹션 정렬 드롭다운 (full 모드에만 존재)
+    document.querySelectorAll('.todo-archived-sort-item').forEach((el) => {
+        el.addEventListener('click', (ev) => {
+            ev.preventDefault();
+            const sort = (el as HTMLElement).dataset.sort || 'created_asc';
+            document.querySelectorAll('.todo-archived-sort-item').forEach((i) => i.classList.remove('active'));
+            el.classList.add('active');
+            _archivedSort = sort;
+            _archivedPage = 1;
+            reloadArchived();
+        });
+    });
+
+    // 보관 섹션 검색 입력 (디바운스)
+    const archivedSearch = document.getElementById('todoArchivedSearch') as HTMLInputElement | null;
+    archivedSearch?.addEventListener('input', () => {
+        _archivedQuery = (archivedSearch.value || '').trim();
+        _archivedPage = 1;
+        if (_archivedSearchTimer) clearTimeout(_archivedSearchTimer);
+        _archivedSearchTimer = setTimeout(() => reloadArchived(), 300);
+    });
+
+    // 보관 섹션 페이지네이션 버튼
+    document.getElementById('todoArchivedPrev')?.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        archivedGoPage(-1);
+    });
+    document.getElementById('todoArchivedNext')?.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        archivedGoPage(1);
+    });
+
     // window 노출 (HTML on* 핸들러용)
     window.addTodo = addTodo;
     window.toggleTodo = toggleTodo;
     window.editTodo = editTodo;
     window.deleteTodo = deleteTodo;
+    window.pinTodo = pinTodo;
     window.archiveTodo = archiveTodo;
     window.unarchiveTodo = unarchiveTodo;
     window.todoBulkAction = todoBulkAction;
@@ -117,20 +163,57 @@ export function initTodoPanel(ctx: TodoPanelCtx): void {
     window.archivedTodoToggleSelect = archivedTodoToggleSelect;
     window.archivedBulkAction = archivedBulkAction;
     window.todoToggleArchivedSelectMode = toggleArchivedSelectMode;
+    window.todoReloadArchived = reloadArchived;
 
     loadTodos();
 }
 
-function buildTodosUrl(archived = false): string {
+function buildTodosUrl(): string {
     const params = new URLSearchParams();
-    if (archived) {
-        params.set('archived', '1');
-    } else {
-        if (_sort !== 'created_asc') params.set('sort', _sort);
-        if (_filter) params.set('filter', _filter);
-    }
+    if (_sort !== 'created_asc') params.set('sort', _sort);
+    if (_filter) params.set('filter', _filter);
     const qs = params.toString();
     return _wsBase + '/todos' + (qs ? '?' + qs : '');
+}
+
+// 보관 항목 목록 URL — 정렬/검색/페이지 상태를 반영해 페이지네이션 모드로 요청한다.
+function buildArchivedUrl(): string {
+    const params = new URLSearchParams();
+    params.set('archived', '1');
+    if (_archivedSort !== 'created_asc') params.set('sort', _archivedSort);
+    if (_archivedQuery) params.set('q', _archivedQuery);
+    params.set('page', String(_archivedPage));
+    return _wsBase + '/todos?' + params.toString();
+}
+
+// 보관 항목만 서버에서 다시 가져온다(활성 목록은 건드리지 않음).
+// 응답의 total/page 로 _archivedTotal/_archivedPage 를 갱신한다(서버가 페이지를 클램프).
+// 절대 throw 하지 않고 결과를 분류해 반환한다(경쟁 상태 방지):
+//   'ok'    — 최신 요청이며 상태를 반영함
+//   'stale' — 더 최신 요청이 시작됨(성공·실패 무관) → 호출 측은 렌더/에러를 생략
+//   'error' — 최신 요청이지만 실패 → 호출 측이 에러 상태 표시
+async function fetchArchived(): Promise<'ok' | 'stale' | 'error'> {
+    if (_mode !== 'full') {
+        _archivedTodos = [];
+        _archivedTotal = 0;
+        return 'ok';
+    }
+    const seq = ++_archivedReqSeq;
+    let data: any;
+    try {
+        data = await apiGet(buildArchivedUrl());
+    } catch {
+        // 늦게 도착한 이전 요청의 실패는 최신 결과를 덮어쓰지 않도록 폐기한다.
+        if (seq !== _archivedReqSeq) return 'stale';
+        _archivedError = true;
+        return 'error';
+    }
+    if (seq !== _archivedReqSeq) return 'stale'; // 더 최신 요청이 이미 시작됨 — 응답 폐기
+    _archivedError = false;
+    _archivedTodos = Array.isArray(data.todos) ? data.todos : [];
+    _archivedTotal = typeof data.total === 'number' ? data.total : _archivedTodos.length;
+    if (typeof data.page === 'number') _archivedPage = data.page;
+    return 'ok';
 }
 
 async function loadTodos(): Promise<void> {
@@ -162,20 +245,23 @@ async function loadTodos(): Promise<void> {
     }
     _archivedSelectedIds.clear();
 
+    // 보관 목록 로드 결과 — fetchArchived 는 throw 하지 않으므로 활성 목록 실패와 분리된다.
+    let archivedResult: 'ok' | 'stale' | 'error' = 'ok';
     try {
         if (_mode === 'compact') {
             // 대시보드: 활성 항목만 (보관 항목 미표시)
-            const activeData = await apiGet(buildTodosUrl(false));
+            const activeData = await apiGet(buildTodosUrl());
             _todos = Array.isArray(activeData.todos) ? activeData.todos : [];
             _archivedTodos = [];
             if (typeof activeData.can_write === 'boolean') _canWrite = activeData.can_write;
         } else {
-            const [activeData, archivedData] = await Promise.all([
-                apiGet(buildTodosUrl(false)),
-                apiGet(buildTodosUrl(true)),
+            // 활성 목록과 보관 목록(검색/정렬/페이지 상태 반영)을 병렬로 로드한다.
+            const [activeData, ar] = await Promise.all([
+                apiGet(buildTodosUrl()),
+                fetchArchived(),
             ]);
+            archivedResult = ar;
             _todos = Array.isArray(activeData.todos) ? activeData.todos : [];
-            _archivedTodos = Array.isArray(archivedData.todos) ? archivedData.todos : [];
             if (typeof activeData.can_write === 'boolean') _canWrite = activeData.can_write;
         }
     } catch {
@@ -189,20 +275,33 @@ async function loadTodos(): Promise<void> {
         return;
     }
     renderTodos();
-    if (_mode === 'full') renderArchivedSection();
+    if (_mode === 'full' && archivedResult !== 'stale') {
+        // 'error': 보관 로드만 실패(활성 목록은 정상). 섹션이 아직 숨겨진(사용자 미노출)
+        //          상태면 펼쳐 재시도 UI 를 보이게 한다 — 이미 보고 접은 섹션은 강제로
+        //          다시 펼치지 않는다.
+        // 'ok'   : 정상 렌더. ('stale' 은 더 최신 요청이 렌더를 담당하므로 생략)
+        if (archivedResult === 'error') {
+            const sec = document.getElementById('todoArchivedSection');
+            if (sec && sec.classList.contains('d-none')) _archivedOpen = true;
+        }
+        renderArchivedSection();
+    }
 }
 
 /**
  * 화면에 표시할 항목 목록.
- *   - compact: 미완료(먼저 추가된 순) 우선 → 부족하면 완료 항목으로 채워 최대 10개.
- *   - full   : API 가 정렬/필터한 활성 항목 전체.
- * (_todos 는 API 기본 정렬인 created_asc 순서를 유지한다.)
+ *   - compact: 고정(별표) 우선 → 미완료(먼저 추가된 순) 우선 → 완료 항목 순으로 최대 10개.
+ *   - full   : API 가 이미 (고정 우선) 정렬/필터한 활성 항목 전체.
+ * (_todos 는 API 기본 정렬인 created_asc 순서를 유지하므로, 아래 안정 정렬이 동순위 내
+ *  생성 순서를 보존한다.)
  */
 function getVisibleTodos(): any[] {
     if (_mode !== 'compact') return _todos;
-    const incomplete = _todos.filter((t) => Number(t.checked) !== 1);
-    const complete = _todos.filter((t) => Number(t.checked) === 1);
-    return incomplete.concat(complete).slice(0, DASH_LIMIT);
+    const pinScore = (t) => (t.pinned_at ? 0 : 1);
+    const checkScore = (t) => (Number(t.checked) === 1 ? 1 : 0);
+    return [..._todos]
+        .sort((a, b) => (pinScore(a) - pinScore(b)) || (checkScore(a) - checkScore(b)))
+        .slice(0, DASH_LIMIT);
 }
 
 function renderTodos(): void {
@@ -223,29 +322,83 @@ function renderTodos(): void {
     listEl.innerHTML = '<div class="todo-list-detail">' + listHtml + '</div>';
 }
 
+// _archivedOpen 상태에 맞춰 보관 섹션의 목록/컨트롤/셰브론/선택토글/페이지네이션
+// 표시를 동기화한다(열림/닫힘 UI 의 단일 소스).
+function applyArchivedOpenUI(): void {
+    const open = _archivedOpen;
+    const listEl = document.getElementById('todoArchivedList');
+    const controls = document.getElementById('todoArchivedControls');
+    const chevron = document.getElementById('todoArchivedChevron');
+    const selectToggle = document.getElementById('todoArchivedSelectToggle');
+    const pagination = document.getElementById('todoArchivedPagination');
+    if (listEl) listEl.classList.toggle('d-none', !open);
+    if (controls) controls.classList.toggle('d-none', !open);
+    if (chevron) chevron.className = open ? 'bi bi-chevron-down' : 'bi bi-chevron-right';
+    // 선택 토글은 쓰기 권한 + 섹션 열림일 때만 표시
+    if (selectToggle && _canWrite) selectToggle.classList.toggle('d-none', !open);
+    // 페이지네이션은 닫힐 때 무조건 숨김(열림 시 renderArchivedPagination 이 결정)
+    if (!open && pagination) pagination.classList.add('d-none');
+}
+
+// 보관 목록 로드 실패 시 재시도 버튼이 있는 오류 본문을 목록 영역에 쓴다.
+function renderArchivedErrorBody(): void {
+    const listEl = document.getElementById('todoArchivedList');
+    if (!listEl) return;
+    listEl.innerHTML =
+        '<div class="text-center text-muted py-3">' +
+        '<i class="bi bi-exclamation-triangle d-block mb-2"></i>' +
+        '<div class="mb-2">보관된 항목을 불러오지 못했습니다.</div>' +
+        '<button type="button" class="btn btn-sm btn-wiki-outline" onclick="window.todoReloadArchived()">' +
+        '<i class="bi bi-arrow-clockwise"></i> 다시 시도</button>' +
+        '</div>';
+}
+
 function renderArchivedSection(): void {
     const section = document.getElementById('todoArchivedSection');
     const badge = document.getElementById('todoArchivedBadge');
     if (!section) return;
 
-    const count = _archivedTodos.length;
-    if (count === 0) {
+    // 로드 실패 상태: 개수와 무관하게 섹션을 노출한다(접힘/펼침은 _archivedOpen 존중).
+    // 펼쳐져 있으면 재시도 UI 를 표시하므로, 토글로 접었다 펴도 유일한 재시도 경로가
+    // 캐시/빈 목록으로 덮어써지지 않는다.
+    if (_archivedError) {
+        section.classList.remove('d-none');
+        if (badge) badge.classList.add('d-none'); // 개수 불명 → 배지 숨김
+        applyArchivedOpenUI();
+        if (_archivedOpen) renderArchivedErrorBody();
+        return;
+    }
+
+    // 검색어가 있으면 결과 0건이라도 섹션을 유지한다(검색 결과 없음 안내 표시).
+    // 검색어가 없고 보관 항목도 없을 때만 섹션 전체를 숨긴다.
+    const hasArchived = _archivedTotal > 0 || _archivedQuery !== '';
+    if (!hasArchived) {
         section.classList.add('d-none');
-        // 보관 섹션이 사라지면 선택 모드 초기화
+        // 보관 섹션이 사라지면 선택 모드·열림 상태 초기화
+        _archivedOpen = false;
         _archivedSelectMode = false;
         _archivedSelectedIds.clear();
         updateArchivedBulkBar();
+        applyArchivedOpenUI();
         return;
     }
 
     section.classList.remove('d-none');
     if (badge) {
-        badge.textContent = String(count);
+        badge.textContent = String(_archivedTotal);
         badge.classList.remove('d-none');
     }
 
+    // 검색 입력값을 상태와 동기화(전체 재로딩 시 입력값 보존).
+    const search = document.getElementById('todoArchivedSearch') as HTMLInputElement | null;
+    if (search && document.activeElement !== search && search.value !== _archivedQuery) {
+        search.value = _archivedQuery;
+    }
+
+    applyArchivedOpenUI();
     if (_archivedOpen) {
         renderArchivedList();
+        renderArchivedPagination();
     }
 }
 
@@ -254,10 +407,65 @@ function renderArchivedList(): void {
     if (!listEl) return;
 
     if (!_archivedTodos.length) {
-        listEl.innerHTML = '';
+        // 검색 결과가 없을 때만 안내를 표시(검색어 없이 비어 있으면 섹션 자체가 숨겨짐).
+        listEl.innerHTML = _archivedQuery
+            ? window.uiEmptyState({ compact: true, icon: 'bi bi-search', title: '검색 결과가 없습니다' })
+            : '';
         return;
     }
     listEl.innerHTML = '<div class="todo-list-detail"><div class="list-group">' + _archivedTodos.map(todoArchivedRow).join('') + '</div></div>';
+}
+
+// 보관 항목 페이지네이션 컨트롤 — 총 페이지가 2 이상일 때만 표시.
+function renderArchivedPagination(): void {
+    const nav = document.getElementById('todoArchivedPagination');
+    const info = document.getElementById('todoArchivedPageInfo');
+    const prev = document.getElementById('todoArchivedPrev') as HTMLButtonElement | null;
+    const next = document.getElementById('todoArchivedNext') as HTMLButtonElement | null;
+    if (!nav) return;
+
+    const totalPages = Math.max(1, Math.ceil(_archivedTotal / ARCHIVED_PAGE_SIZE));
+    if (!_archivedOpen || totalPages <= 1) {
+        nav.classList.add('d-none');
+        return;
+    }
+    nav.classList.remove('d-none');
+    if (info) info.textContent = _archivedPage + ' / ' + totalPages;
+    if (prev) prev.disabled = _archivedPage <= 1;
+    if (next) next.disabled = _archivedPage >= totalPages;
+}
+
+// 보관 항목 페이지 이동(델타: -1 이전 / +1 다음).
+function archivedGoPage(delta: number): void {
+    const totalPages = Math.max(1, Math.ceil(_archivedTotal / ARCHIVED_PAGE_SIZE));
+    const target = Math.min(totalPages, Math.max(1, _archivedPage + delta));
+    if (target === _archivedPage) return;
+    _archivedPage = target;
+    reloadArchived();
+}
+
+// 보관 항목만 다시 로드(검색/정렬/페이지 변경 시). 활성 목록은 유지.
+async function reloadArchived(): Promise<void> {
+    // 보관 섹션 선택 모드 초기화(목록이 바뀌므로 선택 상태 무효).
+    if (_archivedSelectMode) {
+        _archivedSelectMode = false;
+        const btn = document.getElementById('todoArchivedSelectToggle');
+        if (btn) {
+            btn.classList.remove('active');
+            btn.setAttribute('aria-pressed', 'false');
+        }
+    }
+    _archivedSelectedIds.clear();
+    updateArchivedBulkBar();
+
+    const listEl = document.getElementById('todoArchivedList');
+    if (listEl) listEl.innerHTML = window.uiSkeletonList(3);
+
+    const result = await fetchArchived();
+    // 더 최신 요청이 처리 중이면 렌더·에러를 생략한다(그 요청이 최신 상태로 렌더).
+    if (result === 'stale') return;
+    if (result === 'error') _archivedOpen = true; // 오류를 보이도록 펼침 유지
+    renderArchivedSection();
 }
 
 function todoRow(t): string {
@@ -281,6 +489,12 @@ function todoRow(t): string {
             ' onchange="window.toggleTodo(' + id + ', this.checked)" aria-label="완료">';
     }
 
+    const pinned = !!t.pinned_at;
+    // 권한과 무관하게 고정 항목에는 별 표시(뷰어도 어떤 항목이 고정인지 식별).
+    const pinMark = pinned
+        ? '<i class="bi bi-star-fill text-warning flex-shrink-0" title="상단 고정" style="font-size:0.8rem;"></i>'
+        : '';
+
     // 선택 모드에서는 일괄 작업 바로 처리하므로 행별 액션 버튼은 숨긴다.
     // 삭제는 보관된 항목에서만 가능하므로 활성 항목에는 삭제 버튼을 두지 않는다.
     let actions = '';
@@ -288,6 +502,7 @@ function todoRow(t): string {
         const mark = checked ? 'x' : ' ';
         actions =
             '<div class="d-flex gap-1 flex-shrink-0">' +
+            '<button type="button" class="btn btn-sm btn-wiki-outline' + (pinned ? ' text-warning' : '') + '" title="' + (pinned ? '상단 고정 해제' : '상단 고정') + '" aria-pressed="' + pinned + '" onclick="window.pinTodo(' + id + ')"><i class="bi ' + (pinned ? 'bi-star-fill' : 'bi-star') + '"></i></button>' +
             '<button type="button" class="btn btn-sm btn-wiki-outline" title="편집" onclick="window.editTodo(' + id + ')"><i class="bi bi-pencil"></i></button>' +
             '<button type="button" class="btn btn-sm btn-wiki-outline" title="복사 (- [' + mark + '] 형식)" onclick="window.copyTodoItem(' + id + ')"><i class="bi bi-clipboard"></i></button>' +
             '<button type="button" class="btn btn-sm btn-wiki-outline" title="보관" onclick="window.archiveTodo(' + id + ')"><i class="bi bi-archive"></i></button>' +
@@ -301,6 +516,7 @@ function todoRow(t): string {
     return (
         '<div class="list-group-item d-flex align-items-center gap-2" data-todo-id="' + id + '">' +
         leadingControl +
+        pinMark +
         '<div class="flex-grow-1 ' + textCls + '" data-todo-text>' +
         esc(t.content) + '</div>' +
         meta +
@@ -438,24 +654,8 @@ function todoToggleArchived(): void {
         updateArchivedBulkBar();
     }
 
-    const listEl = document.getElementById('todoArchivedList');
-    const chevron = document.getElementById('todoArchivedChevron');
-    const selectToggle = document.getElementById('todoArchivedSelectToggle');
-
-    if (listEl) {
-        listEl.classList.toggle('d-none', !_archivedOpen);
-    }
-    if (chevron) {
-        chevron.className = _archivedOpen ? 'bi bi-chevron-down' : 'bi bi-chevron-right';
-    }
-    // 선택 토글은 섹션이 열렸을 때만 표시
-    if (selectToggle && _canWrite) {
-        selectToggle.classList.toggle('d-none', !_archivedOpen);
-    }
-
-    if (_archivedOpen) {
-        renderArchivedList();
-    }
+    // 렌더는 renderArchivedSection 으로 일원화 — 정상/검색없음/오류 상태를 일관 처리.
+    renderArchivedSection();
 }
 
 async function addTodo(): Promise<void> {
@@ -576,6 +776,30 @@ function editTodo(id: number): void {
     input.addEventListener('blur', () => finish(true));
 }
 
+// 상단 고정(별표) 토글 — 워크스페이스 공용 고정(canWrite). 고정/해제 후 목록을 재조회해
+// 고정 항목이 상단으로 재정렬되도록 한다.
+async function pinTodo(id: number): Promise<void> {
+    const t = _todos.find((x) => Number(x.id) === Number(id));
+    if (!t) return;
+    const willPin = !t.pinned_at;
+    try {
+        const res = await fetch(_wsBase + '/todos/' + Number(id), {
+            method: 'PATCH',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ pinned: willPin }),
+        });
+        if (!res.ok) {
+            const body = await res.json().catch(() => ({}));
+            Swal.fire('오류', body.error || '고정 상태를 변경하지 못했습니다.', 'error');
+            return;
+        }
+        await loadTodos();
+    } catch {
+        Swal.fire('오류', '요청 중 문제가 발생했습니다.', 'error');
+    }
+}
+
 async function archiveTodo(id: number): Promise<void> {
     try {
         const res = await fetch(_wsBase + '/todos/' + Number(id), {
@@ -636,14 +860,15 @@ async function deleteTodo(id: number): Promise<void> {
             Swal.fire('삭제 실패', body.error || '항목을 삭제하지 못했습니다.', 'error');
             return;
         }
-        _todos = _todos.filter((t) => Number(t.id) !== Number(id));
-        _archivedTodos = _archivedTodos.filter((t) => Number(t.id) !== Number(id));
         _selectedIds.delete(Number(id));
         _archivedSelectedIds.delete(Number(id));
-        renderTodos();
-        if (_mode === 'full') renderArchivedSection();
-        updateBulkBar();
-        updateArchivedBulkBar();
+        // 삭제 버튼은 보관 항목 행에만 존재 → 보관 목록만 서버에서 다시 로드(총계/페이지 갱신).
+        // full 이 아닌 경우(이론상 도달 불가)에는 전체 재로딩으로 폴백.
+        if (_mode === 'full') {
+            await reloadArchived();
+        } else {
+            await loadTodos();
+        }
     } catch {
         Swal.fire('오류', '요청 중 문제가 발생했습니다.', 'error');
     }

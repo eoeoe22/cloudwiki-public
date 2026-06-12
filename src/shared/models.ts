@@ -205,6 +205,9 @@ export interface WorkspacePage {
     doc_type: string | null;
     // 1 이면 비멤버/게스트에게도 이 문서 읽기 허용 (라우트 레이어에서 적용)
     ws_public: number;
+    // 워크스페이스 공용 '상단 고정'(별표). NULL = 미고정, 값(unixepoch) = 고정 시각.
+    // 목록에서 고정 문서를 항상 먼저 노출하는 정렬 용도. (canWrite 권한으로 토글)
+    pinned_at: number | null;
 }
 
 export interface WorkspaceRevision {

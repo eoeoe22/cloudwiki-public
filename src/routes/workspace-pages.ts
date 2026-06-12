@@ -156,9 +156,12 @@ wsPages.get('/api/ws/:wslug/pages', async (c) => {
     }
 
     // 정렬: slug 오름차순 또는 최근 수정 내림차순(기본). 둘 다 slug tie-breaker 로 안정 정렬.
-    const orderBy = c.req.query('sort') === 'slug'
+    // 고정(pinned_at) 문서는 정렬 기준과 무관하게 항상 먼저 노출한다('상단 고정' 별표).
+    // `(pinned_at IS NULL)` 는 고정=0/미고정=1 이므로 오름차순이면 고정이 앞으로 온다.
+    const baseOrder = c.req.query('sort') === 'slug'
         ? 'slug ASC'
         : 'updated_at DESC, slug ASC';
+    const orderBy = `(pinned_at IS NULL), ${baseOrder}`;
 
     // 페이지네이션: limit 1~500, offset >= 0.
     const limitRaw = parseInt(c.req.query('limit') || '', 10);
@@ -176,7 +179,7 @@ wsPages.get('/api/ws/:wslug/pages', async (c) => {
 
     const rows = await c.env.DB
         .prepare(
-            `SELECT id, slug, title, updated_at, version, ws_public, rows, characters, redirect_to, doc_type
+            `SELECT id, slug, title, updated_at, version, ws_public, rows, characters, redirect_to, doc_type, pinned_at
              FROM workspace_pages
              WHERE ${whereSql}
              ORDER BY ${orderBy}
@@ -445,6 +448,33 @@ wsPages.post('/api/ws/:wslug/pages/:slug{.+}/move', requireAuth, async (c) => {
         throw e;
     }
     return c.json({ ok: true, slug: newSlug, moved: updates.length });
+});
+
+/**
+ * POST /api/ws/:wslug/pages/:slug{.+}/pin — 문서 '상단 고정'(별표) 토글 (canWrite).
+ * body: { pinned: boolean }  (true=고정, false=고정 해제)
+ *
+ * 고정은 워크스페이스 공용 상태다 — 멤버 누구에게나 동일하게 목록 상단에 노출된다(개인 즐겨찾기 아님).
+ * 단순 정렬 우선용이므로 리비전/updated_at 을 건드리지 않는다(편집이 아님).
+ */
+wsPages.post('/api/ws/:wslug/pages/:slug{.+}/pin', requireAuth, async (c) => {
+    const { workspace, access } = await resolveWs(c);
+    if (!workspace) return c.json({ error: '워크스페이스를 찾을 수 없습니다.' }, 404);
+    if (!access.canWrite) return c.json({ error: '이 워크스페이스의 문서를 수정할 권한이 없습니다.' }, 403);
+
+    const slug = normalizeSlug(c.req.param('slug'));
+    const page = await findPage(c.env.DB, workspace.id, slug);
+    if (!page) return c.json({ error: '문서를 찾을 수 없습니다.' }, 404);
+
+    const body = await c.req.json().catch(() => null) as { pinned?: unknown } | null;
+    const pinned = body?.pinned === true;
+
+    // 멱등: 고정=unixepoch(현재 시각), 해제=NULL. updated_at 은 변경하지 않는다.
+    await c.env.DB
+        .prepare("UPDATE workspace_pages SET pinned_at = CASE WHEN ?1 = 1 THEN unixepoch() ELSE NULL END WHERE id = ?2 AND deleted_at IS NULL")
+        .bind(pinned ? 1 : 0, page.id)
+        .run();
+    return c.json({ ok: true, slug, pinned });
 });
 
 /**

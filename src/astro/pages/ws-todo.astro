@@ -121,6 +121,22 @@ import Footer from '../components/Footer.astro';
                                 <i class="bi bi-check2-square"></i> 선택
                             </button>
                         </div>
+                        <!-- 보관 섹션 검색/정렬 컨트롤 (섹션 열림 시 표시) -->
+                        <div id="todoArchivedControls" class="d-none d-flex flex-wrap gap-2 align-items-center mt-2">
+                            <div class="input-group input-group-sm" style="max-width: 18rem;">
+                                <span class="input-group-text"><i class="bi bi-search"></i></span>
+                                <input type="text" id="todoArchivedSearch" class="form-control" placeholder="보관된 항목 검색" maxlength="2000" autocomplete="off">
+                            </div>
+                            <div class="dropdown">
+                                <button type="button" class="btn btn-sm btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown" id="todoArchivedSortBtn">
+                                    <i class="bi bi-sort-down"></i> 정렬
+                                </button>
+                                <ul class="dropdown-menu">
+                                    <li><a class="dropdown-item todo-archived-sort-item active" href="#" data-sort="created_asc">오래된 순</a></li>
+                                    <li><a class="dropdown-item todo-archived-sort-item" href="#" data-sort="created_desc">최신 순</a></li>
+                                </ul>
+                            </div>
+                        </div>
                         <!-- 보관 섹션 일괄 작업 바 -->
                         <div id="todoArchivedBulkBar" class="d-none d-flex gap-1 align-items-center mt-2">
                             <span id="todoArchivedBulkCount" class="badge bg-secondary"></span>
@@ -132,6 +148,16 @@ import Footer from '../components/Footer.astro';
                             </button>
                         </div>
                         <div id="todoArchivedList" class="d-none mt-2"></div>
+                        <!-- 보관 섹션 페이지네이션 (20개 초과 시 표시) -->
+                        <nav id="todoArchivedPagination" class="d-none d-flex justify-content-center align-items-center gap-2 mt-3" aria-label="보관 항목 페이지네이션">
+                            <button type="button" id="todoArchivedPrev" class="btn btn-sm btn-outline-secondary">
+                                <i class="bi bi-chevron-left"></i> 이전
+                            </button>
+                            <span id="todoArchivedPageInfo" class="text-muted small"></span>
+                            <button type="button" id="todoArchivedNext" class="btn btn-sm btn-outline-secondary">
+                                다음 <i class="bi bi-chevron-right"></i>
+                            </button>
+                        </nav>
                     </div>
                 </div>
 

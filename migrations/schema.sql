@@ -672,11 +672,16 @@ CREATE TABLE IF NOT EXISTS workspace_pages (
   -- 미지/잘못된 값은 클라이언트가 NULL(일반 문서)로 취급한다. (프레젠테이션 모드는 워크스페이스 전용)
   doc_type          TEXT,
   ws_public         INTEGER NOT NULL DEFAULT 0,
+  -- pinned_at: NULL = 일반 문서. 값(unixepoch)이 있으면 워크스페이스 공용 '상단 고정'(별표).
+  -- 목록(대시보드 최근 문서 / files 탐색기)에서 고정 문서를 항상 먼저 노출하는 데만 쓴다.
+  pinned_at         INTEGER,
   UNIQUE (workspace_id, slug),
   FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
 );
 CREATE INDEX IF NOT EXISTS idx_ws_pages_workspace_updated ON workspace_pages(workspace_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ws_pages_deleted ON workspace_pages(deleted_at);
+-- 고정 문서만 빠르게 식별(목록 상단 정렬용). 고정은 소수이므로 partial 인덱스로 가볍게 유지.
+CREATE INDEX IF NOT EXISTS idx_ws_pages_workspace_pinned ON workspace_pages(workspace_id, pinned_at DESC) WHERE pinned_at IS NOT NULL;
 
 -- 워크스페이스 리비전. 구조는 전역 revisions 와 동일 (R2 본문/소프트 삭제/퍼지 포함).
 CREATE TABLE IF NOT EXISTS workspace_revisions (
@@ -738,11 +743,16 @@ CREATE TABLE IF NOT EXISTS workspace_todos (
   updated_at    INTEGER DEFAULT (unixepoch()),
   deleted_at    INTEGER,
   archived_at   INTEGER,
+  -- pinned_at: NULL = 일반 항목. 값(unixepoch)이 있으면 워크스페이스 공용 '상단 고정'(별표).
+  -- 활성 TODO 목록(대시보드 위젯/상세 페이지)에서 고정 항목을 항상 먼저 노출하는 데만 쓴다.
+  pinned_at     INTEGER,
   FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
   FOREIGN KEY (created_by) REFERENCES users(id)
 );
 CREATE INDEX IF NOT EXISTS idx_ws_todos_workspace ON workspace_todos(workspace_id, created_at ASC);
 CREATE INDEX IF NOT EXISTS idx_ws_todos_archived ON workspace_todos(workspace_id, archived_at);
+-- 고정 항목만 빠르게 식별(목록 상단 정렬용). 고정은 소수이므로 partial 인덱스로 가볍게 유지.
+CREATE INDEX IF NOT EXISTS idx_ws_todos_workspace_pinned ON workspace_todos(workspace_id, pinned_at DESC) WHERE pinned_at IS NOT NULL;
 
 -- ──────────────────────────────────────────────────────────────────
 -- 워크스페이스 게시판 (단일 게시판, 리비전 없음)
