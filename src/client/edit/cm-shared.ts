@@ -423,35 +423,13 @@ function buildImageUploadPopupButton(toolbar: HTMLElement, insertText: (text: st
 // 위키 에디터와 워크스페이스 에디터가 동일한 .wiki-editor-layout 구조/CSS 를 공유한다.
 // CM 마운트 지점은 #cm-editor, 프리뷰 컨테이너는 #custom-wiki-preview(.wiki-content) 이다.
 export interface EditorLayoutOptions {
-    /** 프레젠테이션 통합 슬라이드 편집용 추가 존(위키 에디터 전용). */
-    slideZones?: boolean;
     /** 에디터 전용 플로팅 목차 패널 + 스크롤 FAB(위키 에디터 전용). */
     tocFab?: boolean;
 }
 
 export function buildEditorLayoutHTML(opts: EditorLayoutOptions = {}): string {
-    const slideZones = !!opts.slideZones;
     const tocFab = !!opts.tocFab;
 
-    const slideTop = slideZones ? `
-                        <div class="slide-add-zone slide-add-zone-top" id="slideAddZoneTop" hidden>
-                            <i class="mdi mdi-plus-circle-outline"></i>
-                            <div class="slide-add-main">위에 새 슬라이드</div>
-                            <div class="slide-add-sub">현재 슬라이드 앞에 빈 슬라이드 추가</div>
-                        </div>` : '';
-    const slideBottom = slideZones ? `
-                        <div class="slide-add-zone slide-add-zone-bottom" id="slideAddZoneBottom" hidden>
-                            <i class="mdi mdi-plus-circle-outline"></i>
-                            <div class="slide-add-main">아래에 새 슬라이드</div>
-                            <div class="slide-add-sub">현재 슬라이드 뒤에 빈 슬라이드 추가</div>
-                        </div>
-                        <div class="slide-edit-nav" id="slideEditNav" hidden role="toolbar" aria-label="슬라이드 이동">
-                            <button type="button" class="slide-edit-nav-btn" data-slide-nav="prev" aria-label="이전 슬라이드"><i class="bi bi-chevron-left"></i></button>
-                            <span class="slide-edit-nav-indicator" id="slideEditNavIndicator" aria-live="polite">1 / 1</span>
-                            <button type="button" class="slide-edit-nav-btn" data-slide-nav="next" aria-label="다음 슬라이드"><i class="bi bi-chevron-right"></i></button>
-                            <button type="button" class="slide-edit-nav-btn slide-edit-nav-btn-overview" data-slide-nav="overview" title="전체 보기 (그리드)" aria-label="전체 슬라이드 그리드 보기" aria-pressed="false"><i class="bi bi-grid-3x3-gap"></i></button>
-                            <button type="button" class="slide-edit-nav-btn slide-edit-nav-btn-fullscreen" data-slide-nav="fullscreen" title="전체 화면" aria-label="전체 화면 전환"><i class="bi bi-arrows-fullscreen"></i></button>
-                        </div>` : '';
     const tocFabHtml = tocFab ? `
                     <div class="toc-floating-panel" id="editorTocFloatingPanel">
                         <div class="toc-floating-header">
@@ -473,8 +451,8 @@ export function buildEditorLayoutHTML(opts: EditorLayoutOptions = {}): string {
                 </div>
                 <div id="cm-toolbar" class="cm-toolbar"></div>
                 <div class="wiki-editor-split-row" id="wiki-editor-split-row">
-                    <div class="wiki-editor-pane" id="cm-editor-pane">${slideTop}
-                        <div id="cm-editor"></div>${slideBottom}
+                    <div class="wiki-editor-pane" id="cm-editor-pane">
+                        <div id="cm-editor"></div>
                     </div>
                     <div class="wiki-preview-pane" id="custom-wiki-preview"></div>${tocFabHtml}
                 </div>

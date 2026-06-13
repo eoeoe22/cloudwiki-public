@@ -529,103 +529,6 @@ function getKeyboardShortcutsPref() {
     }
 }
 
-// ── 워크스페이스 진입/시작 페이지 (브라우저 로컬 설정) ──
-// wsButtonDest : 헤더 워크스페이스 버튼 대상 — 'home'(기본) | 'ws:SLUG'
-// wsEntryPage  : 루트('/') 진입 시 시작 페이지 — 'wiki'(기본) | 'workspaces' | 'ws:SLUG'
-var WS_BUTTON_KEY = 'wsButtonDest';
-var WS_ENTRY_KEY = 'wsEntryPage';
-// 워크스페이스 페이지에서 헤더 로고로 위키 홈을 열 때, 홈 페이지=워크스페이스 사용자의
-// '/' 진입 리다이렉트(checkAuth)를 1회 건너뛰도록 로고 링크에 싣는 URL 마커.
-// sessionStorage 대신 URL 을 쓰는 이유: 세션 스토리지는 탭 간 공유되지 않아 로고를
-// ctrl/cmd/shift-클릭(새 탭)하면 신호가 전달되지 않는다. URL 에 실으면 같은 탭·새 탭 모두
-// 동작한다. 모듈 평가 시점(어떤 checkAuth 보다 먼저)에 1회 읽어 메모리로 옮기고 깨끗한
-// URL 로 교체한다 — 홈('/')에서 checkAuth 가 두 번(index.ts 직접 + loadConfig 내부) 동시에
-// 돌아도 양쪽이 같은 값을 보고 함께 건너뛰며, 새로고침/북마크 시엔 마커가 없어 정상
-// 리다이렉트된다.
-var WS_HOME_PARAM = 'wikihome';
-var _wsEntrySkipOnce = (function () {
-    try {
-        var sp = new URLSearchParams(location.search);
-        if (sp.get(WS_HOME_PARAM) == null) return false;
-        sp.delete(WS_HOME_PARAM);
-        var qs = sp.toString();
-        history.replaceState(history.state, '', location.pathname + (qs ? '?' + qs : '') + location.hash);
-        return true;
-    } catch (e) { /* ignore */ }
-    return false;
-})();
-var _wsListCache = null;   // null = 미로드, [] = 로드됨(빈 목록 포함)
-var _wsListLoading = null; // 진행 중 fetch Promise — 동시 중복 요청 방지
-
-function getWsButtonDest() {
-    try { return localStorage.getItem(WS_BUTTON_KEY) || 'home'; } catch (e) { return 'home'; }
-}
-function getWsEntryPage() {
-    try { return localStorage.getItem(WS_ENTRY_KEY) || 'wiki'; } catch (e) { return 'wiki'; }
-}
-// 현재 경로가 워크스페이스 관련 페이지(/ws/:slug/...)인지.
-function isOnWorkspacePage() {
-    var p = location.pathname.split('/').filter(Boolean);
-    return p[0] === 'ws' && !!p[1];
-}
-function resolveWsUrl(pref) {
-    if (!pref || pref === 'wiki') return '/';
-    if (pref === 'workspaces' || pref === 'home') return '/workspaces';
-    if (pref.indexOf('ws:') === 0) {
-        var slug = pref.slice(3);
-        return slug ? '/ws/' + encodeURIComponent(slug) : '/workspaces';
-    }
-    return '/workspaces';
-}
-function navigateToWorkspace() {
-    var url = resolveWsUrl(getWsButtonDest());
-    if (typeof navigateTo === 'function') navigateTo(url);
-    else window.location.href = url;
-}
-async function loadUserWorkspaces() {
-    if (_wsListCache !== null) return _wsListCache;
-    // 동시 호출 중복 방지: 진행 중 Promise 를 반환한다.
-    if (_wsListLoading) return _wsListLoading;
-    _wsListLoading = (async function () {
-        try {
-            var res = await fetch('/api/workspaces');
-            if (!res.ok) return []; // 오류는 캐시하지 않음 — 다음 호출에서 재시도
-            var data = await res.json();
-            _wsListCache = (data.owned || []).concat(data.joined || []);
-            return _wsListCache;
-        } catch (e) { return []; } // 오류는 캐시하지 않음
-        finally { _wsListLoading = null; }
-    })();
-    return _wsListLoading;
-}
-// 무효/빈 선택일 때는 placeholder("워크스페이스 선택...")를 앞세워, 저장값 없이 seg 만 'specific'
-// 으로 바꾼 상태에서 첫 항목이 표시상 선택된 것처럼 보이는(실제 저장은 안 된) 불일치를 막는다.
-// 사용자가 드롭다운에서 실제로 항목을 고르면 change 핸들러가 ws:SLUG 를 저장한다.
-function populateWsSelect(selectEl, currentValue) {
-    if (!selectEl) return;
-    // 실제 fetch 직전에만 캐시를 초기화한다(select 가 표시되지 않을 때 불필요한 무효화 방지).
-    _wsListCache = null;
-    selectEl.innerHTML = '<option value="" disabled>불러오는 중...</option>';
-    loadUserWorkspaces().then(function (list) {
-        if (!list || list.length === 0) {
-            selectEl.innerHTML = '<option value="" disabled selected>워크스페이스가 없습니다</option>';
-            return;
-        }
-        var hasSelection = false;
-        var html = list.map(function (ws) {
-            var sel = currentValue === ('ws:' + ws.slug) ? ' selected' : '';
-            if (sel) hasSelection = true;
-            var label = ws.name || ws.slug;
-            return '<option value="' + escapeHtml(ws.slug) + '"' + sel + '>' + escapeHtml(label) + '</option>';
-        }).join('');
-        // 저장된 slug 가 더 이상 목록에 없거나 아직 미선택이면 placeholder 를 앞세워 무효 선택을 방지한다.
-        if (!hasSelection) {
-            html = '<option value="" disabled selected>워크스페이스 선택...</option>' + html;
-        }
-        selectEl.innerHTML = html;
-    });
-}
-
 function openSettingsModal() {
     var modalEl = document.getElementById('settingsModal');
     if (!modalEl || typeof bootstrap === 'undefined' || !bootstrap.Modal) return;
@@ -637,42 +540,6 @@ function openSettingsModal() {
     reconcileThemeControls();
     setSegActive(document.getElementById('settingLayoutMode'), getLayoutOverride() || 'site');
     setSegActive(document.getElementById('settingKeyboardShortcuts'), getKeyboardShortcutsPref());
-
-    // 워크스페이스 설정 섹션 — workspacesEnabled 시만 노출(로그인 사용자 한정).
-    var wsEnabled = !!(appConfig && appConfig.workspacesEnabled && currentUser);
-
-    // 홈 페이지(루트 진입 시작 페이지) 세그 동기화 — 'wiki' | 'ws:SLUG'
-    var homeWrap = document.getElementById('settingHomeWrap');
-    if (homeWrap && wsEnabled) {
-        homeWrap.classList.remove('d-none');
-        var entry = getWsEntryPage();
-        var isWsHome = entry !== 'wiki';
-        setSegActive(document.getElementById('settingHomePage'), isWsHome ? 'workspace' : 'wiki');
-        var homeSlugWrap = document.getElementById('settingHomePageSlugWrap');
-        var homeSlugEl = document.getElementById('settingHomePageSlug');
-        if (isWsHome) {
-            if (homeSlugWrap) homeSlugWrap.classList.remove('d-none');
-            populateWsSelect(homeSlugEl, entry);
-        } else if (homeSlugWrap) {
-            homeSlugWrap.classList.add('d-none');
-        }
-    }
-
-    var wsWrap = document.getElementById('settingWsWrap');
-    if (wsWrap && wsEnabled) {
-        wsWrap.classList.remove('d-none');
-        // 워크스페이스 버튼 대상 세그 동기화
-        var wsDest = getWsButtonDest();
-        setSegActive(document.getElementById('settingWsButton'), wsDest === 'home' ? 'home' : 'specific');
-        var wsButtonSlugWrap = document.getElementById('settingWsButtonSlugWrap');
-        var wsButtonSlugEl = document.getElementById('settingWsButtonSlug');
-        if (wsDest !== 'home') {
-            if (wsButtonSlugWrap) wsButtonSlugWrap.classList.remove('d-none');
-            populateWsSelect(wsButtonSlugEl, wsDest);
-        } else if (wsButtonSlugWrap) {
-            wsButtonSlugWrap.classList.add('d-none');
-        }
-    }
 
     bootstrap.Modal.getOrCreateInstance(modalEl).show();
 }
@@ -773,73 +640,6 @@ function setupSettingsModal() {
             } catch (e2) { /* ignore */ }
             // command-palette.ts 가 keydown 마다 라이브로 읽으므로 새로고침 불필요.
         });
-    }
-    // 홈 페이지 세그 — 'wiki' | 'workspace'(→ ws:SLUG, slug select 로 확정)
-    var homeSeg = document.getElementById('settingHomePage');
-    if (homeSeg && !homeSeg.dataset.bound) {
-        homeSeg.dataset.bound = '1';
-        homeSeg.addEventListener('click', function (e) {
-            var btn = e.target && e.target.closest ? e.target.closest('.seg-btn') : null;
-            if (!btn || !homeSeg.contains(btn)) return;
-            var value = btn.getAttribute('data-value');
-            if (!value) return;
-            setSegActive(homeSeg, value);
-            var slotWrap = document.getElementById('settingHomePageSlugWrap');
-            var slotEl = document.getElementById('settingHomePageSlug');
-            if (value === 'wiki') {
-                var prevEntryW = getWsEntryPage();
-                try { localStorage.setItem(WS_ENTRY_KEY, 'wiki'); } catch (e2) { /* ignore */ }
-                if (slotWrap) slotWrap.classList.add('d-none');
-                // ws 페이지에서 워크스페이스→위키로 전환하면 이미 적용된 헤더 브랜딩을
-                // 되돌려야 하므로, 레이아웃 모드 설정과 동일하게 새로고침으로 깨끗이 복원한다.
-                if (prevEntryW !== 'wiki' && isOnWorkspacePage()) location.reload();
-            } else if (slotWrap) {
-                // 'workspace' 선택 시 slug 를 고를 때까지는 저장하지 않는다(무효 선택 방지) — change 핸들러가 확정.
-                slotWrap.classList.remove('d-none');
-                populateWsSelect(slotEl, getWsEntryPage());
-            }
-        });
-        var homeSlugEl = document.getElementById('settingHomePageSlug');
-        if (homeSlugEl) {
-            homeSlugEl.addEventListener('change', function () {
-                var slug = this.value;
-                if (!slug) return;
-                var prevEntryW = getWsEntryPage();
-                try { localStorage.setItem(WS_ENTRY_KEY, 'ws:' + slug); } catch (e2) { /* ignore */ }
-                // ws 페이지에서 위키→워크스페이스로 전환하면 헤더에 브랜딩을 적용해야 하므로
-                // 새로고침한다. 워크스페이스 내에서 slug 만 바꾸는 경우엔 표시 대상이 현재
-                // 페이지의 워크스페이스라 변화가 없어 새로고침하지 않는다.
-                if (prevEntryW === 'wiki' && isOnWorkspacePage()) location.reload();
-            });
-        }
-    }
-    // 워크스페이스 버튼 대상 세그 — 'home' | 'specific'(→ ws:SLUG, slug select 로 확정)
-    var wsButtonSeg = document.getElementById('settingWsButton');
-    if (wsButtonSeg && !wsButtonSeg.dataset.bound) {
-        wsButtonSeg.dataset.bound = '1';
-        wsButtonSeg.addEventListener('click', function (e) {
-            var btn = e.target && e.target.closest ? e.target.closest('.seg-btn') : null;
-            if (!btn || !wsButtonSeg.contains(btn)) return;
-            var value = btn.getAttribute('data-value');
-            if (!value) return;
-            setSegActive(wsButtonSeg, value);
-            var slotWrap = document.getElementById('settingWsButtonSlugWrap');
-            var slotEl = document.getElementById('settingWsButtonSlug');
-            if (value === 'home') {
-                try { localStorage.setItem(WS_BUTTON_KEY, 'home'); } catch (e2) { /* ignore */ }
-                if (slotWrap) slotWrap.classList.add('d-none');
-            } else if (slotWrap) {
-                slotWrap.classList.remove('d-none');
-                populateWsSelect(slotEl, getWsButtonDest());
-            }
-        });
-        var wsButtonSlugEl = document.getElementById('settingWsButtonSlug');
-        if (wsButtonSlugEl) {
-            wsButtonSlugEl.addEventListener('change', function () {
-                var slug = this.value;
-                if (slug) { try { localStorage.setItem(WS_BUTTON_KEY, 'ws:' + slug); } catch (e2) { /* ignore */ } }
-            });
-        }
     }
 }
 
@@ -1088,10 +888,6 @@ async function loadConfig() {
 
     // 전역 인증 상태 동기화 (레이아웃 주입 여부와 상관없이 항상 수행)
     await checkAuth();
-
-    // 워크스페이스 페이지 헤더 브랜딩 덮어쓰기 (appConfig 적재 후 실행).
-    // fire-and-forget: 내부에서 워크스페이스 목록을 비동기 조회한다.
-    setupWorkspaceBranding();
 }
 
 // ── 인증 확인 + 네비바 UI 업데이트 ──
@@ -1130,36 +926,6 @@ async function checkAuth() {
             loadNotificationCount();
             // 60초마다 알림 폴링 (탭 비활성 시 자동 중단)
             startNotifPolling();
-
-            // 워크스페이스 진입 버튼 노출 (로그인 + workspacesEnabled 시).
-            if (appConfig && appConfig.workspacesEnabled) {
-                document.querySelectorAll('#navWorkspaces').forEach(el => el.classList.remove('d-none'));
-            }
-
-            // 루트('/') 진입 시 시작 페이지 사용자 설정으로 리다이렉트.
-            // 'wiki'(기본) 가 아니고 유효한 대상이면 해당 URL 로 교체한다.
-            if (appConfig && appConfig.workspacesEnabled && window.location.pathname === '/') {
-                // 워크스페이스 페이지에서 로고로 위키 홈을 명시적으로 연 경우(_wsEntrySkipOnce),
-                // 이번 페이지 로드 한정으로 리다이렉트를 건너뛰어 위키 홈을 그대로 보여준다
-                // (로고=위키 홈 보장). 모듈 평가 시 1회 캡처된 값이라 동시 checkAuth 양쪽이 함께 본다.
-                var entryPref = getWsEntryPage();
-                if (!_wsEntrySkipOnce && entryPref !== 'wiki') {
-                    var targetUrl = resolveWsUrl(entryPref);
-                    if (targetUrl && targetUrl !== '/') {
-                        // 특정 워크스페이스 지정 시, 목록에 없으면 /workspaces 로 폴백한다.
-                        // (삭제된 워크스페이스로 영구 리다이렉트되는 함정 방지)
-                        if (entryPref.indexOf('ws:') === 0) {
-                            var wsList = await loadUserWorkspaces();
-                            var wsSlug = entryPref.slice(3);
-                            if (!wsList.some(function (ws) { return ws.slug === wsSlug; })) {
-                                targetUrl = '/workspaces';
-                            }
-                        }
-                        window.location.replace(targetUrl);
-                        return;
-                    }
-                }
-            }
         }
     } catch (e) {
         // 로그인 안 됨
@@ -1841,62 +1607,6 @@ async function sendMessage(receiverId, receiverName) {
     }
 })();
 
-// ── 워크스페이스 페이지 헤더 브랜딩 덮어쓰기 ──
-// 홈 페이지=워크스페이스 설정일 때, 워크스페이스 관련 페이지(ws-*)에서 로고 옆 위키
-// 이름을 현재 워크스페이스 대체 제목으로 바꾸고, 클릭 시 해당 워크스페이스 대시보드로
-// 보낸다. 로고 아이콘 클릭은 위키 홈('/')으로 가는 동작을 그대로 유지한다.
-// loadConfig() 가 appConfig 적재(+checkAuth) 후 호출한다 — DOMContentLoaded 시점에는
-// 아직 appConfig.workspacesEnabled 가 없어(초기값 {wikiName}) 조기 return 되기 때문.
-async function setupWorkspaceBranding() {
-    if (!appConfig || !appConfig.workspacesEnabled) return;
-    if (getWsEntryPage() === 'wiki') return; // 홈 페이지가 워크스페이스가 아니면 적용 안 함
-    var parts = location.pathname.split('/').filter(Boolean); // ['ws', slug, ...]
-    if (parts[0] !== 'ws' || !parts[1]) return; // 워크스페이스 관련 페이지가 아님
-    var slug;
-    try { slug = decodeURIComponent(parts[1]); } catch (e) { slug = parts[1]; }
-    // 헤더 네비바 브랜드 이름만 대상으로 한다. <title class="app-wiki-name"> 도 같은 클래스를
-    // 쓰므로(BaseLayout) 범위를 .navbar-brand 로 좁혀 문서 제목을 건드리지 않는다.
-    var nameEl = document.querySelector('.navbar-brand .app-wiki-name');
-    if (!nameEl) return;
-    if (nameEl.closest('.navbar-brand-ws-name')) return; // 이미 처리됨(중복 실행 방지)
-    // 소유/참가한 워크스페이스 목록(캐시·dedup)에서 현재 slug 를 찾는다.
-    // 목록에 없으면(멤버 아님 등) 위키 브랜딩을 그대로 둔다.
-    var list = await loadUserWorkspaces();
-    var ws = null;
-    for (var i = 0; i < list.length; i++) {
-        if (list[i].slug === slug) { ws = list[i]; break; }
-    }
-    if (!ws) return;
-    var logoAnchor = nameEl.closest('.navbar-brand');
-    if (!logoAnchor || !logoAnchor.parentNode) return;
-
-    // 워크스페이스 이름을 "실제" 네이티브 앵커(<a href="/ws/SLUG">)로 분리한다. span 을
-    // role=link 가짜 링크로 두면 중간 클릭·컨텍스트 메뉴 "새 탭에서 열기"·ctrl/cmd-클릭이
-    // 부모 로고 앵커(위키 홈)를 따라가 엉뚱한 곳으로 간다. 네이티브 앵커면 좌클릭/중간 클릭/
-    // ctrl·cmd·shift-클릭/컨텍스트 메뉴/키보드 Enter 가 모두 표준대로 대시보드로 동작한다
-    // (별도 click/keydown 핸들러 불필요).
-    nameEl.textContent = ws.name || ws.slug;
-    var wsAnchor = document.createElement('a');
-    wsAnchor.className = 'navbar-brand navbar-brand-ws-name';
-    wsAnchor.href = '/ws/' + encodeURIComponent(ws.slug);
-    wsAnchor.setAttribute('title', '워크스페이스 대시보드로 이동');
-    // me-auto(좌우 분배)를 이름 앵커로 옮겨 로고+이름을 좌측에 함께 둔다.
-    if (logoAnchor.classList.contains('me-auto')) {
-        logoAnchor.classList.remove('me-auto');
-        wsAnchor.classList.add('me-auto');
-    }
-    // 이름 span 을 새 앵커로 이동.
-    wsAnchor.appendChild(nameEl);
-    logoAnchor.parentNode.insertBefore(wsAnchor, logoAnchor.nextSibling);
-
-    // 로고 앵커는 이제 아이콘만 남으므로 접근성 이름을 부여하고(스크린리더용), 위키 홈 우회
-    // 마커를 href 에 싣는다. 홈 페이지=워크스페이스 사용자는 '/' 가 다시 워크스페이스로
-    // 리다이렉트되므로, 마커를 URL 에 실어 같은 탭·새 탭(중간/ctrl/cmd/shift-클릭) 모두
-    // 위키 홈에 도달하게 한다(checkAuth 가 마커를 보고 진입 리다이렉트를 1회 건너뜀).
-    logoAnchor.setAttribute('aria-label', (appConfig.wikiName || '위키') + ' 홈');
-    logoAnchor.setAttribute('href', '/?' + WS_HOME_PARAM + '=1');
-}
-
 // ── 개인 설정 모달 이벤트 바인딩 ──
 (function () {
     if (document.readyState === 'loading') {
@@ -2126,7 +1836,6 @@ window.getCurrentTheme = getCurrentTheme;
 window.setThemeSkin = setThemeSkin;
 window.getThemeSkin = getThemeSkin;
 window.openSettingsModal = openSettingsModal;
-window.navigateToWorkspace = navigateToWorkspace;
 window.goRandomPage = goRandomPage;
 window.applyAnnouncementBanner = applyAnnouncementBanner;
 window.loadConfig = loadConfig;

@@ -2,8 +2,9 @@ import { Hono, type Context } from 'hono';
 import type { Env, Page, Revision, User } from '../types';
 import { requireAuth, requireAdmin, requirePermission } from '../middleware/session';
 import { normalizeSlug, isR2OnlyNamespace, isMapNamespace } from '../utils/slug';
+import { computePageMetricsTracked } from '../utils/pageMetrics';
+import { SLUG_FORBIDDEN_CHARS, TITLE_FORBIDDEN_CHARS, TITLE_MAX_LENGTH, normalizeTitleInput } from '../utils/validation';
 import { getEnabledExtensions } from '../utils/extensions';
-import { isWorkspacesEnabled } from '../utils/workspace';
 import { buildMapDocument, buildGroupTree, MAP_CACHE_MAX_AGE_SECONDS } from '../utils/mapDocument';
 import { safeJSON } from '../utils/json';
 import {
@@ -25,36 +26,6 @@ import { mergeEditSummary, capUserSummary } from '../utils/editSummary';
 import { ensurePendingEditsSummaryMigration } from '../utils/pendingEditsSummaryMigration';
 
 const wiki = new Hono<Env>();
-
-/**
- * 슬러그에 사용할 수 없는 금지 문자 패턴.
- * - `{}` / `[]` : 트랜스클루전 `{{...}}` / 위키링크 `[[...]]` 문법과 충돌
- * - `#` : 섹션 앵커 구분자(`[[slug#1.2]]`)
- * - `|` : 위키링크 표시명 / 틀 인자 구분자
- * - `% < > ^` + 제어문자 : URL/HTML/데이터 무결성
- * 일반 괄호 `()` 는 동음이의 분기(예: `수성(행성)`)에 흔히 쓰이고 식별·파싱 경로
- * (위키링크 `[^\]]+`/트랜스클루전 `[^}]+?`/`encodeURIComponent`/리네임 `escapeRe`)
- * 어디에도 끼어들지 않으므로 허용한다. (단, 표준 마크다운 링크 `[..](url)` 에 직접 넣을
- * 때는 닫는 `)` 가 URL 을 조기 종료하므로 내부 링크는 위키링크 `[[...]]` 를 사용한다.)
- */
-export const SLUG_FORBIDDEN_CHARS = /[\[\]{}#%|<>^\x00-\x1F\x7F]/;
-
-/** 대체 title 입력 금지 문자 — 제어문자만 차단. 슬러그와 달리 [], {}, # 등 특수문자 허용. */
-export const TITLE_FORBIDDEN_CHARS = /[\x00-\x1F\x7F]/;
-export const TITLE_MAX_LENGTH = 100;
-
-/**
- * 클라이언트가 보낸 title 입력을 정규화한다.
- * - undefined / null / 빈 문자열(공백 포함) → null
- * - 그 외 → trim 된 문자열
- */
-export function normalizeTitleInput(raw: unknown): string | null {
-    if (raw === null || raw === undefined) return null;
-    if (typeof raw !== 'string') return null;
-    const trimmed = raw.trim();
-    if (!trimmed) return null;
-    return trimmed;
-}
 
 /**
  * candidate(슬러그 또는 title 후보) 가 다른 페이지의 slug 또는 title 과 충돌하는지 검사.
@@ -86,35 +57,6 @@ export async function findConflictingPage(
         .first<{ slug: string; matched: 'slug' | 'title'; deleted_at: number | null }>();
     return row ? { slug: row.slug, matchedColumn: row.matched, isDeleted: !!row.deleted_at } : null;
 }
-
-/**
- * 본문 길이/줄 수 메트릭. characters 는 UTF-16 code unit 수,
- * rows 는 개행으로 분리되는 라인 수(빈 본문 0).
- */
-export function computePageMetrics(content: string): { rows: number; characters: number } {
-    const characters = content.length;
-    if (characters === 0) return { rows: 0, characters: 0 };
-    let rows = 1;
-    for (let i = 0; i < characters; i++) {
-        if (content.charCodeAt(i) === 10) rows++;
-    }
-    return { rows, characters };
-}
-
-/**
- * R2-only 네임스페이스 문서는 본문이 외부 익스텐션 페이로드(예: REW 주파수 응답)이며
- * 사용자 가독 텍스트가 아니므로 줄 수/글자 수 통계가 의미가 없다. 이 경우
- * { rows: null, characters: null } 을 반환해 pages.rows / pages.characters 컬럼을
- * NULL 로 저장하도록 한다. 일반 문서는 그대로 computePageMetrics 결과를 돌려준다.
- */
-export function computePageMetricsTracked(
-    content: string,
-    isR2Only: boolean
-): { rows: number | null; characters: number | null } {
-    if (isR2Only) return { rows: null, characters: null };
-    return computePageMetrics(content);
-}
-
 
 // 문서 본문 저장(생성/수정)은 통합 파이프라인 commitPageMutation(src/utils/pagePipeline)으로
 // 위임한다. 직접 PUT 도 승인(pending/mcp) 경로와 동일하게 이 파이프라인을 거치므로 리비전 저장·
@@ -948,7 +890,6 @@ wiki.get('/config', async (c) => {
         turnstileSiteKey: c.env.TURNSTILE_SITE_KEY || '',
         enabledExtensions: getEnabledExtensions(c.env),
         mediaPublicUrl: c.env.MEDIA_PUBLIC_URL || '',
-        workspacesEnabled: isWorkspacesEnabled(c.env),
         announcements,
         palettes,
     });

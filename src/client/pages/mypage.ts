@@ -32,7 +32,6 @@
             loadSessions();
             loadMcpClients();
             loadMcpApiKey();
-            loadWsMcpSection();
             loadMcpSubmissions();
             checkNameChangeStatus();
             showPictureUpdateResult();
@@ -1418,69 +1417,6 @@
             }
         }
 
-        async function loadWsMcpSection() {
-            if (!window.appConfig?.workspacesEnabled) return;
-
-            const section = document.getElementById('wsMcpSection');
-            const listEl = document.getElementById('wsMcpWorkspacesList');
-            if (!section || !listEl) return;
-
-            section.style.display = '';
-
-            try {
-                const res = await fetch('/api/workspaces');
-                if (!res.ok) throw new Error();
-                const data = await res.json();
-                const all = [...(data.owned || []), ...(data.joined || [])];
-
-                if (all.length === 0) {
-                    listEl.innerHTML = window.uiEmptyState({ compact: true, icon: 'bi bi-folder', title: '접근 가능한 워크스페이스가 없습니다' });
-                    return;
-                }
-
-                listEl.innerHTML = all.map(ws => {
-                    const slug = window.escapeHtml(ws.slug);
-                    const name = window.escapeHtml(ws.name || ws.slug);
-                    const endpointUrl = window.location.origin + '/api/ws/' + ws.slug + '/mcp';
-                    const endpointUrlEscaped = window.escapeHtml(endpointUrl);
-                    const role = ws.my_role
-                        ? `<span class="badge bg-secondary bg-opacity-10 text-secondary border ms-1">${window.escapeHtml(ws.my_role)}</span>`
-                        : '<span class="badge bg-primary bg-opacity-10 text-primary border ms-1">owner</span>';
-                    return `
-                        <div class="session-item">
-                            <div class="session-meta">
-                                <div class="session-ua">
-                                    <i class="bi bi-folder-fill text-primary"></i> ${name} ${role}
-                                </div>
-                                <div class="d-flex align-items-center gap-2 mt-1 flex-wrap">
-                                    <code class="small" style="word-break: break-all; color: var(--wiki-primary); background: transparent; padding: 0;">${endpointUrlEscaped}</code>
-                                    <button class="btn btn-sm btn-wiki-outline flex-shrink-0" data-endpoint="${endpointUrlEscaped}" onclick="copyWsMcpEndpoint(this)">
-                                        <i class="mdi mdi-content-copy"></i>
-                                    </button>
-                                </div>
-                            </div>
-                            <div class="flex-shrink-0">
-                                <a href="/ws/${encodeURIComponent(ws.slug)}/settings" class="btn btn-sm btn-wiki-outline">
-                                    <i class="bi bi-gear"></i> 설정
-                                </a>
-                            </div>
-                        </div>
-                    `;
-                }).join('');
-            } catch (e) {
-                listEl.innerHTML = window.uiEmptyState({ compact: true, icon: 'bi bi-exclamation-triangle', title: '워크스페이스 목록을 불러오지 못했습니다' });
-            }
-        }
-
-        function copyWsMcpEndpoint(btn: HTMLElement) {
-            const url = btn.dataset.endpoint || '';
-            navigator.clipboard.writeText(url).then(() => {
-                Swal.fire({ icon: 'success', title: '복사됨', toast: true, position: 'top-end', showConfirmButton: false, timer: 1500 });
-            }).catch(() => {
-                Swal.fire({ icon: 'error', title: '복사 실패', toast: true, position: 'top-end', showConfirmButton: false, timer: 1500 });
-            });
-        }
-
         async function generateMcpApiKey() {
             const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
             const confirmColor = isDark ? '#38BDF8' : '#2a53c4';
@@ -1847,4 +1783,3 @@ window.deleteAllNotificationsArchive = deleteAllNotificationsArchive;
 window.generateMcpApiKey = generateMcpApiKey;
 window.deleteMcpApiKey = deleteMcpApiKey;
 window.copyWikiMcpEndpoint = copyWikiMcpEndpoint;
-window.copyWsMcpEndpoint = copyWsMcpEndpoint;

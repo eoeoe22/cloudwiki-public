@@ -267,8 +267,11 @@ var _wikiExtensionData = [];
 // 바꾸지 않고도 모든 렌더 경로(프레젠테이션 per-slide 포함)가 동일 컨텍스트를 읽도록 한다.
 // (편집기 이미지 업로드의 window.configureImageUpload 와 동일한 페이지-당-1회 주입 패턴.)
 var _renderCtx = {
-    templateApiBase: '/api/w',  // 틀 본문 fetch 베이스
-    disableExtensions: false,   // true 면 콜론 네임스페이스 익스텐션 호출을 확장하지 않음
+    templateApiBase: '/api/w',          // 틀 본문 fetch 베이스
+    disableExtensions: false,           // true 면 콜론 네임스페이스 익스텐션 호출을 확장하지 않음
+    categoryApiBase: '/api/w/category', // 카테고리 정렬 목록 fetch 베이스
+    wikiLinkBase: '/w',                 // [[위키링크]] href 베이스
+    imageDocLinkBase: '/w',             // 이미지→문서(이미지:파일명) 링크 href 베이스
 };
 
 /**
@@ -894,7 +897,7 @@ async function _loadCategorySortedItems(category) {
     const now = Date.now();
     const cached = _wikiCategorySortedCache.get(category);
     if (cached && (now - cached.t) < _WIKI_CATEGORY_CACHE_TTL_MS) return cached.items;
-    const res = await fetch(`/api/w/category/${encodeURIComponent(category)}`);
+    const res = await fetch(`${_renderCtx.categoryApiBase}/${encodeURIComponent(category)}`);
     if (!res.ok) return null;
     const data = await res.json();
     const raw = Array.isArray(data.pages) ? data.pages : [];
@@ -1504,7 +1507,7 @@ function processWikiLinks(contentEl) {
                     // 같은 페이지 앵커
                     a.href = `#${anchor}`;
                 } else {
-                    a.href = `/w/${encodeURIComponent(linkText)}${anchor ? '#' + anchor : ''}`;
+                    a.href = `${_renderCtx.wikiLinkBase}/${encodeURIComponent(linkText)}${anchor ? '#' + anchor : ''}`;
                 }
                 a.textContent = displayText;
                 a.onclick = (e) => {
@@ -3583,7 +3586,7 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
                 filename = encodedFilename;
             }
             const link = document.createElement('a');
-            link.href = `/w/${encodeURIComponent('이미지:' + filename)}`;
+            link.href = `${_renderCtx.imageDocLinkBase}/${encodeURIComponent('이미지:' + filename)}`;
             link.className = 'wiki-image-link';
             link.setAttribute('aria-label', `이미지 문서 보기: ${filename}`);
             img.parentNode.insertBefore(link, img);
@@ -4546,6 +4549,9 @@ window.configureWikiRender = (opts) => {
     if (!opts) return;
     if (opts.templateApiBase !== undefined) _renderCtx.templateApiBase = opts.templateApiBase;
     if (opts.disableExtensions !== undefined) _renderCtx.disableExtensions = !!opts.disableExtensions;
+    if (opts.categoryApiBase !== undefined) _renderCtx.categoryApiBase = opts.categoryApiBase;
+    if (opts.wikiLinkBase !== undefined) _renderCtx.wikiLinkBase = opts.wikiLinkBase;
+    if (opts.imageDocLinkBase !== undefined) _renderCtx.imageDocLinkBase = opts.imageDocLinkBase;
 };
 // 직접 익스텐션 문서 경로(pages/index.ts)가 컨테이너 교체 전 익스텐션 정리 훅을 호출하기 위해 노출.
 window._teardownExtensions = _teardownExtensions;

@@ -10,8 +10,6 @@ export interface ArticleDoc {
   slug?: string;
   title?: string | null;
   content?: string;
-  // 워크스페이스 문서의 본문 표시 유형('presentation' = 슬라이드 덱). 전역 위키 문서엔 없다.
-  doc_type?: string | null;
   is_private?: boolean | number;
   [key: string]: unknown;
 }

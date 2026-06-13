@@ -312,6 +312,9 @@ declare global {
         configureWikiRender?: (opts: {
             templateApiBase?: string;
             disableExtensions?: boolean;
+            categoryApiBase?: string;
+            wikiLinkBase?: string;
+            imageDocLinkBase?: string;
         }) => void;
         /** render.ts 가 노출하는 익스텐션 정리 헬퍼(컨테이너 직접 교체 전 호출) */
         _teardownExtensions?: (containerEl: HTMLElement) => void;

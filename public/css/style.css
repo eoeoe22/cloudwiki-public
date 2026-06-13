@@ -425,19 +425,6 @@ div:where(.swal2-container) .swal2-validation-message {
   color: var(--wiki-header-brand);
 }
 
-/* 워크스페이스 페이지에서 워크스페이스 대시보드로 분리된 네이티브 브랜드 링크.
-   .navbar-brand 를 함께 부여해 브랜드 글꼴/색/크기를 그대로 따른다. */
-.navbar-brand-ws-name {
-  text-decoration: none;
-}
-.navbar-brand-ws-name:hover {
-  text-decoration: underline;
-}
-.navbar-brand-ws-name:focus-visible {
-  outline: 2px solid var(--wiki-border-focus);
-  outline-offset: 2px;
-  border-radius: 4px;
-}
 
 /* 헤더에 직접 얹힌 .text-body 아이콘(햄버거·설정·로그인·랜덤 등)도 헤더 전경색을 따른다.
    기본값(--wiki-header-text = --wiki-text)이라 default 테마는 무변화. */
@@ -1827,14 +1814,6 @@ html[data-theme="dark"] .btn-close {
 /* 전역 .form-control 패딩 오버라이드(0.7rem)가 -sm 입력을 키워 select 보다 높아지는 현상 보정.
    필터 바 안의 텍스트/날짜 입력을 form-select-sm 와 동일한 small 패딩으로 맞춰 높이를 정렬한다. */
 .search-filters .form-control-sm {
-  padding: var(--wiki-space-1) var(--wiki-space-2);
-}
-
-/* 워크스페이스 문서 에디터: 대체 제목 입력은 단독 .form-control-sm 이라 전역 .form-control
-   패딩(0.7rem)이 적용돼 input-group-sm 안에 있는 제목 입력보다 높아진다. small 패딩으로
-   맞춰 제목 입력 칸과 높이를 동일하게 정렬한다. (위키 에디터의 #alternateTitleInput 은
-   -sm 이 아니므로 영향받지 않는다.) */
-#alternateTitleInput.form-control-sm {
   padding: var(--wiki-space-1) var(--wiki-space-2);
 }
 
@@ -3690,35 +3669,3 @@ html[data-theme="dark"] .push-status-on {
 .doc-banner__action  { white-space: nowrap; }
 .doc-banner--sky .doc-banner__action { background: #38BDF8; color: #06283d; }
 
-/* 워크스페이스 폴더 뷰(/ws/:wslug/files) — 문서명/폴더명 라벨.
-   문서명은 클릭으로 바로 열리는 링크지만, 트리 안에서 과한 링크색을 피하려고
-   본문색을 상속하고 hover 시에만 강조한다. */
-.ws-file-name {
-  color: var(--wiki-text, inherit);
-  text-decoration: none;
-  cursor: pointer;
-}
-.ws-file-name:hover {
-  color: var(--wiki-primary, #0d6efd);
-  text-decoration: underline;
-}
-.ws-file-folder {
-  cursor: pointer;
-}
-
-/* 워크스페이스 TODO 리스트 상세(/ws/:wslug/todos) — 좁은 화면 가로 스크롤.
-   행마다 개별로 스크롤하지 않고 리스트 전체를 하나의 스크롤 컨테이너로 묶는다.
-   래퍼(.todo-list-detail)가 overflow-x 를 갖고, 안쪽 .list-group 은 가장 넓은 행
-   기준(max-content)으로 늘어나 모든 행이 같은 너비로 정렬된 채 함께 스크롤된다. */
-.todo-list-detail {
-  overflow-x: auto;
-}
-.todo-list-detail .list-group {
-  min-width: max-content;
-}
-.todo-list-detail .list-group-item {
-  flex-wrap: nowrap;
-}
-.todo-list-detail .list-group-item > .flex-grow-1 {
-  white-space: nowrap;
-}

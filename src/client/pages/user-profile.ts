@@ -9,7 +9,6 @@
 //    adminChangeRole / goToContributionsPage)는 파일 끝에서 window.* 로 노출한다.
 
 let profileUser = null;
-let ownedWorkspacesForInvite = [];
 let contributionsPage = 1;
 let contributionsTotal = 0;
 let contributionsRequestSeq = 0;
@@ -104,82 +103,12 @@ async function renderProfile() {
             <div class="text-muted"><i class="mdi mdi-calendar"></i> ${joinDate} 가입</div>
             <div class="d-flex flex-wrap gap-2 align-items-center">
                 ${sendMsgBtn}
-                <span id="wsInviteBtnSlot"></span>
             </div>
         </div>
     `;
 
     document.title = `${profileUser.name} - 사용자 프로필 - ${window.appConfig.wikiName}`;
     renderAdminControls();
-    setupWorkspaceInvite();
-}
-
-// ── 워크스페이스로 초대 (내가 소유한 워크스페이스에 이 사용자를 멤버로 추가) ──
-async function setupWorkspaceInvite() {
-    // 로그인 상태이고, 타인 프로필이며, 삭제된 사용자가 아닐 때만.
-    if (!window.currentUser || window.currentUser.id === profileUser.id) return;
-    if (profileUser.role === 'deleted') return;
-
-    let data;
-    try {
-        // 기능 비활성(404)·비로그인이면 응답이 ok 아님 → 버튼 미노출.
-        const res = await fetch('/api/workspaces', { credentials: 'same-origin' });
-        if (!res.ok) return;
-        data = await res.json();
-    } catch (e) {
-        return;
-    }
-    // 초대(멤버 추가)는 소유자(canManage)만 가능하므로 owned 만 대상으로 한다.
-    ownedWorkspacesForInvite = data.owned || [];
-    if (!ownedWorkspacesForInvite.length) return;
-
-    const slot = document.getElementById('wsInviteBtnSlot');
-    if (!slot) return;
-    slot.innerHTML = `<button class="btn btn-sm btn-wiki mt-2" onclick="inviteToWorkspace()"><i class="mdi mdi-folder-plus-outline"></i> 워크스페이스로 초대</button>`;
-}
-
-async function inviteToWorkspace() {
-    if (!ownedWorkspacesForInvite.length) return;
-    const opts = ownedWorkspacesForInvite
-        .map((w) => `<option value="${window.escapeHtml(w.slug)}">${window.escapeHtml(w.name || w.slug)}</option>`)
-        .join('');
-    const { value } = await Swal.fire({
-        title: `${window.escapeHtml(profileUser.name)} 초대`,
-        html: `
-            <label class="d-block text-start small text-muted mb-1">워크스페이스</label>
-            <select id="swalInviteWs" class="swal2-select w-100 mb-2">${opts}</select>
-            <label class="d-block text-start small text-muted mb-1">역할</label>
-            <select id="swalInviteRole" class="swal2-select w-100">
-                <option value="viewer">viewer (읽기)</option>
-                <option value="editor">editor (편집)</option>
-            </select>`,
-        focusConfirm: false,
-        showCancelButton: true,
-        confirmButtonText: '초대',
-        cancelButtonText: '취소',
-        preConfirm: () => ({
-            slug: document.getElementById('swalInviteWs').value,
-            role: document.getElementById('swalInviteRole').value === 'editor' ? 'editor' : 'viewer',
-        }),
-    });
-    if (!value || !value.slug) return;
-
-    try {
-        const res = await fetch(`/api/ws/${encodeURIComponent(value.slug)}/members`, {
-            method: 'POST',
-            credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ user_id: profileUser.id, role: value.role }),
-        });
-        const body = await res.json().catch(() => ({}));
-        if (!res.ok) {
-            Swal.fire('초대 실패', body.error || '멤버를 추가하지 못했습니다.', 'error');
-            return;
-        }
-        Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: '워크스페이스에 초대했습니다.', showConfirmButton: false, timer: 2000, timerProgressBar: true });
-    } catch (e) {
-        Swal.fire('오류', '요청 중 문제가 발생했습니다.', 'error');
-    }
 }
 
 function renderAdminControls() {
@@ -412,4 +341,3 @@ function renderContribution(c) {
 window.adminBanUser = adminBanUser;
 window.adminChangeRole = adminChangeRole;
 window.goToContributionsPage = goToContributionsPage;
-window.inviteToWorkspace = inviteToWorkspace;

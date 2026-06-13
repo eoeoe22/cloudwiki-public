@@ -38,15 +38,12 @@ import { computeLineDiffStats } from '../utils/diff';
 import { ensureMcpDraftsMigration } from '../utils/mcpDraftsMigration';
 import { createNotification } from '../utils/notification';
 import {
-    SLUG_FORBIDDEN_CHARS,
-    TITLE_FORBIDDEN_CHARS,
-    TITLE_MAX_LENGTH,
-    normalizeTitleInput,
     findConflictingPage,
-    computePageMetricsTracked,
     buildLinkAndCategoryStatements,
     rewriteContentForRename,
 } from './wiki';
+import { computePageMetricsTracked } from '../utils/pageMetrics';
+import { SLUG_FORBIDDEN_CHARS, TITLE_FORBIDDEN_CHARS, TITLE_MAX_LENGTH, normalizeTitleInput } from '../utils/validation';
 import {
     invalidatePageCache,
     refreshRecentChangesCache,

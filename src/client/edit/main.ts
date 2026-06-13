@@ -909,9 +909,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         // 에디터 레이아웃 구성 (PC: 툴바 전체폭 + 좌우 스플릿 / 모바일: 탭)
         const editorContainer = document.getElementById('editor');
-        // 레이아웃 HTML 은 워크스페이스 에디터와 공유한다(cm-shared).
-        // 슬라이드 편집 존/플로팅 목차 FAB 는 위키 에디터 전용이므로 활성화.
-        editorContainer.innerHTML = buildEditorLayoutHTML({ slideZones: false, tocFab: true });
+        // 레이아웃 HTML 은 cm-shared 의 빌더를 사용한다(플로팅 목차 FAB 활성화).
+        editorContainer.innerHTML = buildEditorLayoutHTML({ tocFab: true });
 
         // CM6 모듈 동적 import — CM6 가 필요한 이 경로에서만 네트워크를 기다린다.
         // (importmap 으로 해석되며 vite.config.ts 의 rollupOptions.external 가

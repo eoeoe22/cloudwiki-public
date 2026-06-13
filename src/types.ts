@@ -32,10 +32,6 @@ export type Env = {
         WIKI_NAME: string;
         ENABLE_CONCURRENT_EDIT_DETECTION: string;
         EDIT_REQUEST_ENABLED: string;
-        // === 개인 워크스페이스 ===
-        WORKSPACES_ENABLED: string;       // "true" | "false" — 워크스페이스 기능 전역 토글
-        WORKSPACE_CREATOR: string;        // "user" | "admin" — 워크스페이스 생성 가능 주체
-        WORKSPACE_MAX_PER_USER: string;   // 사용자당 소유 워크스페이스 상한 (숫자 문자열, 기본 "1")
         WIKI_LOGO_URL: string;
         WIKI_FAVICON_URL: string;
         CUSTOM_HEADER: string;

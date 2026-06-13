@@ -2,12 +2,11 @@ import { Hono, Context } from 'hono';
 import { cors } from 'hono/cors';
 import type { Env, User } from '../types';
 import { RBAC } from '../utils/role';
-import { isSuperAdmin } from '../utils/auth';
 import { renderForAI, extractTOC, extractSection, expandTemplates } from '../utils/aiParser';
 import { normalizeSlug, isR2OnlyNamespace, isMcpReadableSlug } from '../utils/slug';
 import { getEnabledExtensions } from '../utils/extensions';
 import { getRevisionContent } from '../utils/r2';
-import { sha256Hex, OAUTH_ACCEPTED_SCOPES, OAUTH_SCOPE_ADMIN_MCP } from '../utils/oauth';
+import { resolveBearerAuth } from '../utils/mcpAuth';
 import {
     MCP_TOOL_DEFS_ALL,
     buildInformationIntro,
@@ -89,139 +88,25 @@ function unauthorized(c: Context<Env>, description: string): Response {
 const GUEST_AUTH: McpAuthContext = { user: null, tokenId: null, scope: null };
 
 async function tryAuthenticateBearer(c: Context<Env>): Promise<McpAuthContext | Response> {
-    const authHeader = c.req.header('Authorization') || '';
+    const res = await resolveBearerAuth(c);
     // 헤더가 아예 없으면 guest 모드 — OAuth 흐름을 시작하지 않은 호출자에게 읽기 도구를 허용.
-    if (!authHeader) return GUEST_AUTH;
-    if (!authHeader.toLowerCase().startsWith('bearer ')) {
-        return unauthorized(c, 'Bearer token required');
-    }
-    const token = authHeader.slice(7).trim();
-    if (!token) return unauthorized(c, 'Empty bearer token');
-
-    const tokenHash = await sha256Hex(token);
-    const now = Math.floor(Date.now() / 1000);
-
-    let userRow: {
-        uid: number; provider: string; provider_uid: string; email: string;
-        name: string; picture: string | null; picture_private: number; role: string; banned_until: number | null;
-        last_namechange: number | null; created_at: number;
-    } | null = null;
-    let tokenId: number | null = null;
-    let scope: string | null = null;
-
-    let isApiKeyAuth = token.startsWith('mcp_');
-
-    if (isApiKeyAuth) {
-        // API 키 인증
-        try {
-            const row = await c.env.DB
-                .prepare(
-                    `SELECT k.user_id, k.expires_at,
-                            u.id AS uid, u.provider, u.uid AS provider_uid, u.email, u.name, u.picture, u.picture_private, u.role, u.banned_until, u.last_namechange, u.created_at
-                     FROM mcp_api_keys k
-                     JOIN users u ON k.user_id = u.id
-                     WHERE k.key_hash = ?`
-                )
-                .bind(tokenHash)
-                .first<{
-                    user_id: number; expires_at: number;
-                    uid: number; provider: string; provider_uid: string; email: string; name: string; picture: string | null; picture_private: number;
-                    role: string; banned_until: number | null; last_namechange: number | null; created_at: number;
-                }>();
-
-            if (row) {
-                if (row.expires_at < now) return unauthorized(c, 'Token expired');
-                userRow = row;
-                scope = 'mcp admin-mcp';
-            } else {
-                isApiKeyAuth = false;
-            }
-        } catch {
-            // 테이블이 없는 등의 DB 에러 발생 시 OAuth 토큰 인증으로 Fallback
-            isApiKeyAuth = false;
-        }
-    }
-
-    if (!isApiKeyAuth) {
-        // OAuth 토큰 인증
-        const row = await c.env.DB
-            .prepare(
-                `SELECT t.id, t.user_id, t.scope, t.access_expires_at, t.revoked_at,
-                        u.id AS uid, u.provider, u.uid AS provider_uid, u.email, u.name, u.picture, u.picture_private, u.role, u.banned_until, u.last_namechange, u.created_at
-                 FROM oauth_tokens t
-                 JOIN users u ON t.user_id = u.id
-                 WHERE t.access_token_hash = ?`
-            )
-            .bind(tokenHash)
-            .first<{
-                id: number; user_id: number; scope: string | null; access_expires_at: number; revoked_at: number | null;
-                uid: number; provider: string; provider_uid: string; email: string; name: string; picture: string | null; picture_private: number;
-                role: string; banned_until: number | null; last_namechange: number | null; created_at: number;
-            }>();
-
-        if (!row) return unauthorized(c, 'Token not found');
-        if (row.revoked_at) return unauthorized(c, 'Token revoked');
-        if (row.access_expires_at < now) return unauthorized(c, 'Token expired');
-
-        const scopeVal = row.scope || OAUTH_SCOPE_ADMIN_MCP;
-        const scopeTokens = scopeVal.split(/\s+/).filter(Boolean);
-        if (!scopeTokens.some(s => OAUTH_ACCEPTED_SCOPES.has(s))) {
-            return unauthorized(c, 'Token scope does not permit MCP access');
-        }
-
-        userRow = row;
-        tokenId = row.id;
-        scope = scopeVal;
-
-        // OAuth 토큰의 경우 사용 시각 갱신
-        c.executionCtx.waitUntil(
-            c.env.DB.prepare('UPDATE oauth_tokens SET last_used_at = unixepoch() WHERE id = ?')
-                .bind(row.id).run().catch(() => {})
-        );
-    }
-
-    if (!userRow) {
-        return unauthorized(c, 'Token not found');
-    }
-
-    // 권한 재검증: super_admin 보정 + ban 처리
-    let effectiveRole = userRow.role;
-    if (isSuperAdmin(userRow.email, c.env)) {
-        effectiveRole = 'super_admin';
-    } else if (userRow.banned_until && userRow.banned_until > now) {
-        effectiveRole = 'banned';
-    } else if (userRow.role === 'banned') {
-        effectiveRole = 'user';
-    }
+    if (res.kind === 'none') return GUEST_AUTH;
+    if (res.kind === 'error') return res.response;
 
     // 토큰 발급 후 권한이 강등되어 wiki:read 도 admin:access 도 없는 역할로 떨어졌거나
     // banned/deleted 인 경우 — guest 모드로 강등해 읽기 도구만 허용한다.
     // RBAC.can() 으로 매 요청 재검증해 OAuth 토큰만으로 RBAC 변경을 우회하지 못하도록 한다.
     const rbac = c.get('rbac') as RBAC;
     if (
-        effectiveRole === 'banned' ||
-        effectiveRole === 'deleted' ||
-        (!rbac.can(effectiveRole, 'wiki:read') && !rbac.can(effectiveRole, 'admin:access'))
+        res.effectiveRole === 'banned' ||
+        res.effectiveRole === 'deleted' ||
+        (!rbac.can(res.effectiveRole, 'wiki:read') && !rbac.can(res.effectiveRole, 'admin:access'))
     ) {
         return GUEST_AUTH;
     }
 
-    const user: User = {
-        id: userRow.uid,
-        provider: userRow.provider,
-        uid: userRow.provider_uid,
-        email: userRow.email,
-        name: userRow.name,
-        picture: userRow.picture,
-        picture_private: userRow.picture_private,
-        role: effectiveRole as User['role'],
-        banned_until: userRow.banned_until,
-        last_namechange: userRow.last_namechange,
-        created_at: userRow.created_at,
-    };
-    c.set('user', user);
-
-    return { user, tokenId, scope };
+    c.set('user', res.user);
+    return { user: res.user, tokenId: res.tokenId, scope: res.scope };
 }
 
 // GET /api/mcp - 기본 정보 (브라우저 접속 시 안내 페이지)

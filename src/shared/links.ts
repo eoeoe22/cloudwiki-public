@@ -8,19 +8,13 @@ export interface PageLink {
 /**
  * 문서 content에서 링크를 파싱하여 { target_slug, link_type } 배열을 반환한다.
  *
- * 전역 문서(`wiki.ts` → `page_links`)와 워크스페이스 문서
- * (`workspacePagePipeline.ts` → `workspace_page_links`)가 공유하는 단일 소스.
- * 두 인덱스가 동일한 파싱 정책을 따라야 검색·역링크 그래프가 일관된다.
+ * 전역 문서(`wiki.ts` → `page_links`)의 역링크/검색 인덱스가 사용하는 단일 소스.
  *
  * 수집 범위:
  *   - `[[위키링크]]` / `[[위키링크|표시명]]` / `[[위키링크#섹션]]` → link_type='wikilink'
  *   - `{{틀}}` / `{{익스텐션:...}}` → link_type='template' or 'extension'
  *   - `images/...` 전역 이미지 R2 키 → link_type='image'
  *   - `{palette:이름}` 팔레트 토큰 → link_type='palette'
- *
- * 워크스페이스 미디어(`/wsmedia/{wsId}/{filename}`)는 workspace_id 가 필요하므로
- * 호출자(`saveWorkspacePage`)가 `extractWorkspaceMediaRefs`로 별도 수집해
- * link_type='media'로 합친다.
  */
 export function extractPageLinks(content: string): PageLink[] {
     const links: PageLink[] = [];

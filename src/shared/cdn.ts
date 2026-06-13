@@ -98,16 +98,6 @@ export const PAGE_BUNDLES: Record<string, BundleName[]> = {
     '/user-profile.html':   ['base'],
     '/login.html':          ['base'],
     '/error.html':          ['base'],
-    // 개인 워크스페이스
-    '/workspaces.html':     ['base'],
-    '/ws-dashboard.html':   ['base', 'markdown'],
-    '/ws-todo.html':        ['base'],
-    '/ws-settings.html':    ['base'],
-    '/ws-files.html':       ['base'],
-    '/ws-media.html':       ['base'],
-    '/ws-doc.html':         ['base', 'markdown'],
-    '/ws-edit.html':        ['base', 'markdown', 'editor'],
-    '/ws-revisions.html':   ['base', 'markdown'],
 };
 
 /**
