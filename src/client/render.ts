@@ -2867,6 +2867,7 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
     const skipTransclusion = !!options.skipTransclusion;
     const skipExtensions = !!options.skipExtensions;
     const skipHeadingNumbers = !!options.skipHeadingNumbers;
+    const hideSectionLinkCopy = !!options.hideSectionLinkCopy;
 
     try {
         // 프리뷰 상태 보존용 안정 키 dedup 카운터를 매 렌더 시작 시점에 초기화.
@@ -3747,7 +3748,8 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
             enableSectionEdit: !!options.enableSectionEdit,
             canEdit: !!options.canEdit,
             slug: options.enableSectionEdit ? (options.sectionEditSlug || slug) : null,
-            rawContent: content
+            rawContent: content,
+            hideSectionLinkCopy: hideSectionLinkCopy
         });
 
         // {timer:} 요소 실시간 업데이트
@@ -4046,23 +4048,26 @@ function _addHeadingCopyButtons(containerEl, resolvedContent, options = {}) {
         h.appendChild(copyBtn);
 
         // 섹션 링크 복사 버튼 — 섹션 마크다운 복사 버튼과 섹션 편집 버튼 사이에 위치.
-        const linkBtn = document.createElement('button');
-        linkBtn.className = 'wiki-heading-link-btn';
-        linkBtn.title = '섹션 링크 복사';
-        linkBtn.type = 'button';
-        linkBtn.innerHTML = '<i class="bi bi-link-45deg"></i>';
-        linkBtn.onclick = async (e) => {
-            e.stopPropagation();
-            const anchorId = _getSectionAnchorId(h);
-            if (!anchorId) return;
-            const url = window.location.origin + window.location.pathname + '#' + anchorId;
-            const ok = await _copySectionLinkToClipboard(url);
-            if (ok) {
-                linkBtn.innerHTML = '<i class="bi bi-check-lg"></i>';
-                setTimeout(() => { linkBtn.innerHTML = '<i class="bi bi-link-45deg"></i>'; }, 2000);
-            }
-        };
-        h.appendChild(linkBtn);
+        let linkBtn = null;
+        if (!options.hideSectionLinkCopy) {
+            linkBtn = document.createElement('button');
+            linkBtn.className = 'wiki-heading-link-btn';
+            linkBtn.title = '섹션 링크 복사';
+            linkBtn.type = 'button';
+            linkBtn.innerHTML = '<i class="bi bi-link-45deg"></i>';
+            linkBtn.onclick = async (e) => {
+                e.stopPropagation();
+                const anchorId = _getSectionAnchorId(h);
+                if (!anchorId) return;
+                const url = window.location.origin + window.location.pathname + '#' + anchorId;
+                const ok = await _copySectionLinkToClipboard(url);
+                if (ok) {
+                    linkBtn.innerHTML = '<i class="bi bi-check-lg"></i>';
+                    setTimeout(() => { linkBtn.innerHTML = '<i class="bi bi-link-45deg"></i>'; }, 2000);
+                }
+            };
+            h.appendChild(linkBtn);
+        }
 
         // 비-트랜스클루전 헤딩에 한해, 원본 마크다운의 헤딩 라인 인덱스를 데이터 속성으로 부여한다.
         // 에디터 스크롤 동기화가 raw 라인 기준으로 프리뷰 anchor 를 정확히 찾을 수 있도록 한다.
@@ -4103,7 +4108,7 @@ function _addHeadingCopyButtons(containerEl, resolvedContent, options = {}) {
             });
 
             // 링크 버튼 바로 다음 형제로 삽입 → [copy][link][edit]
-            if (linkBtn.nextSibling) {
+            if (linkBtn && linkBtn.nextSibling) {
                 h.insertBefore(editLink, linkBtn.nextSibling);
             } else {
                 h.appendChild(editLink);
