@@ -1,0 +1,47 @@
+{
+  "name": "@eoeoe2/wiki-shared",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Shared renderer, editor, markup, and UI utilities for CloudWiki apps",
+  "private": false,
+  "exports": {
+    "./markup/transclusion": "./src/markup/transclusion.ts",
+    "./markup/links": "./src/markup/links.ts",
+    "./markup/mentions": "./src/markup/mentions.ts",
+    "./markup/slug": "./src/markup/slug.ts",
+    "./markup/validation": "./src/markup/validation.ts",
+    "./markup/pageMetrics": "./src/markup/pageMetrics.ts",
+    "./markup/editSummary": "./src/markup/editSummary.ts",
+    "./cdn": "./src/cdn/index.ts",
+    "./ui/html": "./src/ui/html.ts",
+    "./ui/url": "./src/ui/url.ts",
+    "./ui/ui-state": "./src/ui/ui-state.ts",
+    "./ui/swal": "./src/ui/swal.ts",
+    "./ui/common-core": "./src/ui/common-core.ts",
+    "./render/render": "./src/render/render.ts",
+    "./render/render-presentation": "./src/render/render-presentation.ts",
+    "./editor/types": "./src/editor/types.ts",
+    "./editor/cm-shared": "./src/editor/cm-shared.ts",
+    "./editor/autocomplete": "./src/editor/autocomplete.ts",
+    "./editor/image": "./src/editor/image.ts",
+    "./editor/summary": "./src/editor/summary.ts",
+    "./editor/utils": "./src/editor/utils.ts",
+    "./editor/table-toolbar": "./src/editor/table-toolbar.ts",
+    "./editor/slide-edit": "./src/editor/slide-edit.ts",
+    "./server/bearerAuth": "./src/server/bearerAuth.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260426.1",
+    "typescript": "^5.5.0"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/eoeoe22/cloudwiki.git"
+  }
+}

@@ -205,7 +205,7 @@ export const THEMES = {
  * @type {Record<string, string>}
  */
 export const THEME_LABELS = {
-    default: 'VIA(기본)',
+    default: 'Cloudwiki(기본)',
     astro: 'Astro',
     vector: '벡터',
     bootstrap: 'Bootstrap',
