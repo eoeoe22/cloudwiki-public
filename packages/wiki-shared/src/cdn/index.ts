@@ -1,4 +1,4 @@
-// 외부 CDN 라이브러리 버전·URL 단일 소스.
+// 외부 CDN 라이브러리 버전·URL 단일 소스
 // 서버(src/middleware/ssr.ts)와 클라이언트(src/client/render.ts, iconLib.ts) 양쪽에서 참조한다.
 const J = 'https://cdn.jsdelivr.net/npm';
 const C = 'https://cdnjs.cloudflare.com/ajax/libs';

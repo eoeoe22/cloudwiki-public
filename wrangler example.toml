@@ -11,7 +11,7 @@ command = "npm run build"
 [assets]
 directory = "public"
 binding = "ASSETS"
-run_worker_first = ["/", "/w/*", "/wiki/*", "/mypage", "/edit", "/profile/*", "/search", "/admin", "/admin-media", "/admin-bulk-manage", "/tickets", "/tickets/*", "/setup-profile", "/error", "/sitemap.xml", "/robots.txt", "/login", "/recent-changes", "/explore", "/auth/discord", "/auth/discord/callback", "/auth/refresh-picture", "/blog", "/blog/*", "/blog-edit", "/sw.js"]
+run_worker_first = ["/", "/w/*", "/wiki/*", "/mypage", "/edit", "/profile/*", "/search", "/admin", "/admin-media", "/admin-bulk-manage", "/tickets", "/tickets/*", "/setup-profile", "/error", "/sitemap.xml", "/robots.txt", "/login", "/recent-changes", "/explore", "/components-json-builder", "/auth/discord", "/auth/discord/callback", "/auth/refresh-picture", "/blog", "/blog/*", "/blog-edit", "/sw.js"]
 
 
 [[d1_databases]]
@@ -109,8 +109,8 @@ CUSTOM_HEADER = """
 """
 
 # 사이드바 / 푸터 내용 커스터마이징
-# 아래 링크에서 제작 후 나온 결과물 json을 붙여넣으세요
-# https://vialinks.xyz/components-json-builder
+# 위키에 내장된 빌더(배포 도메인 기준 /components-json-builder)에서 제작 후
+# 나온 결과물 json을 붙여넣으세요. 예: https://도메인/components-json-builder
 
 SIDEBAR = """
 

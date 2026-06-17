@@ -61,6 +61,7 @@ export default defineConfig({
                 'revisions': resolve(__dirname, 'src/client/pages/revisions.ts'),
                 'admin-media': resolve(__dirname, 'src/client/pages/admin-media.ts'),
                 'admin-bulk-manage': resolve(__dirname, 'src/client/pages/admin-bulk-manage.ts'),
+                'components-json-builder': resolve(__dirname, 'src/client/pages/components-json-builder.ts'),
                 'index': resolve(__dirname, 'src/client/pages/index.ts'),
                 'admin': resolve(__dirname, 'src/client/pages/admin.ts'),
                 'mypage': resolve(__dirname, 'src/client/pages/mypage.ts'),

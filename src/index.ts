@@ -428,6 +428,14 @@ app.get('/explore', async (c) => {
     return fetchAssetHtml(c, '/explore.html');
 });
 
+// /components-json-builder → 사이드바/푸터 네비게이션 JSON 빌더 도구 (정적 셸, 운영자 보조 도구)
+app.get('/components-json-builder', async (c) => {
+    if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) {
+        return c.redirect('/login');
+    }
+    return fetchAssetHtml(c, '/components-json-builder.html');
+});
+
 // /w/* → 와일드카드 라우트: 슬래시 포함 슬러그를 지원하기 위해 경로 전체를 슬러그로 처리
 // 하위 페이지(revisions, discussions)는 ?mode= 쿼리 파라미터로 구분
 app.get('/w/*', async (c) => {

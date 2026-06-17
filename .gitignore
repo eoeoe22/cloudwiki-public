@@ -25,6 +25,7 @@ packages/*/node_modules
 /public/setup-profile.html
 /public/admin-media.html
 /public/admin-bulk-manage.html
+/public/components-json-builder.html
 /public/discussions.html
 /public/tickets.html
 /public/mypage.html

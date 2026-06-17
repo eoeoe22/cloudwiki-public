@@ -1,0 +1,269 @@
+---
+// 사이드바/푸터 네비게이션 JSON 빌더 도구 셸(/components-json-builder).
+// wrangler.toml 의 SIDEBAR/FOOTER 환경변수에 넣을 JSON 을 GUI 로 제작·편집하는 운영자용 보조 도구.
+// - base 번들(Bootstrap/MDI/SweetAlert2/폰트/style.css)은 BaseLayout 이 빌드 타임에 베이킹하므로
+//   원본 standalone HTML 의 CDN <link>/<script> 는 제거했다(중복 로드 방지).
+// - 하드코딩 색상은 --wiki-* 토큰으로 치환해 라이트/다크/스킨 테마를 따른다(테마 연동).
+// - 인라인 <style> 은 #cjbApp 하위로 스코프해 Header 등 다른 영역의 Bootstrap 표면에 새지 않게 한다.
+// - 도구 로직은 /dist/components-json-builder.js (src/client/pages/components-json-builder.ts) 가 담당한다.
+import BaseLayout from '../layouts/BaseLayout.astro';
+import Header from '../components/Header.astro';
+---
+<BaseLayout pagePath="/components-json-builder.html" title="컴포넌트 JSON 빌더 - CloudWiki">
+    <Fragment slot="head">
+        <!-- 테마 FOUC 방지: CSS 로드 후 즉시 테마 적용 -->
+        <script is:inline>try{var t=localStorage.getItem('themeMode');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
+        <style is:inline>
+            #cjbApp .card {
+                border-radius: 12px;
+                border: 1px solid var(--wiki-border);
+                background-color: var(--wiki-card-bg);
+                box-shadow: var(--wiki-shadow-sm);
+                overflow: visible; /* 드롭다운 메뉴를 위해 필요 */
+                margin-bottom: 20px;
+            }
+
+            #cjbApp .card-header {
+                background-color: var(--wiki-card-bg);
+                border-bottom: 1px solid var(--wiki-border);
+                color: var(--wiki-text);
+                font-weight: 600;
+                border-top-left-radius: 12px !important;
+                border-top-right-radius: 12px !important;
+                padding: 15px 20px;
+            }
+
+            #cjbApp .card-footer {
+                background-color: var(--wiki-card-bg);
+                border-top: 1px solid var(--wiki-border);
+                border-bottom-left-radius: 12px !important;
+                border-bottom-right-radius: 12px !important;
+                padding: 15px 20px;
+            }
+
+            #cjbApp .list-group-item {
+                display: flex;
+                align-items: center;
+                padding: 12px 15px;
+                border-left: none;
+                border-right: none;
+                border-color: var(--wiki-border-muted);
+                background-color: var(--wiki-card-bg);
+                color: var(--wiki-text);
+                transition: background-color 0.2s;
+            }
+
+            #cjbApp .list-group-item:hover {
+                background-color: var(--wiki-bg-alt);
+            }
+
+            #cjbApp .list-group-item:first-child { border-top: none; }
+            #cjbApp .list-group-item:last-child { border-bottom: none; }
+
+            #cjbApp .btn-control {
+                color: var(--wiki-text-muted);
+                padding: 0 4px;
+                font-size: 1.2rem;
+                line-height: 1;
+            }
+
+            #cjbApp .btn-control:hover {
+                color: var(--wiki-primary);
+            }
+
+            #cjbApp .btn-delete {
+                color: var(--wiki-danger);
+                opacity: 0.7;
+            }
+
+            #cjbApp .btn-delete:hover {
+                opacity: 1;
+                color: var(--wiki-danger);
+            }
+
+            #cjbApp .json-output-container {
+                position: relative;
+            }
+
+            #cjbApp .json-textarea {
+                font-family: 'JetBrains Mono', 'Consolas', 'Monaco', monospace;
+                font-size: 0.9rem;
+                background-color: var(--wiki-code-bg);
+                color: var(--wiki-text);
+                border-radius: 8px;
+                padding: 15px;
+                padding-top: 50px; /* 버튼과 겹치지 않도록 상단 여백 추가 */
+                width: 100%;
+                height: 250px;
+                border: 1px solid var(--wiki-border);
+                resize: vertical;
+                transition: border-color 0.2s;
+            }
+
+            #cjbApp .json-textarea:focus {
+                outline: none;
+                border-color: var(--wiki-primary);
+            }
+
+            #cjbApp .json-action-btns {
+                position: absolute;
+                top: 10px;
+                right: 15px;
+                display: flex;
+                gap: 8px;
+            }
+
+            #cjbApp .btn-action {
+                background-color: var(--wiki-bg-alt);
+                color: var(--wiki-text);
+                border: 1px solid var(--wiki-border);
+                font-size: 0.8rem;
+                padding: 4px 10px;
+                border-radius: 4px;
+                cursor: pointer;
+                transition: all 0.2s;
+            }
+            #cjbApp .btn-action:hover {
+                border-color: var(--wiki-primary);
+                color: var(--wiki-primary);
+            }
+            #cjbApp .btn-apply-action {
+                background-color: color-mix(in srgb, var(--wiki-success) 14%, transparent);
+                border-color: color-mix(in srgb, var(--wiki-success) 45%, transparent);
+                color: var(--wiki-success);
+            }
+            #cjbApp .btn-apply-action:hover {
+                background-color: var(--wiki-success);
+                border-color: var(--wiki-success);
+                color: #fff;
+            }
+
+            /* 배지 스타일 조정 */
+            #cjbApp .badge-type {
+                min-width: 55px;
+                text-align: center;
+            }
+        </style>
+    </Fragment>
+
+    <!-- ── 네비게이션 바 ── -->
+    <Header />
+
+    <!-- ── 메인 레이아웃 ── -->
+    <div class="wiki-layout">
+        <div class="wiki-container">
+            <div class="wiki-article" style="width: 100%; max-width: 100%; overflow-x: hidden;">
+
+                <div id="cjbApp">
+                    <div class="row align-items-center mb-4">
+                        <div class="col">
+                            <h1 class="h3 mb-1 fw-bold"><i class="mdi mdi-code-json text-primary me-2"></i>컴포넌트 JSON 빌더</h1>
+                            <p class="text-muted mb-0 small">사이드바·푸터 네비게이션을 GUI 로 제작한 뒤 결과 JSON 을 <code>wrangler.toml</code> 의 <code>SIDEBAR</code>·<code>FOOTER</code> 값에 붙여넣으세요.</p>
+                        </div>
+                        <div class="col-auto text-end">
+                            <button class="btn btn-outline-danger btn-sm" onclick="clearAll()"><i class="mdi mdi-delete-sweep me-1"></i>전체 초기화</button>
+                        </div>
+                    </div>
+
+                    <!-- GUI 빌더 영역 -->
+                    <div class="row g-4 mb-4">
+                        <!-- 사이드바 빌더 -->
+                        <div class="col-lg-6">
+                            <div class="card h-100">
+                                <div class="card-header d-flex justify-content-between align-items-center">
+                                    <span><i class="mdi mdi-page-layout-sidebar-left text-primary me-2"></i>사이드바 구성</span>
+                                    <span class="badge bg-primary rounded-pill" id="sidebarCount">0</span>
+                                </div>
+                                <div class="card-body p-0">
+                                    <ul class="list-group list-group-flush" id="sidebarList" style="min-height: 150px;">
+                                        <!-- 항목이 여기에 동적으로 추가됩니다 -->
+                                    </ul>
+                                </div>
+                                <div class="card-footer">
+                                    <div class="dropdown d-grid">
+                                        <button class="btn btn-primary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                                            <i class="mdi mdi-plus me-1"></i>항목 추가
+                                        </button>
+                                        <ul class="dropdown-menu w-100 shadow-sm">
+                                            <li><a class="dropdown-item py-2" href="#" onclick="addItem('sidebar', 'link')"><i class="mdi mdi-link me-2 text-primary"></i>링크 (Link)</a></li>
+                                            <li><a class="dropdown-item py-2" href="#" onclick="addItem('sidebar', 'header')"><i class="mdi mdi-format-header-1 me-2 text-success"></i>제목 (Header)</a></li>
+                                            <li><a class="dropdown-item py-2" href="#" onclick="addItem('sidebar', 'text')"><i class="mdi mdi-format-text me-2 text-secondary"></i>텍스트 (Text)</a></li>
+                                            <li><hr class="dropdown-divider"></li>
+                                            <li><a class="dropdown-item py-2" href="#" onclick="addItem('sidebar', 'divider')"><i class="mdi mdi-minus me-2 text-muted"></i>구분선 (Divider)</a></li>
+                                        </ul>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 푸터 빌더 -->
+                        <div class="col-lg-6">
+                            <div class="card h-100">
+                                <div class="card-header d-flex justify-content-between align-items-center">
+                                    <span><i class="mdi mdi-page-layout-footer text-info me-2"></i>푸터 구성</span>
+                                    <span class="badge bg-info rounded-pill" id="footerCount">0</span>
+                                </div>
+                                <div class="card-body p-0">
+                                    <ul class="list-group list-group-flush" id="footerList" style="min-height: 150px;">
+                                        <!-- 항목이 여기에 동적으로 추가됩니다 -->
+                                    </ul>
+                                </div>
+                                <div class="card-footer">
+                                    <div class="dropdown d-grid">
+                                        <button class="btn btn-info text-white dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                                            <i class="mdi mdi-plus me-1"></i>항목 추가
+                                        </button>
+                                        <ul class="dropdown-menu w-100 shadow-sm">
+                                            <li><a class="dropdown-item py-2" href="#" onclick="addItem('footer', 'link')"><i class="mdi mdi-link me-2 text-primary"></i>링크 (Link)</a></li>
+                                            <li><a class="dropdown-item py-2" href="#" onclick="addItem('footer', 'text')"><i class="mdi mdi-format-text me-2 text-secondary"></i>텍스트 (Text)</a></li>
+                                            <li><hr class="dropdown-divider"></li>
+                                            <li><a class="dropdown-item py-2" href="#" onclick="addItem('footer', 'divider')"><i class="mdi mdi-minus me-2 text-muted"></i>구분선 (Divider)</a></li>
+                                        </ul>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- JSON 결과 영역 -->
+                    <div class="row g-4">
+                        <div class="col-lg-6">
+                            <h5 class="fw-bold mb-3"><i class="mdi mdi-code-braces text-primary me-2"></i>사이드바 JSON</h5>
+                            <div class="json-output-container shadow-sm">
+                                <div class="json-action-btns">
+                                    <button class="btn-action btn-apply-action" onclick="applyJson('sidebar')" title="입력한 JSON을 위 GUI에 적용합니다">
+                                        <i class="mdi mdi-check me-1"></i>적용
+                                    </button>
+                                    <button class="btn-action" onclick="copyJson('sidebar')">
+                                        <i class="mdi mdi-content-copy me-1"></i>복사
+                                    </button>
+                                </div>
+                                <textarea id="sidebarJsonOut" class="json-textarea" placeholder="여기에 JSON 배열을 붙여넣고 상단의 '적용' 버튼을 누르세요."></textarea>
+                            </div>
+                        </div>
+                        <div class="col-lg-6">
+                            <h5 class="fw-bold mb-3"><i class="mdi mdi-code-braces text-info me-2"></i>푸터 JSON</h5>
+                            <div class="json-output-container shadow-sm">
+                                <div class="json-action-btns">
+                                    <button class="btn-action btn-apply-action" onclick="applyJson('footer')" title="입력한 JSON을 위 GUI에 적용합니다">
+                                        <i class="mdi mdi-check me-1"></i>적용
+                                    </button>
+                                    <button class="btn-action" onclick="copyJson('footer')">
+                                        <i class="mdi mdi-content-copy me-1"></i>복사
+                                    </button>
+                                </div>
+                                <textarea id="footerJsonOut" class="json-textarea" placeholder="여기에 JSON 배열을 붙여넣고 상단의 '적용' 버튼을 누르세요."></textarea>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <Fragment slot="scripts">
+        <script type="module" src="/dist/common.js" is:inline></script>
+        <script type="module" src="/dist/components-json-builder.js" is:inline></script>
+    </Fragment>
+</BaseLayout>
