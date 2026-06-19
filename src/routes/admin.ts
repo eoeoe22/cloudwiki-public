@@ -154,7 +154,10 @@ adminRoutes.get('/users', async (c) => {
         } else if (u.role === 'banned') {
             u.role = 'user';
         }
-        return u;
+        // 사용자 관리 UI는 email/provider/uid 를 사용하지 않으므로 PII 과다 노출을
+        // 막기 위해 응답에서 제거한다. (super_admin 판정은 위에서 email 로 이미 완료)
+        const { email: _email, provider: _provider, uid: _uid, ...safe } = u;
+        return safe;
     });
 
     return c.json({
@@ -1660,6 +1663,12 @@ async function isImageReferencedAnywhere(
  * page_links(image) + LIKE fallback 두 방식으로 사용 여부 확인
  */
 adminRoutes.get('/media/gc', async (c) => {
+    // 미사용 이미지 일괄 삭제는 휴리스틱 기반의 비가역 대량 작업이므로
+    // 문서 대량 관리(bulk-manage)와 동일하게 최고 관리자에게만 허용한다.
+    const gcRbac = c.get('rbac') as RBAC;
+    if (!gcRbac.can(c.get('user')!.role, '*')) {
+        return c.json({ error: '최고 관리자만 사용할 수 있습니다.' }, 403);
+    }
     const db = c.env.DB;
 
     // 모든 미디어 조회
@@ -1739,10 +1748,20 @@ adminRoutes.get('/media/gc', async (c) => {
 adminRoutes.post('/media/gc', async (c) => {
     const db = c.env.DB;
     const user = c.get('user')!;
+    // 비가역 대량 삭제 — GET /media/gc 와 동일하게 최고 관리자 전용.
+    const gcRbac = c.get('rbac') as RBAC;
+    if (!gcRbac.can(user.role, '*')) {
+        return c.json({ error: '최고 관리자만 사용할 수 있습니다.' }, 403);
+    }
     const { ids } = await c.req.json<{ ids: number[] }>();
 
     if (!Array.isArray(ids) || ids.length === 0) {
         return c.json({ error: '삭제할 이미지를 선택해주세요.' }, 400);
+    }
+    // 무제한 id 배열로 인한 순차 R2/DB 작업 폭주를 막기 위해 1회 호출당 상한을 둔다.
+    const GC_DELETE_MAX = 200;
+    if (ids.length > GC_DELETE_MAX) {
+        return c.json({ error: `한 번에 최대 ${GC_DELETE_MAX}개까지만 삭제할 수 있습니다.` }, 400);
     }
 
     const deleted: number[] = [];

@@ -173,10 +173,12 @@ search.get('/search', async (c) => {
         const imageQuery = query.trim().substring('이미지:'.length).trim();
 
         // filename 또는 content에 LIKE 매치
-        const likePattern = imageQuery.length > 0 ? `%${imageQuery}%` : '%';
+        // LIKE 메타문자(%, _, \)를 escape 해 사용자가 입력한 문자열 그대로만 매치한다(와일드카드 주입 방지).
+        const imageLikeEscaped = imageQuery.replace(/[\\%_]/g, '\\$&');
+        const likePattern = imageQuery.length > 0 ? `%${imageLikeEscaped}%` : '%';
 
         const totalRow = await db
-            .prepare('SELECT COUNT(*) as total FROM media WHERE filename LIKE ? OR content LIKE ?')
+            .prepare("SELECT COUNT(*) as total FROM media WHERE filename LIKE ? ESCAPE '\\' OR content LIKE ? ESCAPE '\\'")
             .bind(likePattern, likePattern)
             .first<{ total: number }>();
         const total = totalRow?.total ?? 0;
@@ -188,8 +190,8 @@ search.get('/search', async (c) => {
                 .prepare(
                     `SELECT id, r2_key, filename, mime_type, content
                      FROM media
-                     WHERE filename LIKE ? OR content LIKE ?
-                     ORDER BY (CASE WHEN filename LIKE ? THEN 0 ELSE 1 END), created_at DESC
+                     WHERE filename LIKE ? ESCAPE '\\' OR content LIKE ? ESCAPE '\\'
+                     ORDER BY (CASE WHEN filename LIKE ? ESCAPE '\\' THEN 0 ELSE 1 END), created_at DESC
                      LIMIT ? OFFSET ?`
                 )
                 .bind(likePattern, likePattern, likePattern, PAGE_SIZE, offset)

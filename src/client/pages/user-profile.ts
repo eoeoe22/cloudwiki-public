@@ -90,7 +90,7 @@ async function renderProfile() {
                 if (profileUser.role === 'deleted') {
                     sendMsgBtn = `<button class="btn btn-sm btn-outline-secondary mt-2" disabled><i class="mdi mdi-email-plus-outline"></i> 쪽지 보내기 (탈퇴한 사용자)</button>`;
                 } else {
-                    sendMsgBtn = `<button class="btn btn-sm btn-outline-primary mt-2" onclick="sendMessage(${profileUser.id}, '${window.escapeHtml(profileUser.name)}')"><i class="mdi mdi-email-plus-outline"></i> 쪽지 보내기</button>`;
+                    sendMsgBtn = `<button class="btn btn-sm btn-outline-primary mt-2" data-uid="${profileUser.id}" data-uname="${window.escapeHtml(profileUser.name)}" onclick="sendMessage(+this.dataset.uid, this.dataset.uname)"><i class="mdi mdi-email-plus-outline"></i> 쪽지 보내기</button>`;
                 }
             }
         } catch (e) { }

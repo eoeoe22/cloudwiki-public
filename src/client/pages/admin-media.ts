@@ -31,6 +31,12 @@ document.addEventListener("DOMContentLoaded", async () => {
       return;
     }
 
+    // 쓰레기 수집기(미사용 이미지 일괄 삭제)는 최고 관리자 전용 — 서버에서도 '*' 게이팅됨.
+    if (window.currentUser.role === "super_admin") {
+      const gcCard = document.getElementById("gcCard");
+      if (gcCard) gcCard.style.display = "";
+    }
+
     document
       .querySelectorAll("#userAvatar")
       .forEach((el) => (el.src = window.currentUser.picture || ""));
@@ -188,7 +194,7 @@ function renderMedia() {
   listEl.innerHTML = mediaItems
     .map((m) => {
       const isVideo = m.mime_type && m.mime_type.startsWith("video/");
-      const publicUrl = m.r2_key ? `/media/${m.r2_key}` : "";
+      const publicUrl = m.r2_key ? window.escapeHtml(`/media/${m.r2_key}`) : "";
       const preview = isVideo
         ? `<video src="${publicUrl}" muted></video>`
         : `<img src="${publicUrl}" alt="${window.escapeHtml(m.filename)}" loading="lazy">`;
@@ -313,7 +319,7 @@ async function runGarbageCollector() {
     gcList.innerHTML = gcItems
       .map((m) => {
         const isVideo = m.mime_type && m.mime_type.startsWith("video/");
-        const publicUrl = m.r2_key ? `/media/${m.r2_key}` : "";
+        const publicUrl = m.r2_key ? window.escapeHtml(`/media/${m.r2_key}`) : "";
         const preview = isVideo
           ? `<video src="${publicUrl}" muted style="width:60px;height:60px;object-fit:cover;border-radius:6px;"></video>`
           : `<img src="${publicUrl}" alt="${window.escapeHtml(m.filename)}" loading="lazy" style="width:60px;height:60px;object-fit:cover;border-radius:6px;">`;
@@ -341,7 +347,7 @@ async function runGarbageCollector() {
                                     <a class="filename" href="/w/${encodeURIComponent(`이미지:${m.filename}`)}" title="${window.escapeHtml(m.filename)} 문서로 이동">${window.escapeHtml(m.filename)}</a>
                                     <div class="meta">${sizeStr} · ${uploadDate} · 업로더: ${uploaderName}</div>
                                 </div>
-                                <button class="btn btn-sm btn-outline-info" onclick="trackBacklinks(${m.id}, '${window.escapeHtml(m.filename)}')" title="역링크 확인">
+                                <button class="btn btn-sm btn-outline-info" data-id="${m.id}" data-filename="${window.escapeHtml(m.filename)}" onclick="trackBacklinks(+this.dataset.id, this.dataset.filename)" title="역링크 확인">
                                     <i class="mdi mdi-link-variant"></i>
                                 </button>
                             </div>`;
@@ -395,21 +401,31 @@ async function gcDeleteSelected() {
   gcDeleteBtn.innerHTML = window.uiInlineLoading({ text: '삭제 중...' });
 
   try {
-    const res = await fetch("/api/admin/media/gc", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ids: selectedIds }),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || "삭제 실패");
+    // 서버는 1회 호출당 ids 200개 상한을 두므로(자원 고갈 방지), 선택 항목이 많으면
+    // 200개씩 나눠 순차 전송하고 결과를 합산한다. (전체 선택 기본값으로도 대량 GC 동작 보장)
+    const CHUNK = 200;
+    let totalDeleted = 0;
+    const allErrors = [];
+    for (let i = 0; i < selectedIds.length; i += CHUNK) {
+      const chunk = selectedIds.slice(i, i + CHUNK);
+      const res = await fetch("/api/admin/media/gc", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: chunk }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "삭제 실패");
+      totalDeleted += data.deleted_count || 0;
+      if (data.errors && data.errors.length > 0) allErrors.push(...data.errors);
+    }
 
-    let msg = `${data.deleted_count}개 이미지가 삭제되었습니다.`;
-    if (data.errors && data.errors.length > 0) {
-      msg += `\n\n경고:\n${data.errors.join("\n")}`;
+    let msg = `${totalDeleted}개 이미지가 삭제되었습니다.`;
+    if (allErrors.length > 0) {
+      msg += `\n\n경고:\n${allErrors.join("\n")}`;
     }
 
     Swal.fire({
-      icon: data.deleted_count > 0 ? "success" : "warning",
+      icon: totalDeleted > 0 ? "success" : "warning",
       title: "쓰레기 수집 완료",
       text: msg,
       confirmButtonText: "확인",

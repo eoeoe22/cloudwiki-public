@@ -2804,8 +2804,8 @@ wiki.delete('/w/:slug', requireAuth, async (c) => {
     const isAdmin = rbac.can(user.role, 'admin:access');
 
     // Fetch page first to check permissions
-    const page = await db.prepare('SELECT id FROM pages WHERE slug = ? AND deleted_at IS NULL')
-        .bind(slug).first<{ id: number }>();
+    const page = await db.prepare('SELECT id, edit_acl FROM pages WHERE slug = ? AND deleted_at IS NULL')
+        .bind(slug).first<{ id: number; edit_acl: string | null }>();
 
     if (!page) {
         return c.json({ error: '문서를 찾을 수 없습니다.' }, 404);
@@ -2847,6 +2847,29 @@ wiki.delete('/w/:slug', requireAuth, async (c) => {
         // Soft delete requires wiki:delete permission
         if (!rbac.can(user.role, 'wiki:delete')) {
             return c.json({ error: '문서 삭제 권한이 없습니다.' }, 403);
+        }
+
+        // 삭제는 본문을 통째로 무력화하는 편집의 일종이므로 일반 편집(PUT)·되돌리기(revert)와
+        // 동일한 edit_acl 게이트를 적용한다. wiki:delete 를 비관리자 역할에 부여한 커스텀 RBAC 에서
+        // ACL 잠금(admin_only/aged/page_editor 등)을 우회해 삭제하는 것을 막는다.
+        // (삭제는 편집 요청 보류 모드가 없으므로 ACL 미달은 하드 거부.)
+        const aclDelete = parseEditAcl(page.edit_acl);
+        if (aclDelete && aclDelete.flags.length > 0) {
+            const hasAdminOnly = aclDelete.flags.includes('admin_only');
+            if (!isAdmin || hasAdminOnly) {
+                const minAge = await getEditAclMinAgeDays(db);
+                const ev = await evaluateEditAcl(db, aclDelete, user, page.id, minAge, isAdmin);
+                if (!ev.allowed) {
+                    const isAdminOnlyFail = hasAdminOnly && !isAdmin;
+                    return c.json({
+                        error: isAdminOnlyFail
+                            ? '관리자 전용 문서는 관리자만 삭제할 수 있습니다.'
+                            : '이 문서를 삭제할 권한이 부족합니다.',
+                        edit_acl: aclDelete,
+                        min_age_days: minAge,
+                    }, 403);
+                }
+            }
         }
 
         // Soft Delete

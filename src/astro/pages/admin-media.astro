@@ -32,8 +32,8 @@ import Footer from '../components/Footer.astro';
                     업로드된 이미지를 검색하고 관리할 수 있습니다.
                 </p>
 
-                <!-- 쓰레기 수집기 카드 -->
-                <div class="card shadow-sm border-0 mb-4">
+                <!-- 쓰레기 수집기 카드 (최고 관리자 전용 — 클라이언트에서 노출 제어) -->
+                <div class="card shadow-sm border-0 mb-4" id="gcCard" style="display: none">
                     <div class="card-header py-3">
                         <div class="d-flex justify-content-between align-items-center">
                             <h5 class="mb-0">

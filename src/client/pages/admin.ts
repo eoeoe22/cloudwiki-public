@@ -208,7 +208,7 @@
                     <td>${roleSelect}</td>
                     <td>${u.banned_until ? '<span class="badge bg-danger">차단됨</span>' : '<span class="badge bg-success">정상</span>'}</td>
                     <td class="small text-muted">${joinDate}</td>
-                    <td><button class="btn btn-xs btn-outline-danger" onclick="promptBan(${u.id}, '${window.escapeHtml(u.name)}')">${u.banned_until ? "해제" : "차단"}</button></td>
+                    <td><button class="btn btn-xs btn-outline-danger" data-uid="${u.id}" data-uname="${window.escapeHtml(u.name)}" onclick="promptBan(+this.dataset.uid, this.dataset.uname)">${u.banned_until ? "해제" : "차단"}</button></td>
                 </tr>`;
           })
           .join("");

@@ -42,7 +42,7 @@ const SVG_FORBIDDEN_PATTERNS: { re: RegExp; label: string }[] = [
  * 공백류(`\s`)도 금지한다 — 업로드된 URL은 `![alt](/media/...)` 형태로 본문에 주입되며,
  * CommonMark 파서는 괄호로 감싸지 않은 링크 목적지에 공백이 있으면 파싱에 실패하여 이미지가 깨진다.
  */
-const FILENAME_FORBIDDEN = /[\[\]()#%|<>^\x00-\x1F\x7F\/\\.?\s]/;
+const FILENAME_FORBIDDEN = /[\[\]()#%|<>^\x00-\x1F\x7F\/\\.?\s"']/;
 
 function validateUploadFilename(name: string): { ok: true; value: string } | { ok: false; error: string } {
     const trimmed = name.trim();
@@ -50,7 +50,7 @@ function validateUploadFilename(name: string): { ok: true; value: string } | { o
         return { ok: false, error: '파일명을 입력해주세요.' };
     }
     if (FILENAME_FORBIDDEN.test(trimmed)) {
-        return { ok: false, error: '파일명에 사용할 수 없는 문자가 포함되어 있습니다. ([ ] ( ) # % | < > ^ / \\ . ? 공백 등은 사용할 수 없습니다)' };
+        return { ok: false, error: '파일명에 사용할 수 없는 문자가 포함되어 있습니다. ([ ] ( ) # % | < > ^ / \\ . ? " \' 공백 등은 사용할 수 없습니다)' };
     }
     if (trimmed.length > 100) {
         return { ok: false, error: '파일명은 최대 100자까지 입력할 수 있습니다.' };
@@ -579,7 +579,9 @@ media.get('/media/*', async (c) => {
 
 function getExtension(filename: string, mimeType: string): string {
     const fromName = filename.split('.').pop()?.toLowerCase();
-    if (fromName && fromName.length <= 5) return fromName;
+    // 확장자는 r2_key(`images/<name>.<ext>`)에 그대로 들어가 URL·HTML 속성에 주입되므로
+    // 영숫자만 허용한다. 비정상 확장자는 MIME 타입 기반 매핑으로 대체한다.
+    if (fromName && fromName.length <= 5 && /^[a-z0-9]+$/.test(fromName)) return fromName;
 
     const mimeMap: Record<string, string> = {
         'image/jpeg': 'jpg',
