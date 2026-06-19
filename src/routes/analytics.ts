@@ -310,7 +310,9 @@ analyticsRoutes.get('/page/:slug', async (c) => {
     const period = c.req.query('period') || '7d';
     const days = period === '90d' ? 90 : period === '30d' ? 30 : 7;
 
-    const safeSlug = slug.replace(/'/g, "\\'");
+    // 파라미터 바인딩이 없는 Analytics Engine 쿼리이므로, 닫는 따옴표 탈출을 막기 위해
+    // 백슬래시를 먼저 이스케이프한 뒤 작은따옴표를 이스케이프한다.
+    const safeSlug = slug.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 
     const [totalResult, dailyResult] = await Promise.all([
         queryAnalytics(creds.accountId, creds.apiToken, `

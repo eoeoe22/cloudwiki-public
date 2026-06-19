@@ -24,12 +24,12 @@
 /* 관리 메뉴 사이드바 — DOM 순서상 .wiki-container 다음에 위치해
    사이트 다른 페이지(.wiki-sidebar) 와 동일하게 오른쪽 정렬된다. */
 .admin-sidebar {
-  width: 260px;
+  width: var(--wiki-sidebar-width);
   flex-shrink: 0;
   position: sticky;
   top: 1.5rem;
   align-self: flex-start;
-  z-index: 1030;
+  z-index: var(--wiki-z-sidebar);
 }
 
 .admin-sidebar-nav {
@@ -1254,14 +1254,9 @@
   color: var(--wiki-primary);
 }
 
-.dash-metric-icon.views {
-  background-color: color-mix(in srgb, var(--wiki-primary) 12%, transparent);
-  color: var(--wiki-primary);
-}
-
 .dash-metric-icon.countries {
-  background-color: color-mix(in srgb, var(--wiki-info) 12%, transparent);
-  color: var(--wiki-info);
+  background-color: color-mix(in srgb, var(--wiki-callout-info) 12%, transparent);
+  color: var(--wiki-callout-info);
 }
 
 .dash-metric-icon.requests {
@@ -1318,8 +1313,8 @@
 .bulk-move-preview-box,
 .bulk-move-skip-box {
   border: 1px solid var(--wiki-border);
-  border-radius: 8px;
-  background: var(--wiki-bg-soft, rgba(0, 0, 0, 0.02));
+  border-radius: var(--wiki-radius-lg);
+  background: var(--wiki-border-muted);
   padding: 0.75rem 1rem;
 }
 

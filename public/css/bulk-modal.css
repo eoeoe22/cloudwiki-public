@@ -188,7 +188,7 @@
     font-size: var(--wiki-fs-base);
 }
 .bulkcat-subpages-table tr[data-page-id] {
-    transition: background-color var(--wiki-dur-instant) cubic-bezier(0.4, 0, 0.2, 1);
+    transition: background-color var(--wiki-dur-instant) var(--wiki-ease);
 }
 .bulkcat-subpages-table tr[data-page-id] + tr[data-page-id] > td {
     border-top: 1px solid var(--wiki-border);

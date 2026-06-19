@@ -393,7 +393,7 @@ div:where(.swal2-container) .swal2-validation-message {
   padding: 0.8rem 1.5rem 0.6rem;
   margin-bottom: var(--wiki-space-8);
   position: relative;
-  z-index: 1040;
+  z-index: var(--wiki-z-navbar);
 }
 
 /* 모바일 사이드바 열림 시 헤더 숨김 */
@@ -464,8 +464,6 @@ div:where(.swal2-container) .swal2-validation-message {
 
 .nav-search-form .form-control {
   border-radius: var(--wiki-radius-sm) 0 0 var(--wiki-radius-sm);
-  border: 1px solid var(--wiki-border);
-  background: var(--wiki-bg);
   color: var(--wiki-text);
   padding: var(--wiki-space-2) var(--wiki-space-4);
   box-shadow: none;
@@ -484,13 +482,8 @@ div:where(.swal2-container) .swal2-validation-message {
 
 /* Search Mode Dropdown Button */
 .nav-search-form .search-mode-btn {
-  border: 1px solid var(--wiki-border);
-  border-left: none;
-  background: var(--wiki-card-bg);
-  color: var(--wiki-text-muted);
   font-size: 0.8rem;
   white-space: nowrap;
-  border-radius: 0 var(--wiki-radius-md) var(--wiki-radius-md) 0;
   padding: 0.5rem 0.6rem;
   transition: all var(--wiki-dur-fast) var(--wiki-ease);
 }
@@ -771,7 +764,7 @@ html[data-theme="dark"] .user-dropdown-toggle {
   top: 100%;
   left: 0;
   right: 0;
-  z-index: 1050;
+  z-index: var(--wiki-z-search-suggestions);
   margin: 4px 0 0;
   padding: 4px 0;
   list-style: none;
@@ -846,7 +839,7 @@ html[data-theme="dark"] .user-dropdown-toggle {
   top: 1.5rem !important;
   /* 화면 최상단과 약간의 여백 주기 (JS 덮어쓰기 방지) */
   align-self: flex-start;
-  z-index: 1030;
+  z-index: var(--wiki-z-sidebar);
 }
 
 /* 공통 카드 표면 — bg + 1px 보더 + lg 반경. 컴포넌트별 padding/shadow/margin 은
@@ -998,7 +991,7 @@ html[data-theme="dark"] .user-dropdown-toggle {
   align-self: flex-start;
   max-height: calc(100vh - 3rem);
   overflow-y: auto;
-  z-index: 1030;
+  z-index: var(--wiki-z-sidebar);
   /* 목차가 길어 스크롤바가 생길 때: 스크롤바를 좌측에 배치(direction: rtl)하고
      내용은 .wiki-toc-sidebar-inner 에서 ltr 로 되돌린다. 스크롤바는 얇게(thin). */
   direction: rtl;
@@ -1131,7 +1124,7 @@ html[data-theme="dark"] .user-dropdown-toggle {
   align-self: flex-start;
   max-height: calc(100vh - 3rem);
   overflow-y: auto;
-  z-index: 1030;
+  z-index: var(--wiki-z-sidebar);
   scrollbar-width: thin;
   scrollbar-color: var(--wiki-border) transparent;
 }
@@ -1254,7 +1247,7 @@ html[data-theme="dark"] .user-dropdown-toggle {
   min-width: 0;
   padding: 0.4rem 0.6rem;
   border: 1px solid var(--wiki-border);
-  border-radius: 0.5rem;
+  border-radius: var(--wiki-radius-lg);
   text-decoration: none;
   color: var(--wiki-text);
   transition: border-color var(--wiki-dur-instant) ease, background-color var(--wiki-dur-instant) ease;
@@ -2151,7 +2144,7 @@ html[data-theme="dark"] .btn-close {
     top: 0 !important;
     margin-top: 0 !important;
     padding: 0 var(--wiki-space-2) !important;
-    z-index: 1030;
+    z-index: var(--wiki-z-sidebar);
   }
 
   .sidebar-section {
@@ -2206,7 +2199,7 @@ html[data-theme="dark"] .btn-close {
   background: var(--wiki-scrollbar-thumb-hover);
 }
 
-/* ── Dropdown Animation ── */
+/* ── Dropdown Animation + 다크모드 대응 ── */
 .dropdown-menu {
   display: block;
   /* Force block to allow transition */
@@ -2216,6 +2209,9 @@ html[data-theme="dark"] .btn-close {
   transition: opacity var(--wiki-dur-fast) ease, transform var(--wiki-dur-fast) ease, visibility var(--wiki-dur-fast);
   pointer-events: none;
   /* Prevent clicking when hidden */
+  background-color: var(--wiki-card-bg);
+  border: 1px solid var(--wiki-border);
+  box-shadow: var(--wiki-shadow-md);
 }
 
 .dropdown-menu.show {
@@ -2223,13 +2219,6 @@ html[data-theme="dark"] .btn-close {
   visibility: visible;
   transform: translateY(0);
   pointer-events: auto;
-}
-
-/* ── Dropdown 다크모드 대응 ── */
-.dropdown-menu {
-  background-color: var(--wiki-card-bg);
-  border: 1px solid var(--wiki-border);
-  box-shadow: var(--wiki-shadow-md);
 }
 
 .dropdown-item {
@@ -2562,7 +2551,7 @@ html[data-theme="dark"] .btn-close {
   border: 1px solid var(--wiki-border);
   border-radius: var(--wiki-radius-lg);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
-  z-index: 9999;
+  z-index: var(--wiki-z-notification);
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -2991,7 +2980,7 @@ html[data-theme="dark"] .push-status-on {
   display: flex;
   flex-direction: column;
   gap: var(--wiki-space-2);
-  z-index: 1040;
+  z-index: var(--wiki-z-scroll-fab);
   opacity: 0;
   pointer-events: none;
   transition: opacity var(--wiki-dur-moderate) ease;
@@ -3302,10 +3291,10 @@ html[data-theme="dark"] .push-status-on {
  * iconPicker.ts 가 modal.show() 직후 마지막 .modal-backdrop 에 .icon-picker-backdrop
  * 클래스를 부여하므로 그에 대응하는 backdrop z-index 도 함께 올린다. */
 #iconPickerModal {
-  z-index: 2070;
+  z-index: var(--wiki-z-icon-picker-modal);
 }
 .modal-backdrop.icon-picker-backdrop {
-  z-index: 2069;
+  z-index: var(--wiki-z-icon-picker-backdrop);
 }
 
 
@@ -3659,7 +3648,7 @@ html[data-theme="dark"] .push-status-on {
   padding: 0.65rem 1rem;
   margin: 0.5rem 0 1rem;
   border: 1px solid;
-  border-radius: 10px;
+  border-radius: var(--wiki-radius-xl);
   font-size: 0.95rem;
 }
 .doc-banner--warning { border-color: #ffc107; background: rgba(255, 193, 7, 0.10); }

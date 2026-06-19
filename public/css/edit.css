@@ -634,10 +634,6 @@ html[data-theme="dark"] .editor-settings-panel {
 }
 
 /* ── 위키 문법 에디터 내 하이라이팅 ── */
-.cm-toolbar {
-    background: var(--wiki-bg-alt);
-}
-
 .cm-wiki-link {
     color: var(--cm-wiki-link);
     font-weight: bold;

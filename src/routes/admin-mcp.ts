@@ -544,8 +544,16 @@ export async function dispatchAdminReadTool(c: Context<Env>, user: User, toolNam
         if (!Number.isFinite(revisionId) || revisionId <= 0) {
             return asTextResult('Error: revision_id 는 양의 정수여야 합니다.', true);
         }
-        const page = await db.prepare('SELECT id, slug FROM pages WHERE slug = ?').bind(slug).first<{ id: number; slug: string }>();
+        const page = await db.prepare('SELECT id, slug, is_private, deleted_at FROM pages WHERE slug = ?').bind(slug).first<{ id: number; slug: string; is_private: number; deleted_at: number | null }>();
         if (!page) return asTextResult('Error: 문서를 찾을 수 없습니다.', true);
+        // 페이지 단위 가시성 게이트: 비공개 문서는 wiki:private 권한, 삭제된 문서는
+        // admin:access 권한이 없으면 존재하지 않는 것처럼 가린다. (read_revision 은
+        // 기본 user 역할도 호출 가능하므로 페이지 가시성을 반드시 재검증한다.)
+        const canSeeRevisionPrivate = rbac.can(user.role, 'wiki:private');
+        const canSeeRevisionDeletedPage = rbac.can(user.role, 'admin:access');
+        if ((page.is_private && !canSeeRevisionPrivate) || (page.deleted_at && !canSeeRevisionDeletedPage)) {
+            return asTextResult('Error: 문서를 찾을 수 없습니다.', true);
+        }
 
         const rev = await db.prepare(`
             SELECT r.id, r.page_id, r.page_version, r.content, r.r2_key, r.summary, r.created_at,

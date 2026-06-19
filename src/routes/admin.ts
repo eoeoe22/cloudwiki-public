@@ -637,10 +637,23 @@ adminRoutes.put('/settings', async (c) => {
         edit_acl_min_age_days?: number;
     }>();
 
-    // 기존 값 스냅샷 (변경 detail 알림용).
+    // 기존 값 스냅샷 (변경 detail 알림용 + 전역 설정 변경 감지용).
     const oldRow = await db
         .prepare('SELECT namechange_ratelimit, allow_direct_message, signup_policy, edit_acl_min_age_days FROM settings WHERE id = 1')
         .first<{ namechange_ratelimit: number; allow_direct_message: number; signup_policy: string; edit_acl_min_age_days: number | null }>();
+
+    // 사이트 전역 정책(가입 정책·편집 ACL 가입 일수 임계값)은 위키 전체 동작을 좌우하므로
+    // 일반 admin 이 아닌 super_admin('*') 만 변경할 수 있다. (감사 알림도 super 한정인 것과 일치)
+    // 클라이언트는 항상 전체 설정 본문을 보내므로, 값이 실제로 바뀌는 경우에만 거부해야
+    // 일반 admin 이 다른 설정(namechange_ratelimit 등)을 저장할 수 있다.
+    const rbacSettings = c.get('rbac') as RBAC;
+    if (!rbacSettings.can(currentUser.role, '*')) {
+        const signupChanged = body.signup_policy !== undefined && oldRow != null && body.signup_policy !== oldRow.signup_policy;
+        const minAgeChanged = body.edit_acl_min_age_days !== undefined && Number(body.edit_acl_min_age_days) !== (oldRow?.edit_acl_min_age_days ?? 0);
+        if (signupChanged || minAgeChanged) {
+            return c.json({ error: '사이트 전역 설정은 최고 관리자만 변경할 수 있습니다.' }, 403);
+        }
+    }
 
     const changes: string[] = [];
 

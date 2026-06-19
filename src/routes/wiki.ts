@@ -3156,7 +3156,7 @@ wiki.post('/w/:slug/move', requireAdmin, async (c) => {
  * POST /w/:slug/revert
  * 문서 되돌리기
  */
-wiki.post('/w/:slug/revert', requireAuth, async (c) => {
+wiki.post('/w/:slug/revert', requireAuth, requirePermission('wiki:edit'), async (c) => {
     const slug = c.req.param('slug');
     const { revision_id } = await c.req.json<{ revision_id: number }>();
     const user = c.get('user')!;
@@ -3176,11 +3176,25 @@ wiki.post('/w/:slug/revert', requireAuth, async (c) => {
         return c.json({ error: '문서를 찾을 수 없습니다.' }, 404);
     }
 
-    // admin_only ACL 문서 되돌리기는 관리자만 가능. (구 is_locked 분기 대체)
-    if (!isAdmin) {
-        const aclRevert = parseEditAcl(page.edit_acl);
-        if (aclRevert && aclRevert.flags.includes('admin_only')) {
-            return c.json({ error: '관리자 전용 문서는 관리자만 되돌릴 수 있습니다.' }, 403);
+    // 되돌리기는 새 리비전을 쌓는 본문 변경이므로 일반 편집(PUT)과 동일한 edit_acl 게이트를
+    // 적용한다. admin_only 플래그뿐 아니라 aged/page_editor/any_editor 등 모든 ACL 규칙을
+    // evaluateEditAcl 로 검사한다. (되돌리기는 편집 요청 보류 모드가 없으므로 ACL 미달은 하드 거부.)
+    const aclRevert = parseEditAcl(page.edit_acl);
+    if (aclRevert && aclRevert.flags.length > 0) {
+        const hasAdminOnly = aclRevert.flags.includes('admin_only');
+        if (!isAdmin || hasAdminOnly) {
+            const minAge = await getEditAclMinAgeDays(db);
+            const ev = await evaluateEditAcl(db, aclRevert, user, page.id, minAge, isAdmin);
+            if (!ev.allowed) {
+                const isAdminOnlyFail = hasAdminOnly && !isAdmin;
+                return c.json({
+                    error: isAdminOnlyFail
+                        ? '관리자 전용 문서는 관리자만 되돌릴 수 있습니다.'
+                        : '이 문서를 되돌릴 권한이 부족합니다.',
+                    edit_acl: aclRevert,
+                    min_age_days: minAge,
+                }, 403);
+            }
         }
     }
 

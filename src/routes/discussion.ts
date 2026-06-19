@@ -70,6 +70,19 @@ discussionRoutes.get('/discussions/:pageId', async (c) => {
     const db = c.env.DB;
     const status = c.req.query('status'); // 'open' | 'closed' | undefined (all)
 
+    // 부모 문서 가시성 게이트: 비공개(wiki:private 필요)/삭제 문서의 토론 목록은 가린다.
+    const user = c.get('user');
+    const rbac = c.get('rbac') as RBAC;
+    const page = await db.prepare('SELECT is_private, deleted_at FROM pages WHERE id = ?')
+        .bind(pageId).first<{ is_private: number | null; deleted_at: number | null }>();
+    if (
+        !page ||
+        (page.is_private === 1 && (!user || !rbac.can(user.role, 'wiki:private'))) ||
+        (page.deleted_at && (!user || !rbac.can(user.role, 'admin:access')))
+    ) {
+        return c.json(safeJSON({ discussions: [] }));
+    }
+
     let query = `
         SELECT d.*, u.name as author_name, u.picture as author_picture,
                ${ROLE_CASE_SQL} as author_role,
@@ -187,21 +200,34 @@ discussionRoutes.get('/discussions/thread/:id', async (c) => {
     const db = c.env.DB;
     const user = c.get('user');
 
-    // 토론 정보
+    // 토론 정보 (부모 문서의 비공개/삭제 여부도 함께 조회해 가시성 게이트에 사용)
     const discussion = await db.prepare(`
         SELECT d.*, u.name as author_name, u.picture as author_picture,
                ${ROLE_CASE_SQL} as author_role,
-               u.email as _author_email
+               u.email as _author_email,
+               p.is_private as _page_is_private, p.deleted_at as _page_deleted_at
         FROM discussions d
         LEFT JOIN users u ON d.author_id = u.id
+        LEFT JOIN pages p ON d.page_id = p.id
         WHERE d.id = ?
-    `).bind(discussionId).first();
+    `).bind(discussionId).first<Record<string, any>>();
 
     if (!discussion) {
         return c.json({ error: '토론을 찾을 수 없습니다.' }, 404);
     }
 
     const rbac = c.get('rbac') as RBAC;
+
+    // 부모 문서 가시성 게이트: 비공개 문서(wiki:private 필요)나 삭제된 문서의 토론은
+    // 문서 본문과 동일하게 접근을 막는다. (토론 id 추측을 통한 비공개 문서 내용 유출 방지)
+    if (
+        (discussion._page_is_private === 1 && (!user || !rbac.can(user.role, 'wiki:private'))) ||
+        (discussion._page_deleted_at && (!user || !rbac.can(user.role, 'admin:access')))
+    ) {
+        return c.json({ error: '토론을 찾을 수 없습니다.' }, 404);
+    }
+    delete discussion._page_is_private;
+    delete discussion._page_deleted_at;
 
     // soft delete된 토론은 admin 이상만 볼 수 있음
     if (discussion.deleted_at && (!user || !rbac.can(user.role, 'admin:access'))) {

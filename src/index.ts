@@ -213,7 +213,9 @@ app.get('/api/analytics/page-views/:slug', requireAdmin, async (c) => {
     if (!accountId || !apiToken) return c.json({ total: 0, recent: 0 });
 
     const slug = c.req.param('slug');
-    const safeSlug = slug.replace(/'/g, "\\'");
+    // Analytics Engine 쿼리는 파라미터 바인딩이 없어 문자열 보간을 쓴다. 닫는 따옴표
+    // 탈출을 막기 위해 백슬래시를 먼저 이스케이프한 뒤 작은따옴표를 이스케이프한다.
+    const safeSlug = slug.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 
     try {
         const [totalResult, recentResult] = await Promise.all([
@@ -1239,6 +1241,13 @@ export default {
                 `DELETE FROM oauth_tokens
                  WHERE COALESCE(revoked_at, refresh_expires_at, access_expires_at) < ?`
             ).bind(now - 604800).run()
+        );
+        // 세션 정리: 만료된 세션은 로그아웃 시에만 삭제되므로, 탭을 닫고 떠난 유저의 세션이
+        // 영구히 누적된다. 만료 시각이 지난 세션을 주기적으로 삭제해 테이블 무한 증가를 막는다.
+        ctx.waitUntil(
+            env.DB.prepare(
+                'DELETE FROM sessions WHERE expires_at < ?'
+            ).bind(now).run()
         );
     }
 };

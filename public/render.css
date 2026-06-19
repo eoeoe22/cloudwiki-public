@@ -673,7 +673,7 @@ html[data-theme="dark"] .wiki-content pre[class*="language-"] code[class*="langu
   border-radius: var(--wiki-radius-lg);
   padding: 0.3rem 0.5rem;
   cursor: pointer;
-  transition: all var(--wiki-dur-fast) cubic-bezier(0.4, 0, 0.2, 1);
+  transition: all var(--wiki-dur-fast) var(--wiki-ease);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -843,7 +843,7 @@ html[data-theme="dark"] .wiki-content pre[class*="language-"] code[class*="langu
   color: var(--wiki-primary);
   text-decoration: none;
   font-weight: 500;
-  transition: all var(--wiki-dur-fast) cubic-bezier(0.4, 0, 0.2, 1);
+  transition: all var(--wiki-dur-fast) var(--wiki-ease);
 }
 
 .wiki-content a:hover {
@@ -1048,7 +1048,7 @@ html[data-theme="dark"] .wiki-content pre[class*="language-"] code[class*="langu
   border: 1px solid var(--wiki-glass-border);
   border-radius: var(--wiki-radius-lg);
   box-shadow: var(--wiki-shadow-lg);
-  z-index: 1049;
+  z-index: var(--wiki-z-toc-float);
   opacity: 0;
   pointer-events: none;
   transform: translateY(12px) scale(0.95);
@@ -1509,11 +1509,12 @@ html[data-theme="dark"] .toc-floating-body a.toc-active {
 }
 
 /* ── Reading Mode ── */
-.view-count-toggle {
+.view-count-toggle,
+.reading-mode-toggle {
   margin-left: auto;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--wiki-space-1);
   background: transparent;
   border: 1px solid var(--wiki-border);
   color: var(--wiki-text-muted);
@@ -1525,7 +1526,8 @@ html[data-theme="dark"] .toc-floating-body a.toc-active {
   transition: background var(--wiki-dur-instant) ease, color var(--wiki-dur-instant) ease, border-color var(--wiki-dur-instant) ease;
 }
 
-.view-count-toggle:hover {
+.view-count-toggle:hover,
+.reading-mode-toggle:hover {
   background: var(--wiki-bg);
   color: var(--wiki-primary);
   border-color: var(--wiki-primary);
@@ -1538,28 +1540,6 @@ html[data-theme="dark"] .toc-floating-body a.toc-active {
 
 .view-count-toggle + .reading-mode-toggle {
   margin-left: 8px;
-}
-
-.reading-mode-toggle {
-  margin-left: auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  background: transparent;
-  border: 1px solid var(--wiki-border);
-  color: var(--wiki-text-muted);
-  border-radius: var(--wiki-radius-base);
-  padding: 0.25rem 0.6rem;
-  font-size: 0.8rem;
-  font-weight: 500;
-  cursor: pointer;
-  transition: background var(--wiki-dur-instant) ease, color var(--wiki-dur-instant) ease, border-color var(--wiki-dur-instant) ease;
-}
-
-.reading-mode-toggle:hover {
-  background: var(--wiki-bg);
-  color: var(--wiki-primary);
-  border-color: var(--wiki-primary);
 }
 
 /* 읽기 모드 토글은 뷰포트 폭과 무관하게 문서 열람 페이지에서 항상 표시한다.
@@ -1579,7 +1559,7 @@ body.reading-mode .wiki-sidebar-bottom-relocated {
 }
 
 body.reading-mode .wiki-container {
-  max-width: 960px;
+  max-width: var(--wiki-max-content-width);
   margin: 0 auto;
 }
 

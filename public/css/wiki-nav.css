@@ -58,7 +58,7 @@
   padding: var(--wiki-space-1) 0;
   background-color: var(--wiki-card-bg);
   border: 1px solid var(--wiki-border);
-  border-radius: 0.375rem;
+  border-radius: var(--wiki-radius-base);
   box-shadow: var(--wiki-shadow-md);
   font-size: 0.875rem;
 }
