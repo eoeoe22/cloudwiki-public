@@ -325,11 +325,18 @@ search.get('/search', async (c) => {
     const exactMatchVisibility = (isAdmin ? '' : ' AND deleted_at IS NULL') + privateFilter;
     // 정확 일치는 슬러그 OR 대체 제목 양쪽에서 검사한다. title 만 일치하는 경우에도 "새 문서 만들기"
     // CTA 가 노출되면 사용자가 클릭해도 서버가 409(slug↔title 충돌) 로 거부하므로 일관성 깨짐.
+    // 정확 일치 문서의 slug·title 을 함께 가져와, 클라이언트가 "제목이 일치하는 문서" 카드를
+    // 결과 최상단에 별도로 노출할 수 있게 한다(이동 경로는 항상 slug). 슬러그 일치를 제목
+    // 일치보다 우선하고(같은 쿼리가 한 문서의 slug 와 다른 문서의 title 에 동시 매치하는 경우),
+    // 표시명은 클라이언트가 title 우선·없으면 slug 로 결정한다.
     const exactMatchRow = await db
-        .prepare(`SELECT 1 FROM pages WHERE (slug = ?1 OR title = ?1)${exactMatchVisibility} LIMIT 1`)
+        .prepare(`SELECT slug, title FROM pages WHERE (slug = ?1 OR title = ?1)${exactMatchVisibility} ORDER BY (CASE WHEN slug = ?1 THEN 0 ELSE 1 END) LIMIT 1`)
         .bind(trimmedQuery)
-        .first();
+        .first<{ slug: string; title: string | null }>();
     const exactMatch = !!exactMatchRow;
+    const exactMatchPage = exactMatchRow
+        ? { slug: exactMatchRow.slug, title: exactMatchRow.title }
+        : null;
 
     // 카테고리 검색 모드
     if (mode === 'category') {
@@ -350,7 +357,7 @@ search.get('/search', async (c) => {
         `;
         const results = await db.prepare(sql).bind(trimmedQuery, PAGE_SIZE, offset).all();
         if (shouldTrack) trackSearch(c, trimmedQuery, total, Date.now() - searchStartTime);
-        return c.json({ results: results.results, mode: 'category', total, page, pageSize: PAGE_SIZE, exact_match: exactMatch });
+        return c.json({ results: results.results, mode: 'category', total, page, pageSize: PAGE_SIZE, exact_match: exactMatch, exact_match_page: exactMatchPage });
     }
 
     // 제목(=slug)+내용 검색 모드 (FTS5)
@@ -432,7 +439,7 @@ search.get('/search', async (c) => {
         });
 
         if (shouldTrack) trackSearch(c, trimmedQuery, total, Date.now() - searchStartTime);
-        return c.json({ results: safeResults, total, page, pageSize: PAGE_SIZE, exact_match: exactMatch, applied: { sort, field } });
+        return c.json({ results: safeResults, total, page, pageSize: PAGE_SIZE, exact_match: exactMatch, exact_match_page: exactMatchPage, applied: { sort, field } });
     };
 
     // 트라이그램 미스(<3 codepoint) 또는 제목 전용 검색(field=title)은 FTS 를 건너뛰고 LIKE 로 처리한다.
@@ -544,7 +551,7 @@ search.get('/search', async (c) => {
         });
 
         if (shouldTrack) trackSearch(c, trimmedQuery, total, Date.now() - searchStartTime);
-        return c.json({ results: safeResults, total, page, pageSize: PAGE_SIZE, exact_match: exactMatch, applied: { sort, field } });
+        return c.json({ results: safeResults, total, page, pageSize: PAGE_SIZE, exact_match: exactMatch, exact_match_page: exactMatchPage, applied: { sort, field } });
     } catch (ftsError) {
         // FTS5 쿼리 실패 시 LIKE fallback (필터/정렬/필드 동작은 LIKE 경로가 동일하게 처리)
         console.error('FTS5 search failed, falling back to LIKE:', ftsError);

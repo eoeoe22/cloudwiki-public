@@ -384,19 +384,29 @@ function renderSearchResponse(q, requestedPage, data) {
         history.replaceState({}, '', `?${params.toString()}`);
     }
 
-    // 서버가 페이지네이션과 무관하게 정확 일치 존재 여부를 exact_match 로 알려준다.
-    // (정확 일치 슬러그가 페이지 2 이후로 밀려나도 false-positive CTA 가 뜨지 않게 함)
-    // 추가로 SQLite LOWER() 가 ASCII-only 라 비-ASCII 케이스 변형(예: 'Äpfel' vs 'äpfel')은
-    // 서버 플래그가 놓칠 수 있어, 결과 페이지 내 슬러그를 JS toLowerCase() 로 한 번 더 검사해 보완한다.
-    // "이미지:" 네임스페이스는 일반 문서 슬러그로 저장이 거부되므로 CTA 를 숨긴다.
+    // 정확 일치 문서 해석 — "제목이 일치하는 문서" 카드 대상이자 "새 문서 만들기" CTA 억제 판단의
+    // 단일 소스다.
+    //  1) 서버가 내려준 정확 일치 문서(exact_match_page, slug+title)를 우선 사용한다(서버는
+    //     페이지네이션과 무관하게 정확 일치를 알려주므로, 일치 슬러그가 페이지 2 이후로 밀려나도
+    //     false-positive CTA 가 뜨지 않는다).
+    //  2) SQLite LOWER()/= 가 ASCII-only·case-sensitive 라 비-ASCII 케이스 변형(예: 'Äpfel' vs
+    //     'äpfel')은 서버가 놓칠 수 있으므로, 결과 페이지에서 slug 또는 title 이 쿼리와 (소문자
+    //     비교로) 정확히 일치하는 행을 폴백으로 찾는다. 이동 경로는 위키 링크와 동일하게 항상 slug 다.
     const normalizedQuery = q.trim().toLowerCase();
-    const hasUnicodeExactMatchInResults = Array.isArray(data.results)
-        && normalizedQuery !== ''
-        && data.results.some(result =>
-            typeof result?.slug === 'string'
-            && result.slug.trim().toLowerCase() === normalizedQuery
+    let exactMatchPage = null;
+    if (data.exact_match_page && typeof data.exact_match_page.slug === 'string') {
+        exactMatchPage = data.exact_match_page;
+    } else if (Array.isArray(data.results) && normalizedQuery !== '') {
+        const found = data.results.find(r =>
+            (typeof r?.slug === 'string' && r.slug.trim().toLowerCase() === normalizedQuery)
+            || (typeof r?.title === 'string' && r.title.trim().toLowerCase() === normalizedQuery)
         );
-    const hasExactMatch = !!data.exact_match || hasUnicodeExactMatchInResults;
+        if (found) exactMatchPage = { slug: found.slug, title: found.title ?? null };
+    }
+    // CTA 억제는 카드 노출과 동일한 기준(slug/title 폴백 포함)에서 파생해 상호 배타를 보장한다.
+    // (data.exact_match 도 함께 OR — exact_match_page 가 없는 구버전/캐시 응답 호환)
+    const hasExactMatch = !!data.exact_match || !!exactMatchPage;
+
     const queryTrimmed = q.trim();
     const isImageNamespaceQuery = queryTrimmed.startsWith('이미지:');
     // "map:" 은 하위 문서 트리 + TOC 를 합성해 보여주는 예약 가상 뷰라 실제 문서로 생성할 수 없다.
@@ -444,10 +454,40 @@ function renderSearchResponse(q, requestedPage, data) {
         }
     }
 
+    // "제목이 일치하는 문서" 카드: 정확 일치 문서가 있으면 결과 최상단에 별도 카드로 노출한다.
+    // 1페이지에서만 노출하고(페이지 이동 시 중복 방지), 이미지/카테고리(가상·mode) 검색은
+    // 일반 문서가 아니므로 제외한다. 정확 일치가 있을 때 "새 문서 만들기" CTA 는 뜨지 않으므로
+    // 이 카드가 그 자리를 대신한다(상호 배타적). 표시명은 title 우선·없으면 slug.
+    let exactCardHtml = '';
+    const isPlainDocSearch = !data.image_mode && !data.category_mode && data.mode !== 'category';
+    if (exactMatchPage && currentPage === 1 && isPlainDocSearch) {
+        const displayName = exactMatchPage.title || exactMatchPage.slug;
+        const slugSubLabel = exactMatchPage.title
+            ? `<div class="small text-muted mt-1"><code>${window.escapeHtml(exactMatchPage.slug)}</code></div>`
+            : '';
+        exactCardHtml = `
+        <div class="exact-match-card card border-primary mb-4">
+            <div class="card-body py-3">
+                <div class="exact-match-label small fw-semibold text-primary mb-1">
+                    <i class="mdi mdi-magnify"></i> 제목이 일치하는 문서
+                </div>
+                <h4 class="mb-0 fs-5">
+                    <a class="text-decoration-none text-primary fw-semibold" href="/w/${encodeURIComponent(exactMatchPage.slug)}">${window.escapeHtml(displayName)}</a>
+                </h4>
+                ${slugSubLabel}
+            </div>
+        </div>`;
+    }
+
     if (!data.results || data.results.length === 0) {
-        setNoResultsState('검색 결과가 없습니다', '다른 키워드로 검색해 보세요.');
-        noResultsEl.classList.remove('d-none');
-        listEl.innerHTML = ctaHtml;
+        listEl.innerHTML = exactCardHtml + ctaHtml;
+        // 정확 일치 카드가 있으면 "검색 결과가 없습니다" 빈 상태와 모순되므로 빈 상태를 숨긴다.
+        if (exactCardHtml) {
+            noResultsEl.classList.add('d-none');
+        } else {
+            setNoResultsState('검색 결과가 없습니다', '다른 키워드로 검색해 보세요.');
+            noResultsEl.classList.remove('d-none');
+        }
         document.getElementById('searchTitle').innerHTML =
             `<i class="mdi mdi-magnify"></i> 검색 결과`;
         return;
@@ -562,7 +602,7 @@ function renderSearchResponse(q, requestedPage, data) {
     }
 
     const paginationHtml = renderPagination(currentPage, totalPages);
-    listEl.innerHTML = ctaHtml + itemsHtml + paginationHtml;
+    listEl.innerHTML = exactCardHtml + ctaHtml + itemsHtml + paginationHtml;
 
     document.getElementById('searchTitle').innerHTML =
         `<i class="mdi mdi-magnify"></i> 검색 결과 (${total}건)`;
