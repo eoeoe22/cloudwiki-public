@@ -43,6 +43,7 @@ import {
     rewriteContentForRename,
 } from './wiki';
 import { computePageMetricsTracked } from '../utils/pageMetrics';
+import { withFtsRecovery } from '../utils/ftsRecovery';
 import { SLUG_FORBIDDEN_CHARS, TITLE_FORBIDDEN_CHARS, TITLE_MAX_LENGTH, normalizeTitleInput } from '../utils/validation';
 import {
     invalidatePageCache,
@@ -687,12 +688,15 @@ export async function applyExistingPageUpdate(
     // 충돌 응답으로 변환한다. wiki.ts 의 PUT /w/:slug 도 동일하게 version-CAS 를 사용.
     // UPDATE 자체가 throw 하는 경우(예: title 의 idx_pages_title_unique race) 도 동일하게
     // 막 만든 리비전 / R2 객체를 청소한 뒤 에러를 재던져 호출자가 적절한 응답으로 매핑하게 한다.
+    // FTS5 외부 콘텐츠 인덱스(pages_fts) 가 어긋나 있으면 이 UPDATE 의 pages_au 트리거가
+    // 섀도 b-tree 를 읽다 malformed 로 실패한다 — 손상을 감지하면 인덱스를 재구축하고 1회 재시도.
+    // (단일 UPDATE+트리거는 원자적이라 첫 시도 실패는 완전 롤백되므로 재시도가 안전하다.)
     let updResult: D1Result;
     try {
-        updResult = await db
+        updResult = await withFtsRecovery(db, () => db
             .prepare(`UPDATE pages SET ${setClauses.join(', ')} WHERE id = ? AND version = ?`)
             .bind(...bindings)
-            .run();
+            .run());
     } catch (e) {
         await db.prepare('DELETE FROM revisions WHERE id = ?').bind(revisionId).run().catch(() => {});
         await c.env.MEDIA.delete(r2Key).catch(() => {});
@@ -762,12 +766,14 @@ export async function applyNewPageInsert(
     const metrics = computePageMetricsTracked(content, isR2Only);
     const contentToStore = isR2Only ? '' : content;
 
+    // 신규 INSERT 도 pages_ai 트리거로 pages_fts 에 색인하므로, 인덱스가 손상돼 있으면
+    // malformed 로 실패할 수 있다 — 감지 시 재구축 후 1회 재시도(단일 INSERT 는 원자적).
     let pageResult;
     try {
-        pageResult = await db
+        pageResult = await withFtsRecovery(db, () => db
             .prepare('INSERT INTO pages (slug, title, content, category, is_private, edit_acl, redirect_to, rows, characters) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
             .bind(slug, opts.title ?? null, contentToStore, opts.category, opts.isPrivate ?? 0, opts.editAcl ?? null, opts.redirectTo, metrics.rows, metrics.characters)
-            .run();
+            .run());
     } catch (e: any) {
         // UNIQUE race: precheck ~ INSERT 사이에 다른 요청이 같은 slug/title 을 점유.
         // 호출자(commit_edit / submission approve) 가 409 형태로 매핑하도록 code 태깅.

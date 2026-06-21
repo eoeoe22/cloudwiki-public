@@ -22,6 +22,7 @@ import { extractPageLinks } from '../shared/links';
 import { cleanupUnauthorizedSubscriptions } from '../utils/pageAccessCleanup';
 import { collectRevisionR2Keys, buildHardDeleteStatements } from '../utils/pageDeletion';
 import { commitPageMutation } from '../utils/pagePipeline/commit';
+import { withFtsRecovery } from '../utils/ftsRecovery';
 import { mergeEditSummary, capUserSummary } from '../utils/editSummary';
 import { ensurePendingEditsSummaryMigration } from '../utils/pendingEditsSummaryMigration';
 
@@ -3287,9 +3288,11 @@ wiki.post('/w/:slug/revert', requireAuth, requirePermission('wiki:edit'), async 
     const isR2OnlyRevert = isR2OnlyNamespace(slug, enabledExtensionsRevert);
     const contentToStore = isR2OnlyRevert ? '' : revertContent;
     const revertMetrics = computePageMetricsTracked(revertContent, isR2OnlyRevert);
-    await db.prepare('UPDATE pages SET content = ?, last_revision_id = ?, version = ?, rows = ?, characters = ?, updated_at = unixepoch() WHERE id = ?')
+    // 되돌리기도 pages_au 트리거로 pages_fts 를 갱신하므로 인덱스 손상 시 malformed 로 실패할 수 있다.
+    // 손상을 감지하면 인덱스를 재구축하고 1회 재시도(단일 UPDATE+트리거는 원자적이라 안전).
+    await withFtsRecovery(db, () => db.prepare('UPDATE pages SET content = ?, last_revision_id = ?, version = ?, rows = ?, characters = ?, updated_at = unixepoch() WHERE id = ?')
         .bind(contentToStore, newRevId, newVersion, revertMetrics.rows, revertMetrics.characters, page.id)
-        .run();
+        .run());
 
     // page_links 재구성: 되돌린 본문 기준으로 역링크 추적을 동기화한다.
     // (카테고리는 별도 테이블이며 리비전 본문에 포함되지 않으므로 건드리지 않는다.)

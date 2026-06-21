@@ -763,12 +763,22 @@ document.addEventListener('DOMContentLoaded', async () => {
                     } else {
                         html = '편집 권한이 부족합니다.';
                     }
+                    // 초기 로딩 오버레이(#initLoadingOverlay, z-index:9999)가 떠 있는 상태로
+                    // 경고를 띄우면, 오버레이가 SweetAlert 위를 덮어 확인 버튼을 누를 수 없고
+                    // await 가 resolve 되지 않아 사용자가 에디터에서 빠져나오지 못한다.
+                    // 알림을 띄우기 전에 오버레이를 먼저 제거해 상호작용을 보장한다.
+                    const permOverlay = document.getElementById('initLoadingOverlay');
+                    if (permOverlay) {
+                        permOverlay.classList.add('hidden');
+                        permOverlay.style.display = 'none';
+                    }
                     await window.Swal.fire({
                         icon: 'warning',
                         title,
                         html,
                         confirmButtonText: '확인',
                     });
+                    // 알림 확인 후, 권한 없는 사용자를 문서 단순 열람 페이지로 자동 리디렉션한다.
                     window.location.href = slug ? `/w/${encodeURIComponent(slug)}` : '/';
                     return;
                 }

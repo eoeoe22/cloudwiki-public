@@ -1553,11 +1553,14 @@ import { createTocController } from '../article/toc';
 
       // "아직 작성되지 않은 문서입니다" 안내 배너 (MCP/토론 알림과 동일한 카드형, 만들기 액션).
       // hideAllPages 가 #missingDocBanner 를 숨기므로 그 이후에 렌더한다.
+      // 비로그인 사용자는 문서를 생성할 수 없으므로(편집 로그인 필수) "만들기" 액션을 숨긴다.
       renderDocBanner('missingDocBanner', {
         variant: 'info',
         icon: 'bi bi-info-circle',
         message: '아직 작성되지 않은 문서입니다.',
-        action: { label: '만들기', iconClass: 'bi bi-pencil-square', href: `/edit?slug=${encodeURIComponent(slug)}` },
+        action: window.currentUser
+          ? { label: '만들기', iconClass: 'bi bi-pencil-square', href: `/edit?slug=${encodeURIComponent(slug)}` }
+          : undefined,
       });
 
       // 검토 권한자: 이 제목으로 제출된 편집 요청(create/충돌) 검토 동선 노출(서버 count>0 게이팅)
