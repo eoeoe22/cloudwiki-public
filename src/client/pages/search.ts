@@ -360,12 +360,132 @@ async function performSearch(q, mode, page) {
         if (err.name === 'AbortError') return;
         loadingEl.classList.add('d-none');
         listEl.innerHTML = '';
+        setTopNotices('');
         setNoResultsState('검색 요청에 실패했습니다', err instanceof Error && err.message
             ? err.message
             : '잠시 후 다시 시도해 주세요.', 'bi bi-exclamation-triangle');
         noResultsEl.classList.remove('d-none');
         console.error('검색 실패', err);
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 검색 결과 상단 안내 카드 (정렬 옵션 위, #searchNotices 에 렌더)
+//
+// 세 종류 — ① 제목 정확 일치 문서 ② map 가상 뷰 이동 ③ 새 문서 만들기 CTA — 를
+// 같은 헬퍼(buildSearchNoticeCard)로 통합해 동일한 래퍼(.search-notice-card)로 만든다.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// 안내 카드 한 장을 만든다.
+//  - label: 좌상단 작은 라벨 마크업(아이콘 포함, 신뢰 리터럴). 없으면 생략.
+//  - bodyHtml: 본문 마크업(신뢰 리터럴 + 이스케이프된 사용자 입력).
+//  - actionsHtml: 우측 버튼 묶음 마크업. 없으면 생략.
+function buildSearchNoticeCard({ label, bodyHtml, actionsHtml }) {
+    const labelHtml = label
+        ? `<div class="search-notice-label small fw-semibold text-primary mb-1">${label}</div>`
+        : '';
+    const actions = actionsHtml
+        ? `<div class="d-flex gap-2 flex-shrink-0">${actionsHtml}</div>`
+        : '';
+    return `
+        <div class="search-notice-card card border-primary mb-3">
+            <div class="card-body py-3 d-flex flex-column flex-lg-row justify-content-between align-items-stretch align-items-lg-center gap-2">
+                <div>
+                    ${labelHtml}
+                    ${bodyHtml}
+                </div>
+                ${actions}
+            </div>
+        </div>`;
+}
+
+// 현재 검색 응답으로 상단 안내 카드 HTML 과 "정확 일치 카드 노출 여부"를 계산한다.
+// 1페이지에서만 노출하고(페이지 이동 시 중복 방지), 정확 일치 카드와 "새 문서 만들기"
+// CTA 는 상호 배타다. 반환한 hasExactCard 는 "검색 결과 없음" 빈 상태 억제 판단에 쓰인다.
+function computeTopNotices(q, currentPage, data) {
+    const queryTrimmed = q.trim();
+    if (currentPage !== 1 || queryTrimmed === '') return { html: '', hasExactCard: false };
+
+    // 정확 일치 문서 해석 — "제목이 일치하는 문서" 카드 대상이자 "새 문서 만들기" CTA 억제
+    // 판단의 단일 소스다.
+    //  1) 서버가 내려준 정확 일치 문서(exact_match_page, slug+title)를 우선 사용한다(서버는
+    //     페이지네이션과 무관하게 정확 일치를 알려주므로, 일치 슬러그가 페이지 2 이후로 밀려나도
+    //     false-positive CTA 가 뜨지 않는다).
+    //  2) SQLite LOWER()/= 가 ASCII-only·case-sensitive 라 비-ASCII 케이스 변형(예: 'Äpfel' vs
+    //     'äpfel')은 서버가 놓칠 수 있으므로, 결과 페이지에서 slug 또는 title 이 쿼리와 (소문자
+    //     비교로) 정확히 일치하는 행을 폴백으로 찾는다. 이동 경로는 위키 링크와 동일하게 항상 slug 다.
+    const normalizedQuery = queryTrimmed.toLowerCase();
+    let exactMatchPage = null;
+    if (data.exact_match_page && typeof data.exact_match_page.slug === 'string') {
+        exactMatchPage = data.exact_match_page;
+    } else if (Array.isArray(data.results)) {
+        const found = data.results.find(r =>
+            (typeof r?.slug === 'string' && r.slug.trim().toLowerCase() === normalizedQuery)
+            || (typeof r?.title === 'string' && r.title.trim().toLowerCase() === normalizedQuery)
+        );
+        if (found) exactMatchPage = { slug: found.slug, title: found.title ?? null };
+    }
+    // CTA 억제는 카드 노출과 동일한 기준(slug/title 폴백 포함)에서 파생해 상호 배타를 보장한다.
+    // (data.exact_match 도 함께 OR — exact_match_page 가 없는 구버전/캐시 응답 호환)
+    const hasExactMatch = !!data.exact_match || !!exactMatchPage;
+
+    const isImageNamespaceQuery = queryTrimmed.startsWith('이미지:');
+    // "map:" 은 하위 문서 트리 + TOC 를 합성해 보여주는 예약 가상 뷰라 실제 문서로 생성할 수 없다.
+    // 따라서 "새 문서 만들기" CTA 대신 해당 가상 뷰(/w/map:<base>)로 이동하는 버튼만 노출한다.
+    const isMapNamespaceQuery = queryTrimmed.startsWith('map:');
+    // 이동 대상은 위키 링크 [[...]] 와 동일하게 slug 기준의 문서 조회 경로(/w/<slug>)다.
+    const gotoUrl = `/w/${encodeURIComponent(queryTrimmed)}`;
+    // category_mode 응답일 때는 카테고리 가상 문서가 결과에 노출되므로 "새 문서 만들기" CTA 를 숨긴다.
+    const canCreate = window.currentUser && window.currentUser.role !== 'banned'
+        && !data.image_mode && !data.category_mode && !isImageNamespaceQuery;
+    const isPlainDocSearch = !data.image_mode && !data.category_mode && data.mode !== 'category';
+
+    let html = '';
+    let hasExactCard = false;
+
+    // ① 제목이 일치하는 문서 카드 — 정확 일치 문서가 있으면 노출(이미지/카테고리 검색 제외).
+    // 표시명은 title 우선·없으면 slug.
+    if (exactMatchPage && isPlainDocSearch) {
+        const displayName = exactMatchPage.title || exactMatchPage.slug;
+        const slugSubLabel = exactMatchPage.title
+            ? `<div class="small text-muted mt-1"><code>${window.escapeHtml(exactMatchPage.slug)}</code></div>`
+            : '';
+        html += buildSearchNoticeCard({
+            label: '<i class="mdi mdi-magnify"></i> 제목이 일치하는 문서',
+            bodyHtml: `
+                <h4 class="mb-0 fs-5">
+                    <a class="text-decoration-none text-primary fw-semibold" href="/w/${encodeURIComponent(exactMatchPage.slug)}">${window.escapeHtml(displayName)}</a>
+                </h4>
+                ${slugSubLabel}`,
+        });
+        hasExactCard = true;
+    }
+
+    if (isMapNamespaceQuery) {
+        // ② map 가상 뷰는 생성 불가 — 이동 버튼만 노출(존재 여부와 무관, 일반 검색 폴스루 시에도 동일).
+        html += buildSearchNoticeCard({
+            bodyHtml: `<span><strong>"${window.escapeHtml(queryTrimmed)}"</strong> 문서 구조 보기로 이동할 수 있습니다.</span>`,
+            actionsHtml: `<a class="btn btn-wiki" href="${gotoUrl}"><i class="bi bi-diagram-3"></i> 해당 문서로 이동</a>`,
+        });
+    } else if (!hasExactMatch && !data.image_mode && !data.category_mode && !isImageNamespaceQuery) {
+        // ③ 정확 일치 문서가 없을 때: 위키 링크 [[...]] 로 바로 이동 + (권한 있으면) 새 문서 만들기 동시 노출.
+        const gotoBtn = `<a class="btn btn-wiki-outline" href="${gotoUrl}"><i class="bi bi-box-arrow-up-right"></i> ${window.escapeHtml(queryTrimmed)}로 이동</a>`;
+        const createBtn = canCreate
+            ? `<button class="btn btn-wiki" onclick="window.location.href='/edit?slug=${encodeURIComponent(queryTrimmed).replace(/'/g, "%27")}'"><i class="bi bi-pencil-square"></i> 새 문서 만들기</button>`
+            : '';
+        html += buildSearchNoticeCard({
+            bodyHtml: `<span><strong>"${window.escapeHtml(queryTrimmed)}"</strong> 문서가 아직 존재하지 않습니다.</span>`,
+            actionsHtml: `${gotoBtn}${createBtn}`,
+        });
+    }
+
+    return { html, hasExactCard };
+}
+
+// 상단 안내 카드 컨테이너(#searchNotices)를 갱신한다.
+function setTopNotices(html) {
+    const el = document.getElementById('searchNotices');
+    if (el) el.innerHTML = html || '';
 }
 
 function renderSearchResponse(q, requestedPage, data) {
@@ -384,105 +504,15 @@ function renderSearchResponse(q, requestedPage, data) {
         history.replaceState({}, '', `?${params.toString()}`);
     }
 
-    // 정확 일치 문서 해석 — "제목이 일치하는 문서" 카드 대상이자 "새 문서 만들기" CTA 억제 판단의
-    // 단일 소스다.
-    //  1) 서버가 내려준 정확 일치 문서(exact_match_page, slug+title)를 우선 사용한다(서버는
-    //     페이지네이션과 무관하게 정확 일치를 알려주므로, 일치 슬러그가 페이지 2 이후로 밀려나도
-    //     false-positive CTA 가 뜨지 않는다).
-    //  2) SQLite LOWER()/= 가 ASCII-only·case-sensitive 라 비-ASCII 케이스 변형(예: 'Äpfel' vs
-    //     'äpfel')은 서버가 놓칠 수 있으므로, 결과 페이지에서 slug 또는 title 이 쿼리와 (소문자
-    //     비교로) 정확히 일치하는 행을 폴백으로 찾는다. 이동 경로는 위키 링크와 동일하게 항상 slug 다.
-    const normalizedQuery = q.trim().toLowerCase();
-    let exactMatchPage = null;
-    if (data.exact_match_page && typeof data.exact_match_page.slug === 'string') {
-        exactMatchPage = data.exact_match_page;
-    } else if (Array.isArray(data.results) && normalizedQuery !== '') {
-        const found = data.results.find(r =>
-            (typeof r?.slug === 'string' && r.slug.trim().toLowerCase() === normalizedQuery)
-            || (typeof r?.title === 'string' && r.title.trim().toLowerCase() === normalizedQuery)
-        );
-        if (found) exactMatchPage = { slug: found.slug, title: found.title ?? null };
-    }
-    // CTA 억제는 카드 노출과 동일한 기준(slug/title 폴백 포함)에서 파생해 상호 배타를 보장한다.
-    // (data.exact_match 도 함께 OR — exact_match_page 가 없는 구버전/캐시 응답 호환)
-    const hasExactMatch = !!data.exact_match || !!exactMatchPage;
-
-    const queryTrimmed = q.trim();
-    const isImageNamespaceQuery = queryTrimmed.startsWith('이미지:');
-    // "map:" 은 하위 문서 트리 + TOC 를 합성해 보여주는 예약 가상 뷰라 실제 문서로 생성할 수 없다.
-    // 따라서 "새 문서 만들기" CTA 대신 해당 가상 뷰(/w/map:<base>)로 이동하는 버튼만 노출한다.
-    // (가상 뷰는 하위 문서가 있으면 트리가 그려지므로 문서 존재 여부와 무관하게 이동 버튼을 제공)
-    const isMapNamespaceQuery = queryTrimmed.startsWith('map:');
-    // 이동 대상은 위키 링크 [[...]] 와 동일하게 slug 기준의 문서 조회 경로(/w/<slug>)다.
-    const gotoUrl = `/w/${encodeURIComponent(queryTrimmed)}`;
-    // category_mode 응답일 때는 카테고리 가상 문서가 결과에 노출되므로 "새 문서 만들기" CTA 를 숨긴다.
-    // "카테고리:" prefix 인데 page_categories 매치가 없어 일반 검색으로 폴스루된 경우에는
-    // 사용자가 카테고리 설명 문서를 직접 생성하도록 CTA 를 허용한다.
-    const canCreate = window.currentUser && window.currentUser.role !== 'banned'
-        && !data.image_mode && !data.category_mode && !isImageNamespaceQuery;
-
-    let ctaHtml = '';
-    if (queryTrimmed !== '' && currentPage === 1) {
-        if (isMapNamespaceQuery) {
-            // map: 가상 뷰는 생성 불가 — 이동 버튼만 노출(존재 여부와 무관, 일반 검색 폴스루 시에도 동일).
-            ctaHtml = `
-        <div class="mb-4">
-            <div class="alert alert-light border d-flex justify-content-between align-items-center gap-2">
-                <span><strong>"${window.escapeHtml(queryTrimmed)}"</strong> 문서 구조 보기로 이동할 수 있습니다.</span>
-                <a class="btn btn-wiki" href="${gotoUrl}">
-                    <i class="bi bi-diagram-3"></i> 해당 문서로 이동
-                </a>
-            </div>
-        </div>`;
-        } else if (!hasExactMatch && !data.image_mode && !data.category_mode && !isImageNamespaceQuery) {
-            // 정확 일치 문서가 없을 때: 위키 링크 [[...]] 로 바로 이동 + (권한 있으면) 새 문서 만들기 동시 노출.
-            const gotoBtn = `<a class="btn btn-wiki-outline" href="${gotoUrl}">
-                    <i class="bi bi-box-arrow-up-right"></i> ${window.escapeHtml(queryTrimmed)}로 이동
-                </a>`;
-            const createBtn = canCreate
-                ? `<button class="btn btn-wiki" onclick="window.location.href='/edit?slug=${encodeURIComponent(queryTrimmed).replace(/'/g, "%27")}'">
-                    <i class="bi bi-pencil-square"></i> 새 문서 만들기
-                </button>`
-                : '';
-            ctaHtml = `
-        <div class="mb-4">
-            <div class="alert alert-light border d-flex flex-column flex-lg-row justify-content-between align-items-stretch align-items-lg-center gap-2">
-                <span><strong>"${window.escapeHtml(queryTrimmed)}"</strong> 문서가 아직 존재하지 않습니다.</span>
-                <div class="d-flex gap-2 flex-shrink-0">${gotoBtn}${createBtn}</div>
-            </div>
-        </div>`;
-        }
-    }
-
-    // "제목이 일치하는 문서" 카드: 정확 일치 문서가 있으면 결과 최상단에 별도 카드로 노출한다.
-    // 1페이지에서만 노출하고(페이지 이동 시 중복 방지), 이미지/카테고리(가상·mode) 검색은
-    // 일반 문서가 아니므로 제외한다. 정확 일치가 있을 때 "새 문서 만들기" CTA 는 뜨지 않으므로
-    // 이 카드가 그 자리를 대신한다(상호 배타적). 표시명은 title 우선·없으면 slug.
-    let exactCardHtml = '';
-    const isPlainDocSearch = !data.image_mode && !data.category_mode && data.mode !== 'category';
-    if (exactMatchPage && currentPage === 1 && isPlainDocSearch) {
-        const displayName = exactMatchPage.title || exactMatchPage.slug;
-        const slugSubLabel = exactMatchPage.title
-            ? `<div class="small text-muted mt-1"><code>${window.escapeHtml(exactMatchPage.slug)}</code></div>`
-            : '';
-        exactCardHtml = `
-        <div class="exact-match-card card border-primary mb-4">
-            <div class="card-body py-3">
-                <div class="exact-match-label small fw-semibold text-primary mb-1">
-                    <i class="mdi mdi-magnify"></i> 제목이 일치하는 문서
-                </div>
-                <h4 class="mb-0 fs-5">
-                    <a class="text-decoration-none text-primary fw-semibold" href="/w/${encodeURIComponent(exactMatchPage.slug)}">${window.escapeHtml(displayName)}</a>
-                </h4>
-                ${slugSubLabel}
-            </div>
-        </div>`;
-    }
+    // 상단 안내 카드(정렬 옵션 위)를 계산해 #searchNotices 에 렌더한다.
+    // 세 종류(정확 일치 문서 / map 가상 뷰 이동 / 새 문서 만들기 CTA)는 한 헬퍼로 통합돼 있다.
+    const { html: noticesHtml, hasExactCard } = computeTopNotices(q, currentPage, data);
+    setTopNotices(noticesHtml);
 
     if (!data.results || data.results.length === 0) {
-        listEl.innerHTML = exactCardHtml + ctaHtml;
+        listEl.innerHTML = '';
         // 정확 일치 카드가 있으면 "검색 결과가 없습니다" 빈 상태와 모순되므로 빈 상태를 숨긴다.
-        if (exactCardHtml) {
+        if (hasExactCard) {
             noResultsEl.classList.add('d-none');
         } else {
             setNoResultsState('검색 결과가 없습니다', '다른 키워드로 검색해 보세요.');
@@ -602,7 +632,7 @@ function renderSearchResponse(q, requestedPage, data) {
     }
 
     const paginationHtml = renderPagination(currentPage, totalPages);
-    listEl.innerHTML = exactCardHtml + ctaHtml + itemsHtml + paginationHtml;
+    listEl.innerHTML = itemsHtml + paginationHtml;
 
     document.getElementById('searchTitle').innerHTML =
         `<i class="mdi mdi-magnify"></i> 검색 결과 (${total}건)`;

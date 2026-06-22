@@ -45,6 +45,10 @@ import Footer from '../components/Footer.astro';
                     </button>
                 </div>
 
+                <!-- 검색 상단 안내 카드 (정렬 옵션 위) — search.ts 가 채운다:
+                     ① 제목 정확 일치 문서 ② map 가상 뷰 이동 ③ 새 문서 만들기 CTA -->
+                <div id="searchNotices"></div>
+
                 <!-- 필터 바 (일반 문서 검색 모드 전용 — search.ts 가 모드에 따라 표시/숨김) -->
                 <div class="search-filters card card-body mb-4 d-none" id="searchFilters">
                     <div class="row g-2 align-items-end">
