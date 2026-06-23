@@ -68,6 +68,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_pages_title_unique ON pages(title) WHERE t
 -- deleted_at: 리비전 단위 소프트 삭제 시각. NULL = 정상.
 -- purged_at:  하드 삭제 시각. NULL = R2 본문 살아있음. 값이 있으면 r2_key/content 가 비워져 있다.
 --             감사 가능성 유지를 위해 row 자체와 summary/author_id/page_version/created_at 은 보존한다.
+-- is_virtual: 가상 리비전 플래그. 1 이면 본문이 바뀌지 않은 비-본문 변경(편집 ACL 변경,
+--             비공개 플래그 변경, 주소(slug) 이동 등)을 편집 요약으로만 기록한 행이다.
+--             가상 리비전은 R2 스냅샷이 없고(r2_key=NULL, content=''), page_version 도 NULL 이며,
+--             삭제(소프트/하드)·본문 열람·비교(diff)·되돌리기가 모두 불가능하다.
+--             pages.version / pages.last_revision_id 는 건드리지 않는다.
 CREATE TABLE IF NOT EXISTS revisions (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
   page_id      INTEGER NOT NULL,
@@ -79,6 +84,7 @@ CREATE TABLE IF NOT EXISTS revisions (
   created_at   INTEGER DEFAULT (unixepoch()),
   deleted_at   INTEGER,
   purged_at    INTEGER,
+  is_virtual   INTEGER NOT NULL DEFAULT 0,
   FOREIGN KEY (page_id) REFERENCES pages(id),
   FOREIGN KEY (author_id) REFERENCES users(id)
 );

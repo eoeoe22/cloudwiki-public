@@ -2,6 +2,8 @@
  * R2 Hybrid Storage Utils
  */
 
+import { ensureRevisionsVirtualMigration } from './revisionsVirtualMigration';
+
 /**
  * 리비전 본문을 R2에 업로드하고 r2_key를 반환.
  * Key 형식: revisions/{pageId}/{pageVersion}-{token}.md
@@ -25,6 +27,41 @@ export async function uploadRevisionToR2(
         httpMetadata: { contentType: 'text/markdown; charset=utf-8' },
     });
     return r2Key;
+}
+
+/**
+ * 가상 리비전(virtual revision)을 편집 이력에 기록한다.
+ *
+ * 본문이 바뀌지 않은 비-본문 변경(편집 ACL 변경, 비공개 플래그 변경, 주소(slug) 이동 등)을
+ * 편집 요약 메시지로만 남기는 용도이다. R2 스냅샷을 만들지 않으며(r2_key=NULL, content=''),
+ * page_version 도 NULL 로 두고 pages.version / pages.last_revision_id 는 건드리지 않는다.
+ * is_virtual=1 로 표시되어 열람/비교/되돌리기/삭제 경로에서 모두 차단된다.
+ *
+ * 호출부는 try/catch 로 감싸 기록 실패가 원래 변경(ACL/이동)을 깨지 않게 한다.
+ */
+export function buildVirtualRevisionStatement(
+    db: D1Database,
+    pageId: number,
+    summary: string,
+    authorId: number | null
+): D1PreparedStatement {
+    return db
+        .prepare(
+            `INSERT INTO revisions (page_id, page_version, content, r2_key, summary, author_id, is_virtual)
+             VALUES (?, NULL, '', NULL, ?, ?, 1)`
+        )
+        .bind(pageId, summary, authorId);
+}
+
+export async function insertVirtualRevision(
+    db: D1Database,
+    pageId: number,
+    summary: string,
+    authorId: number | null
+): Promise<void> {
+    // 레거시 DB(is_virtual 컬럼 부재) 대비 idempotent 마이그레이션 보장 후 INSERT.
+    await ensureRevisionsVirtualMigration(db);
+    await buildVirtualRevisionStatement(db, pageId, summary, authorId).run();
 }
 
 /**

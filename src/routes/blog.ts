@@ -329,11 +329,19 @@ blog.put('/blog/:id', requireAdmin, async (c) => {
 
 /**
  * DELETE /api/blog/:id
- * 소프트 삭제 (관리자 전용)
+ * - admin/super_admin: 소프트 삭제 (기본)
+ * - super_admin: ?hard=true 시 영구 삭제 (포스트 + 이를 참조하는 모든 데이터 제거)
+ *
+ * 영구 삭제는 wiki.ts 의 문서 하드 삭제와 동일한 권한 정책(`*`)을 따른다.
+ * blog_posts 를 FK 로 참조하는 자식 테이블은 없지만, 포스트를 평문 id 로 참조하는
+ * 데이터(page_links 의 blog=1 역링크, KV 공지 announcements)가 stale 로 남지 않도록
+ * 포스트 행과 함께 제거한다. (소프트 삭제와 달리 row 자체가 사라지므로 복구 불가)
  */
 blog.delete('/blog/:id', requireAdmin, async (c) => {
     const db = c.env.DB;
     const user = c.get('user')!;
+    const rbac = c.get('rbac') as RBAC;
+    const hard = c.req.query('hard') === 'true';
 
     const idParam = c.req.param('id');
     if (!/^\d+$/.test(idParam)) return c.json({ error: 'Not Found' }, 404);
@@ -344,6 +352,38 @@ blog.delete('/blog/:id', requireAdmin, async (c) => {
         .bind(id)
         .first<{ id: number; title: string; deleted_at: number | null }>();
     if (!existing) return c.json({ error: 'Not Found' }, 404);
+
+    if (hard) {
+        if (!rbac.can(user.role, '*')) {
+            return c.json({ error: '영구 삭제는 최고 관리자만 가능합니다.' }, 403);
+        }
+
+        // 포스트를 참조하는 모든 데이터를 함께 제거 (orphan 방지).
+        //  - page_links(blog=1): 본문 이미지/팔레트/틀 역링크. 미사용 미디어 판정이 이 행을
+        //    참조하므로 제거해야 하드 삭제된 포스트의 이미지가 미사용으로 회수될 수 있다.
+        //  - R2 이미지 자체는 다른 문서/포스트와 공유될 수 있는 미디어 자산이므로 삭제하지 않는다
+        //    (위키 하드 삭제가 공유 미디어를 건드리지 않는 것과 동일 — 회수는 admin-media 담당).
+        await db.batch([
+            db.prepare('DELETE FROM page_links WHERE source_page_id = ? AND blog = 1').bind(id),
+            db.prepare('DELETE FROM blog_posts WHERE id = ?').bind(id),
+        ]);
+
+        // 공지로 발행되어 있던 포스트면 KV 공지 연동도 제거 (소프트 삭제 경로와 동일).
+        c.executionCtx.waitUntil(
+            removeAnnouncementByPostId(db, id)
+                .catch((e: any) => console.error('Failed to clear announcement on hard delete:', e))
+        );
+
+        c.executionCtx.waitUntil(
+            db.prepare('INSERT INTO admin_log (type, log, user) VALUES (?, ?, ?)')
+                .bind('blog_hard_delete', `블로그 영구 삭제: ${existing.title}`, user.id)
+                .run()
+                .catch((e: any) => console.error('Failed to write admin_log for blog_hard_delete:', e))
+        );
+
+        return c.json({ message: '블로그 포스트가 영구 삭제되었습니다.', id });
+    }
+
     if (existing.deleted_at) return c.json({ error: '이미 삭제된 포스트입니다.' }, 400);
 
     await db.prepare(

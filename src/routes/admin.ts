@@ -42,6 +42,8 @@ import {
     parseEditAcl,
     type EditAcl,
 } from '../utils/editAcl';
+import { insertVirtualRevision, buildVirtualRevisionStatement } from '../utils/r2';
+import { ensureRevisionsVirtualMigration } from '../utils/revisionsVirtualMigration';
 import {
     getCategoryAcl,
     applyCategoryAclToPage,
@@ -1356,7 +1358,7 @@ adminRoutes.post('/category-acl/:name/bulk-apply', async (c) => {
 
     // 2) 페이지 일괄 적용
     let scanned = 0;
-    const updates: { id: number; slug: string; newAcl: string | null }[] = [];
+    const updates: { id: number; slug: string; newAcl: string | null; oldAcl: string | null }[] = [];
 
     if (mode !== 'ignore' && ids.length > 0) {
         // 카테고리에 속한 페이지 + ids 교집합만 처리. category 컬럼은 id 기준이 아닌 join 으로 검증.
@@ -1388,7 +1390,7 @@ adminRoutes.post('/category-acl/:name/bulk-apply', async (c) => {
             const newSerialized = serializeEditAcl(newAcl);
             const curSerialized = serializeEditAcl(curAcl);
             if (newSerialized === curSerialized) continue;
-            updates.push({ id: r.id, slug: r.slug, newAcl: newSerialized });
+            updates.push({ id: r.id, slug: r.slug, newAcl: newSerialized, oldAcl: curSerialized });
         }
 
         if (updates.length > 0) {
@@ -1398,6 +1400,24 @@ adminRoutes.post('/category-acl/:name/bulk-apply', async (c) => {
             const chunkSize = 200;
             for (let i = 0; i < stmts.length; i += chunkSize) {
                 await db.batch(stmts.slice(i, i + chunkSize));
+            }
+
+            // 본문 변경 없는 편집 ACL 변경을 편집 이력에 가상 리비전으로 남긴다.
+            try {
+                await ensureRevisionsVirtualMigration(db);
+                const vstmts = updates.map(u =>
+                    buildVirtualRevisionStatement(
+                        db,
+                        u.id,
+                        `[권한] 편집 ACL 변경: ${u.oldAcl ?? '비활성'} → ${u.newAcl ?? '비활성'}`,
+                        currentUser.id
+                    )
+                );
+                for (let i = 0; i < vstmts.length; i += chunkSize) {
+                    await db.batch(vstmts.slice(i, i + chunkSize));
+                }
+            } catch (e) {
+                console.error('Failed to write virtual revisions for category-acl bulk-apply:', e);
             }
         }
     }
@@ -2734,7 +2754,7 @@ adminRoutes.post('/doc-setting-prefix-rules/bulk-apply', async (c) => {
     }
 
     let scanned = 0;
-    const updates: { id: number; slug: string; newPriv: number; newAcl: string | null; catChanged: boolean; newCategory: string | null }[] = [];
+    const updates: { id: number; slug: string; newPriv: number; newAcl: string | null; catChanged: boolean; newCategory: string | null; curPriv: number; curAcl: string | null; privChanged: boolean; aclChanged: boolean }[] = [];
 
     if (idsIn.length > 0 && (privateAction !== 'none' || aclAction !== 'none' || categoriesAction !== 'none')) {
         const scan = await scanPrefixSubpages<LockPrivateRow>(db, prefix, DOC_SETTING_SCAN_COLUMNS);
@@ -2765,7 +2785,7 @@ adminRoutes.post('/doc-setting-prefix-rules/bulk-apply', async (c) => {
             const catChanged = (newCategory ?? '') !== (curCat ?? '');
 
             if (newPriv === curPriv && newAcl === curAcl && !catChanged) continue;
-            updates.push({ id: page.id, slug: page.slug, newPriv, newAcl, catChanged, newCategory });
+            updates.push({ id: page.id, slug: page.slug, newPriv, newAcl, catChanged, newCategory, curPriv, curAcl, privChanged: newPriv !== curPriv, aclChanged: newAcl !== curAcl });
         }
 
         if (updates.length > 0) {
@@ -2787,6 +2807,26 @@ adminRoutes.post('/doc-setting-prefix-rules/bulk-apply', async (c) => {
             const chunkSize = 200;
             for (let i = 0; i < stmts.length; i += chunkSize) {
                 await db.batch(stmts.slice(i, i + chunkSize));
+            }
+
+            // 본문 변경 없는 권한(비공개/편집 ACL) 변경을 편집 이력에 가상 리비전으로 남긴다.
+            // (카테고리 변경만 있는 경우는 권한 변경이 아니므로 기록하지 않는다 — 단건 ACL/flags 경로와 동일 정책.)
+            const permChanges = updates.filter(u => u.privChanged || u.aclChanged);
+            if (permChanges.length > 0) {
+                try {
+                    await ensureRevisionsVirtualMigration(db);
+                    const vstmts = permChanges.map(u => {
+                        const parts: string[] = [];
+                        if (u.aclChanged) parts.push(`편집 ACL 변경: ${u.curAcl ?? '비활성'} → ${u.newAcl ?? '비활성'}`);
+                        if (u.privChanged) parts.push(`비공개 설정 ${u.newPriv ? 'ON' : 'OFF'}`);
+                        return buildVirtualRevisionStatement(db, u.id, `[권한] ${parts.join(' / ')}`, currentUser.id);
+                    });
+                    for (let i = 0; i < vstmts.length; i += chunkSize) {
+                        await db.batch(vstmts.slice(i, i + chunkSize));
+                    }
+                } catch (e) {
+                    console.error('Failed to write virtual revisions for bulk doc-settings change:', e);
+                }
             }
         }
     }
@@ -2904,16 +2944,37 @@ adminRoutes.put('/pages/:slug/edit-acl', async (c) => {
     if ('error' in norm) return c.json({ error: norm.error }, 400);
     const serialized = serializeEditAcl(norm.value);
 
-    const result = await db
-        .prepare('UPDATE pages SET edit_acl = ? WHERE slug = ? AND deleted_at IS NULL')
-        .bind(serialized, slug)
-        .run();
+    // page.id / 이전 edit_acl 확보 (가상 리비전 요약용). 본문/리비전 본체는 변경되지 않는다.
+    const page = await db
+        .prepare('SELECT id, edit_acl FROM pages WHERE slug = ? AND deleted_at IS NULL')
+        .bind(slug)
+        .first<{ id: number; edit_acl: string | null }>();
+    if (!page) return c.json({ error: '문서를 찾을 수 없습니다.' }, 404);
 
-    if (result.meta.changes === 0) {
-        return c.json({ error: '문서를 찾을 수 없습니다.' }, 404);
+    const prevSerialized = page.edit_acl;
+    if (prevSerialized === serialized) {
+        // 실제 변경 없음 — 가상 리비전을 남기지 않는다.
+        return c.json({ success: true, edit_acl: norm.value });
     }
 
+    await db
+        .prepare('UPDATE pages SET edit_acl = ? WHERE id = ?')
+        .bind(serialized, page.id)
+        .run();
+
     c.executionCtx.waitUntil(invalidatePageCache(c, slug));
+
+    // 본문 변경 없는 ACL 변경을 편집 이력에 가상 리비전으로 남긴다.
+    try {
+        await insertVirtualRevision(
+            db,
+            page.id,
+            `[권한] 편집 ACL 변경: ${prevSerialized ?? '비활성'} → ${serialized ?? '비활성'}`,
+            currentUser.id
+        );
+    } catch (e) {
+        console.error('Failed to write virtual revision for edit-acl change:', e);
+    }
 
     writeAdminLog(
         c,
@@ -2978,6 +3039,18 @@ adminRoutes.patch('/pages/:slug/flags', async (c) => {
         refreshRecentChangesCache(c),
         invalidateBacklinkCaches(c, slug, db),
     ]));
+
+    // 본문 변경 없는 비공개 플래그 변경을 편집 이력에 가상 리비전으로 남긴다.
+    try {
+        await insertVirtualRevision(
+            db,
+            page.id,
+            `[권한] 비공개 설정 ${nextPriv ? 'ON' : 'OFF'}`,
+            currentUser.id
+        );
+    } catch (e) {
+        console.error('Failed to write virtual revision for flags change:', e);
+    }
 
     writeAdminLog(
         c,

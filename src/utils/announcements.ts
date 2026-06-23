@@ -148,8 +148,13 @@ export async function removeAnnouncementByPostId(
     });
 }
 
-/** 현재 살아있는 공지 목록 — 삭제된 블로그 포스트와 연동된 항목은 제외.
- *  /api/config 응답 합성용. */
+/** 현재 살아있는 공지 목록 — 삭제(소프트/하드)된 블로그 포스트와 연동된 항목은 제외.
+ *  /api/config 응답 합성용.
+ *
+ *  "살아있는 포스트"(row 존재 + deleted_at IS NULL) 집합을 기준으로 keep 한다.
+ *  소프트 삭제(row 잔존 + deleted_at)뿐 아니라 하드 삭제(row 자체 소멸)된 포스트도
+ *  살아있는 집합에 없으므로 함께 걸러진다. 이렇게 하면 공지 KV 정리(removeAnnouncementByPostId)
+ *  가 지연·실패하더라도 404 가 될 /blog/:id 배너가 노출되지 않는다(읽기 시점 안전망). */
 export async function loadActiveAnnouncements(db: D1Database): Promise<Announcement[]> {
     const list = await loadAnnouncements(db);
     if (list.length === 0) return [];
@@ -159,13 +164,13 @@ export async function loadActiveAnnouncements(db: D1Database): Promise<Announcem
         .filter((x): x is number => typeof x === 'number');
     if (postIds.length === 0) return list;
 
-    // 삭제된 포스트 ID 집합 조회 (작은 N 가정 — 보통 한 자리 수)
+    // 살아있는 포스트 ID 집합 조회 (작은 N 가정 — 보통 한 자리 수)
     const placeholders = postIds.map(() => '?').join(',');
     const stmt = db.prepare(
-        `SELECT id FROM blog_posts WHERE id IN (${placeholders}) AND deleted_at IS NOT NULL`,
+        `SELECT id FROM blog_posts WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
     ).bind(...postIds);
     const result = await stmt.all<{ id: number }>();
-    const deletedSet = new Set((result.results || []).map(r => r.id));
+    const liveSet = new Set((result.results || []).map(r => r.id));
 
-    return list.filter(a => a.postId === null || !deletedSet.has(a.postId));
+    return list.filter(a => a.postId === null || liveSet.has(a.postId));
 }

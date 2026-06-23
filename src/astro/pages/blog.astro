@@ -74,6 +74,9 @@ import Footer from '../components/Footer.astro';
               <button class="btn btn-wiki btn-wiki-danger" onclick="deleteBlogPost()">
                 <i class="bi bi-trash me-1"></i>삭제
               </button>
+              <button id="blogPostHardDeleteBtn" class="btn btn-wiki btn-wiki-danger d-none" onclick="hardDeleteBlogPost()">
+                <i class="bi bi-trash3-fill me-1"></i>영구 삭제
+              </button>
             </div>
             <div class="dropdown">
               <button class="btn btn-secondary dropdown-toggle no-caret" type="button" id="shareDropdown"

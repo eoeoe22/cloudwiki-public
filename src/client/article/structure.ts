@@ -3,6 +3,15 @@
 // 네비게이션만 ArticleContext 로 주입받는다. 트리 빌드/정렬/렌더 로직은 과거 index.ts 의
 // showSubdocs 와 동일. 인라인 onclick 대신 Swal didOpen 에서 핸들러를 붙여 전역(SPA)·
 // 워크스페이스(풀 내비게이션) 양쪽에서 동작하게 한다.
+//
+// "전체 구조 보기" 체크박스:
+//   - 체크(활성화) 시 최상위 문서 기준으로 전체 트리를 표시(기존 동작).
+//   - 해제(비활성화) 시 현재 문서를 시작점으로 하는 하위 트리만 표시.
+// 각 뷰는 해당 기준 문서(base)의 하위 목록을 직접 받아온다(전역 목록을 클라이언트에서
+// 필터링하지 않는다). `/subdocs` 응답은 `LIMIT 200` 으로 잘리므로, 하위 문서가 많은
+// 최상위 문서에서 현재 문서 뷰를 전역 목록 필터링으로 만들면 200행 밖의 가지가 누락될 수
+// 있기 때문이다. 한 번 받은 base 의 결과는 캐시해 토글 반복 시 재요청하지 않는다.
+// 현재 문서가 최상위 문서이면 두 뷰가 동일하므로 체크박스를 노출하지 않는다.
 
 import type { ArticleContext } from './context';
 
@@ -12,42 +21,20 @@ export function createStructureModal(ctx: ArticleContext) {
   async function show(slug: string) {
     // 하위 문서인 경우 최상위 문서를 기준으로 탐색
     const topSlug = slug.includes('/') ? slug.split('/')[0] : slug;
+    const isSubdoc = slug !== topSlug;
 
-    let subdocs: any[] = [];
-    try {
-      const res = await fetch(ctx.subdocsUrl(topSlug, false));
+    // base 슬러그 → 하위 문서 목록 캐시(중복 요청 방지).
+    // 슬러그가 `constructor`·`toString` 등 Object.prototype 키와 충돌할 수 있으므로 Map 을 쓴다.
+    const cache = new Map<string, any[]>();
+    async function loadSubdocs(baseSlug: string): Promise<any[]> {
+      const cached = cache.get(baseSlug);
+      if (cached) return cached;
+      const res = await fetch(ctx.subdocsUrl(baseSlug, false));
       if (!res.ok) throw new Error('failed');
       const data = await res.json();
-      subdocs = data.subdocs || [];
-    } catch (err) {
-      console.error(err);
-      Swal.fire('오류', '하위 문서를 불러오는 데 실패했습니다.', 'error');
-      return;
-    }
-
-    if (subdocs.length === 0) {
-      Swal.fire('문서 구조', '하위 문서가 없습니다.', 'info');
-      return;
-    }
-
-    // 트리 구조 빌드 (slug 에서 최상위 문서 prefix 제거)
-    const tree: any = {};
-    for (const doc of subdocs) {
-      const relative = doc.slug.substring(topSlug.length + 1);
-      const parts = relative.split('/');
-      let node = tree;
-      for (const part of parts) {
-        if (!node[part]) node[part] = { _children: {}, _doc: null };
-        node = node[part]._children;
-      }
-      let target = tree;
-      for (let i = 0; i < parts.length; i++) {
-        if (i === parts.length - 1) {
-          target[parts[i]]._doc = doc;
-        } else {
-          target = target[parts[i]]._children;
-        }
-      }
+      const list = data.subdocs || [];
+      cache.set(baseSlug, list);
+      return list;
     }
 
     function annotateDescendants(children: any): number {
@@ -59,7 +46,6 @@ export function createStructureModal(ctx: ArticleContext) {
       }
       return total;
     }
-    annotateDescendants(tree);
 
     function sortEntries(nodes: any): string[] {
       return Object.keys(nodes).sort((a, b) => {
@@ -132,15 +118,70 @@ export function createStructureModal(ctx: ArticleContext) {
       return md;
     }
 
-    const topTitle = decodeURIComponent(topSlug);
+    // baseSlug 를 루트로 하는 뷰(트리 HTML·복사용 텍스트/마크다운)를 구성한다.
+    // list 는 baseSlug 의 하위 문서 목록(슬러그가 `baseSlug/` 로 시작).
+    function computeView(baseSlug: string, list: any[]) {
+      // 슬러그 세그먼트가 `constructor` 등 prototype 키와 충돌하지 않도록 null-prototype 객체를 쓴다.
+      const tree: any = Object.create(null);
+      const prefix = baseSlug + '/';
+      for (const doc of list) {
+        if (!doc.slug.startsWith(prefix)) continue;
+        const relative = doc.slug.substring(prefix.length);
+        const parts = relative.split('/');
+        let node = tree;
+        for (const part of parts) {
+          if (!node[part]) node[part] = { _children: Object.create(null), _doc: null };
+          node = node[part]._children;
+        }
+        let target = tree;
+        for (let i = 0; i < parts.length; i++) {
+          if (i === parts.length - 1) {
+            target[parts[i]]._doc = doc;
+          } else {
+            target = target[parts[i]]._children;
+          }
+        }
+      }
+      annotateDescendants(tree);
 
-    let treeHtml = `<div style="font-family:monospace;white-space:pre;line-height:1.6;"><a href="${ctx.docHref(topSlug)}" class="article-structure-link text-decoration-none fw-bold">${window.escapeHtml(topTitle)}</a></div>`;
-    treeHtml += renderTree(tree, '');
+      const title = decodeURIComponent(baseSlug);
+      let treeHtml = `<div style="font-family:monospace;white-space:pre;line-height:1.6;"><a href="${ctx.docHref(baseSlug)}" class="article-structure-link text-decoration-none fw-bold">${window.escapeHtml(title)}</a></div>`;
+      treeHtml += renderTree(tree, '');
 
-    const plainText = topTitle + '\n' + renderPlain(tree, '');
-    const markdown = `[[${topSlug}]]\n` + renderMarkdown(tree, '');
+      const plainText = title + '\n' + renderPlain(tree, '');
+      const markdown = `[[${baseSlug}]]\n` + renderMarkdown(tree, '');
 
-    const copyData = { plain: plainText, md: markdown };
+      return { treeHtml, plainText, markdown };
+    }
+
+    // 초기 뷰: 현재 문서가 하위 문서이면 현재 문서 기준(체크 해제 상태), 아니면 최상위 문서 기준.
+    const initialBase = isSubdoc ? slug : topSlug;
+    let initialList: any[];
+    try {
+      initialList = await loadSubdocs(initialBase);
+    } catch (err) {
+      console.error(err);
+      Swal.fire('오류', '하위 문서를 불러오는 데 실패했습니다.', 'error');
+      return;
+    }
+
+    // 현재 문서가 최상위 문서인데 하위 문서가 없으면 안내만 표시(기존 동작).
+    // 현재 문서가 하위 문서이면 비어 있어도 모달을 열어 "전체 구조 보기"로 전환할 수 있게 한다.
+    if (!isSubdoc && initialList.length === 0) {
+      Swal.fire('문서 구조', '하위 문서가 없습니다.', 'info');
+      return;
+    }
+
+    const copyData = { plain: '', md: '' };
+
+    function applyView(view: { treeHtml: string; plainText: string; markdown: string }, container: HTMLElement | null) {
+      copyData.plain = view.plainText;
+      copyData.md = view.markdown;
+      if (container) {
+        container.innerHTML = view.treeHtml;
+        attachLinks(container);
+      }
+    }
 
     async function copyFrom(btn: HTMLElement, format: 'plain' | 'md') {
       const text = format === 'md' ? copyData.md : copyData.plain;
@@ -160,6 +201,27 @@ export function createStructureModal(ctx: ArticleContext) {
       }
     }
 
+    function attachLinks(container: HTMLElement) {
+      container.querySelectorAll('a.article-structure-link').forEach((a) => {
+        a.addEventListener('click', (e) => {
+          e.preventDefault();
+          Swal.close();
+          ctx.navigate((a as HTMLAnchorElement).getAttribute('href'));
+        });
+      });
+    }
+
+    const initialView = computeView(initialBase, initialList);
+    copyData.plain = initialView.plainText;
+    copyData.md = initialView.markdown;
+
+    // 현재 문서가 하위 문서일 때만 전체/현재 전환 체크박스를 노출한다.
+    const checkboxHtml = isSubdoc ? `
+      <div class="form-check text-start mb-2">
+        <input class="form-check-input" type="checkbox" id="structure-full-toggle">
+        <label class="form-check-label" for="structure-full-toggle">전체 구조 보기</label>
+      </div>` : '';
+
     const buttonsHtml = `
       <div class="d-flex gap-2 mb-3 justify-content-end">
         <button type="button" class="btn btn-sm btn-outline-secondary" data-copy="plain"><i class="bi bi-copy"></i> 텍스트 복사</button>
@@ -168,21 +230,38 @@ export function createStructureModal(ctx: ArticleContext) {
 
     Swal.fire({
       title: '문서 구조',
-      html: `${buttonsHtml}<div class="text-start">${treeHtml}</div>`,
+      html: `${checkboxHtml}${buttonsHtml}<div class="text-start" id="article-structure-tree">${initialView.treeHtml}</div>`,
       width: 600,
       confirmButtonText: '닫기',
       customClass: { htmlContainer: 'text-start' },
       didOpen: (popup: HTMLElement) => {
+        const treeContainer = popup.querySelector('#article-structure-tree') as HTMLElement | null;
         popup.querySelectorAll('button[data-copy]').forEach((b) => {
           b.addEventListener('click', () => copyFrom(b as HTMLElement, (b as HTMLElement).dataset.copy as 'plain' | 'md'));
         });
-        popup.querySelectorAll('a.article-structure-link').forEach((a) => {
-          a.addEventListener('click', (e) => {
-            e.preventDefault();
-            Swal.close();
-            ctx.navigate((a as HTMLAnchorElement).getAttribute('href'));
+        if (treeContainer) attachLinks(treeContainer);
+
+        const toggle = popup.querySelector('#structure-full-toggle') as HTMLInputElement | null;
+        if (toggle) {
+          toggle.addEventListener('change', async () => {
+            const targetBase = toggle.checked ? topSlug : slug;
+            toggle.disabled = true;
+            if (!cache.has(targetBase) && treeContainer) {
+              treeContainer.innerHTML = '<div class="text-muted">불러오는 중...</div>';
+            }
+            try {
+              const list = await loadSubdocs(targetBase);
+              applyView(computeView(targetBase, list), treeContainer);
+            } catch (err) {
+              console.error(err);
+              if (treeContainer) {
+                treeContainer.innerHTML = '<div class="text-danger">하위 문서를 불러오는 데 실패했습니다.</div>';
+              }
+            } finally {
+              toggle.disabled = false;
+            }
           });
-        });
+        }
       },
     });
   }

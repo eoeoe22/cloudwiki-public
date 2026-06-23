@@ -25,7 +25,7 @@
 import { Context } from 'hono';
 import type { Env, User } from '../types';
 import { RBAC } from '../utils/role';
-import { uploadRevisionToR2, getRevisionContent } from '../utils/r2';
+import { uploadRevisionToR2, getRevisionContent, insertVirtualRevision } from '../utils/r2';
 import { replaceSection } from '../utils/aiParser';
 import { isR2OnlyNamespace } from '../utils/slug';
 import { normalizeSlug } from '../utils/slug';
@@ -36,6 +36,7 @@ import {
 } from '../utils/mcpDispatch';
 import { computeLineDiffStats } from '../utils/diff';
 import { ensureMcpDraftsMigration } from '../utils/mcpDraftsMigration';
+import { ensureRevisionsVirtualMigration } from '../utils/revisionsVirtualMigration';
 import { createNotification } from '../utils/notification';
 import {
     findConflictingPage,
@@ -556,9 +557,11 @@ export async function dispatchAdminReadTool(c: Context<Env>, user: User, toolNam
             return asTextResult('Error: 문서를 찾을 수 없습니다.', true);
         }
 
+        // 레거시 DB(is_virtual 컬럼 부재) 대비 idempotent 마이그레이션 보장 후 쿼리.
+        await ensureRevisionsVirtualMigration(db);
         const rev = await db.prepare(`
             SELECT r.id, r.page_id, r.page_version, r.content, r.r2_key, r.summary, r.created_at,
-                   r.deleted_at, r.purged_at,
+                   r.deleted_at, r.purged_at, r.is_virtual,
                    u.name AS author_name
             FROM revisions r
             LEFT JOIN users u ON r.author_id = u.id
@@ -567,7 +570,7 @@ export async function dispatchAdminReadTool(c: Context<Env>, user: User, toolNam
             id: number; page_id: number; page_version: number | null;
             content: string; r2_key: string | null; summary: string | null;
             created_at: number; deleted_at: number | null; purged_at: number | null;
-            author_name: string | null;
+            is_virtual: number; author_name: string | null;
         }>();
         if (!rev) return asTextResult('Error: 리비전을 찾을 수 없습니다.', true);
         if (rev.page_id !== page.id) {
@@ -578,9 +581,10 @@ export async function dispatchAdminReadTool(c: Context<Env>, user: User, toolNam
         if (rev.deleted_at && !isAdmin) {
             return asTextResult('Error: 리비전을 찾을 수 없습니다.', true);
         }
-        // 하드 삭제된 리비전은 R2 본문이 없으므로 빈 본문으로 반환 (관리자 전용 경로).
+        // 가상 리비전(비-본문 변경 기록)은 본문이 없으므로 빈 본문으로 반환한다.
+        // 하드 삭제된 리비전도 R2 본문이 없으므로 빈 본문으로 반환 (관리자 전용 경로).
         const origin = new URL(c.req.url).origin;
-        const content = rev.purged_at
+        const content = (rev.is_virtual || rev.purged_at)
             ? ''
             : await getRevisionContent(c.env.MEDIA, { content: rev.content, r2_key: rev.r2_key }, origin);
         const payload: Record<string, unknown> = {
@@ -592,6 +596,9 @@ export async function dispatchAdminReadTool(c: Context<Env>, user: User, toolNam
             created_at: unixToIso(rev.created_at),
             content,
         };
+        if (rev.is_virtual) {
+            payload.virtual = true;
+        }
         if (isAdmin && rev.deleted_at) {
             payload.deleted_at = unixToIso(rev.deleted_at);
             if (rev.purged_at) {
@@ -1561,13 +1568,28 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
 
         // 리비전이 정말로 이 페이지에 속하는지 검증 — 다른 페이지 리비전 id 를 입력해
         // 본문을 끌어오는 것을 막는다.
+        // 레거시 DB(is_virtual 컬럼 부재) 대비 idempotent 마이그레이션 보장 후 쿼리.
+        await ensureRevisionsVirtualMigration(db);
         const rev = await db
-            .prepare('SELECT id, page_id, page_version, content, r2_key FROM revisions WHERE id = ?')
+            .prepare('SELECT id, page_id, page_version, content, r2_key, deleted_at, purged_at, is_virtual FROM revisions WHERE id = ?')
             .bind(revisionId)
-            .first<{ id: number; page_id: number; page_version: number | null; content: string; r2_key: string | null }>();
+            .first<{ id: number; page_id: number; page_version: number | null; content: string; r2_key: string | null; deleted_at: number | null; purged_at: number | null; is_virtual: number }>();
         if (!rev) return asTextResult('Error: 리비전을 찾을 수 없습니다.', true);
         if (rev.page_id !== page.id) {
             return asTextResult('Error: 지정한 리비전이 이 문서의 것이 아닙니다.', true);
+        }
+        // 본문 없는/가려진 리비전으로의 되돌리기 차단 — HTTP POST /w/:slug/revert 와 동일 정책.
+        //  - 가상 리비전(is_virtual)/하드 삭제(purged_at): content='' 이라 되돌리면 본문이 빈 페이지로
+        //    덮어써진다(데이터 손실). 명시적으로 거부.
+        //  - 소프트 삭제(deleted_at): 의도적으로 가려진 본문이므로 redaction 우회를 막기 위해 거부.
+        if (rev.is_virtual) {
+            return asTextResult('Error: 가상 리비전으로는 되돌릴 수 없습니다.', true);
+        }
+        if (rev.purged_at) {
+            return asTextResult('Error: 본문이 영구 삭제된 리비전으로는 되돌릴 수 없습니다.', true);
+        }
+        if (rev.deleted_at) {
+            return asTextResult('Error: 숨겨진 리비전으로는 되돌릴 수 없습니다.', true);
         }
 
         const origin = new URL(c.req.url).origin;
@@ -1776,6 +1798,14 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
                 c.executionCtx.waitUntil(db.batch(linkCatStmts).catch(e => console.error('admin-mcp move link/cat batch failed:', e)));
             } else {
                 await db.prepare('UPDATE pages SET slug = ?, updated_at = unixepoch() WHERE id = ?').bind(newSlug, page.id).run();
+                // 본문 재작성이 없는 슬러그 전용 이동도 편집 이력에 가상 리비전으로 남긴다
+                // (HTTP POST /w/:slug/move · 대량 이동과 동일). 본문이 바뀌는 분기는 위에서
+                // 이미 [move] 본문 리비전을 만들므로 별도 가상 리비전이 필요 없다.
+                try {
+                    await insertVirtualRevision(db, page.id, withMcpPrefix(`[이동] 주소 변경: ${oldSlug} → ${newSlug}`), user.id);
+                } catch (e) {
+                    console.error('Failed to write virtual revision for MCP slug-only move:', e);
+                }
             }
         } catch (e: any) {
             const msg = String(e?.message || e);

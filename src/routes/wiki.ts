@@ -25,6 +25,7 @@ import { commitPageMutation } from '../utils/pagePipeline/commit';
 import { withFtsRecovery } from '../utils/ftsRecovery';
 import { mergeEditSummary, capUserSummary } from '../utils/editSummary';
 import { ensurePendingEditsSummaryMigration } from '../utils/pendingEditsSummaryMigration';
+import { ensureRevisionsVirtualMigration } from '../utils/revisionsVirtualMigration';
 
 const wiki = new Hono<Env>();
 
@@ -818,7 +819,7 @@ async function rewriteBacklinksForRename(
     return { updated, skipped, conflicts, total };
 }
 
-import { uploadRevisionToR2, getRevisionContent } from '../utils/r2';
+import { uploadRevisionToR2, getRevisionContent, insertVirtualRevision } from '../utils/r2';
 import { loadActiveAnnouncements } from '../utils/announcements';
 import type { AnnouncementDTO } from '../shared/api/announcement';
 import {
@@ -1237,7 +1238,11 @@ wiki.get('/w/recent-revisions', async (c) => {
     const offset = Math.max(0, parseInt(c.req.query('offset') || '0', 10));
     const limit = Math.min(50, Math.max(1, parseInt(c.req.query('limit') || '10', 10)));
 
+    // 레거시 DB(is_virtual 컬럼 부재) 대비 idempotent 마이그레이션 보장 후 쿼리.
+    await ensureRevisionsVirtualMigration(db);
     const adminCols = isAdmin ? ', r.deleted_at, r.purged_at' : '';
+    // 가상 리비전(비-본문 변경 기록)은 전역 최근 리비전 피드에서 제외한다.
+    // (열람/비교가 불가능하고, 주소 이동 등은 이미 최근 변경/admin_log 가 커버한다.)
     const listQuery = `
         SELECT r.id, r.page_id, r.page_version, r.summary, r.created_at,
                p.slug,
@@ -1247,13 +1252,13 @@ wiki.get('/w/recent-revisions', async (c) => {
         FROM revisions r
         JOIN pages p ON r.page_id = p.id
         LEFT JOIN users u ON r.author_id = u.id
-        WHERE p.deleted_at IS NULL${privateFilter}${revDeletedFilter}
+        WHERE p.deleted_at IS NULL AND r.is_virtual = 0${privateFilter}${revDeletedFilter}
         ORDER BY r.created_at DESC LIMIT ? OFFSET ?`;
     const countQuery = `
         SELECT COUNT(*) as total
         FROM revisions r
         JOIN pages p ON r.page_id = p.id
-        WHERE p.deleted_at IS NULL${privateFilter}${revDeletedFilter}`;
+        WHERE p.deleted_at IS NULL AND r.is_virtual = 0${privateFilter}${revDeletedFilter}`;
 
     const [listResult, countResult] = await db.batch([
         db.prepare(listQuery).bind(limit, offset),
@@ -2446,6 +2451,8 @@ wiki.get('/w/:slug/revisions', async (c) => {
         return c.json({ error: '문서를 찾을 수 없습니다.' }, 404);
     }
 
+    // 레거시 DB(is_virtual 컬럼 부재) 대비 idempotent 마이그레이션 보장 후 쿼리.
+    await ensureRevisionsVirtualMigration(db);
     // 비관리자에게는 삭제된 리비전 행 자체가 존재하지 않는 것처럼 가린다.
     const revDeletedFilter = isAdmin ? '' : ' AND r.deleted_at IS NULL';
     const countDeletedFilter = isAdmin ? '' : ' AND deleted_at IS NULL';
@@ -2460,7 +2467,7 @@ wiki.get('/w/:slug/revisions', async (c) => {
         db.prepare(`SELECT COUNT(*) as total FROM revisions WHERE page_id = ?${countDeletedFilter}`).bind(page.id),
         db
             .prepare(
-                `SELECT r.id, r.page_version, r.summary, r.created_at, u.id as author_id, u.name as author_name, u.picture as author_picture,
+                `SELECT r.id, r.page_version, r.summary, r.created_at, r.is_virtual, u.id as author_id, u.name as author_name, u.picture as author_picture,
                         ${ROLE_CASE_SQL} as author_role,
                         u.email as _author_email${adminCols}
            FROM revisions r
@@ -2479,10 +2486,10 @@ wiki.get('/w/:slug/revisions', async (c) => {
     enrichRoles(listResult.results, 'author_role', '_author_email', c.env);
 
     // 최신 리비전은 삭제 불가 — 클라이언트가 액션 버튼을 비활성화 할 수 있도록 동봉.
-    const lastRevisionId = isAdmin
-        ? (await db.prepare('SELECT last_revision_id FROM pages WHERE id = ?').bind(page.id)
-            .first<{ last_revision_id: number | null }>())?.last_revision_id ?? null
-        : null;
+    // 또한 가상 리비전이 목록 맨 위에 올 수 있어 위치 기반 "현재 버전" 판정이 어긋나므로,
+    // 클라이언트가 last_revision_id 로 본문 최신 리비전을 정확히 식별하도록 항상 내려준다.
+    const lastRevisionId = (await db.prepare('SELECT last_revision_id FROM pages WHERE id = ?').bind(page.id)
+        .first<{ last_revision_id: number | null }>())?.last_revision_id ?? null;
 
     return c.json(safeJSON({
         revisions: listResult.results,
@@ -2519,17 +2526,19 @@ wiki.get('/w/:slug/revisions/:id', async (c) => {
         return c.json({ error: '문서를 찾을 수 없습니다.' }, 404);
     }
 
+    // 레거시 DB(is_virtual 컬럼 부재) 대비 idempotent 마이그레이션 보장 후 쿼리.
+    await ensureRevisionsVirtualMigration(db);
     const revision = await db
         .prepare(
             `SELECT r.id, r.page_id, r.page_version, r.content, r.r2_key, r.summary, r.author_id, r.created_at,
-                    r.deleted_at, r.purged_at,
+                    r.deleted_at, r.purged_at, r.is_virtual,
                     u.name as author_name
        FROM revisions r
        LEFT JOIN users u ON r.author_id = u.id
        WHERE r.id = ? AND r.page_id = ?`
         )
         .bind(revId, page.id)
-        .first<{ id: number; page_id: number; page_version: number | null; content: string; r2_key: string | null; summary: string | null; author_id: number | null; created_at: number; deleted_at: number | null; purged_at: number | null; author_name: string | null }>();
+        .first<{ id: number; page_id: number; page_version: number | null; content: string; r2_key: string | null; summary: string | null; author_id: number | null; created_at: number; deleted_at: number | null; purged_at: number | null; is_virtual: number; author_name: string | null }>();
 
     if (!revision) {
         return c.json({ error: '리비전을 찾을 수 없습니다.' }, 404);
@@ -2538,6 +2547,11 @@ wiki.get('/w/:slug/revisions/:id', async (c) => {
     // 비관리자에게는 삭제된 리비전이 존재하지 않는 것처럼 보여야 한다.
     if (revision.deleted_at && !isAdmin) {
         return c.json({ error: '리비전을 찾을 수 없습니다.' }, 404);
+    }
+
+    // 가상 리비전은 본문이 없다(비-본문 변경 기록). R2 조회를 건너뛰고 빈 본문으로 반환한다.
+    if (revision.is_virtual) {
+        return c.json(safeJSON({ ...revision, content: '', virtual: true }));
     }
 
     // 하드 삭제된 리비전은 R2 본문이 없으므로 빈 본문으로 반환 (관리자 전용 경로).
@@ -2582,28 +2596,36 @@ wiki.get('/w/:slug/revisions/:id/diff', async (c) => {
         return c.json({ error: '문서를 찾을 수 없습니다.' }, 404);
     }
 
+    // 레거시 DB(is_virtual 컬럼 부재) 대비 idempotent 마이그레이션 보장 후 쿼리.
+    await ensureRevisionsVirtualMigration(db);
     // 해당 리비전 조회
     const revision = await db
         .prepare(
-            `SELECT id, page_version, content, r2_key, page_id, created_at, deleted_at, purged_at
+            `SELECT id, page_version, content, r2_key, page_id, created_at, deleted_at, purged_at, is_virtual
        FROM revisions
        WHERE id = ? AND page_id = ?`
         )
         .bind(revId, page.id)
-        .first<{ id: number; page_version: number | null; content: string; r2_key: string | null; page_id: number; created_at: number; deleted_at: number | null; purged_at: number | null }>();
+        .first<{ id: number; page_version: number | null; content: string; r2_key: string | null; page_id: number; created_at: number; deleted_at: number | null; purged_at: number | null; is_virtual: number }>();
 
     if (!revision || (revision.deleted_at && !isAdmin)) {
         return c.json({ error: '리비전을 찾을 수 없습니다.' }, 404);
     }
 
+    // 가상 리비전은 본문이 없어 비교할 수 없다.
+    if (revision.is_virtual) {
+        return c.json({ error: '가상 리비전은 비교할 수 없습니다.' }, 409);
+    }
+
     // 바로 이전 리비전 조회 — 비관리자에게는 살아있는(=deleted_at IS NULL) 직전 리비전과
     // 짝지어 연속 삭제된 리비전을 자동으로 건너뛴다.
+    // 가상 리비전(is_virtual=1)은 본문이 없으므로 "이전 본문"으로 잡히지 않도록 제외한다.
     const prevQuery = isAdmin
         ? `SELECT id, page_version, content, r2_key, deleted_at, purged_at FROM revisions
-           WHERE page_id = ? AND id < ?
+           WHERE page_id = ? AND id < ? AND is_virtual = 0
            ORDER BY id DESC LIMIT 1`
         : `SELECT id, page_version, content, r2_key, deleted_at, purged_at FROM revisions
-           WHERE page_id = ? AND id < ? AND deleted_at IS NULL
+           WHERE page_id = ? AND id < ? AND deleted_at IS NULL AND is_virtual = 0
            ORDER BY id DESC LIMIT 1`;
     const prevRevision = await db
         .prepare(prevQuery)
@@ -3073,6 +3095,19 @@ export async function movePage(
         throw e;
     }
 
+    // 본문 변경 없는 주소(slug) 이동을 편집 이력에 가상 리비전으로 남긴다.
+    // (단건 이동과 대량 이동(AdminJobDO)이 모두 movePage 를 거치므로 양쪽 자동 커버.)
+    try {
+        await insertVirtualRevision(
+            db,
+            page.id,
+            `[이동] 주소 변경: ${currentSlug} → ${trimmedNewSlug}`,
+            user.id
+        );
+    } catch (e) {
+        console.error('Failed to write virtual revision for page move:', e);
+    }
+
     // 자동 카테고리 prefix 룰: 새 slug 가 룰에 매칭되면 카테고리 합집합 적용
     try {
         const ruleRows = await db
@@ -3222,11 +3257,18 @@ wiki.post('/w/:slug/revert', requireAuth, requirePermission('wiki:edit'), async 
         }
     }
 
-    const targetRevision = await db.prepare('SELECT content, r2_key, page_version, deleted_at, purged_at FROM revisions WHERE id = ? AND page_id = ?')
-        .bind(revision_id, page.id).first<{ content: string; r2_key: string | null; page_version: number | null; deleted_at: number | null; purged_at: number | null }>();
+    // 레거시 DB(is_virtual 컬럼 부재) 대비 idempotent 마이그레이션 보장 후 쿼리.
+    await ensureRevisionsVirtualMigration(db);
+    const targetRevision = await db.prepare('SELECT content, r2_key, page_version, deleted_at, purged_at, is_virtual FROM revisions WHERE id = ? AND page_id = ?')
+        .bind(revision_id, page.id).first<{ content: string; r2_key: string | null; page_version: number | null; deleted_at: number | null; purged_at: number | null; is_virtual: number }>();
 
     if (!targetRevision) {
         return c.json({ error: '해당 리비전을 찾을 수 없습니다.' }, 404);
+    }
+
+    // 가상 리비전은 본문이 없으므로 되돌릴 수 없다.
+    if (targetRevision.is_virtual) {
+        return c.json({ error: '가상 리비전으로는 되돌릴 수 없습니다.' }, 409);
     }
 
     // 숨겨진/영구 삭제된 리비전으로의 되돌리기는 redaction 우회 통로가 된다.
@@ -3343,13 +3385,19 @@ async function loadRevisionForDeletion(
         return { ok: false, response: c.json({ error: '문서를 찾을 수 없습니다.' }, 404) };
     }
 
+    // 레거시 DB(is_virtual 컬럼 부재) 대비 idempotent 마이그레이션 보장 후 쿼리.
+    await ensureRevisionsVirtualMigration(db);
     const revision = await db
-        .prepare('SELECT id, page_id, page_version, content, r2_key, deleted_at, purged_at FROM revisions WHERE id = ? AND page_id = ?')
+        .prepare('SELECT id, page_id, page_version, content, r2_key, deleted_at, purged_at, is_virtual FROM revisions WHERE id = ? AND page_id = ?')
         .bind(revId, page.id)
-        .first<{ id: number; page_id: number; page_version: number | null; content: string; r2_key: string | null; deleted_at: number | null; purged_at: number | null }>();
+        .first<{ id: number; page_id: number; page_version: number | null; content: string; r2_key: string | null; deleted_at: number | null; purged_at: number | null; is_virtual: number }>();
 
     if (!revision) {
         return { ok: false, response: c.json({ error: '리비전을 찾을 수 없습니다.' }, 404) };
+    }
+    // 가상 리비전(비-본문 변경 기록)은 삭제(소프트/하드)할 수 없다.
+    if (revision.is_virtual) {
+        return { ok: false, response: c.json({ error: '가상 리비전은 삭제할 수 없습니다.' }, 409) };
     }
     if (page.last_revision_id === revision.id) {
         return { ok: false, response: c.json({ error: '최신 리비전은 삭제할 수 없습니다. 먼저 되돌리기를 한 뒤 시도하세요.' }, 409) };

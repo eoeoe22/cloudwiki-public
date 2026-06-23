@@ -253,6 +253,33 @@ async function deleteBlogPost() {
   }
 }
 
+// ── 블로그 포스트 영구 삭제 (super_admin 전용) ──
+async function hardDeleteBlogPost() {
+  if (!currentBlogPostId) return;
+  const result = await Swal.fire({
+    title: '포스트를 영구 삭제하시겠습니까?',
+    html: '이 작업은 <b>되돌릴 수 없습니다.</b>',
+    icon: 'warning',
+    showCancelButton: true,
+    confirmButtonText: '영구 삭제',
+    cancelButtonText: '취소',
+    confirmButtonColor: '#d33',
+  });
+  if (!result.isConfirmed) return;
+
+  try {
+    const res = await fetch(`/api/blog/${currentBlogPostId}?hard=true`, { method: 'DELETE' });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || '영구 삭제 실패');
+    }
+    await Swal.fire({ icon: 'success', title: '영구 삭제되었습니다.', timer: 1500, showConfirmButton: false });
+    window.location.href = '/blog';
+  } catch (e) {
+    Swal.fire('오류', e.message, 'error');
+  }
+}
+
 // ── 공유하기 기능 ──
 function getShareTitle() {
   return currentBlogPost && currentBlogPost.title ? currentBlogPost.title : document.title;
@@ -352,6 +379,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (user && (user.role === 'admin' || user.role === 'super_admin')) {
     document.getElementById('blogAdminActions').classList.remove('d-none');
     document.getElementById('blogPostAdminActions').classList.remove('d-none');
+    // 영구 삭제는 최고 관리자(super_admin) 전용 — 서버도 `*` 권한으로 재검증한다.
+    if (user.role === 'super_admin') {
+      document.getElementById('blogPostHardDeleteBtn')?.classList.remove('d-none');
+    }
   }
 
   // URL 기반 라우팅
@@ -367,6 +398,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 window.announceBlogPost = announceBlogPost;
 window.unannounceBlogPost = unannounceBlogPost;
 window.deleteBlogPost = deleteBlogPost;
+window.hardDeleteBlogPost = hardDeleteBlogPost;
 window.shareNative = shareNative;
 window.shareCopyLink = shareCopyLink;
 window.shareCopyText = shareCopyText;

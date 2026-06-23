@@ -65,6 +65,9 @@ export interface Revision {
     summary: string | null;
     author_id: number | null;
     created_at: number;
+    // 가상 리비전 플래그. 1 이면 본문 변경 없는 비-본문 변경(ACL/비공개/주소 이동)을
+    // 편집 요약으로만 기록한 행. 삭제·열람·비교·되돌리기 불가, R2 스냅샷 없음.
+    is_virtual?: number;
 }
 
 export interface Media {

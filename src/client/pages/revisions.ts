@@ -39,6 +39,17 @@ function renderRevisionSummary(raw) {
     mcpIcon = '<i class="bi bi-plug-fill text-primary me-1" title="[MCP]" aria-label="[MCP]"></i>';
     body = body.slice(mcpMatch[0].length);
   }
+  // 가상 리비전 요약 접두([권한]/[이동])는 아이콘으로 치환해 비-본문 변경임을 구분.
+  const permMatch = body.match(/^\s*\[권한\]\s*/);
+  if (permMatch) {
+    mcpIcon += '<i class="bi bi-shield-lock-fill text-info me-1" title="[권한]" aria-label="[권한]"></i>';
+    body = body.slice(permMatch[0].length);
+  }
+  const moveMatch = body.match(/^\s*\[이동\]\s*/);
+  if (moveMatch) {
+    mcpIcon += '<i class="bi bi-signpost-split-fill text-info me-1" title="[이동]" aria-label="[이동]"></i>';
+    body = body.slice(moveMatch[0].length);
+  }
   const tokenRe = /\[(?:\+\d+줄(?: -\d+줄)?|-\d+줄)\]/g;
   let html = '';
   let last = 0;
@@ -124,8 +135,32 @@ async function showRevisions(slug, page = 1) {
     const enabledExts = (window.appConfig && window.appConfig.enabledExtensions) || [];
     const isExtSlug = enabledExts.some(ext => slug.startsWith(ext + ':'));
     const itemsHtml = data.revisions.map((rev, idx) => {
-      const isLatest = page === 1 && idx === 0;
+      const isVirtual = !!rev.is_virtual;
+      // "현재 버전"은 본문 최신 리비전(last_revision_id) 기준. 가상 리비전이 목록 맨 위에
+      // 올 수 있어 위치(idx) 기반 판정은 어긋나므로 last_revision_id 로 식별한다.
+      // (last_revision_id 가 없을 때만 첫 행을 폴백으로 사용.)
+      const isLatest = lastRevisionId != null
+        ? rev.id === lastRevisionId
+        : (page === 1 && idx === 0 && !isVirtual);
       const date = new Date(rev.created_at * 1000).toLocaleString('ko-KR');
+
+      // 가상 리비전: 본문 없는 비-본문 변경(ACL/비공개/주소 이동) 기록.
+      // 열람·비교·되돌리기·삭제가 모두 불가하므로 액션 버튼 없이 요약만 표시한다.
+      if (isVirtual) {
+        const authorHtml = rev.author_id
+          ? `<a href="${rev.author_role === 'deleted' ? '/404' : '/profile/' + rev.author_id}" class="revision-author badge bg-light text-dark border text-decoration-none">${window.escapeHtml(rev.author_name || '알 수 없음')}${window.renderUserRoleIcon(rev.author_role)}</a>`
+          : `<span class="revision-author badge bg-light text-dark border">${window.escapeHtml(rev.author_name || '알 수 없음')}${window.renderUserRoleIcon(rev.author_role)}</span>`;
+        return `
+          <div class="revision-item is-virtual d-flex align-items-center justify-content-between border-bottom py-2">
+            <div class="d-flex align-items-center gap-3 flex-grow-1">
+              <span class="revision-date text-muted small" style="min-width: 160px;">${date}</span>
+              ${authorHtml}
+              <span class="badge text-bg-info" style="font-size: 0.7em; flex-shrink: 0;" title="본문 변경 없는 권한/주소 변경 기록입니다. 열람·비교·되돌리기·삭제가 불가능합니다."><i class="bi bi-info-circle"></i> 권한/주소 변경</span>
+              <span class="revision-summary">${renderRevisionSummary(rev.summary)}</span>
+            </div>
+          </div>
+        `;
+      }
       // 삭제 상태: 비관리자 응답에는 삭제된 행 자체가 오지 않으므로 아래 분기는 관리자 한정.
       const isDeleted = !!rev.deleted_at;
       const isPurged = !!rev.purged_at;
