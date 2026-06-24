@@ -1565,6 +1565,51 @@ wiki.get('/w/:slug', async (c) => {
 });
 
 /**
+ * GET /w/:slug/version
+ * 문서의 현재 버전만 반환하는 경량 엔드포인트.
+ *
+ * 본문/메타데이터를 싣지 않고 `version`(+ `updated_at`)만 내려보내, 클라이언트가
+ * 문서 로드 시 1회 호출해 "지금 화면에 렌더된 버전"이 최신인지 확인하는 용도다.
+ * 공개 문서 SSR/`/w/:slug` 응답은 엣지 캐시(최대 24h)되므로, 캐시 무효화가
+ * colo-local best-effort 인 특성상 다른 colo 에서 오래된 본문을 받을 수 있다.
+ * 이 엔드포인트는 항상 D1 최신값을 반영해야 하므로 응답 자체는 절대 캐시하지 않는다(no-store).
+ */
+wiki.get('/w/:slug/version', async (c) => {
+    if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) {
+        return c.json({ error: '로그인이 필요합니다.' }, 401, { 'Cache-Control': 'no-store' });
+    }
+    const slug = c.req.param('slug');
+    const db = c.env.DB;
+    const user = c.get('user');
+    const rbac = c.get('rbac') as RBAC;
+
+    const page = await db
+        .prepare('SELECT slug, version, updated_at, is_private, deleted_at FROM pages WHERE slug = ?')
+        .bind(slug)
+        .first<{ slug: string; version: number; updated_at: number; is_private: number; deleted_at: number | null }>();
+
+    if (!page) {
+        return c.json({ error: '문서를 찾을 수 없습니다.' }, 404, { 'Cache-Control': 'no-store' });
+    }
+
+    const canSeePrivate = rbac.can(user?.role ?? 'guest', 'wiki:private');
+    if (page.is_private === 1 && !canSeePrivate) {
+        return c.json({ error: '비공개 문서입니다.', is_private: true }, 403, { 'Cache-Control': 'no-store' });
+    }
+
+    const isAdmin = !!user && rbac.can(user.role, 'admin:access');
+    if (page.deleted_at && !isAdmin) {
+        return c.json({ error: '삭제된 문서입니다.', deleted: true }, 410, { 'Cache-Control': 'no-store' });
+    }
+
+    return c.json(
+        { slug: page.slug, version: page.version, updated_at: page.updated_at },
+        200,
+        { 'Cache-Control': 'no-store' }
+    );
+});
+
+/**
  * PUT /w/:slug
  * 문서 생성 또는 수정 (로그인 필수)
  * Body: { content, summary, expected_version? }

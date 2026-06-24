@@ -565,12 +565,48 @@ import { createTocController } from '../article/toc';
       wikiBreadcrumb.close();
     }
 
-    async function showArticle(slug) {
+    // 현재 렌더된 문서가 캐시된 오래된 버전인지 경량 엔드포인트로 확인하고, 그렇다면 안내 배너를 띄운다.
+    // 공개 문서 응답은 엣지 캐시(최대 24h)되며 캐시 무효화가 colo-local best-effort 라 다른 colo 에서
+    // 오래된 본문을 받을 수 있다. /api/w/:slug/version 은 no-store 라 항상 D1 최신 version 을 돌려준다.
+    function checkStaleVersion(page) {
+      hideDocBanner('staleVersionBanner');
+      // version 이 없는 문서(가상/이미지 등)는 비교 대상이 아니다.
+      if (!page || typeof page.version !== 'number') return;
+      const renderedSlug = page.slug;
+      const renderedVersion = page.version;
+      fetch(`/api/w/${encodeURIComponent(renderedSlug)}/version`, { cache: 'no-store' })
+        .then(r => r.ok ? r.json() : null)
+        .then(data => {
+          if (!data || typeof data.version !== 'number') return;
+          // SPA 네비게이션 race 가드 — 응답 도착 시점에 여전히 같은 문서를 보고 있어야 한다.
+          if (!currentPage || currentPage.slug !== renderedSlug) return;
+          if (data.version > renderedVersion) {
+            renderDocBanner('staleVersionBanner', {
+              variant: 'warning',
+              icon: 'bi bi-exclamation-triangle-fill',
+              message: '오래된 버전을 열람중입니다.',
+              action: {
+                label: '최신 문서 보기',
+                iconClass: 'bi bi-arrow-clockwise',
+                onClick: () => showArticle(renderedSlug, { fresh: true }),
+              },
+            });
+          }
+        })
+        .catch(() => { });
+    }
+
+    async function showArticle(slug, opts = {}) {
+      // forceFresh: "최신 문서 보기"(stale 배너) 경로 — SSR/엣지 캐시를 우회해 D1 최신 본문을 다시 받는다.
+      const forceFresh = !!opts.fresh;
       showLoading();
       currentSlug = slug;
       // 커맨드 팔레트 편집 단축키용 정식 편집 대상 초기화 — 일반 문서 분기에서만 다시 설정한다
       // (이미지/map/카테고리 폴백/없음/비공개/삭제 화면은 null 유지 → 편집 액션·`e` 비활성).
       window.currentArticleEdit = null;
+
+      // 오래된 버전 배너 초기화 — 모든 분기(이미지/map/없음/일반) 진입 전에 숨겨 이전 문서 잔재 제거
+      hideDocBanner('staleVersionBanner');
 
       // Raw 보기 모드 초기화 — 모든 early-return 분기(404 카테고리 폴백, 403, 410 등) 이전에 수행
       // 이전 문서에서 활성화된 raw-mode 가 남아 있으면 body.raw-mode 스타일이 다음 페이지의
@@ -595,7 +631,8 @@ import { createTocController } from '../article/toc';
         let page;
 
         // SSR 데이터가 있고, 현재 slug와 일치하면 API 호출 없이 사용
-        if (ssrData && ssrData._ssrSlug === slug) {
+        // (단 forceFresh 면 캐시된 SSR 데이터를 건너뛰고 항상 API 로 최신 본문을 받는다.)
+        if (!forceFresh && ssrData && ssrData._ssrSlug === slug) {
           if (ssrData._ssrNotFound) {
             if (ssrData._ssrPrivate) {
               hideAllPages();
@@ -634,8 +671,11 @@ import { createTocController } from '../article/toc';
           ssrData = null;
         } else {
           // 클라이언트 사이드 네비게이션 — API로 문서 로드
-          const search = window.location.search;
-          const res = await fetch(`/api/w/${encodeURIComponent(slug)}${search}`);
+          // forceFresh 면 nocache=true 를 더해 API 엣지 캐시까지 우회한다(기존 쿼리는 보존).
+          const params = new URLSearchParams(window.location.search);
+          if (forceFresh) params.set('nocache', 'true');
+          const qs = params.toString();
+          const res = await fetch(`/api/w/${encodeURIComponent(slug)}${qs ? '?' + qs : ''}`);
 
           if (res.status === 410) {
             hideAllPages();
@@ -1144,6 +1184,9 @@ import { createTocController } from '../article/toc';
         // d-none 을 다시 부여하므로 그 전에 sync 해도 즉시 덮어써진다.
         syncSidebarsForLayout();
         if (typeof window.__sidebarLayoutUpdate === 'function') window.__sidebarLayoutUpdate();
+
+        // 캐시된 오래된 본문을 보고 있는지 1회 확인 (경량 version 엔드포인트와 대조)
+        checkStaleVersion(page);
 
         // 페이지가 d-none을 벗어난 다음 프레임에 해시 스크롤 수행 (초기 진입 시 hideAllPages
         // 이후 articlePage가 노출되기 전이라 scrollIntoView가 no-op이 되는 문제 방지)

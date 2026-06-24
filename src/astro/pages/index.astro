@@ -101,6 +101,9 @@ import ArticleFloatingTools from '../components/ArticleFloatingTools.astro';
           <!-- 사람 편집 보류(검토 대기) 배너 (검토 권한이 있는 사용자에 한해 노출) -->
           <div id="pendingEditBanner" style="display:none;"></div>
 
+          <!-- 오래된(캐시된) 버전 열람 안내 배너 (문서 로드 시 1회 버전 확인 후 노출) -->
+          <div id="staleVersionBanner" style="display:none;"></div>
+
           <!-- 미작성(존재하지 않는) 문서 안내 배너 -->
           <div id="missingDocBanner" class="d-none"></div>
           <!-- 미작성 문서 편집 요청 검토(검토 권한자 한정, 서버 count>0 시 client 가 노출) -->
