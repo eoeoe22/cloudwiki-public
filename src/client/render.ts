@@ -248,11 +248,14 @@ function initMarkedConfig() {
             }
         }
     });
-    marked.setOptions({
-        gfm: true,
-        breaks: true,
-        headerIds: true,
-    });
+    try {
+        marked.setOptions({
+            gfm: true,
+            breaks: true,
+        });
+    } catch (_) {
+        // setOptions는 newer marked에서 제거됨 — per-call 옵션으로 대체
+    }
 }
 initMarkedConfig();
 // ── 익스텐션 데이터 임시 저장소 (렌더링 시 render.js에서 참조) ──
@@ -530,6 +533,7 @@ async function _resolveTransclusionsCore(text, depth, cache, pageSlug, options) 
 
     const codeBlocks = [];
     let protectedText = text;
+    if (typeof marked === 'undefined') return text;
     const tokens = marked.lexer(protectedText);
 
     marked.walkTokens(tokens, token => {

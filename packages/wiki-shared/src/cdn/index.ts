@@ -24,6 +24,7 @@ export const CDN_VERSIONS = {
     cmThemeOneDark:   '6.1.3',
     cmSearch:         '6.7.0',
     lezerHighlight:   '1.2.3',
+    lezerCommon:      '1.5.2',
 } as const;
 
 export const CDN_URLS = {
@@ -63,17 +64,47 @@ export const FONTS = {
     code: 'https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Nanum+Gothic+Coding:wght@400;700&display=swap',
 } as const;
 
-// CodeMirror 6 + Lezer importmap (슈퍼셋 — 9개 항목, 모든 에디터 페이지에서 공유)
+// CodeMirror 6 + Lezer importmap
+//
+// 싱글톤 보장: esm.sh 의 각 패키지는 의존 패키지를 `@codemirror/state@^6.6.0` 같은 "범위"로 import
+// 하는데, 범위는 esm.sh 에서 그때그때 최신 패치로 해석된다(예: ^6.6.0 → 6.7.0). importmap 이 핀한
+// 버전(6.6.0)과 어긋나면 @codemirror/state 가 두 인스턴스로 로드되어 Facet/Compartment 동일성이
+// 깨지고, `new EditorView(...)` 가 "Unrecognized extension value … multiple instances of
+// @codemirror/state" 예외로 죽는다(에디터 진입 시 로딩 스피너 멈춤; 문서 보기는 CM 미사용이라 정상).
+// 이를 막기 위해 공유 패키지를 전부 `?external=` 로 외부화해, 패키지 간 상호 import 를 모두 이
+// importmap 의 단일 핀 버전으로 해석되게 한다(cloudspace 동일 구현과 정합). (leaf 의존성
+// crelt/style-mod/@lezer/markdown 등은 동일성에 민감하지 않으므로 esm.sh 에 맡긴다.)
+const CM_SHARED = [
+    '@codemirror/state',
+    '@codemirror/view',
+    '@codemirror/commands',
+    '@codemirror/language',
+    '@codemirror/lang-markdown',
+    '@codemirror/language-data',
+    '@codemirror/theme-one-dark',
+    '@codemirror/search',
+    '@lezer/highlight',
+    '@lezer/common',
+];
+// 자기 자신을 제외한 공유 패키지를 external 로 지정한 esm.sh URL 을 만든다.
+const cm = (pkg: string, version: string): string => {
+    const external = CM_SHARED.filter((p) => p !== pkg).join(',');
+    return `${E}/${pkg}@${version}?external=${external}`;
+};
+
 export const CODEMIRROR_IMPORTMAP: Record<string, string> = {
-    '@codemirror/state':          `${E}/@codemirror/state@${CDN_VERSIONS.cmState}`,
-    '@codemirror/view':           `${E}/@codemirror/view@${CDN_VERSIONS.cmView}`,
-    '@codemirror/commands':       `${E}/@codemirror/commands@${CDN_VERSIONS.cmCommands}`,
-    '@codemirror/language':       `${E}/@codemirror/language@${CDN_VERSIONS.cmLanguage}`,
-    '@codemirror/lang-markdown':  `${E}/@codemirror/lang-markdown@${CDN_VERSIONS.cmLangMarkdown}`,
-    '@codemirror/language-data':  `${E}/@codemirror/language-data@${CDN_VERSIONS.cmLanguageData}`,
-    '@codemirror/theme-one-dark': `${E}/@codemirror/theme-one-dark@${CDN_VERSIONS.cmThemeOneDark}`,
-    '@codemirror/search':         `${E}/@codemirror/search@${CDN_VERSIONS.cmSearch}`,
-    '@lezer/highlight':           `${E}/@lezer/highlight@${CDN_VERSIONS.lezerHighlight}`,
+    '@codemirror/state':          cm('@codemirror/state', CDN_VERSIONS.cmState),
+    '@codemirror/view':           cm('@codemirror/view', CDN_VERSIONS.cmView),
+    '@codemirror/commands':       cm('@codemirror/commands', CDN_VERSIONS.cmCommands),
+    '@codemirror/language':       cm('@codemirror/language', CDN_VERSIONS.cmLanguage),
+    '@codemirror/lang-markdown':  cm('@codemirror/lang-markdown', CDN_VERSIONS.cmLangMarkdown),
+    '@codemirror/language-data':  cm('@codemirror/language-data', CDN_VERSIONS.cmLanguageData),
+    '@codemirror/theme-one-dark': cm('@codemirror/theme-one-dark', CDN_VERSIONS.cmThemeOneDark),
+    '@codemirror/search':         cm('@codemirror/search', CDN_VERSIONS.cmSearch),
+    '@lezer/highlight':           cm('@lezer/highlight', CDN_VERSIONS.lezerHighlight),
+    // @lezer/common 은 @lezer/highlight·@codemirror/language·lang-markdown 가 공유하는 파서 트리
+    // 기반 타입(Tree/NodeType)의 단일 인스턴스 보장을 위해 importmap 에 직접 핀한다(leaf 라 external 불필요).
+    '@lezer/common':              `${E}/@lezer/common@${CDN_VERSIONS.lezerCommon}`,
 };
 
 export type BundleName = 'base' | 'markdown' | 'editor' | 'turnstile' | 'diff';
