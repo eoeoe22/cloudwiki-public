@@ -3172,7 +3172,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 useSectionMode
                     ? `<i class="mdi mdi-pencil-box-multiple"></i> 섹션 편집: ${escapeHtml(page.slug)}`
                     : pendingMcpSubmissionId
-                        ? `<i class="mdi mdi-robot-outline"></i> MCP 편집안 편집: ${escapeHtml(page.slug)}`
+                        ? `<i class="bi bi-plug-fill"></i> MCP 편집안 편집: ${escapeHtml(page.slug)}`
                         : pendingEditRequestId
                             ? `<i class="mdi mdi-account-check-outline"></i> 편집 요청 검토: ${escapeHtml(page.slug)}`
                             : `<i class="mdi mdi-pencil-box-multiple"></i> 편집: ${escapeHtml(page.slug)}`;
@@ -3303,7 +3303,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     window.Swal.fire('오류', e?.message || 'MCP 편집안을 불러오지 못했습니다.', 'error');
                 }
                 document.getElementById('editPageTitle').innerHTML = mcpLoaded
-                    ? `<i class="mdi mdi-robot-outline"></i> MCP 편집안 편집(신규): ${escapeHtml(slug)}`
+                    ? `<i class="bi bi-plug-fill"></i> MCP 편집안 편집(신규): ${escapeHtml(slug)}`
                     : `<i class="mdi mdi-plus-circle"></i> 새 문서 만들기`;
                 document.title = mcpLoaded
                     ? `MCP 편집: ${slug} - ${window.appConfig.wikiName}`

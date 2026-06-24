@@ -8,10 +8,11 @@
     "cloudspace"
   ],
   "scripts": {
+    "predev": "node packages/wiki-shared/scripts/sync-render-css.mjs",
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "build": "node scripts/build-skins-css.mjs && astro build && node scripts/copy-astro-pages.mjs && vite build",
-    "build:astro": "node scripts/build-skins-css.mjs && astro build && node scripts/copy-astro-pages.mjs",
+    "build": "node packages/wiki-shared/scripts/sync-render-css.mjs && node scripts/build-skins-css.mjs && astro build && node scripts/copy-astro-pages.mjs && vite build",
+    "build:astro": "node packages/wiki-shared/scripts/sync-render-css.mjs && node scripts/build-skins-css.mjs && astro build && node scripts/copy-astro-pages.mjs",
     "build:watch": "vite build --watch",
     "typecheck": "tsc --noEmit",
     "typecheck:client": "tsc --noEmit -p tsconfig.client.json",

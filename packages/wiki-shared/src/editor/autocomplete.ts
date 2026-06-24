@@ -306,8 +306,9 @@ const blockAc = {
     div: document.getElementById('block-autocomplete'),
     options: [
         { id: 'card',      label: '카드',      desc: '제목 + 본문 박스',           icon: 'mdi mdi-card-text-outline'       },
-        { id: 'grid',      label: '그리드',    desc: '카드 그리드 레이아웃',       icon: 'mdi mdi-grid'                    },
+        { id: 'grid',      label: '그리드',    desc: '그리드 ({cols:N}/{template:..})', icon: 'mdi mdi-grid'                },
         { id: 'row',       label: '가로 정렬', desc: '자식을 가로로 배치',         icon: 'mdi mdi-view-column-outline'     },
+        { id: 'canvas',    label: '캔버스',    desc: '12컬럼 자유 배치 (자식 :::area {span:N})', icon: 'mdi mdi-view-dashboard-outline' },
         { id: 'embed',     label: '임베드',    desc: '왼쪽 강조선 인용',           icon: 'mdi mdi-format-quote-close'      },
         { id: 'tabs',      label: '탭',        desc: '탭 컨테이너 (자식 :::tab)',  icon: 'mdi mdi-tab'                     },
         { id: 'accordion', label: '아코디언',  desc: '아코디언 (자식 :::item)',    icon: 'mdi mdi-format-list-bulleted-square' },

@@ -388,12 +388,13 @@ export async function renderForAI(content: string, db: D1Database, depth = 0, cu
     };
     // 컨테이너 블록(tabs/accordion/steps)의 오프너 라인은 제거.
     // 자식 블록(tab/item/step): 제목을 평문으로 보존. step 은 자동 번호 부여.
-    const CONTAINER_TYPES = new Set(['tabs', 'accordion', 'steps']);
+    // canvas 는 자식 :::area 를 담는 레이아웃 컨테이너이므로 오프너 라인을 제거한다.
+    const CONTAINER_TYPES = new Set(['tabs', 'accordion', 'steps', 'canvas']);
     let _stepCounter = 0;
     processed = processed.replace(/^:::([a-zA-Z][a-zA-Z0-9_-]*)(?:[ \t]+([^\n]*))?[ \t]*$/gm, (_, type, title) => {
         const t = (title || '')
             .replace(/\{(?:palette|bg|color):[^}]+\}/g, '')
-            .replace(/\{(?:align|multiple|layout|status|open|icon)(?::[^}]*)?\}/g, '')
+            .replace(/\{(?:align|multiple|layout|status|open|icon|cols|template|gap|span)(?::[^}]*)?\}/g, '')
             .trim();
         const calloutLabel = CALLOUT_LABELS[type as string];
         if (calloutLabel) return t ? `${calloutLabel}: ${t}` : `${calloutLabel}:`;
@@ -406,6 +407,8 @@ export async function renderForAI(content: string, db: D1Database, depth = 0, cu
             return `${_stepCounter}. ${t || '단계'}`;
         }
         if (type === 'tab' || type === 'item') return t || '';
+        // area 는 순수 레이아웃 래퍼: 오프너 라인만 제거하고 내부 콘텐츠는 보존.
+        if (type === 'area') return '';
         return t ? t : '';
     });
     processed = processed.replace(/^:::[ \t]*$/gm, '');

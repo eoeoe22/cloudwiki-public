@@ -1759,6 +1759,82 @@ body.raw-mode .wiki-content-raw {
   margin-bottom: 0;
 }
 
+/* ── 그리드 고도화: 고정 열 수 / 비대칭 템플릿 / 간격 / 정렬 ──
+   {cols:N} 또는 {template:..} 토큰이 있을 때만 .wiki-grid--grid 가 붙어
+   flex-wrap 대신 CSS grid 로 전환된다(토큰 없으면 기존 동작 유지). */
+.wiki-grid--grid {
+  display: grid;
+  flex-wrap: initial;
+}
+.wiki-grid--grid > * {
+  flex: initial;
+  min-width: 0;
+  max-width: 100%;
+}
+.wiki-grid--cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.wiki-grid--cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.wiki-grid--cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.wiki-grid--cols-5 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.wiki-grid--cols-6 { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+.wiki-grid--tpl-1-1     { grid-template-columns: 1fr 1fr; }
+.wiki-grid--tpl-1-2     { grid-template-columns: 1fr 2fr; }
+.wiki-grid--tpl-2-1     { grid-template-columns: 2fr 1fr; }
+.wiki-grid--tpl-1-3     { grid-template-columns: 1fr 3fr; }
+.wiki-grid--tpl-3-1     { grid-template-columns: 3fr 1fr; }
+.wiki-grid--tpl-1-1-1   { grid-template-columns: repeat(3, 1fr); }
+.wiki-grid--tpl-1-2-1   { grid-template-columns: 1fr 2fr 1fr; }
+.wiki-grid--tpl-2-1-1   { grid-template-columns: 2fr 1fr 1fr; }
+.wiki-grid--tpl-1-1-2   { grid-template-columns: 1fr 1fr 2fr; }
+.wiki-grid--tpl-1-1-1-1 { grid-template-columns: repeat(4, 1fr); }
+
+.wiki-grid--gap-sm { gap: var(--wiki-space-2); }
+.wiki-grid--gap-md { gap: var(--wiki-space-3); }
+.wiki-grid--gap-lg { gap: var(--wiki-space-5); }
+.wiki-grid--align-start   { align-items: start; }
+.wiki-grid--align-center  { align-items: center; }
+.wiki-grid--align-stretch { align-items: stretch; }
+
+/* ── 캔버스: 12컬럼 자유 배치 ──
+   .wiki-area 는 기본 전체 폭(1 / -1), {span:N} 으로 N/12 만큼 차지. */
+.wiki-canvas {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: var(--wiki-space-3);
+  margin-bottom: var(--wiki-space-4);
+  align-items: start;
+  max-width: 100%;
+}
+.wiki-canvas--gap-sm { gap: var(--wiki-space-2); }
+.wiki-canvas--gap-md { gap: var(--wiki-space-3); }
+.wiki-canvas--gap-lg { gap: var(--wiki-space-5); }
+
+.wiki-area {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+.wiki-area > :last-child { margin-bottom: 0; }
+.wiki-area--span-1  { grid-column: span 1; }
+.wiki-area--span-2  { grid-column: span 2; }
+.wiki-area--span-3  { grid-column: span 3; }
+.wiki-area--span-4  { grid-column: span 4; }
+.wiki-area--span-5  { grid-column: span 5; }
+.wiki-area--span-6  { grid-column: span 6; }
+.wiki-area--span-7  { grid-column: span 7; }
+.wiki-area--span-8  { grid-column: span 8; }
+.wiki-area--span-9  { grid-column: span 9; }
+.wiki-area--span-10 { grid-column: span 10; }
+.wiki-area--span-11 { grid-column: span 11; }
+.wiki-area--span-12 { grid-column: span 12; }
+
+/* 좁은 화면: 그리드/캔버스를 단일 열로 접어 세로 스택.
+   .wiki-canvas .wiki-area 는 .wiki-area--span-N 보다 우선순위가 높아
+   span 지정과 무관하게 전체 폭으로 펼쳐진다. */
+@media (max-width: 768px) {
+  .wiki-grid--grid { grid-template-columns: 1fr; }
+  .wiki-canvas { grid-template-columns: 1fr; }
+  .wiki-canvas .wiki-area { grid-column: 1 / -1; }
+}
+
 .wiki-stat {
   background: var(--wiki-bg);
   border: 1px solid var(--wiki-border);

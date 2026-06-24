@@ -47,6 +47,9 @@ packages/*/node_modules
 # 멀티 스킨 색 테마 외부 CSS (scripts/build-skins-css.mjs 가 빌드 타임에 생성)
 /public/css/skins-*.css
 
+# 본문 렌더 스타일 (packages/wiki-shared/scripts/sync-render-css.mjs 가 빌드 타임에 생성)
+/public/render.css
+
 # wrangler / cloudflare
 .wrangler
 .dev.vars

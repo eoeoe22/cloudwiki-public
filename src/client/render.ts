@@ -2013,6 +2013,7 @@ function _renderChildInnerHtml(innerText, blockData) {
     const { text: protectedInner, prot: wlProt } = protectWikiLinks(innerText || '');
     let innerHtml = (typeof marked !== 'undefined') ? marked.parse(protectedInner) : protectedInner;
     innerHtml = restoreWikiLinks(innerHtml, wlProt);
+    innerHtml = _replaceTaskCheckboxesWithIcons(innerHtml);
     innerHtml = innerHtml.replace(/<img([^>]*)>\s*\{size:([a-zA-Z0-9_-]+)\}/g, (_, attrs, size) => `<img${attrs} data-size="${size.trim()}">`);
     innerHtml = innerHtml.replace(/(?:<p>)?WIKIBLOCKPH(\d+)XEND(?:<\/p>)?/g, (m, i) => {
         const sub = blockData[parseInt(i, 10)];
@@ -2134,6 +2135,7 @@ function _renderBlockHtml(block, blockData) {
     const { text: protectedInner, prot: wlProt } = protectWikiLinks(innerText);
     let innerHtml = (typeof marked !== 'undefined') ? marked.parse(protectedInner) : protectedInner;
     innerHtml = restoreWikiLinks(innerHtml, wlProt);
+    innerHtml = _replaceTaskCheckboxesWithIcons(innerHtml);
     innerHtml = innerHtml.replace(/<img([^>]*)>\s*\{size:([a-zA-Z0-9_-]+)\}/g, (_, attrs, size) => `<img${attrs} data-size="${size.trim()}">`);
     innerHtml = innerHtml.replace(/(?:<p>)?WIKIBLOCKPH(\d+)XEND(?:<\/p>)?/g, (m, i) => {
         const sub = blockData[parseInt(i, 10)];
@@ -2172,10 +2174,50 @@ function _renderBlockHtml(block, blockData) {
                 `<div class="card-body wiki-card-body"${bodyStyleAttr}>${innerHtml}</div>` +
                 `</div>`;
         }
-        case 'grid':
-            return `<div class="wiki-grid"${styleAttr}>${innerHtml}</div>`;
+        case 'grid': {
+            // 옵션 토큰으로 균등 그리드(고정 열 수) / 비대칭 템플릿 / 간격 / 정렬 제어.
+            // 토큰이 없으면 기존 flex-wrap 동작을 그대로 유지(하위호환).
+            const { tokens: gt } = _extractStrictTokens(block.titleLine, {
+                cols:     { type: 'enum', values: ['2', '3', '4', '5', '6'] },
+                template: { type: 'enum', values: ['1-1', '1-2', '2-1', '1-3', '3-1', '1-1-1', '1-2-1', '2-1-1', '1-1-2', '1-1-1-1'] },
+                gap:      { type: 'enum', values: ['sm', 'md', 'lg'] },
+                align:    { type: 'enum', values: ['start', 'center', 'stretch'] },
+            });
+            const gridCls = ['wiki-grid'];
+            // template 이 cols 보다 우선(더 구체적). 둘 중 하나가 있으면 CSS grid 모드로 전환.
+            if (gt.template) gridCls.push('wiki-grid--grid', `wiki-grid--tpl-${gt.template}`);
+            else if (gt.cols) gridCls.push('wiki-grid--grid', `wiki-grid--cols-${gt.cols}`);
+            if (gt.gap) gridCls.push(`wiki-grid--gap-${gt.gap}`);
+            if (gt.align) gridCls.push(`wiki-grid--align-${gt.align}`);
+            return `<div class="${gridCls.join(' ')}"${styleAttr}>${innerHtml}</div>`;
+        }
         case 'row':
             return `<div class="wiki-row"${styleAttr}>${innerHtml}</div>`;
+        case 'canvas': {
+            // 12컬럼 자유 배치 컨테이너. 자식 :::area {span:N} 이 각자 차지할 폭을 선언.
+            const { tokens: ct } = _extractStrictTokens(block.titleLine, {
+                gap: { type: 'enum', values: ['sm', 'md', 'lg'] },
+            });
+            const children = _collectWikiChildBlocks(block.innerText, blockData, ['area']);
+            if (children.length === 0) return `<div class="wiki-canvas-empty"></div>`;
+            const canvasCls = ['wiki-canvas'];
+            if (ct.gap) canvasCls.push(`wiki-canvas--gap-${ct.gap}`);
+            const areas = children.map((child) => {
+                const meta = _extractStrictTokens(child.titleLine, {
+                    span: { type: 'enum', values: ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'] },
+                });
+                // 영역별 배경/글자색은 카드와 동일한 색 토큰 규칙을 따른다.
+                const cs = _extractBlockStyleTokens(child.titleLine);
+                let areaStyle = '';
+                if (cs.bg && _isSafeCssColor(cs.bg)) areaStyle += `background-color:${cs.bg};`;
+                if (cs.color && _isSafeCssColor(cs.color)) areaStyle += `color:${cs.color};`;
+                const areaStyleAttr = areaStyle ? ` style="${areaStyle}"` : '';
+                const spanCls = meta.tokens.span ? ` wiki-area--span-${meta.tokens.span}` : '';
+                const childInner = _renderChildInnerHtml(child.innerText, blockData);
+                return `<div class="wiki-area${spanCls}"${areaStyleAttr}>${childInner}</div>`;
+            });
+            return `<div class="${canvasCls.join(' ')}">${areas.join('')}</div>`;
+        }
         case 'tabs': {
             // 탭은 항상 좌측 정렬 (align 토큰 미지원)
             const children = _collectWikiChildBlocks(block.innerText, blockData, ['tab']);
@@ -2280,7 +2322,8 @@ function _renderBlockHtml(block, blockData) {
         case 'tab':
         case 'item':
         case 'step':
-            // 부모(tabs/accordion/steps) 밖에서 단독 사용된 경우: 일반 블록으로 폴백.
+        case 'area':
+            // 부모(tabs/accordion/steps/canvas) 밖에서 단독 사용된 경우: 일반 블록으로 폴백.
             return `<div class="wiki-block wiki-block-${escapeHtml(type)}"${styleAttr}>` +
                 (titleHtml ? `<div class="wiki-block-title">${titleHtml}</div>` : '') +
                 innerHtml +
@@ -2832,8 +2875,13 @@ function restoreWikiLinks(html, prot) {
 }
 
 // marked 가 생성한 GFM task list 의 <input type="checkbox"> 를 MDI 아이콘으로 치환.
-// 체크된 항목은 초록색으로 표시.
+// 체크된 항목은 초록색으로 표시. 진행 중(- [~] / - [/]) 항목은 노란 박스 안에 mdi-reload.
 function _replaceTaskCheckboxesWithIcons(html) {
+    // 진행 표식(WIKITASKPROGRESSPH)이 붙은 체크박스를 먼저 치환 — 표식까지 함께 소비.
+    html = html.replace(
+        /<input\b[^>]*\btype="checkbox"[^>]*>\s*WIKITASKPROGRESSPH/gi,
+        () => `<span class="mdi mdi-checkbox-blank wiki-task-checkbox wiki-task-progress" style="position:relative;color:#fbc02d;" aria-hidden="true"><span class="mdi mdi-reload" style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font-size:0.62em;color:#000;"></span></span>`
+    );
     return html.replace(/<input\b([^>]*?)\btype="checkbox"([^>]*?)>/gi, (match, before, after) => {
         const attrs = before + after;
         const checked = /\bchecked\b/i.test(attrs);
@@ -2908,6 +2956,31 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
 
         // "- []" (공백 없는 빈 체크박스) → GFM 표준 "- [ ]" 로 정규화
         foldInput = foldInput.replace(/^(\s*[-*+] )\[\](?=[ \t]|$)/gm, '$1[ ]');
+        // "- [~]" / "- [/]" (진행 중 체크박스) → 표준 빈 체크박스 + 진행 표식 placeholder.
+        // GFM 은 [ ]/[x] 만 task list 로 인식하므로, 빈 체크박스로 정규화한 뒤 표식을
+        // 본문 앞에 끼워 두고 렌더 후 _replaceTaskCheckboxesWithIcons 에서 진행 아이콘으로 치환한다.
+        // 단, 4칸 이상 들여쓰기이면서 상위에 리스트 항목이 없는 줄은 indented code block 이므로
+        // (펜스/인라인 코드는 이미 보호됨) 표식이 코드 샘플에 노출되지 않도록 정규화를 건너뛴다.
+        // 중첩 리스트 항목은 4칸 이상 들여써도 상위 리스트 마커가 있으므로 그대로 정규화한다.
+        {
+            const progLines = foldInput.split('\n');
+            const progRe = /^(\s*(?:[-*+]|\d+\.) )\[[~/]\](?=[ \t]|$)/;
+            const indentOf = (ln) => (ln.match(/^[ \t]*/)[0]).replace(/\t/g, '    ').length;
+            for (let pi = 0; pi < progLines.length; pi++) {
+                if (!progRe.test(progLines[pi])) continue;
+                const indent = indentOf(progLines[pi]);
+                let inList = indent < 4;
+                // 더 얕은 첫 비공백 줄이 리스트 마커이면 중첩 항목으로 간주.
+                for (let pj = pi - 1; pj >= 0 && !inList; pj--) {
+                    if (/^\s*$/.test(progLines[pj])) continue;
+                    if (indentOf(progLines[pj]) >= indent) continue;
+                    inList = /^[ \t]*(?:[-*+]|\d+\.)\s/.test(progLines[pj]);
+                    break;
+                }
+                if (inList) progLines[pi] = progLines[pi].replace(progRe, '$1[ ] WIKITASKPROGRESSPH');
+            }
+            foldInput = progLines.join('\n');
+        }
 
         // 줄 시작의 공백/탭을 NBSP(U+00A0)로 치환해 들여쓰기 보존 (트리 구조 등).
         // 마크다운 블록 마커(리스트/인용/제목/표)로 시작하는 줄은 마크다운 의미를 위해 그대로 둠.
