@@ -1,0 +1,143 @@
+/* /all (모든 문서 보기) 전용 스타일.
+   그리드/그룹 헤더는 카테고리 목록(render.css)과 동일한 --wiki-* 토큰·값을 재사용해 시각적으로
+   일치시키되, render.css 전체를 끌어오지 않도록 이 페이지(.all-page) 스코프로만 둔다.
+   카드·배지·탭·페이지네이션은 style.css / Bootstrap 공통 클래스를 그대로 쓴다. */
+
+/* ── 초성/문자 그룹 섹션 ── */
+.all-page .all-groups {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wiki-space-5);
+  margin-top: var(--wiki-space-3);
+}
+
+.all-page .all-group-label {
+  font-size: var(--wiki-fs-lg);
+  font-weight: 700;
+  color: var(--wiki-primary);
+  margin: 0 0 var(--wiki-space-2) 0;
+  padding-bottom: var(--wiki-space-1);
+  border-bottom: 1px solid var(--wiki-border);
+}
+
+.all-page .all-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: var(--wiki-space-2);
+  align-items: start;
+}
+
+/* ── 최상위 문서 카드 (.surface-card 기반: bg/border/radius 는 style.css 공통) ── */
+.all-page .all-card {
+  padding: 0;
+  overflow: hidden;
+}
+
+.all-page .all-card-header {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.5rem 0.65rem;
+}
+
+.all-page .all-card-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.35;
+  text-decoration: none;
+  color: var(--wiki-text);
+  font-weight: 500;
+}
+
+.all-page .all-card-title:hover { color: var(--wiki-primary); }
+.all-page .all-card-title.is-missing { color: var(--wiki-text-muted); font-style: italic; }
+
+/* 펼치기 토글 화살표 */
+.all-page .all-toggle {
+  flex: 0 0 auto;
+  border: none;
+  background: transparent;
+  color: var(--wiki-text-muted);
+  padding: 0 0.2rem;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+}
+
+.all-page .all-toggle .bi { transition: transform var(--wiki-dur-fast) var(--wiki-ease); }
+.all-page .all-toggle[aria-expanded="true"] .bi { transform: rotate(90deg); }
+
+/* ── 하위 문서 리스트 ── */
+.all-page .all-subdocs {
+  border-top: 1px solid var(--wiki-border);
+  padding: 0.25rem 0.4rem 0.4rem;
+  background: var(--wiki-bg);
+}
+
+.all-page .all-subdoc {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.25rem 0.35rem;
+  text-decoration: none;
+  color: var(--wiki-text);
+  border-radius: var(--wiki-radius-sm);
+  font-size: var(--wiki-fs-sm);
+}
+
+.all-page .all-subdoc:hover { background: var(--wiki-card-bg); color: var(--wiki-primary); }
+.all-page .all-subdoc-name { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+
+/* ── 배지 묶음 (카테고리 / ACL) ── */
+.all-page .all-badges {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  align-items: center;
+}
+
+/* 네임스페이스 하위 탭은 상위 탭보다 작게 */
+.all-page .all-ns-tabs .nav-link {
+  padding: 0.3rem 0.6rem;
+  font-size: var(--wiki-fs-sm);
+}
+
+/* ── 이미지 그리드 ── */
+.all-page .all-img-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: var(--wiki-space-3);
+}
+
+.all-page .all-img-card {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  text-decoration: none;
+  color: var(--wiki-text);
+}
+
+.all-page .all-img-thumb {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+  background: var(--wiki-bg);
+  border-bottom: 1px solid var(--wiki-border);
+}
+
+.all-page .all-img-meta { padding: 0.4rem 0.5rem; min-width: 0; }
+
+.all-page .all-img-name {
+  font-size: var(--wiki-fs-sm);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.3;
+}
+
+.all-page .all-img-size { font-size: var(--wiki-fs-xs); color: var(--wiki-text-muted); }
+
+/* 결과 요약줄 / 페이지네이션 여백 */
+.all-page .all-summary { margin-bottom: var(--wiki-space-2); }
+.all-page .all-pagination { margin-top: var(--wiki-space-6); }

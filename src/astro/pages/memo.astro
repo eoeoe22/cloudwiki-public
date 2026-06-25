@@ -1,0 +1,170 @@
+---
+// 개방 메모장 셸 (/memo). 권한·로그인 없이 누구나 위키 문법을 작성·미리보기할 수 있는
+// 클라이언트 전용 연습장이다. 일반 문서 편집(edit.astro)과 달리:
+//   - 서버에 저장되지 않으며 어떤 문서에도 적용되지 않는다(본문은 브라우저 localStorage 에만 보관).
+//   - 인증/Turnstile/카테고리/리다이렉트/편집 요약/저장 버튼이 없다.
+// 단, 에디터 자체의 편집 경험은 문서 편집과 동일하게 제공한다(autocomplete 만 제외):
+//   문서 편집이 쓰는 동일 번들(edit-utils/edit-modals/edit-image/edit-table-toolbar)을
+//   그대로 로드해 전체 툴바·모달(아이콘/타임스탬프/카드/구조/팔레트/배지/지도/특수문자/CSV),
+//   인라인 표 편집 툴바, 이미지 업로드·편집·검색을 재사용하고, memo.ts 가 main.ts 에서
+//   저장/인증/문서/자동완성을 뺀 경량 오케스트레이터로 CodeMirror6 + 실시간 프리뷰를 구성한다.
+//   자동완성(edit-autocomplete) 은 의도적으로 로드하지 않는다(요청 사양).
+// 요청별 가변값이 없어 fetchAssetHtml 로 순수 정적 서빙되며, CDN 번들(base/markdown/editor)은
+// BaseLayout 이 PAGE_BUNDLES['/memo.html'] 기준으로 빌드 타임에 베이킹한다.
+import BaseLayout from '../layouts/BaseLayout.astro';
+import Header from '../components/Header.astro';
+import Footer from '../components/Footer.astro';
+---
+<BaseLayout pagePath="/memo.html" title="메모장 - CloudWiki">
+    <Fragment slot="head">
+        <link rel="stylesheet" href="/render.css" />
+        <link rel="stylesheet" href="/css/edit.css" />
+        <!-- 테마 FOUC 방지: CSS 로드 후 즉시 테마 적용 -->
+        <script is:inline>try { var t = localStorage.getItem('themeMode'); if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t); } catch (e) { }</script>
+    </Fragment>
+
+    <!-- 아이콘 선택 모달 (edit-modals.js 의 openIconPicker / openSelectedIconsPicker 가 사용) -->
+    <div class="modal fade" id="iconPickerModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-xl modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i id="iconPickerTypeIcon" class="mdi mdi-bootstrap me-2"></i>
+                        <span id="iconPickerTitle">아이콘 선택</span>
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="text" id="iconSearchInput" class="form-control mb-3"
+                        placeholder="아이콘 이름 검색... (예: home, user, card)">
+                    <div id="iconLoadingSpinner" class="text-center py-4" style="display:none;">
+                        <span class="spinner-border text-primary" role="status"></span>
+                        <p class="mt-2 text-muted small">아이콘 목록 로딩 중...</p>
+                    </div>
+                    <div id="iconPickerGrid" class="icon-grid-modal"></div>
+                    <div id="iconPickerEmpty" class="text-center text-muted py-3" style="display:none;">
+                        <i class="mdi mdi-magnify-close" style="font-size:2rem;"></i>
+                        <p class="mt-1">검색 결과가 없습니다.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── 네비게이션 바 ── -->
+    <Header />
+
+    <div class="wiki-container" id="memo-container">
+        <div class="wiki-article">
+
+            <h2 class="mb-2" id="memoPageTitle">
+                <i class="mdi mdi-notebook-edit-outline"></i> 메모장
+            </h2>
+
+            <!-- Markdown 에디터 (CodeMirror6 + 실시간 프리뷰) — memo.ts 가 #editor 에 마운트 -->
+            <div class="mb-3">
+                <div id="editor"></div>
+                <!-- id 는 edit-utils.js 의 카운터(updateEditorTextCounterFromDoc)가 채우는 #editorTextCounter 와 동일하게 둔다 -->
+                <div id="editorTextCounter" class="editor-text-counter" aria-live="off">
+                    <span data-counter="lines">1줄</span>
+                    <span data-counter="chars">0자</span>
+                    <span data-counter="charsWithSpaces">0자(공백포함)</span>
+                    <span data-counter="words">0단어</span>
+                </div>
+            </div>
+
+            <!-- 버튼 -->
+            <div class="edit-actions d-flex align-items-center flex-wrap gap-2">
+                <button type="button" class="btn btn-wiki-outline" id="memoCopyBtn">
+                    <i class="mdi mdi-content-copy"></i> 복사
+                </button>
+                <button type="button" class="btn btn-wiki-outline" id="memoClearBtn">
+                    <i class="mdi mdi-broom"></i> 비우기
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── 이미지 편집 모달 (edit-image.js 가 사용) ── -->
+    <div class="modal fade" id="imageEditorModal" tabindex="-1" aria-hidden="true" data-bs-backdrop="static">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h6 class="modal-title"><i class="bi bi-crop"></i> 이미지 편집</h6>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="닫기"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="img-editor-canvas-wrap" id="imgEditorCanvasWrap">
+                        <canvas id="imgEditorCanvas"></canvas>
+                        <div class="crop-overlay" id="cropOverlay" style="display:none;">
+                            <div class="crop-box" id="cropBox">
+                                <div class="crop-handle tl" data-handle="tl"></div>
+                                <div class="crop-handle tr" data-handle="tr"></div>
+                                <div class="crop-handle bl" data-handle="bl"></div>
+                                <div class="crop-handle br" data-handle="br"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="img-editor-toolbar">
+                        <button type="button" id="btnCropToggle" title="크롭 모드 전환">
+                            <i class="bi bi-crop"></i>
+                        </button>
+                        <button type="button" id="btnCropApply" style="display:none;" title="크롭 적용">
+                            <i class="bi bi-check-lg"></i>
+                        </button>
+                        <div class="separator"></div>
+                        <button type="button" id="btnRotateLeft" title="왼쪽 90도 회전">
+                            <i class="bi bi-arrow-counterclockwise"></i>
+                        </button>
+                        <button type="button" id="btnRotateRight" title="오른쪽 90도 회전">
+                            <i class="bi bi-arrow-clockwise"></i>
+                        </button>
+                        <div class="separator"></div>
+                        <button type="button" id="btnImgReset" title="원본 복원">
+                            <i class="bi bi-arrow-repeat"></i> 초기화
+                        </button>
+                    </div>
+                    <div class="img-editor-info" id="imgEditorInfo"></div>
+                </div>
+                <div class="modal-footer d-flex justify-content-between align-items-center w-100">
+                    <div class="dropdown">
+                        <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button"
+                            id="btnImgEditorSizeToggle" data-bs-toggle="dropdown" aria-expanded="false">
+                            <i class="mdi mdi-arrow-expand-all me-1"></i>크게(기본)
+                        </button>
+                        <ul class="dropdown-menu" id="imgEditorSizeDropdown" aria-labelledby="btnImgEditorSizeToggle">
+                            <li><a class="dropdown-item" href="#" data-size="icon"><i
+                                        class="mdi mdi-square-medium-outline me-2"></i>아이콘</a></li>
+                            <li><a class="dropdown-item" href="#" data-size="small"><i
+                                        class="mdi mdi-arrow-collapse me-2"></i>작게</a></li>
+                            <li><a class="dropdown-item" href="#" data-size="medium"><i
+                                        class="mdi mdi-square-outline me-2"></i>중간</a></li>
+                            <li><a class="dropdown-item" href="#" data-size="full"><i
+                                        class="mdi mdi-arrow-expand-all me-2"></i>크게(기본)</a></li>
+                        </ul>
+                    </div>
+                    <div>
+                        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">취소</button>
+                        <button type="button" class="btn btn-primary btn-sm" id="btnImgEditorDone">
+                            <i class="bi bi-check-lg"></i> 편집 완료
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── 푸터 ── -->
+    <Footer />
+
+    <Fragment slot="scripts">
+        <script type="module" src="/dist/common.js" is:inline></script>
+        <script type="module" src="/dist/render.js" is:inline></script>
+        <!-- 문서 편집과 동일한 편집 도구 번들 재사용 (autocomplete 는 의도적으로 제외) -->
+        <script type="module" src="/dist/edit-utils.js" is:inline></script>
+        <script type="module" src="/dist/edit-modals.js" is:inline></script>
+        <script type="module" src="/dist/edit-image.js" is:inline></script>
+        <script type="module" src="/dist/edit-table-toolbar.js" is:inline></script>
+        <script type="module" src="/dist/memo.js" is:inline></script>
+    </Fragment>
+</BaseLayout>

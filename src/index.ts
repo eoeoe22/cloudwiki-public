@@ -430,6 +430,14 @@ app.get('/explore', async (c) => {
     return fetchAssetHtml(c, '/explore.html');
 });
 
+// /all → all.html 서빙 (모든 문서 보기 상세 페이지, 전체 공개)
+app.get('/all', async (c) => {
+    if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) {
+        return c.redirect('/login');
+    }
+    return fetchAssetHtml(c, '/all.html');
+});
+
 // /components-json-builder → 사이드바/푸터 네비게이션 JSON 빌더 도구 (정적 셸, 운영자 보조 도구)
 app.get('/components-json-builder', async (c) => {
     if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) {
@@ -1022,6 +1030,14 @@ app.get('/edit', async (c) => {
         return c.redirect('/login');
     }
     return fetchAssetHtml(c, '/edit.html');
+});
+
+// /memo → memo.html 서빙 (개방 메모장 — 권한·로그인 불필요한 클라이언트 전용 위키 문법 연습장)
+// 일반 문서 편집(/edit)과 달리 서버에 저장되지 않으며 어떤 문서에도 적용되지 않는다.
+// 본문은 브라우저 localStorage 에만 보관되고 위키 콘텐츠를 노출하지 않으므로,
+// closed 위키에서도 비회원이 접근할 수 있도록 가시성 게이트를 두지 않는다(요청 사양: 비회원 접근 허용).
+app.get('/memo', async (c) => {
+    return fetchAssetHtml(c, '/memo.html');
 });
 
 // /setup-profile 접근 시 서빙

@@ -256,6 +256,43 @@ media.get('/api/media/search', requireAuth, requirePermission('media:upload'), a
 });
 
 /**
+ * GET /api/media/all
+ * /all(모든 문서 보기) 페이지의 이미지 탭 전용 — 업로드된 모든 이미지를 1회 반환한다.
+ * /api/media/search 는 업로드 권한(media:upload) 게이트라 공개 열람에 부적합하다. 이미지는
+ * /media/<r2_key> 로 이미 공개 서빙되므로 목록도 권한 없이 공개하되, closed 가시성만 게이트한다.
+ * 초성 그룹핑/정렬은 클라이언트가 수행하므로 페이지네이션 없이 파일명순 전량 반환한다.
+ */
+media.get('/api/media/all', async (c) => {
+    if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) {
+        return c.json({ error: '로그인이 필요합니다.' }, 401);
+    }
+    const db = c.env.DB;
+    const { results } = await db
+        .prepare(
+            `SELECT m.id, m.r2_key, m.filename, m.mime_type, m.size, m.created_at
+             FROM media m WHERE m.mime_type LIKE 'image/%'
+             ORDER BY m.filename COLLATE NOCASE ASC`
+        )
+        .all<{ id: number; r2_key: string; filename: string; mime_type: string; size: number; created_at: number }>();
+
+    const rows = results || [];
+    const publicBase = c.env.MEDIA_PUBLIC_URL;
+    // 태그는 /all 이미지 그리드(썸네일·파일명·크기)에서 쓰지 않으므로 조회하지 않는다
+    // (필요해지면 search 엔드포인트처럼 fetchMediaTagMap 으로 합치면 된다).
+    const items = rows.map(m => ({
+        id: m.id,
+        r2_key: m.r2_key,
+        filename: m.filename,
+        mime_type: m.mime_type,
+        size: m.size,
+        created_at: m.created_at,
+        url: `${publicBase}/${m.r2_key}`,
+    }));
+
+    return c.json({ items, total: items.length });
+});
+
+/**
  * GET /api/media/search-tags
  * 태그 자동완성(최대 8개). 업로드/검색 모달에서 호출된다.
  */

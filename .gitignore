@@ -20,6 +20,7 @@ packages/*/node_modules
 /public/login.html
 /public/search.html
 /public/explore.html
+/public/all.html
 /public/revisions.html
 /public/user-profile.html
 /public/setup-profile.html
@@ -31,6 +32,7 @@ packages/*/node_modules
 /public/mypage.html
 /public/index.html
 /public/edit.html
+/public/memo.html
 /public/blog.html
 /public/admin.html
 /public/blog-edit.html

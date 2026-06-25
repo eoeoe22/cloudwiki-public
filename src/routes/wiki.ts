@@ -1330,6 +1330,106 @@ wiki.get('/w/all-pages', async (c) => {
 });
 
 /**
+ * GET /w/all-index
+ * /all(모든 문서 보기) 페이지 전용 — 모든 문서를 페이지네이션 없이 1회 반환한다.
+ * 네임스페이스 분리 / 최상위·하위 계층 / 초성 그룹핑 / 정렬은 모두 클라이언트가 수행한다
+ * (카테고리 페이지의 "전량 로드 후 클라 그룹핑" 선례와 동일).
+ * 가시성: closed && 비로그인 → 401. 비관리자(wiki:private 불가)는 is_private=0 만.
+ * 각 행의 edit_acl 은 서버에서 parseEditAcl 로 정규화해 flags 배열(또는 null)로 내려준다.
+ */
+wiki.get('/w/all-index', async (c) => {
+    if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) {
+        return c.json({ error: '로그인이 필요합니다.' }, 401);
+    }
+    const db = c.env.DB;
+    const user = c.get('user');
+    const rbac = c.get('rbac') as RBAC;
+    const canSeePrivate = rbac.can(user?.role ?? 'guest', 'wiki:private');
+
+    const whereClause = 'p.deleted_at IS NULL' + (canSeePrivate ? '' : ' AND p.is_private = 0');
+    const { results } = await db
+        .prepare(
+            `SELECT p.slug, p.title, p.category, p.edit_acl, p.updated_at, p.created_at, p.characters
+             FROM pages p WHERE ${whereClause} ORDER BY p.slug COLLATE NOCASE ASC`
+        )
+        .all<{
+            slug: string; title: string | null; category: string | null; edit_acl: string | null;
+            updated_at: number | null; created_at: number | null; characters: number | null;
+        }>();
+
+    const minAgeDays = await getEditAclMinAgeDays(db);
+    const pages = (results || []).map(r => ({
+        slug: r.slug,
+        title: r.title,
+        category: r.category,
+        acl: parseEditAcl(r.edit_acl)?.flags ?? null,
+        updated_at: r.updated_at,
+        created_at: r.created_at,
+        characters: r.characters,
+    }));
+
+    return c.json(safeJSON({ pages, min_age_days: minAgeDays, total: pages.length }));
+});
+
+/**
+ * GET /w/all-categories
+ * /all 페이지 카테고리 탭 전용 — 모든 카테고리 + 문서 수 + ACL 잠금 여부.
+ * 비관리자에게는 admin_only 카테고리를 제외한다(/w/category-suggest 의 adminFilter 와 동일 정책).
+ * 문서 수는 가시성 게이트를 통과하는(비관리자는 공개) 문서만 집계한다.
+ */
+wiki.get('/w/all-categories', async (c) => {
+    if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) {
+        return c.json({ error: '로그인이 필요합니다.' }, 401);
+    }
+    const db = c.env.DB;
+    const user = c.get('user');
+    const rbac = c.get('rbac') as RBAC;
+    const isAdmin = rbac.can(user?.role ?? 'guest', 'admin:access');
+    const canSeePrivate = rbac.can(user?.role ?? 'guest', 'wiki:private');
+
+    const privacy = canSeePrivate ? '' : ' AND p.is_private = 0';
+    const adminFilter = isAdmin
+        ? ''
+        : ` AND NOT (
+            EXISTS (
+                SELECT 1 FROM category_acl ca
+                 WHERE ca.name = pc.category
+                   AND ca.edit_acl IS NOT NULL
+                   AND ca.edit_acl LIKE '%"admin_only"%'
+            )
+            OR (
+                NOT EXISTS (
+                    SELECT 1 FROM category_acl ca2
+                     WHERE ca2.name = pc.category
+                )
+                AND EXISTS (
+                    SELECT 1 FROM admin_categories ac
+                     WHERE ac.name = pc.category
+                )
+            )
+          )`;
+
+    const { results } = await db
+        .prepare(
+            `SELECT pc.category AS name, COUNT(*) AS count
+             FROM page_categories pc JOIN pages p ON p.id = pc.page_id
+             WHERE p.deleted_at IS NULL${privacy}${adminFilter}
+             GROUP BY pc.category ORDER BY pc.category COLLATE NOCASE ASC`
+        )
+        .all<{ name: string; count: number }>();
+
+    const cats = results || [];
+    const aclMap = await getCategoryAclsBatch(db, cats.map(r => r.name));
+    const categories = cats.map(r => ({
+        name: r.name,
+        count: Number(r.count) || 0,
+        acl: aclMap.get(r.name)?.flags ?? null,
+    }));
+
+    return c.json(safeJSON({ categories }));
+});
+
+/**
  * GET /w/wiki-stats
  * 위키 통계 (문서 개수, 편집 횟수)
  * sqlite_sequence 테이블의 pages, revisions 데이터 참조
