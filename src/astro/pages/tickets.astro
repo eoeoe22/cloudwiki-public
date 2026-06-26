@@ -100,6 +100,9 @@ import Footer from '../components/Footer.astro';
                                         <option value="discussion">토론</option>
                                         <option value="account">계정</option>
                                     </select>
+                                    <div id="newTicketBannedHint" class="form-text text-danger d-none">
+                                        <i class="bi bi-exclamation-circle"></i> 차단된 계정은 소명(이의제기)을 위한 계정 문의만 작성할 수 있습니다.
+                                    </div>
                                 </div>
                                 <div class="mb-3">
                                     <input type="text" class="form-control" id="newTicketTitle" placeholder="문의 제목">

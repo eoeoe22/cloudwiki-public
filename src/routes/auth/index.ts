@@ -3,7 +3,7 @@ import type { Context } from 'hono';
 import { getCookie } from 'hono/cookie';
 import type { Env } from '../../types';
 import { requireAuth, requireAuthAllowBanned } from '../../middleware/session';
-import { getSuperAdmins, PRIVATE_AVATAR_PATH } from '../../utils/auth';
+import { getSuperAdmins, isSuperAdmin, PRIVATE_AVATAR_PATH } from '../../utils/auth';
 import type { OAuthProvider, OAuthProfile, OAuthStateData } from './providers/base';
 import { googleProvider } from './providers/google';
 import { discordProvider } from './providers/discord';
@@ -627,23 +627,29 @@ auth.get('/api/users/:id/profile', async (c) => {
             created_at: adminUser.created_at,
             role: adminUser.role,
             banned_until: adminUser.banned_until,
+            is_admin: rbac.can(adminUser.role, 'admin:access'),
         });
     }
 
     const user = await db
-        .prepare('SELECT id, name, picture, role, created_at FROM users WHERE id = ?')
+        .prepare('SELECT id, name, picture, role, email, created_at FROM users WHERE id = ?')
         .bind(userId)
-        .first<{ id: number; name: string; picture: string; role: string; created_at: number }>();
+        .first<{ id: number; name: string; picture: string; role: string; email: string; created_at: number }>();
 
     if (!user || user.role === 'deleted') {
         return c.json({ error: '사용자를 찾을 수 없습니다.' }, 404);
     }
+
+    // 역할 자체는 공개 응답에서 숨기되, 차단 사용자가 관리자에게만 소명 쪽지를 보낼 수
+    // 있도록 안전한 관리자 여부 플래그만 노출한다(super_admin 은 이메일 기반 판별).
+    const isAdminProfile = rbac.can(user.role, 'admin:access') || isSuperAdmin(user.email, c.env);
 
     return c.json({
         id: user.id,
         name: user.name,
         picture: user.picture,
         created_at: user.created_at,
+        is_admin: isAdminProfile,
     });
 });
 
@@ -913,6 +919,7 @@ auth.delete('/api/me/mcp-clients', requireAuthAllowBanned, async (c) => {
 /**
  * DELETE /api/me/account
  * 회원탈퇴: role을 'deleted'로, 표시명을 '탈퇴한 사용자'로 변경하고 세션 삭제
+ * 모든 OAuth 토큰을 revoke하고 MCP API 키를 삭제하여 잔존 토큰을 즉시 무효화한다.
  * provider + uid는 유지하여 재가입 차단
  */
 auth.delete('/api/me/account', requireAuth, async (c) => {
@@ -929,13 +936,35 @@ auth.delete('/api/me/account', requireAuth, async (c) => {
     // 2. 해당 유저의 모든 세션 삭제
     await db.prepare('DELETE FROM sessions WHERE user_id = ?').bind(user.id).run();
 
-    // 3. KV 세션 캐시 무효화 (현재 세션)
+    // 3. 모든 OAuth 토큰(access/refresh) 즉시 revoke
+    //    탈퇴 후에도 최대 1시간 유효하던 access token 잔존 문제를 차단한다.
+    await db.prepare(
+        'UPDATE oauth_tokens SET revoked_at = unixepoch() WHERE user_id = ? AND revoked_at IS NULL'
+    ).bind(user.id).run();
+
+    // 3-1. 미사용 인가 코드(oauth_codes) 무효화
+    //      승인 후 60초 내 토큰 교환 전 탈퇴 시 잔여 코드로 새 토큰이 발급되는 race 차단.
+    //      (oauth.ts 의 issueTokenPair 가 발급을 사용자 활성 확인과 원자적으로 묶어 최종 방어한다.)
+    await db.prepare(
+        'UPDATE oauth_codes SET used_at = unixepoch() WHERE user_id = ? AND used_at IS NULL'
+    ).bind(user.id).run();
+
+    // 4. MCP API 키 삭제
+    //    탈퇴 후에도 최대 30일 유효하던 MCP API 키 잔존 문제를 차단한다.
+    //    (마이그레이션 전 등으로 테이블이 없을 수 있으므로 조용히 무시)
+    try {
+        await db.prepare('DELETE FROM mcp_api_keys WHERE user_id = ?').bind(user.id).run();
+    } catch (err: any) {
+        if (!err?.message?.includes('no such table')) throw err;
+    }
+
+    // 5. KV 세션 캐시 무효화 (현재 세션)
     const sessionId = getCookie(c, 'wiki_session');
     if (sessionId) {
         await c.env.KV.delete(`session:${sessionId}`);
     }
 
-    // 4. 쿠키 제거
+    // 6. 쿠키 제거
     c.header('Set-Cookie', 'wiki_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0');
 
     return c.json({ success: true });

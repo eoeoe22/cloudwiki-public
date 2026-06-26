@@ -101,6 +101,17 @@ function isBannedAllowedRequest(c: Context<Env>): boolean {
     // 4) 루트 / 로그인 페이지 / 에러 페이지
     if (path === '/' || path === '/login' || path === '/error') return true;
 
+    // 4-1) 차단 사용자 소명(이의제기) 채널 — 닫힌 위키에서도 관리자 문의 경로는 허용한다.
+    //      티켓(생성·조회·댓글)·쪽지(관리자 대상)·알림 조회 + 보조 엔드포인트(DM 설정).
+    //      쓰기 권한 세분화(차단=계정 티켓/관리자 쪽지만)는 각 라우트 핸들러가 재차 강제한다.
+    if (path === '/tickets' || path.startsWith('/tickets/')) return true;
+    if (
+        path === '/api/tickets' || path.startsWith('/api/tickets/') ||
+        path === '/api/messages' || path.startsWith('/api/messages/') ||
+        path === '/api/notifications' || path.startsWith('/api/notifications/') ||
+        path === '/api/settings/dm'
+    ) return true;
+
     // 5) 허용 슬러그의 SSR 위키 페이지 (/w/{slug})
     //    revisions / discussions 서브 라우트는 본문 외 메타 정보를 노출하므로 제외.
     const allowed = bannedAllowedSlugSet(c.env);

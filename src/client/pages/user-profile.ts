@@ -81,19 +81,27 @@ async function renderProfile() {
     // 쪽지 보내기 버튼 표시 여부
     let sendMsgBtn = '';
     if (window.currentUser && window.currentUser.id !== profileUser.id) {
-        try {
-            const dmRes = await fetch('/api/settings/dm');
-            const dmData = dmRes.ok ? await dmRes.json() : { allow_direct_message: 0 };
-            const canBypassDm = ['admin', 'super_admin', 'discussion_manager'].includes(window.currentUser.role);
-
-            if (dmData.allow_direct_message === 1 || canBypassDm) {
-                if (profileUser.role === 'deleted') {
-                    sendMsgBtn = `<button class="btn btn-sm btn-outline-secondary mt-2" disabled><i class="mdi mdi-email-plus-outline"></i> 쪽지 보내기 (탈퇴한 사용자)</button>`;
-                } else {
-                    sendMsgBtn = `<button class="btn btn-sm btn-outline-primary mt-2" data-uid="${profileUser.id}" data-uname="${window.escapeHtml(profileUser.name)}" onclick="sendMessage(+this.dataset.uid, this.dataset.uname)"><i class="mdi mdi-email-plus-outline"></i> 쪽지 보내기</button>`;
-                }
+        if (window.currentUser.role === 'banned') {
+            // 차단 사용자: 소명(이의제기) 채널로 관리자에게만 쪽지 발송 가능.
+            // 공개 프로필은 role 을 숨기므로 안전한 is_admin 플래그로 관리자 여부를 판단한다.
+            if (profileUser.is_admin) {
+                sendMsgBtn = `<button class="btn btn-sm btn-outline-primary mt-2" data-uid="${profileUser.id}" data-uname="${window.escapeHtml(profileUser.name)}" onclick="sendMessage(+this.dataset.uid, this.dataset.uname)"><i class="mdi mdi-email-plus-outline"></i> 관리자에게 소명</button>`;
             }
-        } catch (e) { }
+        } else {
+            try {
+                const dmRes = await fetch('/api/settings/dm');
+                const dmData = dmRes.ok ? await dmRes.json() : { allow_direct_message: 0 };
+                const canBypassDm = ['admin', 'super_admin', 'discussion_manager'].includes(window.currentUser.role);
+
+                if (dmData.allow_direct_message === 1 || canBypassDm) {
+                    if (profileUser.role === 'deleted') {
+                        sendMsgBtn = `<button class="btn btn-sm btn-outline-secondary mt-2" disabled><i class="mdi mdi-email-plus-outline"></i> 쪽지 보내기 (탈퇴한 사용자)</button>`;
+                    } else {
+                        sendMsgBtn = `<button class="btn btn-sm btn-outline-primary mt-2" data-uid="${profileUser.id}" data-uname="${window.escapeHtml(profileUser.name)}" onclick="sendMessage(+this.dataset.uid, this.dataset.uname)"><i class="mdi mdi-email-plus-outline"></i> 쪽지 보내기</button>`;
+                    }
+                }
+            } catch (e) { }
+        }
     }
 
     header.innerHTML = `

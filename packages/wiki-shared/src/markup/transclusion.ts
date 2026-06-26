@@ -231,10 +231,31 @@ export function extractTransclusionTargets(content: string): TransclusionTarget[
     if (!content || content.indexOf('{{') < 0) return [];
     const out: TransclusionTarget[] = [];
     const seen = new Set<string>();
+    collectTransclusionTargets(content, out, seen);
+    return out;
+}
+
+/**
+ * extractTransclusionTargets 의 내부 수집기 — 파서 함수(`{{#if|#ifeq|#switch: ...}}`,
+ * `src/client/render.ts` 의 `_expandParserFunctions`) 의 분기/조건 인자 안에 든 중첩
+ * 트랜스클루전 타깃까지 재귀로 인덱싱하기 위해 분리했다.
+ *
+ * 파서 함수 호출(raw 가 `#` 로 시작)은 함수 이름 자체가 링크 타깃이 아니므로 타깃으로
+ * 내보내지 않고, 대신 raw 내부를 재귀 스캔해 분기/조건에 든 실제 `{{틀}}`·`{{익스텐션}}`
+ * 호출을 끌어온다. 선택되지 않을 분기도 함께 인덱싱하는 보수적 over-approximation 이며,
+ * 역링크/팔레트 그래프는 과대 추정이 안전하다(실제 렌더 시 빠지는 분기가 있어도 무방).
+ */
+function collectTransclusionTargets(content: string, out: TransclusionTarget[], seen: Set<string>): void {
     for (const call of findTemplateCalls(content)) {
+        const rawTrim = call.raw.trim();
+        // 파서 함수(#if/#ifeq/#switch …): 이름은 타깃이 아니다. 분기/조건 내부만 재귀 추출.
+        if (rawTrim.charCodeAt(0) === 35 /* '#' */) {
+            collectTransclusionTargets(call.raw, out, seen);
+            continue;
+        }
         // '|' 앞부분만 slug 로 사용 (파라미터/인자 무시), '#' 앞부분만 slug 로 사용 (섹션 앵커 무시).
         // 슬러그 자체는 '#'/'|' 을 포함할 수 없으므로(이동 API 입력검증 참고) 항상 안전하게 제거.
-        const slug = call.raw.trim().split('|')[0].split('#')[0].trim();
+        const slug = rawTrim.split('|')[0].split('#')[0].trim();
         if (!slug) continue;
         // 익스텐션 패턴: 첫 번째 ':' 앞이 익스텐션 이름 (틀/template/템플릿 접두사가 아닌 경우)
         const colonIdx = slug.indexOf(':');
@@ -253,5 +274,4 @@ export function extractTransclusionTargets(content: string): TransclusionTarget[
             }
         }
     }
-    return out;
 }

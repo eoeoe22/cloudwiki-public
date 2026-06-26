@@ -416,14 +416,29 @@ async function issueTokenPair(c: Context<Env>, clientId: string, userId: number,
     const accessExp = now + ACCESS_TOKEN_TTL_SEC;
     const refreshExp = now + REFRESH_TOKEN_TTL_SEC;
 
-    await c.env.DB
+    // 토큰 발급을 "사용자 활성 상태 확인"과 단일 SQL 로 원자적으로 묶는다.
+    // 발급 직전 사용자가 탈퇴(deleted)·정지(유효한 banned_until)되면 EXISTS 가 거짓이 되어
+    // 행이 삽입되지 않으므로, 탈퇴/정지와 토큰 발급 사이의 race 로 새 토큰이 새는 것을 차단한다.
+    // 활성 판정은 ROLE_CASE_SQL 과 동일하게 banned_until 기준(만료된 ban 은 활성 사용자로 취급).
+    const ins = await c.env.DB
         .prepare(
             `INSERT INTO oauth_tokens
              (access_token_hash, refresh_token_hash, client_id, user_id, scope, access_expires_at, refresh_expires_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)`
+             SELECT ?, ?, ?, ?, ?, ?, ?
+             WHERE EXISTS (
+                 SELECT 1 FROM users
+                 WHERE id = ?
+                   AND role != 'deleted'
+                   AND NOT (banned_until IS NOT NULL AND banned_until > unixepoch())
+             )`
         )
-        .bind(accessHash, refreshHash, clientId, userId, scope, accessExp, refreshExp)
+        .bind(accessHash, refreshHash, clientId, userId, scope, accessExp, refreshExp, userId)
         .run();
+
+    // 행이 삽입되지 않았다 = 발급 직전 사용자가 탈퇴/정지됨. 토큰 없이 null 반환.
+    if (!ins.meta || ins.meta.changes !== 1) {
+        return null;
+    }
 
     return {
         access_token: accessToken,
@@ -498,7 +513,10 @@ oauth.post('/oauth/token', async (c) => {
             return badRequest(c, 'invalid_grant', 'Authorization code already used');
         }
 
+        // 승인 후 토큰 교환 전 탈퇴/정지 시, issueTokenPair 의 원자적 가드가 발급을 막아
+        // null 을 반환한다("탈퇴 즉시 모든 토큰 무효화" race 차단).
         const tokens = await issueTokenPair(c, client.client_id, row.user_id, row.scope || OAUTH_SCOPE_MCP);
+        if (!tokens) return badRequest(c, 'invalid_grant', 'User account is restricted', 403);
         return c.json(tokens, 200, { 'Cache-Control': 'no-store' });
     }
 
@@ -537,7 +555,9 @@ oauth.post('/oauth/token', async (c) => {
             .bind(row.user_id)
             .first<{ id: number; role: string; banned_until: number | null }>();
         if (!userRow) return badRequest(c, 'invalid_grant', 'User not found');
-        const isBanned = userRow.role === 'banned' || (userRow.banned_until && userRow.banned_until > now);
+        // 활성 ban 판정은 ROLE_CASE_SQL 과 동일하게 banned_until 기준 — 만료된 ban(role='banned'
+        // 이지만 banned_until 이 null/과거)은 시스템 전반에서 'user'로 정규화되므로 거부하지 않는다.
+        const isBanned = !!(userRow.banned_until && userRow.banned_until > now);
         const isDeleted = userRow.role === 'deleted';
         if (isBanned || isDeleted) {
             await c.env.DB
@@ -563,6 +583,7 @@ oauth.post('/oauth/token', async (c) => {
         }
 
         const tokens = await issueTokenPair(c, client.client_id, row.user_id, row.scope || OAUTH_SCOPE_MCP);
+        if (!tokens) return badRequest(c, 'invalid_grant', 'User account is restricted', 403);
         return c.json(tokens, 200, { 'Cache-Control': 'no-store' });
     }
 

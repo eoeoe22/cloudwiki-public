@@ -10,6 +10,10 @@
   --cm-wiki-template-param: light-dark(#d98c0b, #f0b155);
   --cm-wiki-template-param-bg: light-dark(rgba(217, 140, 11, 0.1), rgba(240, 177, 85, 0.12));
 
+  /* 틀 파서 함수 {{#if:}}/{{#ifeq:}}/{{#switch:}} — 일반 틀 호출과 시각적으로 구분 */
+  --cm-wiki-parserfunc: light-dark(#8250df, #bc8cff);
+  --cm-wiki-parserfunc-bg: light-dark(rgba(130, 80, 223, 0.1), rgba(188, 140, 255, 0.12));
+
   --cm-quote-marker: var(--cm-wiki-link);
   --cm-time-marker: var(--cm-wiki-link);
 
@@ -654,6 +658,14 @@ html[data-theme="dark"] .editor-settings-panel {
     color: var(--cm-wiki-template-param);
     font-weight: bold;
     background: var(--cm-wiki-template-param-bg);
+    border-radius: var(--wiki-radius-xs);
+    padding: 0 2px;
+}
+
+.cm-wiki-parserfunc.cm-wiki-parserfunc {
+    color: var(--cm-wiki-parserfunc);
+    font-weight: bold;
+    background: var(--cm-wiki-parserfunc-bg);
     border-radius: var(--wiki-radius-xs);
     padding: 0 2px;
 }
@@ -2595,6 +2607,7 @@ html[data-theme="dark"] .img-editor-canvas-wrap {
 
 .cm-inline-code.cm-wiki-link,
 .cm-inline-code.cm-wiki-template,
+.cm-inline-code.cm-wiki-parserfunc,
 .cm-inline-code.cm-wiki-template-param,
 .cm-inline-code.cm-align-marker,
 .cm-inline-code.cm-icon-marker,
@@ -2612,6 +2625,7 @@ html[data-theme="dark"] .img-editor-canvas-wrap {
 .cm-inline-code.cm-param-token,
 .cm-code-block .cm-wiki-link,
 .cm-code-block .cm-wiki-template,
+.cm-code-block .cm-wiki-parserfunc,
 .cm-code-block .cm-wiki-template-param,
 .cm-code-block .cm-align-marker,
 .cm-code-block .cm-icon-marker,

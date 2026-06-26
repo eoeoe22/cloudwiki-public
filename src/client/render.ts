@@ -285,6 +285,10 @@ function _isExtensionCall(name) {
     if (colonIdx <= 0) return false;
     // 틀 접두사(틀:/template:/템플릿:) 판정은 공유 헬퍼 재사용(src/shared/transclusion.ts).
     if (hasTemplatePrefix(name)) return false;
+    // '#' 접두는 파서 함수(조건문 {{#if}}/{{#ifeq}}/{{#switch}}). 정상 경로에서는
+    // _expandParserFunctions 프리패스가 먼저 소비하지만, 인식 실패한 잔여 토큰이
+    // 익스텐션으로 오인돼 /api/w/#... 로 fetch 되지 않도록 방어적으로 제외한다.
+    if (name.charCodeAt(0) === 35 /* '#' */) return false;
     return true;
 }
 
@@ -361,8 +365,13 @@ function _splitPipeTopLevel(raw) {
  * part 내부에서 named-arg 구분자로 쓸 첫 번째 `=` 위치를 반환한다.
  * `{button:text|url?k=v}`, `{{nested|k=v}}`, `[[link|k=v]]` 등 중첩 토큰 내부의
  * `=` 는 무시한다. 없으면 -1. _splitPipeTopLevel 과 동일한 깊이 규칙을 사용.
+ *
+ * @param {number} [minIndex] `=` 로 인정할 최소 위치(기본 1). 틀 인자 파싱(`_parseTemplateCall`)
+ *   은 선행 `=`(빈 키)을 키-값 구분자로 보지 않으려 1 을 쓰지만, `#switch` 케이스는 빈 키가
+ *   의미를 가지므로(`=값` = 빈 문자열 케이스, MediaWiki 동일) 0 을 넘겨 선행 `=` 도 인정한다.
  */
-function _findTopLevelEquals(part) {
+function _findTopLevelEquals(part, minIndex) {
+    if (minIndex === undefined) minIndex = 1;
     let depth = 0;        // {{...}} / [[...]] / {{{...}}} 합산 깊이
     let singleBrace = 0;  // {...} 단일 중괄호 토큰 깊이
     let i = 0;
@@ -394,7 +403,7 @@ function _findTopLevelEquals(part) {
         }
         if (ch === '[' && part[i + 1] === '[') { depth++; i += 2; continue; }
         if (ch === ']' && part[i + 1] === ']') { if (depth > 0) depth--; i += 2; continue; }
-        if (ch === '=' && depth === 0 && singleBrace === 0 && i > 0) return i;
+        if (ch === '=' && depth === 0 && singleBrace === 0 && i >= minIndex) return i;
         i++;
     }
     return -1;
@@ -490,6 +499,129 @@ function _substituteTemplateParams(templateContent, args, depth) {
     return result;
 }
 
+// ── 파서 함수(조건문): {{#if}} / {{#ifeq}} / {{#switch}} ──
+// MediaWiki ParserFunctions 스타일의 선언적 조건 분기. 틀 본문에서 {{{파라미터}}} 치환
+// 결과에 따라 출력 분기를 고른다. 임의 코드 실행/반복 없이 문자열·수치 비교만 수행하고,
+// 틀 fetch 가 필요 없으므로 _resolveTransclusionsCore 의 확장 루프 이전 동기 프리패스로 처리한다.
+//
+// 평가 시점: {{{...}}} 파라미터 치환은 부모 패스의 _substituteTemplateParams 에서 이미
+// 끝난 상태이고(예: {{{x}}} → 실제 인자값), 그 다음 재귀 패스에서 이 프리패스가 최상위
+// {{#...}} 를 만나 분기를 고른다. 선택된 분기에 남은 {{틀}} 호출은 이후 확장 루프가 처리한다.
+//
+// 한계(1단계): 조건/비교 인자는 "그 시점의 문자열" 로 평가된다. 즉 조건 안의 {{다른틀}} 은
+// 아직 렌더 확장 전이라 그 호출 텍스트(비어있지 않음=참)로 취급된다 — 다른 틀의 *렌더 결과*
+// 로 분기할 수는 없다. 표준 사용법은 {{{파라미터}}} 기준 분기다.
+const _PARSER_FUNCTIONS = new Set(['if', 'ifeq', 'switch']);
+
+/** 문자열이 순수 숫자 리터럴이면 Number, 아니면 null. (#ifeq/#switch 수치 비교용) */
+function _parserNumeric(s) {
+    const t = s.trim();
+    if (t === '' || !/^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(t)) return null;
+    const n = Number(t);
+    return Number.isFinite(n) ? n : null;
+}
+
+/** #ifeq/#switch 비교: 양쪽이 숫자면 수치로(예: "1"=="1.0", "+2"=="2"), 아니면 문자열로 동일성 판정. */
+function _parserLooseEquals(a, b) {
+    if (a === b) return true;
+    const na = _parserNumeric(a);
+    if (na === null) return false;
+    const nb = _parserNumeric(b);
+    return nb !== null && na === nb;
+}
+
+/**
+ * text 안의 최상위 {{#if|#ifeq|#switch: ...}} 파서 함수를 평가해 선택된 분기로 치환한다.
+ * 일반 {{틀}}·{{익스텐션:..}} 호출과 {{{파라미터}}} 참조, 백틱 코드스팬은 건드리지 않는다
+ * (_findTemplateCalls 가 코드스팬/파라미터 참조 범위를 건너뛴다). 조건/분기 안에 중첩된
+ * 파서 함수는 재귀로 평가한다(inside-out).
+ */
+function _expandParserFunctions(text) {
+    // 빠른 종료: '{{' 뒤(공백/개행 허용) '#' 가 없으면 파서 함수가 없다. 아래 per-call
+    // 정규식(/^\s*#.../)이 공백 폼 {{ #if: }} 을 받아들이므로 이 가드도 동일하게 \s* 를
+    // 허용해야 한다 — 안 그러면 {{ #if }} 가 평가를 건너뛰고 틀:#if 로 fetch 돼 깨진다.
+    if (!/\{\{\s*#/.test(text)) return text;
+    const calls = _findTemplateCalls(text);
+    if (calls.length === 0) return text;
+    let out = '';
+    let cursor = 0;
+    let changed = false;
+    for (const c of calls) {
+        out += text.substring(cursor, c.start);
+        const m = /^\s*#([a-zA-Z]+)\s*:/.exec(c.raw);
+        if (m && _PARSER_FUNCTIONS.has(m[1].toLowerCase())) {
+            out += _evalParserFunction(m[1].toLowerCase(), c.raw);
+            changed = true;
+        } else {
+            out += text.substring(c.start, c.fullEnd);
+        }
+        cursor = c.fullEnd;
+    }
+    out += text.substring(cursor);
+    return changed ? out : text;
+}
+
+/** 단일 파서 함수 호출(raw = "#fn: arg1 | arg2 | ...") 을 평가해 결과 문자열을 반환. */
+function _evalParserFunction(fn, raw) {
+    const colon = raw.indexOf(':');
+    const segs = _splitPipeTopLevel(raw.substring(colon + 1));
+    if (fn === 'if') {
+        // {{#if: test | then | else}} — test 가 (trim 후) 비어있지 않으면 then, 아니면 else.
+        const test = _expandParserFunctions(segs[0] || '').trim();
+        const branch = test !== '' ? segs[1] : segs[2];
+        return branch === undefined ? '' : _expandParserFunctions(branch).trim();
+    }
+    if (fn === 'ifeq') {
+        // {{#ifeq: a | b | eq | neq}} — a 와 b 가 같으면 eq, 아니면 neq.
+        const a = _expandParserFunctions(segs[0] || '').trim();
+        const b = _expandParserFunctions(segs[1] || '').trim();
+        const branch = _parserLooseEquals(a, b) ? segs[2] : segs[3];
+        return branch === undefined ? '' : _expandParserFunctions(branch).trim();
+    }
+    // switch
+    return _evalParserSwitch(segs);
+}
+
+/**
+ * {{#switch: value | k1=r1 | k2=r2 | #default=rd }} 평가.
+ * - value 와 일치하는 첫 케이스의 결과를 반환. 일치 없으면 #default(또는 '=' 없는 마지막
+ *   세그먼트)를, 그것도 없으면 빈 문자열.
+ * - 폴스루: '=' 없는 케이스 키가 value 와 일치하면 그 뒤 첫 '=' 케이스의 결과를 공유한다
+ *   (예: `| a | b = 2` 에서 value 가 a 든 b 든 결과는 2).
+ */
+function _evalParserSwitch(segs) {
+    const value = _expandParserFunctions(segs[0] || '').trim();
+    const cases = segs.slice(1);
+    let defaultVal = null;
+    for (let i = 0; i < cases.length; i++) {
+        const seg = cases[i];
+        // minIndex=0: '=값'(빈 키) 케이스를 빈 문자열 케이스로 인식(MediaWiki 동일).
+        const eq = _findTopLevelEquals(seg, 0);
+        if (eq < 0) {
+            // '=' 없는 마지막 세그먼트 = raw default 값.
+            if (i === cases.length - 1) {
+                if (defaultVal === null) defaultVal = seg;
+                break;
+            }
+            // 폴스루: 이 키가 매치되면 뒤따르는 첫 '=' 세그먼트의 값을 결과로.
+            const key = _expandParserFunctions(seg).trim();
+            if (_parserLooseEquals(value, key)) {
+                for (let j = i + 1; j < cases.length; j++) {
+                    const e2 = _findTopLevelEquals(cases[j], 0);
+                    if (e2 >= 0) return _expandParserFunctions(cases[j].substring(e2 + 1)).trim();
+                }
+                return '';
+            }
+            continue;
+        }
+        const key = _expandParserFunctions(seg.substring(0, eq)).trim();
+        const val = seg.substring(eq + 1);
+        if (key === '#default') { defaultVal = val; continue; }
+        if (_parserLooseEquals(value, key)) return _expandParserFunctions(val).trim();
+    }
+    return defaultVal === null ? '' : _expandParserFunctions(defaultVal).trim();
+}
+
 // ── 틀(Transclusion) 및 익스텐션 처리 ──
 /**
  * text 안의 최상위 `{{...}}` 호출 중 selfSlug 와 일치하는 것을 경고로 교체한다.
@@ -503,7 +635,19 @@ function _replaceSelfCalls(text, selfSlug) {
     let cursor = 0;
     for (const c of calls) {
         out += text.substring(cursor, c.start);
-        const { name } = _parseTemplateCall(c.raw.trim());
+        const rawTrim = c.raw.trim();
+        if (rawTrim.charCodeAt(0) === 35 /* '#' */) {
+            // 파서 함수(#if/#ifeq/#switch …): 호출 자체는 자기참조가 아니지만 분기 안에
+            // 자기 호출이 숨어 있을 수 있다(예: {{#if:1|{{A}}|ok}}). 분기를 평가/선택하지
+            // 않고 raw 내부만 재귀해 자기 호출 토큰만 경고로 바꾼다 — 분기 선택을 하지 않으므로
+            // 코드펜스 안의 {{#if:...}} 예시를 #if 평가로 재작성하지 않는다(파서 함수 평가는
+            // 코드블록 보호를 거친 프리패스에서만 수행). 이후 프리패스가 분기를 평가하면
+            // 경고가 그대로 출력된다.
+            out += '{{' + _replaceSelfCalls(c.raw, selfSlug) + '}}';
+            cursor = c.fullEnd;
+            continue;
+        }
+        const { name } = _parseTemplateCall(rawTrim);
         if (_isExtensionCall(name)) {
             out += text.substring(c.start, c.fullEnd);
         } else {
@@ -547,11 +691,22 @@ async function _resolveTransclusionsCore(text, depth, cache, pageSlug, options) 
         }
     });
 
+    // 파서 함수(#if/#ifeq/#switch) 프리패스: 틀 fetch 없이 조건 분기를 선택해 치환한다.
+    // 코드블록은 위에서 \x00CODEBLOCK_n\x00 플레이스홀더로 보호된 상태이므로 그 내부의
+    // {{#...}} 는 건드리지 않는다. {{{파라미터}}} 치환은 부모 패스에서 이미 끝났고, 그 결과
+    // 텍스트의 최상위 파서 함수를 여기서 평가한다.
+    protectedText = _expandParserFunctions(protectedText);
+
     // 괄호 균형을 추적하는 파서로 호출 위치를 찾는다. 인자 안의 {button:a|b} 처럼
     // `}` 를 포함한 단일 중괄호 토큰이 있어도 첫 `}` 에서 중단되지 않는다.
     const calls = _findTemplateCalls(protectedText);
 
-    if (calls.length === 0) return text;
+    if (calls.length === 0) {
+        // 남은 틀 호출이 없다 — 파서 함수 분기 선택만으로 본문이 바뀌었을 수 있으므로
+        // 코드블록을 복원해 반환한다. (분기 안에 {{틀}} 이 있었다면 calls 가 비지 않는다.)
+        const restored = protectedText.replace(/\x00CODEBLOCK_(\d+)\x00/g, (_, idx) => codeBlocks[parseInt(idx, 10)]);
+        return restored === text ? text : restored;
+    }
 
     const slugsToFetch = new Set();
     const extensionSlugs = new Set();

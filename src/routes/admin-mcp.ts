@@ -60,6 +60,30 @@ import {
     getEditAclMinAgeDays,
     findPrefixRuleEditAcl,
 } from '../utils/editAcl';
+import { isAdminOnlyCategory } from '../utils/categoryAcl';
+
+/**
+ * 관리자 전용 카테고리 게이트 — 웹 PUT /w/:slug (wiki.ts) 의 isAdminOnlyCategory 검사와 패리티.
+ *
+ * 비관리자가 admin_only 플래그를 가진 카테고리(category_acl)를 적용하려 하면 차단한다.
+ * 관리자는 우회(웹과 동일: `if (body.category && !isAdmin)`). 통과면 null, 차단이면 에러 문자열.
+ */
+export async function enforceAdminOnlyCategories(
+    db: D1Database,
+    rbac: RBAC,
+    user: User,
+    category: string | null,
+): Promise<string | null> {
+    if (!category) return null;
+    if (rbac.can(user.role, 'admin:access')) return null;
+    const cats = category.split(',').map(s => s.trim()).filter(Boolean);
+    for (const cat of cats) {
+        if (await isAdminOnlyCategory(db, cat)) {
+            return `"${cat}" 카테고리는 관리자만 적용할 수 있습니다.`;
+        }
+    }
+    return null;
+}
 
 /**
  * MCP 편집 도구용 ACL 게이트.
@@ -987,6 +1011,12 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
         const redirectTo = (args.redirect_to && typeof args.redirect_to === 'string') ? args.redirect_to : null;
         const createOnly = args.create_only === true;
 
+        // 관리자 전용 카테고리 검증 — 웹 PUT /w/:slug 와 동일하게 비관리자의 admin_only 카테고리 적용 차단.
+        {
+            const catErr = await enforceAdminOnlyCategories(db, rbac, user, category);
+            if (catErr) return asTextResult('Error: ' + catErr, true);
+        }
+
         // 대체 표시 제목(display_title): args 에 키가 명시되어 있을 때만 변경 의도로 해석. (undefined = 기존 유지)
         // MCP 컨벤션 상 args.title 은 슬러그를 가리키므로, 표시용 대체 제목은 별도의 display_title 키로 받는다.
         // 잘못된 타입은 string|null 외 모두 거부 — 조용한 데이터 손실(null 로 정규화 후 삭제) 방지.
@@ -1555,10 +1585,16 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
         }
 
         const page = await db
-            .prepare('SELECT id, version, content, category FROM pages WHERE slug = ? AND deleted_at IS NULL')
+            .prepare('SELECT id, version, content, category, is_private FROM pages WHERE slug = ? AND deleted_at IS NULL')
             .bind(slug)
-            .first<{ id: number; version: number; content: string; category: string | null }>();
+            .first<{ id: number; version: number; content: string; category: string | null; is_private: number }>();
         if (!page) return asTextResult('Error: 문서를 찾을 수 없거나 삭제된 상태입니다.', true);
+
+        // 비공개 문서 가시성 게이트 — 웹 POST /w/:slug/revert 와 동일. wiki:private 권한이 없으면
+        // 문서가 존재하지 않는 것처럼 가린다 (revert 로 비공개 본문을 끌어오는 것을 막는다).
+        if (page.is_private === 1 && !rbac.can(user.role, 'wiki:private')) {
+            return asTextResult('Error: 문서를 찾을 수 없거나 삭제된 상태입니다.', true);
+        }
 
         // edit_acl 검사 — 되돌리기도 편집의 일종. admin_only 가 있으면 비관리자 차단.
         {
@@ -1636,9 +1672,9 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
         const hard = args.hard === true;
 
         const page = await db
-            .prepare('SELECT id FROM pages WHERE slug = ? AND deleted_at IS NULL')
+            .prepare('SELECT id, edit_acl FROM pages WHERE slug = ? AND deleted_at IS NULL')
             .bind(slug)
-            .first<{ id: number }>();
+            .first<{ id: number; edit_acl: string | null }>();
         if (!page) return asTextResult('Error: 문서를 찾을 수 없거나 이미 삭제된 상태입니다.', true);
 
         if (hard) {
@@ -1664,6 +1700,14 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
             );
         } else {
             if (!rbac.can(user.role, 'wiki:delete')) return asTextResult('Error: 문서 삭제 권한이 없습니다.', true);
+            // 소프트 삭제도 본문을 무력화하는 편집의 일종이므로 웹 DELETE /w/:slug 와 동일한 edit_acl
+            // 게이트를 적용한다. admin_only 뿐 아니라 aged/page_editor 등 모든 ACL 규칙을 evaluate 한다
+            // (enforceMcpEditAcl 가 page.edit_acl 로 판정). wiki:delete 를 비관리자 역할에 부여한
+            // 커스텀 RBAC 에서 ACL 잠금을 우회해 삭제하는 것을 막는다.
+            {
+                const aclErr = await enforceMcpEditAcl(db, user, rbac, { id: page.id, edit_acl: page.edit_acl }, null);
+                if (aclErr) return asTextResult('Error: ' + aclErr, true);
+            }
             await db.prepare('UPDATE pages SET deleted_at = unixepoch() WHERE id = ?').bind(page.id).run();
             c.executionCtx.waitUntil(
                 db.prepare('INSERT INTO admin_log (type, log, user) VALUES (?, ?, ?)')
@@ -2100,6 +2144,12 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
             if (aclSet && aclSet.flags.includes('admin_only')) {
                 return asTextResult('Error: 관리자 전용 문서의 상태는 관리자만 변경할 수 있습니다.', true);
             }
+        }
+
+        // 관리자 전용 카테고리 검증 — 웹 PUT /w/:slug 와 동일하게 비관리자의 admin_only 카테고리 적용 차단.
+        {
+            const catErr = await enforceAdminOnlyCategories(db, rbac, user, newCategory);
+            if (catErr) return asTextResult('Error: ' + catErr, true);
         }
 
         const finalCategory = newCategory;

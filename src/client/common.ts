@@ -1375,7 +1375,12 @@ async function viewMessage(messageId) {
 
         // DM 설정 확인 (답장 가능 여부)
         let canReply = false;
-        if (currentUser) {
+        if (currentUser && currentUser.role === 'banned') {
+            // 차단 사용자: 관리자가 보낸 쪽지에 한해 답장(소명) 가능
+            const senderRole = msg.sender_role || '';
+            canReply = msg.receiver_id === currentUser.id &&
+                ['admin', 'super_admin'].includes(senderRole);
+        } else if (currentUser) {
             const dmRes = await fetch('/api/settings/dm');
             const dmData = dmRes.ok ? await dmRes.json() : { allow_direct_message: 0 };
             const canBypassDm = ['admin', 'super_admin', 'discussion_manager'].includes(currentUser.role);

@@ -135,8 +135,8 @@
       currentPage = 1;
       allTickets = [];
 
-      // 새 문의 버튼 표시
-      if (window.currentUser && window.currentUser.role !== 'banned') {
+      // 새 문의 버튼 표시 (차단 사용자도 소명용 계정 문의를 작성할 수 있도록 노출)
+      if (window.currentUser) {
         document.getElementById('newTicketBtn').classList.remove('d-none');
       }
 
@@ -253,7 +253,20 @@
       }
       document.getElementById('newTicketForm').classList.remove('d-none');
       document.getElementById('newTicketTitle').value = '';
-      document.getElementById('newTicketType').value = 'general';
+
+      // 차단 사용자는 소명(이의제기) 채널로 '계정' 유형만 작성 가능 — 유형 선택을 고정한다.
+      const typeSelect = document.getElementById('newTicketType');
+      const isBanned = window.currentUser && window.currentUser.role === 'banned';
+      const bannedHint = document.getElementById('newTicketBannedHint');
+      if (isBanned) {
+        typeSelect.value = 'account';
+        typeSelect.disabled = true;
+        if (bannedHint) bannedHint.classList.remove('d-none');
+      } else {
+        typeSelect.value = 'general';
+        typeSelect.disabled = false;
+        if (bannedHint) bannedHint.classList.add('d-none');
+      }
       // fallback textarea 도 빈 상태로
       document.getElementById('newTicketContentFallback').value = '';
 
@@ -407,8 +420,11 @@
         }
 
         // 댓글 폼 표시 여부
+        // 차단 사용자는 본인 '계정(소명)' 티켓에 한해 댓글 작성 가능
         const commentFormEl = document.getElementById('commentForm');
-        if (ticket.status === 'closed' || ticket.deleted_at || !window.currentUser || window.currentUser.role === 'banned') {
+        const isBannedUser = window.currentUser && window.currentUser.role === 'banned';
+        const bannedCanWrite = window.currentUser && ticket.user_id === window.currentUser.id && ticket.type === 'account';
+        if (ticket.status === 'closed' || ticket.deleted_at || !window.currentUser || (isBannedUser && !bannedCanWrite)) {
           commentFormEl.classList.add('d-none');
         } else {
           commentFormEl.classList.remove('d-none');
@@ -466,7 +482,11 @@
       }
 
       let commentActions = '';
-      if (!isDeleted && window.currentUser && window.currentUser.role !== 'banned' && ticket.status === 'open' && !ticket.deleted_at) {
+      // 차단 사용자는 본인 '계정(소명)' 티켓에 한해 답글 작성 가능
+      const canReplyComment = window.currentUser &&
+        (window.currentUser.role !== 'banned' ||
+          (ticket.user_id === window.currentUser.id && ticket.type === 'account'));
+      if (!isDeleted && canReplyComment && ticket.status === 'open' && !ticket.deleted_at) {
         commentActions += `<button class="btn btn-sm btn-link text-muted" data-id="${c.id}" data-author="${window.escapeHtml(c.author_name || '알 수 없음')}" data-content="${window.escapeHtml((c.content || '').substring(0, 100))}" onclick="startReply(+this.dataset.id, this.dataset.author, this.dataset.content)">
           <i class="bi bi-reply"></i> 답글
         </button>`;

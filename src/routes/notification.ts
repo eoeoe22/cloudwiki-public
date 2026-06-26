@@ -1,9 +1,9 @@
 import { Hono } from 'hono';
 import type { Env, Message } from '../types';
-import { requireAuth, requireAuthAllowBanned } from '../middleware/session';
+import { requireAuthAllowBanned } from '../middleware/session';
 import { safeJSON } from '../utils/json';
 import { isSuperAdmin } from '../utils/auth';
-import { RBAC } from '../utils/role';
+import { RBAC, enrichRole } from '../utils/role';
 import { createNotification } from '../utils/notification';
 import { ensureNotificationsMigration } from '../utils/notificationsMigration';
 
@@ -169,7 +169,7 @@ notificationRoutes.get('/settings/dm', async (c) => {
  * POST /api/messages
  * 쪽지 발송
  */
-notificationRoutes.post('/messages', requireAuth, async (c) => {
+notificationRoutes.post('/messages', requireAuthAllowBanned, async (c) => {
     const user = c.get('user')!;
     const db = c.env.DB;
     const { receiver_id, content, reply_to } = await c.req.json<{
@@ -189,8 +189,8 @@ notificationRoutes.post('/messages', requireAuth, async (c) => {
     }
 
     // 수신자 존재 확인
-    const receiver = await db.prepare('SELECT id, name, role FROM users WHERE id = ?')
-        .bind(receiver_id).first<{ id: number; name: string; role: string }>();
+    const receiver = await db.prepare('SELECT id, name, role, email FROM users WHERE id = ?')
+        .bind(receiver_id).first<{ id: number; name: string; role: string; email: string }>();
     if (!receiver) {
         return c.json({ error: '수신자를 찾을 수 없습니다.' }, 404);
     }
@@ -198,13 +198,25 @@ notificationRoutes.post('/messages', requireAuth, async (c) => {
         return c.json({ error: '탈퇴한 사용자에게는 쪽지를 보낼 수 없습니다.' }, 400);
     }
 
+    const rbac = c.get('rbac') as RBAC;
+    const isBanned = user.role === 'banned';
+
+    // 차단된 사용자는 소명(이의제기) 채널로 '관리자'에게만 쪽지를 보낼 수 있다.
+    // (super_admin 은 role 컬럼이 아닌 이메일로 판별)
+    if (isBanned) {
+        const receiverIsAdmin = rbac.can(receiver.role, 'admin:access') || isSuperAdmin(receiver.email, c.env);
+        if (!receiverIsAdmin) {
+            return c.json({ error: '차단된 계정은 관리자에게만 쪽지를 보낼 수 있습니다.' }, 403);
+        }
+    }
+
     // DM 권한 확인
     const settings = await db.prepare('SELECT allow_direct_message FROM settings WHERE id = 1')
         .first<{ allow_direct_message: number }>();
     const dmAllowed = settings?.allow_direct_message === 1;
-    const rbac = c.get('rbac') as RBAC;
-    // 관리자(admin:access) 또는 토론 관리자(discussion:manage)는 DM 비활성 상태에서도 발송 가능
-    const canBypassDmGate = rbac.can(user.role, 'admin:access') || rbac.can(user.role, 'discussion:manage');
+    // 관리자(admin:access) 또는 토론 관리자(discussion:manage)는 DM 비활성 상태에서도 발송 가능.
+    // 차단된 사용자의 관리자 대상 소명 쪽지도 DM 비활성 여부와 무관하게 허용한다(위에서 관리자 수신만 통과).
+    const canBypassDmGate = isBanned || rbac.can(user.role, 'admin:access') || rbac.can(user.role, 'discussion:manage');
 
     if (!dmAllowed && !canBypassDmGate) {
         // 비활성화 상태에서 일반 유저는 관리자/토론관리자 쪽지에 대한 답장만 가능
@@ -363,6 +375,10 @@ notificationRoutes.get('/messages/:id', requireAuthAllowBanned, async (c) => {
     if (msg.sender_id !== user.id && msg.receiver_id !== user.id) {
         return c.json({ error: '권한이 없습니다.' }, 403);
     }
+
+    // super_admin 은 role 컬럼이 아닌 이메일로 판별되므로 sender_role 을 보정한 뒤 이메일은 제거.
+    // (프런트의 답장 가능 여부 판단이 super_admin 발신자도 올바르게 인식하도록)
+    enrichRole(msg, 'sender_role', 'sender_email', c.env);
 
     return c.json(safeJSON(msg));
 });

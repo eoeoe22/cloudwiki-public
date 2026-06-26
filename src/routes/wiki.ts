@@ -318,7 +318,7 @@ export function splitCategoryString(s: string | null | undefined): string[] {
  * "카테고리:이름" 슬러그에서 자동 적용할 카테고리명을 반환한다.
  * 카테고리 패턴(한글·영문·숫자·공백만 허용)에 맞지 않으면 null 반환.
  */
-function getCategoryDocAutoCategory(slug: string): string | null {
+export function getCategoryDocAutoCategory(slug: string): string | null {
     const prefix = '카테고리:';
     if (!slug.startsWith(prefix)) return null;
     const name = slug.slice(prefix.length).trim();

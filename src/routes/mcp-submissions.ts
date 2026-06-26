@@ -29,8 +29,9 @@ import { ensureMcpDraftsMigration } from '../utils/mcpDraftsMigration';
 import {
     buildCommitSummary,
     validateMcpSummaryLength,
+    enforceAdminOnlyCategories,
 } from './admin-mcp';
-import { findConflictingPage, applyCreatePrefixRulesAndCategoryAcls, splitCategoryString } from './wiki';
+import { findConflictingPage, applyCreatePrefixRulesAndCategoryAcls, splitCategoryString, getCategoryDocAutoCategory } from './wiki';
 import { commitPageMutation } from '../utils/pagePipeline/commit';
 import {
     parseEditAcl,
@@ -367,6 +368,24 @@ mcpSubmissionsRoutes.post('/mcp-submissions/:id/approve', requireAuth, async (c)
             }
         }
 
+        // 관리자 전용 카테고리 재검증 — staging(create_or_update_page) 게이트를 통과했더라도
+        // 실제 write 는 이 승인 시점에 이뤄진다. 그 사이 카테고리가 admin_only 로 바뀌었거나,
+        // 게이트 배포 이전에 staging 된 draft 일 수 있으므로 write 직전(= author 기준)에 다시 검사한다.
+        //
+        // 단, "새로 적용되는" 카테고리에만 적용한다 — patch_page/edit_section 로 만든 draft 는
+        // draft.category 가 페이지 현재 값에서 그대로 시드되므로(사용자가 새로 지정한 게 아님),
+        // 기존에 이미 붙어 있던 admin_only 카테고리를 그대로 보존하는 본문-only 편집이 거부되면 안 된다.
+        // page.category 대비 새로 추가된 카테고리만 검사해 "비관리자의 admin_only 카테고리 신규 적용
+        // 차단"이라는 본래 의도(웹 PUT)는 유지하되, 기존 카테고리 보존 편집은 허용한다.
+        {
+            const currentCats = new Set(splitCategoryString(page.category));
+            const addedCats = splitCategoryString(draft.category).filter(cat => !currentCats.has(cat));
+            const catErr = await enforceAdminOnlyCategories(c.env.DB, rbac, user, addedCats.join(','));
+            if (catErr) {
+                return c.json({ error: 'forbidden', reason: 'admin_only_category', message: catErr }, 403);
+            }
+        }
+
         // draft 가 title 변경을 요청한 경우, 승인 시점에 다른 페이지가 같은 문자열을 slug/title 로
         // 가져갔는지 재검증한다 (idx_pages_title_unique 충돌로 인한 UNIQUE 위반 → applyExistingPageUpdate
         // catch 가 비특정 'apply_failed' 로 떨어지는 것을 방지).
@@ -488,6 +507,24 @@ mcpSubmissionsRoutes.post('/mcp-submissions/:id/approve', requireAuth, async (c)
                 }, 409);
             }
         }
+        // 관리자 전용 카테고리 재검증 — update 승인과 동일한 이유로 write 직전에 다시 검사한다.
+        // (아래 category_acl 머지가 admin_only 를 ACL 로 흡수해 대부분 차단하지만, 레거시
+        // admin_categories 전용 카테고리는 머지 경로가 놓치므로 웹 PUT 과 동일하게 명시적으로 검사한다.)
+        //
+        // 검사 대상은 웹 PUT(create) 와 동일한 집합 — 사용자가 지정한 draft.category + "카테고리:이름"
+        // 슬러그의 자동 카테고리. draft.category 는 비어 있어도 "카테고리:X" 생성이면 X 가 자동 적용되므로
+        // 자동 카테고리를 명시적으로 포함시킨다. prefix-rule 로 자동 추가되는 카테고리는 관리자가 설정한
+        // 의도이므로 웹과 동일하게 isAdminOnlyCategory 검사 대상에서 제외한다(아래 category_acl 머지가 담당).
+        {
+            const catsToCheck = splitCategoryString(draft.category);
+            const autoCat = getCategoryDocAutoCategory(slug);
+            if (autoCat && !catsToCheck.includes(autoCat)) catsToCheck.push(autoCat);
+            const catErr = await enforceAdminOnlyCategories(c.env.DB, rbac, user, catsToCheck.join(','));
+            if (catErr) {
+                return c.json({ error: 'forbidden', reason: 'admin_only_category', message: catErr }, 403);
+            }
+        }
+
         // 신규 문서 prefix 룰 / 카테고리 ACL 머지 — /api/w/:slug PUT(create) 와 동일한 헬퍼를 호출해
         // category_prefix_rules·doc_setting_prefix_rules·category_acl 템플릿을 모두 적용한다.
         // draft 는 is_private/edit_acl 을 들고 있지 않으므로 초기값은 0/null 이고,

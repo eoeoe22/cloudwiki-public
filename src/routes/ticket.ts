@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import type { Env, Ticket, TicketComment } from '../types';
-import { requireAuth, requirePermission } from '../middleware/session';
+import { requireAuth, requireAuthAllowBanned, requirePermission } from '../middleware/session';
 import { safeJSON } from '../utils/json';
 import { ROLE_CASE_SQL, enrichRoles, enrichRole, RBAC } from '../utils/role';
 import { dispatchDiscord } from '../utils/webhook/discord';
@@ -66,7 +66,7 @@ function filterTicketMentionRecipients(
  * GET /api/tickets
  * 티켓 목록 (일반 유저: 내 티켓만, 관리자: 전체)
  */
-ticketRoutes.get('/tickets', requireAuth, async (c) => {
+ticketRoutes.get('/tickets', requireAuthAllowBanned, async (c) => {
     const user = c.get('user')!;
     const rbac = c.get('rbac');
     const db = c.env.DB;
@@ -149,8 +149,9 @@ ticketRoutes.get('/tickets', requireAuth, async (c) => {
  * POST /api/tickets
  * 새 티켓 생성
  */
-ticketRoutes.post('/tickets', requireAuth, requirePermission('ticket:create'), async (c) => {
+ticketRoutes.post('/tickets', requireAuthAllowBanned, async (c) => {
     const user = c.get('user')!;
+    const rbac = c.get('rbac');
     const db = c.env.DB;
     const { title, content, type } = await c.req.json<{ title: string; content: string; type: string }>();
 
@@ -162,6 +163,16 @@ ticketRoutes.post('/tickets', requireAuth, requirePermission('ticket:create'), a
     }
     if (!type || !typeLabels[type]) {
         return c.json({ error: '올바른 문의 유형을 선택해주세요.' }, 400);
+    }
+
+    // 권한: 일반 사용자는 ticket:create 필요. 차단된 사용자는 소명(이의제기) 채널로
+    // '계정(account)' 유형 티켓만 작성할 수 있다 (관리자에게만 알림이 가는 유형).
+    if (user.role === 'banned') {
+        if (type !== 'account') {
+            return c.json({ error: '차단된 계정은 계정 문의(소명) 유형만 작성할 수 있습니다.' }, 403);
+        }
+    } else if (!rbac.can(user.role, 'ticket:create')) {
+        return c.json({ error: '권한이 부족합니다. (ticket:create)' }, 403);
     }
 
     // 티켓 생성
@@ -191,7 +202,6 @@ ticketRoutes.post('/tickets', requireAuth, requirePermission('ticket:create'), a
         const notifContent = `새 티켓 문의 [#${ticketId}] ${typeLabels[type]}: '${title.trim()}'`;
 
         // 멘션 수신자: 티켓 접근 권한이 있는 사용자만(제목 누설 방지), 본인 제외
-        const rbac = c.get('rbac');
         const mentionRecipients = filterTicketMentionRecipients(
             rbac,
             await resolveMentionRecipients(db, c.env, content, user.id),
@@ -253,7 +263,7 @@ ticketRoutes.post('/tickets', requireAuth, requirePermission('ticket:create'), a
  * GET /api/tickets/:id
  * 티켓 상세 + 댓글 목록
  */
-ticketRoutes.get('/tickets/:id', requireAuth, async (c) => {
+ticketRoutes.get('/tickets/:id', requireAuthAllowBanned, async (c) => {
     const ticketId = Number(c.req.param('id'));
     const user = c.get('user')!;
     const db = c.env.DB;
@@ -318,7 +328,7 @@ ticketRoutes.get('/tickets/:id', requireAuth, async (c) => {
  * POST /api/tickets/:id/comments
  * 댓글 작성
  */
-ticketRoutes.post('/tickets/:id/comments', requireAuth, requirePermission('comment:create'), async (c) => {
+ticketRoutes.post('/tickets/:id/comments', requireAuthAllowBanned, async (c) => {
     const ticketId = Number(c.req.param('id'));
     const user = c.get('user')!;
     const db = c.env.DB;
@@ -326,6 +336,14 @@ ticketRoutes.post('/tickets/:id/comments', requireAuth, requirePermission('comme
 
     if (!content || !content.trim()) {
         return c.json({ error: '댓글 내용을 입력해주세요.' }, 400);
+    }
+
+    const rbac = c.get('rbac');
+
+    // 권한: 일반 사용자는 comment:create 필요. 차단된 사용자는 자신의 티켓(소명 채널)에
+    // 한해 댓글 작성을 허용한다 (본인 티켓 여부는 아래 canAccessTicket 으로 재확인).
+    if (user.role !== 'banned' && !rbac.can(user.role, 'comment:create')) {
+        return c.json({ error: '권한이 부족합니다. (comment:create)' }, 403);
     }
 
     const ticket = await db.prepare(
@@ -336,11 +354,15 @@ ticketRoutes.post('/tickets/:id/comments', requireAuth, requirePermission('comme
         return c.json({ error: '티켓을 찾을 수 없습니다.' }, 404);
     }
 
-    const rbac = c.get('rbac');
-
-    // 접근 권한 확인
+    // 접근 권한 확인 (차단 사용자는 canAccessTicket 에서 본인 티켓만 통과)
     if (!canAccessTicket(rbac, user, ticket)) {
         return c.json({ error: '접근 권한이 없습니다.' }, 403);
+    }
+
+    // 차단 사용자는 소명 채널(계정 유형)에만 댓글 작성 가능. 차단 전 작성한 일반/문서/토론
+    // 티켓이라도 차단 중에는 계정 유형 외에는 작성을 막아 생성 경로와 동일하게 제한한다.
+    if (user.role === 'banned' && ticket.type !== 'account') {
+        return c.json({ error: '차단된 계정은 계정 문의(소명) 티켓에만 댓글을 작성할 수 있습니다.' }, 403);
     }
 
     if (ticket.status === 'closed') {
