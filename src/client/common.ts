@@ -1690,6 +1690,10 @@ async function loadRecentChanges() {
                     while (title.firstChild) {
                         link.appendChild(title.firstChild);
                     }
+                    const chevron = document.createElement('i');
+                    chevron.className = 'bi bi-chevron-right ms-1';
+                    chevron.style.cssText = 'font-size:0.75em;opacity:0.45;';
+                    link.appendChild(chevron);
                     title.appendChild(link);
                 }
             }
