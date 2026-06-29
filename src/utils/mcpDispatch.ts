@@ -12,6 +12,7 @@ import { renderForAI, extractTOC, extractSection, findSectionsForQuery, expandTe
 import { normalizeSlug, isR2OnlyNamespace, isMcpReadableSlug } from './slug';
 import { getEnabledExtensions } from './extensions';
 import { getRevisionContent } from './r2';
+import { isRagSearchEnabled, ragSearchBody } from './rag';
 import type { RBAC } from './role';
 
 // ────────────────────────────────────────────────────────────────
@@ -97,6 +98,11 @@ export const MCP_TOOL_DEFS_ALL: McpToolDef[] = [
         name: 'search_fts',
         description: '위키 문서의 본문을 전문 검색(FTS) 합니다. 검색 결과에는 문서 슬러그와, 검색어가 등장하는 모든 목차의 목록이 포함됩니다. 한 문서에서 여러 섹션에 걸쳐 등장하면 모든 섹션이 반환됩니다.',
         inputSchema: { type: 'object', properties: { query: { type: 'string', description: '검색어' } }, required: ['query'] }
+    },
+    {
+        name: 'search_rag',
+        description: '위키 문서의 본문을 Cloudflare AI Search(RAG) 로 의미 기반 검색합니다. FTS 가 정확한 문자열 매칭이라면, 이 도구는 의미가 가까운 문서를 점수(score) 순으로 반환합니다. 응답 각 항목은 slug(식별자), title(표시 전용 대체 제목, 없으면 null), score, snippet 을 포함합니다. 다른 도구의 title 인자에는 반드시 slug 값을 사용하세요. 비공개/삭제 문서는 호출자 권한에 따라 결과에서 제외됩니다.',
+        inputSchema: { type: 'object', properties: { query: { type: 'string', description: '검색어(자연어 가능)' }, max: { type: 'number', description: '최대 반환 개수 (기본 30, 최대 50)' } }, required: ['query'] }
     },
     {
         name: 'get_toc',
@@ -251,6 +257,13 @@ export const MCP_TOOL_DEFS_ALL: McpToolDef[] = [
     }
 ];
 
+// 환경에 따라 노출할 공용(read) 도구 목록을 반환한다. RAG 검색이 비활성이면 search_rag 를 숨긴다.
+export function getSharedToolDefs(env: Env['Bindings']): McpToolDef[] {
+    return isRagSearchEnabled(env)
+        ? MCP_TOOL_DEFS_ALL
+        : MCP_TOOL_DEFS_ALL.filter((t) => t.name !== 'search_rag');
+}
+
 export function buildInformationIntro(c: Context<Env>, toolDefs: McpToolDef[] = MCP_TOOL_DEFS_ALL): string {
     const wikiName = c.env.WIKI_NAME;
     const syntaxNote = c.env.WIKI_SYNTAX ? `\n\n문법 가이드 문서: ${c.env.WIKI_SYNTAX}` : '';
@@ -346,6 +359,40 @@ export async function dispatchReadTool(
                 sections: findSectionsForQuery(actualContent, rawQuery),
             };
         }));
+        return { content: [{ type: 'text', text: JSON.stringify(output, null, 2) }] };
+    }
+
+    if (toolName === 'search_rag') {
+        if (!isRagSearchEnabled(c.env)) {
+            return { content: [{ type: 'text', text: 'Error: RAG 검색이 비활성화되어 있습니다.' }], isError: true };
+        }
+        const rawQuery = String(args.query || '').trim();
+        if (!rawQuery) return { content: [{ type: 'text', text: '[]' }] };
+        const maxN = Math.min(50, Math.max(1, Number(args.max) || 30));
+
+        let hits;
+        try {
+            // 비공개/삭제 사후 필터로 줄어들 분을 보전하기 위해 상한(50)까지 과다 조회.
+            hits = await ragSearchBody(c.env, rawQuery, 50);
+        } catch (e: any) {
+            return { content: [{ type: 'text', text: 'Error: RAG 검색 실패: ' + String(e?.message || e) }], isError: true };
+        }
+        if (hits.length === 0) return { content: [{ type: 'text', text: '[]' }] };
+
+        // ACL 무관 전 문서가 인덱싱돼 있으므로, D1 로 다시 조회하며 가시성(privateFilter)+삭제 사후 필터.
+        const placeholders = hits.map(() => '?').join(',');
+        const rows = await db.prepare(
+            `SELECT slug, title, rows, characters FROM pages WHERE slug IN (${placeholders}) AND deleted_at IS NULL${privateFilter}`,
+        ).bind(...hits.map((h) => h.slug)).all<{ slug: string; title: string | null; rows: number | null; characters: number | null }>();
+        const valid = new Map(rows.results.map((r) => [r.slug, r]));
+
+        const output: unknown[] = [];
+        for (const h of hits) {
+            const r = valid.get(h.slug);
+            if (!r) continue; // 비공개/삭제/비존재 → 제거
+            output.push({ slug: r.slug, title: r.title, score: h.score, rows: r.rows, characters: r.characters, snippet: h.snippet });
+            if (output.length >= maxN) break;
+        }
         return { content: [{ type: 'text', text: JSON.stringify(output, null, 2) }] };
     }
 
@@ -579,10 +626,20 @@ export async function dispatchReadTool(
             binds.push(args.category);
         }
 
+        // author_name/summary 및 author 필터(u.name)는 '가장 최근 리비전(가상 포함, created_at 기준)'
+        // 기준으로 도출한다 — HTTP /api/w/recent-changes 와 동일. last_revision_id 는 가상 리비전
+        // (ACL 변경·이동 등)에서 갱신되지 않아, 그 기준으로는 직전 본문 편집자/요약으로 오귀속되고
+        // author 필터도 실제 변경자(예: 관리자)를 놓친다.
+        // 단, revision_id 는 읽기 가능한 본문 리비전 핸들로서 p.last_revision_id 를 그대로 노출한다
+        // (가상 리비전은 read_revision 등 열람 경로에서 차단되므로 핸들로 부적합).
         const sql = `
             SELECT p.slug, p.updated_at, p.last_revision_id, u.name as author_name, r.summary
             FROM pages p
-            LEFT JOIN revisions r ON p.last_revision_id = r.id
+            LEFT JOIN revisions r ON r.id = (
+                SELECT id FROM revisions
+                WHERE page_id = p.id AND deleted_at IS NULL AND purged_at IS NULL
+                ORDER BY created_at DESC, id DESC LIMIT 1
+            )
             LEFT JOIN users u ON r.author_id = u.id
             WHERE ${wheres.join(' AND ')}
             ORDER BY p.updated_at DESC LIMIT ?

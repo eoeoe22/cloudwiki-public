@@ -8,7 +8,7 @@ import { getEnabledExtensions } from '../utils/extensions';
 import { getRevisionContent } from '../utils/r2';
 import { resolveBearerAuth } from '../utils/mcpAuth';
 import {
-    MCP_TOOL_DEFS_ALL,
+    getSharedToolDefs,
     buildInformationIntro,
     dispatchReadTool,
     formatRelativeTime,
@@ -132,9 +132,10 @@ async function handleJsonRpc(c: Context<Env>, body: any, user: User | null) {
     const canSeePrivate = rbac.can(role, 'wiki:private');
     const privateFilter = canSeePrivate ? '' : ' AND is_private = 0';
     // 단계적으로 노출 도구를 합성한다 — guest 는 read 도구만, wiki:edit 는 + USER_TOOL_DEFS,
-    // admin:access 는 + ADMIN_ONLY_TOOL_DEFS.
+    // admin:access 는 + ADMIN_ONLY_TOOL_DEFS. 공용 read 도구는 환경(RAG 활성 여부)에 따라 search_rag 포함.
+    const sharedToolDefs = getSharedToolDefs(c.env);
     const visibleToolDefs = [
-        ...MCP_TOOL_DEFS_ALL,
+        ...sharedToolDefs,
         ...(canEdit ? USER_TOOL_DEFS : []),
         ...(isAdmin ? ADMIN_ONLY_TOOL_DEFS : []),
     ];
@@ -166,7 +167,7 @@ async function handleJsonRpc(c: Context<Env>, body: any, user: User | null) {
 
     // 3. 도구 목록 반환
     if (method === 'tools/list') {
-        const intro = buildInformationIntro(c, MCP_TOOL_DEFS_ALL);
+        const intro = buildInformationIntro(c, sharedToolDefs);
         const userName = user?.name || '';
         const userSuffix = canEdit ? buildUserEditInformationSuffix(userName) : '';
         const adminSuffix = isAdmin ? buildAdminOnlyInformationSuffix(userName) : '';
@@ -201,7 +202,7 @@ async function handleJsonRpc(c: Context<Env>, body: any, user: User | null) {
                 };
             }
 
-            const shared = await dispatchReadTool(c, toolName, args, MCP_TOOL_DEFS_ALL);
+            const shared = await dispatchReadTool(c, toolName, args, sharedToolDefs);
             if (shared) return { jsonrpc: '2.0', id, result: shared };
 
             // user 디스패처는 USER_TOOL_DEFS / ADMIN_ONLY_TOOL_DEFS 내부 도구를 처리한다.

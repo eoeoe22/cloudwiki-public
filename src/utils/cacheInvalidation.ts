@@ -92,10 +92,17 @@ export async function refreshRecentChangesCache(c: any) {
     const cache = caches.default;
 
     // 캐시는 비공개 페이지 열람 권한이 없는 익명/일반 응답에만 저장된다.
+    // author_name 도출은 GET /api/w/recent-changes(src/routes/wiki.ts) 와 동일하게
+    // '가장 최근 리비전(가상 포함, created_at 기준)'의 작성자를 사용한다 — last_revision_id 는
+    // 가상 리비전(ACL 변경·이동 등)에서 갱신되지 않아 오귀속이 생기기 때문.
     const { results } = await db.prepare(`
         SELECT p.slug, p.updated_at, u.name as author_name
         FROM pages p
-        LEFT JOIN revisions r ON p.last_revision_id = r.id
+        LEFT JOIN revisions r ON r.id = (
+            SELECT id FROM revisions
+            WHERE page_id = p.id AND deleted_at IS NULL AND purged_at IS NULL
+            ORDER BY created_at DESC, id DESC LIMIT 1
+        )
         LEFT JOIN users u ON r.author_id = u.id
         WHERE p.deleted_at IS NULL AND p.is_private = 0
         ORDER BY p.updated_at DESC LIMIT 10

@@ -30,7 +30,7 @@ interface BulkDoc {
 }
 
 interface JobState {
-  type: "reindex-backlinks" | "bulk-move" | "bulk-delete" | null;
+  type: "reindex-backlinks" | "bulk-move" | "bulk-delete" | "rag-backfill" | null;
   status: "idle" | "running" | "completed" | "error";
   cursor: number;
   total: number;
@@ -75,6 +75,12 @@ document.addEventListener("DOMContentLoaded", async () => {
   } catch {
     window.location.href = "/login";
     return;
+  }
+
+  // RAG 백필 카드는 플러그인이 활성(ragSearchEnabled)일 때만 노출.
+  if (window.appConfig?.ragSearchEnabled) {
+    const ragCard = document.getElementById("ragBackfillCard");
+    if (ragCard) ragCard.style.display = "";
   }
 
   const input = document.getElementById("bulkSearchInput") as HTMLInputElement;
@@ -144,6 +150,17 @@ document.addEventListener("DOMContentLoaded", async () => {
             setJobButtonsDisabled(false);
             renderMoveResult(finalState, result);
             searchDocs();
+          });
+        } else if (state.type === "rag-backfill") {
+          renderRagBackfillState(state);
+          const ragStatusEl = document.getElementById("ragBackfillStatus");
+          if (ragStatusEl) {
+            ragStatusEl.innerHTML +=
+              ' <span class="text-muted small">(페이지 이탈 후에도 서버에서 계속 실행됩니다)</span>';
+          }
+          pollJobUntilDone(renderRagBackfillState).then((finalState) => {
+            renderRagBackfillState(finalState);
+            setJobButtonsDisabled(false);
           });
         }
       }
@@ -262,6 +279,7 @@ function setJobButtonsDisabled(disabled: boolean) {
     "bulkSoftBtn", "bulkHardBtn",
     "bulkMoveBtn", "bulkMovePreviewBtn",
     "reindexStartBtn", "reindexResumeBtn",
+    "ragBackfillStartBtn", "ragBackfillResumeBtn",
   ];
   for (const id of ids) {
     const el = document.getElementById(id) as HTMLButtonElement | null;
@@ -270,6 +288,8 @@ function setJobButtonsDisabled(disabled: boolean) {
   // 중지 버튼은 반대 — 실행 중에만 활성
   const stopBtn = document.getElementById("reindexStopBtn") as HTMLButtonElement | null;
   if (stopBtn) stopBtn.disabled = !disabled;
+  const ragStopBtn = document.getElementById("ragBackfillStopBtn") as HTMLButtonElement | null;
+  if (ragStopBtn) ragStopBtn.disabled = !disabled;
 }
 
 // ── 대량 삭제 ──
@@ -669,6 +689,107 @@ async function reindexResume() {
   }
 }
 
+// ── RAG 인덱스 백필 ──
+
+/**
+ * RAG 백필 진행 UI 를 JobState 로 갱신한다.
+ * 진행 바(#ragBackfillProgress), 상태 텍스트(#ragBackfillStatus), 버튼 3개.
+ */
+function renderRagBackfillState(state: JobState) {
+  const progressEl = document.getElementById("ragBackfillProgress") as HTMLElement | null;
+  const statusEl = document.getElementById("ragBackfillStatus") as HTMLElement | null;
+  const startBtn = document.getElementById("ragBackfillStartBtn") as HTMLButtonElement | null;
+  const stopBtn = document.getElementById("ragBackfillStopBtn") as HTMLButtonElement | null;
+  const resumeBtn = document.getElementById("ragBackfillResumeBtn") as HTMLButtonElement | null;
+
+  const isRunning = state.status === "running";
+  const isIdle = state.status === "idle";
+  const isCompleted = state.status === "completed";
+  const isError = state.status === "error";
+
+  if (progressEl) {
+    const pct = state.total > 0 ? Math.round((state.processed / state.total) * 100) : 0;
+    const barEl = progressEl.querySelector(".progress-bar") as HTMLElement | null;
+    if (barEl) {
+      barEl.style.width = `${pct}%`;
+      barEl.setAttribute("aria-valuenow", String(pct));
+      barEl.textContent = `${pct}%`;
+    }
+    progressEl.style.display = isRunning || isCompleted ? "" : "none";
+  }
+
+  if (statusEl) {
+    const r = state.result || {};
+    const mirrored = r.mirrored ?? 0;
+    const skipped = r.skipped ?? 0;
+    if (isRunning) {
+      statusEl.innerHTML = `<span class="text-muted">백필 중... (${state.processed}/${state.total > 0 ? state.total : "?"}) — 미러 ${mirrored}건, ${skipped}건 건너뜀</span>`;
+    } else if (isCompleted) {
+      statusEl.innerHTML = `<span class="text-success">✓ 완료 — 미러 ${mirrored}건, ${skipped}건 건너뜀 (총 ${state.processed}개 문서 처리)</span>`;
+    } else if (isError) {
+      statusEl.innerHTML = `<span class="text-danger">오류: ${window.escapeHtml(state.error || "알 수 없는 오류")}</span>`;
+    } else if (isIdle && state.processed > 0) {
+      statusEl.innerHTML = `<span class="text-muted">일시정지됨 — ${state.processed}개 처리 완료 (재개 가능)</span>`;
+    } else {
+      statusEl.innerHTML = "";
+    }
+  }
+
+  if (startBtn) startBtn.style.display = isIdle && state.processed === 0 ? "" : "none";
+  if (stopBtn) { stopBtn.style.display = isRunning ? "" : "none"; stopBtn.disabled = false; }
+  if (resumeBtn) resumeBtn.style.display = (isIdle && state.processed > 0) || isError ? "" : "none";
+}
+
+async function ragBackfillStart() {
+  setJobButtonsDisabled(true);
+  const statusEl = document.getElementById("ragBackfillStatus");
+  if (statusEl) statusEl.innerHTML = '<span class="text-muted">잡 제출 중...</span>';
+  try {
+    const initState = await submitJob({ type: "rag-backfill" });
+    if (!initState) {
+      setJobButtonsDisabled(false);
+      if (statusEl) statusEl.innerHTML = "";
+      return;
+    }
+    renderRagBackfillState(initState);
+    const finalState = await pollJobUntilDone(renderRagBackfillState);
+    renderRagBackfillState(finalState);
+  } catch (err: any) {
+    if (statusEl) statusEl.innerHTML = `<span class="text-danger">오류: ${window.escapeHtml(err.message || String(err))}</span>`;
+  } finally {
+    setJobButtonsDisabled(false);
+  }
+}
+
+async function ragBackfillStop() {
+  const stopBtn = document.getElementById("ragBackfillStopBtn") as HTMLButtonElement | null;
+  if (stopBtn) stopBtn.disabled = true;
+  const state = await stopJob();
+  if (state) renderRagBackfillState(state);
+  setJobButtonsDisabled(false);
+}
+
+async function ragBackfillResume() {
+  setJobButtonsDisabled(true);
+  const statusEl = document.getElementById("ragBackfillStatus");
+  if (statusEl) statusEl.innerHTML = '<span class="text-muted">잡 재개 중...</span>';
+  try {
+    const initState = await submitJob({ type: "rag-backfill", resume: true });
+    if (!initState) {
+      setJobButtonsDisabled(false);
+      if (statusEl) statusEl.innerHTML = "";
+      return;
+    }
+    renderRagBackfillState(initState);
+    const finalState = await pollJobUntilDone(renderRagBackfillState);
+    renderRagBackfillState(finalState);
+  } catch (err: any) {
+    if (statusEl) statusEl.innerHTML = `<span class="text-danger">오류: ${window.escapeHtml(err.message || String(err))}</span>`;
+  } finally {
+    setJobButtonsDisabled(false);
+  }
+}
+
 // ── 검색 ──
 
 async function searchDocs() {
@@ -836,3 +957,6 @@ window.bulkMoveRun = bulkMoveRun;
 window.reindexStart = reindexStart;
 window.reindexStop = reindexStop;
 window.reindexResume = reindexResume;
+window.ragBackfillStart = ragBackfillStart;
+window.ragBackfillStop = ragBackfillStop;
+window.ragBackfillResume = ragBackfillResume;

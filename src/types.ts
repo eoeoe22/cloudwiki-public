@@ -1,5 +1,6 @@
 import type { Context } from 'hono';
 import type { User } from './shared/models';
+import type { RagAiBinding } from './utils/rag';
 
 // DB 모델 인터페이스(User, Page, Revision, ...) 는 src/shared/models 로 분리되어 있고,
 // 기존 코드의 `import type { User } from '../types'` 같은 경로 호환을 위해 그대로 re-export 한다.
@@ -13,6 +14,13 @@ export type Env = {
         MEDIA: R2Bucket;
         KV: KVNamespace;
         ASSETS: Fetcher;
+        // === RAG(AI Search) 보조 검색 플러그인 ===
+        // RAG_BUCKET: 문서 본문 미러링 전용 R2 버킷. AI: Workers AI 바인딩(AutoRAG 질의).
+        // 두 바인딩 모두 선택적 — 미구성 시 RAG 기능은 자동 비활성(isRagEnabled=false).
+        RAG_BUCKET?: R2Bucket;
+        AI?: RagAiBinding;
+        RAG_SEARCH_ENABLED?: string;   // "true" 면 RAG 플러그인 활성화
+        RAG_AUTORAG_NAME?: string;     // AI Search(AutoRAG) 인스턴스 이름
         ANALYTICS?: AnalyticsEngineDataset;
         // AdminJobDO 잡 러너 (역링크 재인덱싱/대량 이동/대량 삭제). 바인딩 없으면 잡 API 는 503.
         ADMIN_JOB_DO?: DurableObjectNamespace;

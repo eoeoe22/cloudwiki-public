@@ -3,6 +3,7 @@ import { RBAC } from '../utils/role';
 import { buildLinksOnlyStatements, movePage } from '../routes/wiki';
 import { getEnabledExtensions } from '../utils/extensions';
 import { collectRevisionR2Keys, buildHardDeleteStatements } from '../utils/pageDeletion';
+import { ragObjectKey, isRagMirrorEnabled, canCleanupMirror } from '../utils/rag';
 import { cleanupUnauthorizedSubscriptions } from '../utils/pageAccessCleanup';
 import {
     invalidatePageCache,
@@ -60,7 +61,7 @@ const CAP_DELETE_FAILED = 100;    // bulk-delete
 const CAP_MOVE_SKIPPED = 100;     // bulk-move skipped
 const CAP_MOVE_ERRORS = 50;       // bulk-move backlink_errors / backlink_partials
 
-export type JobType = 'reindex-backlinks' | 'bulk-move' | 'bulk-delete';
+export type JobType = 'reindex-backlinks' | 'bulk-move' | 'bulk-delete' | 'rag-backfill';
 
 // Worker 라우트가 그대로 패스스루하고 클라이언트도 이 형태에 의존하는 공개 계약.
 export interface JobState {
@@ -89,6 +90,10 @@ interface BulkDeleteResult {
     mode: 'soft' | 'hard';
     failedIds: number[];
 }
+interface RagBackfillResult {
+    mirrored: number;   // RAG_BUCKET 에 본문을 반영한 문서 수
+    skipped: number;    // 본문이 비어 있거나 put 실패로 건너뛴 문서 수
+}
 interface BulkMoveResult {
     requested: number;
     moved: number;
@@ -115,7 +120,8 @@ interface BulkMovePayload {
     actor: { id: number; role: string };
 }
 type ReindexPayload = Record<string, never>;
-type JobPayload = ReindexPayload | BulkDeletePayload | BulkMovePayload;
+type RagBackfillPayload = { actor: { id: number; role: string } };
+type JobPayload = ReindexPayload | BulkDeletePayload | BulkMovePayload | RagBackfillPayload;
 
 function initialState(): JobState {
     return {
@@ -186,7 +192,7 @@ export class AdminJobDO {
             resume?: boolean;
         };
         const type = body.type;
-        if (type !== 'reindex-backlinks' && type !== 'bulk-move' && type !== 'bulk-delete') {
+        if (type !== 'reindex-backlinks' && type !== 'bulk-move' && type !== 'bulk-delete' && type !== 'rag-backfill') {
             return json({ ok: false, reason: 'invalid_type' }, 400);
         }
 
@@ -230,6 +236,15 @@ export class AdminJobDO {
             const total = await this.countReindexTargets();
             const result: ReindexResult = { linksWritten: 0, skipped: 0, skippedIds: [] };
             return { payload: {}, total, result };
+        }
+        if (type === 'rag-backfill') {
+            // RAG 미러링이 가능한 환경(플러그인 ON + RAG_BUCKET 구성)이어야 한다.
+            if (!isRagMirrorEnabled(this.env)) {
+                return json({ ok: false, reason: 'rag_disabled' }, 400);
+            }
+            const total = await this.countRagBackfillTargets();
+            const result: RagBackfillResult = { mirrored: 0, skipped: 0 };
+            return { payload: (payload as RagBackfillPayload) ?? { actor: { id: 0, role: '' } }, total, result };
         }
         if (type === 'bulk-delete') {
             const p = payload as BulkDeletePayload | undefined;
@@ -289,6 +304,8 @@ export class AdminJobDO {
                 await this.tickBulkDelete(s);
             } else if (s.type === 'bulk-move') {
                 await this.tickBulkMove(s);
+            } else if (s.type === 'rag-backfill') {
+                await this.tickRagBackfill(s);
             } else {
                 // 알 수 없는 type — 방어적으로 종료.
                 s.status = 'error';
@@ -436,6 +453,70 @@ export class AdminJobDO {
         await this.finishTick(s, false);
     }
 
+    // ── rag-backfill 틱 ──
+    //
+    // RAG 플러그인을 켠 뒤, 미러링은 "다음 편집 시점"부터 적용되므로 켜기 전부터 있던 문서는
+    // 인덱스에 없다. 이 잡은 전 문서를 한 번 훑어 현행 본문을 RAG_BUCKET 에 채워 넣는 일회성 백필이다.
+    // ACL 무관 전 문서를 인덱싱한다(비공개 포함) — 검색 결과의 비공개 필터링은 조회 시점에 수행된다.
+    // 본문이 비어 있는 문서(R2-only 익스텐션 네임스페이스 등)는 건너뛴다.
+
+    private async countRagBackfillTargets(): Promise<number> {
+        const row = await this.env.DB.prepare(
+            'SELECT COUNT(*) AS n FROM pages WHERE deleted_at IS NULL',
+        ).first<{ n: number }>();
+        return row?.n ?? 0;
+    }
+
+    private async tickRagBackfill(s: JobState): Promise<void> {
+        if (!isRagMirrorEnabled(this.env)) {
+            s.status = 'error';
+            s.error = 'RAG 미러링이 비활성화되어 있습니다(RAG_SEARCH_ENABLED / RAG_BUCKET 확인).';
+            await this.saveMeta(s);
+            await this.state.storage.deleteAlarm();
+            return;
+        }
+        const budget = this.parseBudget();
+        const result = s.result as unknown as RagBackfillResult;
+        const bucket = this.env.RAG_BUCKET!;
+
+        // 틱당 처리 상한: SELECT 1건 + put N건 ≤ 예산.
+        const perTick = Math.max(1, Math.min(50, budget - 1));
+
+        const { results } = await this.env.DB.prepare(
+            `SELECT id, slug, content FROM pages
+              WHERE id > ? AND deleted_at IS NULL
+              ORDER BY id ASC
+              LIMIT ?`,
+        ).bind(s.cursor, perTick).all<{ id: number; slug: string; content: string | null }>();
+
+        if (!results || results.length === 0) {
+            await this.finishTick(s, true); // 대상 소진 → 완료.
+            return;
+        }
+
+        for (const row of results) {
+            const body = row.content || '';
+            try {
+                if (body.length > 0) {
+                    await bucket.put(ragObjectKey(row.slug), body, {
+                        httpMetadata: { contentType: 'text/markdown; charset=utf-8' },
+                    });
+                    result.mirrored += 1;
+                } else {
+                    result.skipped += 1;
+                }
+            } catch (e) {
+                console.error('rag backfill put failed:', row.slug, e);
+                result.skipped += 1;
+            }
+            s.cursor = row.id;
+            s.processed += 1;
+            if (!(await this.checkpoint(s))) return;
+        }
+
+        await this.finishTick(s, false);
+    }
+
     // ── bulk-delete 틱 ──
 
     private async tickBulkDelete(s: JobState): Promise<void> {
@@ -554,6 +635,12 @@ export class AdminJobDO {
                     used += stmts.length;
                     result.deleted += 1;
                     affected.push(page.slug);
+                    // RAG 미러 정리: D1 영구 삭제가 성공한 경우에만 인덱싱 미러를 제거한다(버킷만 있으면
+                    // 스위치 무관). 단건 하드 삭제(wiki.ts / admin-mcp)의 removePageMirror 와 동일한 보장.
+                    // (batch 실패 시엔 문서가 D1 에 남으므로 미러를 지우면 안 됨 → try 내부에 둔다.)
+                    if (canCleanupMirror(this.env)) {
+                        sink.push(this.env.RAG_BUCKET!.delete(ragObjectKey(page.slug)).catch(() => {}));
+                    }
                     // R2 삭제: 예산 내에서만 즉시 삭제, 초과분은 큐에 적재해 다음 틱 드레인.
                     let ki = 0;
                     const now: string[] = [];

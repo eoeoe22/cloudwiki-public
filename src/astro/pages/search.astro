@@ -88,6 +88,13 @@ import Footer from '../components/Footer.astro';
                                 <label class="form-check-label small" for="includePrivate">비공개 포함</label>
                             </div>
                         </div>
+                        <div class="col-12 col-md-auto d-none" id="ragSearchWrap">
+                            <label class="form-label small mb-1 d-block" id="searchEngineLabel">검색 방식</label>
+                            <div class="btn-group btn-group-sm" role="group" aria-label="검색 방식">
+                                <button type="button" class="btn btn-wiki-outline active" id="searchEngineFts" data-engine="fts" aria-pressed="true" onclick="onSearchEngineChange('fts')" title="본문 검색을 FTS(전문 검색)로 수행합니다.">FTS</button>
+                                <button type="button" class="btn btn-wiki-outline" id="searchEngineRag" data-engine="rag" aria-pressed="false" onclick="onSearchEngineChange('rag')" title="본문 검색을 FTS 대신 AI Search(RAG)로 수행합니다. 제목 검색은 유지됩니다.">RAG</button>
+                            </div>
+                        </div>
                         <div class="col-auto">
                             <button type="button" class="btn btn-wiki-outline btn-sm" id="resetFilters" onclick="resetFilters()">
                                 <i class="bi bi-x-circle"></i> 초기화

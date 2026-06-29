@@ -88,7 +88,7 @@ let activeAbortController = null;
 const CACHE_CAPACITY = 30;
 
 // 일반 문서 검색 필터 파라미터 키. URL/캐시키/초기화에서 공용으로 사용한다.
-const FILTER_KEYS = ['sort', 'field', 'category', 'from', 'to', 'include_private'];
+const FILTER_KEYS = ['sort', 'field', 'category', 'from', 'to', 'include_private', 'rag'];
 
 // URL 의 현재 필터 상태를 읽어 정규화된 객체로 반환한다(서버 기본값과 동일한 기본값 적용).
 function getFilters() {
@@ -100,13 +100,14 @@ function getFilters() {
         from: params.get('from') || '',
         to: params.get('to') || '',
         include_private: params.get('include_private'), // '0' 또는 null(기본 포함)
+        rag: params.get('rag'), // '1' 또는 null(기본 OFF)
     };
 }
 
 // 필터를 캐시키에 합칠 직렬화 문자열. 기본값도 그대로 반영해 조합별로 캐시를 분리한다.
 function filtersKey() {
     const f = getFilters();
-    return [f.sort, f.field, f.category, f.from, f.to, f.include_private || ''].join('\u0000');
+    return [f.sort, f.field, f.category, f.from, f.to, f.include_private || '', f.rag || ''].join('\u0000');
 }
 
 function cacheKey(q, mode, page) {
@@ -203,6 +204,39 @@ function syncFilterControls() {
     if (toEl) toEl.value = f.to;
     const incEl = document.getElementById('includePrivate');
     if (incEl) incEl.checked = f.include_private !== '0';
+    setSelectedSearchEngine(f.rag === '1' ? 'rag' : 'fts');
+}
+
+// FTS/RAG 버튼 그룹에서 현재 선택된 검색 엔진을 읽는다. RAG 버튼이 active 면 'rag', 아니면 'fts'.
+function getSelectedSearchEngine() {
+    const ragBtn = document.getElementById('searchEngineRag');
+    return ragBtn && ragBtn.classList.contains('active') ? 'rag' : 'fts';
+}
+
+// FTS/RAG 버튼 그룹의 active(선택) 상태를 지정한 엔진으로 맞춘다.
+function setSelectedSearchEngine(engine) {
+    const isRag = engine === 'rag';
+    const ftsBtn = document.getElementById('searchEngineFts');
+    const ragBtn = document.getElementById('searchEngineRag');
+    if (ftsBtn) {
+        ftsBtn.classList.toggle('active', !isRag);
+        ftsBtn.setAttribute('aria-pressed', String(!isRag));
+    }
+    if (ragBtn) {
+        ragBtn.classList.toggle('active', isRag);
+        ragBtn.setAttribute('aria-pressed', String(isRag));
+    }
+}
+
+// FTS/RAG 버튼 클릭: 같은 엔진 재클릭은 무시하고, 엔진이 바뀌면 이전 엔진의 검색 결과를
+// 즉시 비운 뒤(FTS↔RAG 교차 잔상 방지) 선택을 갱신하고 재검색한다.
+function onSearchEngineChange(engine) {
+    if (getSelectedSearchEngine() === engine) return;
+    setSelectedSearchEngine(engine);
+    const listEl = document.getElementById('resultsList');
+    if (listEl) listEl.innerHTML = '';
+    setTopNotices('');
+    onFilterChange();
 }
 
 // 현재 모드(일반/이미지/카테고리)에 따라 필터 바 표시 여부, 활성 네임스페이스 칩,
@@ -232,6 +266,13 @@ function updateFilterChrome(q, mode) {
         const canPrivate = !!(window.currentUser && window.currentUser.permissions && window.currentUser.permissions['wiki:private']);
         wrap.classList.toggle('d-none', !(isDoc && canPrivate));
     }
+
+    // RAG 검색 토글: 일반 문서 검색이고 플러그인이 활성일 때만 노출한다.
+    const ragWrap = document.getElementById('ragSearchWrap');
+    if (ragWrap) {
+        const ragOn = !!(window.appConfig && window.appConfig.ragSearchEnabled);
+        ragWrap.classList.toggle('d-none', !(isDoc && ragOn));
+    }
 }
 
 // 필터 컨트롤 변경 시: URL 동기화 → page=1 리셋 → 재검색(캐시 히트 시 네트워크 생략).
@@ -260,6 +301,14 @@ function onFilterChange() {
         params.delete('include_private');
     }
 
+    // 검색 방식(FTS/RAG) 버튼 그룹은 노출(플러그인 활성)된 경우에만 반영한다. RAG 선택 시에만 rag=1.
+    const ragWrap = document.getElementById('ragSearchWrap');
+    if (ragWrap && !ragWrap.classList.contains('d-none')) {
+        setOrDel('rag', getSelectedSearchEngine() === 'rag' ? '1' : '');
+    } else {
+        params.delete('rag');
+    }
+
     params.set('page', '1');
 
     // 결과 URL 이 현재와 동일하면 중복 처리를 건너뛴다. 카테고리 자동완성 선택/Enter 는
@@ -282,6 +331,11 @@ function resetFilters() {
     params.set('page', '1');
     history.pushState({}, '', `?${params.toString()}`);
     syncFilterControls();
+    // 초기화로 검색 엔진이 FTS 로 되돌아갈 수 있으므로, 엔진 전환과 동일하게 이전 결과를
+    // 즉시 비운 뒤 재검색해 FTS↔RAG 교차 잔상을 방지한다.
+    const listEl = document.getElementById('resultsList');
+    if (listEl) listEl.innerHTML = '';
+    setTopNotices('');
     performSearch(currentQuery, currentMode, 1);
 }
 
@@ -326,6 +380,7 @@ async function performSearch(q, mode, page) {
         if (f.from) qs.set('from', f.from);
         if (f.to) qs.set('to', f.to);
         if (f.include_private === '0') qs.set('include_private', '0');
+        if (f.rag === '1') qs.set('rag', '1');
         const res = await fetch(`/api/search?${qs.toString()}`, { signal: controller.signal });
 
         if (!res.ok) {
@@ -904,4 +959,5 @@ window.goImageSearch = goImageSearch;
 window.goCategorySearch = goCategorySearch;
 window.goDocumentSearch = goDocumentSearch;
 window.onFilterChange = onFilterChange;
+window.onSearchEngineChange = onSearchEngineChange;
 window.resetFilters = resetFilters;

@@ -167,6 +167,8 @@ export interface AppConfig {
     privacyPolicySlug?: string;
     enableConcurrentEditDetection?: boolean;
     selectedIconsOnly?: boolean;
+    /** RAG(AI Search) 보조 본문 검색 활성 여부 — /search 의 RAG 체크박스 노출 게이트. */
+    ragSearchEnabled?: boolean;
     palettes?: Record<string, PaletteDefinition>;
     announcements?: Array<{
         id: number;

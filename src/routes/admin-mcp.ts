@@ -26,6 +26,7 @@ import { Context } from 'hono';
 import type { Env, User } from '../types';
 import { RBAC } from '../utils/role';
 import { uploadRevisionToR2, getRevisionContent, insertVirtualRevision } from '../utils/r2';
+import { mirrorPageBody, removePageMirror } from '../utils/rag';
 import { replaceSection } from '../utils/aiParser';
 import { isR2OnlyNamespace } from '../utils/slug';
 import { normalizeSlug } from '../utils/slug';
@@ -756,6 +757,8 @@ export async function applyExistingPageUpdate(
         refreshRecentChangesCache(c),
         invalidateBacklinkCaches(c, opts.slug, c.env.DB),
     ]));
+    // RAG 미러: 현행 본문을 인덱싱 전용 R2 버킷에 best-effort 반영(플러그인 OFF 시 no-op).
+    mirrorPageBody(c.env, c.executionCtx, opts.slug, content);
     if (opts.logType && opts.logMessage) {
         c.executionCtx.waitUntil(
             c.env.DB.prepare('INSERT INTO admin_log (type, log, user) VALUES (?, ?, ?)')
@@ -852,6 +855,8 @@ export async function applyNewPageInsert(
         refreshRecentChangesCache(c),
         invalidateBacklinkCaches(c, slug, db),
     ]));
+    // RAG 미러: 신규 문서 본문을 인덱싱 전용 R2 버킷에 best-effort 반영(플러그인 OFF 시 no-op).
+    mirrorPageBody(c.env, c.executionCtx, slug, content);
     if (opts.logType && opts.logMessage) {
         c.executionCtx.waitUntil(
             db.prepare('INSERT INTO admin_log (type, log, user) VALUES (?, ?, ?)')
@@ -1698,6 +1703,10 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
                     .bind('hard_delete', `[admin-mcp] 문서 영구 삭제: ${slug}`, user.id)
                     .run().catch(() => {})
             );
+            // RAG 미러 정리: 영구 삭제는 D1 에서 완전히 사라지므로 인덱스 위생을 위해 R2 객체도 제거.
+            // (소프트 삭제는 R2 를 건드리지 않는다 — 검색 결과의 deleted_at 사후 필터가 가려주고,
+            //  복원 시 즉시 다시 검색 가능해야 하기 때문.)
+            removePageMirror(c.env, c.executionCtx, slug);
         } else {
             if (!rbac.can(user.role, 'wiki:delete')) return asTextResult('Error: 문서 삭제 권한이 없습니다.', true);
             // 소프트 삭제도 본문을 무력화하는 편집의 일종이므로 웹 DELETE /w/:slug 와 동일한 edit_acl

@@ -90,7 +90,7 @@ adminJobRoutes.post('/bulk-manage/jobs', async (c) => {
     const body = await c.req.json<JobSubmitBody>().catch(() => ({} as JobSubmitBody));
 
     const type = body.type;
-    if (type !== 'reindex-backlinks' && type !== 'bulk-move' && type !== 'bulk-delete') {
+    if (type !== 'reindex-backlinks' && type !== 'bulk-move' && type !== 'bulk-delete' && type !== 'rag-backfill') {
         return c.json({ error: '알 수 없는 잡 유형입니다.' }, 400);
     }
     const resume = body.resume === true;
@@ -156,6 +156,13 @@ adminJobRoutes.post('/bulk-manage/jobs', async (c) => {
                     updateBacklinks,
                     actor: { id: currentUser.id, role: currentUser.role },
                 },
+            };
+        } else if (type === 'rag-backfill') {
+            // RAG 백필: 전 문서를 RAG_BUCKET 에 미러링하는 일회성 잡. actor 만 전달(감사용).
+            startBody = {
+                type,
+                resume: false,
+                payload: { actor: { id: currentUser.id, role: currentUser.role } },
             };
         } else {
             // reindex-backlinks: 페이로드 없음.

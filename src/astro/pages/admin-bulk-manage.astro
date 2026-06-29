@@ -91,6 +91,42 @@ import Footer from '../components/Footer.astro';
                     </div>
                 </div>
 
+                <!-- RAG 인덱스 백필 카드 (RAG 플러그인 활성 시에만 노출) -->
+                <div class="card shadow-sm border-0 mb-4" id="ragBackfillCard" style="display: none;">
+                    <div class="card-header py-3">
+                        <h5 class="mb-0"><i class="mdi mdi-database-sync"></i> RAG 인덱스 백필</h5>
+                    </div>
+                    <div class="card-body">
+                        <p class="text-muted small mb-3">
+                            RAG(AI Search) 플러그인을 켠 뒤, 이미 존재하던 모든 문서의 현행 본문을 인덱싱 전용 R2 버킷에 한 번에 채워 넣습니다.
+                            플러그인 활성화 이후의 변경은 자동 미러링되므로, 이 백필은 도입 시 1회만 실행하면 됩니다.
+                            ACL과 무관하게 전 문서를 인덱싱하며(비공개 포함), 검색 시점에 비공개/삭제 문서가 필터링됩니다.
+                            페이지를 닫아도 계속 진행됩니다.
+                        </p>
+
+                        <!-- 진행 바 (Bootstrap progress) -->
+                        <div id="ragBackfillProgress" class="progress mb-3" style="display: none; height: 20px;" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                            <div class="progress-bar progress-bar-striped progress-bar-animated" style="width: 0%">0%</div>
+                        </div>
+
+                        <!-- 상태 텍스트 -->
+                        <div id="ragBackfillStatus" class="mb-3 small"></div>
+
+                        <!-- 버튼 -->
+                        <div class="d-flex gap-2 flex-wrap">
+                            <button class="btn btn-wiki btn-sm" id="ragBackfillStartBtn" onclick="ragBackfillStart()">
+                                <i class="mdi mdi-play"></i> 백필 시작
+                            </button>
+                            <button class="btn btn-wiki-outline btn-sm" id="ragBackfillStopBtn" onclick="ragBackfillStop()" style="display: none;">
+                                <i class="mdi mdi-pause"></i> 중지
+                            </button>
+                            <button class="btn btn-wiki-outline btn-sm" id="ragBackfillResumeBtn" onclick="ragBackfillResume()" style="display: none;">
+                                <i class="mdi mdi-play-circle-outline"></i> 이어서 재개
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- 결과/선택 카드 -->
                 <div class="card shadow-sm border-0 mb-4" id="bulkResultCard" style="display: none">
                     <div class="card-header py-3">

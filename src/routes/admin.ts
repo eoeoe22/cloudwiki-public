@@ -1394,8 +1394,9 @@ adminRoutes.post('/category-acl/:name/bulk-apply', async (c) => {
         }
 
         if (updates.length > 0) {
+            // 가상 리비전을 남기는 비-본문 변경이므로 updated_at 도 함께 bump 한다.
             const stmts: D1PreparedStatement[] = updates.map(u =>
-                db.prepare('UPDATE pages SET edit_acl = ? WHERE id = ?').bind(u.newAcl, u.id)
+                db.prepare('UPDATE pages SET edit_acl = ?, updated_at = unixepoch() WHERE id = ?').bind(u.newAcl, u.id)
             );
             const chunkSize = 200;
             for (let i = 0; i < stmts.length; i += chunkSize) {
@@ -2791,15 +2792,20 @@ adminRoutes.post('/doc-setting-prefix-rules/bulk-apply', async (c) => {
         if (updates.length > 0) {
             const stmts: D1PreparedStatement[] = [];
             for (const u of updates) {
+                // 권한(비공개/편집 ACL) 변경이 있는 행만 가상 리비전을 남기므로(아래 permChanges),
+                // 그 행에만 updated_at 을 bump 한다. 카테고리만 바뀐 행은 가상 리비전·bump 대상이 아니다.
+                const isPerm = u.privChanged || u.aclChanged;
                 if (u.catChanged) {
+                    const bump = isPerm ? ', updated_at = unixepoch()' : '';
                     stmts.push(
-                        db.prepare('UPDATE pages SET is_private = ?, edit_acl = ?, category = ? WHERE id = ?')
+                        db.prepare(`UPDATE pages SET is_private = ?, edit_acl = ?, category = ?${bump} WHERE id = ?`)
                             .bind(u.newPriv, u.newAcl, u.newCategory, u.id)
                     );
                     stmts.push(...buildCategoryOnlyStatements(db, u.id, u.newCategory));
                 } else {
+                    // !catChanged 이면 비공개/ACL 중 하나는 반드시 바뀐 행(상단 continue 조건) → 항상 bump.
                     stmts.push(
-                        db.prepare('UPDATE pages SET is_private = ?, edit_acl = ? WHERE id = ?')
+                        db.prepare('UPDATE pages SET is_private = ?, edit_acl = ?, updated_at = unixepoch() WHERE id = ?')
                             .bind(u.newPriv, u.newAcl, u.id)
                     );
                 }
@@ -2957,12 +2963,12 @@ adminRoutes.put('/pages/:slug/edit-acl', async (c) => {
         return c.json({ success: true, edit_acl: norm.value });
     }
 
+    // 본문 변경은 없지만 가상 리비전을 남기는 비-본문 변경이므로 updated_at 도 함께 bump 한다.
+    // (단건 비공개 플래그·slug 이동과 동일 정책 — '최근 변경'(updated_at 정렬)에 반영.)
     await db
-        .prepare('UPDATE pages SET edit_acl = ? WHERE id = ?')
+        .prepare('UPDATE pages SET edit_acl = ?, updated_at = unixepoch() WHERE id = ?')
         .bind(serialized, page.id)
         .run();
-
-    c.executionCtx.waitUntil(invalidatePageCache(c, slug));
 
     // 본문 변경 없는 ACL 변경을 편집 이력에 가상 리비전으로 남긴다.
     try {
@@ -2975,6 +2981,14 @@ adminRoutes.put('/pages/:slug/edit-acl', async (c) => {
     } catch (e) {
         console.error('Failed to write virtual revision for edit-acl change:', e);
     }
+
+    // updated_at 을 bump 했으므로 recent-changes 캐시(updated_at 정렬)도 함께 새로고침.
+    // refreshRecentChangesCache 는 이제 author_name 을 '최신 리비전' 기준으로 도출하므로,
+    // 방금 만든 가상 리비전이 보이도록 INSERT 이후에 스케줄해야 직전 본문 작성자로 캐시되지 않는다.
+    c.executionCtx.waitUntil(Promise.allSettled([
+        invalidatePageCache(c, slug),
+        refreshRecentChangesCache(c),
+    ]));
 
     writeAdminLog(
         c,
@@ -3032,14 +3046,6 @@ adminRoutes.patch('/pages/:slug/flags', async (c) => {
         await cleanupUnauthorizedSubscriptions(db, c.env, rbac, page.id, 'private');
     }
 
-    // UPDATE 가 updated_at 을 bump 하므로 recent-changes 캐시(updated_at 정렬)도 새로고침.
-    // is_private 변경은 추가로 백링크 캐시(이 문서를 트랜스클루드 한 페이지의 렌더 결과) 에도 영향.
-    c.executionCtx.waitUntil(Promise.allSettled([
-        invalidatePageCache(c, slug),
-        refreshRecentChangesCache(c),
-        invalidateBacklinkCaches(c, slug, db),
-    ]));
-
     // 본문 변경 없는 비공개 플래그 변경을 편집 이력에 가상 리비전으로 남긴다.
     try {
         await insertVirtualRevision(
@@ -3051,6 +3057,16 @@ adminRoutes.patch('/pages/:slug/flags', async (c) => {
     } catch (e) {
         console.error('Failed to write virtual revision for flags change:', e);
     }
+
+    // UPDATE 가 updated_at 을 bump 하므로 recent-changes 캐시(updated_at 정렬)도 새로고침.
+    // is_private 변경은 추가로 백링크 캐시(이 문서를 트랜스클루드 한 페이지의 렌더 결과) 에도 영향.
+    // recent-changes 의 author_name 은 '최신 리비전' 기준이므로, 위 가상 리비전 INSERT 이후에
+    // 새로고침해야 직전 본문 작성자가 아닌 실제 변경자로 캐시된다.
+    c.executionCtx.waitUntil(Promise.allSettled([
+        invalidatePageCache(c, slug),
+        refreshRecentChangesCache(c),
+        invalidateBacklinkCaches(c, slug, db),
+    ]));
 
     writeAdminLog(
         c,

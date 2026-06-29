@@ -23,6 +23,19 @@ database_id = ""
 binding = "MEDIA"
 bucket_name = ""
 
+# === RAG(AI Search) 인덱싱 전용 R2 버킷 ===
+# RAG 플러그인(RAG_SEARCH_ENABLED="true")이 켜지면 각 문서의 "현행 본문"을 이 버킷에 미러링한다.
+# 이 버킷을 Cloudflare 대시보드에서 AI Search(구 AutoRAG) 데이터 소스로 등록하면 인덱싱이 자동 관리된다.
+# 플러그인을 쓰지 않으면 빈 값으로 둬도 된다.
+[[r2_buckets]]
+binding = "RAG_BUCKET"
+bucket_name = ""
+
+# === Workers AI 바인딩 (AI Search / AutoRAG 질의용) ===
+# RAG 본문 검색에 사용. 블록 그대로 사용.
+[ai]
+binding = "AI"
+
 [[kv_namespaces]]
 binding = "KV"
 id = ""
@@ -48,6 +61,12 @@ head_sampling_rate = 1.0
 
 [vars]
 WIKI_HOME_PAGE = "" #위키 홈페이지로 쓸 문서 제목
+# === RAG(AI Search) 보조 검색 플러그인 ===
+# "true" 면 활성화: 문서 변경 시 본문을 RAG_BUCKET 에 미러링하고, /search 의 RAG 체크박스와
+# MCP search_rag 도구를 노출한다. RAG_BUCKET·AI 바인딩이 모두 구성돼야 실제로 동작한다.
+RAG_SEARCH_ENABLED = "false"
+# AI Search(AutoRAG) 인스턴스 이름 — Cloudflare 대시보드에서 만든 인스턴스 이름과 일치해야 한다.
+RAG_AUTORAG_NAME = ""
 # === AdminJobDO 잡 러너 — alarm 틱(=호출 1회)당 서브리퀘스트(D1 쿼리+R2/Cache op) 예산 ===
 # Workers 무료 플랜은 호출당 50 한도라 40, 유료 플랜은 1,000 한도라 950 권장.
 JOB_SUBREQUEST_BUDGET = "40"

@@ -820,6 +820,7 @@ async function rewriteBacklinksForRename(
 }
 
 import { uploadRevisionToR2, getRevisionContent, insertVirtualRevision } from '../utils/r2';
+import { renamePageMirror, removePageMirror, isRagSearchEnabled } from '../utils/rag';
 import { loadActiveAnnouncements } from '../utils/announcements';
 import type { AnnouncementDTO } from '../shared/api/announcement';
 import {
@@ -891,6 +892,8 @@ wiki.get('/config', async (c) => {
         enableConcurrentEditDetection: c.env.ENABLE_CONCURRENT_EDIT_DETECTION !== 'false',
         turnstileSiteKey: c.env.TURNSTILE_SITE_KEY || '',
         enabledExtensions: getEnabledExtensions(c.env),
+        // RAG(AI Search) 보조 본문 검색이 동작 가능한 상태인지 — /search 의 RAG 체크박스 노출 게이트.
+        ragSearchEnabled: isRagSearchEnabled(c.env),
         mediaPublicUrl: c.env.MEDIA_PUBLIC_URL || '',
         announcements,
         palettes,
@@ -1108,10 +1111,18 @@ wiki.get('/w/recent-changes', async (c) => {
     }
 
     const privateFilter = canSeePrivate ? '' : ' AND p.is_private = 0';
+    // author_name 은 '가장 최근 리비전(가상 포함, created_at 기준)'의 작성자로 도출한다.
+    // last_revision_id 는 가상 리비전(ACL 변경·이동 등)에서 갱신되지 않으므로, 그 기준으로는
+    // 방금 권한을 바꾼 관리자가 아니라 직전 본문 편집자가 작성자로 표시되는 오귀속이 생긴다.
+    // 본문 리비전만 있는 일반 문서에선 최신 리비전 == last_revision_id 라 결과가 동일하다.
     const { results } = await db.prepare(`
         SELECT p.slug, p.updated_at, u.name as author_name
         FROM pages p
-        LEFT JOIN revisions r ON p.last_revision_id = r.id
+        LEFT JOIN revisions r ON r.id = (
+            SELECT id FROM revisions
+            WHERE page_id = p.id AND deleted_at IS NULL AND purged_at IS NULL
+            ORDER BY created_at DESC, id DESC LIMIT 1
+        )
         LEFT JOIN users u ON r.author_id = u.id
         WHERE p.deleted_at IS NULL${privateFilter}
         ORDER BY p.updated_at DESC LIMIT 10
@@ -3010,6 +3021,9 @@ wiki.delete('/w/:slug', requireAuth, async (c) => {
                 .run().catch((e: any) => console.error('Failed to write admin log:', e))
         );
 
+        // RAG 미러 정리: 영구 삭제는 D1 에서 완전히 사라지므로 인덱스 위생을 위해 R2 객체도 제거.
+        removePageMirror(c.env, c.executionCtx, slug);
+
         return c.json({ message: '문서가 영구 삭제되었습니다.' });
     } else {
         // Soft delete requires wiki:delete permission
@@ -3227,8 +3241,10 @@ export async function movePage(
     }
 
     // Update Page Slug — pages_slug_vs_title_update / slug UNIQUE 트리거가 race 를 잡으면 409.
+    // 본문 변경은 없지만 가상 리비전을 남기는 비-본문 변경이므로 updated_at 도 함께 bump 한다
+    // (MCP edit_slug 슬러그 전용 이동과 동일 정책 — '최근 변경'(updated_at 정렬)에 반영).
     try {
-        await db.prepare('UPDATE pages SET slug = ? WHERE id = ?')
+        await db.prepare('UPDATE pages SET slug = ?, updated_at = unixepoch() WHERE id = ?')
             .bind(trimmedNewSlug, page.id)
             .run();
     } catch (e: any) {
@@ -3239,6 +3255,9 @@ export async function movePage(
         }
         throw e;
     }
+
+    // RAG 미러: slug 가 바뀌었으므로 이전 키→신규 키로 객체를 옮긴다(best-effort, 플러그인 OFF 시 no-op).
+    renamePageMirror(c.env, c.executionCtx, currentSlug, trimmedNewSlug);
 
     // 본문 변경 없는 주소(slug) 이동을 편집 이력에 가상 리비전으로 남긴다.
     // (단건 이동과 대량 이동(AdminJobDO)이 모두 movePage 를 거치므로 양쪽 자동 커버.)

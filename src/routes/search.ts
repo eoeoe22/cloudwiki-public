@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import type { Env } from '../types';
 import { trackSearch } from '../utils/analytics';
 import { fetchMediaTagMap } from '../utils/mediaTags';
+import { isRagSearchEnabled, ragSearchBody } from '../utils/rag';
 import type { RBAC } from '../utils/role';
 
 // 이미지 검색 결과의 본문 미리보기 최대 길이.
@@ -130,6 +131,8 @@ search.get('/search', async (c) => {
     // 비공개 포함 토글: wiki:private 보유자만 끌 수 있다(기본 포함). 권한 미달이면 무시(강제 제외 유지).
     const includePrivate = c.req.query('include_private') !== '0';
     const effectiveSeePrivate = canSeePrivate && includePrivate;
+    // RAG 본문 검색 토글: ?rag=1 이고 플러그인이 동작 가능할 때만. (제목 전용 검색에는 적용하지 않음)
+    const useRag = c.req.query('rag') === '1' && isRagSearchEnabled(c.env);
 
     // category(정확 일치) + 날짜 범위 추가필터 SQL 조각 빌더.
     // FTS 경로는 별칭 'p', LIKE 경로는 별칭 없이('') 호출해 동일 조건을 재사용한다.
@@ -441,6 +444,122 @@ search.get('/search', async (c) => {
         if (shouldTrack) trackSearch(c, trimmedQuery, total, Date.now() - searchStartTime);
         return c.json({ results: safeResults, total, page, pageSize: PAGE_SIZE, exact_match: exactMatch, exact_match_page: exactMatchPage, applied: { sort, field } });
     };
+
+    // ── RAG(AI Search) 본문 검색 경로 ──
+    // ?rag=1 이고 field 가 title 이 아니면 본문 검색을 FTS 대신 RAG 로 수행한다(제목 검색은 유지).
+    // ACL 무관 전 문서가 인덱싱돼 있으므로, RAG 가 돌려준 slug 를 D1 로 다시 조회하며 가시성/필터를
+    // 사후 적용한다(비공개·삭제·비존재 제거). field=all 이면 제목/slug LIKE 매치를 먼저 두고 RAG
+    // 본문 매치를 그 뒤에 slug 기준 dedup 으로 병합한다. RAG 실패 시 아래 FTS 경로로 graceful 폴백.
+    const runRagSearch = async () => {
+        // 사후 필터로 줄어들 비공개/삭제분을 보전하기 위해 과다 조회(AI Search max_num_results 상한 50).
+        const RAG_OVERFETCH = 50;
+        const ragHits = await ragSearchBody(c.env, trimmedQuery, RAG_OVERFETCH); // score 내림차순
+        const ragSnippetBySlug = new Map(ragHits.map((h) => [h.slug, h.snippet]));
+
+        const visibility = (isAdmin ? '' : ' AND deleted_at IS NULL') + (effectiveSeePrivate ? '' : ' AND is_private = 0');
+        const extra = buildExtraFilters('');
+
+        type Row = { slug: string; title: string | null; content: string; deleted_at: number | null; updated_at: number | null };
+        const orderedSlugs: string[] = [];
+        const seen = new Set<string>();
+        const rowBySlug = new Map<string, Row>();
+        const pushSlug = (s: string) => { if (!seen.has(s)) { seen.add(s); orderedSlugs.push(s); } };
+
+        // field=all: 제목/slug LIKE 매치를 먼저(고정밀 식별자 매치).
+        // 제목 후보는 50건으로 캡한다(RAG 검색은 의미 후보의 유한 집합이라 전수 페이지네이션 대상이
+        // 아니다). 캡이 요청 정렬과 어긋나 1페이지 행이 누락되지 않도록, ORDER BY 를 sort 에 맞춰
+        // 적용한 뒤 LIMIT 한다(이후 병합 집합을 같은 sort 로 한 번 더 재정렬).
+        if (field === 'all') {
+            const likeEscaped = trimmedQuery.replace(/[\\%_]/g, '\\$&');
+            const likePattern = `%${likeEscaped}%`;
+            let titleOrderSql: string;
+            const titleOrderBinds: unknown[] = [];
+            if (sort === 'recent') {
+                titleOrderSql = 'ORDER BY updated_at DESC, slug ASC';
+            } else if (sort === 'title') {
+                titleOrderSql = 'ORDER BY COALESCE(title, slug) ASC, slug ASC';
+            } else {
+                titleOrderSql = `ORDER BY (CASE WHEN slug LIKE ? ESCAPE '\\' THEN 0
+                               WHEN title LIKE ? ESCAPE '\\' THEN 1 ELSE 2 END), updated_at DESC, slug ASC`;
+                titleOrderBinds.push(likePattern, likePattern);
+            }
+            const titleSql = `
+                SELECT slug, title, content, deleted_at, updated_at FROM pages
+                WHERE (slug LIKE ? ESCAPE '\\' OR title LIKE ? ESCAPE '\\')${visibility}${extra.sql}
+                ${titleOrderSql}
+                LIMIT 50`;
+            const titleRes = await db.prepare(titleSql)
+                .bind(likePattern, likePattern, ...extra.binds, ...titleOrderBinds)
+                .all<Row>();
+            for (const r of titleRes.results) { pushSlug(r.slug); rowBySlug.set(r.slug, r); }
+        }
+
+        // RAG 본문 매치를 가시성/필터로 사후 검증(slug IN ...) 후 score 순으로 병합.
+        if (ragHits.length > 0) {
+            const placeholders = ragHits.map(() => '?').join(',');
+            const ragSql = `SELECT slug, title, content, deleted_at, updated_at FROM pages
+                            WHERE slug IN (${placeholders})${visibility}${extra.sql}`;
+            const ragRes = await db.prepare(ragSql)
+                .bind(...ragHits.map((h) => h.slug), ...extra.binds)
+                .all<Row>();
+            const validBySlug = new Map(ragRes.results.map((r) => [r.slug, r]));
+            for (const h of ragHits) {
+                const row = validBySlug.get(h.slug);
+                if (!row) continue; // 비공개/삭제/비존재 → 사후 필터로 제거
+                pushSlug(h.slug);
+                if (!rowBySlug.has(h.slug)) rowBySlug.set(h.slug, row);
+            }
+        }
+
+        const total = orderedSlugs.length;
+        // sort 적용: relevance(기본)는 병합 순서(제목 LIKE 우선 + RAG score) 유지, recent/title 은 재정렬.
+        let finalSlugs = orderedSlugs;
+        if (sort === 'recent') {
+            finalSlugs = [...orderedSlugs].sort((a, b) => {
+                const ra = rowBySlug.get(a)!, rb = rowBySlug.get(b)!;
+                return (rb.updated_at ?? 0) - (ra.updated_at ?? 0) || (a < b ? -1 : a > b ? 1 : 0);
+            });
+        } else if (sort === 'title') {
+            finalSlugs = [...orderedSlugs].sort((a, b) => {
+                const ta = rowBySlug.get(a)!.title || a;
+                const tb = rowBySlug.get(b)!.title || b;
+                return ta < tb ? -1 : ta > tb ? 1 : (a < b ? -1 : a > b ? 1 : 0);
+            });
+        }
+        const { page, offset } = clampPage(total);
+        const pageSlugs = finalSlugs.slice(offset, offset + PAGE_SIZE);
+
+        const safeResults = pageSlugs.map((slug) => {
+            const row = rowBySlug.get(slug)!;
+            const snip = buildLikeSnippet(slug, row.content || '', trimmedQuery);
+            let html = snip.html;
+            // 순수 의미(semantic) 매치라 본문에 검색어 리터럴이 없으면 RAG 청크 텍스트를 스니펫으로 사용.
+            if (!html) {
+                const ragText = ragSnippetBySlug.get(slug);
+                if (ragText) html = escapeForHtml(ragText.slice(0, 160)) + (ragText.length > 160 ? '...' : '');
+            }
+            return {
+                slug: row.slug,
+                title: row.title,
+                deleted_at: row.deleted_at,
+                isDeleted: !!row.deleted_at,
+                snippet: html,
+                bodyMatch: snip.bodyMatch,
+            };
+        });
+
+        if (shouldTrack) trackSearch(c, trimmedQuery, total, Date.now() - searchStartTime);
+        return c.json({ results: safeResults, total, page, pageSize: PAGE_SIZE, exact_match: exactMatch, exact_match_page: exactMatchPage, applied: { sort, field, rag: true } });
+    };
+
+    if (useRag && field !== 'title') {
+        try {
+            return await runRagSearch();
+        } catch (ragError) {
+            // RAG 질의 실패 → 아래 FTS/LIKE 경로로 graceful 폴백.
+            console.error('RAG search failed, falling back to FTS/LIKE:', ragError);
+        }
+    }
 
     // 트라이그램 미스(<3 codepoint) 또는 제목 전용 검색(field=title)은 FTS 를 건너뛰고 LIKE 로 처리한다.
     if (queryCodepointLength < 3 || field === 'title') {
