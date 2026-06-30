@@ -1826,11 +1826,20 @@ body.raw-mode .wiki-content-raw {
 .wiki-area--span-11 { grid-column: span 11; }
 .wiki-area--span-12 { grid-column: span 12; }
 
+/* {panel} 토큰: 카드와 동일한 chrome(여백·테두리·라운드)을 부여해
+   색 배경을 준 영역이 모서리에 붙은 날것의 블록으로 보이지 않게 한다. */
+.wiki-area--panel {
+  padding: var(--wiki-space-4) var(--wiki-space-5);
+  border: 1px solid var(--wiki-border);
+  border-radius: var(--wiki-radius-lg);
+}
+
 /* 좁은 화면: 그리드/캔버스를 단일 열로 접어 세로 스택.
    .wiki-canvas .wiki-area 는 .wiki-area--span-N 보다 우선순위가 높아
    span 지정과 무관하게 전체 폭으로 펼쳐진다. */
 @media (max-width: 768px) {
-  .wiki-grid--grid { grid-template-columns: 1fr; }
+  /* 임의 비율 그리드(인라인 grid-template-columns)도 좁은 화면에선 단일 열로 접도록 !important. */
+  .wiki-grid--grid { grid-template-columns: 1fr !important; }
   .wiki-canvas { grid-template-columns: 1fr; }
   .wiki-canvas .wiki-area { grid-column: 1 / -1; }
 }

@@ -105,6 +105,8 @@ interface BlockOption {
     label: string;
     desc: string;
     icon: string;
+    /** 자식 디렉티브가 필요한 블록(예: canvas)을 선택했을 때 통째로 삽입할 멀티라인 골격. */
+    scaffold?: string;
 }
 
 interface WikiResult {
@@ -299,6 +301,13 @@ function selectCodeAutocomplete(index: number): void {
 // 블록 컴포넌트 자동완성 (:::)
 // ─────────────────────────────────────────────────────────────────────────────
 
+// 캔버스는 자식 :::area 디렉티브가 있어야 의미가 있어, 선택 시 8/4 패널 골격을 자동 삽입한다.
+const CANVAS_SCAFFOLD =
+    ':::canvas {gap:md}\n' +
+    ':::area {span:8} {panel}\n\n:::\n' +
+    ':::area {span:4} {panel}\n\n:::\n' +
+    ':::';
+
 const blockAc = {
     visible: false,
     selectedIndex: -1,
@@ -306,9 +315,9 @@ const blockAc = {
     div: document.getElementById('block-autocomplete'),
     options: [
         { id: 'card',      label: '카드',      desc: '제목 + 본문 박스',           icon: 'mdi mdi-card-text-outline'       },
-        { id: 'grid',      label: '그리드',    desc: '그리드 ({cols:N}/{template:..})', icon: 'mdi mdi-grid'                },
+        { id: 'grid',      label: '그리드',    desc: '그리드 ({cols:N}/{template:1-3·8-4 등})', icon: 'mdi mdi-grid'                },
         { id: 'row',       label: '가로 정렬', desc: '자식을 가로로 배치',         icon: 'mdi mdi-view-column-outline'     },
-        { id: 'canvas',    label: '캔버스',    desc: '12컬럼 자유 배치 (자식 :::area {span:N})', icon: 'mdi mdi-view-dashboard-outline' },
+        { id: 'canvas',    label: '캔버스',    desc: '비대칭 12컬럼 레이아웃 — 선택 시 :::area 골격 자동 삽입', icon: 'mdi mdi-view-dashboard-outline', scaffold: CANVAS_SCAFFOLD },
         { id: 'embed',     label: '임베드',    desc: '왼쪽 강조선 인용',           icon: 'mdi mdi-format-quote-close'      },
         { id: 'tabs',      label: '탭',        desc: '탭 컨테이너 (자식 :::tab)',  icon: 'mdi mdi-tab'                     },
         { id: 'accordion', label: '아코디언',  desc: '아코디언 (자식 :::item)',    icon: 'mdi mdi-format-list-bulleted-square' },
@@ -434,10 +443,17 @@ function selectBlockAutocomplete(index: number): void {
     }
 
     editor.setSelection?.([line, 1], [line, col]);
-    editor.insertText?.(`:::${opt.id} `);
 
-    const targetCol = 5 + opt.id.length;
-    editor.setSelection?.([line, targetCol], [line, targetCol]);
+    if (opt.scaffold) {
+        // 자식 디렉티브 골격을 통째로 삽입하고, 커서를 첫 영역 본문(빈 줄)에 둔다.
+        // 골격 2번째 줄이 ':::area ...' 이고 그 다음 빈 본문 줄이 line + 2.
+        editor.insertText?.(opt.scaffold);
+        editor.setSelection?.([line + 2, 1], [line + 2, 1]);
+    } else {
+        editor.insertText?.(`:::${opt.id} `);
+        const targetCol = 5 + opt.id.length;
+        editor.setSelection?.([line, targetCol], [line, targetCol]);
+    }
 
     hideBlockAutocomplete();
     editor.focus?.();

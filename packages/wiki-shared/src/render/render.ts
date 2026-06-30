@@ -2342,13 +2342,31 @@ function _renderBlockHtml(block, blockData) {
                 gap:      { type: 'enum', values: ['sm', 'md', 'lg'] },
                 align:    { type: 'enum', values: ['start', 'center', 'stretch'] },
             });
+            // 화이트리스트에 없는 임의 정수 비율(예: {template:8-4}, {template:3-3-6})도 허용한다.
+            // enum 으로는 표현할 수 없으므로 인라인 grid-template-columns(<n>fr ...) 로 직접 생성.
+            // 열은 2~6개, 각 값 1~12 정수만 허용(그 외 값은 무시해 기존 동작으로 폴백).
+            let customCols = '';
+            if (!gt.template) {
+                const cm = block.titleLine.match(/\{template:\s*([0-9]+(?:-[0-9]+)+)\s*\}/);
+                if (cm) {
+                    const parts = cm[1].split('-').map((n) => parseInt(n, 10));
+                    if (parts.length >= 2 && parts.length <= 6 && parts.every((n) => n >= 1 && n <= 12)) {
+                        customCols = parts.map((n) => `${n}fr`).join(' ');
+                    }
+                }
+            }
             const gridCls = ['wiki-grid'];
-            // template 이 cols 보다 우선(더 구체적). 둘 중 하나가 있으면 CSS grid 모드로 전환.
-            if (gt.template) gridCls.push('wiki-grid--grid', `wiki-grid--tpl-${gt.template}`);
+            // template(화이트리스트) 또는 customCols(임의 비율)가 cols 보다 우선. 셋 중 하나라도 있으면 CSS grid 모드로 전환.
+            if (customCols) gridCls.push('wiki-grid--grid');
+            else if (gt.template) gridCls.push('wiki-grid--grid', `wiki-grid--tpl-${gt.template}`);
             else if (gt.cols) gridCls.push('wiki-grid--grid', `wiki-grid--cols-${gt.cols}`);
             if (gt.gap) gridCls.push(`wiki-grid--gap-${gt.gap}`);
             if (gt.align) gridCls.push(`wiki-grid--align-${gt.align}`);
-            return `<div class="${gridCls.join(' ')}"${styleAttr}>${innerHtml}</div>`;
+            // 임의 비율은 색(bg/color) 인라인 뒤에 grid-template-columns 를 덧붙인다. 좁은 화면에서는
+            // render.css 의 @media 규칙(grid-template-columns:1fr !important)이 인라인을 이겨 단일 열로 접힌다.
+            const gridStyle = customCols ? `${style}grid-template-columns:${customCols};` : style;
+            const gridStyleAttr = gridStyle ? ` style="${gridStyle}"` : '';
+            return `<div class="${gridCls.join(' ')}"${gridStyleAttr}>${innerHtml}</div>`;
         }
         case 'row':
             return `<div class="wiki-row"${styleAttr}>${innerHtml}</div>`;
@@ -2363,7 +2381,8 @@ function _renderBlockHtml(block, blockData) {
             if (ct.gap) canvasCls.push(`wiki-canvas--gap-${ct.gap}`);
             const areas = children.map((child) => {
                 const meta = _extractStrictTokens(child.titleLine, {
-                    span: { type: 'enum', values: ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'] },
+                    span:  { type: 'enum', values: ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'] },
+                    panel: { type: 'flag' },
                 });
                 // 영역별 배경/글자색은 카드와 동일한 색 토큰 규칙을 따른다.
                 const cs = _extractBlockStyleTokens(child.titleLine);
@@ -2372,8 +2391,10 @@ function _renderBlockHtml(block, blockData) {
                 if (cs.color && _isSafeCssColor(cs.color)) areaStyle += `color:${cs.color};`;
                 const areaStyleAttr = areaStyle ? ` style="${areaStyle}"` : '';
                 const spanCls = meta.tokens.span ? ` wiki-area--span-${meta.tokens.span}` : '';
+                // {panel} 토큰: 카드와 동일한 여백·테두리(chrome)를 부여해 색 영역이 날것으로 보이지 않게 한다.
+                const panelCls = meta.tokens.panel ? ' wiki-area--panel' : '';
                 const childInner = _renderChildInnerHtml(child.innerText, blockData);
-                return `<div class="wiki-area${spanCls}"${areaStyleAttr}>${childInner}</div>`;
+                return `<div class="wiki-area${spanCls}${panelCls}"${areaStyleAttr}>${childInner}</div>`;
             });
             return `<div class="${canvasCls.join(' ')}">${areas.join('')}</div>`;
         }
