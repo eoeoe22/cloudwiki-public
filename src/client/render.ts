@@ -2751,8 +2751,6 @@ function _processInlineLayoutTokens(html) {
             (label ? `<div class="wiki-stat-label"${labelStyleAttr}>${label}</div>` : '') +
             `</div>`;
     });
-    // stat이 자신만 있는 단락(<p>...</p>) 안에 래핑된 경우 <p>를 제거해 블록으로 승격.
-    html = html.replace(/<p>\s*(<div class="wiki-stat"[\s\S]*?<\/div>)\s*<\/p>/g, '$1');
 
     // 닫는 '}' 누락 시 뒤쪽 다른 '}' 까지 탐욕 매치되어 HTML 태그를 내용으로 삼키는 것을 막기 위해
     // 매치 범위를 '<' / 개행 직전까지로 제한한다.
@@ -2811,8 +2809,18 @@ function _processInlineLayoutTokens(html) {
             `</div>` +
         `</div>`;
     });
-    // progress가 자신만 있는 단락(<p>...</p>) 안에 래핑된 경우 <p>를 제거해 블록으로 승격.
-    html = html.replace(/<p>\s*(<div class="wiki-progress"[\s\S]*?<\/div>\s*<\/div>\s*<\/div>)\s*<\/p>/g, '$1');
+    // 블록 레벨 인라인 컴포넌트(stat/progress)는 <div> 로 승격되지만 marked 가
+    // 이를 둘러싼 <p> 를 남긴다. <div> 는 <p> 안에 올 수 없어 브라우저가 <p> 를
+    // 강제로 닫으며 빈 <p> 를 만들고, 이 빈 <p> 가 그리드/플렉스/캔버스 컨테이너에서
+    // 빈 셀(자식)이 되어 카드가 한 줄에 모이지 못하고 체커보드처럼 어긋나 배치된다.
+    // 또한 breaks:true 때문에 같은 단락의 연속된 줄은 <br> 로 연결되는데, 컴포넌트
+    // 사이에 남은 <br> 역시 빈 그리드 자식이 된다.
+    // → ① 블록 컴포넌트 바로 앞의 <br> 를 제거하고,
+    //   ② 블록 컴포넌트를 포함한 단락의 <p> 래퍼를 벗겨 컴포넌트를 블록으로 승격한다.
+    //   (stat/progress 가 어떤 순서로 섞여도, 단독이어도, 여러 개여도 동일하게 처리)
+    html = html.replace(/<br\s*\/?>\s*(?=<div class="wiki-(?:stat|progress)\b)/g, '');
+    html = html.replace(/<p>([\s\S]*?)<\/p>/g, (m, inner) =>
+        /<div class="wiki-(?:stat|progress)\b/.test(inner) ? inner : m);
 
     html = html.replace(/(?:<p>)?\{hr\}(?:<\/p>)?/g, '<hr class="wiki-block-hr">');
 
