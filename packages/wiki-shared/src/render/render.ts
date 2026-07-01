@@ -1370,7 +1370,7 @@ function _buildInlineTocLayout(containerEl) {
         if (!hash || hash.length < 2) return;
         let id;
         try { id = decodeURIComponent(hash.slice(1)); } catch (_) { id = hash.slice(1); }
-        const target = id ? document.getElementById(id) : null;
+        const target = id ? _resolveAnchorTarget(id) : null;
         if (!target) return;
         e.preventDefault();
         try { history.pushState(null, '', hash); } catch (_) { /* ignore */ }
@@ -1410,6 +1410,32 @@ function _getSectionAnchorId(heading) {
     const anchorEl = heading.querySelector('.wiki-section-anchor[id^="s-"]');
     if (anchorEl) return anchorEl.id;
     return heading.id || '';
+}
+
+// ── 문단(헤딩) 링크 앵커 해석 ──
+// URL 해시/위키링크 앵커로 다음 세 형식을 모두 지원한다: `#s-1.2`(내부 ID, 하위 호환),
+// `#1.2`(목차 번호), `#제목`(헤딩 텍스트 그대로). 우선순위: 1) 실제 DOM id 완전 일치
+// (각주 등 다른 앵커 포함) 2) 순번만 온 경우 `s-{순번}` 매핑 3) 그 외엔 헤딩 텍스트
+// (번호 프리픽스 제외)와 정확히 일치하는 헤딩 — 동일 텍스트가 여러 개면 문서상 가장 위(첫 번째)를 사용.
+function _resolveAnchorTarget(rawId) {
+    if (!rawId) return null;
+    let el = document.getElementById(rawId);
+    if (el) return el;
+    if (/^\d+(?:\.\d+)*$/.test(rawId)) {
+        el = document.getElementById(`s-${rawId}`);
+        if (el) return el;
+    }
+    const contentEl = document.getElementById('articleContent') || document.body;
+    const headings = contentEl.querySelectorAll('h1:not(.accordion-header), h2:not(.accordion-header), h3:not(.accordion-header), h4:not(.accordion-header)');
+    for (const h of headings) {
+        // makeCollapsibleSections()가 헤딩 내용을 .wiki-section-heading-text로 감싸면서
+        // .wiki-heading-num이 중첩될 수 있으므로, 직계 자식만 보지 않고 복제본에서
+        // 번호 프리픽스/버튼류를 모두 제거한 뒤 순수 텍스트를 비교한다.
+        const clone = h.cloneNode(true);
+        clone.querySelectorAll('.wiki-heading-num, .wiki-heading-copy-btn, .wiki-heading-link-btn, .wiki-heading-edit-btn').forEach(n => n.remove());
+        if (clone.textContent.trim() === rawId) return h;
+    }
+    return null;
 }
 
 async function _copySectionLinkToClipboard(url) {
@@ -1635,24 +1661,18 @@ function processWikiLinks(contentEl) {
                     displayText = innerContent.substring(pipeIndex + 1).trim();
                 }
 
-                // 섹션 링크 문법: [[slug#1.2]], [[slug#1.2|텍스트]], [[#1.2]]
+                // 섹션 링크 문법: [[slug#1.2]], [[slug#s-1.2]], [[slug#제목]], [[#1.2]] 등
                 // 슬러그에는 '#'이 금지 문자(서버/에디터에서 검증)이므로
                 // '#'을 발견하면 항상 앵커 구분자로 취급하고 슬러그에서 제거한다.
-                // '#' 뒷부분이 목차 번호 형식이면 내부 헤딩 ID(s-N.N...)로 매핑하고,
-                // 형식이 유효하지 않으면 앵커를 무시한다(스크롤 없이 문서만 이동).
+                // '#' 뒷부분은 목차 번호(`1.2`), 내부 ID(`s-1.2`), 헤딩 제목 텍스트를 모두
+                // 허용하며 실제 대상 매칭은 이동 시점에 _resolveAnchorTarget()이 수행한다
+                // (제목이 중복되면 문서상 가장 위 헤딩으로 매칭).
                 let anchor = '';
                 const hashIdx = linkText.indexOf('#');
                 if (hashIdx !== -1) {
                     const candidate = linkText.substring(hashIdx + 1).trim();
                     linkText = linkText.substring(0, hashIdx).trim();
-                    if (/^\d+(?:\.\d+)*$/.test(candidate)) {
-                        // 사용자 친화적 목차 번호 → 내부 헤딩 ID로 매핑
-                        anchor = `s-${candidate}`;
-                    } else if (/^s-\d+(?:\.\d+)*$/.test(candidate)) {
-                        // 내부 ID 직접 입력(하위 호환)
-                        anchor = candidate;
-                    }
-                    // 그 외 형식은 무시
+                    if (candidate) anchor = candidate;
                 }
 
                 if (!linkText && !anchor) {
@@ -1663,10 +1683,10 @@ function processWikiLinks(contentEl) {
 
                 const a = document.createElement('a');
                 if (!linkText && anchor) {
-                    // 같은 페이지 앵커
-                    a.href = `#${anchor}`;
+                    // 같은 페이지 앵커(제목 형식은 공백/한글 포함 가능하므로 인코딩)
+                    a.href = `#${encodeURIComponent(anchor)}`;
                 } else {
-                    a.href = `${_renderCtx.wikiLinkBase}/${encodeURIComponent(linkText)}${anchor ? '#' + anchor : ''}`;
+                    a.href = `${_renderCtx.wikiLinkBase}/${encodeURIComponent(linkText)}${anchor ? '#' + encodeURIComponent(anchor) : ''}`;
                 }
                 a.textContent = displayText;
                 a.onclick = (e) => {
@@ -1680,7 +1700,7 @@ function processWikiLinks(contentEl) {
                         } catch (_) {
                             id = href.slice(1);
                         }
-                        const target = id ? document.getElementById(id) : null;
+                        const target = id ? _resolveAnchorTarget(id) : null;
                         if (target) {
                             history.pushState(null, '', href);
                             _scrollToElementWithAncestors(target, { behavior: 'smooth', block: 'start' });
@@ -4824,6 +4844,7 @@ window._teardownExtensions = _teardownExtensions;
 window._extractMarkdownSectionRanges = _extractMarkdownSectionRanges;
 window._extractMarkdownSections = _extractMarkdownSections;
 window._addHeadingCopyButtons = _addHeadingCopyButtons;
+window._resolveAnchorTarget = _resolveAnchorTarget;
 
 // initMarkedConfig() / _setupArticleTitleCopy() 의 즉시 호출은 원본 render.js
 // 와 동일하게 파일 본문 안에서 수행된다(상단의 `initMarkedConfig()` / 본문 끝의

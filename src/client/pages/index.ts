@@ -1996,7 +1996,9 @@ import { createTocController } from '../article/toc';
       } catch (_) {
         id = hash.slice(1);
       }
-      const el = id ? document.getElementById(id) : null;
+      const el = id
+        ? (typeof window._resolveAnchorTarget === 'function' ? window._resolveAnchorTarget(id) : document.getElementById(id))
+        : null;
       if (el) {
         if (typeof window._scrollToElementWithAncestors === 'function') {
           window._scrollToElementWithAncestors(el, { behavior: 'instant', block: 'start' });

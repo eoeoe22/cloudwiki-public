@@ -146,7 +146,9 @@ export function createTocController(opts: TocControllerOptions = {}) {
     if (!hash || hash.length < 2) return;
     let id: string;
     try { id = decodeURIComponent(hash.slice(1)); } catch (_) { id = hash.slice(1); }
-    const target = id ? document.getElementById(id) : null;
+    const target = id && typeof window._resolveAnchorTarget === 'function'
+      ? window._resolveAnchorTarget(id)
+      : (id ? document.getElementById(id) : null);
     if (!target) return;
     e.preventDefault();
     history.pushState(null, '', hash);
