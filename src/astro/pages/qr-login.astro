@@ -1,0 +1,222 @@
+---
+// QR 로그인 승인 페이지(호스트 기기) 정적 셸.
+// login / setup-profile 과 동일한 독립 중앙정렬 카드 — header/sidebar/footer 컴포넌트를 쓰지 않는다.
+// 로그인된 사용자만 접근한다(index.ts 라우트가 비로그인 시 /login 으로 리다이렉트).
+// base CDN 은 BaseLayout 이 빌드 타임에 인라인(베이킹) — PAGE_BUNDLES['/qr-login.html']=['base'].
+// 실제 계정/게스트 정보 채우기와 승인/취소 처리는 /dist/qr-login.js 가 담당한다.
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+<BaseLayout pagePath="/qr-login.html" title="QR 로그인 승인 - CloudWiki">
+    <Fragment slot="head">
+        <!-- 테마 FOUC 방지: CSS 로드 후 즉시 테마 적용 -->
+        <script is:inline>try{var t=localStorage.getItem('themeMode');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
+        <style is:inline>
+            body {
+                background-color: var(--wiki-bg);
+                min-height: 100vh;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                margin: 0;
+                padding: 20px;
+            }
+
+            .qr-approve-container {
+                width: 100%;
+                max-width: 460px;
+                background: var(--wiki-card-bg);
+                border-radius: 20px;
+                box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+                padding: 2.5rem 2rem;
+                text-align: center;
+                border: 1px solid var(--wiki-border);
+            }
+
+            .qr-approve-icon {
+                font-size: 3.5rem;
+                color: var(--wiki-primary);
+                margin-bottom: 0.5rem;
+                line-height: 1;
+            }
+
+            .qr-approve-title {
+                font-weight: 800;
+                margin-bottom: 0.25rem;
+                color: var(--wiki-text);
+            }
+
+            .qr-approve-subtitle {
+                color: var(--wiki-text-muted);
+                margin-bottom: 1.75rem;
+                font-size: 0.95rem;
+            }
+
+            .qr-account {
+                display: flex;
+                align-items: center;
+                gap: 0.85rem;
+                padding: 0.9rem 1rem;
+                border: 1px solid var(--wiki-border);
+                border-radius: 14px;
+                background: var(--wiki-toc-bg);
+                margin-bottom: 1rem;
+                text-align: left;
+            }
+
+            .qr-account-avatar {
+                width: 48px;
+                height: 48px;
+                border-radius: 50%;
+                object-fit: cover;
+                background: var(--wiki-bg);
+                flex-shrink: 0;
+                border: 1px solid var(--wiki-border);
+            }
+
+            .qr-account-name {
+                font-weight: 700;
+                color: var(--wiki-text);
+                word-break: break-all;
+            }
+
+            .qr-account-label {
+                font-size: 0.8rem;
+                color: var(--wiki-text-muted);
+            }
+
+            .qr-guest-box {
+                text-align: left;
+                padding: 0.9rem 1rem;
+                border: 1px solid var(--wiki-border);
+                border-radius: 14px;
+                margin-bottom: 1.5rem;
+            }
+
+            .qr-guest-label {
+                font-size: 0.8rem;
+                color: var(--wiki-text-muted);
+                margin-bottom: 0.25rem;
+                display: flex;
+                align-items: center;
+                gap: 0.35rem;
+            }
+
+            .qr-guest-ua {
+                font-size: 0.85rem;
+                color: var(--wiki-text);
+                word-break: break-all;
+                line-height: 1.4;
+            }
+
+            .qr-actions {
+                display: flex;
+                gap: 0.75rem;
+            }
+
+            .qr-btn {
+                flex: 1;
+                padding: 0.85rem 1rem;
+                font-size: 1rem;
+                font-weight: 700;
+                border-radius: 12px;
+                border: none;
+                transition: all 0.2s ease;
+            }
+
+            .qr-btn-approve {
+                background: var(--wiki-primary);
+                color: #ffffff;
+            }
+
+            .qr-btn-approve:hover:not(:disabled) {
+                opacity: 0.9;
+                transform: translateY(-2px);
+            }
+
+            .qr-btn-cancel {
+                background: transparent;
+                color: var(--wiki-text-muted);
+                border: 1px solid var(--wiki-border);
+            }
+
+            .qr-btn-cancel:hover:not(:disabled) {
+                background: var(--wiki-bg);
+                color: var(--wiki-text);
+            }
+
+            .qr-btn:disabled {
+                opacity: 0.6;
+                cursor: not-allowed;
+            }
+
+            .qr-status {
+                margin-top: 1.25rem;
+                font-size: 0.95rem;
+                min-height: 1.2rem;
+            }
+
+            .qr-warning {
+                font-size: 0.82rem;
+                color: var(--wiki-text-muted);
+                margin-top: 1rem;
+                line-height: 1.5;
+            }
+
+            .qr-hidden {
+                display: none !important;
+            }
+        </style>
+    </Fragment>
+
+    <div class="qr-approve-container">
+        <i class="mdi mdi-qrcode-scan qr-approve-icon"></i>
+        <h2 class="qr-approve-title">QR 로그인 승인</h2>
+        <p class="qr-approve-subtitle">아래 계정으로 다른 기기를 로그인합니다.</p>
+
+        <!-- 로딩/오류/승인 흐름을 JS 가 토글한다. 기본은 로딩. -->
+        <div id="qrLoading" class="qr-status text-muted">
+            <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+            정보를 불러오는 중…
+        </div>
+
+        <!-- 승인 대상 정보 -->
+        <div id="qrApprovePanel" class="qr-hidden">
+            <div class="qr-account">
+                <img id="qrAccountAvatar" class="qr-account-avatar" alt="프로필" src="/avatar-default.svg">
+                <div>
+                    <div class="qr-account-label">로그인할 계정</div>
+                    <div id="qrAccountName" class="qr-account-name"></div>
+                </div>
+            </div>
+
+            <div class="qr-guest-box">
+                <div class="qr-guest-label"><i class="mdi mdi-cellphone-link"></i> 로그인할 기기</div>
+                <div id="qrGuestUa" class="qr-guest-ua"></div>
+            </div>
+
+            <div class="qr-actions">
+                <button type="button" id="qrCancelBtn" class="qr-btn qr-btn-cancel">취소</button>
+                <button type="button" id="qrApproveBtn" class="qr-btn qr-btn-approve">확인</button>
+            </div>
+
+            <div class="qr-warning">
+                <i class="mdi mdi-shield-alert-outline"></i>
+                본인이 요청한 기기가 맞는지 확인하세요. 모르는 기기라면 승인하지 마세요.
+            </div>
+        </div>
+
+        <!-- 결과(성공/취소/오류) 화면 -->
+        <div id="qrResult" class="qr-hidden">
+            <i id="qrResultIcon" class="mdi qr-approve-icon"></i>
+            <p id="qrResultMessage" class="qr-approve-subtitle" style="margin-bottom:1.25rem;"></p>
+            <a href="/" class="qr-btn qr-btn-cancel" style="display:inline-block; text-decoration:none;">위키로 이동</a>
+        </div>
+
+        <div id="qrStatus" class="qr-status"></div>
+    </div>
+
+    <Fragment slot="scripts">
+        <script type="module" src="/dist/common.js" is:inline></script>
+        <script type="module" src="/dist/qr-login-approve.js" is:inline></script>
+    </Fragment>
+</BaseLayout>

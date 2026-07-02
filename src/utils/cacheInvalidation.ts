@@ -45,7 +45,53 @@ export function invalidatePageCache(c: any, slug: string) {
  * 해당 문서를 참조하는 모든 문서의 캐시를 무효화
  */
 export async function invalidateBacklinkCaches(c: any, slug: string, db: D1Database): Promise<void> {
-    if (!slug.includes(':')) return;
+    if (!slug.includes(':')) {
+        // 콜론 없는 일반 문서: 과거엔 임베드 의존성이 없어 조기 반환했으나, 이제 섹션
+        // 트랜스클루전 `{{Foo#s-1}}` 이 일반 문서 Foo 의 섹션을 다른 페이지에 임베드한다
+        // (extractTransclusionTargets 가 이를 target_slug=Foo, link_type='template' 로 기록).
+        // 따라서 Foo 를 임베드(template)하는 페이지의 캐시(used_palettes 포함)를 무효화한다.
+        // 단순 위키링크 백링크(`[[Foo]]`)는 본문을 임베드하지 않아 제외 — 인기 문서 편집마다
+        // 모든 링커를 무효화하는 폭풍을 막고, 콜론 경로와 달리 template 타입만 대상으로 한다.
+        //
+        // 리다이렉트 별칭도 포함한다: `{{Alias#s-1}}` 은 렌더러가 `/api/w/Alias` 를 fetch 할 때
+        // 서버가 redirect_to 를 따라 실제 대상(Foo) 본문을 반환하지만, page_links 에는 호출에
+        // 적힌 `Alias` 가 target_slug 로 기록된다. 따라서 실제 대상 Foo 편집 시 Alias 로 섹션
+        // 임베드한 페이지도 무효화되도록 `redirect_to = Foo` 인 별칭 슬러그를 대상에 더한다.
+        const { results } = await db
+            .prepare(`
+                SELECT DISTINCT p.slug
+                FROM page_links pl
+                JOIN pages p ON pl.source_page_id = p.id
+                WHERE p.deleted_at IS NULL
+                  AND pl.blog = 0
+                  AND pl.source_type = 'page'
+                  AND pl.link_type = 'template'
+                  AND (
+                    pl.target_slug = ?1
+                    OR pl.target_slug IN (
+                      SELECT slug FROM pages WHERE redirect_to = ?1 AND deleted_at IS NULL
+                    )
+                  )
+            `)
+            .bind(slug)
+            .all<{ slug: string }>();
+
+        // 별칭 자체(`/api/w/Alias`)의 엣지 캐시도 비운다. `GET /api/w/:slug` 가 redirect 를
+        // 따라 실제 대상(Foo) 본문을 반환해 하루(86400s) 캐시하므로, Foo 편집 후 별칭 캐시가
+        // stale 로 남으면 섹션 임베드 페이지가 재렌더 시 `/api/w/Alias` 에서 여전히 옛 본문을
+        // fetch 한다. 따라서 `redirect_to = Foo` 인 별칭 슬러그의 페이지 캐시도 함께 무효화한다.
+        const { results: aliasRows } = await db
+            .prepare(`SELECT slug FROM pages WHERE redirect_to = ?1 AND deleted_at IS NULL`)
+            .bind(slug)
+            .all<{ slug: string }>();
+
+        const toInvalidate = new Set<string>();
+        results.forEach((row: { slug: string }) => toInvalidate.add(row.slug));
+        aliasRows.forEach((row: { slug: string }) => toInvalidate.add(row.slug));
+        if (toInvalidate.size === 0) return;
+        await Promise.allSettled([...toInvalidate].map((s: string) => invalidatePageCache(c, s)));
+        return;
+    }
 
     const targetSlugs: string[] = [slug];
     const templatePrefixes = ['틀:', 'template:', '템플릿:'];

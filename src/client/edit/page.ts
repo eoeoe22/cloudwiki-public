@@ -68,7 +68,11 @@ function toggleEditorFloatingToc() {
                         .replace(/~~(.*?)~~/g, '$2')
                         .replace(/==(.*?)==/g, '$2')
                         .replace(/\[\[(?:[^|\]]*\|)?([^\]]+)\]\]/g, '$1')
-                        .replace(/`([^`]+)`/g, '$1').trim();
+                        .replace(/`([^`]+)`/g, '$1')
+                        // 헤딩 끝 {collapse} 토큰 제거: 프리뷰 DOM 은 render.ts _applyHeadingCollapseTokens
+                        // 가 이미 토큰을 떼므로(targetText 에 토큰 없음), 소스 라인 매칭도 동일 규칙으로
+                        // 맞춰야 `## 개요 {collapse}` 헤딩의 편집기 스크롤이 동작한다.
+                        .replace(/\s*\{\s*collapse\s*\}\s*#*\s*$/, '').trim();
                     const targetText = stripMd(rawText);
 
                     for (let ln = 1; ln <= doc.lines; ln++) {

@@ -23,6 +23,7 @@ export const googleProvider: OAuthProvider = {
             userId: stateData?.userId,
             expectedUid: stateData?.expectedUid,
             redirectUrl: stateData?.redirectUrl ?? safeRedirectUrl,
+            remember: stateData?.remember ?? (c.req.query('remember') === '1'),
         };
         await c.env.KV.put(`oauth_state:${state}`, JSON.stringify(payload), { expirationTtl: 300 });
 

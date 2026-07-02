@@ -1,5 +1,6 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { normalizeSlug } from './slug';
+import { stripCollapseToken } from './headingTokens';
 
 const MAX_TEMPLATE_DEPTH = 3;
 
@@ -676,7 +677,8 @@ export function extractTOC(content: string): string {
 
             const parts = counters.slice(0, level).map(n => String(n));
             const number = level === 1 ? `${parts[0]}.` : parts.join('.');
-            toc.push(`${number} ${match[2].trim()}`);
+            // {collapse} 토큰은 목차 제목 표시에서 제외 (렌더 접힘 마커일 뿐 제목의 일부가 아님).
+            toc.push(`${number} ${stripCollapseToken(match[2].trim())}`);
         } else if (!firstHeadingSeen && line.trim() !== '') {
             hasPreamble = true;
         }
@@ -873,7 +875,8 @@ export function findSectionsForQuery(content: string, query: string): string[] {
             if (!inCodeBlock && !isFence) {
                 const m = line.match(/^(#{1,6})\s+(.+)$/);
                 if (m) {
-                    currentHeading = m[2].trim();
+                    // 검색 결과의 섹션 라벨에도 {collapse} 토큰이 노출되지 않게 제거.
+                    currentHeading = stripCollapseToken(m[2].trim());
                     currentHeadingId = i;
                 }
             }

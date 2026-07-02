@@ -184,32 +184,58 @@ function initMarkedConfig() {
                 }
             },
             {
-                // 팝오버 각주 [* ... ]. 인라인 토크나이저로 등록해 marked 가
-                // 코드 스팬/코드 블록/인덴트 코드 등에서 자동으로 건드리지 않게 한다.
-                // 내부 텍스트는 lexer.inline 으로 재귀 토크나이즈해 기본 인라인
-                // 마크다운(굵게/기울임/링크/인라인 코드 등)을 허용. 렌더된 HTML 은
-                // data-fn-html 속성에 escape 해 보관하고, 후속 processFootnotes 단계가
-                // DOMPurify 로 정제 후 팝오버/하단 섹션에 사용한다.
+                // 팝오버 각주. 인라인 토크나이저로 등록해 marked 가 코드 스팬/코드
+                // 블록/인덴트 코드 등에서 자동으로 건드리지 않게 한다. 세 가지 형태:
+                //   [* 내용]            익명 각주(기존)
+                //   [*이름 내용]        이름 있는 각주 정의(MediaWiki name= 대응)
+                //   [*이름]             같은 이름의 재참조(내용 없음)
+                // 정의 내용은 lexer.inline 으로 재귀 토크나이즈해 기본 인라인 마크다운을
+                // 허용하고, 렌더된 HTML 은 data-fn-html 에 escape 해 보관한다(이름은
+                // data-fn-name, 재참조는 data-fn-ref). 번호 매핑·백링크는 processFootnotes.
                 name: 'wikiFootnote',
                 level: 'inline',
-                start(src) { return src.indexOf('[* '); },
+                start(src) { return src.indexOf('[*'); },
                 tokenizer(src) {
-                    const match = src.match(/^\[\*\s((?:[^\[\]\n]|\[[^\[\]\n]*\]|\[)+)\]/);
-                    if (match) {
-                        const token = {
-                            type: 'wikiFootnote',
-                            raw: match[0],
-                            text: match[1],
-                            tokens: []
-                        };
-                        this.lexer.inline(token.text, token.tokens);
-                        return token;
+                    if (src.charCodeAt(0) !== 91 /* [ */ || src.charCodeAt(1) !== 42 /* * */) return;
+                    // 닫는 ']' 뒤에 '(' 가 오면 각주가 아니라 마크다운 링크([*텍스트](url))
+                    // 이므로 (?!\() 로 제외해 링크를 가로채지 않는다.
+                    const m = src.match(/^\[\*((?:[^\[\]\n]|\[[^\[\]\n]*\]|\[)*)\](?!\()/);
+                    if (!m) return;
+                    const body = m[1];
+                    let name = '', content = '', isRef = false;
+                    if (/^\s/.test(body)) {
+                        // 익명 각주: [* 내용]
+                        content = body.replace(/^\s+/, '');
+                        if (content === '') return; // 빈 각주는 미매치(기존 동작 유지)
+                    } else {
+                        // 이름 있는 각주: [*이름 내용] 또는 재참조 [*이름]
+                        const sp = body.search(/\s/);
+                        if (sp === -1) { name = body.trim(); isRef = true; }
+                        else { name = body.slice(0, sp).trim(); content = body.slice(sp + 1).replace(/^\s+/, ''); }
+                        // 이름은 식별자 문자만 허용([*강조*] 같은 마크다운 강조를 각주로
+                        // 오인하지 않도록 ASCII 구두점/공백을 배제, 한글·CJK 등은 허용).
+                        if (!name || !/^[\w.\-\u00C0-\uFFFF]+$/.test(name)) return;
                     }
+                    const token = {
+                        type: 'wikiFootnote',
+                        raw: m[0],
+                        fnName: name,
+                        fnRef: isRef,
+                        text: content,
+                        tokens: []
+                    };
+                    if (!isRef && content) this.lexer.inline(content, token.tokens);
+                    return token;
                 },
                 childTokens: ['tokens'],
                 renderer(token) {
+                    const nameAttr = token.fnName ? ` data-fn-name="${escapeHtml(token.fnName)}"` : '';
+                    if (token.fnRef) {
+                        // 재참조: 내용 없이 이름·ref 플래그만 실어 보낸다.
+                        return `<sup class="wiki-fn-marker"${nameAttr} data-fn-ref="1"></sup>`;
+                    }
                     const innerHtml = this.parser.parseInline(token.tokens);
-                    return `<sup class="wiki-fn-marker" data-fn-html="${escapeHtml(innerHtml)}"></sup>`;
+                    return `<sup class="wiki-fn-marker" data-fn-html="${escapeHtml(innerHtml)}"${nameAttr}></sup>`;
                 }
             },
             {
@@ -220,13 +246,27 @@ function initMarkedConfig() {
                 level: 'inline',
                 start(src) { return src.indexOf('{button:'); },
                 tokenizer(src) {
-                    const match = src.match(/^\{button:([^}]+)\}/);
-                    if (match) {
-                        return {
-                            type: 'wikiButton',
-                            raw: match[0],
-                            text: match[1]
-                        };
+                    if (!src.startsWith('{button:')) return;
+                    // 중괄호 균형 스캔: {button:{dday:…}|url} 처럼 중첩 {…} 토큰을 포함한
+                    // 전체 토큰을 raw 로 잡는다. '<'/개행을 만나거나 닫는 '}' 없이 끝나면
+                    // 매치 포기(런어웨이 방지 — 기존 [^}]+ 와 동일한 보호).
+                    const openLen = '{button:'.length;
+                    let depth = 1;
+                    for (let i = openLen; i < src.length; i++) {
+                        const ch = src[i];
+                        if (ch === '<' || ch === '\n') return;
+                        if (ch === '{') depth++;
+                        else if (ch === '}') {
+                            depth--;
+                            if (depth === 0) {
+                                if (i === openLen) return; // 빈 인자 — 기존 [^}]+ 와 동일하게 미매치
+                                return {
+                                    type: 'wikiButton',
+                                    raw: src.slice(0, i + 1),
+                                    text: src.slice(openLen, i)
+                                };
+                            }
+                        }
                     }
                 },
                 renderer(token) {
@@ -511,7 +551,7 @@ function _substituteTemplateParams(templateContent, args, depth) {
 // 한계(1단계): 조건/비교 인자는 "그 시점의 문자열" 로 평가된다. 즉 조건 안의 {{다른틀}} 은
 // 아직 렌더 확장 전이라 그 호출 텍스트(비어있지 않음=참)로 취급된다 — 다른 틀의 *렌더 결과*
 // 로 분기할 수는 없다. 표준 사용법은 {{{파라미터}}} 기준 분기다.
-const _PARSER_FUNCTIONS = new Set(['if', 'ifeq', 'switch']);
+const _PARSER_FUNCTIONS = new Set(['if', 'ifeq', 'switch', 'expr']);
 
 /** 문자열이 순수 숫자 리터럴이면 Number, 아니면 null. (#ifeq/#switch 수치 비교용) */
 function _parserNumeric(s) {
@@ -578,8 +618,123 @@ function _evalParserFunction(fn, raw) {
         const branch = _parserLooseEquals(a, b) ? segs[2] : segs[3];
         return branch === undefined ? '' : _expandParserFunctions(branch).trim();
     }
+    if (fn === 'expr') {
+        // {{#expr: 식}} — 사칙연산 안전 부분집합(+ - * / round floor ceil, 괄호, 단항 ±).
+        // 임의 코드 실행 없이 문자열 파싱만 수행하며, 파이프 인자를 쓰지 않으므로
+        // 콜론 이후 전체를 식으로 본다. 내부 파서 함수는 먼저 전개한다.
+        const exprStr = _expandParserFunctions(raw.substring(colon + 1));
+        const val = _evalExpr(exprStr);
+        return val === null ? '' : _formatExprResult(val);
+    }
     // switch
     return _evalParserSwitch(segs);
+}
+
+/**
+ * MediaWiki #expr 의 안전 부분집합 평가기. 지원: 숫자, 괄호, 이항 + - * / 와 round,
+ * 단항 + -, 단항 floor / ceil. 그 외 문자(임의 함수·식별자·비교연산 등)는 전부 오류.
+ * 우선순위(낮음→높음): round < +,- < *,/ < 단항(floor/ceil/부호) < primary.
+ * 오류(구문/미지원/0 나눗셈/비유한)면 null 을 반환한다(호출부가 빈 문자열로 치환).
+ */
+function _evalExpr(input) {
+    if (typeof input !== 'string') return null;
+    const tokens = [];
+    const re = /\s*(?:(\d+\.?\d*|\.\d+)|([+\-*/()])|([a-zA-Z]+))/g;
+    let consumed = 0;
+    let mm;
+    while ((mm = re.exec(input)) !== null) {
+        if (mm.index !== consumed) return null; // 허용되지 않는 문자를 건너뜀 → 오류
+        consumed = re.lastIndex;
+        if (mm[1] !== undefined) tokens.push({ t: 'num', v: parseFloat(mm[1]) });
+        else if (mm[2] !== undefined) tokens.push({ t: 'op', v: mm[2] });
+        else {
+            const w = mm[3].toLowerCase();
+            if (w === 'round' || w === 'floor' || w === 'ceil') tokens.push({ t: 'fn', v: w });
+            else return null; // 알 수 없는 단어
+        }
+    }
+    if (input.slice(consumed).trim() !== '') return null; // 잔여 문자
+    if (tokens.length === 0) return null;
+
+    let pos = 0;
+    const peek = () => tokens[pos];
+
+    function parseRound() {
+        let left = parseAddSub();
+        if (left === null) return null;
+        while (peek() && peek().t === 'fn' && peek().v === 'round') {
+            pos++;
+            const right = parseAddSub();
+            if (right === null || !Number.isFinite(right)) return null;
+            const digits = Math.trunc(right);
+            if (digits < 0 || digits > 15) return null;
+            const f = Math.pow(10, digits);
+            left = Math.round(left * f) / f;
+        }
+        return left;
+    }
+    function parseAddSub() {
+        let left = parseMulDiv();
+        if (left === null) return null;
+        while (peek() && peek().t === 'op' && (peek().v === '+' || peek().v === '-')) {
+            const op = peek().v; pos++;
+            const right = parseMulDiv();
+            if (right === null) return null;
+            left = op === '+' ? left + right : left - right;
+        }
+        return left;
+    }
+    function parseMulDiv() {
+        let left = parseUnary();
+        if (left === null) return null;
+        while (peek() && peek().t === 'op' && (peek().v === '*' || peek().v === '/')) {
+            const op = peek().v; pos++;
+            const right = parseUnary();
+            if (right === null) return null;
+            if (op === '*') left = left * right;
+            else { if (right === 0) return null; left = left / right; }
+        }
+        return left;
+    }
+    function parseUnary() {
+        const p = peek();
+        if (p && p.t === 'fn' && (p.v === 'floor' || p.v === 'ceil')) {
+            pos++;
+            const operand = parseUnary();
+            if (operand === null) return null;
+            return p.v === 'floor' ? Math.floor(operand) : Math.ceil(operand);
+        }
+        if (p && p.t === 'op' && (p.v === '-' || p.v === '+')) {
+            pos++;
+            const operand = parseUnary();
+            if (operand === null) return null;
+            return p.v === '-' ? -operand : operand;
+        }
+        return parsePrimary();
+    }
+    function parsePrimary() {
+        const p = peek();
+        if (!p) return null;
+        if (p.t === 'num') { pos++; return p.v; }
+        if (p.t === 'op' && p.v === '(') {
+            pos++;
+            const val = parseRound();
+            if (val === null) return null;
+            if (!peek() || peek().t !== 'op' || peek().v !== ')') return null;
+            pos++;
+            return val;
+        }
+        return null;
+    }
+
+    const result = parseRound();
+    if (result === null || pos !== tokens.length || !Number.isFinite(result)) return null;
+    return result;
+}
+
+/** #expr 결과 포매팅: 부동소수 오차를 정리하고 불필요한 꼬리 0 을 제거. */
+function _formatExprResult(n) {
+    return String(parseFloat(n.toFixed(10)));
 }
 
 /**
@@ -623,6 +778,147 @@ function _evalParserSwitch(segs) {
 }
 
 // ── 틀(Transclusion) 및 익스텐션 처리 ──
+
+/**
+ * 섹션 트랜스클루전 참조({{문서#s-1.2}} / {{문서#1.2}} / {{문서#제목}}) 파싱.
+ * 이름에 '#'(슬러그 금지 문자)가 있으면 앞부분을 문서 슬러그, 뒷부분을 섹션 앵커로
+ * 나눈다. 전체 문서가 아닌 한 섹션만 포함하는 용도라 문서 슬러그는 그대로 쓴다
+ * (틀: 접두 미부착 — 일반 문서 대상. `틀:Foo#s-1` 처럼 명시 접두는 유지). 없으면 null.
+ */
+function _parseSectionRef(name) {
+    const hashIdx = name.indexOf('#');
+    if (hashIdx === -1) return null;
+    const docPart = name.slice(0, hashIdx).trim();
+    const anchor = name.slice(hashIdx + 1).trim();
+    if (!docPart || !anchor) return null;
+    return { docPart, anchor };
+}
+
+/**
+ * 원본(미전개) 마크다운에 헤딩을 주입할 수 있는 트랜스클루전 호출(틀·일반 문서 섹션
+ * 트랜스클루전·파서 함수)이 있는지 검사. 익스텐션 호출은 컴포넌트로 렌더돼 마크다운 헤딩을
+ * 내지 않으므로 제외한다. 숫자 섹션 앵커(s-N.N)의 안전 가드에 사용한다.
+ */
+function _hasHeadingInjectingCalls(content) {
+    if (typeof content !== 'string' || content.indexOf('{{') === -1) return false;
+    const calls = _findTemplateCalls(content);
+    for (const c of calls) {
+        const raw = c.raw.trim();
+        // 파서 함수: 값만 내는 {{#expr:...}} 는 숫자만 출력해 헤딩을 주입할 수 없으므로 제외.
+        // 분기 선택형({{#if}}/{{#ifeq}}/{{#switch}} 등)은 분기 안에 헤딩이 있을 수 있어 주입 가능.
+        if (raw.charCodeAt(0) === 35 /* '#' */) {
+            const pm = /^#([a-zA-Z]+)/.exec(raw);
+            if (pm && pm[1].toLowerCase() === 'expr') continue;
+            return true;
+        }
+        const { name } = _parseTemplateCall(raw);
+        const secRef = _parseSectionRef(name);
+        // 익스텐션(및 익스텐션 docPart 섹션 참조)은 헤딩을 주입하지 않는다 → 제외.
+        if (secRef && _isExtensionCall(secRef.docPart)) continue;
+        if (_isExtensionCall(name)) continue;
+        // 그 외(틀/일반 문서 섹션 트랜스클루전)는 fetch 본문의 헤딩을 주입할 수 있다.
+        return true;
+    }
+    return false;
+}
+
+/**
+ * 헤딩의 raw 마크다운 텍스트를 렌더된 순수 텍스트에 가깝게 정규화(제목 기반 섹션 매칭용).
+ * `_resolveAnchorTarget` 이 DOM textContent(마크다운 전개 후)로 매칭하는 것과 어긋나지
+ * 않도록 `## **Install**` · `` ## `Install` `` · `## Install ##`(ATX 닫기) 같은 흔한 서식을
+ * 벗겨 `{{Doc#Install}}` 이 매칭되게 한다. DOM 비의존(서버 SSR·wiki-shared 미러 공용).
+ * 불균형 서식 등은 벗기지 못해도 exact 매칭 실패 시 '섹션 없음'으로 안전하게 떨어진다.
+ */
+function _stripInlineMarkdownForMatch(s) {
+    if (typeof s !== 'string') return '';
+    let t = s;
+    t = t.replace(/\s+#+\s*$/, '');                       // ATX 닫기 마커(예: "Install ##")
+    t = t.replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1');        // 이미지 → alt
+    t = t.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1');         // 링크 → 텍스트
+    t = t.replace(/\[([^\]]*)\]\[[^\]]*\]/g, '$1');        // 참조 링크 → 텍스트
+    t = t.replace(/`+/g, '');                              // 인라인 코드 백틱
+    t = t.replace(/(\*\*|__)(.*?)\1/g, '$2');              // 볼드
+    t = t.replace(/(\*|_)(.*?)\1/g, '$2');                 // 이탤릭
+    t = t.replace(/~~(.*?)~~/g, '$1');                     // 취소선
+    t = t.replace(/[*_~]/g, '');                           // 잔여 홑 마커(불균형 대비)
+    t = t.replace(/\\([\\`*_{}\[\]()#+\-.!~>])/g, '$1');   // 이스케이프 해제(\X → X)
+    return t.trim();
+}
+
+/**
+ * 마크다운 본문에서 앵커(s-1.2 / 1.2 / 헤딩 텍스트)에 해당하는 섹션(헤딩 라인~다음 동급
+ * 헤딩 직전)을 잘라 반환. numberHeadings 와 동일한 상대 레벨 카운터로 s-N.N 번호를
+ * 재구성해 매칭한다. 못 찾으면 null. (_extractMarkdownSectionRanges 가 코드펜스·setext
+ * 예외를 이미 처리하므로 그 range 를 슬라이스만 한다.)
+ *
+ * 안전 가드: 원본에 헤딩 주입 트랜스클루전이 있으면 렌더된 s-N(numberHeadings — 트랜스클루전
+ * 헤딩 포함)과 여기 원본 기준 s-N 이 어긋나므로, 숫자 앵커는 null 로 폴백해 조용한 오슬라이스를
+ * 막는다. 헤딩 텍스트 앵커는 번호와 무관하므로 그대로 허용한다.
+ */
+function _sliceMarkdownSection(content, anchor) {
+    const ranges = _extractMarkdownSectionRanges(content);
+    if (ranges.length === 0) return null;
+    const lines = content.split('\n');
+
+    const minLevel = Math.min(...ranges.map(r => r.level));
+    const counters = [0, 0, 0, 0, 0, 0];
+    const numByIdx = ranges.map(r => {
+        const rel = r.level - minLevel;
+        counters[rel]++;
+        for (let k = rel + 1; k < counters.length; k++) counters[k] = 0;
+        const parts = [];
+        for (let k = 0; k <= rel; k++) parts.push(counters[k] || 1);
+        return parts.join('.');
+    });
+
+    const a = (anchor || '').trim();
+    const isNumericAnchor = /^(?:s-)?\d+(?:\.\d+)*$/.test(a);
+    // 숫자 앵커 + 원본에 헤딩 주입 트랜스클루전 → 렌더 번호와 어긋날 수 있어 폴백(null).
+    if (isNumericAnchor && _hasHeadingInjectingCalls(content)) return null;
+    let idx = -1;
+    if (/^s-\d+(?:\.\d+)*$/.test(a)) idx = numByIdx.indexOf(a.slice(2));
+    else if (/^\d+(?:\.\d+)*$/.test(a)) idx = numByIdx.indexOf(a);
+    else {
+        // 먼저 raw headingText 와 정확히 비교(기존 동작 보존), 실패 시 인라인 마크다운을
+        // 벗겨 렌더된 헤딩 텍스트 기준(_resolveAnchorTarget 과 동일)으로 재매칭한다.
+        idx = ranges.findIndex(r => r.headingText === a);
+        if (idx === -1) {
+            const target = _stripInlineMarkdownForMatch(a);
+            if (target) idx = ranges.findIndex(r => _stripInlineMarkdownForMatch(r.headingText) === target);
+        }
+    }
+    if (idx === -1) return null;
+
+    const r = ranges[idx];
+    return lines.slice(r.lineIdx, r.endLine).join('\n');
+}
+
+/**
+ * 전개 결과(expanded)를 호출 위치의 라인 컨텍스트에 맞춰 transclusion 센티넬로 감싼다.
+ * (블록 단독 라인 / 들여쓰기 단독 라인 / 인라인) — 틀·섹션 트랜스클루전이 공유한다.
+ */
+function _wrapTransclusionSentinels(protectedText, c, expanded) {
+    const OPEN = '<!--WIKI_TCL_B-->';
+    const CLOSE = '<!--WIKI_TCL_E-->';
+    const lineStart = protectedText.lastIndexOf('\n', c.start - 1) + 1;
+    const nextNl = protectedText.indexOf('\n', c.fullEnd);
+    const lineEnd = nextNl === -1 ? protectedText.length : nextNl;
+    const beforeOnLine = protectedText.substring(lineStart, c.start);
+    const afterOnLine = protectedText.substring(c.fullEnd, lineEnd);
+    const aloneOnLine = beforeOnLine.trim() === '' && afterOnLine.trim() === '';
+    if (aloneOnLine && beforeOnLine === '') {
+        // 진짜 블록 컨텍스트(컬럼 0, 단독 라인): 센티넬을 빈 줄로 분리.
+        return '\n\n' + OPEN + '\n\n' + expanded + '\n\n' + CLOSE + '\n\n';
+    }
+    if (aloneOnLine) {
+        // 들여쓰기된 단독 라인: 원본 접두사를 다음 줄들에도 이어 붙여 부모 블록 유지.
+        const indentedExpanded = expanded.split('\n').join('\n' + beforeOnLine);
+        return OPEN + indentedExpanded + CLOSE;
+    }
+    // 인라인 컨텍스트(문장 중간): 같은 줄에 바로 붙여 문단 흐름 유지.
+    return OPEN + expanded + CLOSE;
+}
+
 /**
  * text 안의 최상위 `{{...}}` 호출 중 selfSlug 와 일치하는 것을 경고로 교체한다.
  * `_substituteTemplateParams` 가 기본값을 전개한 결과에 남아 있는 자기 호출을 잡아낸다.
@@ -648,7 +944,15 @@ function _replaceSelfCalls(text, selfSlug) {
             continue;
         }
         const { name } = _parseTemplateCall(rawTrim);
-        if (_isExtensionCall(name)) {
+        // 대상 슬러그를 fetch 로직(_resolveTransclusionsCore)과 동일한 순서로 판정한다.
+        // 섹션 트랜스클루전 {{문서#섹션}} 은 docPart 를 그대로(틀: 미부착) fetch 하므로,
+        // selfSlug 가 섹션 소스 문서(bare docPart, 또는 {{틀:X#s}} 의 '틀:X')이면
+        // {{docPart#다른섹션}} 자기 참조를 잡아 MAX_DEPTH 까지의 반복 자기 포함을 막는다.
+        // (반대로 {{Foo}}=틀:Foo 는 일반 문서 Foo 와 다른 개체이므로 여기서 잡지 않는다.)
+        const selfSecRef = _parseSectionRef(name);
+        if (selfSecRef && !_isExtensionCall(selfSecRef.docPart)) {
+            out += selfSecRef.docPart === selfSlug ? warning : text.substring(c.start, c.fullEnd);
+        } else if (_isExtensionCall(name)) {
             out += text.substring(c.start, c.fullEnd);
         } else {
             let refSlug = name;
@@ -712,6 +1016,12 @@ async function _resolveTransclusionsCore(text, depth, cache, pageSlug, options) 
     const extensionSlugs = new Set();
     calls.forEach(c => {
         const { name, args } = _parseTemplateCall(c.raw.trim());
+        // 섹션 트랜스클루전({{문서#섹션}})은 문서 슬러그를 그대로 fetch(틀: 미부착).
+        const secRef = _parseSectionRef(name);
+        if (secRef && !_isExtensionCall(secRef.docPart)) {
+            slugsToFetch.add(secRef.docPart);
+            return;
+        }
         if (_isExtensionCall(name)) {
             // 익스텐션 비활성 컨텍스트(워크스페이스)에서는 fetch 대상에 넣지 않는다 —
             // 메인 위키 `/api/w/` 로 새지 않도록. 치환 단계에서 안내 메시지로 처리한다.
@@ -813,13 +1123,12 @@ async function _resolveTransclusionsCore(text, depth, cache, pageSlug, options) 
     }
     await Promise.all(fetchPromises);
 
-    // transclusion 으로 주입된 헤딩을 원본 헤딩과 구분하기 위해, 템플릿 전개 결과를
-    // 보이지 않는 HTML 주석 센티넬로 감싼다. 같은 헤딩 텍스트가 원본과 템플릿 양쪽에
+    // transclusion 으로 주입된 헤딩을 원본 헤딩과 구분하기 위해, 템플릿/섹션 전개
+    // 결과를 보이지 않는 HTML 주석 센티넬(<!--WIKI_TCL_B-->/<!--WIKI_TCL_E-->)로
+    // 감싼다(_wrapTransclusionSentinels). 같은 헤딩 텍스트가 원본과 주입본 양쪽에
     // 존재할 때 텍스트 매칭만으로는 섹션 편집 링크가 엉뚱한 섹션을 가리킬 수 있으므로,
     // 확실한 소스 표식이 필요하다. 센티넬은 _extractMarkdownSectionRanges 에서
     // 문자 오프셋 깊이 추적으로 감지되고, 최종 HTML 에서는 DOMPurify 가 제거한다.
-    const WIKI_TCL_OPEN = '<!--WIKI_TCL_B-->';
-    const WIKI_TCL_CLOSE = '<!--WIKI_TCL_E-->';
 
     // 각 호출에 대응할 치환 텍스트를 먼저 계산한 뒤, 호출 위치(start, fullEnd) 를 이용해
     // 원본에서 세그먼트 단위로 교체. 정규식 기반 replace 를 사용하지 않아 인자 내부의
@@ -832,7 +1141,28 @@ async function _resolveTransclusionsCore(text, depth, cache, pageSlug, options) 
         const call = _parseTemplateCall(c.raw.trim());
         const trimmed = call.name;
         let replacement;
-        if (_isExtensionCall(trimmed)) {
+        const secRef = _parseSectionRef(trimmed);
+        if (secRef && !_isExtensionCall(secRef.docPart)) {
+            // 섹션 트랜스클루전({{문서#섹션}}): 문서를 fetch 해 해당 섹션만 슬라이스한다.
+            // 문서 슬러그는 그대로 사용(틀: 미부착 — 일반 문서 대상).
+            const slug = secRef.docPart;
+            const cached = cache.get(slug);
+            if (cached === undefined || cached === null || typeof cached !== 'string') {
+                replacement = match;
+            } else {
+                // 소스 문서의 문서 변수(:::meta + {{{@이름}}})를 슬라이스 이전에 적용한다.
+                // 섹션 밖에 정의된 :::meta 도 반영돼 {{{@이름}}} 값 유실을 막고, 섹션 안의
+                // :::meta 블록도 원본 텍스트로 새지 않도록 제거된다 — 문서를 단독으로 열 때와 동일.
+                const section = _sliceMarkdownSection(_applyDocMetaVars(cached), secRef.anchor);
+                if (section === null) {
+                    replacement = `⚠️ [섹션을 찾을 수 없음: ${slug}#${secRef.anchor}]`;
+                } else {
+                    let expanded = _substituteTemplateParams(section, call.args);
+                    expanded = _replaceSelfCalls(expanded, slug);
+                    replacement = _wrapTransclusionSentinels(protectedText, c, expanded);
+                }
+            }
+        } else if (_isExtensionCall(trimmed)) {
             if (!options.expandExtensions) {
                 replacement = match;
             } else if (_renderCtx.disableExtensions) {
@@ -890,27 +1220,7 @@ async function _resolveTransclusionsCore(text, depth, cache, pageSlug, options) 
                 // cache 시점의 사전 스캔은 {{{...}}} 범위를 건너뛰므로 이 지점에서 한 번 더
                 // 자기 호출을 경고로 교체해 MAX_DEPTH 까지의 무한 재귀를 차단한다.
                 expanded = _replaceSelfCalls(expanded, slug);
-
-                // 현재 라인의 접두 / 접미 컨텍스트 분석
-                const lineStart = protectedText.lastIndexOf('\n', c.start - 1) + 1;
-                const nextNl = protectedText.indexOf('\n', c.fullEnd);
-                const lineEnd = nextNl === -1 ? protectedText.length : nextNl;
-                const beforeOnLine = protectedText.substring(lineStart, c.start);
-                const afterOnLine = protectedText.substring(c.fullEnd, lineEnd);
-                const aloneOnLine = beforeOnLine.trim() === '' && afterOnLine.trim() === '';
-
-                if (aloneOnLine && beforeOnLine === '') {
-                    // 진짜 블록 컨텍스트(컬럼 0, 단독 라인): 센티넬을 빈 줄로 분리.
-                    replacement = '\n\n' + WIKI_TCL_OPEN + '\n\n' + expanded + '\n\n' + WIKI_TCL_CLOSE + '\n\n';
-                } else if (aloneOnLine) {
-                    // 들여쓰기된 단독 라인: 원본 접두사를 다음 줄들에도 이어 붙여 부모 블록 유지.
-                    const prefix = beforeOnLine;
-                    const indentedExpanded = expanded.split('\n').join('\n' + prefix);
-                    replacement = WIKI_TCL_OPEN + indentedExpanded + WIKI_TCL_CLOSE;
-                } else {
-                    // 인라인 컨텍스트(문장 중간): 같은 줄에 바로 붙여 문단 흐름 유지.
-                    replacement = WIKI_TCL_OPEN + expanded + WIKI_TCL_CLOSE;
-                }
+                replacement = _wrapTransclusionSentinels(protectedText, c, expanded);
             }
         }
         newText += replacement;
@@ -946,6 +1256,78 @@ async function resolveTransclusionsForMarkdown(content, pageSlug) {
     const expanded = await _resolveTransclusionsCore(normalized, 0, cache, pageSlug, { expandExtensions: false, emitExtensionPlaceholders: false });
     // 마크다운 원문 복사 경로에서는 transclusion 센티넬을 제거해 깔끔한 텍스트로 반환.
     return expanded.replace(/<!--WIKI_TCL_[BE]-->/g, '');
+}
+
+// ── 문서 변수 :::meta + {{{@이름}}} ──
+// 문서 최상단(어디든)의 `:::meta` 블록에서 `이름 = 값` 정의를 수집하고, 본문의
+// `{{{@이름}}}` / `{{{@이름|기본값}}}` 참조를 그 값으로 치환한 뒤 meta 블록은 제거한다.
+// 틀 파라미터({{{이름}}})와 이름공간이 `@` 로 분리되어 충돌하지 않으며, `@` 가 아닌
+// {{{...}}} 참조는 손대지 않는다(틀 본문 파라미터는 이후 _substituteTemplateParams 담당).
+// 트랜스클루전·타임스탬프·컴포넌트 인자 치환보다 먼저 수행되어 값 하나로 문서 전체가
+// 갱신되고 #expr·{dday:} 등과 조합된다. 코드블록/코드스팬 내부는 보호한다.
+function _applyDocMetaVars(content) {
+    if (typeof content !== 'string') return content;
+    if (content.indexOf(':::meta') === -1 && content.indexOf('{{{@') === -1) return content;
+    let text = content.replace(/\r\n?/g, '\n');
+
+    // 코드블록/코드스팬 보호 (resolveTransclusions 와 동일 방식).
+    const codeBlocks = [];
+    if (typeof marked !== 'undefined') {
+        try {
+            const tokens = marked.lexer(text);
+            marked.walkTokens(tokens, token => {
+                if (token.type === 'code' || token.type === 'codespan') {
+                    const raw = token.raw;
+                    if (text.includes(raw)) {
+                        const idx = codeBlocks.length;
+                        codeBlocks.push(raw);
+                        text = text.replace(raw, `\x00METACODE_${idx}\x00`);
+                    }
+                }
+            });
+        } catch (_) { /* lexer 실패 시 보호 없이 진행 */ }
+    }
+
+    // :::meta 블록 추출(라인 시작 오프너 ~ 단독 ::: 클로저). 여러 개면 모두 소비.
+    const metaArgs = {};
+    text = text.replace(/^:::meta[ \t]*\n([\s\S]*?)\n:::[ \t]*$\n?/gm, (whole, bodyText) => {
+        bodyText.split('\n').forEach(line => {
+            const eq = line.indexOf('=');
+            if (eq === -1) return;
+            const key = line.slice(0, eq).trim();
+            if (!key) return;
+            metaArgs['@' + key] = line.slice(eq + 1).trim();
+        });
+        return '';
+    });
+
+    // {{{@이름}}} / {{{@이름|기본값}}} 참조만 치환. @ 가 아닌 참조는 원본 유지.
+    if (text.indexOf('{{{@') !== -1) {
+        const refs = _findParamRefs(text);
+        if (refs.length > 0) {
+            let out = '';
+            let cursor = 0;
+            for (const ref of refs) {
+                out += text.substring(cursor, ref.start);
+                const parts = _splitPipeTopLevel(ref.raw);
+                const key = (parts.shift() || '').trim();
+                if (key.charCodeAt(0) === 64 /* @ */) {
+                    const def = parts.length > 0 ? parts.join('|') : undefined;
+                    if (Object.prototype.hasOwnProperty.call(metaArgs, key)) out += metaArgs[key];
+                    else if (def !== undefined) out += def;
+                    // 정의도 기본값도 없으면 빈 문자열
+                } else {
+                    out += text.substring(ref.start, ref.fullEnd);
+                }
+                cursor = ref.fullEnd;
+            }
+            out += text.substring(cursor);
+            text = out;
+        }
+    }
+
+    // 코드블록 복원
+    return text.replace(/\x00METACODE_(\d+)\x00/g, (_, i) => codeBlocks[parseInt(i, 10)]);
 }
 
 // ── 카테고리 목록 렌더링 ──
@@ -1170,6 +1552,41 @@ if (typeof document !== 'undefined' && !(window as any).__wikiCategoryListBound)
             e.preventDefault();
             (window as any).navigateTo(itemLink.href);
         }
+    });
+}
+
+// ── 헤딩 접기 토큰 ({collapse}) ──
+// 헤딩 끝에 `{collapse}` 를 붙이면 그 문단(헤딩 섹션)을 기본 접힘 상태로 렌더한다.
+// 토큰 자체는 헤딩 표시 텍스트·목차 카드·FAB·MCP 읽기 어디에도 노출되면 안 되므로,
+// 헤딩 텍스트가 소비되는 모든 경로(_extractMarkdownSectionRanges 매칭, 렌더 후 DOM 표시)에서
+// 제거한다. 헤딩 끝(트레일링)에 올 때만 유효하며 ATX 닫기(예: `## 제목 {collapse} ##`)가
+// 뒤따라도 인식한다. 서버측(aiParser/mapDocument)의 stripCollapseToken 과 동일 규칙.
+const WIKI_COLLAPSE_TOKEN_RE = /\s*\{\s*collapse\s*\}\s*#*\s*$/;
+function _stripCollapseToken(text) {
+    const t = text || '';
+    return WIKI_COLLAPSE_TOKEN_RE.test(t)
+        ? { text: t.replace(WIKI_COLLAPSE_TOKEN_RE, ''), collapse: true }
+        : { text: t, collapse: false };
+}
+
+// 렌더된 DOM 헤딩에서 {collapse} 토큰 텍스트를 제거하고 기본 접힘 마커(dataset.wikiCollapseDefault)를
+// 부착한다. numberHeadings/목차 생성/섹션 래핑 이전에 실행해 토큰이 표시 텍스트·목차·FAB 에 남지
+// 않게 한다. (collapsibleSections 옵션과 무관하게 항상 스트립 — 실제 접힘 효과만 섹션 래핑에 의존)
+function _applyHeadingCollapseTokens(containerEl) {
+    if (!containerEl) return;
+    const headings = containerEl.querySelectorAll(
+        'h1:not(.accordion-header), h2:not(.accordion-header), h3:not(.accordion-header), h4:not(.accordion-header), h5:not(.accordion-header), h6:not(.accordion-header)'
+    );
+    headings.forEach(h => {
+        // 토큰은 헤딩 끝(마지막 텍스트 노드)에 있을 때만 유효하다.
+        const last = h.lastChild;
+        if (!last || last.nodeType !== 3) return; // 3 = TEXT_NODE
+        const val = last.nodeValue || '';
+        if (!WIKI_COLLAPSE_TOKEN_RE.test(val)) return;
+        const stripped = val.replace(WIKI_COLLAPSE_TOKEN_RE, '');
+        if (stripped === '') h.removeChild(last);
+        else last.nodeValue = stripped;
+        h.dataset.wikiCollapseDefault = '1';
     });
 }
 
@@ -1569,6 +1986,10 @@ function _wrapLevelSections(containerEl, level) {
             const headingTextEl = child.querySelector(':scope > .wiki-section-heading-text');
             const headingText = (headingTextEl && headingTextEl.textContent) ? headingTextEl.textContent : (child.textContent || '');
             section.setAttribute('data-state-key', _makeStateKey(`sec${level}`, headingText));
+            // 헤딩에 {collapse} 토큰이 있었으면(_applyHeadingCollapseTokens 가 마킹) 기본 접힘.
+            if (child.dataset && child.dataset.wikiCollapseDefault === '1') {
+                section.classList.add('wiki-section-collapsed');
+            }
             child.parentNode.insertBefore(section, child);
             section.appendChild(child);
 
@@ -1826,75 +2247,127 @@ function _sanitizeFootnoteHtml(html) {
     return escapeHtml(src);
 }
 
+// 여러 참조 위치의 백링크 첨자(a·b·c… → 26개 초과 시 번호로 폴백).
+function _fnBackLabel(i) {
+    return i < 26 ? String.fromCharCode(97 + i) : String(i + 1);
+}
+
 function processFootnotes(contentEl) {
     if (!contentEl) return;
-    const markers = Array.from(contentEl.querySelectorAll('sup.wiki-fn-marker[data-fn-html]'));
+    // 정의(data-fn-html) 와 재참조(data-fn-ref) 마커를 문서 순서대로 모두 수집한다.
+    const markers = Array.from(contentEl.querySelectorAll('sup.wiki-fn-marker[data-fn-html], sup.wiki-fn-marker[data-fn-ref]'));
     if (markers.length === 0) return;
 
+    // 번호는 "문서상 첫 등장" 순서로 매긴다(정의/재참조 무관, MediaWiki 동일).
+    // 이름 있는 각주는 이름별로 하나의 번호와 정의 내용을 공유하고, 각 참조 위치는
+    // 개별 백링크(a·b·c…)를 갖는다. 익명 각주는 참조마다 독립된 번호를 갖는다.
     let footnoteIndex = 0;
-    const footnotes = [];
+    const order = [];               // { num, html|null, refs: marker[], fnId, refIds }
+    const namedEntries = new Map();  // name -> entry
 
     markers.forEach(marker => {
-        const rawHtml = marker.getAttribute('data-fn-html') || '';
-        const sanitized = _sanitizeFootnoteHtml(rawHtml);
-
-        footnoteIndex++;
-        const uniqueId = ++_fnUniqueCounter;
-        const fnId = `fn-${footnoteIndex}-${uniqueId}`;
-        const refId = `fn-ref-${footnoteIndex}-${uniqueId}`;
-
-        footnotes.push({ id: fnId, refId: refId, num: footnoteIndex, html: sanitized });
-
-        const sup = document.createElement('sup');
-        sup.className = 'wiki-fn-ref';
-        const a = document.createElement('a');
-        a.href = `#${fnId}`;
-        a.id = refId;
-        a.textContent = `[${footnoteIndex}]`;
-
-        if (typeof bootstrap !== 'undefined') {
-            a.setAttribute('data-bs-toggle', 'popover');
-            a.setAttribute('data-bs-trigger', 'hover focus');
-            a.setAttribute('data-bs-placement', 'top');
-            a.setAttribute('data-bs-html', 'true');
-            a.setAttribute('data-bs-content', sanitized);
-        }
-
-        a.onclick = (e) => {
-            e.preventDefault();
-            if (window.innerWidth >= 992) {
-                const target = document.getElementById(fnId);
-                if (target) _scrollToElementWithAncestors(target, { behavior: 'smooth', block: 'start' });
+        const name = marker.getAttribute('data-fn-name');
+        const hasHtml = marker.hasAttribute('data-fn-html');
+        const rawHtml = hasHtml ? (marker.getAttribute('data-fn-html') || '') : null;
+        if (!name) {
+            // 익명 각주: 참조마다 독립된 note.
+            footnoteIndex++;
+            const entry = { num: footnoteIndex, html: _sanitizeFootnoteHtml(rawHtml || ''), refs: [marker] };
+            order.push(entry);
+        } else {
+            let entry = namedEntries.get(name);
+            if (!entry) {
+                footnoteIndex++;
+                entry = { num: footnoteIndex, html: null, refs: [] };
+                namedEntries.set(name, entry);
+                order.push(entry);
             }
-        };
-        sup.appendChild(a);
-        marker.parentNode?.replaceChild(sup, marker);
+            // 첫 번째 정의 내용을 채택(정의가 재참조보다 뒤에 와도 반영).
+            if (rawHtml != null && entry.html == null) entry.html = _sanitizeFootnoteHtml(rawHtml);
+            entry.refs.push(marker);
+        }
     });
 
-    if (footnotes.length > 0) {
+    // 안정 id 부여.
+    order.forEach(entry => {
+        const uniqueId = ++_fnUniqueCounter;
+        entry.fnId = `fn-${entry.num}-${uniqueId}`;
+        entry.refIds = entry.refs.map((_, i) => `fn-ref-${entry.num}-${uniqueId}-${i}`);
+    });
+
+    // 본문 마커를 참조 링크로 교체(각 참조 위치는 자기 refId 를 가진다).
+    order.forEach(entry => {
+        const multi = entry.refs.length > 1;
+        const contentHtml = entry.html != null ? entry.html : '';
+        entry.refs.forEach((marker, i) => {
+            const sup = document.createElement('sup');
+            sup.className = 'wiki-fn-ref';
+            const a = document.createElement('a');
+            a.href = `#${entry.fnId}`;
+            a.id = entry.refIds[i];
+            // 재사용 각주는 [n-a] 처럼 첨자를 붙여 어느 참조인지 구분한다.
+            a.textContent = multi ? `[${entry.num}-${_fnBackLabel(i)}]` : `[${entry.num}]`;
+
+            if (typeof bootstrap !== 'undefined' && contentHtml) {
+                a.setAttribute('data-bs-toggle', 'popover');
+                a.setAttribute('data-bs-trigger', 'hover focus');
+                a.setAttribute('data-bs-placement', 'top');
+                a.setAttribute('data-bs-html', 'true');
+                a.setAttribute('data-bs-content', contentHtml);
+            }
+
+            a.onclick = (e) => {
+                e.preventDefault();
+                if (window.innerWidth >= 992) {
+                    const target = document.getElementById(entry.fnId);
+                    if (target) _scrollToElementWithAncestors(target, { behavior: 'smooth', block: 'start' });
+                }
+            };
+            sup.appendChild(a);
+            marker.parentNode?.replaceChild(sup, marker);
+        });
+    });
+
+    if (order.length > 0) {
         const fnSection = document.createElement('div');
         fnSection.className = 'wiki-footnotes';
         fnSection.innerHTML = `<hr><h4><i class="bi bi-card-text"></i> 각주</h4>`;
 
         const ol = document.createElement('ol');
-        footnotes.forEach(fn => {
+        order.forEach(entry => {
             const li = document.createElement('li');
-            li.id = fn.id;
+            li.id = entry.fnId;
 
-            const backLink = document.createElement('a');
-            backLink.href = `#${fn.refId}`;
-            backLink.className = 'wiki-fn-back';
-            backLink.innerHTML = '<i class="bi bi-arrow-return-left"></i>';
-            backLink.title = '본문으로 돌아가기';
-            backLink.onclick = (e) => {
-                e.preventDefault();
-                document.getElementById(fn.refId)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            };
+            // 참조가 하나면 기존과 동일한 아이콘 백링크, 여럿이면 참조별 a·b·c 첨자.
+            if (entry.refs.length === 1) {
+                const backLink = document.createElement('a');
+                backLink.href = `#${entry.refIds[0]}`;
+                backLink.className = 'wiki-fn-back';
+                backLink.innerHTML = '<i class="bi bi-arrow-return-left"></i>';
+                backLink.title = '본문으로 돌아가기';
+                backLink.onclick = (e) => {
+                    e.preventDefault();
+                    document.getElementById(entry.refIds[0])?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                };
+                li.appendChild(backLink);
+            } else {
+                entry.refIds.forEach((rid, i) => {
+                    const backLink = document.createElement('a');
+                    backLink.href = `#${rid}`;
+                    backLink.className = 'wiki-fn-back wiki-fn-back-multi';
+                    backLink.textContent = _fnBackLabel(i);
+                    backLink.title = '이 참조 위치로 돌아가기';
+                    backLink.onclick = (e) => {
+                        e.preventDefault();
+                        document.getElementById(rid)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    };
+                    li.appendChild(backLink);
+                });
+            }
 
             const span = document.createElement('span');
-            span.innerHTML = ' ' + fn.html;
+            span.innerHTML = ' ' + (entry.html != null ? entry.html : '<span class="text-muted">(내용 없음)</span>');
 
-            li.appendChild(backLink);
             li.appendChild(span);
             ol.appendChild(li);
         });
@@ -2133,6 +2606,18 @@ function _makeStateKey(prefix, text) {
     return escapeHtml(n === 0 ? k : `${k}#${n}`);
 }
 
+// 탭/아코디언의 {id:이름} 을 페이지 내 유일한 DOM id 로 변환한다. 같은 이름이
+// 여러 번 나오면 _makeStateKey 와 동일한 렌더-스코프 카운터(_stateKeyDedup)로
+// dedup 해 두 번째부터 `이름-2`, `이름-3` … 을 부여한다(딥링크 #이름 은 문서상
+// 첫 번째를 가리킴 — 헤딩 텍스트 앵커와 동일한 "가장 위" 규칙). 입력은
+// _extractStrictTokens 의 id 타입이 [a-zA-Z0-9_-] 로 이미 검증한다.
+function _dedupAnchorDomId(name) {
+    const k = `@id|${name}`;
+    const n = _stateKeyDedup[k] || 0;
+    _stateKeyDedup[k] = n + 1;
+    return n === 0 ? name : `${name}-${n + 1}`;
+}
+
 /**
  * 컨테이너 블록(:::tabs / :::accordion / :::steps) 의 innerText 에서
  * WIKIBLOCKPH<i>XEND 플레이스홀더를 순서대로 수집해 자식 block 객체로 반환.
@@ -2180,6 +2665,14 @@ function _extractStrictTokens(titleLine, schema) {
             if (m) {
                 const v = m[1].trim();
                 if (/^(bi-|mdi-)[a-zA-Z0-9_-]+$/.test(v)) found[key] = v;
+                t = t.replace(m[0], '');
+            }
+        } else if (spec.type === 'id') {
+            // 안정 앵커 ID 토큰 {id:이름}. 아이콘 토큰과 동일한 [a-zA-Z0-9_-] 문자 규칙.
+            const re = new RegExp(`\\{${key}:\\s*([a-zA-Z0-9_-]+)\\s*\\}`);
+            const m = t.match(re);
+            if (m) {
+                found[key] = m[1].trim();
                 t = t.replace(m[0], '');
             }
         }
@@ -2427,7 +2920,8 @@ function _renderBlockHtml(block, blockData) {
             const panes = [];
             children.forEach((child, i) => {
                 const meta = _extractStrictTokens(child.titleLine, {
-                    icon: { type: 'icon' }
+                    icon: { type: 'icon' },
+                    id: { type: 'id' }
                 });
                 const tabId = `${groupId}-pane-${i}`;
                 const navId = `${groupId}-tab-${i}`;
@@ -2435,6 +2929,12 @@ function _renderBlockHtml(block, blockData) {
                 const iconHtml = meta.tokens.icon ? _iconHtmlFromToken(meta.tokens.icon) + ' ' : '';
                 const labelEsc = escapeHtml(meta.cleanTitle || `탭 ${i + 1}`);
                 const tabKey = _makeStateKey('tab', meta.cleanTitle || `tab-${i}`);
+                // {id:이름} 딥링크 앵커: 패널 내부 첫 자식으로 marker span 을 심어
+                // [[문서#이름]] 이동 시 getElementById → _expandAncestorsForScroll 이
+                // 접힌 탭을 자동으로 활성화하도록 한다(스크롤 대상도 패널 내부).
+                const anchorMarker = meta.tokens.id
+                    ? `<span class="wiki-anchor-target" id="${escapeHtml(_dedupAnchorDomId(meta.tokens.id))}"></span>`
+                    : '';
                 navItems.push(
                     `<li class="nav-item" role="presentation">` +
                     `<button class="nav-link${isActive ? ' active' : ''}" id="${navId}" ` +
@@ -2446,7 +2946,7 @@ function _renderBlockHtml(block, blockData) {
                 const childInner = _renderChildInnerHtml(child.innerText, blockData);
                 panes.push(
                     `<div class="tab-pane fade${isActive ? ' show active' : ''}" id="${tabId}" ` +
-                    `role="tabpanel" aria-labelledby="${navId}" tabindex="0" data-state-key="${tabKey}">${childInner}</div>`
+                    `role="tabpanel" aria-labelledby="${navId}" tabindex="0" data-state-key="${tabKey}">${anchorMarker}${childInner}</div>`
                 );
             });
             return `<div class="wiki-tabs">` +
@@ -2468,7 +2968,8 @@ function _renderBlockHtml(block, blockData) {
             const items = children.map((child, i) => {
                 const meta = _extractStrictTokens(child.titleLine, {
                     open: { type: 'flag' },
-                    icon: { type: 'icon' }
+                    icon: { type: 'icon' },
+                    id: { type: 'id' }
                 });
                 const itemId = `${groupId}-item-${i}`;
                 const headId = `${groupId}-head-${i}`;
@@ -2482,6 +2983,11 @@ function _renderBlockHtml(block, blockData) {
                 const parentAttr = allowMultiple ? '' : ` data-bs-parent="#${groupId}"`;
                 const childInner = _renderChildInnerHtml(child.innerText, blockData);
                 const accKey = _makeStateKey('acc', meta.cleanTitle || `item-${i}`);
+                // {id:이름} 딥링크 앵커: 접힌 항목 본문 내부에 marker 를 심어
+                // [[문서#이름]] 이동 시 _expandAncestorsForScroll 이 collapse 를 펼치게 한다.
+                const anchorMarker = meta.tokens.id
+                    ? `<span class="wiki-anchor-target" id="${escapeHtml(_dedupAnchorDomId(meta.tokens.id))}"></span>`
+                    : '';
                 return `<div class="accordion-item" data-state-key="${accKey}">` +
                     `<h2 class="accordion-header" id="${headId}">` +
                     `<button class="accordion-button${isOpen ? '' : ' collapsed'}" type="button" ` +
@@ -2490,7 +2996,7 @@ function _renderBlockHtml(block, blockData) {
                     `${iconHtml}${labelEsc}</button></h2>` +
                     `<div id="${itemId}" class="accordion-collapse collapse${isOpen ? ' show' : ''}" ` +
                     `aria-labelledby="${headId}"${parentAttr}>` +
-                    `<div class="accordion-body">${childInner}</div>` +
+                    `<div class="accordion-body">${anchorMarker}${childInner}</div>` +
                     `</div></div>`;
             });
             return `<div class="accordion wiki-accordion" id="${groupId}">${items.join('')}</div>`;
@@ -2719,33 +3225,126 @@ function _processInlineLayoutTokens(html) {
         return out;
     }
 
-    html = scanComponent(html, /\{badge:([^}|]+)\}/g, (prefix, m) => {
+    // 칩(chip) 계열 컴포넌트의 사람-대상 텍스트 채널 렌더러.
+    // escapeHtml 은 {, }, :, 숫자, - 를 건드리지 않으므로 {dday:}/{age:}/{timer:}/{time:}/
+    // {calendar:} 타임스탬프 토큰이 이스케이프를 통과해 신뢰된 span 으로 렌더링되고,
+    // 나머지 사용자 텍스트는 이스케이프된 채 유지된다.
+    function renderChipValue(raw) {
+        return _processTimestampsInHtml(escapeHtml(raw == null ? '' : String(raw)));
+    }
+
+    // 중괄호 균형 스캐너: {<name>:…} 의 인자를 첫 '}' 가 아니라 중괄호 depth 가 0 으로
+    // 돌아오는 '}' 까지 추출해, {stat:{dday:2026-03-09}|라벨} 같은 중첩 토큰을 지원한다.
+    // scanComponent 와 동일한 out/lastIdx/프리픽스(collectPrefixStart) 규칙을 따른다.
+    // 안전 규칙(기존 정규식의 런어웨이 방지와 동일):
+    //   - depth 가 0 으로 돌아오기 전에 '<' 또는 개행을 만나면 매치 포기(원문 유지)
+    //   - 닫는 '}' 없이 문자열이 끝나도 포기
+    //   - opts.rejectTopLevelPipe: 인자에 최상위 '|' 가 있으면 포기(badge/tag 의 기존
+    //     [^}|] 의미 보존 — 중첩 토큰 내부의 '|' 는 _splitPipeTopLevel 이 무시)
+    // render 가 null 을 반환하면 해당 매치는 원문 유지.
+    function scanComponentBalanced(source, name, render, opts) {
+        const rejectTopLevelPipe = !!(opts && opts.rejectTopLevelPipe);
+        const open = '{' + name + ':';
+        let out = '';
+        let lastIdx = 0;
+        let searchFrom = 0;
+        while (true) {
+            const start = source.indexOf(open, searchFrom);
+            if (start === -1) break;
+            let depth = 1;
+            let i = start + open.length;
+            let closeIdx = -1;
+            while (i < source.length) {
+                const ch = source[i];
+                if (ch === '<' || ch === '\n') break;
+                if (ch === '{') depth++;
+                else if (ch === '}') {
+                    depth--;
+                    if (depth === 0) { closeIdx = i; break; }
+                }
+                i++;
+            }
+            if (closeIdx === -1) {
+                // 미종결 / HTML 태그·개행 충돌 — 원문 유지, 여는 토큰 뒤부터 재탐색.
+                searchFrom = start + open.length;
+                continue;
+            }
+            const arg = source.slice(start + open.length, closeIdx);
+            const end = closeIdx + 1;
+            if (arg.length === 0 || (rejectTopLevelPipe && _splitPipeTopLevel(arg).length > 1)) {
+                searchFrom = start + open.length;
+                continue;
+            }
+            const pStart = collectPrefixStart(source, start, lastIdx);
+            const prefix = source.slice(pStart, start);
+            const built = render(prefix, arg);
+            if (built === null) { searchFrom = end; continue; }
+            out += source.slice(lastIdx, pStart) + built;
+            lastIdx = end;
+            searchFrom = end;
+        }
+        out += source.slice(lastIdx);
+        return out;
+    }
+
+    html = scanComponentBalanced(html, 'badge', (prefix, arg) => {
         const { bg, color } = parseStylePrefix(prefix);
         const iconHtml = extractIconHtml(prefix);
-        const text = m[1].trim();
+        const text = arg.trim();
         const inner = iconHtml
-            ? `${iconHtml}<span class="wiki-badge-label">${escapeHtml(text)}</span>`
-            : escapeHtml(text);
+            ? `${iconHtml}<span class="wiki-badge-label">${renderChipValue(text)}</span>`
+            : renderChipValue(text);
         return `<span class="wiki-badge"${buildStyleAttr(bg, color)}>${inner}</span>`;
-    });
+    }, { rejectTopLevelPipe: true });
 
-    html = scanComponent(html, /\{tag:([^}|]+)\}/g, (prefix, m) => {
+    html = scanComponentBalanced(html, 'tag', (prefix, arg) => {
         const { bg, color } = parseStylePrefix(prefix);
         const iconHtml = extractIconHtml(prefix);
-        const text = m[1].trim();
+        const text = arg.trim();
         const inner = iconHtml
-            ? `${iconHtml}<span class="wiki-tag-label">${escapeHtml(text)}</span>`
-            : escapeHtml(text);
+            ? `${iconHtml}<span class="wiki-tag-label">${renderChipValue(text)}</span>`
+            : renderChipValue(text);
         return `<span class="wiki-tag"${buildStyleAttr(bg, color)}>${inner}</span>`;
-    });
+    }, { rejectTopLevelPipe: true });
 
-    html = scanComponent(html, /\{button:([^}]+)\}/g, (prefix, m) => {
+    html = scanComponentBalanced(html, 'button', (prefix, arg) => {
         const { bg, color } = parseStylePrefix(prefix);
         const iconHtml = extractIconHtml(prefix);
-        const parts = m[1].split('|').map(s => s.trim());
+        const parts = _splitPipeTopLevel(arg).map(s => s.trim());
         const text = parts[0] || '';
         const url = parts[1] || '';
         if (!text || !url) return null;
+        const styled = !!(bg || color);
+        const inner = iconHtml
+            ? `${iconHtml}<span class="wiki-button-label">${renderChipValue(text)}</span>`
+            : renderChipValue(text);
+
+        // 내부 링크 버튼: URL 자리에 위키링크 [[문서]] / [[문서#섹션]] / [[문서#섹션|라벨]]
+        // 를 허용한다. 라벨은 버튼 텍스트(parts[0])가 대신하므로 슬러그·앵커만 사용.
+        // wikiLinkBase 로 href 를 만들고 wiki-button-internal 클래스로 SPA navigateTo /
+        // 앵커 스크롤에 연결한다(동일 오리진이라 외부 링크 확인 팝업도 자연히 우회).
+        const wl = url.match(/^\[\[([\s\S]+)\]\]$/);
+        if (wl) {
+            let target = wl[1];
+            const labelPipe = target.indexOf('|');
+            if (labelPipe !== -1) target = target.substring(0, labelPipe);
+            target = target.trim();
+            let linkSlug = target, anchor = '';
+            const hashIdx = target.indexOf('#');
+            if (hashIdx !== -1) {
+                anchor = target.substring(hashIdx + 1).trim();
+                linkSlug = target.substring(0, hashIdx).trim();
+            }
+            if (!linkSlug && !anchor) return null;
+            const ihref = (!linkSlug && anchor)
+                ? `#${encodeURIComponent(anchor)}`
+                : `${_renderCtx.wikiLinkBase}/${encodeURIComponent(linkSlug)}${anchor ? '#' + encodeURIComponent(anchor) : ''}`;
+            const icls = styled
+                ? 'wiki-button wiki-button-custom wiki-button-internal'
+                : 'wiki-button wiki-button-internal';
+            return `<a class="${icls}" href="${escapeHtml(ihref)}"${buildStyleAttr(bg, color)}>${inner}</a>`;
+        }
+
         const safe = (typeof isSafeUrl === 'function') && isSafeUrl(url);
         const href = safe ? url : '#';
         let external = false;
@@ -2753,21 +3352,17 @@ function _processInlineLayoutTokens(html) {
             const u = new URL(url, window.location.origin);
             external = (u.origin !== window.location.origin);
         } catch (e) { /* 상대 경로 등 */ }
-        const styled = !!(bg || color);
         const cls = styled ? 'wiki-button wiki-button-custom' : 'wiki-button';
         const extAttr = external ? ' target="_blank" rel="noopener noreferrer"' : '';
-        const inner = iconHtml
-            ? `${iconHtml}<span class="wiki-button-label">${escapeHtml(text)}</span>`
-            : escapeHtml(text);
         return `<a class="${cls}" href="${escapeHtml(href)}"${extAttr}${buildStyleAttr(bg, color)}>${inner}</a>`;
     });
 
-    html = scanComponent(html, /\{stat:([^}]+)\}/g, (prefix, m) => {
+    html = scanComponentBalanced(html, 'stat', (prefix, arg) => {
         const { bg, color } = parseStylePrefix(prefix);
         const iconHtml = extractIconHtml(prefix);
-        const parts = m[1].split('|').map(s => s.trim());
-        const value = escapeHtml(parts[0] || '');
-        const label = parts[1] ? escapeHtml(parts[1]) : '';
+        const parts = _splitPipeTopLevel(arg).map(s => s.trim());
+        const value = renderChipValue(parts[0] || '');
+        const label = parts[1] ? renderChipValue(parts[1]) : '';
         const valueInner = iconHtml
             ? `${iconHtml}<span class="wiki-stat-value-text">${value}</span>`
             : value;
@@ -2807,12 +3402,36 @@ function _processInlineLayoutTokens(html) {
             `</span>`;
     });
 
-    html = scanComponent(html, /\{progress:([^}<\n]+)\}/g, (prefix, m) => {
+    html = scanComponentBalanced(html, 'progress', (prefix, arg) => {
         const { bg, color } = parseStylePrefix(prefix);
         const iconHtml = extractIconHtml(prefix);
-        const parts = m[1].split('|').map(s => s.trim());
+        const parts = _splitPipeTopLevel(arg).map(s => s.trim());
         const valueStr = parts[0] || '';
         const label = parts[1] || '';
+
+        // {progress:auto|라벨} — 같은 블록(카드·폴드·섹션 등) 안의 체크리스트 완료율을
+        // 렌더 후처리(_fillAutoProgressBars)가 세어 채운다. 여기서는 0% 자리표시자
+        // 막대를 만들고 data-progress-auto 로 표시만 해 둔다(값 텍스트도 후처리가 채움).
+        if (valueStr.toLowerCase() === 'auto') {
+            const rootStyleA = (color && _isSafeCssColor(color)) ? ` style="color:${color};"` : '';
+            const fillStyleA = (bg && _isSafeCssColor(bg))
+                ? ` style="width:0%;background-color:${bg};"`
+                : ` style="width:0%;"`;
+            const hasLabelA = !!(iconHtml || label);
+            const labelHtmlA = hasLabelA
+                ? `<span class="wiki-progress-label">${iconHtml}${label ? `<span class="wiki-progress-label-text">${renderChipValue(label)}</span>` : ''}</span>`
+                : '';
+            return `<div class="wiki-progress wiki-progress-auto" data-progress-auto="1"${rootStyleA}>` +
+                `<div class="wiki-progress-header">` +
+                    labelHtmlA +
+                    `<span class="wiki-progress-value"></span>` +
+                `</div>` +
+                `<div class="wiki-progress-track">` +
+                    `<div class="wiki-progress-fill"${fillStyleA}></div>` +
+                `</div>` +
+            `</div>`;
+        }
+
         let percent = null;
         let valueDisplay = '';
         const fracMatch = valueStr.match(/^(\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)$/);
@@ -2838,7 +3457,7 @@ function _processInlineLayoutTokens(html) {
         const rootStyle = (color && _isSafeCssColor(color)) ? ` style="color:${color};"` : '';
         const hasLabel = !!(iconHtml || label);
         const labelHtml = hasLabel
-            ? `<span class="wiki-progress-label">${iconHtml}${label ? `<span class="wiki-progress-label-text">${escapeHtml(label)}</span>` : ''}</span>`
+            ? `<span class="wiki-progress-label">${iconHtml}${label ? `<span class="wiki-progress-label-text">${renderChipValue(label)}</span>` : ''}</span>`
             : '';
         return `<div class="wiki-progress"${rootStyle}>` +
             `<div class="wiki-progress-header">` +
@@ -3100,6 +3719,32 @@ function _replaceTaskCheckboxesWithIcons(html) {
     });
 }
 
+// {progress:auto|라벨} 자동 집계 진행도 채우기 (렌더 후처리).
+// 각 auto 막대에서 가장 가까운 공통 블록 컨테이너(카드·폴드·섹션 본문·탭 패널 등,
+// 없으면 문서 본문 전체)를 잡아 그 안의 .wiki-task-checkbox 개수 대비 완료(체크됨,
+// mdi-checkbox-marked) 비율을 계산해 막대 폭과 값 텍스트를 채운다. 진행 중([~])·
+// 미완료([ ]) 항목은 분모(total)에는 포함되지만 완료로 세지 않는다("완료율").
+// makeCollapsibleSections 이후에 호출해 .wiki-section-body-inner 스코프도 인식한다.
+function _fillAutoProgressBars(containerEl) {
+    if (!containerEl) return;
+    const bars = containerEl.querySelectorAll('.wiki-progress-auto[data-progress-auto]');
+    bars.forEach(bar => {
+        const scope = bar.closest(
+            '.wiki-block, .wiki-fold-content, .accordion-body, .tab-pane, ' +
+            '.wiki-embed-body, .wiki-callout-body, .wiki-area, .wiki-section-body-inner'
+        ) || containerEl;
+        const boxes = scope.querySelectorAll('.wiki-task-checkbox');
+        const total = boxes.length;
+        let done = 0;
+        boxes.forEach(b => { if (b.classList.contains('mdi-checkbox-marked')) done++; });
+        const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+        const fill = bar.querySelector('.wiki-progress-fill');
+        if (fill) fill.style.width = pct + '%';
+        const valEl = bar.querySelector('.wiki-progress-value');
+        if (valEl) valEl.textContent = total > 0 ? `${done}/${total} · ${pct}%` : '—';
+    });
+}
+
 // ── 문서 렌더링 통합 (index.html, edit.html 공통) ──
 async function renderWikiContent(content, slug, containerId, options = {}) {
     const containerEl = document.getElementById(containerId);
@@ -3131,9 +3776,12 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
         // 복원한다 — 그 사이 다른 renderWikiContent 호출이 카운터를 덮어써도
         // 이번 호출의 키 순서가 일관되게 유지되도록.
         const myDedup = _resetStateKeyDedup();
+        // 문서 변수(:::meta + {{{@이름}}})를 트랜스클루전 이전에 치환한다(값 하나로
+        // 문서 전체가 갱신되고, 이후 #expr·타임스탬프·컴포넌트 인자와 조합된다).
+        // 풀 위키 문법을 끄는 경로(skipTransclusion)에서는 함께 생략한다.
         const resolvedContent = skipTransclusion
             ? (content || '')
-            : await resolveTransclusions(content || '', slug);
+            : await resolveTransclusions(_applyDocMetaVars(content || ''), slug);
         _stateKeyDedup = myDedup;
         _currentRenderPalettes = myPalettes;
         // resolveTransclusions 가 모듈 로컬 _wikiExtensionData 를 채우는 즉시 스냅샷.
@@ -3254,7 +3902,7 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
                 const b = foldBlockData[parseInt(blkIdx, 10)];
                 return b ? _renderBlockHtml(b, foldBlockData) : '';
             });
-            let contentHtml = (typeof DOMPurify !== 'undefined') ? DOMPurify.sanitize(rawContentHtml, { ADD_TAGS: ['i', 'span', 'details', 'summary', 'div', 'canvas'], ADD_ATTR: ['class', 'style', 'data-bg', 'data-color', 'data-size', 'data-unix', 'data-ext-name', 'data-ext-idx', 'data-state-key', 'data-fn-html', 'colspan', 'rowspan', 'title'] }) : escapeHtml(rawContentHtml);
+            let contentHtml = (typeof DOMPurify !== 'undefined') ? DOMPurify.sanitize(rawContentHtml, { ADD_TAGS: ['i', 'span', 'details', 'summary', 'div', 'canvas'], ADD_ATTR: ['class', 'style', 'data-bg', 'data-color', 'data-size', 'data-unix', 'data-ext-name', 'data-ext-idx', 'data-state-key', 'data-fn-html', 'data-fn-name', 'data-fn-ref', 'data-progress-auto', 'colspan', 'rowspan', 'title'] }) : escapeHtml(rawContentHtml);
 
             foldBlocks.push({ summaryText, bgAttr, colorAttr, contentHtml });
             return `\n\nWIKIFOLDPH${idx}XEND\n\n`;
@@ -3298,7 +3946,7 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
         rawHtml = rawHtml.replace(/(?:<p>)?WIKIEXTPH_([a-zA-Z0-9]+)_(\d+)_XEND(?:<\/p>)?/g, (m, extName, idx) => {
             return `<div class="wiki-ext wiki-ext-${escapeHtml(extName)}" data-ext-name="${escapeHtml(extName)}" data-ext-idx="${escapeHtml(idx)}"></div>`;
         });
-        let html = (typeof DOMPurify !== 'undefined') ? DOMPurify.sanitize(rawHtml, { ADD_TAGS: ['i', 'span', 'details', 'summary', 'div', 'canvas'], ADD_ATTR: ['class', 'style', 'data-bg', 'data-color', 'data-size', 'data-unix', 'data-ext-name', 'data-ext-idx', 'data-state-key', 'data-fn-html', 'colspan', 'rowspan', 'title'] }) : escapeHtml(rawHtml);
+        let html = (typeof DOMPurify !== 'undefined') ? DOMPurify.sanitize(rawHtml, { ADD_TAGS: ['i', 'span', 'details', 'summary', 'div', 'canvas'], ADD_ATTR: ['class', 'style', 'data-bg', 'data-color', 'data-size', 'data-unix', 'data-ext-name', 'data-ext-idx', 'data-state-key', 'data-fn-html', 'data-fn-name', 'data-fn-ref', 'data-progress-auto', 'colspan', 'rowspan', 'title'] }) : escapeHtml(rawHtml);
 
         if (options.showCategory && slug) {
             // index.html 의 route() 가 decodeURIComponent 실패 시 원본 slug 를 그대로
@@ -3563,6 +4211,28 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
                 });
             });
         }
+
+        // 내부 링크 버튼({button:텍스트|[[문서#섹션]]}) — processWikiLinks 와 동일한
+        // 이동 규칙을 적용한다: 같은 페이지 앵커(#…)는 재로드 없이 스크롤(접힌 조상 펼침
+        // 포함), 그 외에는 SPA navigateTo(미정의 시 전체 내비게이션).
+        containerEl.querySelectorAll('a.wiki-button-internal').forEach(a => {
+            a.addEventListener('click', (e) => {
+                e.preventDefault();
+                const href = a.getAttribute('href');
+                if (href && href.startsWith('#')) {
+                    let id;
+                    try { id = decodeURIComponent(href.slice(1)); } catch (_) { id = href.slice(1); }
+                    const target = id ? _resolveAnchorTarget(id) : null;
+                    if (target) {
+                        try { history.pushState(null, '', href); } catch (_) { /* ignore */ }
+                        _scrollToElementWithAncestors(target, { behavior: 'smooth', block: 'start' });
+                    }
+                    return;
+                }
+                if (typeof navigateTo === 'function') navigateTo(a.href);
+                else window.location.href = a.href;
+            });
+        });
 
         // YouTube / Niconico Embed Processing
         containerEl.querySelectorAll('a').forEach(a => {
@@ -3986,6 +4656,10 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
             }
         }
 
+        // {collapse} 토큰: 헤딩에서 토큰 텍스트를 제거하고 기본 접힘 마커를 부착한다.
+        // (목차 카드/FAB/헤딩 표시에 토큰이 노출되지 않도록 번호·목차·섹션 래핑보다 먼저 수행)
+        _applyHeadingCollapseTokens(containerEl);
+
         // 헤딩 번호 삽입 (옵션으로 비활성 가능 — 토론·티켓 본문 등)
         if (!skipHeadingNumbers) {
             numberHeadings(containerEl);
@@ -4035,6 +4709,9 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
 
         // {timer:} 요소 실시간 업데이트
         _initTimers(containerEl, containerId);
+
+        // {progress:auto} 체크리스트 완료율 집계 채우기(섹션 래핑 이후라 섹션 스코프 인식).
+        _fillAutoProgressBars(containerEl);
 
         // 익스텐션 렌더링 (Chart.js 등). resolveTransclusions 직후 캡처한 스냅샷을 전달.
         if (!skipExtensions) {
@@ -4182,7 +4859,9 @@ function _extractMarkdownSectionRanges(markdownText) {
                 headings.push({
                     level: hMatch[1].length,
                     lineIdx: i,
-                    headingText: hMatch[2].trim(),
+                    // {collapse} 토큰은 헤딩 식별/매칭용 텍스트에서 제외한다
+                    // (섹션 트랜스클루전 {{문서#제목}}·섹션 편집 매칭이 토큰 없는 제목으로 동작).
+                    headingText: _stripCollapseToken(hMatch[2].trim()).text,
                     transcluded: depthAt(lineOffsets[i]) > 0
                 });
             } else if (i > 0) {
@@ -4213,7 +4892,7 @@ function _extractMarkdownSectionRanges(markdownText) {
                         headings.push({
                             level: level,
                             lineIdx: i - 1,
-                            headingText: prevTrim,
+                            headingText: _stripCollapseToken(prevTrim).text,
                             transcluded: depthAt(lineOffsets[i - 1]) > 0
                         });
                     }
@@ -4845,6 +5524,10 @@ window._extractMarkdownSectionRanges = _extractMarkdownSectionRanges;
 window._extractMarkdownSections = _extractMarkdownSections;
 window._addHeadingCopyButtons = _addHeadingCopyButtons;
 window._resolveAnchorTarget = _resolveAnchorTarget;
+// 초기 로드 해시 스크롤(pages/index.ts scrollToHash)이 접힌 조상을 펼치도록 노출한다.
+// {collapse} 기본 접힘 섹션·닫힌 fold(<details>)·비활성 탭 내부로의 딥링크 대상이
+// 스크롤 전에 보이도록 조상을 펼친 뒤 스크롤한다(가드: typeof === 'function').
+window._scrollToElementWithAncestors = _scrollToElementWithAncestors;
 
 // initMarkedConfig() / _setupArticleTitleCopy() 의 즉시 호출은 원본 render.js
 // 와 동일하게 파일 본문 안에서 수행된다(상단의 `initMarkedConfig()` / 본문 끝의

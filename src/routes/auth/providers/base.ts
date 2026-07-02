@@ -47,6 +47,8 @@ export interface OAuthStateData {
     expectedUid?: string;
     /** 로그인 완료 후 이동할 상대경로 URL (/ 시작, // 미시작인 경우만 유효) */
     redirectUrl?: string;
+    /** "로그인 유지" 체크 여부. true 면 세션을 매우 길게, 아니면 6시간으로 발급한다. */
+    remember?: boolean;
 }
 
 /**

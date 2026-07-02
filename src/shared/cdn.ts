@@ -131,6 +131,7 @@ export const PAGE_BUNDLES: Record<string, BundleName[]> = {
     '/setup-profile.html':  ['base'],
     '/user-profile.html':   ['base'],
     '/login.html':          ['base'],
+    '/qr-login.html':       ['base'],
     '/error.html':          ['base'],
 };
 

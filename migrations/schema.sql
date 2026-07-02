@@ -32,6 +32,31 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 
+-- QR 로그인 핸드셰이크 테이블
+-- 게스트 기기(비로그인)가 표시한 QR 을 이미 로그인된 호스트 기기가 찍어 승인하면
+-- 게스트 기기에 6시간짜리 임시 세션을 발급하는 흐름의 단기 상태를 저장한다.
+--  - token      : QR·승인 URL 에 노출되는 공개 식별자(호스트가 스캔). 그 자체로는 아무 권한이 없다.
+--  - secret_hash: 게스트만 보유하는 secret 의 SHA-256. 게스트가 status 조회/redeem 시 소유권 증명에 사용.
+--                 token 을 관찰한 제3자가 세션을 가로채지 못하도록 한다(redeem 은 secret 필수).
+--  - status     : pending → approved(호스트 승인) → consumed(게스트 세션 발급 완료). cancelled 는 취소.
+--  - guest_ua   : 게스트 기기 User-Agent (호스트 승인 화면에 표시 — 예기치 못한 기기 탐지용).
+--  - approved_user_id: 승인한 호스트 계정. redeem 시 이 계정으로 게스트 세션을 만든다.
+-- expires_at 로 짧게(수 분) 만료시키며, 만료분은 크론이 정리한다. KV 대신 D1 을 쓰는 이유는
+-- 게스트/호스트가 서로 다른 콜로에서 폴링하므로 강한 read-after-write 일관성이 필요하기 때문.
+CREATE TABLE IF NOT EXISTS qr_login_sessions (
+  token            TEXT PRIMARY KEY,
+  secret_hash      TEXT NOT NULL,
+  status           TEXT NOT NULL DEFAULT 'pending',  -- 'pending' | 'approved' | 'consumed' | 'cancelled'
+  guest_ua         TEXT,
+  approved_user_id INTEGER,
+  created_at       INTEGER NOT NULL DEFAULT (unixepoch()),
+  expires_at       INTEGER NOT NULL,
+  approved_at      INTEGER,
+  consumed_at      INTEGER,
+  FOREIGN KEY (approved_user_id) REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS idx_qr_login_expires ON qr_login_sessions(expires_at);
+
 -- 문서 테이블
 -- slug 가 문서의 고유 식별자이며 모든 호출 경로(위키 링크/트랜스클루전/MCP/URL)의 단일 진실이다.
 -- title 은 선택적 표시 전용 대체 제목(NULL = slug 사용). 호출 매칭에는 절대 참여하지 않는다.

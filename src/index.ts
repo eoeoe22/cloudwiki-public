@@ -28,6 +28,7 @@ import oauthRoutes from './routes/oauth';
 import analyticsRoutes from './routes/analytics';
 import blogRoutes from './routes/blog';
 import exploreRoutes from './routes/explore';
+import qrLoginRoutes from './routes/qr-login';
 import { trackPageView, trackError, queryAnalytics } from './utils/analytics';
 import { isR2OnlyNamespace, isMapNamespace, normalizeSlug } from './utils/slug';
 import { getEnabledExtensions } from './utils/extensions';
@@ -163,6 +164,7 @@ app.route('/', oauthRoutes); // /.well-known/* + /oauth/*
 app.route('/api/admin/analytics', analyticsRoutes);
 app.route('/api', blogRoutes);
 app.route('/api', exploreRoutes);
+app.route('/api', qrLoginRoutes);
 
 // ── Service Worker (/sw.js) ──
 // Vite 빌드 산출물을 /dist/sw.js 로 두고, 루트 스코프 부여를 위해 /sw.js 로 위임한다.
@@ -918,6 +920,16 @@ app.get('/login', async (c) => {
     });
 });
 
+// /qr-login/:token 접근 시 QR 로그인 승인 페이지(호스트 기기) 서빙.
+// 승인은 로그인된 사용자만 가능하므로 비로그인 시 로그인 후 돌아오도록 리다이렉트한다.
+app.get('/qr-login/:token', async (c) => {
+    if (!c.get('user')) {
+        const token = c.req.param('token');
+        return c.redirect('/login?redirect=' + encodeURIComponent('/qr-login/' + token));
+    }
+    return fetchAssetHtml(c, '/qr-login.html');
+});
+
 // / (루트) 접근 시 index.html 서빙 (SSR 브랜딩 적용)
 app.get('/', async (c) => {
     if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) {
@@ -1275,6 +1287,18 @@ export default {
             env.DB.prepare(
                 'DELETE FROM sessions WHERE expires_at < ?'
             ).bind(now).run()
+        );
+        // QR 로그인 핸드셰이크 정리: 만료된(수 분 TTL) 행을 주기적으로 삭제해 테이블 무한 증가를 막는다.
+        // start 라우트가 매 시작마다 best-effort 로 정리하지만, 트래픽이 없는 동안 남는 잔여분도 청소한다.
+        // (테이블 미존재 레거시 환경은 조용히 무시 — 첫 QR 로그인 호출 시 런타임 마이그레이션이 생성한다.)
+        ctx.waitUntil(
+            env.DB.prepare('DELETE FROM qr_login_sessions WHERE expires_at < ?')
+                .bind(now)
+                .run()
+                .catch((e: unknown) => {
+                    const msg = e instanceof Error ? e.message : String(e);
+                    if (!msg.includes('no such table')) console.error('qr_login_sessions cleanup failed:', e);
+                })
         );
     }
 };

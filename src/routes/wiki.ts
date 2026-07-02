@@ -507,7 +507,7 @@ export async function applyCreatePrefixRulesAndCategoryAcls(
  */
 function rewriteTransclusionCallNames(
     text: string,
-    variants: { from: string; to: string }[]
+    variants: { from: string; to: string; anchorPolicy?: 'any' | 'anchored' | 'bare' }[]
 ): string {
     const calls = findTemplateCalls(text);
     if (calls.length === 0) return text;
@@ -525,9 +525,19 @@ function rewriteTransclusionCallNames(
         const secPart = hashIdx >= 0 ? head.slice(hashIdx) : '';
         const name = (hashIdx >= 0 ? head.slice(0, hashIdx) : head).trim();
         const variant = variants.find(v => v.from === name);
-        out += variant
-            ? `{{${variant.to}${secPart}${rest}}}`
-            : text.slice(call.start, call.fullEnd);
+        // 앵커 유무로 참조 대상이 갈린다: `{{Foo}}` 는 `틀:Foo`(틀), `{{Foo#s}}` 는 일반 문서
+        // Foo 의 섹션(render.ts _parseSectionRef). 그래서 변형별 적용 정책을 둔다:
+        //   'any'      — 앵커 무관(명시 `틀:`/익스텐션 접두 변형)
+        //   'anchored' — 앵커 있는 호출만(일반 문서 이동 = 섹션 트랜스클루전만)
+        //   'bare'     — 앵커 없는 호출만(틀 이동의 무접두 shorthand `{{Foo}}`; `{{Foo#s}}` 는 일반 문서라 제외)
+        const hasAnchor = secPart.length > 1 && secPart.slice(1).trim() !== '';
+        const policy = variant ? (variant.anchorPolicy || 'any') : 'any';
+        const policyOk = policy === 'any' || (policy === 'anchored' ? hasAnchor : !hasAnchor);
+        if (variant && policyOk) {
+            out += `{{${variant.to}${secPart}${rest}}}`;
+        } else {
+            out += text.slice(call.start, call.fullEnd);
+        }
         cursor = call.fullEnd;
     }
     out += text.slice(cursor);
@@ -539,6 +549,8 @@ function rewriteTransclusionCallNames(
  * - 코드블럭(```...```)과 인라인 코드(`...`)는 마스킹하여 보존
  * - `[[oldSlug]]`, `[[oldSlug|표시]]`, `[[oldSlug#섹션]]`, `[[oldSlug#섹션|표시]]`를 새 슬러그로 치환
  * - isTemplateMove === true일 때만 `{{...}}` 치환 (`틀:`, `template:`, `템플릿:` 접두사 변형 포함)
+ * - 일반 문서 이동은 섹션 트랜스클루전 `{{oldSlug#섹션}}` 헤드만 치환(앵커 없는 `{{oldSlug}}`=`틀:`의미라 제외)
+ * - `틀:` 이동의 무접두 shorthand `{{Foo}}` 는 앵커 없는 호출만 치환(`{{Foo#s}}` 는 일반 문서 Foo 섹션이라 제외)
  * - 익스텐션 슬러그(콜론 포함, 틀 접두사 아님)는 `{{namespace:Name}}` 형태 치환
  * - 원문과 결과가 동일하면 호출자가 새 리비전 생성을 생략할 수 있도록 문자열 비교로 판단
  */
@@ -588,22 +600,28 @@ export function rewriteContentForRename(
 
     // 3) {{template}} / {{extension}} 치환 — 공유 스캐너(rewriteTransclusionCallNames)로 호출의
     //    이름 부분만 안전하게 치환한다(파라미터·멀티라인·중괄호 포함 호출도 정확히 매칭).
-    const callVariants: { from: string; to: string }[] = [];
+    const callVariants: { from: string; to: string; anchorPolicy?: 'any' | 'anchored' | 'bare' }[] = [];
     if (isTemplateMove) {
         // 접두사가 다른 `{{template:Foo}}` / `{{템플릿:Foo}}` 등은 각각 다른 문서를 가리키므로
-        // 건드리지 않는다. `{{Foo}}`(접두사 없음)는 파서가 항상 `틀:`을 붙여 해석하므로,
-        // `틀:` 네임스페이스 내부 이동일 때에만 bare 형태를 함께 갱신한다.
+        // 건드리지 않는다. 명시 접두 변형은 앵커 무관(`{{틀:Foo}}`·`{{틀:Foo#s}}` 모두 틀 참조).
         callVariants.push({ from: oldSlug, to: newSlug });
         if (matchedOldPrefix === '틀:' && matchedNewPrefix === '틀:') {
+            // `{{Foo}}`(접두사 없음)는 파서가 `틀:`을 붙여 해석하므로 함께 갱신하되, `{{Foo#s}}`
+            // 는 일반 문서 Foo 의 섹션 트랜스클루전이라 이 틀 이동과 무관 — 앵커 없는 호출만.
             callVariants.push({
                 from: oldSlug.substring(matchedOldPrefix.length),
                 to: newSlug.substring(matchedNewPrefix.length),
+                anchorPolicy: 'bare',
             });
         }
     } else if (isExtensionMove) {
         callVariants.push({ from: oldSlug, to: newSlug });
+    } else {
+        // 일반 문서 이동(Foo → Bar): 앵커 없는 `{{Foo}}` 는 `틀:Foo` 를 의미하므로 그대로 두되,
+        // 섹션 트랜스클루전 `{{Foo#s-1}}` 은 일반 문서 Foo 를 가리키므로(render.ts _parseSectionRef)
+        // 그 헤드만 `{{Bar#s-1}}` 로 갱신한다 — 그러지 않으면 이동 후 옛(사라진) 슬러그를 fetch 한다.
+        callVariants.push({ from: oldSlug, to: newSlug, anchorPolicy: 'anchored' });
     }
-    // 일반 문서 이동(Foo → Bar) 시에는 {{Foo}}는 `틀:Foo`를 의미하므로 변환하지 않음(callVariants 비움)
     if (callVariants.length > 0) {
         masked = rewriteTransclusionCallNames(masked, callVariants);
     }

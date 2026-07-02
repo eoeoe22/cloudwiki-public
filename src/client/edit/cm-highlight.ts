@@ -72,8 +72,8 @@ export function buildWikiHighlightPlugins(cm: WikiHighlightCM, opts: WikiHighlig
 
     const templateMatcher = new MatchDecorator({
         // {{{...}}} 파라미터 참조는 제외 (lookbehind + lookahead 사용).
-        // 파서 함수 {{#if:}}/{{#ifeq:}}/{{#switch:}} 도 제외 — parserFuncMatcher 가 별도 색으로 처리.
-        regexp: /(?<!\{)\{\{(?!\{)(?!\s*#(?:if|ifeq|switch)\b\s*:)([^}]*)\}\}/gi,
+        // 파서 함수 {{#if:}}/{{#ifeq:}}/{{#switch:}}/{{#expr:}} 도 제외 — parserFuncMatcher 가 별도 색으로 처리.
+        regexp: /(?<!\{)\{\{(?!\{)(?!\s*#(?:if|ifeq|switch|expr)\b\s*:)([^}]*)\}\}/gi,
         decoration: (match: any, view: any, pos: number) => {
             if (isInInlineCode(view.state, pos)) return null;
             return Decoration.mark({ class: "cm-wiki-template" });
@@ -81,11 +81,11 @@ export function buildWikiHighlightPlugins(cm: WikiHighlightCM, opts: WikiHighlig
     });
     const templatePlugin = makePlugin(templateMatcher);
 
-    // 틀 파서 함수 {{#if:}}/{{#ifeq:}}/{{#switch:}} — 일반 틀 호출과 구분되는 색.
-    // render.ts 의 _PARSER_FUNCTIONS 와 동일한 세 함수만 인식한다(대소문자 무시).
+    // 틀 파서 함수 {{#if:}}/{{#ifeq:}}/{{#switch:}}/{{#expr:}} — 일반 틀 호출과 구분되는 색.
+    // render.ts 의 _PARSER_FUNCTIONS 와 동일한 함수만 인식한다(대소문자 무시).
     // 렌더러 계약(`/^\s*#([a-zA-Z]+)\s*:/`)과 일치하도록 함수명 뒤 콜론을 필수로 둔다.
     const parserFuncMatcher = new MatchDecorator({
-        regexp: /(?<!\{)\{\{(?!\{)\s*#(?:if|ifeq|switch)\b\s*:[^}]*\}\}/gi,
+        regexp: /(?<!\{)\{\{(?!\{)\s*#(?:if|ifeq|switch|expr)\b\s*:[^}]*\}\}/gi,
         decoration: (match: any, view: any, pos: number) => {
             if (isInInlineCode(view.state, pos)) return null;
             return Decoration.mark({ class: "cm-wiki-parserfunc" });

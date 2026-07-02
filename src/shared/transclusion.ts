@@ -253,9 +253,29 @@ function collectTransclusionTargets(content: string, out: TransclusionTarget[], 
             collectTransclusionTargets(call.raw, out, seen);
             continue;
         }
+        const nameBeforeArgs = rawTrim.split('|')[0].trim();
+        // 섹션 트랜스클루전 {{문서#섹션}} 은 렌더러(render.ts _parseSectionRef)가 문서
+        // 슬러그를 그대로(틀: 미부착, 명시 접두는 유지) fetch 한다. 의존성 인덱스도 같은
+        // 슬러그를 대상으로 기록해야 역링크·이동 재작성·캐시 무효화가 원본 문서 편집을
+        // 반영한다(그러지 않으면 틀:문서 로 잘못 기록돼 섹션 포함 페이지가 stale 로 남는다).
+        const hashIdx = nameBeforeArgs.indexOf('#');
+        if (hashIdx > 0) {
+            const docPart = nameBeforeArgs.slice(0, hashIdx).trim();
+            const anchor = nameBeforeArgs.slice(hashIdx + 1).trim();
+            const dColon = docPart.indexOf(':');
+            const docIsExtension = dColon > 0 && !hasTemplatePrefix(docPart);
+            if (docPart && anchor && !docIsExtension) {
+                const key = 't:' + docPart;
+                if (!seen.has(key)) {
+                    seen.add(key);
+                    out.push({ slug: docPart, type: 'template' });
+                }
+                continue;
+            }
+        }
         // '|' 앞부분만 slug 로 사용 (파라미터/인자 무시), '#' 앞부분만 slug 로 사용 (섹션 앵커 무시).
         // 슬러그 자체는 '#'/'|' 을 포함할 수 없으므로(이동 API 입력검증 참고) 항상 안전하게 제거.
-        const slug = rawTrim.split('|')[0].split('#')[0].trim();
+        const slug = nameBeforeArgs.split('#')[0].trim();
         if (!slug) continue;
         // 익스텐션 패턴: 첫 번째 ':' 앞이 익스텐션 이름 (틀/template/템플릿 접두사가 아닌 경우)
         const colonIdx = slug.indexOf(':');

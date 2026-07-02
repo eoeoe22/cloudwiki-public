@@ -14,6 +14,7 @@
  */
 
 import { parseEditAcl, type EditAclFlag } from './editAcl';
+import { stripCollapseToken } from './headingTokens';
 
 export const MAP_TREE_LIMIT = 500;
 /**
@@ -141,7 +142,8 @@ function extractMapTOC(content: string): { num: string; title: string }[] {
         }
         const m = line.match(/^(#{1,4})\s+(.*)$/);
         if (!m) continue;
-        headings.push({ level: m[1].length, title: m[2].trim() });
+        // {collapse} 토큰은 맵/트리 목차 제목 표시에서 제외.
+        headings.push({ level: m[1].length, title: stripCollapseToken(m[2].trim()) });
     }
     if (headings.length === 0) return [];
 

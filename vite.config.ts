@@ -34,6 +34,7 @@ export default defineConfig({
             input: {
                 '404': resolve(__dirname, 'src/client/404.ts'),
                 'login': resolve(__dirname, 'src/client/pages/login.ts'),
+                'qr-login-approve': resolve(__dirname, 'src/client/pages/qr-login-approve.ts'),
                 'edit-summary': resolve(__dirname, 'src/client/edit/summary.ts'),
                 'edit-utils': resolve(__dirname, 'src/client/edit/utils.ts'),
                 'edit-image': resolve(__dirname, 'src/client/edit/image.ts'),

@@ -18,6 +18,7 @@ packages/*/node_modules
 /.astro
 /public/error.html
 /public/login.html
+/public/qr-login.html
 /public/search.html
 /public/explore.html
 /public/all.html

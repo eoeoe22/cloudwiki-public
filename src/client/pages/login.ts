@@ -15,6 +15,7 @@ import { escapeHtml } from '../utils/html';
 import { apiGet } from '../utils/api';
 import '../utils/swal';
 import type { AuthProvidersResponse } from '../../shared/api/auth';
+import { initQrLogin } from './qr-login-guest';
 
 interface SsrData {
     loginMessage?: string;
@@ -43,6 +44,21 @@ function getSafeRedirectParam(): string | null {
     return (raw && raw.startsWith('/') && !raw.startsWith('//') && !/[\x00-\x1f\x7f]/.test(raw)) ? raw : null;
 }
 
+/**
+ * "로그인 유지" 체크 상태를 모든 공급자 링크의 remember 쿼리에 반영한다.
+ * 체크 시 remember=1 을 붙이면 서버가 세션을 매우 길게, 미체크면 6시간으로 발급한다.
+ */
+function applyRememberToLinks(remember: boolean): void {
+    const container = document.getElementById('auth-providers-container');
+    if (!container) return;
+    container.querySelectorAll<HTMLAnchorElement>('a.btn-oauth').forEach((a) => {
+        const url = new URL(a.getAttribute('href') || '', window.location.origin);
+        if (remember) url.searchParams.set('remember', '1');
+        else url.searchParams.delete('remember');
+        a.setAttribute('href', url.pathname + url.search);
+    });
+}
+
 async function renderProviders(): Promise<void> {
     try {
         const { providers } = await apiGet<AuthProvidersResponse>('/api/auth/providers');
@@ -61,6 +77,10 @@ async function renderProviders(): Promise<void> {
             a.innerHTML = cfg.icon + '<span>' + label + '</span>';
             container.appendChild(a);
         }
+
+        // 버튼이 렌더된 뒤 현재 체크박스 상태를 반영 (비동기 렌더 이후 링크 갱신)
+        const rememberCheckbox = document.getElementById('rememberMe') as HTMLInputElement | null;
+        applyRememberToLinks(!!rememberCheckbox?.checked);
     } catch (e) {
         console.error('Failed to load auth providers', e);
     }
@@ -83,6 +103,10 @@ function policyHtml(s: string): string {
 
 document.addEventListener('DOMContentLoaded', () => {
     renderProviders();
+    initQrLogin();
+
+    const rememberCheckbox = document.getElementById('rememberMe') as HTMLInputElement | null;
+    rememberCheckbox?.addEventListener('change', () => applyRememberToLinks(rememberCheckbox.checked));
 
     const ssrData = readSsrData();
     if (ssrData.loginMessage) {

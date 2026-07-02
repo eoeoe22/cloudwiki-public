@@ -11,7 +11,15 @@ import { userJoined } from '../../utils/webhook/events/signup';
  *  2. 없으면 이메일 중복 체크 → 신규 유저 생성 (또는 승인제 처리)
  *  3. 세션 생성 후 쿠키 발급
  */
-export async function handleOAuthLogin(c: Context<Env>, profile: OAuthProfile, redirectUrl?: string): Promise<Response> {
+/**
+ * 세션 수명(초).
+ *  - REMEMBER: "로그인 유지" 체크 시. 매우 길게(1년) 발급한다.
+ *  - DEFAULT : 미체크 시. 6시간 후 만료.
+ */
+export const SESSION_TTL_REMEMBER = 60 * 60 * 24 * 365; // 1년
+export const SESSION_TTL_DEFAULT = 60 * 60 * 6; // 6시간
+
+export async function handleOAuthLogin(c: Context<Env>, profile: OAuthProfile, redirectUrl?: string, remember = false): Promise<Response> {
     const db = c.env.DB;
 
     let isNewUser = false;
@@ -137,7 +145,7 @@ export async function handleOAuthLogin(c: Context<Env>, profile: OAuthProfile, r
     }
 
     // 3. 세션 생성 + 쿠키 발급
-    await createSession(c, user.id);
+    await createSession(c, user.id, remember);
 
     if (isNewUser) {
         return c.redirect('/setup-profile');
@@ -151,11 +159,13 @@ export async function handleOAuthLogin(c: Context<Env>, profile: OAuthProfile, r
 
 /**
  * 세션 생성 + 쿠키 설정
+ * @param remember "로그인 유지" 여부. true 면 매우 긴 수명, 아니면 6시간.
  */
-export async function createSession(c: Context<Env>, userId: number): Promise<void> {
+export async function createSession(c: Context<Env>, userId: number, remember = false): Promise<void> {
     const sessionId = crypto.randomUUID();
     const now = Math.floor(Date.now() / 1000);
-    const expiresAt = now + 60 * 60 * 24 * 7; // 7일
+    const maxAge = remember ? SESSION_TTL_REMEMBER : SESSION_TTL_DEFAULT;
+    const expiresAt = now + maxAge;
     const userAgent = c.req.header('User-Agent') || null;
 
     await c.env.DB
@@ -165,7 +175,7 @@ export async function createSession(c: Context<Env>, userId: number): Promise<vo
 
     c.header(
         'Set-Cookie',
-        `wiki_session=${sessionId}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${60 * 60 * 24 * 7}`
+        `wiki_session=${sessionId}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`
     );
 }
 
