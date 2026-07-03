@@ -61,6 +61,11 @@ declare global {
         openStructureBlockInsertModal?: () => void;
         openGoogleMapsEmbedModal?: () => void;
         openTemplateModal?: () => Promise<void>;
+        openTemplateInsertModal?: () => Promise<void>;
+        /** render.js 가 노출하는 틀 파라미터 치환기 (openTemplateInsertModal 프리뷰 폴백) */
+        _substituteTemplateParams?: (content: string, args: Record<string, string>, depth?: number) => string;
+        /** render.js 가 노출하는 최상위 `|` 분리기 (틀 호출 인자 직렬화 시 파이프 이스케이프용) */
+        _splitPipeTopLevel?: (raw: string) => string[];
     }
 }
 
@@ -2562,6 +2567,342 @@ async function openTemplateModal(): Promise<void> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// 틀 삽입 모달 (커서 위치에 {{틀}} 호출 삽입)
+// ─────────────────────────────────────────────────────────────────────────────
+// 툴바 "{{ }} 틀 삽입" 버튼이 여는 모달. 과거에는 `{{틀제목}}` 예시 스니펫을 그대로
+// 삽입했지만, 이제 (1) 틀 문서 검색 → (2) 내용 미리보기 → (3) 파라미터 채우기 →
+// (4) 완성된 `{{틀:슬러그|인자}}` 호출 삽입 플로우로 대체한다.
+// 문서 전체를 틀로 교체하는 openTemplateModal("템플릿으로 시작하기")과는 별개다.
+
+interface TemplateParam { name: string; def: string | undefined; }
+
+/** 표시용 접두사(틀:/template:/템플릿:)를 제거한다. 식별·호출에는 항상 원본 slug 를 쓴다. */
+function templateDisplayTitle(slug: string): string {
+    return slug.replace(/^(틀|template|템플릿):/i, '');
+}
+
+/**
+ * 틀 본문에서 `{{{이름}}}` / `{{{1}}}` / `{{{이름|기본값}}}` 파라미터 참조를 추출한다.
+ * - render.js 의 `window._findParamRefs`(코드스팬/중첩 방어 스캐너)를 재사용한다.
+ * - 기본값 안의 중첩 참조(`{{{reason|{{{1|}}}}}}` 관용 패턴)까지 재귀 수집한다.
+ * - `@` 접두 참조(`{{{@이름}}}`)는 문서 변수(:::meta)이지 틀 호출 인자가 아니므로 제외한다.
+ * 반환: positional(숫자 이름, 오름차순) / named(그 외, 최초 등장 순).
+ */
+function extractTemplateParams(content: string): { positional: TemplateParam[]; named: TemplateParam[] } {
+    const findRefs = window._findParamRefs;
+    if (typeof findRefs !== 'function') return { positional: [], named: [] };
+    const seen = new Map<string, string | undefined>();
+    const order: string[] = [];
+    const POSITIONAL_RE = /^[1-9]\d*$/;
+
+    function scan(text: string): void {
+        for (const r of findRefs!(text)) {
+            const raw = r.raw;
+            const pipeIdx = raw.indexOf('|');
+            const name = (pipeIdx === -1 ? raw : raw.substring(0, pipeIdx)).trim();
+            const def = pipeIdx === -1 ? undefined : raw.substring(pipeIdx + 1);
+            if (name && !name.startsWith('@') && !seen.has(name)) {
+                seen.set(name, def);
+                order.push(name);
+            }
+            if (pipeIdx !== -1) scan(raw.substring(pipeIdx + 1));
+        }
+    }
+    scan(content);
+
+    const positional: TemplateParam[] = [];
+    const named: TemplateParam[] = [];
+    for (const name of order) {
+        const entry: TemplateParam = { name, def: seen.get(name) };
+        if (POSITIONAL_RE.test(name)) positional.push(entry);
+        else named.push(entry);
+    }
+    positional.sort((a, b) => parseInt(a.name, 10) - parseInt(b.name, 10));
+    return { positional, named };
+}
+
+/**
+ * 파라미터 값을 틀 호출 인자로 직렬화할 때 최상위 `|` 를 `&#124;` 로 이스케이프한다.
+ * 그대로 두면 `_parseTemplateCall` 이 인자 구분자로 오해해 삽입 결과가 미리보기와
+ * 달라진다(예: 라벨 "A | B"). `&#124;` 는 표 셀 등에서 `|` 로 렌더돼 안전하다.
+ * 중첩 `{{...}}`/`[[...]]` 안의 `|` 는 사용자가 의도한 토큰이므로 보존한다.
+ * 폴백: 스캐너 부재 시 모든 `|` 를 이스케이프(중첩 여부 구분 불가).
+ */
+function escapeTemplateArgValue(value: string): string {
+    const split = window._splitPipeTopLevel;
+    if (typeof split === 'function') return split(value).join('&#124;');
+    return value.replace(/\|/g, '&#124;');
+}
+
+/** 파라미터 기본값을 placeholder 문구로 정리한다(중괄호 포함 복잡 기본값은 요약). */
+function templateParamPlaceholder(def: string | undefined): string {
+    if (def === undefined) return '값 입력 (선택)';
+    const clean = def.trim();
+    if (clean === '') return '기본값: (빈 값)';
+    if (/[{}]/.test(clean)) return '기본값 있음';
+    return `기본값: ${clean}`;
+}
+
+async function openTemplateInsertModal(): Promise<void> {
+    const Swal = window.Swal;
+    if (!Swal) return;
+    const editor = window.editor;
+
+    // 삽입할 최종 텍스트. "삽입" 버튼 클릭 시 채워지고, 모달 닫힘 후 커서 위치에 삽입한다.
+    let resultText: string | null = null;
+    let searchDebounce: number | undefined;
+    let previewDebounce: number | undefined;
+    // 늦게 도착한 이전 요청이 최신 결과를 덮어쓰지 못하도록 하는 세대 카운터.
+    let searchGen = 0;
+    let detailGen = 0;
+
+    await Swal.fire({
+        title: '<i class="mdi mdi-shape-plus-outline me-2"></i>틀 삽입',
+        html: `
+            <div class="text-start">
+                <div id="tplInsSearchView">
+                    <div class="input-group mb-2">
+                        <input type="text" id="tplInsSearchInput" class="form-control" placeholder="틀 문서 검색 (예: 정보상자)" autocomplete="off">
+                        <button class="btn btn-primary" id="tplInsSearchBtn" type="button"><i class="mdi mdi-magnify"></i></button>
+                    </div>
+                    <div id="tplInsList" class="list-group" style="max-height: 320px; overflow-y: auto;"></div>
+                </div>
+                <div id="tplInsDetailView" style="display:none;"></div>
+            </div>
+        `,
+        width: 680,
+        showConfirmButton: false,
+        showCloseButton: true,
+        showCancelButton: false,
+        didOpen: () => {
+            const searchView = document.getElementById('tplInsSearchView');
+            const detailView = document.getElementById('tplInsDetailView');
+            const searchInput = document.getElementById('tplInsSearchInput') as HTMLInputElement | null;
+            const searchBtn = document.getElementById('tplInsSearchBtn');
+            const listEl = document.getElementById('tplInsList');
+            if (!searchView || !detailView || !searchInput || !searchBtn || !listEl) return;
+
+            // ── 검색 뷰 ──
+            const renderList = (templates: TemplateItem[] | undefined) => {
+                listEl.innerHTML = '';
+                if (!templates || templates.length === 0) {
+                    listEl.innerHTML = '<div class="p-3 text-center text-muted">검색 결과가 없습니다.</div>';
+                    return;
+                }
+                templates.forEach(t => {
+                    const btn = document.createElement('button');
+                    btn.type = 'button';
+                    btn.className = 'list-group-item list-group-item-action d-flex align-items-center gap-2';
+                    btn.innerHTML = `<i class="mdi mdi-toy-brick-outline text-primary"></i>`
+                        + `<span class="flex-grow-1">${escapeHtml(templateDisplayTitle(t.slug))}</span>`
+                        + `<span class="badge bg-secondary-subtle text-secondary-emphasis">${escapeHtml(t.slug)}</span>`;
+                    btn.onclick = () => showDetail(t.slug);
+                    listEl.appendChild(btn);
+                });
+            };
+
+            const fetchTemplates = async (query: string) => {
+                const gen = ++searchGen;
+                listEl.innerHTML = '<div class="p-3 text-center"><span class="spinner-border spinner-border-sm text-primary" role="status"></span> 불러오는 중...</div>';
+                try {
+                    // inline=1: 인라인 틀 삽입용으로 틀 네임스페이스 3종을 모두 검색한다
+                    // (문서 전체 교체용 openTemplateModal 과 달리 partial 틀까지 포함).
+                    const res = await fetch(`/api/w/templates?inline=1${query ? `&q=${encodeURIComponent(query)}` : ''}`);
+                    if (gen !== searchGen) return;
+                    if (!res.ok) throw new Error('틀 목록을 불러올 수 없습니다.');
+                    const data = await res.json() as { templates?: TemplateItem[] };
+                    if (gen !== searchGen) return;
+                    renderList(data.templates);
+                } catch (err) {
+                    if (gen !== searchGen) return;
+                    const msg = err instanceof Error ? err.message : '오류';
+                    listEl.innerHTML = `<div class="p-3 text-center text-danger">${escapeHtml(msg)}</div>`;
+                }
+            };
+
+            searchBtn.addEventListener('click', () => fetchTemplates(searchInput.value.trim()));
+            searchInput.addEventListener('input', () => {
+                clearTimeout(searchDebounce);
+                searchDebounce = window.setTimeout(() => fetchTemplates(searchInput.value.trim()), 250);
+            });
+            searchInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    clearTimeout(searchDebounce);
+                    fetchTemplates(searchInput.value.trim());
+                }
+            });
+
+            // ── 상세(미리보기 + 파라미터) 뷰 ──
+            const backToSearch = () => {
+                detailGen++; // 진행 중이던 상세 로딩/프리뷰 응답 폐기
+                clearTimeout(previewDebounce);
+                detailView.style.display = 'none';
+                detailView.innerHTML = '';
+                searchView.style.display = '';
+                searchInput.focus();
+            };
+
+            const showDetail = async (slug: string) => {
+                const gen = ++detailGen;
+                clearTimeout(previewDebounce); // 이전 상세 뷰의 대기 중 프리뷰 렌더 취소
+                searchView.style.display = 'none';
+                detailView.style.display = '';
+                detailView.innerHTML = '<div class="p-4 text-center"><span class="spinner-border spinner-border-sm text-primary" role="status"></span> 틀 내용을 불러오는 중...</div>';
+
+                let content = '';
+                try {
+                    const res = await fetch(`/api/w/${encodeURIComponent(slug)}`);
+                    if (gen !== detailGen) return;
+                    if (!res.ok) throw new Error('틀 내용을 불러올 수 없습니다.');
+                    const data = await res.json() as { content?: string };
+                    if (gen !== detailGen) return;
+                    content = data.content || '';
+                } catch (err) {
+                    if (gen !== detailGen) return;
+                    const msg = err instanceof Error ? err.message : '오류';
+                    detailView.innerHTML = `<div class="alert alert-danger">${escapeHtml(msg)}</div>`
+                        + `<button type="button" class="btn btn-outline-secondary btn-sm" id="tplInsBackErr"><i class="mdi mdi-arrow-left"></i> 뒤로</button>`;
+                    document.getElementById('tplInsBackErr')?.addEventListener('click', backToSearch);
+                    return;
+                }
+
+                const { positional, named } = extractTemplateParams(content);
+                const params: TemplateParam[] = [...positional, ...named];
+
+                const paramRows = params.map((p, i) => {
+                    const label = /^[1-9]\d*$/.test(p.name)
+                        ? `위치 인자 <code>${escapeHtml(p.name)}</code>`
+                        : `<code>${escapeHtml(p.name)}</code>`;
+                    return `
+                        <div class="mb-2">
+                            <label class="form-label small mb-1 text-muted">${label}</label>
+                            <input type="text" class="form-control form-control-sm tpl-ins-param-input"
+                                data-pidx="${i}" placeholder="${escapeHtml(templateParamPlaceholder(p.def))}" autocomplete="off">
+                        </div>`;
+                }).join('');
+
+                detailView.innerHTML = `
+                    <div class="d-flex align-items-center gap-2 mb-2">
+                        <button type="button" class="btn btn-outline-secondary btn-sm" id="tplInsBack" title="검색으로 돌아가기"><i class="mdi mdi-arrow-left"></i></button>
+                        <strong class="flex-grow-1 text-truncate" title="${escapeHtml(slug)}">${escapeHtml(templateDisplayTitle(slug))}</strong>
+                    </div>
+                    ${params.length > 0 ? `
+                    <div class="mb-2">
+                        <div class="fw-semibold small mb-2"><i class="mdi mdi-tune-variant"></i> 파라미터 (${params.length}개)</div>
+                        <div id="tplInsParams" style="max-height: 220px; overflow-y: auto;">${paramRows}</div>
+                    </div>` : '<div class="text-muted small mb-2">이 틀에는 채울 파라미터가 없습니다.</div>'}
+                    <div class="fw-semibold small mb-1"><i class="mdi mdi-eye-outline"></i> 미리보기</div>
+                    <div id="tplInsPreview-${gen}" class="wiki-content border rounded p-2 mb-3"
+                        style="max-height: 260px; overflow-y: auto; background: var(--wiki-card-bg); border-color: var(--wiki-border) !important;"></div>
+                    <div class="d-flex justify-content-end gap-2">
+                        <button type="button" class="btn btn-secondary" id="tplInsCancel">취소</button>
+                        <button type="button" class="btn btn-primary" id="tplInsConfirm"><i class="mdi mdi-plus"></i> 삽입</button>
+                    </div>
+                `;
+
+                // 채워진 값으로 args 객체(키: "1"/"2"/이름)를 만든다. 빈 값은 제외해 기본값이 적용되게 한다.
+                // 최상위 `|` 는 이스케이프해 미리보기(_substituteTemplateParams)와 삽입 호출이 일치하게 한다.
+                const collectValues = (): Record<string, string> => {
+                    const args: Record<string, string> = {};
+                    detailView.querySelectorAll<HTMLInputElement>('.tpl-ins-param-input').forEach(inp => {
+                        const idx = Number(inp.dataset.pidx);
+                        const p = params[idx];
+                        if (!p) return;
+                        const v = inp.value.trim();
+                        if (v) args[p.name] = escapeTemplateArgValue(v);
+                    });
+                    return args;
+                };
+
+                // 최종 호출 문자열. 위치 인자도 명시적 `N=값` 형태로 넣어 빈 인자 생략 시 위치가 밀리지 않게 한다.
+                const buildCall = (): string => {
+                    const args = collectValues();
+                    const parts: string[] = [];
+                    for (const p of params) {
+                        if (Object.prototype.hasOwnProperty.call(args, p.name)) {
+                            parts.push(`${p.name}=${args[p.name]}`);
+                        }
+                    }
+                    return `{{${slug}${parts.length ? '|' + parts.join('|') : ''}}}`;
+                };
+
+                // 컨테이너 id 에 상세 세대(gen)를 박는다 → 다른 틀로 전환한 뒤 늦게 끝난
+                // 렌더가 새 미리보기를 덮어쓰지 못한다(옛 컨테이너는 이미 DOM 에서 제거됨).
+                const containerId = `tplInsPreview-${gen}`;
+                const previewEl = document.getElementById(containerId);
+                // 같은 상세 안에서 파라미터를 연달아 고칠 때의 경합 방지: previewSeq 로 렌더를
+                // 직렬화한다. 렌더는 항상 "현재 폼 상태"(collectValues)를 읽으므로, 진행 중 새
+                // 입력이 오면(previewSeq 증가) 완료 후 최신 상태로 한 번 더 렌더한다 — 먼저 시작한
+                // 느린 렌더(트랜스클루전 resolve 중)가 나중 값 위에 stale 결과를 쓰지 않는다.
+                let previewSeq = 0;
+                let previewRunning = false;
+                const drainPreview = async () => {
+                    if (gen !== detailGen) return;
+                    previewRunning = true;
+                    try {
+                        let done = -1;
+                        while (done !== previewSeq && gen === detailGen) {
+                            done = previewSeq;
+                            const args = collectValues();
+                            // 매 키 입력마다 네트워크 재요청 없이 이미 받은 본문에 파라미터만 치환해 렌더한다.
+                            const substitute = window._substituteTemplateParams;
+                            const body = typeof substitute === 'function' ? substitute(content, args) : content;
+                            const render = window.renderWikiContent;
+                            if (typeof render === 'function') {
+                                try {
+                                    await render(body, window.slug ?? null, containerId);
+                                } catch (_) {
+                                    if (previewEl) previewEl.innerHTML = `<pre class="small mb-0" style="white-space:pre-wrap;">${escapeHtml(body)}</pre>`;
+                                }
+                            } else if (previewEl) {
+                                previewEl.innerHTML = `<pre class="small mb-0" style="white-space:pre-wrap;">${escapeHtml(body)}</pre>`;
+                            }
+                        }
+                    } finally {
+                        previewRunning = false;
+                    }
+                };
+                const renderPreview = () => {
+                    previewSeq++;
+                    if (!previewRunning) void drainPreview();
+                };
+
+                document.getElementById('tplInsBack')?.addEventListener('click', backToSearch);
+                document.getElementById('tplInsCancel')?.addEventListener('click', () => Swal.close());
+                document.getElementById('tplInsConfirm')?.addEventListener('click', () => {
+                    resultText = buildCall();
+                    Swal.close();
+                });
+                detailView.querySelectorAll<HTMLInputElement>('.tpl-ins-param-input').forEach(inp => {
+                    inp.addEventListener('input', () => {
+                        clearTimeout(previewDebounce);
+                        previewDebounce = window.setTimeout(renderPreview, 300);
+                    });
+                });
+
+                renderPreview();
+                const firstInput = detailView.querySelector<HTMLInputElement>('.tpl-ins-param-input');
+                if (firstInput) firstInput.focus();
+            };
+
+            // 진입 시 최근 틀 목록을 불러온다.
+            fetchTemplates('');
+            searchInput.focus();
+        },
+        willClose: () => {
+            clearTimeout(searchDebounce);
+            clearTimeout(previewDebounce);
+        }
+    });
+
+    if (resultText && editor) {
+        editor.insertText?.(resultText);
+        editor.focus?.();
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // 구조 컴포넌트(탭/아코디언/진행상황) 삽입 모달
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -3031,6 +3372,7 @@ window.openComponentInsertModal = openComponentInsertModal;
 window.openStructureBlockInsertModal = openStructureBlockInsertModal;
 window.openGoogleMapsEmbedModal = openGoogleMapsEmbedModal;
 window.openTemplateModal       = openTemplateModal;
+window.openTemplateInsertModal = openTemplateInsertModal;
 
 console.log('[edit/modals] module loaded');
 

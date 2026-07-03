@@ -287,8 +287,9 @@ declare global {
         // purgeLegacyAutosaveKeys → src/client/edit/utils.ts
         // openSelectedIconsPicker / openIconPicker / openCardInsertModal /
         // openPaletteColorModal / openBadgeInsertModal / openGoogleMapsEmbedModal /
-        // openTemplateModal / openSubdocInsertModal / openTimestampInsertModal /
-        // setupTableInsertPopover / setupSpecialCharPicker → src/client/edit/modals.ts
+        // openTemplateModal / openTemplateInsertModal / openSubdocInsertModal /
+        // openTimestampInsertModal / setupTableInsertPopover / setupSpecialCharPicker
+        // → src/client/edit/modals.ts
         /** Bootstrap 5 CDN 글로벌 (Modal 만 사용) */
         bootstrap?: {
             Modal: {

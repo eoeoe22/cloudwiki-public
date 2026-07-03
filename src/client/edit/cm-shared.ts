@@ -264,9 +264,19 @@ export function buildSharedToolbar(
     toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-link-variant"></i>', '링크', () => wrapSelection('[', '](url)')));
     toolbar.appendChild(createToolbarSep());
 
-    // ── 위키 문법 버튼(모달 비의존) ──
+    // ── 위키 문법 버튼 ──
     toolbar.appendChild(createToolbarBtn('[[ ]]', '위키 링크 삽입', () => insertText('[[문서제목]]')));
-    toolbar.appendChild(createToolbarBtn('{{ }}', '틀 삽입', () => insertText('{{틀제목}}')));
+    // 틀 삽입: 위키 에디터(enableWikiModals)에서는 검색→미리보기→파라미터 채우기 모달을
+    // 연다(edit-modals.js). 메모장 등 위키 모달 비활성 컨텍스트는 틀 목록 API
+    // (/api/w/templates — closed 위키에서 비로그인 401)에 의존하지 않도록 기존 예시
+    // 스니펫을 삽입한다. 모달 미로드 환경도 스니펫으로 폴백한다.
+    toolbar.appendChild(createToolbarBtn('{{ }}', '틀 삽입', () => {
+        if (opts.enableWikiModals && typeof w.openTemplateInsertModal === 'function') {
+            w.openTemplateInsertModal();
+        } else {
+            insertText('{{틀제목}}');
+        }
+    }));
     toolbar.appendChild(createToolbarBtn('[*]', '각주 삽입', () => insertText('[* 각주 내용]')));
     toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-form-dropdown"></i>', '펼치기 접기', () => insertText('[+ 펼치기/접기 제목]\n여기에 숨겨진 내용이 들어갑니다.\n[-]')));
 

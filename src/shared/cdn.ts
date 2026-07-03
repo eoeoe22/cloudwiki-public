@@ -15,6 +15,10 @@ export const CDN_VERSIONS = {
     jsdiff:           '5.1.0',
     prism:            '1.29.0',
     mermaid:          '11.15.0',
+    // freq/stock 익스텐션(public/ext/*, raw JS 라 이 모듈을 import 할 수 없어 인라인 상수)과
+    // 동일 버전·동일 URL 로 핀 — render.ts 의 ```chart 코드펜스가 같은 스크립트를 재사용해
+    // _extLoadScript 메모이즈(src 키)와 window.Chart 전역 가드가 중복 로드를 막는다.
+    chartjs:          '4.5.1',
     // CodeMirror / Lezer (esm.sh importmap)
     cmState:          '6.6.0',
     cmView:           '6.41.1',
@@ -54,6 +58,10 @@ export const CDN_URLS = {
     // 인접 청크로 번들돼 있어(앞단 8개 정적 + 나머지는 다이어그램 종류별 지연 로드) 요청 수가
     // 적고 워터폴이 사라진다. 상대 경로 청크는 이 URL 기준으로 해석된다.
     mermaidEsm:           `${J}/mermaid@${CDN_VERSIONS.mermaid}/dist/mermaid.esm.min.mjs`,
+    // Chart.js UMD — ```chart 코드펜스가 있는 문서에서만 render.ts 가 _extLoadScript 로
+    // 지연 로드한다(차트 없는 문서는 비용 0). freq/stock 익스텐션의 인라인 URL 과 동일해야
+    // 스크립트가 1회만 로드된다.
+    chartJs:              `${J}/chart.js@${CDN_VERSIONS.chartjs}/dist/chart.umd.min.js`,
 } as const;
 
 export const FONTS = {

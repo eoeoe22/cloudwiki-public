@@ -1190,25 +1190,43 @@ wiki.get('/w/admin-categories', async (c) => {
 
 /**
  * GET /w/templates
- * 템플릿 목록 (slug가 '템플릿:'으로 시작하는 문서들만)
+ * 틀(템플릿) 문서 목록.
+ * - 기본(param 미지정): "템플릿으로 시작하기"(문서 전체 교체) 플로우용 — 기존대로
+ *   `템플릿:` 네임스페이스만 반환한다. 인라인 partial(`틀:`/`template:`)이 섞이면
+ *   새 문서를 partial 로 덮어쓸 수 있어 제외한다.
+ * - `?inline=1`: 인라인 틀 삽입 모달({{틀}} 호출)용 — 트랜스클루전 틀 네임스페이스
+ *   3종(`틀:`/`template:`/`템플릿:`) 전체를 반환한다(익스텐션 네임스페이스는 제외).
+ * Query: q (검색어, LIKE 매칭)
  */
 wiki.get('/w/templates', async (c) => {
+    // closed 가시성에서는 비로그인 호출을 차단한다(/w/:slug·/w/search-titles 와 동일).
+    // 그러지 않으면 로그인 없이 틀 슬러그 목록을 열거할 수 있다.
+    if (c.env.WIKI_VISIBILITY === 'closed' && !c.get('user')) {
+        return c.json({ error: '로그인이 필요합니다.' }, 401);
+    }
     const db = c.env.DB;
     const user = c.get('user');
     const rbac = c.get('rbac') as RBAC;
     const canSeePrivate = rbac.can(user?.role ?? 'guest', 'wiki:private');
     const privateFilter = canSeePrivate ? '' : ' AND is_private = 0';
     const q = c.req.query('q');
+    // 인라인 삽입 모달만 3종 접두사 전체를 검색한다. 문서 교체 플로우는 `템플릿:` 유지.
+    const inline = c.req.query('inline') === '1';
+    const nsFilter = inline
+        ? `(slug LIKE '틀:%' OR slug LIKE 'template:%' OR slug LIKE '템플릿:%')`
+        : `slug LIKE '템플릿:%'`;
 
     if (q) {
+        const orderLimit = inline ? 'ORDER BY slug ASC LIMIT 30' : 'ORDER BY created_at DESC';
         const { results } = await db
-            .prepare(`SELECT slug FROM pages WHERE slug LIKE '템플릿:%' AND slug LIKE ? AND deleted_at IS NULL${privateFilter} ORDER BY created_at DESC`)
+            .prepare(`SELECT slug FROM pages WHERE ${nsFilter} AND slug LIKE ? AND deleted_at IS NULL${privateFilter} ${orderLimit}`)
             .bind(`%${q}%`)
             .all();
         return c.json({ templates: results });
     } else {
+        const limit = inline ? 20 : 10;
         const { results } = await db
-            .prepare(`SELECT slug FROM pages WHERE slug LIKE '템플릿:%' AND deleted_at IS NULL${privateFilter} ORDER BY created_at DESC LIMIT 10`)
+            .prepare(`SELECT slug FROM pages WHERE ${nsFilter} AND deleted_at IS NULL${privateFilter} ORDER BY created_at DESC LIMIT ${limit}`)
             .all();
         return c.json({ templates: results });
     }

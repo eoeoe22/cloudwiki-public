@@ -46,6 +46,10 @@ export function createTocController(opts: TocControllerOptions = {}) {
     }
     nav.innerHTML = html;
     sidebar.classList.remove('d-none');
+    // 재구축된 사이드바 목차에 temporal(:::after/:::until) 숨김 필터를 재적용.
+    // buildTocOlHtml 은 숨김 분기 헤딩도 포함해 생성하고, 이 재구축은
+    // renderWikiContent 내부의 _initTemporal 동기화보다 늦게 실행되기 때문.
+    window._syncTemporalDerivedVisibility?.(document);
     return true;
   }
 
@@ -58,7 +62,9 @@ export function createTocController(opts: TocControllerOptions = {}) {
     const isVisible = panel.classList.contains('visible');
 
     if (!isVisible) {
-      if (!tocSource || !tocSource.innerHTML.trim()) return;
+      // temporal(:::after/:::until) 필터로 전 항목이 숨겨진 목차는 없는 것으로 취급
+      // (raw innerHTML 은 숨김 li 도 포함하므로 보이는 항목 기준으로 판정).
+      if (!tocSource || !tocSource.querySelector('li:not([hidden])')) return;
       floatingNav.innerHTML = tocSource.innerHTML;
       floatingNav.querySelectorAll('a').forEach((a) => {
         a.addEventListener('click', () => {
@@ -223,12 +229,15 @@ export function createTocController(opts: TocControllerOptions = {}) {
       const tocSource = document.getElementById('tocNav');
       const articlePage = document.getElementById('articlePage');
       if (tocBtn) {
-        const hasToc = tocSource && tocSource.innerHTML.trim();
+        // temporal 필터로 전 항목이 숨겨진 목차(li 전부 [hidden])는 FAB 도 숨긴다.
+        const hasToc = tocSource && tocSource.querySelector('li:not([hidden])');
         const isArticle = articlePage && !articlePage.classList.contains('d-none');
         (tocBtn as HTMLElement).style.display = (hasToc && isArticle) ? '' : 'none';
       }
     });
-    observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
+    // attributeFilter 에 hidden 포함: temporal 경계 flip 이 li[hidden] 만 바꾸는 경우에도
+    // FAB 표시 여부가 재평가되도록 한다.
+    observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'hidden'] });
 
     updateActive();
   }

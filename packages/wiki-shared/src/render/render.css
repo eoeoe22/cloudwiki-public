@@ -314,7 +314,16 @@
 }
 
 .wiki-section-body-inner {
+  /* 접기 애니메이션(grid-template-rows 0fr↔1fr)용 클리핑. hidden 은 스크롤 컨테이너를
+     만들어 내부 position:sticky(캔버스 {sticky} 영역)가 뷰포트에 고정되지 못하게 하므로,
+     지원 브라우저에서는 스크롤 컨테이너를 만들지 않는 clip 으로 대체한다(클리핑 효과는
+     동일). 미지원 브라우저는 앞 선언 hidden 으로 폴백.
+     hidden 과 달리 clip 은 BFC 를 만들지 않아 내부 float(:::float/:::infobox)가 섹션
+     높이에 포함되지 않고 다음 섹션으로 흘러넘칠 수 있으므로, flow-root 로 BFC 를
+     복원한다(스크롤 컨테이너는 아니라서 sticky 는 그대로 동작). */
+  display: flow-root;
   overflow: hidden;
+  overflow: clip;
 }
 
 .wiki-content p {
@@ -442,6 +451,39 @@ html[data-theme="dark"] .wiki-content video:hover {
 
 .wiki-content .mermaid-figure .mermaid-error {
   text-align: left;
+}
+
+/* ── 차트 (```chart 코드펜스 → <figure><canvas>) ──
+   높이를 고정해 로딩 placeholder → 차트 전환 시 레이아웃 변동(스크롤 싱크 붕괴)이 없다.
+   Chart.js responsive 모드는 부모 크기를 따르므로 figure 가 크기의 단일 소스. */
+.wiki-content .wiki-chart-figure {
+  margin: var(--wiki-space-6) 0;
+  padding: var(--wiki-space-4);
+  height: 320px;
+  position: relative;
+  background: var(--wiki-card-bg);
+  border: 1px solid var(--wiki-border);
+  border-radius: var(--wiki-radius-lg);
+}
+
+.wiki-content .wiki-chart-figure .wiki-chart-loading {
+  color: var(--wiki-text-muted, #6b7280);
+  font-size: var(--wiki-fs-body);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--wiki-space-2);
+  height: 100%;
+}
+
+.wiki-content .wiki-chart-figure .wiki-chart-error {
+  text-align: left;
+}
+
+@media (max-width: 768px) {
+  .wiki-content .wiki-chart-figure {
+    height: 260px;
+  }
 }
 
 /* ── Prism.js: VS Code Dark+/Light+ 스타일 테마 ──
@@ -834,10 +876,103 @@ html[data-theme="dark"] .wiki-content pre[class*="language-"] code[class*="langu
   font-variant-numeric: tabular-nums;
 }
 
-/* 표 헤더 sticky 는 적용하지 않는다 — render.ts 의 makeCollapsibleSections 가 표를
-   접기 애니메이션용 overflow:hidden 컨테이너(.wiki-section-body-inner)로 이동시키므로,
+/* 표 헤더 sticky 는 전역으로 적용하지 않는다 — render.ts 의 makeCollapsibleSections 가
+   표를 접기 애니메이션용 overflow:hidden 컨테이너(.wiki-section-body-inner)로 이동시키므로,
    그 조상이 sticky 의 스크롤 컨테이너가 되어 top:0 이 뷰포트 스크롤에 반응하지 못한다
-   (헤딩 아래 표 = 대부분). 도입부 표만 동작하는 비일관 상태를 피하기 위해 미적용. */
+   (헤딩 아래 표 = 대부분). 도입부 표만 동작하는 비일관 상태를 피하기 위해 미적용.
+   대신 옵트인 표 옵션 토큰 {sticky-header} 가 감싸개(.wiki-table-wrapper-scroll)
+   자체를 스크롤 컨테이너로 만들어 조상 overflow 와 무관하게 동작한다 (아래 참조). */
+
+/* ── 표 옵션 토큰 (render.ts _applyWikiTableOptions) ──
+   {table:left|center|right} · {w:50~100%} · {caption:} · {sticky-header} ·
+   {sortable} · {row-header} · 구분 행 {w:NN%} 열 너비 */
+
+/* 정렬/너비 지정 표의 감싸개: fit-content 기본값 대신 본문 폭 전체를 차지해
+   퍼센트 너비와 margin:auto 정렬의 기준을 제공한다 */
+.wiki-content .wiki-table-wrapper-full {
+  width: 100%;
+}
+
+.wiki-content table.wiki-table-align-left {
+  margin-right: auto;
+}
+
+.wiki-content table.wiki-table-align-center {
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.wiki-content table.wiki-table-align-right {
+  margin-left: auto;
+}
+
+/* {caption:}: 표 상단 제목 (접근성 + 표 제목 표준화) */
+.wiki-content table caption.wiki-table-caption {
+  caption-side: top;
+  padding: var(--wiki-space-2) var(--wiki-space-1);
+  font-weight: 600;
+  color: var(--wiki-text);
+  text-align: inherit;
+}
+
+/* {sticky-header}: 감싸개를 세로 스크롤 컨테이너로 만들어 헤더 행 고정.
+   표의 세로 margin 은 스크롤 영역 안에서 여백-스크롤을 만들므로 감싸개로 옮긴다.
+   모바일의 table display:block(자체 스크롤 컨테이너화)도 sticky 를 깨뜨리므로
+   이 감싸개 안에서는 항상 정상 table 레이아웃으로 되돌린다. */
+.wiki-content .wiki-table-wrapper-scroll {
+  max-height: 70vh;
+  overflow-y: auto;
+  margin: var(--wiki-space-6) 0;
+}
+
+.wiki-content .wiki-table-wrapper-scroll > table {
+  /* 세로 margin 만 리셋 — margin:0 쇼트핸드는 동일 특이도로 뒤에 선언되어
+     위 정렬 토큰의 margin-left/right:auto 를 덮어쓰므로 가로 margin 은 보존한다 */
+  margin-top: 0;
+  margin-bottom: 0;
+  display: table;
+  white-space: normal;
+}
+
+.wiki-content .wiki-table-wrapper-scroll > table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--wiki-card-bg);
+  /* border-collapse 표의 sticky 헤더는 셀 border 가 함께 스크롤되어 사라지므로
+     inset box-shadow 로 위/아래 경계선을 헤더에 고정한다 */
+  box-shadow: inset 0 1px 0 var(--wiki-border), inset 0 -1px 0 var(--wiki-border);
+}
+
+/* {sortable}: 헤더 클릭 정렬 상태 표시 */
+.wiki-content table.wiki-table-sortable thead th {
+  cursor: pointer;
+  user-select: none;
+}
+
+.wiki-content table.wiki-table-sortable thead th::after {
+  content: '⇅';
+  margin-left: 0.35em;
+  font-size: var(--wiki-fs-sm);
+  opacity: 0.35;
+}
+
+.wiki-content table.wiki-table-sortable thead th[aria-sort='ascending']::after {
+  content: '▲';
+  opacity: 0.8;
+}
+
+.wiki-content table.wiki-table-sortable thead th[aria-sort='descending']::after {
+  content: '▼';
+  opacity: 0.8;
+}
+
+/* {row-header}: 첫 열 세로 헤더(th[scope=row]) — 헤더 배경/굵기는 기존
+   `.wiki-content table th` 규칙이 그대로 적용되므로 별도 스타일 불요.
+   zebra 줄무늬가 th 배경을 덮지 않도록 배경 우선순위만 명시한다. */
+.wiki-content table.wiki-table-row-header tbody th[scope='row'] {
+  background: var(--wiki-card-bg);
+}
 
 .wiki-content a {
   color: var(--wiki-primary);
@@ -1174,6 +1309,16 @@ html[data-theme="dark"] .toc-floating-body a.toc-active {
   line-height: inherit;
   vertical-align: baseline;
   cursor: default;
+}
+
+/* ── :::after / :::until 시점별 조건부 표시 ── */
+/* 표시 상태는 렌더 시점에 hidden 속성으로 확정되고 _initTemporal 이 경계 통과 시 토글한다.
+   [hidden] 규칙을 명시해 전역 div 스타일이 UA 의 hidden 동작을 덮어쓰지 못하게 방어한다. */
+.wiki-temporal {
+  display: block;
+}
+.wiki-temporal[hidden] {
+  display: none;
 }
 
 /* ── 캘린더 박스 렌더링 ── */
@@ -1834,6 +1979,32 @@ body.raw-mode .wiki-content-raw {
   border-radius: var(--wiki-radius-lg);
 }
 
+/* {span-md:N}: 중간 폭(태블릿)에서의 칸 수. 같은 특이도의 .wiki-area--span-N 을
+   소스 순서(뒤)로 이겨 데스크톱 8/4 → 태블릿 12/12 같은 단계적 접힘을 만든다. */
+@media (min-width: 769px) and (max-width: 1199.98px) {
+  .wiki-area--span-md-1  { grid-column: span 1; }
+  .wiki-area--span-md-2  { grid-column: span 2; }
+  .wiki-area--span-md-3  { grid-column: span 3; }
+  .wiki-area--span-md-4  { grid-column: span 4; }
+  .wiki-area--span-md-5  { grid-column: span 5; }
+  .wiki-area--span-md-6  { grid-column: span 6; }
+  .wiki-area--span-md-7  { grid-column: span 7; }
+  .wiki-area--span-md-8  { grid-column: span 8; }
+  .wiki-area--span-md-9  { grid-column: span 9; }
+  .wiki-area--span-md-10 { grid-column: span 10; }
+  .wiki-area--span-md-11 { grid-column: span 11; }
+  .wiki-area--span-md-12 { grid-column: span 12; }
+}
+
+/* {sticky}: 스크롤 시 영역을 상단에 고정. 오프셋은 헤딩 앵커의 scroll-margin-top(80px)과
+   동일하게 잡아 고정 내비바 아래에 안착한다. 섹션 접기 컨테이너(.wiki-section-body-inner)는
+   overflow:clip 이라 스크롤 컨테이너를 만들지 않으므로 뷰포트 기준 sticky 가 동작한다. */
+.wiki-area--sticky {
+  position: sticky;
+  top: 80px;
+  align-self: start;
+}
+
 /* 좁은 화면: 그리드/캔버스를 단일 열로 접어 세로 스택.
    .wiki-canvas .wiki-area 는 .wiki-area--span-N 보다 우선순위가 높아
    span 지정과 무관하게 전체 폭으로 펼쳐진다. */
@@ -1842,6 +2013,241 @@ body.raw-mode .wiki-content-raw {
   .wiki-grid--grid { grid-template-columns: 1fr !important; }
   .wiki-canvas { grid-template-columns: 1fr; }
   .wiki-canvas .wiki-area { grid-column: 1 / -1; }
+
+  /* {order:N}: 1열 접힘 시 표시 순서 — 미지정 영역(order:0)이 먼저, 지정 영역이 값 순서로 뒤에. */
+  .wiki-area--order-1 { order: 1; }
+  .wiki-area--order-2 { order: 2; }
+  .wiki-area--order-3 { order: 3; }
+  .wiki-area--order-4 { order: 4; }
+  .wiki-area--order-5 { order: 5; }
+  .wiki-area--order-6 { order: 6; }
+  .wiki-area--order-7 { order: 7; }
+  .wiki-area--order-8 { order: 8; }
+  .wiki-area--order-9 { order: 9; }
+
+  /* 1열 스택에서는 sticky 사이드바가 본문을 가리므로 해제. */
+  .wiki-area--sticky { position: static; }
+}
+
+/* ── 플로팅 패널 (:::float) & 인포박스 (:::infobox) ──
+   인라인 목차 카드(.wiki-toc-card)가 검증한 float 전략의 사용자 문법 버전.
+   본문 문단이 패널 옆을 감싸 흐르고, 섹션 컨테이너(.wiki-section-body-inner)가
+   BFC 로 float 를 포함한다. */
+.wiki-float {
+  float: right;
+  width: 33.333%;
+  min-width: 220px;
+  max-width: 100%;
+  margin: 0 0 var(--wiki-space-4) var(--wiki-space-5);
+}
+
+.wiki-float--left {
+  float: left;
+  margin: 0 var(--wiki-space-5) var(--wiki-space-4) 0;
+}
+
+/* {span:3~6} — 12칸 기준 폭(캔버스와 동일 어휘의 부분집합) */
+.wiki-float--span-3 { width: 25%; }
+.wiki-float--span-4 { width: 33.333%; }
+.wiki-float--span-5 { width: 41.666%; }
+.wiki-float--span-6 { width: 50%; }
+
+.wiki-float > :last-child {
+  margin-bottom: 0;
+}
+
+/* :::float 에 제목 텍스트를 준 경우의 얇은 헤더 */
+.wiki-float-title {
+  font-weight: 700;
+  margin-bottom: var(--wiki-space-2);
+}
+
+/* 인포박스: float 위에 카드 chrome + 제목 헤더를 얹은 프리셋 */
+.wiki-infobox {
+  background: var(--wiki-card-bg);
+  border: 1px solid var(--wiki-border);
+  border-radius: var(--wiki-radius-lg);
+  box-shadow: var(--wiki-shadow-sm);
+  overflow: hidden;
+}
+
+.wiki-infobox-title {
+  padding: 0.6rem 0.85rem;
+  font-weight: 700;
+  text-align: center;
+  background: var(--wiki-toc-bg);
+  border-bottom: 1px solid var(--wiki-border);
+}
+
+.wiki-infobox-body {
+  padding: var(--wiki-space-3);
+}
+
+.wiki-infobox-body > :last-child {
+  margin-bottom: 0;
+}
+
+.wiki-infobox-body p {
+  margin-bottom: var(--wiki-space-2);
+  line-height: var(--wiki-lh-normal);
+}
+
+/* 프로필 이미지: 카드 폭에 맞춰 블록 배치 */
+.wiki-infobox-body img:not([data-size="icon"]) {
+  display: block;
+  width: 100%;
+  margin: 0 auto var(--wiki-space-2);
+}
+
+/* 인포박스 표: 컴팩트 2열 프로필 표. 감싸개/표를 카드 폭에 맞추고,
+   구분 행 없는 나무위키식 행은 렌더러가 첫 행을 thead 로 승격하므로
+   thead 도 일반 행과 같은 톤으로 맞춘다. */
+.wiki-infobox-body .wiki-table-wrapper {
+  width: 100%;
+  margin: var(--wiki-space-2) 0;
+}
+
+.wiki-infobox-body table {
+  width: 100%;
+  margin: 0;
+  font-size: var(--wiki-fs-base);
+}
+
+.wiki-infobox-body table th,
+.wiki-infobox-body table td {
+  padding: 0.35rem 0.5rem;
+}
+
+.wiki-infobox-body table thead th {
+  background: transparent;
+  font-weight: 600;
+  text-align: left;
+}
+
+/* 첫 열(항목명)을 옅게 강조 — 나무위키 프로필 표의 키 열 대응 */
+.wiki-infobox-body table th:first-child,
+.wiki-infobox-body table td:first-child {
+  background: color-mix(in srgb, var(--wiki-text) 4%, transparent);
+  font-weight: 600;
+}
+
+/* 모바일: float 해제, 본문 흐름 위치에 전체 폭으로 스택(캔버스 1열 접힘과 동일 정책) */
+@media (max-width: 768px) {
+  .wiki-float,
+  .wiki-float--left {
+    float: none;
+    width: 100%;
+    min-width: 0;
+    margin: 0 0 var(--wiki-space-4);
+  }
+}
+
+/* ── 이미지 갤러리 (:::gallery) ── */
+.wiki-gallery {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--wiki-space-3);
+  margin-bottom: var(--wiki-space-4);
+}
+
+.wiki-gallery--cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.wiki-gallery--cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.wiki-gallery--cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.wiki-gallery--cols-5 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.wiki-gallery--cols-6 { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+
+.wiki-gallery-item {
+  display: block;
+  min-width: 0;
+  text-decoration: none;
+  color: inherit;
+}
+
+/* 정사각 크롭 썸네일 타일 */
+.wiki-gallery-thumb {
+  display: block;
+  aspect-ratio: 1 / 1;
+  overflow: hidden;
+  border: 1px solid var(--wiki-border);
+  border-radius: var(--wiki-radius-lg);
+  background: var(--wiki-card-bg);
+}
+
+.wiki-gallery-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  margin: 0;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  transition: transform var(--wiki-dur-fast) var(--wiki-ease);
+}
+
+.wiki-gallery-item:hover .wiki-gallery-thumb img {
+  transform: scale(1.03);
+}
+
+/* 캡션 = alt 텍스트 */
+.wiki-gallery-caption {
+  display: block;
+  margin-top: 0.35rem;
+  font-size: var(--wiki-fs-sm);
+  color: var(--wiki-text-muted);
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+/* 모바일: 열 수와 무관하게 2열로 접힘 (소스 순서상 뒤라 cols-N 을 이김) */
+@media (max-width: 768px) {
+  .wiki-gallery {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* ── 이미지 정렬/캡션 ({align:}/{caption:} → <figure class="wiki-img-figure">) ──
+   display:table 로 이미지 폭에 수축시켜 캡션 폭이 이미지를 따라가게 한다. */
+.wiki-content .wiki-img-figure {
+  display: table;
+  margin: var(--wiki-space-6) 0;
+  max-width: 100%;
+}
+
+.wiki-content .wiki-img-align-center {
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.wiki-content .wiki-img-align-right {
+  margin-left: auto;
+}
+
+/* figure 가 세로 여백을 소유하므로 내부 이미지의 기본 마진 제거 */
+.wiki-content .wiki-img-figure img {
+  margin: 0;
+}
+
+.wiki-content .wiki-img-caption {
+  display: table-caption;
+  caption-side: bottom;
+  padding-top: 0.4rem;
+  font-size: var(--wiki-fs-sm);
+  color: var(--wiki-text-muted);
+  text-align: center;
+}
+
+/* ── 임베드 크기 옵션 (URL{size:small|medium}) ──
+   YouTube/니코동/Spotify/지도 자동 임베드 래퍼의 최대 폭을 제한하고 가운데 정렬. */
+.wiki-embed-size-medium {
+  max-width: 640px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.wiki-embed-size-small {
+  max-width: 420px;
+  margin-left: auto;
+  margin-right: auto;
 }
 
 .wiki-stat {
@@ -2412,3 +2818,37 @@ mark.search-hit {
   font-weight: 500;
   cursor: default;
 }
+
+/* ── 글자 크기 채널 ({fs:xs|sm|lg|xl|xxl}) ──
+   ==하이라이트== / 인라인 컴포넌트(badge·tag·button·stat·kbd·progress) 프리픽스의
+   {fs:} 토큰이 render.ts 에서 루트 요소에 .wiki-fs-* 클래스로 렌더된다. em 단위라
+   주변 문맥(헤딩·표 셀 등) 대비 상대 배율로 합성된다. 팔레트 클래스와 같은 bare
+   셀렉터 정책(.wiki-content 미사용 렌더 경로에도 적용, !important 금지).
+   a.wiki-fs-* 는 a.wiki-button(특이성 0,1,1)의 rem 고정 크기를 이기기 위한
+   동률 특이성 오버라이드(뒤 선언 우선). */
+.wiki-fs-xs,  a.wiki-fs-xs  { font-size: 0.75em; }
+.wiki-fs-sm,  a.wiki-fs-sm  { font-size: 0.85em; }
+.wiki-fs-lg,  a.wiki-fs-lg  { font-size: 1.25em; }
+.wiki-fs-xl,  a.wiki-fs-xl  { font-size: 1.5em; }
+.wiki-fs-xxl, a.wiki-fs-xxl { font-size: 2em; }
+
+/* stat/progress 내부 텍스트는 rem 고정 크기라 루트의 em 배율을 따르지 않는다.
+   fs 지정 시에만 em 등가값으로 전환해 배율을 상속시킨다(기본 렌더는 기존 rem 유지). */
+.wiki-fs-xs .wiki-stat-value, .wiki-fs-sm .wiki-stat-value, .wiki-fs-lg .wiki-stat-value,
+.wiki-fs-xl .wiki-stat-value, .wiki-fs-xxl .wiki-stat-value { font-size: 1.5em; }
+.wiki-fs-xs .wiki-stat-label, .wiki-fs-sm .wiki-stat-label, .wiki-fs-lg .wiki-stat-label,
+.wiki-fs-xl .wiki-stat-label, .wiki-fs-xxl .wiki-stat-label { font-size: 0.85em; }
+.wiki-fs-xs .wiki-progress-header, .wiki-fs-sm .wiki-progress-header, .wiki-fs-lg .wiki-progress-header,
+.wiki-fs-xl .wiki-progress-header, .wiki-fs-xxl .wiki-progress-header { font-size: 0.9em; }
+
+/* ── 정렬 블록 (:::left / :::center / :::right) ──
+   render.ts _renderBlockHtml 의 default 분기(제네릭 .wiki-block-* div)가 그대로
+   렌더하는 가장 얇은 정렬 컨테이너 — text-align + (블록 자식) margin:auto 만 적용. */
+.wiki-block-left   { text-align: left; }
+.wiki-block-center { text-align: center; }
+.wiki-block-right  { text-align: right; }
+/* 인라인 축(text-align)을 따르지 않는 고정폭 블록 자식도 같은 축으로 이동.
+   전폭(width:100%/auto stretch) 자식에게는 no-op 이라 안전하다. */
+.wiki-block-left   > * { margin-left: 0; margin-right: auto; }
+.wiki-block-center > * { margin-left: auto; margin-right: auto; }
+.wiki-block-right  > * { margin-left: auto; margin-right: 0; }

@@ -42,10 +42,10 @@ function initMarkedConfig() {
                 name: 'highlight',
                 level: 'inline',
                 // ==text== 의 시작이 어디 있는지를 찾되, 선행 스타일 토큰
-                // ({color:...}, {bg:...}, {palette:...}) 가 있을 수 있는 가장 이른 위치도 후보로 삼는다.
+                // ({color:...}, {bg:...}, {palette:...}, {fs:...}) 가 있을 수 있는 가장 이른 위치도 후보로 삼는다.
                 start(src) {
                     let min = -1;
-                    for (const needle of ['==', '{color:', '{bg:', '{palette:']) {
+                    for (const needle of ['==', '{color:', '{bg:', '{palette:', '{fs:']) {
                         const idx = src.indexOf(needle);
                         if (idx >= 0 && (min === -1 || idx < min)) min = idx;
                     }
@@ -53,7 +53,7 @@ function initMarkedConfig() {
                 },
                 tokenizer(src) {
                     // 선행 스타일 토큰을 0개 이상 흡수하고 ==text== 본문을 캡처.
-                    const match = src.match(/^((?:\{(?:palette|bg|color):[^}]+\})*)==([^=]+)==/);
+                    const match = src.match(/^((?:\{(?:palette|bg|color|fs):[^}]+\})*)==([^=]+)==/);
                     if (match && match[2]) {
                         const token = {
                             type: 'highlight',
@@ -74,11 +74,13 @@ function initMarkedConfig() {
                     //     mark.wiki-palette-NAME 클래스로 렌더(테마/스킨/다크모드 CSS 자동 반영).
                     //   - 커스텀 {palette:NAME}  : 모드별 hex 로 풀어 두 채널 literal(현행 의미 유지).
                     //   - {bg:V}/{color:V}       : 해당 채널만 literal 로 덮음(클래스 위에 인라인 우선).
+                    //   - {fs:V}                 : 크기 채널. enum(WIKI_FS_SIZES) 값만 .wiki-fs-* 클래스로 렌더.
                     // 예: {palette:primary}{bg:blue} → bg=blue(인라인), color=primary(클래스).
                     let bgCh = null, colorCh = null;
+                    let fsVal = '';
                     if (token.prefix) {
                         let merged = null; // 커스텀 팔레트는 필요 시에만 조회
-                        const re = /\{(palette|bg|color):\s*([^}]+?)\s*\}/g;
+                        const re = /\{(palette|bg|color|fs):\s*([^}]+?)\s*\}/g;
                         let m;
                         while ((m = re.exec(token.prefix)) !== null) {
                             const kind = m[1];
@@ -87,6 +89,9 @@ function initMarkedConfig() {
                                 bgCh = { kind: 'literal', value: val };
                             } else if (kind === 'color') {
                                 colorCh = { kind: 'literal', value: val };
+                            } else if (kind === 'fs') {
+                                // enum 밖 값(픽셀 자유 입력 등)은 무시 — 미등록 팔레트 이름과 동일 정책.
+                                if (WIKI_FS_SIZES.has(val)) fsVal = val;
                             } else { // palette
                                 if (BUILTIN_PALETTE_NAMES.has(val)) {
                                     bgCh = { kind: 'palette', value: val };
@@ -108,6 +113,7 @@ function initMarkedConfig() {
                     }
                     const inner = this.parser.parseInline(token.tokens);
                     const classes = [];
+                    if (fsVal) classes.push('wiki-fs-' + fsVal);
                     let style = '';
                     let hasBg = false, hasColor = false;
                     if (bgCh) {
@@ -124,7 +130,14 @@ function initMarkedConfig() {
                     // 팔레트 '이름'(primary 등)이라 span 의 color 로 쓰면 무효 CSS 가 된다. 그 경우는
                     // 아래 <mark class> 경로로 떨어뜨려 팔레트 클래스(bg+color)가 살아나게 한다.
                     if (hasColor && !hasBg && colorCh.kind === 'literal') {
-                        return `<span style="color:${colorCh.value};">` + inner + '</span>';
+                        const fsClassAttr = fsVal ? ` class="wiki-fs-${fsVal}"` : '';
+                        return `<span${fsClassAttr} style="color:${colorCh.value};">` + inner + '</span>';
+                    }
+                    // 색상 토큰 없이 {fs:} 만 지정: 형광펜 효과를 적용하지 않고 크기만 바꾼 <span>.
+                    // (bg/color/palette 중 무엇도 적용되지 않은 순수 크기 지정) — 형광펜은 색상 토큰이
+                    // 하나라도 있을 때만, 또는 토큰이 전혀 없는 순수 ==하이라이트== 일 때만 유지된다.
+                    if (fsVal && !hasBg && !hasColor) {
+                        return `<span class="wiki-fs-${fsVal}">` + inner + '</span>';
                     }
                     const classAttr = classes.length ? ` class="${[...new Set(classes)].join(' ')}"` : '';
                     const styleAttr = style ? ` style="${style}"` : '';
@@ -158,14 +171,23 @@ function initMarkedConfig() {
                 level: 'inline',
                 start(src) { return src.indexOf('!['); },
                 tokenizer(src) {
-                    const match = src.match(/^!\[([^\]]*)\]\(([^)]+)\)(?:\{size:\s*(icon|small|medium|full)\})/);
+                    // 접미 토큰은 {size:}/{align:}/{caption:} 을 순서 무관으로 1개 이상 허용한다.
+                    // enum 밖 값(예: {size:big})은 미매치로 남겨 기존처럼 literal 텍스트로
+                    // 노출된다(하위호환). caption 은 자유 텍스트(중괄호/개행 제외).
+                    const match = src.match(/^!\[([^\]]*)\]\(([^)]+)\)((?:\{size:\s*(?:icon|small|medium|full)\s*\}|\{align:\s*(?:left|center|right)\s*\}|\{caption:[^}\n]*\})+)/);
                     if (match) {
+                        const tokenStr = match[3];
+                        const size = (tokenStr.match(/\{size:\s*(icon|small|medium|full)\s*\}/) || [])[1] || '';
+                        const align = (tokenStr.match(/\{align:\s*(left|center|right)\s*\}/) || [])[1] || '';
+                        const capM = tokenStr.match(/\{caption:([^}\n]*)\}/);
                         return {
                             type: 'customImage',
                             raw: match[0],
                             text: match[1],
                             href: match[2],
-                            size: match[3]
+                            size,
+                            align,
+                            caption: capM ? capM[1].trim() : ''
                         };
                     }
                 },
@@ -180,7 +202,12 @@ function initMarkedConfig() {
                     } else if (token.size === 'full') {
                         style = 'max-width: 100%; height: auto;';
                     }
-                    return `<img src="${escapeHtml(token.href)}" alt="${escapeHtml(token.text)}" style="${style}" data-size="${token.size}">`;
+                    // align/caption 은 data-* 로 실어 보내고, 렌더 후처리(단독 문단 이미지의
+                    // <figure> 승격)에서 소비한다. size 는 기존과 동일하게 인라인 스타일.
+                    const sizeAttr = token.size ? ` data-size="${token.size}"` : '';
+                    const alignAttr = token.align ? ` data-align="${token.align}"` : '';
+                    const captionAttr = token.caption ? ` data-caption="${escapeHtml(token.caption)}"` : '';
+                    return `<img src="${escapeHtml(token.href)}" alt="${escapeHtml(token.text)}" style="${style}"${sizeAttr}${alignAttr}${captionAttr}>`;
                 }
             },
             {
@@ -1715,6 +1742,9 @@ function generateTOC(contentEl, tocContainerId, tocNavId) {
     if (!tocNav) return;
 
     tocNav.innerHTML = html;
+    // temporal 파생 동기화(_updateTemporalTocVisibility)가 전 항목 숨김 시 이 목차의
+    // 컨테이너까지 함께 숨길 수 있도록 컨테이너 id 를 nav 에 기록해 둔다.
+    tocNav.dataset.wikiTocContainerId = tocContainerId;
     tocContainer.classList.remove('d-none');
 }
 
@@ -2337,6 +2367,10 @@ function processFootnotes(contentEl) {
         order.forEach(entry => {
             const li = document.createElement('li');
             li.id = entry.fnId;
+            // 리스트 번호를 엔트리 번호로 고정 — temporal 숨김으로 일부 항목이 display:none
+            // 이 되어도(브라우저는 숨긴 li 를 건너뛰고 재번호) 보이는 번호가 본문 마커 [n] 과
+            // 계속 일치한다.
+            li.value = entry.num;
 
             // 참조가 하나면 기존과 동일한 아이콘 백링크, 여럿이면 참조별 a·b·c 첨자.
             if (entry.refs.length === 1) {
@@ -2387,11 +2421,14 @@ function extractPlainTextWithFootnotes(contentEl) {
     if (!fnSection) return contentEl.innerText;
 
     // 각주 항목을 번호와 함께 평문 라인으로 만든다(되돌아가기 아이콘은 span 외부라 제외됨).
-    const items = Array.from(fnSection.querySelectorAll(':scope > ol > li'));
+    // 숨김 temporal 분기 전용 항목(li[hidden])은 제외한다 — display:none 하위의 innerText
+    // 는 textContent 로 폴백해 텍스트가 살아있으므로 명시적으로 걸러야 한다. 번호는
+    // processFootnotes 가 고정한 li.value(본문 마커와 동일)를 사용한다.
+    const items = Array.from(fnSection.querySelectorAll(':scope > ol > li')).filter(li => !li.hidden);
     const lines = items.map((li, i) => {
         const span = li.querySelector('span');
         const text = (span ? span.innerText : li.innerText).replace(/\s+/g, ' ').trim();
-        return `[${i + 1}] ${text}`;
+        return `[${li.value || i + 1}] ${text}`;
     });
 
     // 본문 텍스트는 각주 섹션을 잠시 떼어낸 상태에서 읽는다(동기 처리라 화면 깜빡임 없음).
@@ -2494,6 +2531,10 @@ const WIKI_HARDCODED_PALETTES = {
 // 빌트인 팔레트 이름 집합(= 위 테이블 키, palettes.ts RESERVED_PALETTE_NAMES 와 동일 집합).
 // 본문 renderer 가 "빌트인(클래스) vs 커스텀(인라인 hex)" 을 가르는 단일 판정 소스.
 const BUILTIN_PALETTE_NAMES = new Set(Object.keys(WIKI_HARDCODED_PALETTES));
+
+// {fs:크기} 채널 enum — 픽셀 자유 입력을 받지 않아 문서 간 크기 일관성과 안전성을 지킨다.
+// render.css 의 .wiki-fs-* 클래스와 1:1 대응(기본 크기는 토큰 생략).
+const WIKI_FS_SIZES = new Set(['xs', 'sm', 'lg', 'xl', 'xxl']);
 
 /**
  * 커스텀 팔레트 + 하드코딩을 병합한 팔레트 맵. 커스텀 우선.
@@ -2758,6 +2799,49 @@ function _extractBlockStyleTokens(titleLine) {
     return { cleanTitle: t.trim(), bg, color };
 }
 
+/**
+ * 인포박스 편의 문법: 구분(delimiter) 행 없이 나열된 `| 키 | 값 |` 행 묶음을
+ * GFM 이 표로 인식하도록 첫 행 뒤에 구분 행을 합성한다(나무위키식 프로필 행 대응).
+ * 이미 정상 표(구분 행 존재)는 건드리지 않고, 코드펜스 안쪽은 제외한다.
+ * 컬럼 수는 [[링크|텍스트]] 의 파이프가 셀 구분자로 오인되지 않도록 위키링크를
+ * 보호한 상태에서 센다.
+ */
+function _normalizeBareTableRows(src) {
+    if (!src || src.indexOf('|') === -1) return src;
+    const lines = src.split('\n');
+    const out = [];
+    let inFence = false;
+    const rowRe = /^\s*\|.*\|\s*$/;
+    const delimRe = /^\s*\|(?:\s*:?-+:?\s*\|)+\s*$/;
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        if (/^(```|~~~)/.test(line.trim())) { inFence = !inFence; out.push(line); continue; }
+        const isBareFirstRow = !inFence && rowRe.test(line)
+            // 표 첫 행에서만 판정 (직전 줄이 이미 행이면 내부 행)
+            && !(i > 0 && rowRe.test(lines[i - 1]))
+            // 다음 줄이 구분 행이면 이미 정상 GFM 표
+            && !delimRe.test(i + 1 < lines.length ? lines[i + 1] : '');
+        if (!isBareFirstRow) { out.push(line); continue; }
+        // 직전 줄이 일반 텍스트(이미지 등)면 빈 줄을 넣어 문단 연속(lazy continuation)으로
+        // 붙지 않게 분리한다 — GFM 표는 블록 시작에서만 인식된다.
+        if (i > 0 && lines[i - 1].trim() !== '') out.push('');
+        out.push(line);
+        // 이스케이프된 파이프(\|)는 GFM 이 리터럴로 취급하므로 컬럼 수 계산에서 제외한다.
+        const { text: masked } = protectWikiLinks(line.replace(/\\\|/g, '\x00'));
+        const cols = masked.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').length;
+        out.push('|' + new Array(cols).fill(' --- ').join('|') + '|');
+    }
+    return out.join('\n');
+}
+
+// :::float / :::infobox 공용 배치 토큰 — {left|right} 플래그 + {span:3~6} (12칸 기준 폭,
+// 캔버스 {span:N} 과 동일 어휘의 부분집합).
+const WIKI_FLOAT_TOKEN_SCHEMA = {
+    left:  { type: 'flag' },
+    right: { type: 'flag' },
+    span:  { type: 'enum', values: ['3', '4', '5', '6'] },
+};
+
 /** 블록을 HTML로 렌더링. 중첩 WIKIBLOCKPH 는 자체적으로 재귀 치환 */
 function _renderBlockHtml(block, blockData) {
     const type = block.type;
@@ -2766,6 +2850,11 @@ function _renderBlockHtml(block, blockData) {
     let bodyBg = '', bodyColor = '';
 
     let innerText = block.innerText || '';
+
+    // 인포박스는 구분 행 없는 `| 키 | 값 |` 나열을 표로 승격한다(marked.parse 이전).
+    if (type === 'infobox') {
+        innerText = _normalizeBareTableRows(innerText);
+    }
 
     const isCallout = (type === 'info' || type === 'tip' || type === 'success'
                     || type === 'warning' || type === 'danger' || type === 'note');
@@ -2894,8 +2983,15 @@ function _renderBlockHtml(block, blockData) {
             if (ct.gap) canvasCls.push(`wiki-canvas--gap-${ct.gap}`);
             const areas = children.map((child) => {
                 const meta = _extractStrictTokens(child.titleLine, {
-                    span:  { type: 'enum', values: ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'] },
-                    panel: { type: 'flag' },
+                    span:      { type: 'enum', values: ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'] },
+                    // {span-md:N}: 중간 폭(태블릿)에서의 칸 수 — 데스크톱 8/4 → 태블릿 12/12
+                    // 같은 단계적 접힘을 선언한다(모바일 1열 접힘은 기존과 동일).
+                    'span-md': { type: 'enum', values: ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'] },
+                    // {order:N}: 모바일 1열 접힘 시 표시 순서(미지정 영역은 order:0 으로 앞에 옴).
+                    order:     { type: 'enum', values: ['1', '2', '3', '4', '5', '6', '7', '8', '9'] },
+                    // {sticky}: 스크롤 시 영역을 상단에 고정(긴 본문 + 짧은 사이드바 조합).
+                    sticky:    { type: 'flag' },
+                    panel:     { type: 'flag' },
                 });
                 // 영역별 배경/글자색은 카드와 동일한 색 토큰 규칙을 따른다.
                 const cs = _extractBlockStyleTokens(child.titleLine);
@@ -2904,12 +3000,81 @@ function _renderBlockHtml(block, blockData) {
                 if (cs.color && _isSafeCssColor(cs.color)) areaStyle += `color:${cs.color};`;
                 const areaStyleAttr = areaStyle ? ` style="${areaStyle}"` : '';
                 const spanCls = meta.tokens.span ? ` wiki-area--span-${meta.tokens.span}` : '';
+                const spanMdCls = meta.tokens['span-md'] ? ` wiki-area--span-md-${meta.tokens['span-md']}` : '';
+                const orderCls = meta.tokens.order ? ` wiki-area--order-${meta.tokens.order}` : '';
+                const stickyCls = meta.tokens.sticky ? ' wiki-area--sticky' : '';
                 // {panel} 토큰: 카드와 동일한 여백·테두리(chrome)를 부여해 색 영역이 날것으로 보이지 않게 한다.
                 const panelCls = meta.tokens.panel ? ' wiki-area--panel' : '';
                 const childInner = _renderChildInnerHtml(child.innerText, blockData);
-                return `<div class="wiki-area${spanCls}${panelCls}"${areaStyleAttr}>${childInner}</div>`;
+                return `<div class="wiki-area${spanCls}${spanMdCls}${orderCls}${stickyCls}${panelCls}"${areaStyleAttr}>${childInner}</div>`;
             });
             return `<div class="${canvasCls.join(' ')}">${areas.join('')}</div>`;
+        }
+        case 'float':
+        case 'infobox': {
+            // 본문이 옆을 감싸는 좌/우 플로팅 패널. 인라인 목차 카드(_buildInlineTocLayout)가
+            // 검증한 float 전략의 사용자 문법 버전으로, 모바일(≤768px)에서는 render.css 가
+            // float 를 해제하고 전체 폭으로 스택한다. infobox 는 float 위에 제목 헤더(팔레트
+            // 토큰 적용)와 카드 chrome 을 얹는 설탕 문법.
+            const { cleanTitle: floatTitle, tokens: ft } = _extractStrictTokens(cleanTitle, WIKI_FLOAT_TOKEN_SCHEMA);
+            const side = (ft.left && !ft.right) ? 'left' : 'right';
+            const span = ft.span || '4';
+            const floatCls = `wiki-float wiki-float--${side} wiki-float--span-${span}`;
+            let floatTitleHtml = '';
+            if (floatTitle) {
+                if (typeof marked !== 'undefined') {
+                    const { text: pt, prot: tp } = protectWikiLinks(floatTitle);
+                    floatTitleHtml = marked.parseInline(pt);
+                    floatTitleHtml = restoreWikiLinks(floatTitleHtml, tp);
+                    floatTitleHtml = _processInlineLayoutTokens(floatTitleHtml);
+                } else {
+                    floatTitleHtml = escapeHtml(floatTitle);
+                }
+            }
+            if (type === 'float') {
+                // 제목 없는 순수 패널이 기본. 제목 텍스트가 있으면 얇은 헤더로 노출해
+                // 사용자 입력이 조용히 사라지지 않게 한다.
+                return `<aside class="${floatCls}"${styleAttr}>` +
+                    (floatTitleHtml ? `<div class="wiki-float-title">${floatTitleHtml}</div>` : '') +
+                    innerHtml +
+                    `</aside>`;
+            }
+            // 인포박스: 제목 헤더에만 색 토큰({palette:}/{bg:}/{color:})을 적용한다.
+            let ibHeaderStyle = '';
+            if (bg && _isSafeCssColor(bg)) ibHeaderStyle += `background-color:${bg};`;
+            if (color && _isSafeCssColor(color)) ibHeaderStyle += `color:${color};`;
+            const ibHeaderStyleAttr = ibHeaderStyle ? ` style="${ibHeaderStyle}"` : '';
+            return `<aside class="${floatCls} wiki-infobox">` +
+                (floatTitleHtml ? `<div class="wiki-infobox-title"${ibHeaderStyleAttr}>${floatTitleHtml}</div>` : '') +
+                `<div class="wiki-infobox-body">${innerHtml}</div>` +
+                `</aside>`;
+        }
+        case 'gallery': {
+            // 이미지 균등 썸네일 그리드. 본문에서 <img> 만 수집해 정사각 크롭 타일로
+            // 배치하고, 캡션은 alt 텍스트를 사용한다. 클릭 시 원본을 새 탭으로 연다
+            // (라이트박스는 1단계에서 의도적으로 생략). 이미지 외 콘텐츠는 무시한다.
+            const { tokens: galTokens } = _extractStrictTokens(block.titleLine, {
+                cols: { type: 'enum', values: ['2', '3', '4', '5', '6'] },
+            });
+            const imgTagRe = /<img\b[^>]*>/g;
+            const galleryImgs = [];
+            let imgTagM;
+            while ((imgTagM = imgTagRe.exec(innerHtml)) !== null) {
+                // src/alt 는 marked 렌더 출력에서 추출하므로 이미 attribute-escape 된 상태 —
+                // 새 attribute 문맥에 그대로 재사용해도 안전하다.
+                const src = (imgTagM[0].match(/src="([^"]*)"/) || [])[1];
+                if (!src) continue;
+                const alt = (imgTagM[0].match(/alt="([^"]*)"/) || [])[1] || '';
+                galleryImgs.push({ src, alt });
+            }
+            if (galleryImgs.length === 0) return `<div class="wiki-gallery-empty"></div>`;
+            const galCls = `wiki-gallery wiki-gallery--cols-${galTokens.cols || '3'}`;
+            const galItems = galleryImgs.map(im =>
+                `<a class="wiki-gallery-item" href="${im.src}" target="_blank" rel="noopener">` +
+                `<span class="wiki-gallery-thumb"><img src="${im.src}" alt="${im.alt}"></span>` +
+                (im.alt ? `<span class="wiki-gallery-caption">${im.alt}</span>` : '') +
+                `</a>`);
+            return `<div class="${galCls}">${galItems.join('')}</div>`;
         }
         case 'tabs': {
             // 탭은 항상 좌측 정렬 (align 토큰 미지원)
@@ -3034,6 +3199,25 @@ function _renderBlockHtml(block, blockData) {
                 (titleHtml ? `<div class="wiki-block-title">${titleHtml}</div>` : '') +
                 innerHtml +
                 `</div>`;
+        case 'after':
+        case 'until': {
+            // 시점별 조건부 표시: :::after <시각> 은 그 시각 이후에만, :::until <시각> 은
+            // 그 시각 이전에만 본문을 표시한다. 파서 함수(파싱 시점 고정)와 달리 뷰어
+            // 브라우저에서 렌더 시점에 초기 표시 여부를 확정하고(_initTemporal 이 이후
+            // 경계 통과 시 라이브 전환), {timer:} 와 동일한 클라이언트-사이드 아키텍처를 따른다.
+            // 시각은 유닉스 초(전역 순간) 또는 YYYY-MM-DD[ HH:MM](뷰어 로컬)로 작성한다.
+            const boundaryMs = _parseTemporalBoundary(block.titleLine);
+            if (boundaryMs === null) {
+                // 시각을 해석할 수 없으면 표현 기능이므로 안전하게 항상 표시(fail-open).
+                return `<div class="wiki-block wiki-block-${escapeHtml(type)}"${styleAttr}>${innerHtml}</div>`;
+            }
+            // 렌더 시점(뷰어 클럭)에 초기 표시 상태를 확정 → 첫 페인트에서 양쪽이 깜빡이지 않음.
+            const passed = Date.now() >= boundaryMs;
+            const visible = type === 'until' ? !passed : passed;
+            const hiddenAttr = visible ? '' : ' hidden';
+            return `<div class="wiki-temporal wiki-temporal-${type}"${hiddenAttr} ` +
+                `data-temporal-ms="${boundaryMs}" data-temporal-mode="${type}">${innerHtml}</div>`;
+        }
         case 'embed': {
             const accentRaw = (bg && _isSafeCssColor(bg)) ? bg
                             : (color && _isSafeCssColor(color)) ? color
@@ -3070,6 +3254,9 @@ function _renderBlockHtml(block, blockData) {
                 `</div>`;
         }
         default:
+            // 정렬 블록(:::left / :::center / :::right)을 포함한 미분류 타입의 제네릭 폴백.
+            // 스타일은 render.css 의 .wiki-block-<type> 클래스가 부여한다(정렬 블록은
+            // text-align + margin:auto 만 적용하는 가장 얇은 컨테이너).
             return `<div class="wiki-block wiki-block-${escapeHtml(type)}"${styleAttr}>${innerHtml}</div>`;
     }
 }
@@ -3080,7 +3267,7 @@ function _renderBlockHtml(block, blockData) {
  * - {button:텍스트|url}           → <a class="wiki-button">
  * - {stat:값|라벨}               → <div>  (선행 <p> 제거)
  * - {hr}                          → <hr class="wiki-block-hr">
- * 선행 {palette:}/{bg:}/{color:} 토큰을 흡수해 스타일로 적용.
+ * 선행 {palette:}/{bg:}/{color:}/{fs:} 토큰을 흡수해 스타일로 적용.
  * 코드블록/인라인코드 내부는 보호.
  */
 function _processInlineLayoutTokens(html) {
@@ -3091,7 +3278,7 @@ function _processInlineLayoutTokens(html) {
 
     function parseStylePrefix(prefix) {
         let t = _resolvePaletteTokens(prefix || '');
-        let bg = '', color = '';
+        let bg = '', color = '', fs = '';
         let replaced = true;
         while (replaced) {
             replaced = false;
@@ -3099,8 +3286,15 @@ function _processInlineLayoutTokens(html) {
             if (bm) { bg = bm[1].trim(); t = t.replace(bm[0], ''); replaced = true; }
             const cm = t.match(/\{color:\s*([^}]+)\}/);
             if (cm) { color = cm[1].trim(); t = t.replace(cm[0], ''); replaced = true; }
+            const fm = t.match(/\{fs:\s*([^}]+)\}/);
+            if (fm) {
+                const v = fm[1].trim();
+                // enum 밖 값은 무시 — ==하이라이트== 프리픽스와 동일 정책.
+                if (WIKI_FS_SIZES.has(v)) fs = v;
+                t = t.replace(fm[0], ''); replaced = true;
+            }
         }
-        return { bg, color };
+        return { bg, color, fs };
     }
     function buildStyleAttr(bg, color) {
         let s = '';
@@ -3108,9 +3302,13 @@ function _processInlineLayoutTokens(html) {
         if (color && _isSafeCssColor(color)) s += `color:${color};`;
         return s ? ` style="${s}"` : '';
     }
+    // 컴포넌트 루트 class 에 덧붙일 크기 채널 클래스(" wiki-fs-*"). fs 미지정 시 빈 문자열.
+    function fsClass(fs) {
+        return fs ? ` wiki-fs-${fs}` : '';
+    }
 
     // 인라인 컴포넌트({button:}, {badge:}, {tag:}, {stat:}) 앞에 놓인
-    // 스타일/아이콘 토큰({palette|bg|color|mdi|bi|icon|img}:...)을 흡수해 컴포넌트 내부에 렌더링.
+    // 스타일/아이콘 토큰({palette|bg|color|fs|mdi|bi|icon|img}:...)을 흡수해 컴포넌트 내부에 렌더링.
     // 순서 무관하게 혼용 가능. 아이콘 토큰은 최대 1개만 소비.
     // 프리픽스는 컴포넌트 매치 후 역방향 결정적 스캔으로 수집하여
     // 탐욕적 반복 정규식의 백트래킹을 회피한다.
@@ -3138,13 +3336,13 @@ function _processInlineLayoutTokens(html) {
         }
     );
 
-    const COMPONENT_TOKEN_RE = /^\{(?:palette|bg|color|mdi|bi|icon|img):[^}]+\}$/;
+    const COMPONENT_TOKEN_RE = /^\{(?:palette|bg|color|fs|mdi|bi|icon|img):[^}]+\}$/;
     const ICON_TOKEN_RE = /^\{(mdi|bi|icon|img):\s*([^}]+?)\s*\}$/;
     const CLASS_NAME_RE = /^[a-zA-Z0-9\-_]+$/;
 
     function extractIconHtml(prefix) {
         let iconHtml = '';
-        const tokenRe = /\{(?:palette|bg|color|mdi|bi|icon|img):[^}]+\}/g;
+        const tokenRe = /\{(?:palette|bg|color|fs|mdi|bi|icon|img):[^}]+\}/g;
         let tm;
         while ((tm = tokenRe.exec(prefix)) !== null) {
             const im = tm[0].match(ICON_TOKEN_RE);
@@ -3288,27 +3486,27 @@ function _processInlineLayoutTokens(html) {
     }
 
     html = scanComponentBalanced(html, 'badge', (prefix, arg) => {
-        const { bg, color } = parseStylePrefix(prefix);
+        const { bg, color, fs } = parseStylePrefix(prefix);
         const iconHtml = extractIconHtml(prefix);
         const text = arg.trim();
         const inner = iconHtml
             ? `${iconHtml}<span class="wiki-badge-label">${renderChipValue(text)}</span>`
             : renderChipValue(text);
-        return `<span class="wiki-badge"${buildStyleAttr(bg, color)}>${inner}</span>`;
+        return `<span class="wiki-badge${fsClass(fs)}"${buildStyleAttr(bg, color)}>${inner}</span>`;
     }, { rejectTopLevelPipe: true });
 
     html = scanComponentBalanced(html, 'tag', (prefix, arg) => {
-        const { bg, color } = parseStylePrefix(prefix);
+        const { bg, color, fs } = parseStylePrefix(prefix);
         const iconHtml = extractIconHtml(prefix);
         const text = arg.trim();
         const inner = iconHtml
             ? `${iconHtml}<span class="wiki-tag-label">${renderChipValue(text)}</span>`
             : renderChipValue(text);
-        return `<span class="wiki-tag"${buildStyleAttr(bg, color)}>${inner}</span>`;
+        return `<span class="wiki-tag${fsClass(fs)}"${buildStyleAttr(bg, color)}>${inner}</span>`;
     }, { rejectTopLevelPipe: true });
 
     html = scanComponentBalanced(html, 'button', (prefix, arg) => {
-        const { bg, color } = parseStylePrefix(prefix);
+        const { bg, color, fs } = parseStylePrefix(prefix);
         const iconHtml = extractIconHtml(prefix);
         const parts = _splitPipeTopLevel(arg).map(s => s.trim());
         const text = parts[0] || '';
@@ -3339,9 +3537,9 @@ function _processInlineLayoutTokens(html) {
             const ihref = (!linkSlug && anchor)
                 ? `#${encodeURIComponent(anchor)}`
                 : `${_renderCtx.wikiLinkBase}/${encodeURIComponent(linkSlug)}${anchor ? '#' + encodeURIComponent(anchor) : ''}`;
-            const icls = styled
+            const icls = (styled
                 ? 'wiki-button wiki-button-custom wiki-button-internal'
-                : 'wiki-button wiki-button-internal';
+                : 'wiki-button wiki-button-internal') + fsClass(fs);
             return `<a class="${icls}" href="${escapeHtml(ihref)}"${buildStyleAttr(bg, color)}>${inner}</a>`;
         }
 
@@ -3352,13 +3550,13 @@ function _processInlineLayoutTokens(html) {
             const u = new URL(url, window.location.origin);
             external = (u.origin !== window.location.origin);
         } catch (e) { /* 상대 경로 등 */ }
-        const cls = styled ? 'wiki-button wiki-button-custom' : 'wiki-button';
+        const cls = (styled ? 'wiki-button wiki-button-custom' : 'wiki-button') + fsClass(fs);
         const extAttr = external ? ' target="_blank" rel="noopener noreferrer"' : '';
         return `<a class="${cls}" href="${escapeHtml(href)}"${extAttr}${buildStyleAttr(bg, color)}>${inner}</a>`;
     });
 
     html = scanComponentBalanced(html, 'stat', (prefix, arg) => {
-        const { bg, color } = parseStylePrefix(prefix);
+        const { bg, color, fs } = parseStylePrefix(prefix);
         const iconHtml = extractIconHtml(prefix);
         const parts = _splitPipeTopLevel(arg).map(s => s.trim());
         const value = renderChipValue(parts[0] || '');
@@ -3382,7 +3580,7 @@ function _processInlineLayoutTokens(html) {
         const labelStyleAttr = resolvedColor
             ? ` style="color:${resolvedColor};opacity:0.75;"`
             : '';
-        return `<div class="wiki-stat"${containerStyleAttr}>` +
+        return `<div class="wiki-stat${fsClass(fs)}"${containerStyleAttr}>` +
             `<div class="wiki-stat-value">${valueInner}</div>` +
             (label ? `<div class="wiki-stat-label"${labelStyleAttr}>${label}</div>` : '') +
             `</div>`;
@@ -3391,19 +3589,20 @@ function _processInlineLayoutTokens(html) {
     // 닫는 '}' 누락 시 뒤쪽 다른 '}' 까지 탐욕 매치되어 HTML 태그를 내용으로 삼키는 것을 막기 위해
     // 매치 범위를 '<' / 개행 직전까지로 제한한다.
     html = scanComponent(html, /\{kbd:([^}<\n]+)\}/g, (prefix, m) => {
-        const { bg, color } = parseStylePrefix(prefix);
+        const { bg, color, fs } = parseStylePrefix(prefix);
         const keys = m[1].split('+').map(s => s.trim()).filter(Boolean);
         if (keys.length === 0) return null;
         const keyStyleAttr = buildStyleAttr(bg, color);
         const parts = keys.map(k => `<kbd class="wiki-kbd"${keyStyleAttr}>${escapeHtml(k)}</kbd>`);
         // 바깥 카드는 사용자 색 토큰을 받지 않고 테마 기본색만 사용한다.
-        return `<span class="wiki-kbd-card">` +
+        // 크기 채널은 카드 루트에 적용 — 내부 .wiki-kbd 가 em 크기라 배율을 상속.
+        return `<span class="wiki-kbd-card${fsClass(fs)}">` +
             `<span class="wiki-kbd-combo">${parts.join('<span class="wiki-kbd-plus">+</span>')}</span>` +
             `</span>`;
     });
 
     html = scanComponentBalanced(html, 'progress', (prefix, arg) => {
-        const { bg, color } = parseStylePrefix(prefix);
+        const { bg, color, fs } = parseStylePrefix(prefix);
         const iconHtml = extractIconHtml(prefix);
         const parts = _splitPipeTopLevel(arg).map(s => s.trim());
         const valueStr = parts[0] || '';
@@ -3421,7 +3620,7 @@ function _processInlineLayoutTokens(html) {
             const labelHtmlA = hasLabelA
                 ? `<span class="wiki-progress-label">${iconHtml}${label ? `<span class="wiki-progress-label-text">${renderChipValue(label)}</span>` : ''}</span>`
                 : '';
-            return `<div class="wiki-progress wiki-progress-auto" data-progress-auto="1"${rootStyleA}>` +
+            return `<div class="wiki-progress wiki-progress-auto${fsClass(fs)}" data-progress-auto="1"${rootStyleA}>` +
                 `<div class="wiki-progress-header">` +
                     labelHtmlA +
                     `<span class="wiki-progress-value"></span>` +
@@ -3459,7 +3658,7 @@ function _processInlineLayoutTokens(html) {
         const labelHtml = hasLabel
             ? `<span class="wiki-progress-label">${iconHtml}${label ? `<span class="wiki-progress-label-text">${renderChipValue(label)}</span>` : ''}</span>`
             : '';
-        return `<div class="wiki-progress"${rootStyle}>` +
+        return `<div class="wiki-progress${fsClass(fs)}"${rootStyle}>` +
             `<div class="wiki-progress-header">` +
                 labelHtml +
                 `<span class="wiki-progress-value">${escapeHtml(valueDisplay)}</span>` +
@@ -3583,6 +3782,183 @@ function _initTimers(containerEl, containerId) {
     }
     tick();
     _timerIntervalMap[containerId] = setInterval(tick, 1000);
+}
+
+/**
+ * :::after / :::until 블록의 경계 시각을 절대 밀리초로 파싱. 실패 시 null.
+ * - 순수 정수 → 유닉스 초(전역 순간). {time:}/{timer:} 와 동일한 절대 기준.
+ * - YYYY-MM-DD 또는 YYYY-MM-DD HH:MM → 뷰어 로컬 시각. {dday}/{age}/{calendar} 와
+ *   동일하게 new Date(y, m-1, d[, hh, mm]) 로 로컬 자정/시각을 구성한다.
+ * 렌더와 _initTemporal 이 모두 같은 브라우저(동일 TZ)에서 돌기 때문에, 로컬 해석으로
+ * 얻은 절대 밀리초를 data 속성에 담아 두면 이후 재평가도 일관되게 비교된다.
+ */
+function _parseTemporalBoundary(raw) {
+    const s = (raw || '').trim();
+    if (!s) return null;
+    if (/^\d+$/.test(s)) {
+        const sec = parseInt(s, 10);
+        return Number.isFinite(sec) ? sec * 1000 : null;
+    }
+    const m = /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2}))?$/.exec(s);
+    if (!m) return null;
+    const y = parseInt(m[1], 10), mo = parseInt(m[2], 10), d = parseInt(m[3], 10);
+    const hh = m[4] !== undefined ? parseInt(m[4], 10) : 0;
+    const mm = m[5] !== undefined ? parseInt(m[5], 10) : 0;
+    if (mo < 1 || mo > 12 || d < 1 || d > 31 || hh > 23 || mm > 59) return null;
+    const dt = new Date(y, mo - 1, d, hh, mm, 0, 0);
+    // 존재하지 않는 날짜(예: 02-30)는 롤오버되므로 구성 요소 일치를 확인해 거부.
+    if (isNaN(dt.getTime()) || dt.getFullYear() !== y || dt.getMonth() !== mo - 1 || dt.getDate() !== d) return null;
+    return dt.getTime();
+}
+
+// containerId → 예약된 전환 타이머 id 배열 (중복/누수 방지). setInterval 대신 경계까지
+// 정확히 한 번 setTimeout 으로 전환한다.
+const _temporalTimeoutMap = {};
+// setTimeout 지연은 부호 있는 32비트라 ~24.85일(2^31-1 ms) 초과 시 즉시 발동하는
+// 버그가 있다. 그보다 먼 경계는 타이머를 걸지 않고(초기 상태는 이미 정확) 다음 로드에서
+// 재계산하도록 둔다. 안전 여유를 두고 24일로 상한.
+const _TEMPORAL_MAX_DELAY_MS = 24 * 24 * 60 * 60 * 1000;
+let _temporalVisibilityHooked = false;
+
+/** 단일 .wiki-temporal 요소의 표시 여부를 현재 시각 기준으로 재계산해 hidden 을 토글. */
+function _applyTemporalState(el) {
+    const ms = parseInt(el.getAttribute('data-temporal-ms'), 10);
+    if (isNaN(ms)) return null;
+    const mode = el.getAttribute('data-temporal-mode');
+    const passed = Date.now() >= ms;
+    // after: 경계 통과 후 표시 / until: 경계 통과 전 표시
+    el.hidden = mode === 'until' ? passed : !passed;
+    return ms;
+}
+
+/**
+ * 숨김 temporal 분기에서만 참조되는 각주 항목을 하단 각주 목록에서도 함께 숨긴다.
+ * processFootnotes 는 수집 시점의 DOM 전체를 대상으로 하므로, 숨긴 분기의 각주 본문이
+ * 보이는 .wiki-footnotes 섹션(과 innerText 평문 추출)으로 새어 나온다 — 항목의 모든
+ * 참조 마커가 hidden temporal 조상 아래에 있을 때만 li 를 숨겨 누출을 막는다.
+ * 번호는 li.value(=엔트리 번호)로 고정돼 있어 목록 번호는 본문 마커와 계속 일치하며,
+ * 헤딩 numbering 과 동일하게 clock-independent 하다(가시성만 시각에 따라 토글).
+ */
+function _updateTemporalFootnoteVisibility(root) {
+    const scope = root || document;
+    scope.querySelectorAll('.wiki-footnotes').forEach((section) => {
+        section.querySelectorAll(':scope > ol > li[id]').forEach((li) => {
+            const refs = scope.querySelectorAll(`sup.wiki-fn-ref > a[href="#${CSS.escape(li.id)}"]`);
+            if (refs.length === 0) return;
+            let anyVisible = false;
+            refs.forEach((a) => { if (!a.closest('.wiki-temporal[hidden]')) anyVisible = true; });
+            li.hidden = !anyVisible;
+        });
+    });
+}
+
+/**
+ * 숨김 temporal 분기의 헤딩을 가리키는 TOC 항목(인라인 목차 카드 + 전역 목차 요소들)을
+ * 함께 숨긴다. 헤딩 번호·s-앵커 부여는 그대로 유지한다 — 번호를 제외하면 산출이 뷰어
+ * 시계에 의존해 섹션 링크 안정성이 깨지므로, 각주와 동일하게 번호는 clock-independent 로
+ * 두고 가시성만 토글한다. 전역 목차 요소(#tocNav 소스·좌/우 사이드바·플로팅 패널,
+ * article/toc.ts 헤더의 고정 DOM 마커)는 SPA 전환 간 공유되어 root 스코프 밖에 있으므로
+ * document 에서 함께 찾는다. 사이드바는 populateSidebar 가 buildTocOlHtml 로 렌더 후
+ * 재구축하므로, 그쪽에서도 window._syncTemporalDerivedVisibility 를 재호출한다.
+ */
+function _updateTemporalTocVisibility(root) {
+    const scope = root || document;
+    const navs = Array.from(scope.querySelectorAll('.wiki-toc-card-nav'));
+    ['tocNav', 'wikiTocSidebarNav', 'wikiTocSidebarRightNav', 'tocFloatingNav'].forEach((navId) => {
+        const nav = document.getElementById(navId);
+        if (nav && !navs.includes(nav)) navs.push(nav);
+    });
+    navs.forEach((nav) => {
+        let hasVisible = false;
+        nav.querySelectorAll('li').forEach((li) => {
+            const a = li.querySelector(':scope > a[href^="#"]');
+            if (!a) return;
+            const href = a.getAttribute('href') || '';
+            let id = href.slice(1);
+            try { id = decodeURIComponent(id); } catch (_) { /* 원문 그대로 사용 */ }
+            const target = id ? document.getElementById(id) : null;
+            if (target) li.hidden = !!target.closest('.wiki-temporal[hidden]');
+            if (!li.hidden) hasVisible = true;
+        });
+        _toggleTocShellForNav(nav, hasVisible);
+    });
+}
+
+/**
+ * 목차 nav 에 (temporal 숨김 제외) 보이는 항목이 남는지에 따라 감싸는 셸도 함께 토글.
+ * 모든 헤딩이 숨김 temporal 분기 안에 있으면 항목만 숨겨서는 빈 "목차" 카드/사이드바
+ * 껍데기가 남으므로 셸까지 숨기고, 경계 통과로 항목이 드러나면 대칭적으로 되살린다.
+ */
+function _toggleTocShellForNav(nav, hasVisible) {
+    // 인라인 목차 카드: 카드 전체를 토글(빈 "목차" 헤더 방지).
+    const card = nav.closest('.wiki-toc-card');
+    if (card) { card.hidden = !hasVisible; return; }
+    // 좌/우 사이드바: populateSidebar 와 동일한 d-none 클래스로 제어.
+    if (nav.id === 'wikiTocSidebarNav' || nav.id === 'wikiTocSidebarRightNav') {
+        const sidebar = document.getElementById(nav.id === 'wikiTocSidebarNav' ? 'wikiTocSidebar' : 'wikiTocSidebarRight');
+        if (sidebar) sidebar.classList.toggle('d-none', !hasVisible);
+        return;
+    }
+    // #tocNav 소스: generateTOC 가 기록해 둔 컨테이너 id(예: tocContainer)를 같은 방식으로 토글.
+    if (nav.dataset && nav.dataset.wikiTocContainerId) {
+        const container = document.getElementById(nav.dataset.wikiTocContainerId);
+        if (container) container.classList.toggle('d-none', !hasVisible);
+    }
+    // #tocFloatingNav 는 열릴 때마다 #tocNav 를 복제하는 임시 뷰라 셸 제어 대상이 아니다.
+}
+
+/** 숨김 temporal 분기에서 파생되는 표시물(각주·TOC 항목·{progress:auto} 집계)을 일괄 동기화. */
+function _syncTemporalDerivedVisibility(root) {
+    _updateTemporalFootnoteVisibility(root);
+    _updateTemporalTocVisibility(root);
+    // {progress:auto} 는 숨김 temporal 하위 체크박스를 제외하고 집계하므로,
+    // 가시성이 바뀔 때마다 재계산한다(값 덮어쓰기 멱등 함수라 재호출 안전).
+    _fillAutoProgressBars(root || document);
+}
+
+/**
+ * :::after / :::until 블록의 라이브 전환 초기화. _initTimers 와 동일한 컨테이너-키
+ * 패턴으로, 재렌더(SPA 네비게이션·diff 뷰어 teardown) 시 이전 타이머를 정리한다.
+ * 각 블록의 경계까지 setTimeout 을 1회 걸어 정확한 시점에 전환하며, 백그라운드 탭
+ * 스로틀링으로 전환이 지연되는 경우를 대비해 visibilitychange/focus 에서 전체 재계산한다.
+ */
+function _initTemporal(containerEl, containerId) {
+    if (_temporalTimeoutMap[containerId]) {
+        _temporalTimeoutMap[containerId].forEach((id) => clearTimeout(id));
+        delete _temporalTimeoutMap[containerId];
+    }
+    const els = containerEl.querySelectorAll('.wiki-temporal[data-temporal-ms]');
+    if (els.length === 0) return;
+    const now = Date.now();
+    const timeouts = [];
+    els.forEach((el) => {
+        const ms = _applyTemporalState(el);
+        if (ms === null) return;
+        const delay = ms - now;
+        // 미래 경계이고 32비트 상한 이내면 그 시점에 정확히 한 번 전환.
+        if (delay > 0 && delay <= _TEMPORAL_MAX_DELAY_MS) {
+            timeouts.push(setTimeout(() => {
+                _applyTemporalState(el);
+                _syncTemporalDerivedVisibility(containerEl);
+            }, delay + 50));
+        }
+    });
+    // 초기 상태 확정 직후 숨김 분기 전용 각주·TOC 항목을 함께 숨긴다
+    // (processFootnotes/generateTOC/_buildInlineTocLayout 가 renderWikiContent 에서
+    // 이 함수보다 먼저 실행됨).
+    _syncTemporalDerivedVisibility(containerEl);
+    if (timeouts.length) _temporalTimeoutMap[containerId] = timeouts;
+    // 전역 리스너는 한 번만 등록: 탭 복귀 시 문서 전체의 temporal 요소를 즉시 보정한다.
+    if (!_temporalVisibilityHooked && typeof document !== 'undefined') {
+        _temporalVisibilityHooked = true;
+        const recompute = () => {
+            if (document.visibilityState === 'hidden') return;
+            document.querySelectorAll('.wiki-temporal[data-temporal-ms]').forEach(_applyTemporalState);
+            _syncTemporalDerivedVisibility(document);
+        };
+        document.addEventListener('visibilitychange', recompute);
+        window.addEventListener('focus', recompute);
+    }
 }
 
 /** {age:YYYY-MM-DD} → 만 나이 (국제 표준) */
@@ -3725,15 +4101,20 @@ function _replaceTaskCheckboxesWithIcons(html) {
 // mdi-checkbox-marked) 비율을 계산해 막대 폭과 값 텍스트를 채운다. 진행 중([~])·
 // 미완료([ ]) 항목은 분모(total)에는 포함되지만 완료로 세지 않는다("완료율").
 // makeCollapsibleSections 이후에 호출해 .wiki-section-body-inner 스코프도 인식한다.
+// 진행률은 앵커·참조가 걸리지 않는 순수 표시 집계이므로, 숨김 temporal 분기의
+// 체크박스는 제외한다(값을 덮어쓰는 멱등 함수라 temporal flip 시 재호출로 갱신).
 function _fillAutoProgressBars(containerEl) {
     if (!containerEl) return;
     const bars = containerEl.querySelectorAll('.wiki-progress-auto[data-progress-auto]');
     bars.forEach(bar => {
         const scope = bar.closest(
-            '.wiki-block, .wiki-fold-content, .accordion-body, .tab-pane, ' +
-            '.wiki-embed-body, .wiki-callout-body, .wiki-area, .wiki-section-body-inner'
+            '.wiki-temporal, .wiki-block, .wiki-fold-content, .accordion-body, .tab-pane, ' +
+            '.wiki-embed-body, .wiki-callout-body, .wiki-area, .wiki-float, .wiki-section-body-inner'
         ) || containerEl;
-        const boxes = scope.querySelectorAll('.wiki-task-checkbox');
+        const boxes = [];
+        scope.querySelectorAll('.wiki-task-checkbox').forEach(b => {
+            if (!b.closest('.wiki-temporal[hidden]')) boxes.push(b);
+        });
         const total = boxes.length;
         let done = 0;
         boxes.forEach(b => { if (b.classList.contains('mdi-checkbox-marked')) done++; });
@@ -3743,6 +4124,239 @@ function _fillAutoProgressBars(containerEl) {
         const valEl = bar.querySelector('.wiki-progress-value');
         if (valEl) valEl.textContent = total > 0 ? `${done}/${total} · ${pct}%` : '—';
     });
+}
+
+// ── 표 옵션 토큰 ──
+// 표 바로 윗줄의 단독 토큰 라인({table:정렬}{w:너비}{caption:제목}{sticky-header}
+// {sortable}{row-header})과 구분 행 셀의 {w:NN%} 열 너비 토큰을 marked 파싱 전에
+// 텍스트 단계에서 소비한다. 구분 행에 토큰이 남으면 GFM 표 인식 자체가 깨지고,
+// 옵션 라인은 일반 문단으로 새어 나가므로, placeholder(WIKITBLOPTPH<idx>XEND)
+// 문단으로 치환해 두고 렌더 후 _applyWikiTableOptions DOM 패스가 표에 적용한다.
+
+// {w:} 표 전체 너비는 50%~100% 10% 단위 enum 만 허용
+const _WIKI_TABLE_WIDTH_ENUM = new Set(['50%', '60%', '70%', '80%', '90%', '100%']);
+
+/** 단독 표 옵션 라인 파싱. 알 수 없는 토큰이 섞이면 null (일반 텍스트로 유지). */
+function _parseWikiTableOptionLine(line) {
+    const trimmed = line.trim();
+    if (trimmed[0] !== '{' || trimmed[trimmed.length - 1] !== '}') return null;
+    // 라인이 토큰 나열만으로 구성되는지 확인 (토큰 사이 공백 허용)
+    if (trimmed.replace(/\{[^{}]*\}/g, '').trim() !== '') return null;
+    const opts = {};
+    const re = /\{([^{}]*)\}/g;
+    let m;
+    while ((m = re.exec(trimmed))) {
+        const body = m[1].trim();
+        let tok;
+        if ((tok = body.match(/^table\s*:\s*(left|center|right)$/i))) { opts.align = tok[1].toLowerCase(); continue; }
+        if ((tok = body.match(/^w\s*:\s*(\d{2,3}\s*%)$/i))) {
+            const width = tok[1].replace(/\s+/g, '');
+            if (!_WIKI_TABLE_WIDTH_ENUM.has(width)) return null;
+            opts.width = width;
+            continue;
+        }
+        if ((tok = body.match(/^caption\s*:\s*(\S[\s\S]*)$/i))) { opts.caption = tok[1].trim(); continue; }
+        if (/^sticky-header$/i.test(body)) { opts.stickyHeader = true; continue; }
+        if (/^sortable$/i.test(body)) { opts.sortable = true; continue; }
+        if (/^row-header$/i.test(body)) { opts.rowHeader = true; continue; }
+        return null;
+    }
+    return Object.keys(opts).length > 0 ? opts : null;
+}
+
+/**
+ * GFM 표 구분 행 검사 + 셀별 {w:NN%} 열 너비 토큰 추출.
+ * 구분 행이 아니면 null. 반환 line 은 토큰이 제거된 표준 구분 행,
+ * widths 는 열별 너비 배열(토큰이 하나도 없으면 null).
+ */
+function _extractWikiTableDelimWidths(line) {
+    if (line.indexOf('|') === -1 || line.indexOf('-') === -1) return null;
+    if (/^ {4,}/.test(line)) return null; // indented code block
+    const trimmed = line.trim();
+    let parts = trimmed.split('|');
+    if (trimmed.startsWith('|')) parts = parts.slice(1);
+    if (trimmed.endsWith('|')) parts = parts.slice(0, -1);
+    if (parts.length === 0) return null;
+    const widths = [];
+    let hasToken = false;
+    const cleaned = [];
+    for (const cell of parts) {
+        const m = cell.trim().match(/^(:?-+:?)(?:\s+\{w\s*:\s*(\d{1,3}\s*%)\s*\})?$/i);
+        if (!m) return null;
+        if (m[2]) {
+            const width = m[2].replace(/\s+/g, '');
+            const pct = parseInt(width, 10);
+            // 범위 밖 값은 너비 미지정으로 취급하되 토큰은 소비 (표 인식은 유지)
+            widths.push(pct >= 1 && pct <= 100 ? width : null);
+            if (widths[widths.length - 1]) hasToken = true;
+        } else {
+            widths.push(null);
+        }
+        cleaned.push(m[1]);
+    }
+    return {
+        line: '| ' + cleaned.join(' | ') + ' |',
+        widths: hasToken ? widths : null,
+    };
+}
+
+/**
+ * 표 옵션 토큰 텍스트 프리패스. 코드 펜스/인라인 코드가 placeholder 로 보호된
+ * 상태에서 호출해야 코드 안의 토큰 라인이 매칭되지 않는다.
+ * placeholder 문단과 표 사이에 빈 줄을 끼워 marked 가 둘을 별개 블록으로 파싱하게
+ * 하므로, 최상위(비인용·비리스트) 표에서만 동작한다.
+ */
+function _preprocessWikiTableTokens(text) {
+    const data = [];
+    if (text.indexOf('{') === -1) return { text, data };
+    const lines = text.split('\n');
+    const out = [];
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        // ① 표 바로 윗줄 단독 옵션 라인 (+ 같은 표의 구분 행 {w:} 병행 처리)
+        if (/^ {0,3}\{/.test(line)) {
+            const opts = _parseWikiTableOptionLine(line);
+            if (opts && i + 2 < lines.length && lines[i + 1].indexOf('|') !== -1) {
+                const delim = _extractWikiTableDelimWidths(lines[i + 2]);
+                if (delim) {
+                    if (delim.widths) opts.colWidths = delim.widths;
+                    const idx = data.push(opts) - 1;
+                    out.push('', `WIKITBLOPTPH${idx}XEND`, '', lines[i + 1], delim.line);
+                    i += 2;
+                    continue;
+                }
+            }
+        }
+        // ② 옵션 라인 없이 구분 행에만 {w:} 열 너비 토큰이 있는 표
+        if (line.indexOf('{w') !== -1 && i > 0 && out.length > 0 && lines[i - 1].indexOf('|') !== -1) {
+            const delim = _extractWikiTableDelimWidths(line);
+            if (delim) {
+                if (delim.widths) {
+                    const idx = data.push({ colWidths: delim.widths }) - 1;
+                    const header = out.pop();
+                    out.push('', `WIKITBLOPTPH${idx}XEND`, '', header, delim.line);
+                } else {
+                    // 모든 {w:} 값이 범위 밖 → 적용할 너비는 없지만 토큰은 소비해야
+                    // 표 인식이 유지된다 (토큰을 남기면 GFM 구분 행 매칭이 깨진다)
+                    out.push(delim.line);
+                }
+                continue;
+            }
+        }
+        out.push(line);
+    }
+    return { text: out.join('\n'), data };
+}
+
+/**
+ * placeholder 문단을 소비해 바로 다음 표에 옵션을 적용하는 DOM 패스.
+ * 셀 병합({<}{>}{^}{><}) 처리 이후에 호출해, rowspan/colspan 이 반영된 최종
+ * 구조를 기준으로 세로 헤더 변환·정렬 가능 여부를 판단한다.
+ */
+function _applyWikiTableOptions(containerEl, data) {
+    if (!data || data.length === 0) return;
+    containerEl.querySelectorAll('p').forEach(p => {
+        const m = (p.textContent || '').trim().match(/^WIKITBLOPTPH(\d+)XEND$/);
+        if (!m) return;
+        const opts = data[parseInt(m[1], 10)];
+        const next = p.nextElementSibling;
+        p.remove();
+        if (!opts || !next || next.tagName !== 'TABLE') return;
+        const table = next;
+        if (opts.align) table.classList.add('wiki-table-align-' + opts.align);
+        if (opts.width) table.style.width = opts.width;
+        if (opts.caption) {
+            const cap = document.createElement('caption');
+            cap.className = 'wiki-table-caption';
+            cap.textContent = opts.caption;
+            table.insertBefore(cap, table.firstChild);
+        }
+        if (opts.colWidths) {
+            const colgroup = document.createElement('colgroup');
+            opts.colWidths.forEach(w => {
+                const col = document.createElement('col');
+                if (w) col.style.width = w;
+                colgroup.appendChild(col);
+            });
+            // caption 은 colgroup 보다 앞에 와야 하는 HTML 콘텐츠 모델을 지킨다
+            const cap = table.querySelector(':scope > caption');
+            table.insertBefore(colgroup, cap ? cap.nextSibling : table.firstChild);
+        }
+        if (opts.rowHeader) {
+            table.classList.add('wiki-table-row-header');
+            // 첫 열이 위 행의 rowspan 에 덮인 행은 cells[0] 이 둘째 열이므로 건너뛴다
+            let carry = 0;
+            table.querySelectorAll(':scope > tbody > tr').forEach(tr => {
+                if (carry > 0) { carry--; return; }
+                const first = tr.cells[0];
+                if (!first) return;
+                carry = ((parseInt(first.getAttribute('rowspan') || '1', 10) || 1) - 1);
+                if (first.tagName !== 'TD') return;
+                const th = document.createElement('th');
+                Array.from(first.attributes).forEach(a => th.setAttribute(a.name, a.value));
+                th.innerHTML = first.innerHTML;
+                th.setAttribute('scope', 'row');
+                first.replaceWith(th);
+            });
+        }
+        if (opts.stickyHeader) table.classList.add('wiki-table-sticky-header');
+        if (opts.sortable) _initWikiSortableTable(table);
+    });
+}
+
+/** {sortable}: 헤더 클릭 정렬. 클라이언트 DOM 재배열만 수행하며 문서 데이터는 불변. */
+function _initWikiSortableTable(table) {
+    // 병합 셀이 있는 표는 행 재배열이 병합 구조를 깨뜨리므로 조용히 비활성화한다.
+    const hasMerge = Array.from(table.querySelectorAll('td, th')).some(c =>
+        (parseInt(c.getAttribute('colspan') || '1', 10) || 1) > 1 ||
+        (parseInt(c.getAttribute('rowspan') || '1', 10) || 1) > 1);
+    if (hasMerge) return;
+    // {^} 병합 변환으로 thead 가 tbody 로 이동한 표도 hasMerge 에서 걸러지지만,
+    // 헤더 행이 없는 표는 정렬 트리거 자체가 없으므로 방어적으로 제외.
+    const thead = table.querySelector(':scope > thead');
+    const tbody = table.querySelector(':scope > tbody');
+    if (!thead || !tbody || thead.rows.length === 0) return;
+    const headRow = thead.rows[0];
+    table.classList.add('wiki-table-sortable');
+    Array.from(headRow.cells).forEach((th, colIdx) => {
+        th.tabIndex = 0;
+        const onSort = () => _sortWikiTableByColumn(table, headRow, colIdx);
+        th.addEventListener('click', onSort);
+        th.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSort(); }
+        });
+    });
+}
+
+function _sortWikiTableByColumn(table, headRow, colIdx) {
+    const tbody = table.querySelector(':scope > tbody');
+    if (!tbody) return;
+    const th = headRow.cells[colIdx];
+    if (!th) return;
+    const asc = th.getAttribute('aria-sort') !== 'ascending';
+    Array.from(headRow.cells).forEach(c => c.removeAttribute('aria-sort'));
+    th.setAttribute('aria-sort', asc ? 'ascending' : 'descending');
+    const dir = asc ? 1 : -1;
+    // "+5%" / "1,200원" 같은 표기의 선두 숫자를 인식하는 숫자 우선 비교
+    const numOf = (s) => {
+        const nm = s.replace(/[,\s]/g, '').match(/^[+\-−]?\d+(?:\.\d+)?/);
+        return nm ? parseFloat(nm[0].replace('−', '-').replace('+', '')) : NaN;
+    };
+    const keyed = Array.from(tbody.rows).map(tr => {
+        const cell = tr.cells[colIdx];
+        const text = cell ? cell.textContent.trim() : '';
+        return { tr, text, num: numOf(text) };
+    });
+    const nonEmpty = keyed.filter(k => k.text !== '');
+    const numeric = nonEmpty.length > 0 && nonEmpty.every(k => !isNaN(k.num));
+    keyed.sort((a, b) => {
+        if (a.text === '' && b.text === '') return 0;
+        if (a.text === '') return 1; // 빈 셀은 정렬 방향과 무관하게 항상 뒤로
+        if (b.text === '') return -1;
+        const cmp = numeric ? (a.num - b.num) : a.text.localeCompare(b.text, 'ko');
+        return cmp * dir;
+    });
+    keyed.forEach(k => tbody.appendChild(k.tr));
 }
 
 // ── 문서 렌더링 통합 (index.html, edit.html 공통) ──
@@ -3800,6 +4414,14 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
             codeBlocksForFold.push(m);
             return `WIKICODEFPH${idx}XEND`;
         });
+
+        // 표 옵션 토큰(표 위 단독 라인·구분 행 {w:} 열 너비)을 marked 파싱 전에 소비.
+        // 코드 펜스/인라인 코드가 위에서 placeholder 로 보호된 상태이므로 코드 안의
+        // 토큰 라인은 매칭되지 않고, {br} 치환보다 먼저 수행해 {caption:} 값이
+        // WIKIBRPHEND placeholder 로 오염되지 않도록 한다.
+        const tableTokenResult = _preprocessWikiTableTokens(foldInput);
+        foldInput = tableTokenResult.text;
+        const wikiTableOptData = tableTokenResult.data;
 
         // {br} 인라인 줄바꿈 토큰을 안전한 placeholder 로 치환. marked 의 로컬 renderer.html
         // 가 raw HTML 을 escape 하므로 직접 <br> 를 넣으면 &lt;br&gt; 로 새어 나간다.
@@ -3902,7 +4524,7 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
                 const b = foldBlockData[parseInt(blkIdx, 10)];
                 return b ? _renderBlockHtml(b, foldBlockData) : '';
             });
-            let contentHtml = (typeof DOMPurify !== 'undefined') ? DOMPurify.sanitize(rawContentHtml, { ADD_TAGS: ['i', 'span', 'details', 'summary', 'div', 'canvas'], ADD_ATTR: ['class', 'style', 'data-bg', 'data-color', 'data-size', 'data-unix', 'data-ext-name', 'data-ext-idx', 'data-state-key', 'data-fn-html', 'data-fn-name', 'data-fn-ref', 'data-progress-auto', 'colspan', 'rowspan', 'title'] }) : escapeHtml(rawContentHtml);
+            let contentHtml = (typeof DOMPurify !== 'undefined') ? DOMPurify.sanitize(rawContentHtml, { ADD_TAGS: ['i', 'span', 'details', 'summary', 'div', 'canvas'], ADD_ATTR: ['class', 'style', 'data-bg', 'data-color', 'data-size', 'data-align', 'data-caption', 'data-unix', 'data-temporal-ms', 'data-temporal-mode', 'hidden', 'data-ext-name', 'data-ext-idx', 'data-state-key', 'data-fn-html', 'data-fn-name', 'data-fn-ref', 'data-progress-auto', 'colspan', 'rowspan', 'title'] }) : escapeHtml(rawContentHtml);
 
             foldBlocks.push({ summaryText, bgAttr, colorAttr, contentHtml });
             return `\n\nWIKIFOLDPH${idx}XEND\n\n`;
@@ -3946,7 +4568,7 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
         rawHtml = rawHtml.replace(/(?:<p>)?WIKIEXTPH_([a-zA-Z0-9]+)_(\d+)_XEND(?:<\/p>)?/g, (m, extName, idx) => {
             return `<div class="wiki-ext wiki-ext-${escapeHtml(extName)}" data-ext-name="${escapeHtml(extName)}" data-ext-idx="${escapeHtml(idx)}"></div>`;
         });
-        let html = (typeof DOMPurify !== 'undefined') ? DOMPurify.sanitize(rawHtml, { ADD_TAGS: ['i', 'span', 'details', 'summary', 'div', 'canvas'], ADD_ATTR: ['class', 'style', 'data-bg', 'data-color', 'data-size', 'data-unix', 'data-ext-name', 'data-ext-idx', 'data-state-key', 'data-fn-html', 'data-fn-name', 'data-fn-ref', 'data-progress-auto', 'colspan', 'rowspan', 'title'] }) : escapeHtml(rawHtml);
+        let html = (typeof DOMPurify !== 'undefined') ? DOMPurify.sanitize(rawHtml, { ADD_TAGS: ['i', 'span', 'details', 'summary', 'div', 'canvas'], ADD_ATTR: ['class', 'style', 'data-bg', 'data-color', 'data-size', 'data-align', 'data-caption', 'data-unix', 'data-temporal-ms', 'data-temporal-mode', 'hidden', 'data-ext-name', 'data-ext-idx', 'data-state-key', 'data-fn-html', 'data-fn-name', 'data-fn-ref', 'data-progress-auto', 'colspan', 'rowspan', 'title'] }) : escapeHtml(rawHtml);
 
         if (options.showCategory && slug) {
             // index.html 의 route() 가 decodeURIComponent 실패 시 원본 slug 를 그대로
@@ -4185,6 +4807,11 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
             }
         });
 
+        // 표 옵션 토큰 적용 (placeholder 문단 소비 → 정렬/너비/캡션/열너비/세로헤더/
+        // 고정헤더/클릭정렬). 셀 병합 처리 이후에 실행해야 rowspan/colspan 이 반영된
+        // 최종 구조를 기준으로 판단할 수 있다.
+        _applyWikiTableOptions(containerEl, wikiTableOptData);
+
         // Fold 색상 적용
         containerEl.querySelectorAll('.wiki-fold').forEach(fold => {
             const bg = fold.getAttribute('data-bg');
@@ -4236,13 +4863,44 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
 
         // YouTube / Niconico Embed Processing
         containerEl.querySelectorAll('a').forEach(a => {
-            const href = a.getAttribute('href');
+            let href = a.getAttribute('href');
             if (!href) return;
+
+            // 임베드 크기 토큰 {size:small|medium}: URL 뒤에 붙여 임베드 최대 폭을 제한한다
+            // (이미지 {size:} 와 동일 어휘). GFM 오토링크는 '{' 를 URL 문자로 삼키므로 토큰이
+            // href 안에 포함될 수도(케이스 1 — 이때 marked 가 %7B/%7D 로 percent-encode 함),
+            // 링크 뒤 텍스트 노드로 남을 수도(케이스 2) 있다. 링크 텍스트는 원문 그대로라
+            // 문단 비교(stripEmbedSize)는 raw 형태만 다룬다.
+            const embedSizeRe = /\{size:\s*(small|medium)\s*\}\s*$/;
+            const embedSizeEncRe = /%7Bsize:(small|medium)%7D\s*$/i;
+            let embedSize = '';
+            let hrefSizeM = href.match(embedSizeRe);
+            if (hrefSizeM) {
+                embedSize = hrefSizeM[1];
+                href = href.replace(embedSizeRe, '');
+            } else if ((hrefSizeM = href.match(embedSizeEncRe))) {
+                embedSize = hrefSizeM[1].toLowerCase();
+                href = href.replace(embedSizeEncRe, '');
+            }
+            const applyEmbedSize = (el) => {
+                if (embedSize) {
+                    el.classList.add(`wiki-embed-size-${embedSize}`);
+                    // 기본 경로가 인라인 max-width:100% 를 지정하므로 비워서 클래스가 이기게 한다.
+                    el.style.maxWidth = '';
+                }
+                return el;
+            };
 
             // Must be the only text inside a block level element, specifically a paragraph
             const parent = a.parentElement;
             if (!parent || parent.tagName !== 'P') return;
-            if (parent.textContent.trim() !== a.textContent.trim()) return;
+            // 링크가 문단의 유일한 콘텐츠여야 한다 — 끝의 {size:} 토큰만 예외로 무시하고 비교.
+            const stripEmbedSize = (s) => (s || '').trim().replace(embedSizeRe, '').trim();
+            if (stripEmbedSize(parent.textContent) !== stripEmbedSize(a.textContent)) return;
+            if (!embedSize) {
+                const pSizeM = (parent.textContent || '').trim().match(embedSizeRe);
+                if (pSizeM) embedSize = pSizeM[1];
+            }
 
             // Must not be a custom markdown link. If text exactly matches href or its domain, we allow it.
             // Also ignore if it is inside a blockquote, a code block, or a footnote
@@ -4272,6 +4930,7 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
                         if (allowedTypes.includes(type)) {
                             const container = document.createElement('div');
                             container.className = 'spotify-embed-container my-3';
+                            applyEmbedSize(container);
 
                             const iframe = document.createElement('iframe');
                             const embedUrl = `https://open.spotify.com/embed/${type}/${id}${url.search}`;
@@ -4320,6 +4979,7 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
                     const container = document.createElement('div');
                     container.className = 'maps-embed-container my-3';
                     container.style.width = '100%';
+                    applyEmbedSize(container);
 
                     const iframe = document.createElement('iframe');
                     iframe.setAttribute('src', embedUrl);
@@ -4367,6 +5027,7 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
                         const iframeWrapper = document.createElement('div');
                         iframeWrapper.className = 'ratio ratio-16x9 my-3';
                         iframeWrapper.style.maxWidth = '100%';
+                        applyEmbedSize(iframeWrapper);
                         const ytIframe = document.createElement('iframe');
                         ytIframe.setAttribute('src', `https://www.youtube.com/embed/videoseries?${params.join('&')}`);
                         ytIframe.setAttribute('title', 'YouTube playlist player');
@@ -4403,6 +5064,7 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
                         const iframeWrapper = document.createElement('div');
                         iframeWrapper.className = 'ratio ratio-16x9 my-3';
                         iframeWrapper.style.maxWidth = '100%';
+                        applyEmbedSize(iframeWrapper);
                         const ytIframe = document.createElement('iframe');
                         ytIframe.setAttribute('src', `https://www.youtube.com/embed/${encodeURIComponent(videoId)}${query}`);
                         ytIframe.setAttribute('title', 'YouTube video player');
@@ -4432,6 +5094,7 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
                 const iframeWrapper = document.createElement('div');
                 iframeWrapper.className = 'ratio ratio-16x9 my-3';
                 iframeWrapper.style.maxWidth = '100%';
+                applyEmbedSize(iframeWrapper);
                 const nicoIframe = document.createElement('iframe');
                 nicoIframe.setAttribute('src', `https://embed.nicovideo.jp/watch/${encodeURIComponent(videoId)}${query}`);
                 nicoIframe.setAttribute('frameborder', '0');
@@ -4480,6 +5143,21 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
             t.classList.add('table', 'table-bordered');
             const wrapper = document.createElement('div');
             wrapper.className = 'wiki-table-wrapper';
+            // 표 옵션 토큰이 정렬/너비를 지정한 표는 감싸개가 본문 폭 전체를 차지해야
+            // 퍼센트 너비·margin:auto 정렬의 기준이 생긴다 (기본 감싸개는 fit-content).
+            if (t.style.width ||
+                t.classList.contains('wiki-table-align-left') ||
+                t.classList.contains('wiki-table-align-center') ||
+                t.classList.contains('wiki-table-align-right')) {
+                wrapper.classList.add('wiki-table-wrapper-full');
+            }
+            // {sticky-header}: 감싸개 자체를 세로 스크롤 컨테이너로 만들어 thead 를
+            // sticky 고정한다. 뷰포트 기준 sticky 는 섹션 접기 컨테이너
+            // (.wiki-section-body-inner, overflow:hidden)가 스크롤 컨테이너를 가로채
+            // 동작하지 않으므로(render.css 주석 참고) 감싸개 스크롤 방식만 지원한다.
+            if (t.classList.contains('wiki-table-sticky-header')) {
+                wrapper.classList.add('wiki-table-wrapper-scroll');
+            }
             t.parentNode.insertBefore(wrapper, t);
             wrapper.appendChild(t);
         });
@@ -4545,6 +5223,35 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
             link.appendChild(img);
         });
 
+        // ── 이미지 {align:}/{caption:} 토큰: 단독 문단 이미지를 <figure> 로 승격 ──
+        // customImage 토크나이저가 data-align/data-caption 으로 실어 보낸 값을 소비한다.
+        // 이미지가 문단의 유일한 콘텐츠일 때만 블록 <figure> 로 변환한다(YouTube 임베드의
+        // parent.replaceWith 와 동일한 승격 규칙 — 텍스트와 섞인 인라인 이미지는 무시).
+        // 위 이미지 문서 링크 래핑(a.wiki-image-link) 이후에 수행해 링크째로 figure 에 옮긴다.
+        containerEl.querySelectorAll('img[data-align], img[data-caption]').forEach(img => {
+            const align = img.getAttribute('data-align') || '';
+            const caption = img.getAttribute('data-caption') || '';
+            if (!align && !caption) return;
+            let node = img;
+            if (img.parentElement && img.parentElement.classList.contains('wiki-image-link')) {
+                node = img.parentElement;
+            }
+            const p = node.parentElement;
+            if (!p || p.tagName !== 'P') return;
+            if ((p.textContent || '').trim() !== '') return;
+            if (p.querySelectorAll('img').length !== 1) return;
+            const figure = document.createElement('figure');
+            figure.className = 'wiki-img-figure' + (align ? ` wiki-img-align-${align}` : '');
+            figure.appendChild(node);
+            if (caption) {
+                const figcap = document.createElement('figcaption');
+                figcap.className = 'wiki-img-caption';
+                figcap.textContent = caption;
+                figure.appendChild(figcap);
+            }
+            p.replaceWith(figure);
+        });
+
         // ── Mermaid 다이어그램: ```mermaid 코드펜스를 복사버튼/Prism 경로 도달 전에 분기 ──
         // 코드펜스는 verbatim 캡처라 Mermaid DSL({결정?}·|예|·==>·~~~ 등)이 위키 인라인 문법과
         // 충돌하지 않는다. 언어 태그가 mermaid 인 <pre><code> 를 <figure> placeholder 로 치환해
@@ -4565,6 +5272,28 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
         if (hasMermaid) {
             // fire-and-forget: 나머지 후처리를 막지 않도록 await 하지 않는다.
             _renderMermaidFigures(containerEl);
+        }
+
+        // ── 차트: ```chart 코드펜스를 mermaid 와 동일한 방식으로 분기 ──
+        // 언어 태그가 chart 인 <pre><code> 를 고정 높이 <figure> placeholder 로 치환해
+        // 복사버튼/Prism 루프가 보지 못하게 하고, Chart.js 를 지연 로드해 비동기 렌더한다.
+        // figure 높이가 CSS 로 고정돼 있어 렌더 전후 레이아웃 변동이 없다(스크롤 싱크 안전).
+        let hasChart = false;
+        containerEl.querySelectorAll('pre > code.language-chart').forEach(codeEl => {
+            const pre = codeEl.parentElement;
+            if (!pre || !pre.parentNode) return;
+            const src = codeEl.textContent || '';
+            const figure = document.createElement('figure');
+            figure.className = 'wiki-chart-figure';
+            figure.setAttribute('role', 'img');
+            figure.dataset.src = src;
+            figure.innerHTML = '<div class="wiki-chart-loading"><span class="spinner-border spinner-border-sm"></span> 차트 렌더링 중…</div>';
+            pre.parentNode.replaceChild(figure, pre);
+            hasChart = true;
+        });
+        if (hasChart) {
+            // fire-and-forget (mermaid 와 동일)
+            _renderWikiChartFigures(containerEl);
         }
 
         // 코드블럭 복사 버튼 추가 및 언어 하이라이팅 감지
@@ -4709,6 +5438,9 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
 
         // {timer:} 요소 실시간 업데이트
         _initTimers(containerEl, containerId);
+
+        // :::after / :::until 시점별 조건부 표시의 라이브 전환 초기화
+        _initTemporal(containerEl, containerId);
 
         // {progress:auto} 체크리스트 완료율 집계 채우기(섹션 래핑 이후라 섹션 스코프 인식).
         _fillAutoProgressBars(containerEl);
@@ -5256,6 +5988,14 @@ function _teardownExtensions(containerEl) {
         try { if (typeof el._extDestroy === 'function') el._extDestroy(); } catch (e) { /* noop */ }
         el._extDestroy = null;
     });
+    // ```chart figure 의 Chart.js 인스턴스도 함께 파기한다 — destroy 없이 innerHTML 만
+    // 교체하면 Chart.instances 레지스트리/리사이즈 옵저버가 누수된다(freq 정리 훅과 동일 이유).
+    containerEl.querySelectorAll('.wiki-chart-figure').forEach(fig => {
+        if (fig._wikiChart) {
+            try { fig._wikiChart.destroy(); } catch (e) { /* noop */ }
+            fig._wikiChart = null;
+        }
+    });
 }
 
 /** 테마/스킨 변경 시 렌더된 익스텐션을 onThemeChange 로 갱신(없으면 destroy+재렌더 폴백). */
@@ -5472,6 +6212,226 @@ if (typeof window !== 'undefined') {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// 차트 (```chart 코드펜스) — Chart.js 지연 로드 + 테마 동기화 렌더러.
+// mermaid 와 동일 아키텍처: 코드펜스는 verbatim 캡처라 위키 인라인 문법과 충돌하지
+// 않고, 라이브러리는 차트가 있는 문서에서만 1회 로드된다(없으면 비용 0). 스크립트는
+// freq/stock 익스텐션과 동일한 URL(_extLoadScript 메모이즈 + window.Chart 전역 가드)을
+// 공유해 중복 로드가 없다. 입력은 임의 JS 옵션 없이 단순 키-값 DSL 로 한정한다:
+//   type: bar | line | pie | doughnut | radar
+//   labels: [라벨1, 라벨2, ...]
+//   series:
+//     이름: [숫자, 숫자, ...]      ← 들여쓰기 필수, 여러 줄 가능
+// ─────────────────────────────────────────────────────────────────────────────
+const WIKI_CHART_TYPES = ['bar', 'line', 'pie', 'doughnut', 'radar'];
+// 시리즈 카테고리 팔레트 — 라이트/다크 표면 각각에 대해 검증된 8슬롯(CVD 인접쌍 분리,
+// 명도 밴드)을 고정 순서로 배정한다. 8개 초과는 가독성이 무너지므로 지원하지 않는다.
+const WIKI_CHART_SERIES_COLORS = {
+    light: ['#2a78d6', '#1baf7a', '#eda100', '#008300', '#4a3aa7', '#e34948', '#e87ba4', '#eb6834'],
+    dark:  ['#3987e5', '#199e70', '#c98500', '#008300', '#9085e9', '#e66767', '#d55181', '#d95926'],
+};
+
+/** #rrggbb → rgba(r,g,b,a). radar 채움 등 반투명 파생색 생성용. */
+function _wikiChartAlpha(hex, alpha) {
+    const n = parseInt(hex.slice(1), 16);
+    return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
+}
+
+/** ```chart DSL 파서. 형식 오류는 사용자에게 보여줄 한국어 메시지로 throw 한다. */
+function _parseWikiChartSource(src) {
+    const lines = (src || '').split('\n');
+    let type = '';
+    let labels = null;
+    const series = [];
+    let inSeries = false;
+    const parseList = (v, what) => {
+        const m = v.trim().match(/^\[(.*)\]$/);
+        if (!m) throw new Error(`${what} 값은 [a, b, c] 형식이어야 합니다.`);
+        return m[1].split(',').map(s => s.trim()).filter(s => s !== '');
+    };
+    for (const rawLine of lines) {
+        if (!rawLine.trim()) continue;
+        const indented = /^[ \t]/.test(rawLine);
+        const line = rawLine.trim();
+        if (inSeries && indented) {
+            const ci = line.indexOf(':');
+            const name = ci === -1 ? '' : line.slice(0, ci).trim();
+            if (!name) throw new Error(`시리즈 항목 형식 오류: "${line}" — "이름: [숫자, ...]" 형식이어야 합니다.`);
+            const nums = parseList(line.slice(ci + 1), `시리즈 "${name}"`).map(Number);
+            if (nums.length === 0 || nums.some(n => !Number.isFinite(n))) {
+                throw new Error(`시리즈 "${name}" 값은 숫자 목록([120, 150, ...])이어야 합니다.`);
+            }
+            series.push({ label: name, data: nums });
+            continue;
+        }
+        inSeries = false;
+        const ci = line.indexOf(':');
+        if (ci === -1) throw new Error(`알 수 없는 줄: "${line}"`);
+        const key = line.slice(0, ci).trim().toLowerCase();
+        const value = line.slice(ci + 1).trim();
+        if (key === 'type') {
+            if (!WIKI_CHART_TYPES.includes(value)) {
+                throw new Error(`지원하지 않는 type: "${value}" — bar·line·pie·doughnut·radar 중 하나여야 합니다.`);
+            }
+            type = value;
+        } else if (key === 'labels') {
+            labels = parseList(value, 'labels');
+        } else if (key === 'series') {
+            if (value) throw new Error('series: 다음 줄부터 들여쓰기로 "이름: [숫자, ...]" 를 나열합니다.');
+            inSeries = true;
+        } else {
+            throw new Error(`알 수 없는 키: "${key}" — type·labels·series 만 지원합니다(시리즈 항목은 들여쓰기 필요).`);
+        }
+    }
+    if (!type) throw new Error('type 이 필요합니다 (bar·line·pie·doughnut·radar).');
+    if (!labels || labels.length === 0) throw new Error('labels 가 필요합니다 (예: labels: [1Q, 2Q, 3Q, 4Q]).');
+    if (series.length === 0) throw new Error('series 항목이 최소 1개 필요합니다.');
+    if (series.length > 8) throw new Error('시리즈는 최대 8개까지 지원합니다.');
+    if ((type === 'pie' || type === 'doughnut') && labels.length > 8) {
+        throw new Error('pie/doughnut 차트는 항목(labels)을 최대 8개까지 지원합니다.');
+    }
+    // 값 개수가 labels 와 다르면 Chart.js 가 빈 칸/라벨 없는 점을 조용히 렌더해
+    // 잘못된 데이터로 보일 수 있으므로 명시적으로 거부한다.
+    for (const s of series) {
+        if (s.data.length !== labels.length) {
+            throw new Error(`시리즈 "${s.label}" 값 개수(${s.data.length})가 labels 개수(${labels.length})와 일치해야 합니다.`);
+        }
+    }
+    return { type, labels, series };
+}
+
+/** 현재 테마(라이트/다크·스킨 토큰)에 맞는 Chart.js 설정 생성. */
+function _buildWikiChartConfig(parsed) {
+    const dark = _mermaidEffectiveDark();
+    const colors = WIKI_CHART_SERIES_COLORS[dark ? 'dark' : 'light'];
+    const rootStyle = getComputedStyle(document.documentElement);
+    const cssVar = (name, fallback) => ((rootStyle.getPropertyValue(name) || '').trim() || fallback);
+    const inkMuted = cssVar('--wiki-text-muted', dark ? '#898781' : '#52514e');
+    const grid = cssVar('--wiki-border', dark ? '#2c2c2a' : '#e1e0d9');
+    const surface = cssVar('--wiki-card-bg', dark ? '#1a1a19' : '#ffffff');
+    const isPieish = parsed.type === 'pie' || parsed.type === 'doughnut';
+    const datasets = parsed.series.map((s, i) => {
+        const c = colors[i % colors.length];
+        if (isPieish) {
+            // 파이 계열은 라벨(조각)별 색 + 조각 사이 표면색 링.
+            return {
+                label: s.label,
+                data: s.data,
+                backgroundColor: parsed.labels.map((_, li) => colors[li % colors.length]),
+                borderColor: surface,
+                borderWidth: 2,
+            };
+        }
+        if (parsed.type === 'line') {
+            return {
+                label: s.label, data: s.data,
+                borderColor: c, backgroundColor: c,
+                borderWidth: 2, pointRadius: 3, pointHoverRadius: 5,
+                tension: 0.3, fill: false,
+            };
+        }
+        if (parsed.type === 'radar') {
+            return {
+                label: s.label, data: s.data,
+                borderColor: c, backgroundColor: _wikiChartAlpha(c, 0.15),
+                borderWidth: 2, pointRadius: 3, pointHoverRadius: 5,
+            };
+        }
+        // bar: 얇은 라운드 데이터-엔드(4px), 기둥 폭 상한.
+        return { label: s.label, data: s.data, backgroundColor: c, borderRadius: 4, maxBarThickness: 48 };
+    });
+    const options = {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            // 단일 시리즈는 제목(문맥)이 시리즈를 설명하므로 범례를 생략, 파이 계열·복수
+            // 시리즈는 항상 표시(색만으로 정체성을 전달하지 않기 위한 최소 장치).
+            legend: {
+                display: isPieish || parsed.series.length > 1,
+                labels: { color: inkMuted, usePointStyle: true, boxWidth: 8, boxHeight: 8 },
+            },
+        },
+    };
+    if (parsed.type === 'bar' || parsed.type === 'line') {
+        options.scales = {
+            x: { ticks: { color: inkMuted }, grid: { display: false }, border: { color: grid } },
+            y: { beginAtZero: true, ticks: { color: inkMuted }, grid: { color: grid }, border: { color: grid } },
+        };
+    } else if (parsed.type === 'radar') {
+        options.scales = {
+            r: {
+                angleLines: { color: grid },
+                grid: { color: grid },
+                pointLabels: { color: inkMuted },
+                ticks: { color: inkMuted, backdropColor: 'transparent' },
+            },
+        };
+    }
+    return { type: parsed.type, data: { labels: parsed.labels, datasets }, options };
+}
+
+/** figure 하나를 (재)렌더. 기존 Chart 인스턴스는 파기 후 새로 만든다. */
+function _renderWikiChartFigure(fig) {
+    if (fig._wikiChart) {
+        try { fig._wikiChart.destroy(); } catch (_) { /* noop */ }
+        fig._wikiChart = null;
+    }
+    let parsed;
+    try {
+        parsed = _parseWikiChartSource(fig.dataset.src || '');
+    } catch (err) {
+        const msg = (err && err.message) ? err.message : String(err);
+        fig.innerHTML = `<div class="wiki-chart-error alert alert-warning mb-0"><strong>차트 오류</strong><br><span class="small">${escapeHtml(msg)}</span></div>`;
+        return;
+    }
+    fig.innerHTML = '';
+    const canvas = document.createElement('canvas');
+    fig.appendChild(canvas);
+    if (!fig.getAttribute('aria-label')) {
+        fig.setAttribute('aria-label', `차트: ${parsed.series.map(s => s.label).join(', ')}`);
+    }
+    try {
+        fig._wikiChart = new window.Chart(canvas, _buildWikiChartConfig(parsed));
+    } catch (err) {
+        console.error('위키 차트 렌더 실패:', err);
+        fig.innerHTML = '<div class="wiki-chart-error alert alert-warning mb-0">차트를 렌더링하지 못했습니다.</div>';
+    }
+}
+
+/** root 내부의 .wiki-chart-figure 들을 렌더(원문은 data-src 에 보존). */
+async function _renderWikiChartFigures(root) {
+    const figures = Array.from((root || document).querySelectorAll('.wiki-chart-figure'));
+    if (figures.length === 0) return;
+    try {
+        await _extLoadScript(CDN_URLS.chartJs, { id: 'chartjs-script', global: 'Chart' });
+    } catch (err) {
+        console.error('Chart.js 로드 실패:', err);
+        figures.forEach(fig => {
+            fig.innerHTML = '<div class="wiki-chart-error alert alert-warning mb-0">차트 라이브러리를 불러오지 못했습니다.</div>';
+        });
+        return;
+    }
+    // 로드 대기 중 컨테이너가 교체됐을 수 있으므로(재렌더·SPA 이동) 연결된 figure 만 렌더.
+    figures.forEach(fig => { if (fig.isConnected) _renderWikiChartFigure(fig); });
+}
+
+/** 테마 토글 / OS 다크모드 변경 시 렌더된 차트를 새 테마 색으로 재렌더. 미로드면 no-op. */
+function _rerenderAllWikiCharts() {
+    if (typeof window === 'undefined' || !window.Chart) return;
+    document.querySelectorAll('.wiki-chart-figure').forEach(fig => {
+        if (fig._wikiChart) _renderWikiChartFigure(fig);
+    });
+}
+
+if (typeof window !== 'undefined') {
+    window.addEventListener('wiki:theme-changed', _rerenderAllWikiCharts);
+    if (typeof window.matchMedia === 'function') {
+        const _chartMq = window.matchMedia('(prefers-color-scheme: dark)');
+        if (_chartMq.addEventListener) _chartMq.addEventListener('change', _rerenderAllWikiCharts);
+        else if (_chartMq.addListener) _chartMq.addListener(_rerenderAllWikiCharts);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // window 브리지 — classic public/js/render.js 시절 모든 top-level 함수가
 // classic-script-global 로 자동 노출되었으므로, ESM 으로 이전한 뒤에도 동일한
 // 외부 계약을 유지한다. 다른 모듈(edit/main.ts / edit/conflict.ts / freq 익스텐션
@@ -5506,6 +6466,9 @@ window.WIKI_HARDCODED_PALETTES = WIKI_HARDCODED_PALETTES;
 window.getMergedWikiPalettes = getMergedWikiPalettes;
 window._processInlineLayoutTokens = _processInlineLayoutTokens;
 window._processTimestampsInHtml = _processTimestampsInHtml;
+// temporal(:::after/:::until) 파생 표시물 동기화 — 사이드바 목차 재구축(article/toc.ts
+// populateSidebar) 등 렌더 밖에서 목차를 다시 만드는 경로가 필터를 재적용할 때 사용.
+window._syncTemporalDerivedVisibility = _syncTemporalDerivedVisibility;
 window.protectWikiLinks = protectWikiLinks;
 window.restoreWikiLinks = restoreWikiLinks;
 window.renderWikiContent = renderWikiContent;

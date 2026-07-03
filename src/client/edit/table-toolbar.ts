@@ -58,8 +58,13 @@ function isPipeRow(text: string): boolean {
     return /^\s*\|/.test(text) && (text.match(/(?<!\\)\|/g) || []).length >= 2;
 }
 
+// 구분선 셀에는 렌더러의 열 너비 토큰(`:--- {w:30%}`)이 붙을 수 있다 (render.ts
+// _extractWikiTableDelimWidths). 토큰이 있어도 구분선으로 인식해 툴바가 유지되도록 허용.
+const SEP_CELL = String.raw`:?-{3,}:?(?:\s*\{w:\s*\d{1,3}%\s*\})?`;
+const SEP_LINE_RE = new RegExp(String.raw`^\s*\|\s*${SEP_CELL}(?:\s*\|\s*${SEP_CELL})*\s*\|?\s*$`);
+
 function isTableSeparatorLine(text: string): boolean {
-    return /^\s*\|\s*:?-{3,}:?(?:\s*\|\s*:?-{3,}:?)*\s*\|?\s*$/.test(text);
+    return SEP_LINE_RE.test(text);
 }
 
 function splitRowCells(lineText: string): string[] {
@@ -166,7 +171,8 @@ function findTableContext(view: EditorView): TableContext | null {
     if (colCount === 0) return null;
     colIndex = Math.max(0, Math.min(colIndex, colCount - 1));
 
-    const sepCell = sepCells[colIndex] || '';
+    // 열 너비 토큰(`:---: {w:30%}`)은 정렬 판정에서 제외
+    const sepCell = (sepCells[colIndex] || '').replace(/\{w:\s*\d{1,3}%\s*\}/, '').trim();
     let activeAlign: 'left' | 'center' | 'right' = 'left';
     if (sepCell.startsWith(':') && sepCell.endsWith(':')) activeAlign = 'center';
     else if (sepCell.endsWith(':')) activeAlign = 'right';
@@ -210,7 +216,9 @@ function actionAlign(view: EditorView, ctx: TableContext, align: 'left' | 'cente
     const sepLine = view.state.doc.line(ctx.separatorLineNum);
     const cells = splitRowCells(sepLine.text);
     const sym = align === 'center' ? ':---:' : align === 'right' ? '---:' : ':---';
-    cells[ctx.colIndex] = sym;
+    // 셀에 붙어 있던 열 너비 토큰({w:30%})은 정렬 변경 후에도 보존
+    const wTok = (cells[ctx.colIndex] || '').match(/\{w:\s*\d{1,3}%\s*\}/);
+    cells[ctx.colIndex] = wTok ? `${sym} ${wTok[0]}` : sym;
     const newLine = '| ' + cells.join(' | ') + ' |';
     view.dispatch({
         changes: { from: sepLine.from, to: sepLine.to, insert: newLine }
