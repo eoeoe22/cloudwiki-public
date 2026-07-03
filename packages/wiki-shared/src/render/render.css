@@ -2107,15 +2107,20 @@ body.raw-mode .wiki-content-raw {
   margin: var(--wiki-space-2) 0;
 }
 
+/* 프로필 표는 데이터 표가 아니므로 모바일 공용 규칙(display:block·nowrap·가로 스크롤)을
+   따르지 않는다. 카드 폭에 맞춰 항상 표로 배치하고 값이 자연스럽게 줄바꿈되게 한다. */
 .wiki-infobox-body table {
+  display: table;
   width: 100%;
   margin: 0;
   font-size: var(--wiki-fs-base);
+  white-space: normal;
 }
 
 .wiki-infobox-body table th,
 .wiki-infobox-body table td {
   padding: 0.35rem 0.5rem;
+  overflow-wrap: anywhere;
 }
 
 .wiki-infobox-body table thead th {
@@ -2131,14 +2136,18 @@ body.raw-mode .wiki-content-raw {
   font-weight: 600;
 }
 
-/* 모바일: float 해제, 본문 흐름 위치에 전체 폭으로 스택(캔버스 1열 접힘과 동일 정책) */
+/* 모바일: float 해제 후 본문 흐름 위치에 스택. 데스크톱의 좁은 사이드 박스를 그대로
+   전체 폭으로 늘리면 프로필 이미지·표가 화면을 가득 채워 과대해지므로(특히 ≤768 태블릿),
+   폭을 카드 크기로 제한하고 중앙 정렬한다. min() 이 좁은 폰에서는 100% 를 골라 사실상
+   전체 폭, 넓은 태블릿에서는 22rem 카드로 수렴한다. */
 @media (max-width: 768px) {
   .wiki-float,
   .wiki-float--left {
     float: none;
     width: 100%;
+    max-width: min(22rem, 100%);
     min-width: 0;
-    margin: 0 0 var(--wiki-space-4);
+    margin: 0 auto var(--wiki-space-4);
   }
 }
 
@@ -2198,8 +2207,18 @@ body.raw-mode .wiki-content-raw {
   overflow-wrap: anywhere;
 }
 
-/* 모바일: 열 수와 무관하게 2열로 접힘 (소스 순서상 뒤라 cols-N 을 이김) */
+/* 모바일: 좁아질수록 열 수를 단계적으로 줄여 화면 폭에 맞춘다. 작성한 {cols:N} 을
+   상한으로 삼아 태블릿(≤768)에서는 최대 3열, 좁은 폰(≤480)에서는 2열로 접는다.
+   (모두 같은 특이도 → 소스 순서 뒤가 이김: ≤480 규칙이 ≤768·cols-N 을 모두 이긴다.) */
 @media (max-width: 768px) {
+  .wiki-gallery--cols-4,
+  .wiki-gallery--cols-5,
+  .wiki-gallery--cols-6 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 480px) {
   .wiki-gallery {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
