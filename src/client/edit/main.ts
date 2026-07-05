@@ -37,6 +37,7 @@ import {
 } from './cm-shared';
 // 위키 문법 인라인 하이라이트 플러그인 단일 소스(개방 메모장 pages/memo.ts 와 공유).
 import { buildWikiHighlightPlugins } from './cm-highlight';
+import { computeWikiLint, isInInlineCode } from './wiki-lint';
 
 declare global {
     interface Window {
@@ -943,7 +944,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         const { EditorState, Compartment, RangeSetBuilder, StateField, StateEffect } = cmState;
         const { EditorView, keymap: cmKeymap, lineNumbers, highlightActiveLineGutter, drawSelection,
-            MatchDecorator, ViewPlugin, Decoration, WidgetType } = cmViewMod;
+            MatchDecorator, ViewPlugin, Decoration, WidgetType, gutter, GutterMarker } = cmViewMod;
         const { defaultKeymap, history, historyKeymap, indentWithTab } = cmCommands;
         const { markdown, markdownLanguage } = cmMarkdown;
         const { languages } = cmLangData;
@@ -971,6 +972,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             advancedEdit: localStorage.getItem('editor_advanced_edit') !== 'false',
             autoSummary: localStorage.getItem('editor_auto_summary') !== 'false',
             syntaxAutocomplete: localStorage.getItem('editor_syntax_autocomplete') !== 'false',
+            syntaxLint: localStorage.getItem('editor_syntax_lint') !== 'false',
         };
 
         // 자동완성·인라인 표 툴바가 lazy 하게 읽는 플래그.
@@ -982,6 +984,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const lineWrappingCompartment = new Compartment();
         const syntaxHighlightCompartment = new Compartment();
         const advancedEditCompartment = new Compartment();
+        const wikiLintCompartment = new Compartment();
         const themeCompartment = new Compartment();
         const darkBgCompartment = new Compartment();
 
@@ -1017,6 +1020,69 @@ document.addEventListener('DOMContentLoaded', async () => {
             { getIsDark: () => isDarkMode }
         );
 
+        // ── 위키 문법 린트 (제안 G-4) — 비차단 경고 거터 ──
+        // 순수 진단 계산은 edit/wiki-lint.ts. 여기서는 라인→메시지 맵을 StateField 로 들고,
+        // 거터가 해당 라인에 ⚠ 마커(툴팁=메시지)를 그린다. 렌더는 관대하게 유지하고
+        // 진단만 에디터가 담당한다. 등록 팔레트 집합은 render.js 전역에서 1회 수집한다.
+        const knownPaletteNames: Set<string> = (() => {
+            const s = new Set<string>();
+            const wany = window as unknown as {
+                WIKI_HARDCODED_PALETTES?: Record<string, unknown>;
+                getMergedWikiPalettes?: () => Record<string, unknown>;
+            };
+            const hard = wany.WIKI_HARDCODED_PALETTES;
+            if (hard) for (const k of Object.keys(hard)) s.add(k);
+            try {
+                const merged = typeof wany.getMergedWikiPalettes === 'function' ? wany.getMergedWikiPalettes() : null;
+                if (merged) for (const k of Object.keys(merged)) s.add(k);
+            } catch (_) { /* noop */ }
+            return s;
+        })();
+        const buildLintMap = (docText: string): Map<number, string[]> => {
+            const map = new Map<number, string[]>();
+            for (const d of computeWikiLint(docText, knownPaletteNames)) {
+                const arr = map.get(d.line);
+                if (arr) arr.push(d.message);
+                else map.set(d.line, [d.message]);
+            }
+            return map;
+        };
+        const wikiLintField = StateField.define({
+            create(state: any) { return buildLintMap(state.doc.toString()); },
+            update(value: Map<number, string[]>, tr: any) { return tr.docChanged ? buildLintMap(tr.state.doc.toString()) : value; }
+        });
+        class WikiLintMarker extends GutterMarker {
+            msgs: string[];
+            constructor(msgs: string[]) { super(); this.msgs = msgs; }
+            eq(other: WikiLintMarker) { return other.msgs.join('\n') === this.msgs.join('\n'); }
+            toDOM() {
+                const el = document.createElement('span');
+                el.className = 'cm-wiki-lint-marker';
+                el.textContent = '⚠';
+                el.title = this.msgs.join('\n');
+                el.setAttribute('aria-label', this.msgs.join(', '));
+                return el;
+            }
+        }
+        const wikiLintGutter = gutter({
+            class: 'cm-wiki-lint-gutter',
+            lineMarker(view: any, line: any) {
+                const map = view.state.field(wikiLintField, false) as Map<number, string[]> | undefined;
+                if (!map) return null;
+                const msgs = map.get(view.state.doc.lineAt(line.from).number);
+                return msgs && msgs.length ? new WikiLintMarker(msgs) : null;
+            },
+            lineMarkerChange(update: any) {
+                return update.startState.field(wikiLintField, false) !== update.state.field(wikiLintField, false);
+            }
+        });
+        const wikiLintTheme = EditorView.baseTheme({
+            '.cm-wiki-lint-gutter': { minWidth: '1.1em' },
+            '.cm-wiki-lint-gutter .cm-gutterElement': { display: 'flex', alignItems: 'center', justifyContent: 'center' },
+            '.cm-wiki-lint-marker': { color: '#d29922', cursor: 'help', fontSize: '0.85em', lineHeight: '1' }
+        });
+        const buildWikiLintExts = () => editorSettings.syntaxLint ? [wikiLintField, wikiLintGutter, wikiLintTheme] : [];
+
         // ── 표 안 커서 위 통합 인라인 편집 툴바 ──
         // 정렬/행/열/셀 병합을 한 곳에서 제공. 스크롤·리사이즈 리스너는 모듈 내부에서 등록.
         // edit-table-toolbar.js 모듈 로드가 실패할 경우(캐시 불일치 등) 에디터 자체가
@@ -1024,6 +1090,177 @@ document.addEventListener('DOMContentLoaded', async () => {
         const tableToolbar = window.setupTableToolbar
             ? window.setupTableToolbar()
             : { update: () => {}, hide: () => {} };
+
+        // ── 토큰 인라인 편집 팝업 (제안 G-3) ──
+        // 커서가 완성된 편집 가능 토큰({bg:}/{color:}/{palette:}/{size:}/{align:}) 안에
+        // 놓이면, 토큰 위에 작은 "편집" 핀을 띄운다. 클릭하면 값 교체 UI 로 진입한다:
+        //   · 색/배경 → 기존 색 피커(showColorAutocomplete)
+        //   · 팔레트  → 기존 팔레트 피커(showPaletteAutocomplete + replaceRange)
+        //   · 크기/정렬 → 핀 안에서 옵션 칩으로 즉시 교체
+        // 자동 팝업(커서 이동마다 피커가 뜨는 방식)은 커서 이동/타이핑을 방해하므로,
+        // 표 툴바와 동일한 "커서 위 작은 핀 → 클릭 시 편집" 패턴을 택했다.
+        const tokenEditPill = setupTokenEditPill();
+
+        // 편집 가능한 완성 토큰 어휘. subtype 은 색 피커 트리거('bg'|'color') 구분용.
+        function _findEditableTokenAt(text: string, rel: number): null | { type: string; subtype: string; value: string; start: number; end: number } {
+            const specs: Array<{ type: string; re: RegExp }> = [
+                { type: 'color',   re: /\{(bg|color):\s*([^}]*)\}/g },
+                { type: 'palette', re: /\{palette:\s*([^}]*)\}/g },
+                { type: 'size',    re: /\{size:\s*([^}]*)\}/g },
+                { type: 'align',   re: /\{align:\s*([^}]*)\}/g },
+            ];
+            for (const spec of specs) {
+                spec.re.lastIndex = 0;
+                let m: RegExpExecArray | null;
+                while ((m = spec.re.exec(text)) !== null) {
+                    const start = m.index;
+                    const end = start + m[0].length;
+                    // 커서가 토큰 내부(닫는 `}` 경계는 제외)일 때만 — 편집 진입으로 커서를
+                    // 토큰 끝(end)으로 옮긴 직후 핀이 다시 뜨는 것을 막는다.
+                    if (rel >= start && rel < end) {
+                        const isColor = spec.type === 'color';
+                        return {
+                            type: spec.type,
+                            subtype: isColor ? m[1] : '',
+                            value: (isColor ? m[2] : m[1] || '').trim(),
+                            start,
+                            end,
+                        };
+                    }
+                }
+            }
+            return null;
+        }
+
+        function setupTokenEditPill(): { update: (view: any) => void; hide: () => void } {
+            let pillEl: HTMLDivElement | null = null;
+            let ctx: { view: any; from: number; to: number; type: string; subtype: string; value: string } | null = null;
+
+            function ensureEl(): void {
+                if (pillEl) return;
+                if (!document.getElementById('token-edit-pill-styles')) {
+                    const st = document.createElement('style');
+                    st.id = 'token-edit-pill-styles';
+                    st.textContent =
+                        '.token-edit-pill{position:fixed;z-index:9998;display:none;background:var(--wiki-card-bg,#fff);border:1px solid var(--wiki-border,#d0d7de);border-radius:6px;box-shadow:0 3px 12px rgba(0,0,0,0.2);padding:2px;white-space:nowrap;font-size:0.8rem;}' +
+                        '.token-edit-pill button{border:none;background:transparent;color:var(--wiki-text,#1f2328);cursor:pointer;padding:3px 8px;border-radius:4px;font-size:0.8rem;line-height:1.2;}' +
+                        '.token-edit-pill button:hover{background:var(--wiki-bg,#f6f8fa);color:var(--wiki-primary,#0969da);}' +
+                        '.token-edit-pill .tep-type{color:var(--wiki-text-muted,#6e7781);font-family:monospace;font-size:0.72rem;margin-left:2px;}';
+                    document.head.appendChild(st);
+                }
+                pillEl = document.createElement('div');
+                pillEl.className = 'token-edit-pill';
+                pillEl.id = 'token-edit-pill';
+                document.body.appendChild(pillEl);
+                // 스크롤/리사이즈 시 재배치(편집 대상이 뷰포트 밖으로 나가면 숨김).
+                window.addEventListener('scroll', () => { if (ctx && pillEl && pillEl.style.display !== 'none') reposition(); }, true);
+                window.addEventListener('resize', () => hide());
+            }
+
+            function reposition(): void {
+                if (!ctx || !pillEl) return;
+                const coords = ctx.view.coordsAtPos(ctx.from);
+                if (!coords) { hide(); return; }
+                pillEl.style.left = Math.round(coords.left) + 'px';
+                pillEl.style.top = Math.max(2, Math.round(coords.top) - 30) + 'px';
+            }
+
+            function hide(): void {
+                ctx = null;
+                if (pillEl) pillEl.style.display = 'none';
+            }
+
+            function applyChip(type: string, value: string): void {
+                if (!ctx) return;
+                const insert = `{${type}:${value}}`;
+                const view = ctx.view;
+                const from = ctx.from;
+                view.dispatch({ changes: { from, to: ctx.to, insert }, selection: { anchor: from + insert.length } });
+                view.focus();
+                hide();
+            }
+
+            function renderChips(type: string, opts: Array<{ v: string; label: string }>): void {
+                if (!pillEl) return;
+                pillEl.innerHTML = '';
+                for (const o of opts) {
+                    const btn = document.createElement('button');
+                    btn.type = 'button';
+                    btn.textContent = o.label;
+                    btn.addEventListener('mousedown', (e) => { e.preventDefault(); e.stopPropagation(); applyChip(type, o.v); });
+                    pillEl.appendChild(btn);
+                }
+            }
+
+            function openEditor(): void {
+                if (!ctx) return;
+                // 스냅샷 먼저. view.dispatch(selection 이동)는 동기적으로 updateListener 를
+                // 발화시켜 tokenEditPill.update → hide() 로 ctx 를 null 로 만든다. dispatch 이후
+                // ctx.* 에 접근하면 크래시하므로, 필요한 값을 모두 로컬로 캡처한 뒤 진행한다.
+                const { view, type, subtype, value, from, to } = ctx;
+                if (type === 'color') {
+                    // 색 피커는 shim 커서 위치 + lastIndexOf 로 토큰을 교체하므로, 커서를
+                    // 토큰 끝(닫는 } 뒤)으로 옮겨 토큰 전체가 교체 범위에 들어오게 한다.
+                    view.dispatch({ selection: { anchor: to } });
+                    view.focus();
+                    window.showColorAutocomplete?.(value, (subtype === 'color' ? 'color' : 'bg') as 'bg' | 'color');
+                } else if (type === 'palette') {
+                    // 팔레트 피커는 replaceRange 로 토큰 범위를 명시 교체한다(커서 무관).
+                    if (window.paletteAc) window.paletteAc.replaceRange = { from, to };
+                    view.focus();
+                    window.showPaletteAutocomplete?.('', { showAll: true });
+                } else if (type === 'size') {
+                    renderChips('size', [
+                        { v: 'icon', label: '아이콘' }, { v: 'small', label: '작게' },
+                        { v: 'medium', label: '중간' }, { v: 'full', label: '크게' },
+                    ]);
+                    return; // 칩 메뉴 유지 — 핀을 숨기지 않는다.
+                } else if (type === 'align') {
+                    renderChips('align', [
+                        { v: 'left', label: '왼쪽' }, { v: 'center', label: '가운데' }, { v: 'right', label: '오른쪽' },
+                    ]);
+                    return; // 칩 메뉴 유지 — 핀을 숨기지 않는다.
+                }
+                hide();
+            }
+
+            function renderPill(): void {
+                if (!pillEl) return;
+                pillEl.innerHTML = '';
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.innerHTML = '<i class="mdi mdi-pencil"></i> 편집 <span class="tep-type">' + (ctx ? ctx.type : '') + '</span>';
+                btn.addEventListener('mousedown', (e) => { e.preventDefault(); e.stopPropagation(); openEditor(); });
+                pillEl.appendChild(btn);
+            }
+
+            function update(view: any): void {
+                // "문법 자동완성" 이 꺼져 있으면 인라인 편집 진입점도 막는다(배지 클릭과 동일 정책).
+                if (window.wikiSyntaxAutocompleteEnabled === false) { hide(); return; }
+                const sel = view.state.selection.main;
+                if (sel.from !== sel.to) { hide(); return; }
+                const pos = sel.from;
+                const line = view.state.doc.lineAt(pos);
+                const rel = pos - line.from;
+                // 인라인 코드(백틱 코드스팬) 내부 토큰은 문서화용 예시이므로 편집 대상에서 제외한다.
+                // 색/팔레트 배지(cm-highlight.ts isInInlineCode)와 동일 정책 — 코드 안 리터럴 토큰을
+                // 실수로 치환하지 않도록 wiki-lint 의 isInInlineCode 를 재사용한다.
+                if (isInInlineCode(line.text, rel)) { hide(); return; }
+                // 표 셀 안에서는 표 셀 툴바가 커서 위 동일 위치를 차지하므로(z-index 겹침으로 버튼이
+                // 가려짐), 표 컨텍스트에서는 핀을 띄우지 않고 표 툴바에 우선권을 준다.
+                const tableFinder = (window as unknown as { findTableContext?: (v: unknown) => unknown }).findTableContext;
+                if (typeof tableFinder === 'function' && tableFinder(view)) { hide(); return; }
+                const found = _findEditableTokenAt(line.text, rel);
+                if (!found) { hide(); return; }
+                ensureEl();
+                ctx = { view, from: line.from + found.start, to: line.from + found.end, type: found.type, subtype: found.subtype, value: found.value };
+                renderPill();
+                pillEl!.style.display = 'block';
+                reposition();
+            }
+
+            return { update, hide };
+        }
 
         // 찾기/바꾸기 패널이 외부 편집을 감지하기 위한 훅 (find 패널 init 후 할당됨)
         var _findFeatureOnDocChange = null;
@@ -1035,9 +1272,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                 window.updateEditorTextCounterFromDoc(update.state.doc);
                 if (_findFeatureOnDocChange) _findFeatureOnDocChange(update);
             }
-            // 표 인라인 편집 툴바 위치/표시 갱신
+            // 표 인라인 편집 툴바 / 토큰 인라인 편집 핀 위치·표시 갱신
             if (update.selectionSet || update.docChanged || update.viewportChanged) {
                 tableToolbar.update(update.view);
+                tokenEditPill.update(update.view);
             }
         });
 
@@ -1048,6 +1286,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                 // 에디터에서 포커스가 떠나면(모달 열기, 다른 입력 등) 표 툴바도 숨김.
                 // 툴바 버튼 클릭은 mousedown.preventDefault()로 blur가 발생하지 않으므로 안전.
                 tableToolbar.hide();
+                // 토큰 편집 핀도 함께 숨긴다(핀 버튼은 mousedown.preventDefault 로 blur 미발생).
+                tokenEditPill.hide();
             },
             mousedown: (event, view) => {
                 const target = event.target;
@@ -1161,6 +1401,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                             ? [lineNumbers(), highlightActiveLineGutter()]
                             : []
                     ),
+                    wikiLintCompartment.of(buildWikiLintExts()),
                     drawSelection(),
                     indentOnInput(),
                     bracketMatching(),
@@ -1337,6 +1578,17 @@ document.addEventListener('DOMContentLoaded', async () => {
             imageButton: { mode: 'wiki-popup', handler: () => { } },
             enableWikiModals: true,
         });
+
+        // ── 문법 치트시트 버튼 (제안 G-5) ──
+        // 삽입 그룹 끝에 두어, 기억 안 나는 토큰을 이름/용도로 검색 → 커서 위치 삽입한다.
+        // 실제 모달은 edit-cheatsheet 번들(window.openSyntaxCheatsheet)이 제공한다.
+        const cheatsheetBtn = createToolbarBtn(
+            '<i class="mdi mdi-book-search-outline"></i>',
+            '문법 치트시트 (문법 검색)',
+            () => { if (typeof window.openSyntaxCheatsheet === 'function') window.openSyntaxCheatsheet(); }
+        );
+        cheatsheetBtn.id = 'cm-cheatsheet-btn';
+        toolbar.appendChild(cheatsheetBtn);
 
         // ── 툴바 오른쪽 끝: 찾기/바꾸기 + 프리뷰 모드 + 설정 버튼 ──
         // 우측 정렬은 #cm-find-btn 의 margin-left:auto 로 처리 (findBtn 이 이 그룹의 첫 항목)
@@ -1524,6 +1776,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             <label class="editor-settings-item">
                 <span>문법 자동완성</span>
                 <input type="checkbox" id="settingSyntaxAutocomplete" ${editorSettings.syntaxAutocomplete ? 'checked' : ''}>
+            </label>
+            <label class="editor-settings-item">
+                <span>문법 린트(경고)</span>
+                <input type="checkbox" id="settingSyntaxLint" ${editorSettings.syntaxLint ? 'checked' : ''}>
             </label>
             <label class="editor-settings-item">
                 <span>편집 요약 자동 작성</span>
@@ -1921,6 +2177,18 @@ document.addEventListener('DOMContentLoaded', async () => {
                 }
             });
         });
+
+        // ── 문법 린트 토글 (비차단 경고 거터) ──
+        const syntaxLintCheckbox = document.getElementById('settingSyntaxLint');
+        if (syntaxLintCheckbox) {
+            syntaxLintCheckbox.addEventListener('change', (e) => {
+                editorSettings.syntaxLint = e.target.checked;
+                localStorage.setItem('editor_syntax_lint', editorSettings.syntaxLint);
+                cmEditorView.dispatch({
+                    effects: wikiLintCompartment.reconfigure(buildWikiLintExts())
+                });
+            });
+        }
 
         // ── 문법 자동완성 토글 (인라인 자동완성 + 표 인라인 툴바 공용 스위치) ──
         const syntaxAutocompleteCheckbox = document.getElementById('settingSyntaxAutocomplete');

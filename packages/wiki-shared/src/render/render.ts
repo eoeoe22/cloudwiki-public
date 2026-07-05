@@ -6236,6 +6236,26 @@ function _wikiChartAlpha(hex, alpha) {
     return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
 }
 
+/**
+ * 테마 색 토큰을 canvas 가 이해하는 [r,g,b] 로 해소한다.
+ * `--wiki-text-muted` 등은 `light-dark(L, D)` 로 정의돼 있는데, 커스텀 프로퍼티를
+ * getComputedStyle 로 직접 읽으면 `light-dark(...)` 가 미해소 문자열 그대로 반환된다.
+ * 이를 Chart.js(canvas)에 넘기면 파싱 실패로 기본 검정/투명으로 렌더돼, 다크모드에서
+ * 텍스트·그리드선이 어두운 표면과 붙어 보이지 않는다. 프로브 엘리먼트의 color 로
+ * 브라우저가 현재 color-scheme 에 맞춰 계산한 실제 rgb 를 받아 이 문제를 없앤다.
+ */
+function _wikiChartResolveRgb(probe, expr, fallback) {
+    if (!probe) return fallback;
+    try {
+        probe.style.color = '';
+        probe.style.color = expr;
+        if (!probe.style.color) return fallback;
+        const m = getComputedStyle(probe).color.match(/([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/);
+        if (m) return [Math.round(+m[1]), Math.round(+m[2]), Math.round(+m[3])];
+    } catch (_) { /* noop */ }
+    return fallback;
+}
+
 /** ```chart DSL 파서. 형식 오류는 사용자에게 보여줄 한국어 메시지로 throw 한다. */
 function _parseWikiChartSource(src) {
     const lines = (src || '').split('\n');
@@ -6303,11 +6323,25 @@ function _parseWikiChartSource(src) {
 function _buildWikiChartConfig(parsed) {
     const dark = _mermaidEffectiveDark();
     const colors = WIKI_CHART_SERIES_COLORS[dark ? 'dark' : 'light'];
-    const rootStyle = getComputedStyle(document.documentElement);
-    const cssVar = (name, fallback) => ((rootStyle.getPropertyValue(name) || '').trim() || fallback);
-    const inkMuted = cssVar('--wiki-text-muted', dark ? '#898781' : '#52514e');
-    const grid = cssVar('--wiki-border', dark ? '#2c2c2a' : '#e1e0d9');
-    const surface = cssVar('--wiki-card-bg', dark ? '#1a1a19' : '#ffffff');
+    // 테마 토큰(light-dark())을 canvas 용 실제 rgb 로 해소한다(getComputedStyle 직접 읽기는
+    // light-dark() 를 풀지 못함 → _wikiChartResolveRgb 주석 참고).
+    const probe = (typeof document !== 'undefined' && document.body) ? document.createElement('span') : null;
+    if (probe) {
+        probe.style.cssText = 'position:absolute;visibility:hidden;pointer-events:none';
+        document.body.appendChild(probe);
+    }
+    const inkRgb = _wikiChartResolveRgb(probe, 'var(--wiki-text-muted)', dark ? [161, 161, 170] : [82, 90, 102]);
+    const surfaceRgb = _wikiChartResolveRgb(probe, 'var(--wiki-card-bg)', dark ? [17, 17, 17] : [255, 255, 255]);
+    if (probe) document.body.removeChild(probe);
+    const asRgb = ([r, g, b]) => `rgb(${r}, ${g}, ${b})`;
+    const asRgba = ([r, g, b], a) => `rgba(${r}, ${g}, ${b}, ${a})`;
+    // 틱/범례/포인트라벨 텍스트 — muted 잉크(테마별로 표면과 대비되도록 선택된 색).
+    const inkMuted = asRgb(inkRgb);
+    const surface = asRgb(surfaceRgb);
+    // 그리드선·축선 — 테마 --wiki-border 는 다크 표면(#111)과 거의 붙어 안 보이므로,
+    // muted 잉크를 낮은 알파로 섞어 "보이지만 은은한" 대비를 보장한다(스킨도 자동 추종).
+    const grid = asRgba(inkRgb, dark ? 0.28 : 0.22);
+    const axisLine = asRgba(inkRgb, dark ? 0.5 : 0.38);
     const isPieish = parsed.type === 'pie' || parsed.type === 'doughnut';
     const datasets = parsed.series.map((s, i) => {
         const c = colors[i % colors.length];
@@ -6353,8 +6387,8 @@ function _buildWikiChartConfig(parsed) {
     };
     if (parsed.type === 'bar' || parsed.type === 'line') {
         options.scales = {
-            x: { ticks: { color: inkMuted }, grid: { display: false }, border: { color: grid } },
-            y: { beginAtZero: true, ticks: { color: inkMuted }, grid: { color: grid }, border: { color: grid } },
+            x: { ticks: { color: inkMuted }, grid: { display: false }, border: { color: axisLine } },
+            y: { beginAtZero: true, ticks: { color: inkMuted }, grid: { color: grid }, border: { color: axisLine } },
         };
     } else if (parsed.type === 'radar') {
         options.scales = {

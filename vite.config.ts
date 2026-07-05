@@ -43,6 +43,7 @@ export default defineConfig({
                 'edit-modals': resolve(__dirname, 'src/client/edit/modals.ts'),
                 'edit-table-toolbar': resolve(__dirname, 'src/client/edit/table-toolbar.ts'),
                 'edit-main': resolve(__dirname, 'src/client/edit/main.ts'),
+                'edit-cheatsheet': resolve(__dirname, 'src/client/edit/cheatsheet.ts'),
                 'edit-bulk-category': resolve(__dirname, 'src/client/edit/bulk-category.ts'),
                 'permissions-modal': resolve(__dirname, 'src/client/permissions/permissions-modal.ts'),
                 'category-acl-modal': resolve(__dirname, 'src/client/permissions/category-acl-modal.ts'),

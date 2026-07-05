@@ -29,6 +29,8 @@ type GlobalBridge = typeof window & {
     } | null;
     // index.ts 가 문서 렌더 시 노출하는 정식 편집 대상(리다이렉트 canonical·권한 반영). 없으면 편집 불가.
     currentArticleEdit?: { slug: string } | null;
+    // 에디터 페이지(edit-cheatsheet 번들)에서만 정의되는 문법 치트시트 진입점.
+    openSyntaxCheatsheet?: () => void;
     // SweetAlert2 CDN 전역. 팔레트가 새 문서 이름을 prompt 할 때 사용.
     Swal?: {
         fire: (opts: Record<string, unknown>) => Promise<{ isConfirmed: boolean; value?: string }>;
@@ -267,6 +269,15 @@ const ACTIONS: PaletteAction[] = [
         icon: 'mdi mdi-cog-outline',
         keywords: '설정 settings 환경설정 테마 레이아웃',
         run: () => w.openSettingsModal?.(),
+    },
+    {
+        id: 'syntax-cheatsheet',
+        label: '문법 치트시트 (문법 검색)',
+        icon: 'mdi mdi-book-search-outline',
+        keywords: '문법 치트시트 syntax cheatsheet 토큰 검색 삽입',
+        // 에디터 페이지에서만 노출 (edit-cheatsheet 번들이 진입점을 정의).
+        canRun: () => typeof w.openSyntaxCheatsheet === 'function',
+        run: () => w.openSyntaxCheatsheet?.(),
     },
     {
         id: 'help',

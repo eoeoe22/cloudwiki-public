@@ -428,6 +428,13 @@ async function initCodeMirrorEditor(host: HTMLElement, initialDoc: string): Prom
         enableWikiModals: false,
     });
 
+    // ── 문법 치트시트 버튼 (제안 G-5) — 문서 편집기와 동일한 진입점 ──
+    const cheatsheetBtn = createToolbarBtn('<i class="mdi mdi-book-search-outline"></i>', '문법 치트시트 (문법 검색)', () => {
+        if (typeof window.openSyntaxCheatsheet === 'function') window.openSyntaxCheatsheet();
+    });
+    cheatsheetBtn.id = 'cm-cheatsheet-btn';
+    toolbarEl.appendChild(cheatsheetBtn);
+
     // ── 찾기/바꾸기 + 설정 버튼(공유 모드 드롭다운 앞에 위치) ──
     const findBtn = createToolbarBtn('<i class="mdi mdi-magnify"></i>', '찾기 / 바꾸기 (Ctrl+F)', () => {
         if (findPanel.style.display === 'block') closeFindPanel(); else openFindPanel();

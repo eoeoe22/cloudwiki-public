@@ -133,6 +133,31 @@ export function createTocController(opts: TocControllerOptions = {}) {
         }
       }
     }
+
+    // docs/right-toc 우측 목차 사이드바: 활성 항목이 사이드바 스크롤 영역 밖으로 밀려나면
+    // 사이드바 내부 스크롤만 조정해 다시 보이게 한다(플로팅 목차 패널과 동일하게 스크롤스파이
+    // 갱신 시점에만 실행). 스크롤 컨테이너는 nav 가 아니라 aside(#wikiTocSidebarRight,
+    // overflow-y:auto)이며, sticky 사이드바에서 scrollIntoView 는 윈도우 스크롤까지 유발할 수
+    // 있으므로 컨테이너 scrollTop 만 직접 보정한다.
+    const rightSidebar = document.getElementById('wikiTocSidebarRight');
+    if (rightSidebar && !rightSidebar.classList.contains('d-none')) {
+      const activeLink = rightSidebar.querySelector('a.toc-active');
+      if (activeLink) {
+        const boxRect = rightSidebar.getBoundingClientRect();
+        const linkRect = activeLink.getBoundingClientRect();
+        // temporal(:::after/:::until) 숨김 헤딩에 활성 표시가 걸리면 그 목차 링크의 li 는
+        // [hidden] 이라 rect 가 0 이 된다. 이 경우 top(0) < boxRect.top 가 참이 되어 사이드바를
+        // 잘못 위로 스냅하므로, 렌더되지 않는(rect 0) 링크는 보정 대상에서 제외한다
+        // (FAB 의 scrollIntoView 가 비렌더 대상에서 no-op 인 것과 동일한 방어).
+        if (linkRect.width || linkRect.height) {
+          if (linkRect.top < boxRect.top) {
+            rightSidebar.scrollTop -= boxRect.top - linkRect.top;
+          } else if (linkRect.bottom > boxRect.bottom) {
+            rightSidebar.scrollTop += linkRect.bottom - boxRect.bottom;
+          }
+        }
+      }
+    }
   }
 
   /** 렌더 직후/레이아웃 변동 시 스파이 재계산(여러 프레임 보정). */

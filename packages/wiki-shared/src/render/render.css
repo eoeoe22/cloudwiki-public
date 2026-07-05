@@ -324,6 +324,14 @@
   display: flow-root;
   overflow: hidden;
   overflow: clip;
+  /* clip 은 스크롤 컨테이너가 아니어서 그리드 아이템의 자동 최소 크기(min-width/height:auto)가
+     콘텐츠 기반으로 계산된다. 그러면 nowrap 표 등 넓은 콘텐츠가 섹션 그리드의 암시적 컬럼
+     트랙을 콘텐츠 폭(max-content)까지 강제로 키워, 섹션 안의 모든 구성요소(표·콜아웃·임베드)가
+     뷰포트 밖으로 밀려나고(모바일에서 표 감싸개 스크롤도 무력화), 블록 축에서는 0fr 접기가
+     콘텐츠 높이 아래로 수축하지 못해 섹션 접기가 깨진다. 두 축의 자동 최소 크기를 명시적으로
+     0 으로 두어 hidden(스크롤 컨테이너) 시절의 수축 동작을 복원한다. */
+  min-width: 0;
+  min-height: 0;
 }
 
 .wiki-content p {
@@ -834,21 +842,21 @@ html[data-theme="dark"] .wiki-content pre[class*="language-"] code[class*="langu
   /* separate 대신 collapse */
   border-radius: var(--wiki-radius-lg);
   overflow: hidden;
-  /* 모바일에서 표가 화면을 벗어나지 않도록 감싸기 */
-  display: block;
-  /* 가로 스크롤 허용용 */
-  overflow-x: auto;
-  white-space: nowrap;
-  /* 셀 내용이 강제 개행되지 않도록 설정해 가로 스크롤 작동 */
+  /* border-radius 모서리 클리핑용 */
   box-shadow: none;
   background: var(--wiki-bg);
   border: 1px solid var(--wiki-border);
   /* 테이블 외곽선 */
+  /* 모바일: 셀 강제 개행을 막아 표가 화면보다 넓어지면 감싸개(.wiki-table-wrapper,
+     overflow-x:auto)가 가로 스크롤한다. 가로 스크롤 컨테이너는 감싸개 하나로 단일화한다 —
+     이전에는 표 자체를 display:block + overflow-x:auto 로도 만들어, width:fit-content
+     감싸개가 width:100% 스크롤 컨테이너 자식(표)을 감싸는 순환 구조가 되며 어느 쪽도
+     제대로 스크롤되지 않고 nowrap 표가 조상 overflow:clip 에 잘려 화면 밖으로 나갔다. */
+  white-space: nowrap;
 }
 
 @media (min-width: 768px) {
   .wiki-content table {
-    display: table;
     white-space: normal;
   }
 }
@@ -882,6 +890,18 @@ html[data-theme="dark"] .wiki-content pre[class*="language-"] code[class*="langu
    (헤딩 아래 표 = 대부분). 도입부 표만 동작하는 비일관 상태를 피하기 위해 미적용.
    대신 옵트인 표 옵션 토큰 {sticky-header} 가 감싸개(.wiki-table-wrapper-scroll)
    자체를 스크롤 컨테이너로 만들어 조상 overflow 와 무관하게 동작한다 (아래 참조). */
+
+/* 표 가로 스크롤 감싸개(render.ts 가 모든 표를 감싼다). 표가 화면보다 넓어지면 이 감싸개가
+   유일한 가로 스크롤 컨테이너가 된다(표 자체는 정상 display:table 로 두어 자연 폭을 갖는다).
+   셸 style.css 에도 동일 규칙이 있으나, 공유 소스인 render.css 에도 두어 cloudspace 등
+   소비 앱에서 셸 CSS 와 무관하게 표 스크롤이 보장되도록 한다.
+   width:fit-content 로 짧은 표는 콘텐츠 폭만, max-width:100% 로 넓은 표는 감싸개가 스크롤. */
+.wiki-content .wiki-table-wrapper {
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  overflow-x: auto;
+}
 
 /* ── 표 옵션 토큰 (render.ts _applyWikiTableOptions) ──
    {table:left|center|right} · {w:50~100%} · {caption:} · {sticky-header} ·
@@ -1856,13 +1876,10 @@ body.raw-mode .wiki-content-raw {
   margin-bottom: 0;
 }
 
-/* 그리드 내부의 표는 항상 정상 table 레이아웃으로 그리드 트랙 폭을 가득 채운다.
-   기본 .wiki-content table 의 모바일 규칙(display:block; overflow-x:auto; white-space:nowrap)
-   은 셀이 콘텐츠 폭으로 줄어들면서 flex 트랙 우측에 빈 공간(=빈 칸처럼 보이는 영역)을 남기므로,
-   그리드 내부에서는 사용하지 않는다. 대신 셀 콘텐츠를 적극적으로 줄바꿈해
-   좁은 뷰포트에서도 트랙을 벗어나지 않도록 한다(가로 스크롤 불가능한 display:table 제약 보완). */
+/* 그리드 내부의 표는 그리드 트랙 폭을 가득 채운다. 기본 .wiki-content table 은 모바일에서
+   white-space:nowrap 이라 표가 넓어지면 감싸개가 가로 스크롤하지만, 좁은 flex 트랙 안에서는
+   셀을 적극적으로 줄바꿈해 트랙을 벗어나지 않게 하는 편이 낫다. white-space:normal 로 되돌린다. */
 .wiki-content .wiki-grid > table {
-  display: table;
   width: 100%;
   max-width: 100%;
   white-space: normal;

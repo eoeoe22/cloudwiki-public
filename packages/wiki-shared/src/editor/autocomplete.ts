@@ -222,6 +222,13 @@ const codeAc = {
         { id: 'kbd',      label: '키보드 키',     icon: 'mdi mdi-keyboard-outline',          insert: 'kbd:'       },
         { id: 'progress', label: '진행도 바',     icon: 'mdi mdi-progress-helper',           insert: 'progress:'  },
         { id: 'size',     label: '이미지 크기',   icon: 'mdi mdi-image-size-select-large',   insert: 'size:'      },
+        { id: 'align',    label: '이미지 정렬',   icon: 'mdi mdi-format-align-center',        insert: 'align:'     },
+        { id: 'caption',  label: '이미지/표 캡션', icon: 'mdi mdi-format-text',              insert: 'caption:'   },
+        { id: 'id',       label: '앵커 ID(탭/아코디언)', icon: 'mdi mdi-identifier',          insert: 'id:'        },
+        { id: 'badge',    label: '배지',          icon: 'mdi mdi-label-outline',             insert: 'badge:'     },
+        { id: 'tag',      label: '태그',          icon: 'mdi mdi-tag-outline',               insert: 'tag:'       },
+        { id: 'button',   label: '버튼',          icon: 'mdi mdi-gesture-tap-button',        insert: 'button:'    },
+        { id: 'stat',     label: '통계 수치',     icon: 'mdi mdi-counter',                   insert: 'stat:'      },
     ] as CodeOption[],
     filtered: [] as CodeOption[],
 };
@@ -302,12 +309,56 @@ function selectCodeAutocomplete(index: number): void {
 // 블록 컴포넌트 자동완성 (:::)
 // ─────────────────────────────────────────────────────────────────────────────
 
-// 캔버스는 자식 :::area 디렉티브가 있어야 의미가 있어, 선택 시 8/4 패널 골격을 자동 삽입한다.
-const CANVAS_SCAFFOLD =
-    ':::canvas {gap:md}\n' +
-    ':::area {span:8} {panel}\n\n:::\n' +
-    ':::area {span:4} {panel}\n\n:::\n' +
-    ':::';
+// 자식/전용 문법을 외우지 않아도 되도록, 선택 즉시 삽입할 골격(scaffold).
+// 캔버스처럼 "자식 :::디렉티브" 나 특수 본문 형식이 필요한 블록에 적용한다.
+// ''(CARET_MARKER) 은 삽입 후 커서를 놓을 위치를 표시하는 센티넬로, 삽입 직전 제거된다.
+const CARET_MARKER = '';
+
+const BLOCK_SCAFFOLDS: Record<string, string> = {
+    // 12컬럼 비대칭 배치 — 자식 :::area {span:N} 골격.
+    canvas:
+        ':::canvas {gap:md}\n' +
+        ':::area {span:8} {panel}\n' + CARET_MARKER + '\n:::\n' +
+        ':::area {span:4} {panel}\n\n:::\n' +
+        ':::',
+    // 인포박스 — 제목 헤더 + 구분 행 없는 `| 키 | 값 |` 프로필 나열(나무위키식).
+    infobox:
+        ':::infobox {right} {span:4} ' + CARET_MARKER + '\n' +
+        '| 이름 | 값 |\n' +
+        '| 이름 | 값 |\n\n' +
+        ':::',
+    // 이미지 갤러리 — 본문의 <img> 만 수집해 균등 썸네일 그리드로 배치.
+    gallery:
+        ':::gallery {cols:3}\n' +
+        '![](' + CARET_MARKER + ')\n' +
+        '![]()\n' +
+        '![]()\n' +
+        ':::',
+    // 탭 — 자식 :::tab 항목.
+    tabs:
+        ':::tabs\n' +
+        ':::tab 탭 1\n' + CARET_MARKER + '내용\n:::\n' +
+        ':::tab 탭 2\n내용\n:::\n' +
+        ':::',
+    // 아코디언 — 자식 :::item 항목.
+    accordion:
+        ':::accordion\n' +
+        ':::item 항목 1\n' + CARET_MARKER + '내용\n:::\n' +
+        ':::item 항목 2\n내용\n:::\n' +
+        ':::',
+    // 스텝퍼 — 자식 :::step 항목.
+    steps:
+        ':::steps\n' +
+        ':::step 단계 1\n' + CARET_MARKER + '내용\n:::\n' +
+        ':::step 단계 2\n내용\n:::\n' +
+        ':::',
+    // 문서 변수 — `이름 = 값` 정의(본문에서 {{{@이름}}} 으로 참조).
+    meta:
+        ':::meta\n' +
+        '제목 = ' + CARET_MARKER + '\n' +
+        '저자 = \n' +
+        ':::',
+};
 
 const blockAc = {
     visible: false,
@@ -321,11 +372,15 @@ const blockAc = {
         { id: 'center',    label: '가운데 정렬', desc: '내용을 가운데 정렬',       icon: 'mdi mdi-format-align-center'     },
         { id: 'right',     label: '오른쪽 정렬', desc: '내용을 오른쪽 정렬',       icon: 'mdi mdi-format-align-right'      },
         { id: 'left',      label: '왼쪽 정렬', desc: '내용을 왼쪽 정렬(중첩 정렬 해제)', icon: 'mdi mdi-format-align-left'  },
-        { id: 'canvas',    label: '캔버스',    desc: '비대칭 12컬럼 레이아웃 — 선택 시 :::area 골격 자동 삽입', icon: 'mdi mdi-view-dashboard-outline', scaffold: CANVAS_SCAFFOLD },
+        { id: 'canvas',    label: '캔버스',    desc: '비대칭 12컬럼 레이아웃 — 선택 시 :::area 골격 자동 삽입', icon: 'mdi mdi-view-dashboard-outline', scaffold: BLOCK_SCAFFOLDS.canvas },
+        { id: 'infobox',   label: '인포박스',  desc: '옆을 감싸는 프로필 카드 — 선택 시 제목+표 골격 삽입', icon: 'mdi mdi-card-account-details-outline', scaffold: BLOCK_SCAFFOLDS.infobox },
+        { id: 'float',     label: '플로팅 패널', desc: '본문이 옆을 감싸는 좌/우 패널 ({left|right}{span:3~6})', icon: 'mdi mdi-dock-right'          },
+        { id: 'gallery',   label: '갤러리',    desc: '이미지 균등 그리드 — 선택 시 이미지 골격 삽입 ({cols:2~6})', icon: 'mdi mdi-view-gallery-outline', scaffold: BLOCK_SCAFFOLDS.gallery },
         { id: 'embed',     label: '임베드',    desc: '왼쪽 강조선 인용',           icon: 'mdi mdi-format-quote-close'      },
-        { id: 'tabs',      label: '탭',        desc: '탭 컨테이너 (자식 :::tab)',  icon: 'mdi mdi-tab'                     },
-        { id: 'accordion', label: '아코디언',  desc: '아코디언 (자식 :::item)',    icon: 'mdi mdi-format-list-bulleted-square' },
-        { id: 'steps',     label: '스텝퍼',    desc: '진행 단계 (자식 :::step)',   icon: 'mdi mdi-stairs'                  },
+        { id: 'tabs',      label: '탭',        desc: '탭 컨테이너 — 선택 시 :::tab 골격 삽입',  icon: 'mdi mdi-tab',            scaffold: BLOCK_SCAFFOLDS.tabs      },
+        { id: 'accordion', label: '아코디언',  desc: '아코디언 — 선택 시 :::item 골격 삽입',    icon: 'mdi mdi-format-list-bulleted-square', scaffold: BLOCK_SCAFFOLDS.accordion },
+        { id: 'steps',     label: '스텝퍼',    desc: '진행 단계 — 선택 시 :::step 골격 삽입',   icon: 'mdi mdi-stairs',        scaffold: BLOCK_SCAFFOLDS.steps     },
+        { id: 'meta',      label: '문서 변수', desc: '`이름 = 값` 정의 → 본문 {{{@이름}}} 참조', icon: 'mdi mdi-variable',      scaffold: BLOCK_SCAFFOLDS.meta      },
         { id: 'until',     label: '시점 이전 표시', desc: '지정 시각 전에만 표시 (유닉스초 또는 YYYY-MM-DD)', icon: 'mdi mdi-clock-start' },
         { id: 'after',     label: '시점 이후 표시', desc: '지정 시각 후에만 표시 (유닉스초 또는 YYYY-MM-DD)', icon: 'mdi mdi-clock-end'   },
         { id: 'info',      label: '정보',      desc: '정보 콜아웃',                icon: 'mdi mdi-information-outline'     },
@@ -451,10 +506,20 @@ function selectBlockAutocomplete(index: number): void {
     editor.setSelection?.([line, 1], [line, col]);
 
     if (opt.scaffold) {
-        // 자식 디렉티브 골격을 통째로 삽입하고, 커서를 첫 영역 본문(빈 줄)에 둔다.
-        // 골격 2번째 줄이 ':::area ...' 이고 그 다음 빈 본문 줄이 line + 2.
-        editor.insertText?.(opt.scaffold);
-        editor.setSelection?.([line + 2, 1], [line + 2, 1]);
+        // 자식 디렉티브/전용 형식 골격을 통째로 삽입하고, 커서를 골격 내 센티넬
+        // (CARET_MARKER) 위치에 둔다. 센티넬은 삽입 전 제거한다. 삽입은 방금
+        // setSelection 으로 현재 라인 1열부터 시작하므로, 센티넬 앞부분의 개행 수로
+        // 커서 라인을, 마지막 줄 세그먼트 길이로 커서 열(1-기반)을 계산한다.
+        const markerIdx = opt.scaffold.indexOf(CARET_MARKER);
+        const cleanScaffold = markerIdx >= 0 ? opt.scaffold.replace(CARET_MARKER, '') : opt.scaffold;
+        editor.insertText?.(cleanScaffold);
+        if (markerIdx >= 0) {
+            const before = opt.scaffold.slice(0, markerIdx);
+            const segs = before.split('\n');
+            const caretLine = line + segs.length - 1;
+            const caretCol = segs[segs.length - 1].length + 1;
+            editor.setSelection?.([caretLine, caretCol], [caretLine, caretCol]);
+        }
     } else {
         editor.insertText?.(`:::${opt.id} `);
         const targetCol = 5 + opt.id.length;
