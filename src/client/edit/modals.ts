@@ -1089,7 +1089,6 @@ interface CardInsertResult {
     type: string;
     title: string;
     titlePalette: string;
-    bodyPalette: string;
     calloutType: string;
     body: string;
 }
@@ -1157,11 +1156,6 @@ function openCardInsertModal(): void {
                             <input type="hidden" id="cardInsertTitlePalette" value="">
                             ${paletteSwatchHtml('cardInsertTitleSwatches')}
                         </div>
-                        <div class="mb-2" id="cardInsertBodyPaletteGroup">
-                            <label class="form-label">내용 팔레트</label>
-                            <input type="hidden" id="cardInsertBodyPalette" value="">
-                            ${paletteSwatchHtml('cardInsertBodySwatches')}
-                        </div>
                         <div class="mb-2">
                             <label class="form-label" for="cardInsertBody">내용</label>
                             <textarea id="cardInsertBody" class="form-control"
@@ -1198,11 +1192,9 @@ function openCardInsertModal(): void {
                 });
             }
             wireSwatches('cardInsertTitleSwatches', 'cardInsertTitlePalette');
-            wireSwatches('cardInsertBodySwatches', 'cardInsertBodyPalette');
 
             const typeHidden = document.getElementById('cardInsertType') as HTMLInputElement;
             const typeButtons = document.querySelectorAll<HTMLElement>('#cardInsertTypeToggle button[data-type]');
-            const bodyGroup = document.getElementById('cardInsertBodyPaletteGroup');
             const titlePaletteGroup = document.getElementById('cardInsertTitlePaletteGroup');
             const titlePaletteLabel = document.getElementById('cardInsertTitlePaletteLabel');
             const titleLabel = document.getElementById('cardInsertTitleLabel');
@@ -1213,20 +1205,17 @@ function openCardInsertModal(): void {
                 typeHidden.value = t;
                 typeButtons.forEach(b => b.classList.toggle('active', b.dataset.type === t));
                 if (t === 'embed') {
-                    if (bodyGroup) bodyGroup.style.display = 'none';
                     if (titlePaletteGroup) titlePaletteGroup.style.display = '';
                     if (calloutGroup) calloutGroup.style.display = 'none';
                     if (titlePaletteLabel) titlePaletteLabel.textContent = '왼쪽 테두리 팔레트';
                     if (titleLabel) titleLabel.textContent = '제목 (선택)';
                     if (titleInputEl) titleInputEl.placeholder = '임베드 제목';
                 } else if (t === 'callout') {
-                    if (bodyGroup) bodyGroup.style.display = 'none';
                     if (titlePaletteGroup) titlePaletteGroup.style.display = 'none';
                     if (calloutGroup) calloutGroup.style.display = '';
                     if (titleLabel) titleLabel.textContent = '제목 (선택, 비우면 기본 제목)';
                     if (titleInputEl) titleInputEl.placeholder = '예: 백업 필수';
                 } else {
-                    if (bodyGroup) bodyGroup.style.display = '';
                     if (titlePaletteGroup) titlePaletteGroup.style.display = '';
                     if (calloutGroup) calloutGroup.style.display = 'none';
                     if (titlePaletteLabel) titlePaletteLabel.textContent = '제목 팔레트';
@@ -1257,7 +1246,6 @@ function openCardInsertModal(): void {
                 .replace(/[\r\n]+/g, ' ')
                 .trim();
             const titlePalette = ((document.getElementById('cardInsertTitlePalette') as HTMLInputElement | null)?.value || '').trim();
-            const bodyPalette = ((document.getElementById('cardInsertBodyPalette') as HTMLInputElement | null)?.value || '').trim();
             const calloutType = ((document.getElementById('cardInsertCalloutType') as HTMLInputElement | null)?.value || 'info').trim();
             const bodyRaw = ((document.getElementById('cardInsertBody') as HTMLTextAreaElement | null)?.value || '')
                 .replace(/\r\n/g, '\n')
@@ -1267,33 +1255,27 @@ function openCardInsertModal(): void {
                 return false;
             }
             const body = bodyRaw.replace(/^\n+|\n+$/g, '');
-            return { type, title, titlePalette, bodyPalette, calloutType, body };
+            return { type, title, titlePalette, calloutType, body };
         }
     }).then(result => {
         if (!result.isConfirmed || !result.value) return;
-        const { type, title, titlePalette, bodyPalette, calloutType, body: bodyContent } = result.value;
+        const { type, title, titlePalette, calloutType, body: bodyContent } = result.value;
 
         let blockType: string;
         if (type === 'embed') blockType = 'embed';
         else if (type === 'callout') blockType = calloutType;
         else blockType = 'card';
 
+        // 색 토큰은 헤더 줄에서만 흡수되므로 팔레트는 헤더 줄에만 붙인다. 제목이 있으면 헤더가,
+        // 없으면 본문이 색을 받아(`:::card {palette:...}`) 카드 전체가 물든다. 본문(내용) 줄에는
+        // 팔레트를 넣지 않는다 — 넣으면 렌더러가 무시해 리터럴 토큰이 그대로 노출된다.
         const useTitlePalette = type !== 'callout' && titlePalette;
-        const useBodyPalette = type !== 'callout' && type !== 'embed' && bodyPalette;
 
         const titleTokens = useTitlePalette ? `{palette:${titlePalette}}` : '';
         const titlePart = titleTokens && title ? `${titleTokens} ${title}` : (titleTokens || title);
         const header = titlePart ? `:::${blockType} ${titlePart}` : `:::${blockType}`;
 
-        const bodyText = bodyContent || '내용';
-        let body: string;
-        if (useBodyPalette) {
-            const lines = bodyText.split('\n');
-            lines[0] = `{palette:${bodyPalette}}${lines[0]}`;
-            body = lines.join('\n');
-        } else {
-            body = bodyText;
-        }
+        const body = bodyContent || '내용';
 
         window.editor?.insertText?.(`${header}\n${body}\n:::`);
         window._cmView?.focus();

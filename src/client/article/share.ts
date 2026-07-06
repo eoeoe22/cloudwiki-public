@@ -68,6 +68,41 @@ export function createShareActions(ctx: ArticleContext) {
     }
   }
 
+  /**
+   * "HTML 복사" — 렌더된 본문을 외부 WYSIWYG 에디터에 raw HTML 로 붙여넣어도 동작하는
+   * 이식용 HTML(render.ts buildPortableHtml)로 변환해 복사한다. text/html(리치 붙여넣기)과
+   * text/plain(HTML 소스 — raw HTML 입력창용)을 함께 실어, 붙여넣는 곳에 맞는 형태가 들어간다.
+   */
+  async function shareCopyHtml() {
+    const content = document.getElementById('articleContent');
+    if (!content || typeof window.buildPortableHtml !== 'function') {
+      Swal.fire('오류', '문서 내용을 가져올 수 없습니다.', 'error');
+      return;
+    }
+    try {
+      const doc = ctx.getDoc();
+      const title = (doc && (doc.title || doc.slug)) || '';
+      const html = window.buildPortableHtml(content, { title });
+      let copied = false;
+      if (typeof ClipboardItem !== 'undefined' && navigator.clipboard && navigator.clipboard.write) {
+        try {
+          await navigator.clipboard.write([
+            new ClipboardItem({
+              'text/html': new Blob([html], { type: 'text/html' }),
+              'text/plain': new Blob([html], { type: 'text/plain' }),
+            }),
+          ]);
+          copied = true;
+        } catch (_) { copied = false; }
+      }
+      if (!copied) await navigator.clipboard.writeText(html);
+      toast('문서 HTML이 클립보드에 복사되었습니다.');
+    } catch (err) {
+      console.error('복사 실패:', err);
+      Swal.fire('오류', '클립보드 복사에 실패했습니다.', 'error');
+    }
+  }
+
   function sharePrint() {
     window.print();
   }
@@ -103,6 +138,7 @@ export function createShareActions(ctx: ArticleContext) {
     shareCopyLink,
     shareCopyText,
     shareCopyMarkdown,
+    shareCopyHtml,
     sharePrint,
     shareAskClaude,
     shareAskChatGPT,

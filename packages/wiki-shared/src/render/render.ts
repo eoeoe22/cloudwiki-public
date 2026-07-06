@@ -2443,6 +2443,552 @@ function extractPlainTextWithFootnotes(contentEl) {
     return `${bodyText.replace(/\s+$/, '')}\n\n각주\n${lines.join('\n')}`;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// "HTML 복사" — 렌더된 문서 본문을 외부 WYSIWYG 에디터에 raw HTML 로 붙여넣어도
+// 동작하는 이식용(portable) HTML 로 변환한다. 원칙:
+//  - 표준 HTML 태그만 사용하고, 이 사이트의 CSS/JS(부트스트랩 탭·아코디언·팝오버,
+//    아이콘 폰트, Chart.js/mermaid 등)에 의존하는 구조는 기본 태그로 폴백한다.
+//  - 각주: 팝오버 → 문서 하단 <ol> 목록으로의 앵커 링크(<sup><a href="#fn-..">).
+//  - 익스텐션: (이름:값) 텍스트로 치환. 예: {{freq:HD600}} → (freq:HD600)
+//    (파이프 인자는 슬러그에 포함되지 않으므로 자연히 무시된다.)
+//  - 차트(```chart)는 라이브 캔버스의 PNG 스냅샷, mermaid 는 SVG 데이터 URI 이미지로.
+//  - 테마 CSS 변수(빌트인 팔레트·{fs:} 등)는 현재 테마 기준 실제 값으로 인라인한다.
+//  - 상대 URL(링크·이미지)은 절대 URL 로 바꾼다(#앵커·data: 는 유지).
+// ─────────────────────────────────────────────────────────────────────────────
+function buildPortableHtml(contentEl, options) {
+    if (!contentEl) return '';
+    const opts = options || {};
+
+    // ── 라이브 DOM 에서만 얻을 수 있는 데이터를 클론 전에 수집 ──
+    // el._extData 는 JS 프로퍼티라 cloneNode 로 복사되지 않고, 차트 canvas 비트맵도
+    // 클론에는 없다. querySelectorAll 문서 순서는 클론과 1:1 이므로 인덱스로 대응한다.
+    const extSlugs = Array.from(contentEl.querySelectorAll('[data-ext-name]')).map(el => {
+        if (el._extData && typeof el._extData.slug === 'string' && el._extData.slug) return el._extData.slug;
+        // 렌더러 폴링 대기 중 등 _extData 미부착 시 모듈 스냅샷 폴백(_processExtensions 와 동일)
+        const idx = parseInt(el.getAttribute('data-ext-idx'), 10);
+        const d = Number.isInteger(idx) ? _wikiExtensionData[idx] : null;
+        if (d && typeof d.slug === 'string' && d.slug) return d.slug;
+        return el.getAttribute('data-ext-name') || '';
+    });
+    const chartPngs = Array.from(contentEl.querySelectorAll('.wiki-chart-figure')).map(fig => {
+        const canvas = fig.querySelector('canvas');
+        try {
+            return (canvas && canvas.width > 0 && canvas.height > 0) ? canvas.toDataURL('image/png') : '';
+        } catch (_) { return ''; }
+    });
+
+    const root = contentEl.cloneNode(true);
+
+    // ── 헬퍼 ──
+    const unwrap = (el) => {
+        const parent = el.parentNode;
+        if (!parent) return;
+        while (el.firstChild) parent.insertBefore(el.firstChild, el);
+        parent.removeChild(el);
+    };
+    // source 가 요소면 자식 노드(인라인 마크업 보존)를, 문자열이면 텍스트를 굵은 문단으로.
+    const makeTitleP = (source, prefix) => {
+        const p = document.createElement('p');
+        const st = document.createElement('strong');
+        if (prefix) st.appendChild(document.createTextNode(prefix));
+        if (source && source.nodeType === 1) {
+            while (source.firstChild) st.appendChild(source.firstChild);
+        } else if (source) {
+            st.appendChild(document.createTextNode(String(source)));
+        }
+        p.appendChild(st);
+        return p;
+    };
+    // {fs:} 크기 클래스(.wiki-fs-*) → 인라인 font-size 값 (render.css 와 동일).
+    // 스탯/진행률처럼 원본 요소를 새 요소로 "교체"하는 변환은 클래스가 함께 사라져
+    // 뒤쪽의 일괄 인라인화 패스가 잡지 못하므로, 교체 시점에 이 헬퍼로 직접 옮긴다.
+    const FS_EM = { xs: '0.75em', sm: '0.85em', lg: '1.25em', xl: '1.5em', xxl: '2em' };
+    const carryFsClass = (fromEl, toEl) => {
+        const m = (fromEl.getAttribute('class') || '').match(/wiki-fs-(xxl|xl|lg|sm|xs)/);
+        if (m && !toEl.style.fontSize) toEl.style.fontSize = FS_EM[m[1]];
+    };
+    // var()/light-dark() 색을 프로브로 현재 테마의 실제 rgb 로 해소(호출 단위 캐시 —
+    // 테마 전환 후 재복사 시 stale 값을 쓰지 않도록 모듈 전역 캐시는 두지 않는다).
+    const colorCache = new Map();
+    const resolveColor = (expr) => {
+        if (!expr || typeof expr !== 'string') return null;
+        if (colorCache.has(expr)) return colorCache.get(expr);
+        let out = null;
+        try {
+            const probe = document.createElement('span');
+            probe.style.position = 'absolute';
+            probe.style.visibility = 'hidden';
+            probe.style.color = expr;
+            if (probe.style.color) {
+                document.body.appendChild(probe);
+                const c = getComputedStyle(probe).color;
+                probe.remove();
+                if (c && c.indexOf('var(') === -1) out = c;
+            }
+        } catch (_) { out = null; }
+        colorCache.set(expr, out);
+        return out;
+    };
+
+    // 1) 익스텐션 → (이름:값) 텍스트. 클론이 원본과 1:1 인 시점(다른 변형 이전)에 수행.
+    root.querySelectorAll('[data-ext-name]').forEach((el, i) => {
+        const slug = extSlugs[i] || el.getAttribute('data-ext-name') || '';
+        const p = document.createElement('p');
+        p.textContent = `(${slug})`;
+        el.replaceWith(p);
+    });
+
+    // 2) ```chart → 라이브 캔버스 PNG 스냅샷 이미지(캔버스는 이식 불가). 실패 시 텍스트.
+    root.querySelectorAll('.wiki-chart-figure').forEach((fig, i) => {
+        const png = chartPngs[i];
+        const p = document.createElement('p');
+        if (png) {
+            const img = document.createElement('img');
+            img.src = png;
+            img.alt = '차트';
+            img.style.maxWidth = '100%';
+            p.appendChild(img);
+        } else {
+            p.textContent = '(차트)';
+        }
+        fig.replaceWith(p);
+    });
+
+    // 3) mermaid → SVG 데이터 URI 이미지(mermaid 는 테마 스타일을 SVG 안에 인라인한다).
+    root.querySelectorAll('figure.mermaid-figure').forEach(fig => {
+        const svg = fig.querySelector('svg');
+        let replaced = null;
+        if (svg) {
+            try {
+                const ser = new XMLSerializer().serializeToString(svg);
+                const img = document.createElement('img');
+                img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(ser)));
+                img.alt = '다이어그램';
+                img.style.maxWidth = '100%';
+                replaced = document.createElement('p');
+                replaced.appendChild(img);
+            } catch (_) { replaced = null; }
+        }
+        if (!replaced) {
+            replaced = document.createElement('p');
+            replaced.textContent = '(다이어그램)';
+        }
+        fig.replaceWith(replaced);
+    });
+
+    // 4) 숨김 분기 제거 — 화면에 보이지 않는 내용(temporal 등)은 복사본에서도 제외
+    //    (extractPlainTextWithFootnotes 의 innerText 동작과 동일한 원칙).
+    root.querySelectorAll('[hidden]').forEach(el => el.remove());
+
+    // 5) UI 전용 요소 제거(목차 카드/토글/헤딩 버튼/코드 복사 버튼/각주 백링크/앵커 스팬)
+    root.querySelectorAll(
+        '.wiki-toc-card, .wiki-toc-clear, .wiki-section-toggle-icon, .wiki-heading-copy-btn, ' +
+        '.wiki-heading-link-btn, .wiki-heading-edit-btn, .wiki-section-anchor, .wiki-anchor-target, ' +
+        '.btn-copy-code, .wiki-fn-back, script, style, link, canvas'
+    ).forEach(el => el.remove());
+
+    // 6) 섹션 접기 래퍼/도입부 래퍼 해제 → 평평한 헤딩+본문 구조
+    root.querySelectorAll(
+        '.wiki-section-heading-text, .wiki-heading-num, .wiki-section, .wiki-section-body, ' +
+        '.wiki-section-body-inner, .wiki-lead-body'
+    ).forEach(unwrap);
+
+    // 7) 탭 → 순차 블록(제목 굵은 문단 + 패널 내용) — Bootstrap JS 없이 모든 탭 내용 노출
+    root.querySelectorAll('.wiki-tabs').forEach(tabs => {
+        const titles = Array.from(tabs.querySelectorAll(':scope > ul.nav-tabs .nav-link'))
+            .map(b => (b.textContent || '').trim());
+        const panes = Array.from(tabs.querySelectorAll(':scope > .tab-content > .tab-pane'));
+        const frag = document.createDocumentFragment();
+        panes.forEach((pane, i) => {
+            frag.appendChild(makeTitleP(titles[i] || `탭 ${i + 1}`));
+            while (pane.firstChild) frag.appendChild(pane.firstChild);
+        });
+        tabs.replaceWith(frag);
+    });
+
+    // 8) 아코디언 → 순차 블록(제목 굵은 문단 + 본문)
+    root.querySelectorAll('.wiki-accordion').forEach(acc => {
+        const frag = document.createDocumentFragment();
+        Array.from(acc.querySelectorAll(':scope > .accordion-item')).forEach((item, i) => {
+            const btn = item.querySelector('.accordion-button');
+            frag.appendChild(makeTitleP(btn ? (btn.textContent || '').trim() : `항목 ${i + 1}`));
+            const body = item.querySelector('.accordion-body');
+            if (body) { while (body.firstChild) frag.appendChild(body.firstChild); }
+        });
+        acc.replaceWith(frag);
+    });
+
+    // 9) 콜아웃 → blockquote(아이콘 폰트는 이모지로 폴백)
+    const CALLOUT_FALLBACK_EMOJI = { info: 'ℹ️', tip: '💡', success: '✅', warning: '⚠️', danger: '🚨', note: '📝' };
+    root.querySelectorAll('.wiki-callout').forEach(el => {
+        const m = (el.getAttribute('class') || '').match(/wiki-callout-([a-z]+)/);
+        const emoji = (m && CALLOUT_FALLBACK_EMOJI[m[1]]) || '';
+        const titleEl = el.querySelector(':scope > .wiki-callout-header .wiki-callout-title');
+        const bodyEl = el.querySelector(':scope > .wiki-callout-body');
+        const bq = document.createElement('blockquote');
+        if (titleEl && ((titleEl.textContent || '').trim() || emoji)) {
+            bq.appendChild(makeTitleP(titleEl, emoji ? emoji + ' ' : ''));
+        }
+        if (bodyEl) { while (bodyEl.firstChild) bq.appendChild(bodyEl.firstChild); }
+        el.replaceWith(bq);
+    });
+
+    // 카드(:::card) → blockquote(제목 굵은 문단 + 본문) — 헤더/바디의 인라인 색은 보존
+    root.querySelectorAll('.wiki-card').forEach(card => {
+        const bq = document.createElement('blockquote');
+        const header = card.querySelector(':scope > .wiki-card-header');
+        if (header) {
+            if ((header.textContent || '').trim()) {
+                const p = makeTitleP(header);
+                const hs = header.getAttribute('style');
+                if (hs) p.setAttribute('style', hs);
+                bq.appendChild(p);
+            }
+            header.remove();
+        }
+        const body = card.querySelector(':scope > .wiki-card-body');
+        const src = body || card;
+        const bodyStyle = body ? (body.getAttribute('style') || '') : '';
+        if (bodyStyle) {
+            const wrap = document.createElement('div');
+            wrap.setAttribute('style', bodyStyle);
+            while (src.firstChild) wrap.appendChild(src.firstChild);
+            bq.appendChild(wrap);
+        } else {
+            while (src.firstChild) bq.appendChild(src.firstChild);
+        }
+        card.replaceWith(bq);
+    });
+
+    // 10) 인포박스/플로트 → 제목 굵은 문단 + 내용(float/grid CSS 는 이식 불가 → 일반 흐름)
+    root.querySelectorAll('.wiki-float, .wiki-infobox').forEach(aside => {
+        const frag = document.createDocumentFragment();
+        const titleEl = aside.querySelector(':scope > .wiki-infobox-title, :scope > .wiki-float-title');
+        if (titleEl) {
+            if ((titleEl.textContent || '').trim()) frag.appendChild(makeTitleP(titleEl));
+            titleEl.remove();
+        }
+        const body = aside.querySelector(':scope > .wiki-infobox-body') || aside;
+        while (body.firstChild) frag.appendChild(body.firstChild);
+        aside.replaceWith(frag);
+    });
+
+    // :::embed 블록 → blockquote(제목 굵은 문단 + 본문)
+    root.querySelectorAll('.wiki-embed').forEach(el => {
+        const bq = document.createElement('blockquote');
+        const titleEl = el.querySelector(':scope > .wiki-embed-title');
+        if (titleEl) {
+            if ((titleEl.textContent || '').trim()) bq.appendChild(makeTitleP(titleEl));
+            titleEl.remove();
+        }
+        const body = el.querySelector(':scope > .wiki-embed-body') || el;
+        while (body.firstChild) bq.appendChild(body.firstChild);
+        el.replaceWith(bq);
+    });
+
+    // 제네릭 :::블록 제목 → 굵은 문단
+    root.querySelectorAll('.wiki-block-title').forEach(t => {
+        t.replaceWith(makeTitleP(t));
+    });
+
+    // 11) 갤러리 → <figure> 나열(그리드 CSS 없이도 이미지+캡션이 순서대로 남도록)
+    root.querySelectorAll('.wiki-gallery').forEach(gal => {
+        const frag = document.createDocumentFragment();
+        gal.querySelectorAll('.wiki-gallery-item').forEach(item => {
+            const img = item.querySelector('img');
+            if (!img) return;
+            const figure = document.createElement('figure');
+            img.style.maxWidth = '100%';
+            figure.appendChild(img);
+            const cap = item.querySelector('.wiki-gallery-caption');
+            if (cap && (cap.textContent || '').trim()) {
+                const fc = document.createElement('figcaption');
+                fc.textContent = (cap.textContent || '').trim();
+                figure.appendChild(fc);
+            }
+            frag.appendChild(figure);
+        });
+        gal.replaceWith(frag);
+    });
+
+    // 12) 스텝 → 일반 <ol>(마커/아이콘 제거 — 번호는 ol 이 부여, 제목은 굵은 문단)
+    //     {status:done|current} 를 하나라도 쓴 블록만 상태 글리프(체크박스 폴백과 동일
+    //     어휘 ☑/◐/☐)를 제목 앞에 붙인다. 전부 기본값(todo)인 단순 순서 안내에까지
+    //     ☐ 를 붙이면 노이즈만 되므로 상태를 실제로 표기한 블록으로 한정한다.
+    root.querySelectorAll('ol.wiki-steps').forEach(ol => {
+        const hasStatus = !!ol.querySelector(':scope > li.wiki-step-done, :scope > li.wiki-step-current');
+        ol.querySelectorAll(':scope > li').forEach(li => {
+            const marker = li.querySelector(':scope > .wiki-step-marker');
+            if (marker) marker.remove();
+            const title = li.querySelector('.wiki-step-title');
+            if (title) {
+                const glyph = !hasStatus ? ''
+                    : li.classList.contains('wiki-step-done') ? '☑ '
+                    : li.classList.contains('wiki-step-current') ? '◐ ' : '☐ ';
+                title.replaceWith(makeTitleP(title, glyph));
+            }
+        });
+    });
+
+    // 스탯 칩({stat:값|라벨}) → 값 굵게 + 라벨 문단(인라인 색 보존) — 값·라벨 span 이
+    // 그대로 이어 붙으면 "8주 콘텐츠"처럼 구분 없이 붙어 읽히므로 명시적으로 재구성한다.
+    root.querySelectorAll('.wiki-stat').forEach(el => {
+        const value = el.querySelector('.wiki-stat-value');
+        const label = el.querySelector('.wiki-stat-label');
+        const p = document.createElement('p');
+        const st = el.getAttribute('style');
+        if (st) p.setAttribute('style', st);
+        const strong = document.createElement('strong');
+        strong.textContent = value ? (value.textContent || '').trim() : '';
+        p.appendChild(strong);
+        if (label && (label.textContent || '').trim()) {
+            p.appendChild(document.createTextNode(' ' + (label.textContent || '').trim()));
+        }
+        carryFsClass(el, p);
+        el.replaceWith(p);
+    });
+
+    // 13) 진행률 바 → 텍스트 게이지(라벨 + ▰▱ 바 + 값)
+    root.querySelectorAll('.wiki-progress').forEach(el => {
+        const label = el.querySelector('.wiki-progress-label-text');
+        const value = el.querySelector('.wiki-progress-value');
+        const fill = el.querySelector('.wiki-progress-fill');
+        let pct = NaN;
+        const w = fill && fill.style ? (fill.style.width || '').trim() : '';
+        const wm = w.match(/^([\d.]+)%$/);
+        if (wm) pct = parseFloat(wm[1]);
+        const p = document.createElement('p');
+        if (label && (label.textContent || '').trim()) {
+            const st = document.createElement('strong');
+            st.textContent = (label.textContent || '').trim();
+            p.appendChild(st);
+            p.appendChild(document.createTextNode(' '));
+        }
+        let bar = '';
+        if (Number.isFinite(pct)) {
+            const filled = Math.max(0, Math.min(10, Math.round(pct / 10)));
+            bar = '▰'.repeat(filled) + '▱'.repeat(10 - filled) + ' ';
+        }
+        p.appendChild(document.createTextNode(bar + (value ? (value.textContent || '').trim() : '')));
+        carryFsClass(el, p);
+        el.replaceWith(p);
+    });
+
+    // 14) 체크박스 아이콘 → 유니코드(아이콘 폰트 폴백)
+    root.querySelectorAll('.wiki-task-checkbox').forEach(el => {
+        const ch = el.classList.contains('wiki-task-progress') ? '◐'
+            : el.classList.contains('mdi-checkbox-marked') ? '☑' : '☐';
+        el.replaceWith(document.createTextNode(ch));
+    });
+
+    // {calendar:} 달력 박스 → 텍스트 폴백 — 세로 스택형 span 레이아웃은 CSS 없이는
+    // "3월9월요일2026"처럼 뭉개진다. title 속성이 원본 날짜(YYYY-MM-DD 또는 MM-DD)를 담는다.
+    root.querySelectorAll('.wiki-calendar-box').forEach(el => {
+        const date = (el.getAttribute('title') || '').trim();
+        const dow = el.querySelector('.wiki-cal-dow');
+        const dowText = dow ? (dow.textContent || '').replace(/\u00a0/g, ' ').trim() : '';
+        const text = '📅 ' + (date || (el.textContent || '').trim()) + (dowText ? ` (${dowText})` : '');
+        el.replaceWith(document.createTextNode(text));
+    });
+
+    // 15) 임베드 iframe → 원본 링크(외부 사이트에서 iframe 은 흔히 차단/제거됨)
+    root.querySelectorAll('iframe').forEach(f => {
+        let src = f.getAttribute('src') || '';
+        const yt = src.match(/youtube(?:-nocookie)?\.com\/embed\/([A-Za-z0-9_-]+)/);
+        if (yt) src = 'https://www.youtube.com/watch?v=' + yt[1];
+        const p = document.createElement('p');
+        if (src) {
+            const a = document.createElement('a');
+            a.href = src;
+            a.textContent = src;
+            p.appendChild(a);
+        }
+        // 임베드 래퍼(.ratio 등)가 iframe 하나만 담고 있으면 래퍼째 교체
+        let target = f;
+        while (target.parentElement && target.parentElement !== root &&
+               target.parentElement.children.length === 1 &&
+               !(target.parentElement.textContent || '').trim()) {
+            target = target.parentElement;
+        }
+        target.replaceWith(p);
+    });
+
+    // 16) 남은 아이콘 폰트 요소 제거(텍스트가 없는 <i class="bi-*">, mdi 스팬)
+    root.querySelectorAll('i[class*="bi-"], span.mdi, i.mdi').forEach(el => {
+        if (!(el.textContent || '').trim()) el.remove();
+    });
+
+    // 17) 팔레트 클래스/CSS 변수 → 실제 색 인라인
+    // ==하이라이트== 의 빌트인 팔레트(mark.wiki-palette-NAME) — 클래스 색을 인라인으로.
+    root.querySelectorAll('[class*="wiki-palette-"]').forEach(el => {
+        const m = (el.getAttribute('class') || '').match(/wiki-palette-([a-z]+)/);
+        if (!m) return;
+        const bg = resolveColor(`var(--wiki-palette-${m[1]}-bg)`);
+        const fg = resolveColor(`var(--wiki-palette-${m[1]}-text)`);
+        if (bg && !el.style.backgroundColor) el.style.backgroundColor = bg;
+        if (fg && !el.style.color) el.style.color = fg;
+    });
+    // {fs:} 크기 클래스 → 인라인 font-size (헬퍼의 FS_EM 재사용 — 클래스를 유지한 채
+    // 살아남은 요소용 일괄 패스. 요소를 교체하는 변환은 carryFsClass 로 이미 옮겼다.)
+    root.querySelectorAll('[class*="wiki-fs-"]').forEach(el => {
+        carryFsClass(el, el);
+    });
+    // 정렬 블록(:::left/center/right)/이미지 figure 정렬 클래스 → 인라인 text-align
+    root.querySelectorAll('.wiki-block-left, .wiki-block-center, .wiki-block-right').forEach(el => {
+        const align = el.classList.contains('wiki-block-center') ? 'center'
+            : el.classList.contains('wiki-block-right') ? 'right' : 'left';
+        if (!el.style.textAlign) el.style.textAlign = align;
+    });
+    root.querySelectorAll('.wiki-img-figure').forEach(fig => {
+        const m = (fig.getAttribute('class') || '').match(/wiki-img-align-(left|center|right)/);
+        if (m && !fig.style.textAlign) fig.style.textAlign = m[1];
+    });
+    // 레이아웃 전용 컨테이너(:::grid/:::row/:::canvas)의 grid 선언 제거 — display:grid 없이는
+    // grid-template-columns 가 무의미하게 남는다({template:8-4} 임의 비율 경로). bg/color 인라인은
+    // 유지해 색 있는 컨테이너는 styled div 로 남고, 스타일이 비면 아래 div 정규화가 래퍼를 해제한다.
+    root.querySelectorAll('.wiki-grid, .wiki-row, .wiki-canvas').forEach(el => {
+        if (el.style && el.style.gridTemplateColumns) el.style.removeProperty('grid-template-columns');
+        if (!(el.getAttribute('style') || '').trim()) el.removeAttribute('style');
+    });
+    // 인라인 스타일 안에 남은 var(--...) 해소 — 색 속성은 프로브로, 그 외 미해소 선언은 제거
+    // (괄호가 든 속성 substring 선택자는 일부 셀렉터 엔진에서 매칭이 깨져 JS 필터로 거른다.)
+    root.querySelectorAll('[style]').forEach(el => {
+        if ((el.getAttribute('style') || '').indexOf('var(') === -1) return;
+        const decls = (el.getAttribute('style') || '').split(';');
+        const out = [];
+        decls.forEach(d => {
+            const ci = d.indexOf(':');
+            if (ci === -1) return;
+            const prop = d.slice(0, ci).trim();
+            let val = d.slice(ci + 1).trim();
+            if (!prop || !val) return;
+            if (val.indexOf('var(') !== -1) {
+                const resolved = /color/i.test(prop) ? resolveColor(val) : null;
+                if (!resolved) return;
+                val = resolved;
+            }
+            out.push(prop + ':' + val);
+        });
+        if (out.length) el.setAttribute('style', out.join(';') + ';');
+        else el.removeAttribute('style');
+    });
+
+    // 18) 표: 스크롤 래퍼 해제 + 이식용 최소 테두리(외부에서 render.css 격자선 부재 대비)
+    root.querySelectorAll('.wiki-table-wrapper').forEach(unwrap);
+    // {caption:} <caption> → 표 위 굵은 문단 — 위지윅 에디터 다수(ProseMirror 계열 등)가
+    // 표 스키마에 caption 이 없어 붙여넣기 시 내용째 버린다.
+    root.querySelectorAll('table > caption').forEach(cap => {
+        const table = cap.parentNode;
+        if ((cap.textContent || '').trim() && table.parentNode) {
+            table.parentNode.insertBefore(makeTitleP(cap), table);
+        }
+        cap.remove();
+    });
+    root.querySelectorAll('table').forEach(t => {
+        t.setAttribute('border', '1');
+        t.setAttribute('cellpadding', '4'); // 외부 CSS 부재 시 셀 여백(CSS 가 있으면 그쪽이 우선)
+        if (!t.style.borderCollapse) t.style.borderCollapse = 'collapse';
+        if (t.classList.contains('wiki-table-align-center')) {
+            t.style.marginLeft = 'auto';
+            t.style.marginRight = 'auto';
+            t.setAttribute('align', 'center'); // margin:auto 를 버리는 에디터용 레거시 폴백
+        } else if (t.classList.contains('wiki-table-align-right')) {
+            t.style.marginLeft = 'auto';
+        }
+        // {w:NN%} 열 너비: <colgroup> 을 버리는 에디터가 많아 첫 행 셀 인라인 너비로도 복제.
+        // 첫 행에 병합 셀이 있으면 열↔셀 대응이 어긋나므로 복제하지 않는다(colgroup 은 유지).
+        const cols = Array.from(t.querySelectorAll(':scope > colgroup > col'));
+        const firstRow = t.querySelector(':scope > thead > tr, :scope > tbody > tr, :scope > tr');
+        if (cols.length > 0 && firstRow) {
+            const cells = Array.from(firstRow.cells);
+            const plain = cells.length === cols.length &&
+                cells.every(c => (parseInt(c.getAttribute('colspan') || '1', 10) || 1) === 1);
+            if (plain) cols.forEach((col, i) => {
+                const w = col.style ? col.style.width : '';
+                if (w && !cells[i].style.width) cells[i].style.width = w;
+            });
+        }
+    });
+
+    // 19) 코드블록: Prism 하이라이트 토큰 제거 → 순수 텍스트 <pre><code>
+    root.querySelectorAll('pre code').forEach(code => {
+        code.textContent = code.textContent;
+    });
+
+    // 20) 이미지/링크 URL 절대화(#앵커·data:·절대 URL 은 유지)
+    const toAbs = (u) => {
+        if (!u) return u;
+        if (/^(?:[a-z][a-z0-9+.-]*:|\/\/|#)/i.test(u)) return u;
+        try { return new URL(u, window.location.href).href; } catch (_) { return u; }
+    };
+    root.querySelectorAll('img[src]').forEach(img => {
+        img.setAttribute('src', toAbs(img.getAttribute('src')));
+        img.removeAttribute('loading');
+        if (img.getAttribute('data-size') !== 'icon' && !img.style.maxWidth) img.style.maxWidth = '100%';
+    });
+    root.querySelectorAll('a[href]').forEach(a => {
+        a.setAttribute('href', toAbs(a.getAttribute('href')));
+    });
+
+    // 21) 속성 정리 — 표준·이식 가능한 속성만 남긴다.
+    //     id 는 각주 앵커(fn-*)만 유지해 하단 목록으로의 참조 링크가 살아 있게 한다.
+    const ATTR_KEEP_GLOBAL = new Set(['style', 'title']);
+    const ATTR_KEEP_BY_TAG = {
+        A: new Set(['href', 'target', 'rel']),
+        IMG: new Set(['src', 'alt', 'width', 'height']),
+        TD: new Set(['colspan', 'rowspan', 'align', 'valign', 'scope']),
+        TH: new Set(['colspan', 'rowspan', 'align', 'valign', 'scope']),
+        TABLE: new Set(['border', 'align', 'cellpadding']),
+        OL: new Set(['start', 'type']),
+        LI: new Set(['value']),
+        COL: new Set(['span', 'width']),
+        COLGROUP: new Set(['span']),
+        DETAILS: new Set(['open']),
+    };
+    root.querySelectorAll('*').forEach(el => {
+        Array.from(el.attributes).forEach(attr => {
+            const n = attr.name.toLowerCase();
+            if (n === 'id') {
+                if (!/^fn-/.test(attr.value)) el.removeAttribute(attr.name);
+                return;
+            }
+            if (ATTR_KEEP_GLOBAL.has(n)) return;
+            const perTag = ATTR_KEEP_BY_TAG[el.tagName];
+            if (perTag && perTag.has(n)) return;
+            el.removeAttribute(attr.name);
+        });
+    });
+
+    // 22) 잔여 정리: 버튼 제거, 빈 인라인/블록 제거, div 정규화(인라인만 → <p>, 블록 래퍼 → 해제)
+    root.querySelectorAll('button').forEach(el => el.remove());
+    const BLOCK_TAGS = new Set(['P', 'DIV', 'UL', 'OL', 'DL', 'TABLE', 'BLOCKQUOTE', 'PRE', 'FIGURE',
+        'HR', 'DETAILS', 'ASIDE', 'SECTION', 'NAV', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6']);
+    Array.from(root.querySelectorAll('div')).reverse().forEach(div => {
+        if (div.hasAttribute('style')) return; // 정렬/색 등 의미 있는 인라인 스타일은 div 로 유지
+        const hasBlockChild = Array.from(div.children).some(c => BLOCK_TAGS.has(c.tagName));
+        if (hasBlockChild) {
+            unwrap(div);
+        } else {
+            const p = document.createElement('p');
+            while (div.firstChild) p.appendChild(div.firstChild);
+            div.replaceWith(p);
+        }
+    });
+    const maybeEmpty = Array.from(root.querySelectorAll('p, div, span, blockquote, figure, aside, section, sup, strong, em, mark, u, small, a'));
+    for (let i = maybeEmpty.length - 1; i >= 0; i--) {
+        const el = maybeEmpty[i];
+        if (!(el.textContent || '').trim() && !el.querySelector('img, table, hr, br, details')) el.remove();
+    }
+
+    // ── 직렬화(+ 가독용 블록 개행 — <pre> 내부 텍스트는 escape 되어 영향 없음) ──
+    let html = root.innerHTML;
+    html = html.replace(/<\/(p|h[1-6]|ul|ol|li|table|thead|tbody|tr|blockquote|pre|figure|details|div|aside)>/g, '</$1>\n');
+    html = html.replace(/\n{3,}/g, '\n\n').trim();
+    const title = typeof opts.title === 'string' ? opts.title.trim() : '';
+    if (title) html = `<h1>${escapeHtml(title)}</h1>\n` + html;
+    return html;
+}
+
 // ── 색상값 → [r,g,b] 파서 (캐시). 16진/rgb는 직접 파싱, 그 외는 DOM 폴백. ──
 const _wikiColorRgbCache = new Map();
 function _wikiColorToRgb(value) {
@@ -2846,8 +3392,6 @@ const WIKI_FLOAT_TOKEN_SCHEMA = {
 function _renderBlockHtml(block, blockData) {
     const type = block.type;
     let { cleanTitle, bg, color } = _extractBlockStyleTokens(block.titleLine);
-    // 본문 색은 본문 맨 앞의 {bg:}/{color:}/{palette:} 토큰만으로 지정한다.
-    let bodyBg = '', bodyColor = '';
 
     let innerText = block.innerText || '';
 
@@ -2856,42 +3400,10 @@ function _renderBlockHtml(block, blockData) {
         innerText = _normalizeBareTableRows(innerText);
     }
 
-    const isCallout = (type === 'info' || type === 'tip' || type === 'success'
-                    || type === 'warning' || type === 'danger' || type === 'note');
-    if (type === 'card' || isCallout) {
-        // 본문 색상 토큰은 본문 첫 줄, 맨 앞에 있을 때만 소비한다.
-        // 줄바꿈을 만나면 더 이상 흡수하지 않아 다른 줄의 {bg:}/{color:}/{palette:}
-        // 토큰은 인라인 컴포넌트(badge/button/tag 등)의 프리픽스로 그대로 남는다.
-        let t = innerText.replace(/^[ \t]+/, '');
-        let replaced = true;
-        while (replaced) {
-            replaced = false;
-            let palMatch = t.match(/^\{palette:\s*([^}\s][^}]*?)\s*\}/);
-            if (palMatch) {
-                const expanded = _resolvePaletteTokens(`{palette:${palMatch[1].trim()}}`);
-                if (expanded !== `{palette:${palMatch[1].trim()}}`) {
-                    t = expanded + t.slice(palMatch[0].length);
-                } else {
-                    t = t.slice(palMatch[0].length);
-                }
-                replaced = true;
-                continue;
-            }
-            let bgMatch = t.match(/^\{bg:\s*([^}]+)\}/);
-            if (bgMatch) {
-                bodyBg = bgMatch[1].trim();
-                t = t.slice(bgMatch[0].length).replace(/^[ \t]+/, '');
-                replaced = true;
-            }
-            let colorMatch = t.match(/^\{color:\s*([^}]+)\}/);
-            if (colorMatch) {
-                bodyColor = colorMatch[1].trim();
-                t = t.slice(colorMatch[0].length).replace(/^[ \t]+/, '');
-                replaced = true;
-            }
-        }
-        innerText = t;
-    }
+    // 색 토큰({palette:}/{bg:}/{color:})은 헤더 줄(`:::card {palette:...}`)에서만 흡수해
+    // 컴포넌트에 적용한다. 본문(내용) 줄의 색 토큰은 흡수하지 않으므로, 인라인 컴포넌트
+    // (badge/button/tag 등)의 프리픽스로 그대로 남아 각 요소에만 개별 적용된다. 즉 카드
+    // 첫 줄의 {palette:...} 가 카드 전체 색을 바꾸는 일이 없다.
 
     const { text: protectedInner, prot: wlProt } = protectWikiLinks(innerText);
     let innerHtml = (typeof marked !== 'undefined') ? marked.parse(protectedInner) : protectedInner;
@@ -2919,16 +3431,15 @@ function _renderBlockHtml(block, blockData) {
 
     switch (type) {
         case 'card': {
-            // 헤더(제목)와 바디(내용)에 스타일을 분리 적용. Bootstrap .card 와 호환.
-            let headerStyle = '';
-            if (bg && _isSafeCssColor(bg)) headerStyle += `background-color:${bg};`;
-            if (color && _isSafeCssColor(color)) headerStyle += `color:${color};`;
-            const headerStyleAttr = headerStyle ? ` style="${headerStyle}"` : '';
-
-            let bodyStyle = '';
-            if (bodyBg && _isSafeCssColor(bodyBg)) bodyStyle += `background-color:${bodyBg};`;
-            if (bodyColor && _isSafeCssColor(bodyColor)) bodyStyle += `color:${bodyColor};`;
-            const bodyStyleAttr = bodyStyle ? ` style="${bodyStyle}"` : '';
+            // 헤더 줄의 색 토큰({palette:}/{bg:}/{color:})만 컴포넌트에 적용한다. Bootstrap .card 와 호환.
+            // 제목이 있으면 헤더에, 제목이 없으면 본문에 색을 입혀 헤더 줄 토큰이 항상 보이게 한다
+            // (`:::card {palette:primary}` 처럼 제목 없이 카드 전체를 물들이는 용법 지원).
+            let cardStyle = '';
+            if (bg && _isSafeCssColor(bg)) cardStyle += `background-color:${bg};`;
+            if (color && _isSafeCssColor(color)) cardStyle += `color:${color};`;
+            const cardStyleAttr = cardStyle ? ` style="${cardStyle}"` : '';
+            const headerStyleAttr = titleHtml ? cardStyleAttr : '';
+            const bodyStyleAttr = titleHtml ? '' : cardStyleAttr;
 
             return `<div class="card wiki-card">` +
                 (titleHtml ? `<div class="card-header wiki-card-header"${headerStyleAttr}>${titleHtml}</div>` : '') +
@@ -6495,6 +7006,8 @@ window.processWikiLinks = processWikiLinks;
 window.processMentions = processMentions;
 window.processFootnotes = processFootnotes;
 window.extractPlainTextWithFootnotes = extractPlainTextWithFootnotes;
+// 공유 메뉴 "HTML 복사"(article/share.ts) — 렌더된 본문을 이식용 HTML 로 변환.
+window.buildPortableHtml = buildPortableHtml;
 window._isSafeCssColor = _isSafeCssColor;
 window.WIKI_HARDCODED_PALETTES = WIKI_HARDCODED_PALETTES;
 window.getMergedWikiPalettes = getMergedWikiPalettes;

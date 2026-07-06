@@ -170,10 +170,13 @@ async function addItem(target: NavTarget, type: NavItemType): Promise<void> {
             <div class="mb-3 text-start">
                 <label class="form-label small fw-bold">아이콘 (선택)</label>
                 <div class="input-group">
-                    <span class="input-group-text"><i class="mdi mdi-star-outline"></i></span>
+                    <span class="input-group-text"><i id="swal-icon-preview" class="mdi mdi-star-outline"></i></span>
                     <input id="swal-input-icon" class="form-control" placeholder="예: mdi mdi-home">
+                    <button type="button" id="swal-icon-pick-btn" class="btn btn-outline-secondary">
+                        <i class="mdi mdi-shape-plus me-1"></i>선택
+                    </button>
                 </div>
-                <div class="form-text small">MDI 또는 부트스트랩 아이콘 클래스명을 입력하세요.</div>
+                <div class="form-text small">아이콘 선택기로 고르거나 클래스명을 직접 입력하세요. (형식: <code>mdi mdi-home</code> · <code>bi bi-house</code>)</div>
             </div>
         `;
     }
@@ -186,6 +189,31 @@ async function addItem(target: NavTarget, type: NavItemType): Promise<void> {
         confirmButtonText: '추가하기',
         cancelButtonText: '취소',
         confirmButtonColor: target === 'sidebar' ? '#0d6efd' : '#0dcaf0',
+        didOpen: () => {
+            const iconInput = document.getElementById('swal-input-icon') as HTMLInputElement | null;
+            const iconPreview = document.getElementById('swal-icon-preview');
+            const pickBtn = document.getElementById('swal-icon-pick-btn');
+            if (!iconInput) return; // header 타입 등 아이콘 필드가 없는 경우
+
+            // 입력값(직접 입력/피커 선택)을 좌측 미리보기 아이콘에 반영.
+            const syncPreview = () => {
+                if (!iconPreview) return;
+                const val = iconInput.value.trim();
+                iconPreview.className = val || 'mdi mdi-star-outline';
+            };
+            iconInput.addEventListener('input', syncPreview);
+
+            // 아이콘 선택기 모달(iconPicker.ts). 결과는 이미 'mdi mdi-<이름>' /
+            // 'bi bi-<이름>' 형식의 class 문자열이므로 그대로 입력값에 채운다.
+            pickBtn?.addEventListener('click', async () => {
+                if (typeof window.pickWikiIcon !== 'function') return;
+                const picked = await window.pickWikiIcon();
+                if (picked) {
+                    iconInput.value = picked;
+                    syncPreview();
+                }
+            });
+        },
         preConfirm: () => {
             const textInput = document.getElementById('swal-input-text') as HTMLInputElement | null;
             const urlInput = document.getElementById('swal-input-url') as HTMLInputElement | null;

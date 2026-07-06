@@ -621,7 +621,7 @@ import { createTocController } from '../article/toc';
       if (_tocFabBtn) _tocFabBtn.classList.remove('d-none');
 
       // 공유하기 드롭다운 초기화 (이전 익스텐션 문서에서 숨겨진 경우 복원)
-      ['shareItemCopyText', 'shareItemCopyMarkdown', 'shareItemPrint',
+      ['shareItemCopyText', 'shareItemCopyMarkdown', 'shareItemCopyHtml', 'shareItemPrint',
         'shareAiDivider', 'shareItemAskClaude', 'shareItemAskChatGPT'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.classList.remove('d-none');
@@ -1053,8 +1053,8 @@ import { createTocController } from '../article/toc';
           const _staleTocNav = document.getElementById('tocNav');
           if (_staleTocNav) _staleTocNav.innerHTML = '';
 
-          // 공유하기 드롭다운에서 텍스트/마크다운 복사 및 인쇄 버튼 숨기기
-          ['shareItemCopyText', 'shareItemCopyMarkdown', 'shareItemPrint'].forEach(id => {
+          // 공유하기 드롭다운에서 텍스트/마크다운/HTML 복사 및 인쇄 버튼 숨기기
+          ['shareItemCopyText', 'shareItemCopyMarkdown', 'shareItemCopyHtml', 'shareItemPrint'].forEach(id => {
             const el = document.getElementById(id);
             if (el) el.classList.add('d-none');
           });
@@ -1543,7 +1543,7 @@ import { createTocController } from '../article/toc';
       window.currentArticleEdit = null;         // 편집 단축키 비활성
       // 본문/AI 의존 공유 항목 숨김 — 문서가 없어 텍스트/마크다운 복사·인쇄·AI 질문이 무의미하고
       // currentPage 가 null 이라 동작 시 오류. "공유하기"/"링크 복사하기"(URL 기반)만 남긴다.
-      ['shareItemCopyText', 'shareItemCopyMarkdown', 'shareItemPrint',
+      ['shareItemCopyText', 'shareItemCopyMarkdown', 'shareItemCopyHtml', 'shareItemPrint',
         'shareAiDivider', 'shareItemAskClaude', 'shareItemAskChatGPT'].forEach(id => {
         document.getElementById(id)?.classList.add('d-none');
       });
@@ -1960,6 +1960,7 @@ import { createTocController } from '../article/toc';
     const shareCopyLink = () => wikiShare.shareCopyLink();
     const shareCopyText = () => wikiShare.shareCopyText();
     const shareCopyMarkdown = () => wikiShare.shareCopyMarkdown();
+    const shareCopyHtml = () => wikiShare.shareCopyHtml();
     const sharePrint = () => wikiShare.sharePrint();
     const shareAskClaude = () => wikiShare.shareAskClaude();
     const shareAskChatGPT = () => wikiShare.shareAskChatGPT();
@@ -2606,6 +2607,7 @@ window.shareNative = shareNative;
 window.shareCopyLink = shareCopyLink;
 window.shareCopyText = shareCopyText;
 window.shareCopyMarkdown = shareCopyMarkdown;
+window.shareCopyHtml = shareCopyHtml;
 window.sharePrint = sharePrint;
 window.shareAskClaude = shareAskClaude;
 window.shareAskChatGPT = shareAskChatGPT;
