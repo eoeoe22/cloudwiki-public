@@ -1075,7 +1075,8 @@ function openGoogleMapsEmbedModal(): void {
         }
     }).then(result => {
         if (result.isConfirmed && result.value) {
-            window.editor?.insertText?.(result.value + '\n');
+            // 자동 링크 인식이 폐지되어, 지도 URL 은 명시적 임베드 토큰으로 삽입한다.
+            window.editor?.insertText?.(`{embed:${result.value}}\n`);
             window._cmView?.focus();
         }
     });
@@ -1200,10 +1201,18 @@ function openCardInsertModal(): void {
             const titleLabel = document.getElementById('cardInsertTitleLabel');
             const titleInputEl = document.getElementById('cardInsertTitle') as HTMLInputElement | null;
             const calloutGroup = document.getElementById('cardInsertCalloutTypeGroup');
+            const bodyInputEl = document.getElementById('cardInsertBody') as HTMLTextAreaElement | null;
+            const DEFAULT_BODY_PLACEHOLDER = "비워두면 '내용'이 자리표시자로 들어갑니다.";
 
             function applyType(t: string) {
                 typeHidden.value = t;
                 typeButtons.forEach(b => b.classList.toggle('active', b.dataset.type === t));
+                if (bodyInputEl) {
+                    // 임베드 블록은 본문에 URL 을 넣으면 그 자리에서 미디어 뷰어로 승격된다.
+                    bodyInputEl.placeholder = t === 'embed'
+                        ? '임베드할 미디어 URL (YouTube · 니코동 · Spotify · 지도) 을 한 줄에 하나씩'
+                        : DEFAULT_BODY_PLACEHOLDER;
+                }
                 if (t === 'embed') {
                     if (titlePaletteGroup) titlePaletteGroup.style.display = '';
                     if (calloutGroup) calloutGroup.style.display = 'none';
@@ -1275,7 +1284,22 @@ function openCardInsertModal(): void {
         const titlePart = titleTokens && title ? `${titleTokens} ${title}` : (titleTokens || title);
         const header = titlePart ? `:::${blockType} ${titlePart}` : `:::${blockType}`;
 
-        const body = bodyContent || '내용';
+        let body = bodyContent || '내용';
+        if (type === 'embed' && bodyContent) {
+            // 렌더러는 breaks:true 라 인접한 두 줄이 <br> 로 한 문단에 묶이고, 임베드 패스는
+            // 링크가 문단의 유일한 콘텐츠일 때만 승격하므로 한 문단에 URL 이 둘이면 아무것도
+            // 임베드되지 않는다. 안내대로 '한 줄에 하나씩' 넣은 URL 이 각각 임베드되도록,
+            // 연속한 맨-URL 줄 사이에 빈 줄을 넣어 독립 문단으로 분리한다(비-URL 내용은 보존).
+            const isBareUrl = (s: string): boolean => /^https?:\/\/\S+$/.test(s.trim());
+            const lines = bodyContent.split('\n');
+            const out: string[] = [];
+            for (let i = 0; i < lines.length; i++) {
+                out.push(lines[i]);
+                const next = lines[i + 1];
+                if (next !== undefined && isBareUrl(lines[i]) && isBareUrl(next)) out.push('');
+            }
+            body = out.join('\n');
+        }
 
         window.editor?.insertText?.(`${header}\n${body}\n:::`);
         window._cmView?.focus();

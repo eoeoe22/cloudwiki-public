@@ -220,10 +220,10 @@ export function buildWikiHighlightPlugins(cm: WikiHighlightCM, opts: WikiHighlig
     });
     const paletteBadgePlugin = makePlugin(paletteBadgeMatcher);
 
-    // 파라미터 토큰: {badge:}, {tag:}, {button:}, {stat:}, {size:}, {hr}
+    // 파라미터 토큰: {badge:}, {tag:}, {button:}, {stat:}, {size:}, {embed:}, {hr}
     // {{틀}} 과 충돌하지 않도록 앞뒤 중괄호 제외
     const paramTokenMatcher = new MatchDecorator({
-        regexp: /(?<!\{)\{(?:hr|(?:badge|tag|button|stat|size):[^}]+)\}(?!\})/g,
+        regexp: /(?<!\{)\{(?:hr|(?:badge|tag|button|stat|size|embed):[^}]+)\}(?!\})/g,
         decoration: (match: any, view: any, pos: number) => {
             if (isInInlineCode(view.state, pos)) return null;
             return Decoration.mark({ class: "cm-param-token" });

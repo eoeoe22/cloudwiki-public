@@ -1,6 +1,7 @@
 import type { Env } from '../types';
 import { RBAC } from '../utils/role';
 import { buildLinksOnlyStatements, movePage } from '../routes/wiki';
+import { extractPageLinks } from '../shared/links';
 import { getEnabledExtensions } from '../utils/extensions';
 import { collectRevisionR2Keys, buildHardDeleteStatements } from '../utils/pageDeletion';
 import { ragObjectKey, isRagMirrorEnabled, canCleanupMirror } from '../utils/rag';
@@ -57,6 +58,7 @@ const DEFAULT_BUDGET = 40;
 
 // 결과 배열 캡(128KB DO value 한도 + 무한 누적 방지).
 const CAP_SKIPPED_IDS = 50;       // reindex
+const CAP_MISMATCHED_DOCS = 100;  // reindex 불일치(누락/잔여) 상세 리스트
 const CAP_DELETE_FAILED = 100;    // bulk-delete
 const CAP_MOVE_SKIPPED = 100;     // bulk-move skipped
 const CAP_MOVE_ERRORS = 50;       // bulk-move backlink_errors / backlink_partials
@@ -82,6 +84,16 @@ interface ReindexResult {
     linksWritten: number;
     skipped: number;
     skippedIds: number[];
+    // 인덱스 불일치 감지·수정 집계. 각 문서를 재기록하기 전, 기존 page_links 를
+    // 본문에서 재추출한 링크 집합과 비교해 **실제로 교정된**(누락/잔여가 있던) 문서만 센다.
+    //   - mismatched   : 기존 인덱스가 본문과 달랐던(=교정된) 문서 수
+    //   - linksAdded   : 인덱스에 누락돼 새로 채워진 링크 수(합계)
+    //   - linksRemoved : 본문에 없는데 인덱스에 남아 있던(stale) 링크 제거 수(합계)
+    //   - mismatchedDocs : 교정된 문서의 slug + 추가/제거 링크 수(캡 적용)
+    mismatched: number;
+    linksAdded: number;
+    linksRemoved: number;
+    mismatchedDocs: { slug: string; added: number; removed: number }[];
 }
 interface BulkDeleteResult {
     requested: number;
@@ -234,7 +246,15 @@ export class AdminJobDO {
     ): Promise<{ payload: JobPayload; total: number; result: object } | Response> {
         if (type === 'reindex-backlinks') {
             const total = await this.countReindexTargets();
-            const result: ReindexResult = { linksWritten: 0, skipped: 0, skippedIds: [] };
+            const result: ReindexResult = {
+                linksWritten: 0,
+                skipped: 0,
+                skippedIds: [],
+                mismatched: 0,
+                linksAdded: 0,
+                linksRemoved: 0,
+                mismatchedDocs: [],
+            };
             return { payload: {}, total, result };
         }
         if (type === 'rag-backfill') {
@@ -388,33 +408,65 @@ export class AdminJobDO {
         return row?.n ?? 0;
     }
 
+    // 인덱스 불일치 비교용 키. link_type 은 고정 소집합(wikilink/template/extension/
+    // image/palette)으로 ':' 을 포함하지 않지만 target_slug 는 임의 문자열이라 널바이트로 구분한다.
+    private linkKey(type: string, slug: string): string {
+        return `${type}\u0000${slug}`;
+    }
+
     private async tickReindex(s: JobState): Promise<void> {
         const budget = this.parseBudget();
         const result = s.result as unknown as ReindexResult;
+        // 배포 이전에 시작·일시정지된 잡을 재개할 때 result 에 신규 불일치 필드가 없을 수
+        // 있어 보정한다(없으면 += 가 NaN 이 되고 mismatchedDocs.push 가 throw 함).
+        result.mismatched ??= 0;
+        result.linksAdded ??= 0;
+        result.linksRemoved ??= 0;
+        result.mismatchedDocs ??= [];
         const { clause, binds } = this.reindexExclusion();
 
-        // version 도 함께 읽어 동시 편집 감지에 쓴다(쓰기 후 재확인).
+        // version 도 함께 읽어 동시 편집 감지에 쓴다(쓰기 후 재확인). slug 는 불일치 문서
+        // 리스트 표기용(사용자가 "어디가 누락됐는지" 확인).
         const { results } = await this.env.DB.prepare(
-            `SELECT id, content, version FROM pages
+            `SELECT id, slug, content, version FROM pages
               WHERE id > ? AND deleted_at IS NULL AND ${clause}
               ORDER BY id ASC
               LIMIT ?`,
         ).bind(s.cursor, ...binds, MAX_REINDEX_PER_TICK)
-            .all<{ id: number; content: string | null; version: number | null }>();
+            .all<{ id: number; slug: string; content: string | null; version: number | null }>();
 
         if (!results || results.length === 0) {
             await this.finishTick(s, true); // 대상 소진 → 완료.
             return;
         }
 
-        let queryCount = 1; // 위 SELECT 1건.
+        // 이번 틱 대상들의 기존 page_links 를 한 번에 읽어(서브리퀘스트 1건) 문서별 링크 집합을
+        // 만든다. 재기록 전 스냅샷이므로 아래 루프의 쓰기와 경쟁하지 않는다. 재추출한 링크와
+        // 비교해 누락/잔여(=인덱스가 본문과 어긋난 부분)를 문서 단위로 집계한다.
+        const ids = results.map((r) => r.id);
+        const placeholders = ids.map(() => '?').join(',');
+        const { results: oldLinkRows } = await this.env.DB.prepare(
+            `SELECT source_page_id AS id, target_slug, link_type FROM page_links
+              WHERE source_type = 'page' AND blog = 0 AND source_page_id IN (${placeholders})`,
+        ).bind(...ids).all<{ id: number; target_slug: string; link_type: string }>();
+
+        const oldByPage = new Map<number, Set<string>>();
+        for (const lr of oldLinkRows ?? []) {
+            let set = oldByPage.get(lr.id);
+            if (!set) { set = new Set<string>(); oldByPage.set(lr.id, set); }
+            set.add(this.linkKey(lr.link_type, lr.target_slug));
+        }
+        const EMPTY_LINKS: Set<string> = new Set();
+
+        // 기본 쿼리 2건: 대상 문서 SELECT + 기존 page_links 배치 SELECT(불일치 비교용).
+        let queryCount = 2;
         let pagesThisTick = 0;
         for (const row of results) {
             const stmts = buildLinksOnlyStatements(this.env.DB, row.id, row.content || '');
             const cost = stmts.length + 1; // 쓰기 + version 재확인 1건.
 
             // 단일 문서가 한 틱 예산조차 넘으면(>~budget 링크) skip+기록(무한 stall 방지).
-            if (pagesThisTick === 0 && 1 + cost > budget) {
+            if (pagesThisTick === 0 && queryCount + cost > budget) {
                 s.cursor = row.id;
                 result.skipped += 1;
                 if (result.skippedIds.length < CAP_SKIPPED_IDS) result.skippedIds.push(row.id);
@@ -425,9 +477,35 @@ export class AdminJobDO {
             // 최소 1문서는 처리해 진행을 보장하되, 다음 문서로 예산을 넘기면 이번 틱 종료.
             if (pagesThisTick > 0 && queryCount + cost > budget) break;
 
+            // 불일치 진단: 재추출한 링크 집합 vs 기존 인덱스 집합(둘 다 extractPageLinks 기준으로
+            // 중복 제거된 집합). added=인덱스에 없던 링크, removed=본문에 없는데 남아 있던 링크.
+            // 여기서는 읽기만 하고(로컬 변수), result 반영은 batch 성공 후로 미룬다 — 쓰기 전에
+            // result 를 증가시키면 batch 실패 시 alarm 이 커서 미전진 상태로 증가분을 저장해,
+            // 재개 시 같은 행을 다시 세거나(이중 집계) 일어나지 않은 교정을 보고하게 된다.
+            const oldSet = oldByPage.get(row.id) ?? EMPTY_LINKS;
+            const newSet = new Set<string>();
+            let added = 0;
+            for (const l of extractPageLinks(row.content || '')) {
+                const k = this.linkKey(l.link_type, l.target_slug);
+                newSet.add(k);
+                if (!oldSet.has(k)) added += 1;
+            }
+            let removed = 0;
+            for (const k of oldSet) if (!newSet.has(k)) removed += 1;
+
             await this.env.DB.batch(stmts);
             queryCount += stmts.length;
             result.linksWritten += stmts.length - 1; // 선두 DELETE 1개 제외.
+
+            // 재기록이 커밋된 뒤에만 불일치 집계를 result 에 병합한다(linksWritten 과 동일 시점).
+            if (added > 0 || removed > 0) {
+                result.mismatched += 1;
+                result.linksAdded += added;
+                result.linksRemoved += removed;
+                if (result.mismatchedDocs.length < CAP_MISMATCHED_DOCS) {
+                    result.mismatchedDocs.push({ slug: row.slug, added, removed });
+                }
+            }
 
             // 동시 편집 보호: 쓰기 직후 version 재확인 → 바뀌었으면 최신 본문으로 1회 재작성.
             queryCount += 1;

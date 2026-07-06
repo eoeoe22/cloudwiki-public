@@ -299,6 +299,40 @@ function initMarkedConfig() {
                 renderer(token) {
                     return token.raw;
                 }
+            },
+            {
+                // {embed:URL} 은 GFM 자동 링크로부터 보호해야 URL 이 그대로 보존됨.
+                // wikiButton 과 동일 패턴 — 실제 <a class="wiki-media-embed"> 변환은
+                // _processInlineLayoutTokens 가 수행하고, 후속 임베드 DOM 패스가 iframe 으로 승격한다.
+                name: 'wikiEmbed',
+                level: 'inline',
+                start(src) { return src.indexOf('{embed:'); },
+                tokenizer(src) {
+                    if (!src.startsWith('{embed:')) return;
+                    // 중괄호 균형 스캔(wikiButton 과 동일): '<'/개행을 만나거나 닫는 '}' 없이
+                    // 끝나면 매치 포기(런어웨이 방지).
+                    const openLen = '{embed:'.length;
+                    let depth = 1;
+                    for (let i = openLen; i < src.length; i++) {
+                        const ch = src[i];
+                        if (ch === '<' || ch === '\n') return;
+                        if (ch === '{') depth++;
+                        else if (ch === '}') {
+                            depth--;
+                            if (depth === 0) {
+                                if (i === openLen) return; // 빈 인자 — 미매치
+                                return {
+                                    type: 'wikiEmbed',
+                                    raw: src.slice(0, i + 1),
+                                    text: src.slice(openLen, i)
+                                };
+                            }
+                        }
+                    }
+                },
+                renderer(token) {
+                    return token.raw;
+                }
             }
         ],
         renderer: {
@@ -4066,6 +4100,19 @@ function _processInlineLayoutTokens(html) {
         return `<a class="${cls}" href="${escapeHtml(href)}"${extAttr}${buildStyleAttr(bg, color)}>${inner}</a>`;
     });
 
+    // {embed:URL} → <a class="wiki-media-embed" href="URL">URL</a> (자동 링크 인식을 대체하는
+    // 명시적 임베드 토큰). 지원 서비스(YouTube/니코동/Spotify/지도) 판별과 iframe 승격은 후속
+    // 임베드 DOM 패스가 담당하고, 여기서는 옵트인 표식(class)만 심는다. 뒤따르는
+    // {size:small|medium} 은 텍스트로 남겨 DOM 패스가 폭을 적용하며, embed 는 선행 스타일
+    // 토큰을 흡수하지 않으므로 prefix 를 그대로 되살린다.
+    html = scanComponentBalanced(html, 'embed', (prefix, arg) => {
+        const url = arg.trim();
+        if (!url) return null;
+        const safe = (typeof isSafeUrl === 'function') && isSafeUrl(url);
+        if (!safe) return null;
+        return `${prefix}<a class="wiki-media-embed" href="${escapeHtml(url)}">${escapeHtml(url)}</a>`;
+    });
+
     html = scanComponentBalanced(html, 'stat', (prefix, arg) => {
         const { bg, color, fs } = parseStylePrefix(prefix);
         const iconHtml = extractIconHtml(prefix);
@@ -5377,6 +5424,12 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
             let href = a.getAttribute('href');
             if (!href) return;
 
+            // 임베드는 명시적 옵트인만 처리한다(맨 링크 자동 인식 폐지):
+            //   1) {embed:URL} 인라인 토큰 → a.wiki-media-embed
+            //   2) :::embed 블록(.wiki-embed) 내부의 링크
+            // 그 외 위치의 맨 링크는 자동으로 임베드하지 않고 일반 링크로 남긴다.
+            if (!a.classList.contains('wiki-media-embed') && !a.closest('.wiki-embed')) return;
+
             // 임베드 크기 토큰 {size:small|medium}: URL 뒤에 붙여 임베드 최대 폭을 제한한다
             // (이미지 {size:} 와 동일 어휘). GFM 오토링크는 '{' 를 URL 문자로 삼키므로 토큰이
             // href 안에 포함될 수도(케이스 1 — 이때 marked 가 %7B/%7D 로 percent-encode 함),
@@ -5413,8 +5466,8 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
                 if (pSizeM) embedSize = pSizeM[1];
             }
 
-            // Must not be a custom markdown link. If text exactly matches href or its domain, we allow it.
-            // Also ignore if it is inside a blockquote, a code block, or a footnote
+            // 커스텀 라벨 링크([label](url))는 임베드하지 않는다(아래 텍스트=URL 검사).
+            // 코드블록/각주 안의 링크도 제외한다.
             if (a.closest('code, pre') || a.closest('.wiki-fn-ref')) return;
 
             // Checking if the link display text looks like a URL instead of custom text

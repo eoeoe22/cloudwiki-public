@@ -229,6 +229,7 @@ const codeAc = {
         { id: 'tag',      label: '태그',          icon: 'mdi mdi-tag-outline',               insert: 'tag:'       },
         { id: 'button',   label: '버튼',          icon: 'mdi mdi-gesture-tap-button',        insert: 'button:'    },
         { id: 'stat',     label: '통계 수치',     icon: 'mdi mdi-counter',                   insert: 'stat:'      },
+        { id: 'embed',    label: '미디어 임베드', icon: 'mdi mdi-play-box-outline',          insert: 'embed:'     },
     ] as CodeOption[],
     filtered: [] as CodeOption[],
 };
@@ -376,7 +377,7 @@ const blockAc = {
         { id: 'infobox',   label: '인포박스',  desc: '옆을 감싸는 프로필 카드 — 선택 시 제목+표 골격 삽입', icon: 'mdi mdi-card-account-details-outline', scaffold: BLOCK_SCAFFOLDS.infobox },
         { id: 'float',     label: '플로팅 패널', desc: '본문이 옆을 감싸는 좌/우 패널 ({left|right}{span:3~6})', icon: 'mdi mdi-dock-right'          },
         { id: 'gallery',   label: '갤러리',    desc: '이미지 균등 그리드 — 선택 시 이미지 골격 삽입 ({cols:2~6})', icon: 'mdi mdi-view-gallery-outline', scaffold: BLOCK_SCAFFOLDS.gallery },
-        { id: 'embed',     label: '임베드',    desc: '왼쪽 강조선 인용',           icon: 'mdi mdi-format-quote-close'      },
+        { id: 'embed',     label: '임베드',    desc: '강조선 박스 + 내부 URL 미디어 임베드', icon: 'mdi mdi-format-quote-close'      },
         { id: 'tabs',      label: '탭',        desc: '탭 컨테이너 — 선택 시 :::tab 골격 삽입',  icon: 'mdi mdi-tab',            scaffold: BLOCK_SCAFFOLDS.tabs      },
         { id: 'accordion', label: '아코디언',  desc: '아코디언 — 선택 시 :::item 골격 삽입',    icon: 'mdi mdi-format-list-bulleted-square', scaffold: BLOCK_SCAFFOLDS.accordion },
         { id: 'steps',     label: '스텝퍼',    desc: '진행 단계 — 선택 시 :::step 골격 삽입',   icon: 'mdi mdi-stairs',        scaffold: BLOCK_SCAFFOLDS.steps     },

@@ -599,14 +599,50 @@ function renderReindexState(state: JobState) {
       const r = state.result || {};
       const written = r.linksWritten ?? 0;
       const skipped = r.skipped ?? 0;
-      statusEl.innerHTML = `<span class="text-muted">재인덱싱 중... (${state.processed}/${state.total > 0 ? state.total : "?"}) — 링크 ${written}건 기록, ${skipped}건 건너뜀</span>`;
+      const mismatched = r.mismatched ?? 0;
+      statusEl.innerHTML = `<span class="text-muted">재인덱싱 중... (${state.processed}/${state.total > 0 ? state.total : "?"}) — 불일치 ${mismatched}개 문서 수정, 링크 ${written}건 기록${skipped ? `, ${skipped}건 건너뜀` : ""}</span>`;
     } else if (isCompleted) {
       const r = state.result || {};
       const written = r.linksWritten ?? 0;
       const skipped = r.skipped ?? 0;
       const skippedIds: number[] = r.skippedIds || [];
+      const mismatched = r.mismatched ?? 0;
+      const linksAdded = r.linksAdded ?? 0;
+      const linksRemoved = r.linksRemoved ?? 0;
+      const mismatchedDocs: { slug: string; added: number; removed: number }[] =
+        r.mismatchedDocs || [];
       const esc = window.escapeHtml;
-      let html = `<span class="text-success">✓ 완료 — 링크 ${written}건 기록, ${skipped}건 건너뜀 (총 ${state.processed}개 문서 처리)</span>`;
+
+      let html = `<span class="text-success">✓ 완료 — 총 ${state.processed}개 문서 처리${skipped ? `, ${skipped}건 건너뜀` : ""}</span>`;
+
+      if (mismatched > 0) {
+        // 몇 개 문서를 교정했고 링크 몇 건을 채웠/제거했는지 요약.
+        html +=
+          `<div class="mt-1">인덱스 불일치 <strong>${mismatched}</strong>개 문서 수정 —` +
+          ` 누락 링크 ${linksAdded}건 추가 · 잔여 링크 ${linksRemoved}건 제거 (전체 ${written}건 재기록)</div>`;
+        // 어느 문서가 어긋나 있었는지 목록으로 표시(+추가/−제거).
+        if (mismatchedDocs.length > 0) {
+          const items = mismatchedDocs
+            .map((d) => {
+              const parts: string[] = [];
+              if (d.added > 0) parts.push(`+${d.added}`);
+              if (d.removed > 0) parts.push(`−${d.removed}`);
+              return `<li><a href="/w/${encodeURIComponent(d.slug)}" target="_blank" rel="noopener">${esc(d.slug)}</a> <span class="text-muted">(${parts.join(", ")})</span></li>`;
+            })
+            .join("");
+          const overflow =
+            mismatched > mismatchedDocs.length
+              ? `<div class="text-muted small mt-1">…외 ${mismatched - mismatchedDocs.length}개 문서 생략</div>`
+              : "";
+          html += `<div class="bulk-move-skip-box mt-2"><div class="small mb-1">수정된 문서 (누락/잔여 링크)</div><ul class="mb-0 small">${items}</ul>${overflow}</div>`;
+        }
+      } else if (skipped > 0) {
+        // 건너뛴 문서는 비교·교정 대상이 아니므로 "전체 일치" 로 단정하지 않는다.
+        html += `<div class="mt-1 text-muted">처리한 문서는 모두 인덱스가 본문과 일치했습니다 (건너뛴 문서는 미검증 — 아래 목록).</div>`;
+      } else {
+        html += `<div class="mt-1 text-muted">모든 문서의 백링크 인덱스가 본문과 일치합니다 (수정 없음).</div>`;
+      }
+
       if (skippedIds.length > 0) {
         html += `<div class="bulk-move-skip-box mt-2 small"><div class="mb-1">건너뛴 문서 ID (오류 또는 최소 크기 미달)</div><div class="text-muted">${esc(skippedIds.join(", "))}</div></div>`;
       }

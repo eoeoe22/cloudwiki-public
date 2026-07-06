@@ -94,6 +94,8 @@ const CATALOG: CheatSection[] = [
             { label: '이미지 크기', desc: '이미지 뒤 크기 토큰', keywords: 'size 크기 이미지', syntax: '{size:medium}', insert: `{size:${CARET}}` },
             { label: '이미지 정렬', desc: '이미지 뒤 정렬 토큰', keywords: 'align 정렬 이미지', syntax: '{align:center}', insert: `{align:${CARET}}` },
             { label: '이미지 캡션', desc: '이미지 뒤 캡션 토큰', keywords: 'caption 캡션 설명 이미지', syntax: '{caption:설명}', insert: `{caption:${CARET}}` },
+            { label: '미디어 임베드', desc: 'YouTube·니코동·Spotify·지도 삽입', keywords: 'embed 임베드 youtube spotify 니코동 지도 미디어 영상 음악', syntax: '{embed:URL}', insert: `{embed:${CARET}}` },
+            { label: '임베드 크기', desc: '임베드 뒤 크기 토큰(가운데 정렬)', keywords: 'size 크기 임베드 embed', syntax: '{embed:URL}{size:small}', insert: `{embed:URL}{size:${CARET}}` },
         ],
     },
     {
@@ -130,7 +132,7 @@ const CATALOG: CheatSection[] = [
             { label: '아코디언', desc: '접이식 항목(자식 :::item)', keywords: 'accordion 아코디언 접기', syntax: ':::accordion', insert: `:::accordion\n:::item 항목 1\n${CARET}내용\n:::\n:::item 항목 2\n내용\n:::\n:::` },
             { label: '스텝퍼', desc: '진행 단계(자식 :::step)', keywords: 'steps 스텝 단계', syntax: ':::steps', insert: `:::steps\n:::step 단계 1\n${CARET}내용\n:::\n:::step 단계 2\n내용\n:::\n:::` },
             { label: '문서 변수', desc: '이름=값 정의 → {{{@이름}}}', keywords: 'meta 변수 문서변수', syntax: ':::meta', insert: `:::meta\n제목 = ${CARET}\n저자 = \n:::` },
-            { label: '임베드', desc: '왼쪽 강조선 인용', keywords: 'embed 임베드 인용', syntax: ':::embed', insert: `:::embed\n${CARET}\n\n:::` },
+            { label: '임베드 블록', desc: '강조선 박스 + 내부 URL 미디어 임베드', keywords: 'embed 임베드 인용 미디어 youtube spotify', syntax: ':::embed', insert: `:::embed\n${CARET}\n\n:::` },
             { label: '시점 이후 표시', desc: '지정 시각 후에만 표시', keywords: 'after 시점 이후', syntax: ':::after 2026-01-01', insert: `:::after ${CARET}\n\n:::` },
             { label: '시점 이전 표시', desc: '지정 시각 전에만 표시', keywords: 'until 시점 이전', syntax: ':::until 2026-01-01', insert: `:::until ${CARET}\n\n:::` },
         ],

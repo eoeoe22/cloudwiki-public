@@ -14,14 +14,14 @@
 // inset 대신 옅은 보더로 식별성을 유지하도록 --wiki-border 를 너무 옅게 두지 않는다.
 //
 // 라이트·다크 양벌(다크 전용 아님). 뉴모피즘은 본래 라이트 양식이라 라이트가 주력이지만,
-// 다크에서도 중간 명도 회색(#2a2e35) 위 어두운/밝은 그림자 쌍으로 같은 입체감을 낸다.
+// 다크는 OLED 수준의 초저명도 배경(#0e0f12)에 어두운/밝은 그림자 쌍으로 같은 입체감을 낸다.
 //
 // AA 메모(themes.md §3):
 //  - 듀얼-롤 primary(채움 배경 + 표면 위 텍스트): 라이트=#3457cf(흰 카드/연회색 표면 위
 //    텍스트 ≈5.2:1, 흰 btn-text 채움 위 ≈6:1), 다크=#9bb4f5(어두운 표면 위 텍스트, 어두운
 //    btn-text #14213d 채움 위) → 두 역할 모두 AA.
 //  - accent(텍스트로도 렌더): 라이트=#2f54cc(연회색 위 ≈5.7:1), 다크=#acc0fb.
-//  - text-muted: 라이트 #5f6671(#ecf0f3 위 ≈5:1), 다크 #9aa3af(#2a2e35 위 ≈5.2:1).
+//  - text-muted: 라이트 #5f6671(#ecf0f3 위 ≈5:1), 다크 #9aa3af(#0e0f12 위 ≈7.5:1).
 //  - primary-rgb·focus-ring·glass·shadow 를 라이트(root)·다크(dark 그룹) 양쪽 동기화.
 //    box-shadow 전체 값은 light-dark() 로 감싸면 무효(색/이미지 전용)라 root=라이트, dark
 //    그룹=다크로 분리한다(themes.md §3).
@@ -35,16 +35,16 @@
 export default {
     root: {
         // ── 팔레트(소프트 모노크롬 — 페이지와 카드가 같은 색) ──
-        '--wiki-bg': 'light-dark(#ecf0f3, #2a2e35)',
-        '--wiki-bg-alt': 'light-dark(#e3e9ef, #23272e)',
+        '--wiki-bg': 'light-dark(#ecf0f3, #0e0f12)',
+        '--wiki-bg-alt': 'light-dark(#e3e9ef, #08090b)',
         // 카드 = 배경과 동일색(뉴모피즘 전제). 채움이 아니라 이중 그림자로 솟아오른다.
-        '--wiki-card-bg': 'light-dark(#ecf0f3, #2a2e35)',
+        '--wiki-card-bg': 'light-dark(#ecf0f3, #0e0f12)',
         '--wiki-text': 'light-dark(#45494f, #d7dce3)',
         '--wiki-text-muted': 'light-dark(#5f6671, #9aa3af)',
         // 보더는 거의 사라지되 입력 필드 식별을 위해 완전 투명까진 두지 않는다(inset 불가 대비).
-        '--wiki-border': 'light-dark(#c9d2dc, #3a3f48)',
+        '--wiki-border': 'light-dark(#c9d2dc, #24262c)',
         '--wiki-border-focus': 'light-dark(#3457cf, #9bb4f5)',
-        '--wiki-hr-color': 'light-dark(#d0d7df, #3a3f48)',
+        '--wiki-hr-color': 'light-dark(#d0d7df, #24262c)',
         '--wiki-primary': 'light-dark(#3457cf, #9bb4f5)',
         '--wiki-primary-hover': 'light-dark(#2742b5, #bcccf9)',
         '--wiki-accent': 'light-dark(#2f54cc, #acc0fb)',
@@ -55,10 +55,10 @@ export default {
         '--wiki-focus-ring-color': 'rgba(52, 87, 207, 0.25)',
 
         // ── 표면(블러 없는 불투명 — 프로스트 글래스 대신 솔리드 뉴모 표면) ──
-        '--wiki-code-bg': 'light-dark(#e6ecf2, #23272e)',
-        '--wiki-toc-bg': 'light-dark(#ecf0f3, #2a2e35)',
-        '--wiki-glass-bg': 'light-dark(#ecf0f3, #2a2e35)',
-        '--wiki-glass-border': 'light-dark(#d8dee5, #3a3f48)',
+        '--wiki-code-bg': 'light-dark(#e6ecf2, #08090b)',
+        '--wiki-toc-bg': 'light-dark(#ecf0f3, #0e0f12)',
+        '--wiki-glass-bg': 'light-dark(#ecf0f3, #0e0f12)',
+        '--wiki-glass-border': 'light-dark(#d8dee5, #24262c)',
         '--wiki-glass-blur': 'blur(0px)',
 
         // ── 이중 그림자(뉴모피즘의 핵심) ──
@@ -72,8 +72,8 @@ export default {
         // ── 헤더(navbar) — 페이지와 같은 색 + 솟아오른 이중 그림자(컬러 바 대신 플러시 바) ──
         // bg/border/text/brand 는 색이라 light-dark() OK. shadow 는 전체 box-shadow 라
         // root(라이트) + dark 그룹(다크).
-        '--wiki-header-bg': 'light-dark(#ecf0f3, #2a2e35)',
-        '--wiki-header-border': 'light-dark(#dfe5ec, #33373f)',
+        '--wiki-header-bg': 'light-dark(#ecf0f3, #0e0f12)',
+        '--wiki-header-border': 'light-dark(#dfe5ec, #1a1c21)',
         '--wiki-header-shadow': '4px 4px 12px #d1d9e6, -4px -4px 12px #f9fbff',
         '--wiki-header-text': 'light-dark(#45494f, #d7dce3)',
         '--wiki-header-brand': 'light-dark(#3457cf, #9bb4f5)',
@@ -94,14 +94,15 @@ export default {
     dark: {
         // 다크 트리플렛(= #9bb4f5).
         '--wiki-primary-rgb': '155, 180, 245',
-        // 어두운 표면 위 키보드 포커스 링(밝은 블루 45%).
-        '--wiki-focus-ring-color': 'rgba(155, 180, 245, 0.45)',
-        // 다크 이중 그림자(중간 명도 #2a2e35 위 어두운/밝은 쌍).
-        '--wiki-shadow-sm': '3px 3px 6px #1f2228, -3px -3px 6px #353b44',
-        '--wiki-shadow': '5px 5px 10px #1d2026, -5px -5px 10px #373d47',
-        '--wiki-shadow-md': '6px 6px 14px #1f2228, -6px -6px 14px #353b44',
-        '--wiki-shadow-lg': '10px 10px 22px #1d2026, -10px -10px 22px #373d47',
+        // 어두운 표면 위 키보드 포커스 링(밝은 블루, OLED 보이드 대비 위해 45%→55%로 상향).
+        '--wiki-focus-ring-color': 'rgba(155, 180, 245, 0.55)',
+        // 다크 이중 그림자(OLED 수준 초저명도 #0e0f12 위 어두운/밝은 쌍 — 거의 검정에 가까운
+        // 그림자 + 살짝 밝은 하이라이트로 색 대비 대신 미세한 명도 차만으로 입체감을 낸다).
+        '--wiki-shadow-sm': '3px 3px 6px #050609, -3px -3px 6px #1b1d22',
+        '--wiki-shadow': '5px 5px 10px #030407, -5px -5px 10px #1e2026',
+        '--wiki-shadow-md': '6px 6px 14px #050609, -6px -6px 14px #1b1d22',
+        '--wiki-shadow-lg': '10px 10px 22px #030407, -10px -10px 22px #22242b',
         // 헤더 다크 그림자.
-        '--wiki-header-shadow': '4px 4px 12px #1f2228, -4px -4px 12px #353b44',
+        '--wiki-header-shadow': '4px 4px 12px #050609, -4px -4px 12px #1b1d22',
     },
 };
