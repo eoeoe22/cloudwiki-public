@@ -4967,11 +4967,24 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
         // 백틱(```) · 틸드(~~~) fenced block 과 인라인 백틱 코드 모두 보호한다.
         // 틸드 fence 도 마크다운 표준이므로 보호 대상에 포함해야 다음 단계의
         // {br} → placeholder 치환이 코드 본문 내부까지 침범하지 않는다.
-        let foldInput = resolvedContent.replace(/^([`~]{3,})[^\n]*\n[\s\S]*?\n\1[ \t]*$|`[^`\n]+`/gm, (m) => {
+        // 펜스 구분자 줄 맨 앞의 제로폭 문자(U+200B/U+FEFF)도 허용해 오염된 펜스를
+        // 코드로 보호한다 — 허용하지 않으면 아래 줄 시작 제로폭 제거가 펜스만 "살려내"
+        // 이미 {br}·표 토큰·체크박스 정규화가 적용된 본문이 코드블록으로 노출된다.
+        // 저장 시 구분자 줄(여는/닫는 줄)의 접두 제로폭 문자만 제거해 marked 가 복원된
+        // 펜스를 정상 인식하게 하고, 코드 본문 줄의 제로폭 문자는 그대로 보존한다.
+        let foldInput = resolvedContent.replace(/^[\u200B\uFEFF]*([`~]{3,})[^\n]*\n[\s\S]*?\n[\u200B\uFEFF]*\1[ \t]*$|`[^`\n]+`/gm, (m) => {
             const idx = codeBlocksForFold.length;
-            codeBlocksForFold.push(m);
+            codeBlocksForFold.push(m.replace(/^[\u200B\uFEFF]+/, '').replace(/\n[\u200B\uFEFF]+([`~]{3,}[ \t]*)$/, '\n$1'));
             return `WIKICODEFPH${idx}XEND`;
         });
+
+        // 줄 시작의 제로폭 문자(U+200B ZWSP / U+FEFF BOM) 제거. 모바일 IME·외부 앱
+        // 붙여넣기로 유입되면 눈에 보이지 않으면서 헤딩(#)/목록/인용/표/폴드 등 줄 시작
+        // 문법 인식을 전부 깨뜨린다. 코드 펜스/인라인 코드는 위에서 이미 placeholder 로
+        // 보호됐으므로 코드 본문 안의 제로폭 문자는 보존된다. 줄 중간의 제로폭 문자는
+        // 의도적 문법 이스케이프 용도일 수 있어 건드리지 않는다.
+        // (저장 시점에도 동일 정규화를 수행하지만, 이미 저장된 문서를 위해 관대하게 처리)
+        foldInput = foldInput.replace(/^[\u200B\uFEFF]+/gm, '');
 
         // 표 옵션 토큰(표 위 단독 라인·구분 행 {w:} 열 너비)을 marked 파싱 전에 소비.
         // 코드 펜스/인라인 코드가 위에서 placeholder 로 보호된 상태이므로 코드 안의
@@ -4987,8 +5000,6 @@ async function renderWikiContent(content, slug, containerId, options = {}) {
         // 코드 블록·인라인 코드는 위에서 이미 플레이스홀더로 보호된 상태이므로 코드 본문
         // 안의 {br} 은 그대로 보존된다.
         foldInput = foldInput.replace(/\{br\}/g, 'WIKIBRPHEND');
-
-        foldInput = foldInput.replace(/^[\u200B\uFEFF]+(\[[-+])/gm, '$1');
 
         // "- []" (공백 없는 빈 체크박스) → GFM 표준 "- [ ]" 로 정규화
         foldInput = foldInput.replace(/^(\s*[-*+] )\[\](?=[ \t]|$)/gm, '$1[ ]');
@@ -6136,7 +6147,10 @@ function _extractMarkdownSectionRanges(markdownText) {
             // 틸드 펜스는 info string 에 어떤 문자(틸드 포함)든 허용된다.
             // edit.js 의 _collectRawHeadingsFromDoc 와 동일한 판정을 적용해
             // raw 라인 인덱스 부여(data-raw-line) 와 스크롤 동기화 측 헤딩 시퀀스가 어긋나지 않게 한다.
-            const fenceMatch = line.match(/^(`{3,}|~{3,})(.*)$/);
+            // 줄 시작 제로폭 문자(U+200B/U+FEFF) 는 renderWikiContent 가 marked 입력에서
+            // 제거하므로, 여기서도 무시해야 DOM 헤딩 수와 ranges 가 어긋나지 않는다
+            // (저장 전 정규화를 거치지 않은 기존 문서 대응).
+            const fenceMatch = line.match(/^[\u200B\uFEFF]*(`{3,}|~{3,})(.*)$/);
             if (fenceMatch) {
                 const opener = fenceMatch[1];
                 const rest = fenceMatch[2];
@@ -6150,7 +6164,7 @@ function _extractMarkdownSectionRanges(markdownText) {
                 }
                 // 유효한 펜스 오프너가 아니면 일반 라인 흐름으로 떨어뜨려 헤딩 판정 계속.
             }
-            const hMatch = line.match(/^(#{1,4})\s+(.*)$/);
+            const hMatch = line.match(/^[\u200B\uFEFF]*(#{1,4})\s+(.*)$/);
             if (hMatch) {
                 headings.push({
                     level: hMatch[1].length,
@@ -6165,7 +6179,7 @@ function _extractMarkdownSectionRanges(markdownText) {
                 // marked 는 setext 를 <h1>/<h2> 로 렌더링하므로 DOM headingEls 에는
                 // 포함되지만, ATX 만 파싱하면 ranges 와 DOM 개수가 어긋나 section 인덱스가
                 // 엉뚱한 섹션을 가리킬 수 있다.
-                const underlineMatch = line.match(/^(=+|-+)\s*$/);
+                const underlineMatch = line.match(/^[\u200B\uFEFF]*(=+|-+)\s*$/);
                 if (underlineMatch) {
                     const prev = lines[i - 1];
                     // 들여쓰기 코드블록 시작 컨텍스트는 문단이 아니므로 Setext 베이스로 인정 X.

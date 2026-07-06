@@ -24,6 +24,7 @@ import './types';
 import { escapeHtml } from '../utils/html';
 import { normalizeSlug, hasSlugForbiddenChars } from '../utils/slug';
 import { CDN_URLS } from '../../shared/cdn';
+import { stripLineLeadingZeroWidth } from '../../shared/normalize';
 import { snapshotPreviewState, restorePreviewState } from './preview-state';
 import type { CMEditor, CMSelection, PageMeta, SectionRange } from './types';
 // 워크스페이스 에디터(pages/ws-edit.ts)와 공유하는 CodeMirror6 빌딩 블록 단일 소스.
@@ -1456,6 +1457,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                     ),
                     updateListener,
                     blurHandler,
+                    // 붙여넣기 유입 제로폭 문자 차단 — 문서 로드/서버 저장 정규화와 동일 규칙
+                    // (코드펜스 본문 보존은 붙여넣는 조각 내부 기준의 최선 근사).
+                    EditorView.clipboardInputFilter.of((text) => stripLineLeadingZeroWidth(text)),
                     syntaxHighlightCompartment.of(buildSyntaxHighlightExts()),
                     advancedEditCompartment.of(buildAdvancedEditExts())
                 ]
@@ -2334,7 +2338,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const line = lines[i];
 
                 if (!inFencedCode) {
-                    const fenceMatch = line.match(/^(`{3,}|~{3,})(.*)$/);
+                    // 줄 시작 제로폭 문자는 render.ts _extractMarkdownSectionRanges 와 동일하게 무시
+                    // (문서 로드 시 정규화되지만, IME 등으로 세션 중 유입된 경우의 정렬 유지).
+                    const fenceMatch = line.match(/^[\u200B\uFEFF]*(`{3,}|~{3,})(.*)$/);
                     if (fenceMatch) {
                         const opener = fenceMatch[1];
                         const rest = fenceMatch[2];
@@ -2349,14 +2355,14 @@ document.addEventListener('DOMContentLoaded', async () => {
                             continue;
                         }
                     }
-                    if (/^#{1,4}[ \t]/.test(line)) {
+                    if (/^[\u200B\uFEFF]*#{1,4}[ \t]/.test(line)) {
                         headings.push({ lineIdx: i });
                         continue;
                     }
                     // Setext 헤딩 감지: 이전 줄이 문단 텍스트일 때만 인정.
                     // marked 의 Setext 인식 조건과 일치시켜 프리뷰의 헤딩 수와 어긋나지 않도록 한다.
                     if (i > 0) {
-                        const underlineMatch = line.match(/^(=+|-+)\s*$/);
+                        const underlineMatch = line.match(/^[\u200B\uFEFF]*(=+|-+)\s*$/);
                         if (underlineMatch) {
                             const prev = lines[i - 1];
                             // 들여쓰기 코드 컨텍스트(앞에 빈 줄 또는 문서 시작이 있고 prev 가 4칸 이상
@@ -2943,6 +2949,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             let initialContent = page.content || '';
             if (!isExtensionData) {
+                // 저장 전 정규화를 거치지 않은 기존 문서의 제로폭 문자를 로드 시점에 제거
+                // (익스텐션 데이터는 raw 그대로 보존해야 하므로 제외).
+                initialContent = stripLineLeadingZeroWidth(initialContent);
                 if (!initialContent.endsWith('\n')) {
                     initialContent += '\n\n';
                 } else if (!initialContent.endsWith('\n\n')) {
@@ -4350,9 +4359,10 @@ async function loadBlogContentForEdit() {
             if (!res.ok) throw new Error('포스트를 찾을 수 없습니다.');
             const post = await res.json();
             if (titleInput) titleInput.value = post.title || '';
-            if (editor) editor.setMarkdown(post.content || '');
+            const blogContent = stripLineLeadingZeroWidth(post.content || '');
+            if (editor) editor.setMarkdown(blogContent);
             syncStateToWindow();
-            originalContent = post.content || '';
+            originalContent = blogContent;
         } catch (e) {
             window.Swal.fire('오류', e.message, 'error').then(() => {
                 window.location.href = '/blog';

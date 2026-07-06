@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import type { Env, BlogPost } from '../types';
 import { requireAdmin } from '../middleware/session';
 import { safeJSON } from '../utils/json';
+import { stripLineLeadingZeroWidth } from '../shared/normalize';
 import { RBAC } from '../utils/role';
 import { loadPalettesForBlogPost } from '../utils/palettes';
 import { writeAdminLog } from './admin';
@@ -229,7 +230,9 @@ blog.post('/blog', requireAdmin, async (c) => {
     if (title.length > 500) return c.json({ error: '제목은 500자 이내여야 합니다.' }, 400);
 
     const rawContent = typeof body.content === 'string' ? body.content : '';
-    const content = rawContent.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    // 줄 시작 제로폭 문자(U+200B/U+FEFF) 제거(코드펜스 본문 보존) — 위키 저장과 동일 정규화.
+    // 보이지 않는 채로 헤딩/목록 등 줄 시작 문법 인식을 깨뜨리는 유입을 저장 시점에 차단한다.
+    const content = stripLineLeadingZeroWidth(rawContent.replace(/\r\n/g, '\n').replace(/\r/g, '\n'));
     const rows = content ? content.split('\n').length : 0;
     const characters = content ? content.length : 0;
 
@@ -297,7 +300,7 @@ blog.put('/blog/:id', requireAdmin, async (c) => {
     if (title.length > 500) return c.json({ error: '제목은 500자 이내여야 합니다.' }, 400);
 
     const content = typeof body.content === 'string'
-        ? body.content.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+        ? stripLineLeadingZeroWidth(body.content.replace(/\r\n/g, '\n').replace(/\r/g, '\n'))
         : undefined;
 
     if (content !== undefined) {

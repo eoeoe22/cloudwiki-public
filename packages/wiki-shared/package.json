@@ -8,6 +8,7 @@
     "./markup/transclusion": "./src/markup/transclusion.ts",
     "./markup/links": "./src/markup/links.ts",
     "./markup/mentions": "./src/markup/mentions.ts",
+    "./markup/normalize": "./src/markup/normalize.ts",
     "./markup/slug": "./src/markup/slug.ts",
     "./markup/validation": "./src/markup/validation.ts",
     "./markup/pageMetrics": "./src/markup/pageMetrics.ts",

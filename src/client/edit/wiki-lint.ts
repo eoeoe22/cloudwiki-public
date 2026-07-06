@@ -5,11 +5,13 @@
  * 지금처럼 관대하게 유지하고(잘못 써도 최대한 그려냄), 이 모듈은 "아마 실수일" 지점만
  * 짚어 준다. CodeMirror/DOM 의존이 전혀 없어 단위 검사가 가능하다(CM 배선은 main.ts).
  *
- * 검사 규칙(제안 명세 4종):
+ * 검사 규칙(제안 명세 4종 + 추가 1종):
  *   1) 미종료 ::: 블록 — 열렸으나 EOF 까지 닫히지 않은 디렉티브.
  *   2) 미등록 팔레트명 — {palette:NAME} 의 NAME 이 빌트인/커스텀 어디에도 없음.
  *   3) 캔버스 span 합 ≠ 12 — :::canvas 직계 :::area 들이 모두 {span:N} 을 가질 때 합이 12 아님.
  *   4) 중복 {id:} — 같은 {id:이름} 이 문서에서 2회 이상 등장.
+ *   5) 줄 시작 제로폭 문자(U+200B/U+FEFF) — 보이지 않는 채로 헤딩(#)/목록 등
+ *      줄 시작 문법 인식을 깨뜨린다(IME·붙여넣기 유입; 저장 시 서버가 제거).
  *
  * 코드펜스(``` / ~~~) 내부와 인라인 코드(`...`) 내부의 토큰은 검사에서 제외한다.
  */
@@ -65,6 +67,11 @@ export function computeWikiLint(doc: string, knownPalettes: Set<string>): WikiLi
     for (let i = 0; i < lines.length; i++) {
         const lineNo = i + 1;
         const text = lines[i];
+
+        // ── 줄 시작 제로폭 문자 검사 (코드펜스 밖에서만 — 코드 본문은 사용자 데이터) ──
+        if (fenceChar === null && /^[\u200B\uFEFF]/.test(text)) {
+            diags.push({ line: lineNo, message: '줄 맨 앞에 보이지 않는 문자(제로폭 공백)가 있습니다 — 헤딩(#)·목록 등 줄 시작 문법이 인식되지 않을 수 있습니다. 저장 시 자동 제거됩니다.' });
+        }
 
         // ── 코드펜스 상태 추적 (펜스 라인/내부는 디렉티브·토큰 검사 제외) ──
         const fm = FENCE_RE.exec(text);

@@ -18,6 +18,7 @@ import { fetchMediaTags } from '../utils/mediaTags';
 import { createNotifications } from '../utils/notification';
 import { loadAllPalettes, loadPalettesForPage } from '../utils/palettes';
 import { extractTransclusionTargets, findTemplateCalls } from '../shared/transclusion';
+import { stripLineLeadingZeroWidth } from '../shared/normalize';
 import { extractPageLinks } from '../shared/links';
 import { cleanupUnauthorizedSubscriptions } from '../utils/pageAccessCleanup';
 import { collectRevisionR2Keys, buildHardDeleteStatements } from '../utils/pageDeletion';
@@ -2113,6 +2114,15 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
     // \r 가 섞여 들어오면 렌더 파이프라인의 펜스/`:::`/폴드 정규식이 깨진다.
     // 저장 시점에 한 번만 정규화하면 이후 모든 읽기 경로가 안전해진다.
     body.content = body.content.replace(/\r\n?/g, '\n');
+    // 줄 시작의 제로폭 문자(U+200B ZWSP / U+FEFF BOM) 제거(코드펜스 본문은 보존).
+    // 모바일 IME·외부 앱 붙여넣기로 유입되면 눈에 보이지 않으면서 헤딩(#)/목록/인용 등
+    // 줄 시작 문법의 렌더링·에디터 하이라이팅을 깨뜨린다.
+    // 익스텐션(R2-only) 네임스페이스는 마크다운이 아닌 raw 데이터이므로 제외 —
+    // 클라이언트(edit/main.ts)의 isExtensionData 로드 정규화 제외와 동일 정책.
+    const isR2OnlyContent = isR2OnlyNamespace(slug, getEnabledExtensions(c.env));
+    if (!isR2OnlyContent) {
+        body.content = stripLineLeadingZeroWidth(body.content);
+    }
 
     // 보안: 카테고리 특수문자 금지 (한글, 영문, 숫자, 공백, 쉼표만 허용)
     if (body.category) {
@@ -2290,8 +2300,10 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
         if (body.expected_version !== undefined && body.expected_version !== existing.version) {
             // 내용이 완전히 동일하면 충돌로 보지 않고 진행 (Idempotent).
             // 레거시 저장 본문은 CRLF 일 수 있으므로 비교 양쪽을 LF 로 정규화한다.
-            // (요청 본문은 이미 위에서 정규화됨)
-            const existingNormalized = (existing.content || '').replace(/\r\n?/g, '\n');
+            // (요청 본문은 이미 위에서 정규화됨) 제로폭 문자도 요청 본문과 동일하게
+            // 정규화해야 레거시 제로폭 오염 문서에서 내용 동일 판정이 어긋나 가짜 409 가 나지 않는다.
+            let existingNormalized = (existing.content || '').replace(/\r\n?/g, '\n');
+            if (!isR2OnlyContent) existingNormalized = stripLineLeadingZeroWidth(existingNormalized);
             if (body.content !== existingNormalized) {
                 return c.json(
                     {
@@ -2320,7 +2332,9 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
                 }
             }
             // 레거시 저장본은 CRLF 일 수 있으므로 비교/응답 양쪽을 LF 로 정규화.
-            const currentNormalized = (currentActualContent || '').replace(/\r\n?/g, '\n');
+            // 제로폭 문자도 요청 본문과 동일 규칙으로 정규화(가짜 409 방지 — 위 existingNormalized 와 동일).
+            let currentNormalized = (currentActualContent || '').replace(/\r\n?/g, '\n');
+            if (!isR2Only) currentNormalized = stripLineLeadingZeroWidth(currentNormalized);
 
             // 내용이 완전히 동일하면 충돌로 보지 않고 진행 (Idempotent)
             if (body.content !== currentNormalized) {
