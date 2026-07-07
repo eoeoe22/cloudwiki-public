@@ -2966,39 +2966,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const range = window.findSectionRange(initialContent, sectionIndex, sectionHeadingParam);
                 if (range) {
                     useSectionMode = true;
-                    fullOriginalContent = initialContent;
-                    sectionRange = range;
-                    const lines = initialContent.split('\n');
-                    const sectionText = lines.slice(range.lineIdx, range.endLine).join('\n');
-                    originalContent = sectionText;
-                    editor.setMarkdown(sectionText);
-                    scrollPreviewToBottom();
-
-                    // 섹션 모드 UI
-                    const banner = document.getElementById('sectionEditBanner');
-                    const headingEl = document.getElementById('sectionEditHeading');
-                    const fullLink = document.getElementById('sectionEditFullLink');
-                    if (banner && headingEl) {
-                        headingEl.textContent = range.headingText;
-                        banner.classList.remove('d-none');
-                        banner.classList.add('d-flex');
-                    }
-                    if (fullLink) {
-                        fullLink.href = '/edit?slug=' + encodeURIComponent(slug);
-                    }
-                    // 섹션 모드에서 수정 불가한 필드 숨김 (슬러그/대체 제목/카테고리/리다이렉트/프레젠테이션 모드)
-                    const lockedContainers = [
-                        document.getElementById('titleInput'),
-                        document.getElementById('alternateTitleInput'),
-                        document.getElementById('categoryInput'),
-                        document.getElementById('redirectInput')
-                    ];
-                    lockedContainers.forEach(el => {
-                        if (el) {
-                            const wrapper = el.closest('.mb-3') || el.closest('.row');
-                            if (wrapper) wrapper.style.display = 'none';
-                        }
-                    });
+                    applySectionEditModeUI(range, initialContent);
                 } else {
                     // 섹션을 찾지 못하면 전체 편집으로 자동 fallback
                     sectionMode = false;
@@ -3315,6 +3283,137 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 });
 
+// ── 섹션 편집 모드 진입 UI (초기 로드 ?section= 경로와 MCP 문단 편집 경로 공용) ──
+// range/fullContent 를 받아 모듈 상태(fullOriginalContent/sectionRange/originalContent)와
+// 에디터 본문을 섹션 텍스트로 세팅하고, 섹션 배너 노출 + 수정 불가 필드 숨김을 적용한다.
+// (sectionMode/sectionIndex/sectionHeadingParam/DRAFT_KEY 는 호출자가 상황에 맞게 설정한다.)
+function applySectionEditModeUI(range: SectionRange, fullContent: string): void {
+    fullOriginalContent = fullContent;
+    sectionRange = range;
+    const lines = fullContent.split('\n');
+    const sectionText = lines.slice(range.lineIdx, range.endLine).join('\n');
+    originalContent = sectionText;
+    if (editor) editor.setMarkdown(sectionText);
+    scrollPreviewToBottom();
+
+    // 섹션 모드 UI
+    const banner = document.getElementById('sectionEditBanner');
+    const headingEl = document.getElementById('sectionEditHeading');
+    const fullLink = document.getElementById('sectionEditFullLink') as HTMLAnchorElement | null;
+    if (banner && headingEl) {
+        headingEl.textContent = range.headingText;
+        banner.classList.remove('d-none');
+        banner.classList.add('d-flex');
+    }
+    if (fullLink) {
+        fullLink.href = '/edit?slug=' + encodeURIComponent(slug ?? '');
+    }
+    // 섹션 모드에서 수정 불가한 필드 숨김 (슬러그/대체 제목/카테고리/리다이렉트)
+    const lockedContainers = [
+        document.getElementById('titleInput'),
+        document.getElementById('alternateTitleInput'),
+        document.getElementById('categoryInput'),
+        document.getElementById('redirectInput'),
+    ];
+    lockedContainers.forEach(el => {
+        if (el) {
+            const wrapper = el.closest('.mb-3') || el.closest('.row');
+            if (wrapper) (wrapper as HTMLElement).style.display = 'none';
+        }
+    });
+}
+
+// 두 본문(current/proposed)의 변경이 단일 섹션의 본문에만 국한되는지 판정한다.
+// 국한되면 { index, range, proposedSectionText } 를, 아니면 null 을 반환한다.
+// (MCP 문단 편집 진입 여부 판단용 — edit_section 처럼 한 문단만 고친 제출안을 감지.)
+//
+// 판정 조건:
+//   1) 양쪽 헤딩 구조(개수·레벨·텍스트·순서)가 완전히 동일 (transcluded 헤딩은 제외).
+//   2) 정확히 하나의 섹션 텍스트만 다름.
+//   3) current 의 해당 섹션만 proposed 섹션으로 교체(mergeSectionIntoFull)했을 때 정확히
+//      proposedContent 가 됨 — 머리말/꼬리말·빈 줄 등 섹션 밖 변경이 없음을 왕복 검증으로 보장.
+//      (저장 시 savePage 가 동일한 range/fullOriginalContent 로 재구성하므로 무손실이 보장된다.)
+function detectSingleChangedSection(
+    currentContent: string,
+    proposedContent: string,
+): { index: number; range: SectionRange; proposedSectionText: string } | null {
+    const extract = window._extractMarkdownSectionRanges;
+    const merge = window.mergeSectionIntoFull;
+    if (typeof extract !== 'function' || typeof merge !== 'function') return null;
+    if (currentContent === proposedContent) return null;
+
+    const curRanges = extract(currentContent);
+    const propRanges = extract(proposedContent);
+    if (!curRanges.length || curRanges.length !== propRanges.length) return null;
+
+    const norm = (s: string | null | undefined): string => (s || '').trim();
+    for (let i = 0; i < curRanges.length; i++) {
+        if (curRanges[i].level !== propRanges[i].level) return null;
+        if (norm(curRanges[i].headingText) !== norm(propRanges[i].headingText)) return null;
+        // transcluded 헤딩이 끼면 섹션 편집 매칭(raw 헤딩 기준)이 어긋나므로 섹션 모드 부적합.
+        if (curRanges[i].transcluded || propRanges[i].transcluded) return null;
+    }
+
+    const curLines = currentContent.split('\n');
+    const propLines = proposedContent.split('\n');
+    let changedIdx = -1;
+    for (let i = 0; i < curRanges.length; i++) {
+        const cur = curLines.slice(curRanges[i].lineIdx, curRanges[i].endLine).join('\n');
+        const prop = propLines.slice(propRanges[i].lineIdx, propRanges[i].endLine).join('\n');
+        if (cur !== prop) {
+            if (changedIdx !== -1) return null; // 두 개 이상 섹션 변경 → 섹션 편집 부적합
+            changedIdx = i;
+        }
+    }
+    if (changedIdx === -1) return null;
+
+    const range = curRanges[changedIdx];
+    const proposedSectionText = propLines
+        .slice(propRanges[changedIdx].lineIdx, propRanges[changedIdx].endLine)
+        .join('\n');
+
+    // 왕복 검증 — 섹션 밖(머리말/꼬리말/문단 간 빈 줄) 차이가 있으면 여기서 걸러진다.
+    if (merge(currentContent, range, proposedSectionText) !== proposedContent) return null;
+
+    return { index: changedIdx, range, proposedSectionText };
+}
+
+// MCP 제출안이 단일 문단만 수정한 경우, 그 문단 편집 모드로 전환한다.
+// - fullOriginalContent = 현재 본문(currentContent) → 저장 시 mergeSectionIntoFull 로 재구성.
+// - originalContent = 현재 섹션 본문(변경 감지 기준선), 에디터 = proposed 섹션 본문(검토자 편집 시작점).
+function enterSectionEditModeForMcp(
+    index: number,
+    range: SectionRange,
+    currentContent: string,
+    proposedSectionText: string,
+    submissionId: number,
+): void {
+    sectionMode = true;
+    sectionIndex = index;
+    sectionHeadingParam = range.headingText || '';
+    if (slug) DRAFT_KEY = 'wiki_draft_' + slug + '#section=' + sectionIndex;
+
+    // 현재 섹션 본문으로 배너/상태를 세팅한 뒤, 에디터만 제출안 섹션 본문으로 덮어쓴다.
+    applySectionEditModeUI(range, currentContent);
+    if (editor) editor.setMarkdown(proposedSectionText);
+
+    // 전체 편집 전환 링크는 MCP 컨텍스트를 유지하고, 문단 분리 버튼은 MCP 승인 흐름과
+    // 섞이면 혼란스러우므로 숨긴다.
+    const fullLink = document.getElementById('sectionEditFullLink') as HTMLAnchorElement | null;
+    if (fullLink && slug) {
+        fullLink.href = '/edit?slug=' + encodeURIComponent(slug) + '&mcp_submission=' + encodeURIComponent(String(submissionId));
+    }
+    const splitBtn = document.getElementById('sectionSplitToSubdocBtn');
+    if (splitBtn) splitBtn.style.display = 'none';
+
+    const titleEl = document.getElementById('editPageTitle');
+    if (titleEl && slug) {
+        titleEl.innerHTML = `<i class="bi bi-plug-fill"></i> MCP 편집안 문단 편집: ${escapeHtml(slug)}`;
+    }
+
+    syncStateToWindow();
+}
+
 // 자동 편집 요약(buildAutoEditSummary / window.refreshAutoSummary)은 edit-summary.js 로 분리됨.
 
 // ── 변경 사항 검증 (프론트 전용) ──
@@ -3465,6 +3564,41 @@ async function loadMcpSubmissionIntoEditor(submissionId: number): Promise<boolea
             });
         }
         return true;
+    }
+
+    // ── 단일 문단만 수정한 제출안이면 그 문단 편집 모드로 진입 ──
+    // edit_section 처럼 한 섹션 본문만 고친 update 제출안은, 전체 문서 편집 대신 해당 문단만
+    // 열어 검토자의 추가 편집 범위를 좁힌다. 단, 섹션 모드는 저장 시 카테고리/리다이렉트를
+    // 현재 페이지 값으로 고정 전송하므로(savePage), 제출안이 메타(카테고리/리다이렉트)를 함께
+    // 바꾼 경우는 그 변경이 유실되지 않도록 전체 편집을 유지한다. 익스텐션 데이터는 섹션 모드 미지원.
+    if (detail.action === 'update' && !isExtensionData) {
+        const norm = (v: unknown): string => (v == null ? '' : String(v)).trim();
+        const curMeta = originalPageMeta || {};
+        const categoryChanged = typeof detail.category === 'string'
+            && norm(detail.category) !== norm(curMeta.category);
+        const redirectChanged = typeof detail.redirect_to === 'string'
+            && norm(detail.redirect_to) !== norm(curMeta.redirect_to);
+        // 대체 제목 변경 제출안도 전체 편집을 유지한다 — 섹션 모드는 저장 시 title 을 전송하지 않아
+        // 제목 변경이 유실된다. 현재 mcp-submissions 상세 응답은 has_title_change 를 노출하지 않아
+        // 사실상 no-op 이지만, 향후 노출 시 섹션 모드가 제목 변경을 조용히 떨어뜨리지 않도록 방어한다.
+        const titleChanged = !!detail.has_title_change;
+        if (!categoryChanged && !redirectChanged && !titleChanged) {
+            const seg = detectSingleChangedSection(currentContent, proposedContent);
+            if (seg) {
+                enterSectionEditModeForMcp(seg.index, seg.range, currentContent, seg.proposedSectionText, submissionId);
+                window.Swal?.fire({
+                    toast: true,
+                    position: 'top',
+                    icon: 'info',
+                    title: '문단 편집 모드',
+                    text: `제출안이 '${seg.range.headingText}' 문단만 수정하여 해당 문단 편집 모드로 열었습니다.`,
+                    showConfirmButton: false,
+                    timer: 5000,
+                    timerProgressBar: true,
+                });
+                return true;
+            }
+        }
     }
 
     // 충돌 없음 — 사용자가 제출안 본문을 그대로 (또는 수정 후) 저장.

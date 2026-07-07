@@ -174,6 +174,41 @@ function _lcsBlockOps(oldKeys: string[], newKeys: string[], oldHtmls: string[], 
     return ops;
 }
 
+// 렌더링 diff 미리보기는 스테이징 컨테이너에서 렌더한 결과의 정적 HTML 스냅샷을 그대로
+// 모달에 주입한다. mermaid 다이어그램 / chart.js 차트 / 익스텐션은 외부 스크립트를 지연 로드해
+// 비동기로 그려지는데, 이 정적 스냅샷 컨텍스트에서는 다시 구동되지 않는다. 그래서 "렌더링 중…"
+// 스피너 placeholder 가 그대로 캡처되면 모달에 무한 로딩으로 박제된다. 그런 블록을 "미리보기 불가"
+// 안내로 치환해 무한 로딩을 없앤다. 원문(mermaid/chart 의 data-src, 익스텐션 이름)을 data 속성에
+// 담아 _normalizeBlockKey 가 old/new 를 비교할 때 동일 블록은 '변경 없음' 으로 접히도록 한다.
+function _replaceUnpreviewableBlocks(container: HTMLElement): void {
+    const LABELS: Record<string, string> = {
+        mermaid: 'Mermaid 다이어그램',
+        chart: '차트',
+        ext: '익스텐션',
+    };
+    const makePlaceholder = (kind: string, srcKey: string): HTMLElement => {
+        const ph = document.createElement('div');
+        ph.className = 'rich-diff-noscript';
+        ph.setAttribute('data-noscript-kind', kind);
+        // 원문/식별자를 키에 담아 old==new 인 블록이 diff 에서 same 으로 접히게 한다.
+        if (srcKey) ph.setAttribute('data-noscript-key', srcKey);
+        const label = LABELS[kind] || '외부 콘텐츠';
+        ph.innerHTML =
+            `<i class="bi bi-eye-slash" aria-hidden="true"></i> 미리보기에서 표시할 수 없는 ${escape(label)} 블록입니다. ` +
+            `<span class="rich-diff-noscript-hint">Raw 비교로 원문을 확인하세요.</span>`;
+        return ph;
+    };
+    container.querySelectorAll('.mermaid-figure').forEach((el) => {
+        el.replaceWith(makePlaceholder('mermaid', (el as HTMLElement).getAttribute('data-src') || ''));
+    });
+    container.querySelectorAll('.wiki-chart-figure').forEach((el) => {
+        el.replaceWith(makePlaceholder('chart', (el as HTMLElement).getAttribute('data-src') || ''));
+    });
+    container.querySelectorAll('.wiki-ext[data-ext-name]').forEach((el) => {
+        el.replaceWith(makePlaceholder('ext', (el as HTMLElement).getAttribute('data-ext-name') || ''));
+    });
+}
+
 export async function buildRichDiffHtml(oldText: string, newText: string, slug: string): Promise<string> {
     if ((oldText || '') === (newText || '')) {
         return '<div class="diff-empty">변경된 내용이 없습니다.</div>';
@@ -228,18 +263,9 @@ export async function buildRichDiffHtml(oldText: string, newText: string, slug: 
                 }
             }
 
-            // 익스텐션 렌더는 _processExtensions 가 setTimeout 폴링으로 늦게
-            // 완료될 수 있다. 양쪽 컨테이너에 미완료 .wiki-ext 가 있으면 잠깐
-            // 대기 (cap 500ms) — 익스텐션이 없는 문서는 즉시 통과해 비용 없음.
-            const SETTLE_CAP_MS = 500;
-            const SETTLE_POLL_MS = 50;
-            const pendingExt = () =>
-                oldDiv.querySelectorAll('.wiki-ext:not([data-ext-rendered="1"])').length +
-                newDiv.querySelectorAll('.wiki-ext:not([data-ext-rendered="1"])').length;
-            const settleStart = Date.now();
-            while (pendingExt() > 0 && Date.now() - settleStart < SETTLE_CAP_MS) {
-                await new Promise((r) => setTimeout(r, SETTLE_POLL_MS));
-            }
+            // 익스텐션(.wiki-ext)은 _processExtensions 가 setTimeout 폴링으로 비동기 렌더하지만,
+            // 정적 diff 스냅샷에서는 어차피 다시 구동되지 않으므로 렌더 완료를 기다리지 않는다.
+            // 아래 _replaceUnpreviewableBlocks 가 완료 여부와 무관하게 "미리보기 불가" 로 치환한다.
         } else if (canSanitize && (window as any).marked && typeof (window as any).marked.parse === 'function') {
             try {
                 oldDiv.innerHTML = (window as any).DOMPurify.sanitize((window as any).marked.parse(oldText || ''));
@@ -256,6 +282,10 @@ export async function buildRichDiffHtml(oldText: string, newText: string, slug: 
             oldDiv.innerHTML = `<pre>${escape(oldText || '')}</pre>`;
             newDiv.innerHTML = `<pre>${escape(newText || '')}</pre>`;
         }
+
+        // 외부 스크립트가 필요한 블록(mermaid/chart/익스텐션)을 미리보기 불가 안내로 치환 — 무한 로딩 방지.
+        _replaceUnpreviewableBlocks(oldDiv);
+        _replaceUnpreviewableBlocks(newDiv);
 
         const oldEls = Array.from(oldDiv.children);
         const newEls = Array.from(newDiv.children);

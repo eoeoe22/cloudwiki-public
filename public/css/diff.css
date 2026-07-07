@@ -141,6 +141,32 @@
   opacity: 0.85;
 }
 
+/* 외부 스크립트가 필요해 정적 미리보기에서 구동할 수 없는 블록(mermaid/chart/익스텐션)의 안내 자리 표시.
+   무한 로딩 스피너 대신 노출된다 — Raw 비교로 원문을 확인하도록 유도. */
+.rich-diff-noscript {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: 0.55rem 0.75rem;
+  margin: var(--wiki-space-1) 0;
+  border: 1px dashed var(--wiki-border);
+  border-radius: var(--wiki-radius-sm);
+  background: var(--wiki-bg-subtle, var(--wiki-bg));
+  color: var(--wiki-text-muted);
+  font-size: 0.85rem;
+}
+
+.rich-diff-noscript .bi {
+  font-size: 1rem;
+  opacity: 0.8;
+}
+
+.rich-diff-noscript-hint {
+  font-size: 0.78rem;
+  opacity: 0.8;
+}
+
 /* 미변경 문단 구간을 접은 자리 표시 — Raw diff 의 .diff-skip-label 과 일관 */
 .rich-diff-skip {
   text-align: center;
