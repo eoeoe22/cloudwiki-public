@@ -21,6 +21,7 @@ import {
     dispatchAdminReadTool,
     dispatchAdminEditTool,
 } from './admin-mcp';
+import { APPLY_EDIT_TOOL_DEF, dispatchApplyEditTool } from '../utils/mcpDraftApply';
 
 const mcpRoutes = new Hono<Env>();
 
@@ -131,12 +132,16 @@ async function handleJsonRpc(c: Context<Env>, body: any, user: User | null) {
     const isAdmin = rbac.can(role, 'admin:access');
     const canSeePrivate = rbac.can(role, 'wiki:private');
     const privateFilter = canSeePrivate ? '' : ' AND is_private = 0';
+    // MCP 편집 즉시반영 허용(마이페이지 설정) 사용자에게만 apply_edit(즉시 적용) 도구를 추가 노출한다.
+    // 설정을 켠 wiki:edit 사용자만 대상 — guest/권한 강등 사용자는 애초에 canEdit=false 로 배제된다.
+    const canInstantApply = canEdit && !!user?.mcp_instant_apply;
     // 단계적으로 노출 도구를 합성한다 — guest 는 read 도구만, wiki:edit 는 + USER_TOOL_DEFS,
     // admin:access 는 + ADMIN_ONLY_TOOL_DEFS. 공용 read 도구는 환경(RAG 활성 여부)에 따라 search_rag 포함.
     const sharedToolDefs = getSharedToolDefs(c.env);
     const visibleToolDefs = [
         ...sharedToolDefs,
         ...(canEdit ? USER_TOOL_DEFS : []),
+        ...(canInstantApply ? [APPLY_EDIT_TOOL_DEF] : []),
         ...(isAdmin ? ADMIN_ONLY_TOOL_DEFS : []),
     ];
     const visibleToolNames = new Set(visibleToolDefs.map(t => t.name));
@@ -204,6 +209,13 @@ async function handleJsonRpc(c: Context<Env>, body: any, user: User | null) {
 
             const shared = await dispatchReadTool(c, toolName, args, sharedToolDefs);
             if (shared) return { jsonrpc: '2.0', id, result: shared };
+
+            // apply_edit(즉시 적용) — canInstantApply 사용자에게만 visibleToolDefs 에 포함되므로
+            // 여기 도달 시 이미 게이팅을 통과한 상태다. 디스패처가 설정/소유/충돌을 재검증한다.
+            if (user && toolName === 'apply_edit') {
+                const applyResult = await dispatchApplyEditTool(c, user, rbac, args);
+                return { jsonrpc: '2.0', id, result: applyResult };
+            }
 
             // user 디스패처는 USER_TOOL_DEFS / ADMIN_ONLY_TOOL_DEFS 내부 도구를 처리한다.
             // visibleToolNames 검사로 이미 권한 없는 호출은 차단된 상태이므로 user!=null 이 보장된다.

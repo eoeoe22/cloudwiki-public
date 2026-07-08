@@ -18,6 +18,8 @@ export interface User {
     picture: string | null;
     /** 프로필 사진 비공개 여부(1=비공개, picture 가 정적 기본 아바타로 고정됨) */
     picture_private: number;
+    /** MCP 편집 즉시반영 허용 여부(1=허용, MCP 도구에 apply_edit 즉시 적용 도구가 노출됨) */
+    mcp_instant_apply: number;
     role: 'user' | 'discussion_manager' | 'admin' | 'super_admin' | 'banned' | 'deleted';
     banned_until: number | null;
     last_namechange: number | null;

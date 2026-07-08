@@ -47,7 +47,7 @@ const CATALOG: CheatSection[] = [
             { label: '기울임', desc: '이탤릭', keywords: 'italic emphasis 이탤릭 기울임', syntax: '*텍스트*', insert: `*${CARET}*` },
             { label: '밑줄', desc: '밑줄', keywords: 'underline 밑줄', syntax: '__텍스트__', insert: `__${CARET}__` },
             { label: '취소선', desc: '취소선', keywords: 'strike 취소선 삭제', syntax: '~~텍스트~~', insert: `~~${CARET}~~` },
-            { label: '형광펜', desc: '하이라이트(색 토큰 선행 가능)', keywords: 'highlight mark 형광펜 하이라이트', syntax: '==텍스트==', insert: `==${CARET}==` },
+            { label: '형광펜', desc: '배경 강조 — 색 토큰({bg:} 등) 선행 필요', keywords: 'highlight mark 형광펜 하이라이트 배경 강조 형식', syntax: '{bg:색}==텍스트==', insert: `{bg:${CARET}}==텍스트==` },
             { label: '제목', desc: 'ATX 헤딩(개수로 레벨)', keywords: 'heading h2 h3 제목 헤딩', syntax: '## 제목', insert: `## ${CARET}` },
             { label: '인라인 코드', desc: '코드 스팬', keywords: 'code inline 코드', syntax: '`코드`', insert: '`' + CARET + '`' },
             { label: '헤딩 접기', desc: '해당 섹션을 기본 접힘으로', keywords: 'collapse fold 접기 헤딩', syntax: '## 제목 {collapse}', insert: `## ${CARET} {collapse}` },

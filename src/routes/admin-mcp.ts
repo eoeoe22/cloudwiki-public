@@ -246,7 +246,7 @@ export const USER_EDIT_TOOL_DEFS: McpToolDef[] = [
     },
     {
         name: 'commit_edit',
-        description: 'draft 에 누적된 편집을 승인 대기로 제출합니다. base_revision_id 가 그 사이 변경되었으면(=다른 사용자가 페이지를 수정) 거부합니다 — 그 경우 discard_edit 후 read_document 로 최신 상태를 다시 읽고 편집을 재구성해야 합니다. 신규 페이지 draft 인데 commit 시점에 이미 같은 슬러그가 존재하면 같은 사유로 거부합니다. summary 는 새 리비전의 편집 요약입니다 (선택, 최대 255자). 저장 시 자동으로 `[MCP] [+N줄 -M줄] ` 접두가 붙어 사람 편집과 구분되며 변경 규모를 한눈에 보여줍니다 (예: `[MCP] [+5줄 -2줄] 오타 수정`).\n\n응답에도 이전 본문 대비 라인 단위 변경량(`lines_added` / `lines_removed`)이 포함됩니다 — git diff --stat 의 +N/-M 와 동일한 의미입니다 (CRLF 정규화 후 LCS 기반으로 산출).\n\n**항상 승인 대기로 제출**됩니다. draft 는 즉시 리비전이 되지 않고 OAuth 토큰 소유자(=이 MCP 를 연결한 본인) 에게 승인 대기로 제출됩니다. 본인이 마이페이지 / 알림 / 문서 배너에서 검토 후 승인해야 비로소 리비전이 만들어집니다. 거부 시 draft 는 폐기됩니다.',
+        description: 'draft 에 누적된 편집을 승인 대기로 제출합니다. base_revision_id 가 그 사이 변경되었으면(=다른 사용자가 페이지를 수정) 거부합니다 — 그 경우 discard_edit 후 read_document 로 최신 상태를 다시 읽고 편집을 재구성해야 합니다. 신규 페이지 draft 인데 commit 시점에 이미 같은 슬러그가 존재하면 같은 사유로 거부합니다. summary 는 새 리비전의 편집 요약입니다 (선택, 최대 255자). 저장 시 자동으로 `[MCP] [+N줄 -M줄] ` 접두가 붙어 사람 편집과 구분되며 변경 규모를 한눈에 보여줍니다 (예: `[MCP] [+5줄 -2줄] 오타 수정`).\n\n응답에도 이전 본문 대비 라인 단위 변경량(`lines_added` / `lines_removed`)이 포함됩니다 — git diff --stat 의 +N/-M 와 동일한 의미입니다 (CRLF 정규화 후 LCS 기반으로 산출).\n\n**항상 승인 대기로 제출**됩니다. draft 는 즉시 리비전이 되지 않고 OAuth 토큰 소유자(=이 MCP 를 연결한 본인) 에게 승인 대기로 제출됩니다. 본인이 마이페이지 / 알림 / 문서 배너에서 검토 후 승인해야 비로소 리비전이 만들어집니다. 거부 시 draft 는 폐기됩니다.\n\n승인 단계 없이 즉시 반영하려면(마이페이지에서 "MCP 편집 즉시반영 허용" 을 켠 경우) commit_edit 대신 apply_edit 도구를 사용하세요 — 도구 목록에 apply_edit 이 보이면 활성 상태입니다.',
         inputSchema: {
             type: 'object',
             properties: {

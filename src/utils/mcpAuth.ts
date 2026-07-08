@@ -2,6 +2,7 @@ import type { Context } from 'hono';
 import type { Env, User } from '../types';
 import { isSuperAdmin } from './auth';
 import { sha256Hex, OAUTH_ACCEPTED_SCOPES, OAUTH_SCOPE_ADMIN_MCP } from './oauth';
+import { ensureMcpInstantApplyMigration } from './mcpInstantApplyMigration';
 
 /**
  * MCP Bearer 토큰 인증 공용 로직.
@@ -55,9 +56,12 @@ export async function resolveBearerAuth(c: Context<Env>): Promise<BearerAuthResu
     const tokenHash = await sha256Hex(token);
     const now = Math.floor(Date.now() / 1000);
 
+    // 레거시 D1(mcp_instant_apply 컬럼 부재) 대비 idempotent 마이그레이션 보장 후 SELECT.
+    await ensureMcpInstantApplyMigration(c.env.DB);
+
     let userRow: {
         uid: number; provider: string; provider_uid: string; email: string;
-        name: string; picture: string | null; picture_private: number; role: string; banned_until: number | null;
+        name: string; picture: string | null; picture_private: number; mcp_instant_apply: number; role: string; banned_until: number | null;
         last_namechange: number | null; created_at: number;
     } | null = null;
     let tokenId: number | null = null;
@@ -71,7 +75,7 @@ export async function resolveBearerAuth(c: Context<Env>): Promise<BearerAuthResu
             const row = await c.env.DB
                 .prepare(
                     `SELECT k.user_id, k.expires_at,
-                            u.id AS uid, u.provider, u.uid AS provider_uid, u.email, u.name, u.picture, u.picture_private, u.role, u.banned_until, u.last_namechange, u.created_at
+                            u.id AS uid, u.provider, u.uid AS provider_uid, u.email, u.name, u.picture, u.picture_private, u.mcp_instant_apply, u.role, u.banned_until, u.last_namechange, u.created_at
                      FROM mcp_api_keys k
                      JOIN users u ON k.user_id = u.id
                      WHERE k.key_hash = ?`
@@ -79,7 +83,7 @@ export async function resolveBearerAuth(c: Context<Env>): Promise<BearerAuthResu
                 .bind(tokenHash)
                 .first<{
                     user_id: number; expires_at: number;
-                    uid: number; provider: string; provider_uid: string; email: string; name: string; picture: string | null; picture_private: number;
+                    uid: number; provider: string; provider_uid: string; email: string; name: string; picture: string | null; picture_private: number; mcp_instant_apply: number;
                     role: string; banned_until: number | null; last_namechange: number | null; created_at: number;
                 }>();
 
@@ -101,7 +105,7 @@ export async function resolveBearerAuth(c: Context<Env>): Promise<BearerAuthResu
         const row = await c.env.DB
             .prepare(
                 `SELECT t.id, t.user_id, t.scope, t.access_expires_at, t.revoked_at,
-                        u.id AS uid, u.provider, u.uid AS provider_uid, u.email, u.name, u.picture, u.picture_private, u.role, u.banned_until, u.last_namechange, u.created_at
+                        u.id AS uid, u.provider, u.uid AS provider_uid, u.email, u.name, u.picture, u.picture_private, u.mcp_instant_apply, u.role, u.banned_until, u.last_namechange, u.created_at
                  FROM oauth_tokens t
                  JOIN users u ON t.user_id = u.id
                  WHERE t.access_token_hash = ?`
@@ -109,7 +113,7 @@ export async function resolveBearerAuth(c: Context<Env>): Promise<BearerAuthResu
             .bind(tokenHash)
             .first<{
                 id: number; user_id: number; scope: string | null; access_expires_at: number; revoked_at: number | null;
-                uid: number; provider: string; provider_uid: string; email: string; name: string; picture: string | null; picture_private: number;
+                uid: number; provider: string; provider_uid: string; email: string; name: string; picture: string | null; picture_private: number; mcp_instant_apply: number;
                 role: string; banned_until: number | null; last_namechange: number | null; created_at: number;
             }>();
 
@@ -156,6 +160,7 @@ export async function resolveBearerAuth(c: Context<Env>): Promise<BearerAuthResu
         name: userRow.name,
         picture: userRow.picture,
         picture_private: userRow.picture_private,
+        mcp_instant_apply: userRow.mcp_instant_apply,
         role: effectiveRole as User['role'],
         banned_until: userRow.banned_until,
         last_namechange: userRow.last_namechange,

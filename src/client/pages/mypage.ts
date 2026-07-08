@@ -167,6 +167,12 @@
             document.getElementById('nameInput').value = window.currentUser.name;
             const privToggle = document.getElementById('picturePrivateToggle');
             if (privToggle) privToggle.checked = !!window.currentUser.picture_private;
+            // MCP 편집 즉시반영 설정은 wiki:edit 권한자(=MCP 편집 도구 사용 가능)에게만 노출한다.
+            const canEditWiki = !!(window.currentUser.permissions && window.currentUser.permissions['wiki:edit']);
+            const instantApplyWrap = document.getElementById('mcpInstantApplySetting');
+            const instantApplyToggle = document.getElementById('mcpInstantApplyToggle');
+            if (instantApplyWrap) instantApplyWrap.style.display = canEditWiki ? '' : 'none';
+            if (instantApplyToggle) instantApplyToggle.checked = !!window.currentUser.mcp_instant_apply;
             document.getElementById('settingsSection').style.display = '';
         }
 
@@ -196,6 +202,37 @@
                 });
             } catch (err) {
                 el.checked = !makePrivate; // 롤백
+                Swal.fire('오류', err.message, 'error');
+            } finally {
+                el.disabled = false;
+            }
+        }
+
+        async function toggleMcpInstantApply(el) {
+            const enabled = !!el.checked;
+            el.disabled = true;
+            try {
+                const res = await fetch('/api/me/mcp-instant-apply', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ enabled })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || '변경 실패');
+
+                window.currentUser.mcp_instant_apply = data.enabled ? 1 : 0;
+
+                Swal.fire({
+                    icon: 'success',
+                    title: enabled ? 'MCP 편집 즉시반영을 허용했습니다.' : 'MCP 편집 즉시반영을 비활성화했습니다.',
+                    text: enabled ? '연결된 MCP 클라이언트를 새로고침하면 apply_edit 도구가 노출됩니다.' : '',
+                    toast: true,
+                    position: 'top-end',
+                    showConfirmButton: false,
+                    timer: 2200,
+                });
+            } catch (err) {
+                el.checked = !enabled; // 롤백
                 Swal.fire('오류', err.message, 'error');
             } finally {
                 el.disabled = false;
@@ -1767,6 +1804,7 @@
 // (viewMessage 는 common.ts 전역이라 노출 대상이 아니다.)
 window.updateName = updateName;
 window.togglePicturePrivacy = togglePicturePrivacy;
+window.toggleMcpInstantApply = toggleMcpInstantApply;
 window.loadMoreMessages = loadMoreMessages;
 window.loadMoreSentMessages = loadMoreSentMessages;
 window.loadMoreMyDiscussions = loadMoreMyDiscussions;

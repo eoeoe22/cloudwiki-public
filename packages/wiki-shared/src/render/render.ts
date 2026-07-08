@@ -134,11 +134,15 @@ function initMarkedConfig() {
                         return `<span${fsClassAttr} style="color:${colorCh.value};">` + inner + '</span>';
                     }
                     // 색상 토큰 없이 {fs:} 만 지정: 형광펜 효과를 적용하지 않고 크기만 바꾼 <span>.
-                    // (bg/color/palette 중 무엇도 적용되지 않은 순수 크기 지정) — 형광펜은 색상 토큰이
-                    // 하나라도 있을 때만, 또는 토큰이 전혀 없는 순수 ==하이라이트== 일 때만 유지된다.
+                    // (bg/color/palette 중 무엇도 적용되지 않은 순수 크기 지정) — <mark> 하이라이트는
+                    // 배경 토큰({bg:}/{palette:}) 이 실제 적용됐을 때만 남는다.
                     if (fsVal && !hasBg && !hasColor) {
                         return `<span class="wiki-fs-${fsVal}">` + inner + '</span>';
                     }
+                    // 기본 강조(형광펜) 제거: 어떤 스타일 토큰({fs:}/{color:}/{bg:}/{palette:}) 도 실제
+                    // 적용되지 않은 순수 ==텍스트== 는 하이라이트 없이 본문만 렌더한다. ==...== 는 형식
+                    // 지정 캐리어일 뿐이며, <mark> 는 배경({bg:}/{palette:}) 이 적용됐을 때만 남는다.
+                    if (!classes.length && !style) return inner;
                     const classAttr = classes.length ? ` class="${[...new Set(classes)].join(' ')}"` : '';
                     const styleAttr = style ? ` style="${style}"` : '';
                     return `<mark${classAttr}${styleAttr}>` + inner + '</mark>';

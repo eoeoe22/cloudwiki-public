@@ -231,9 +231,10 @@ export function buildWikiHighlightPlugins(cm: WikiHighlightCM, opts: WikiHighlig
     });
     const paramTokenPlugin = makePlugin(paramTokenMatcher);
 
-    // ==text== 형광펜 — {color:..} / {bg:..} / {palette:..} 선행 토큰을 0개 이상 흡수하고
+    // ==text== 형식 캐리어 — {color:..} / {bg:..} / {palette:..} 선행 토큰을 0개 이상 흡수하고
     // render.ts renderer 와 동일한 채널 우선 규칙(뒤 토큰이 우선)으로 최종 bg/color 를 산출해
-    // 본문에만 데코를 적용한다. 선행 토큰 자체는 colorBadgePlugin / paletteBadgePlugin 이 별도 처리.
+    // 본문에만 데코를 적용한다. 선행 토큰이 없어 bg/color 가 모두 비면 렌더처럼 기본 강조(형광펜)를
+    // 적용하지 않는다. 선행 토큰 자체는 colorBadgePlugin / paletteBadgePlugin 이 별도 처리.
     //   - 빌트인 {palette:NAME}: 실제 렌더(클래스)와 동일하게 토큰 var(--wiki-palette-*) 로 풀어
     //     테마/스킨/다크모드를 반영(우리가 통제하는 토큰이라 _isSafeCssColor 우회).
     //   - 커스텀 {palette:NAME}: 모드별 hex(안전 검증), {bg:}/{color:}: 리터럴(안전 검증).
@@ -277,7 +278,8 @@ export function buildWikiHighlightPlugins(cm: WikiHighlightCM, opts: WikiHighlig
             const innerEnd = to;
             const { bg: safeBg, color: safeColor } = resolveHighlightStyle(prefix);
             if (!safeColor && !safeBg) {
-                add(innerStart, innerEnd, Decoration.mark({ class: 'cm-highlight' }));
+                // 순수 ==텍스트== (배경/색 토큰 없음): 렌더에서 기본 강조가 제거됐으므로
+                // 에디터에서도 형광펜 데코를 적용하지 않는다 — 렌더 결과와 일치.
                 return;
             }
             let style = '';

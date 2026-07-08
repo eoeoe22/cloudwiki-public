@@ -236,7 +236,9 @@ export function buildSharedToolbar(
     toolbar.appendChild(createToolbarBtn('<i>I</i>', '기울임', () => wrapSelection('*', '*')));
     toolbar.appendChild(createToolbarBtn('<s>S</s>', '취소선', () => wrapSelection('~~', '~~')));
     toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-format-underline"></i>', '밑줄', () => wrapSelection('__', '__')));
-    toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-marker"></i>', '형광펜', () => wrapSelection('==', '==')));
+    // ==...== 는 형식 지정 캐리어라 단독으로는 강조가 없다(기본 형광펜 제거). 형광펜 버튼은
+    // 배경/글자색 토큰을 함께 감싸 실제 노란 형광펜을 만든다(bg·color 둘 다 지정 → 다크모드 가독성 안전).
+    toolbar.appendChild(createToolbarBtn('<i class="mdi mdi-marker"></i>', '형광펜', () => wrapSelection('{bg:yellow}{color:black}==', '==')));
     toolbar.appendChild(createToolbarSep());
     // ── 구분선/인용 ──
     toolbar.appendChild(createToolbarBtn('─', '구분선', () => insertText('\n---\n')));

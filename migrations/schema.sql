@@ -13,6 +13,9 @@ CREATE TABLE IF NOT EXISTS users (
   -- 프로필 사진 비공개 여부. 1 이면 picture 가 지정된 정적 기본 아바타(/avatar-default.svg)로 고정되고
   -- OAuth 재로그인/사진 갱신이 picture 를 덮어쓰지 않는다(공급자 사진 누설 방지).
   picture_private INTEGER NOT NULL DEFAULT 0,
+  -- MCP 편집 즉시반영 허용 여부. 1 이면 이 사용자의 MCP 도구 스키마에 즉시 적용용 apply_edit 도구가
+  -- 추가로 노출되어, commit_edit(승인 대기 제출) 대신 새 리비전을 곧바로 만들 수 있다. 기본 0(제출만).
+  mcp_instant_apply INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER DEFAULT (unixepoch()),
   role TEXT DEFAULT 'user',  -- 'user', 'discussion_manager', 'admin', 'super_admin', 'banned', 'deleted'
   banned_until INTEGER,

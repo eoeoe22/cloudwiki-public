@@ -2,6 +2,7 @@ import { createMiddleware } from 'hono/factory';
 import { getCookie } from 'hono/cookie';
 import { isSuperAdmin } from '../utils/auth';
 import { RBAC } from '../utils/role';
+import { ensureMcpInstantApplyMigration } from '../utils/mcpInstantApplyMigration';
 import type { Env, User } from '../types';
 
 /**
@@ -54,9 +55,11 @@ export const sessionMiddleware = createMiddleware<Env>(async (c, next) => {
 
     // 2) 캐시 미스 시 DB에서 조회 후 KV에 캐싱
     if (!row) {
+        // 레거시 D1(mcp_instant_apply 컬럼 부재) 대비 idempotent 마이그레이션 보장 후 SELECT.
+        await ensureMcpInstantApplyMigration(db);
         const dbRow = await db
             .prepare(
-                `SELECT u.id, u.provider, u.uid, u.email, u.name, u.picture, u.picture_private, u.role, u.banned_until, u.last_namechange, u.created_at, s.expires_at
+                `SELECT u.id, u.provider, u.uid, u.email, u.name, u.picture, u.picture_private, u.mcp_instant_apply, u.role, u.banned_until, u.last_namechange, u.created_at, s.expires_at
            FROM sessions s
            JOIN users u ON s.user_id = u.id
            WHERE s.id = ? AND s.expires_at > ?`

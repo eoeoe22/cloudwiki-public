@@ -10,12 +10,12 @@
 //   GET  /api/mcp-submissions             — 본인 제출안 목록
 //   GET  /api/mcp-submissions/count       — (선택) ?slug= 로 문서별 카운트, 미지정 시 전체
 //   GET  /api/mcp-submissions/:id         — 제출 본문 + 페이지 현재 본문(비교용)
-//   POST /api/mcp-submissions/:id/approve — 새 리비전 생성 (= 기존 commit_edit 후반 로직)
+//   POST /api/mcp-submissions/:id/approve — 새 리비전 생성 (공용 applyDraftMutation 위임)
 //   POST /api/mcp-submissions/:id/reject  — draft + 관련 알림 폐기
 //
 // 승인 시점에 페이지가 잠겼거나, 다른 사용자가 그 사이 페이지를 수정해 base_revision_id 가
-// 변했거나, 페이지가 삭제되었으면 409 Conflict 와 함께 거부한다 — 같은 정책을 admin-mcp 의
-// commit_edit 의 충돌 검증과 동일한 정책을 승인 시점에도 적용한다.
+// 변했거나, 페이지가 삭제되었으면 409 Conflict 와 함께 거부한다 — 같은 정책을 MCP 즉시 적용
+// (apply_edit) 과 공유한다. 실제 확정 로직은 utils/mcpDraftApply.ts 의 applyDraftMutation 단일 소스.
 
 import { Hono } from 'hono';
 import type { Env, User } from '../types';
@@ -26,18 +26,8 @@ import { getEnabledExtensions } from '../utils/extensions';
 import { getRevisionContent } from '../utils/r2';
 import { computeLineDiffStats } from '../utils/diff';
 import { ensureMcpDraftsMigration } from '../utils/mcpDraftsMigration';
-import {
-    buildCommitSummary,
-    validateMcpSummaryLength,
-    enforceAdminOnlyCategories,
-} from './admin-mcp';
-import { findConflictingPage, applyCreatePrefixRulesAndCategoryAcls, splitCategoryString, getCategoryDocAutoCategory } from './wiki';
-import { commitPageMutation } from '../utils/pagePipeline/commit';
-import {
-    parseEditAcl,
-    evaluateEditAcl,
-    getEditAclMinAgeDays,
-} from '../utils/editAcl';
+import { validateMcpSummaryLength } from './admin-mcp';
+import { applyDraftMutation } from '../utils/mcpDraftApply';
 
 const mcpSubmissionsRoutes = new Hono<Env>();
 
@@ -294,7 +284,7 @@ mcpSubmissionsRoutes.get('/mcp-submissions/:id', requireAuth, async (c) => {
  * POST /api/mcp-submissions/:id/approve
  * 본인 제출안을 새 리비전으로 커밋. body 의 summary 가 있으면 그것을, 없으면
  * submitted_summary (AI 가 제안한 요약) 를 사용. 둘 다 비었으면 빈 요약 → [MCP] 접두만 남음.
- * 같은 충돌/잠금 정책이 재적용된다.
+ * 충돌/ACL/카테고리 재검증 + 실제 저장은 공용 applyDraftMutation 에 위임한다(즉시 적용 apply_edit 과 동일 소스).
  */
 mcpSubmissionsRoutes.post('/mcp-submissions/:id/approve', requireAuth, async (c) => {
     const user = c.get('user')!;
@@ -320,309 +310,11 @@ mcpSubmissionsRoutes.post('/mcp-submissions/:id/approve', requireAuth, async (c)
     const summaryLengthError = validateMcpSummaryLength(finalSummary);
     if (summaryLengthError) return c.json({ error: summaryLengthError }, 400);
 
-    const slug = draft.slug;
-
-    if (draft.action === 'update') {
-        const page = await c.env.DB.prepare(
-            'SELECT id, version, content, category, last_revision_id, title, is_private FROM pages WHERE slug = ? AND deleted_at IS NULL'
-        ).bind(slug).first<{ id: number; version: number; content: string; category: string | null; last_revision_id: number | null; title: string | null; is_private: number }>();
-        if (!page) {
-            return c.json({ error: 'conflict', reason: 'page_missing' }, 409);
-        }
-        if (page.last_revision_id !== draft.base_revision_id || page.version !== draft.base_version) {
-            return c.json({
-                error: 'conflict',
-                reason: 'concurrent_modification',
-                base_revision_id: draft.base_revision_id,
-                base_version: draft.base_version,
-                current_revision_id: page.last_revision_id,
-                current_version: page.version,
-            }, 409);
-        }
-
-        // 페이지의 edit_acl 평가 — 제출 시점에는 통과했더라도 승인 시점 (= 실제 author) 기준으로 재검증.
-        // admin_only 플래그가 없으면 관리자는 우회. admin-mcp commit_edit 의 enforceMcpEditAcl 와 같은 정책.
-        const isAdminApprove = rbac.can(user.role, 'admin:access');
-        const pageAclRow = await c.env.DB
-            .prepare('SELECT edit_acl FROM pages WHERE id = ?')
-            .bind(page.id)
-            .first<{ edit_acl: string | null }>();
-        const pageAcl = parseEditAcl(pageAclRow?.edit_acl ?? null);
-        if (pageAcl && pageAcl.flags.length > 0) {
-            const hasAdminOnly = pageAcl.flags.includes('admin_only');
-            if (!isAdminApprove || hasAdminOnly) {
-                const minAge = await getEditAclMinAgeDays(c.env.DB);
-                const ev = await evaluateEditAcl(c.env.DB, pageAcl, user, page.id, minAge, isAdminApprove);
-                if (!ev.allowed) {
-                    const isAdminOnlyFail = ev.decisive === 'admin_only';
-                    return c.json({
-                        error: 'forbidden',
-                        reason: isAdminOnlyFail ? 'admin_only' : 'edit_acl',
-                        message: isAdminOnlyFail
-                            ? '이 문서는 관리자만 편집할 수 있습니다.'
-                            : '이 문서를 편집할 권한이 부족합니다.',
-                        edit_acl: pageAcl,
-                        min_age_days: minAge,
-                    }, 403);
-                }
-            }
-        }
-
-        // 관리자 전용 카테고리 재검증 — staging(create_or_update_page) 게이트를 통과했더라도
-        // 실제 write 는 이 승인 시점에 이뤄진다. 그 사이 카테고리가 admin_only 로 바뀌었거나,
-        // 게이트 배포 이전에 staging 된 draft 일 수 있으므로 write 직전(= author 기준)에 다시 검사한다.
-        //
-        // 단, "새로 적용되는" 카테고리에만 적용한다 — patch_page/edit_section 로 만든 draft 는
-        // draft.category 가 페이지 현재 값에서 그대로 시드되므로(사용자가 새로 지정한 게 아님),
-        // 기존에 이미 붙어 있던 admin_only 카테고리를 그대로 보존하는 본문-only 편집이 거부되면 안 된다.
-        // page.category 대비 새로 추가된 카테고리만 검사해 "비관리자의 admin_only 카테고리 신규 적용
-        // 차단"이라는 본래 의도(웹 PUT)는 유지하되, 기존 카테고리 보존 편집은 허용한다.
-        {
-            const currentCats = new Set(splitCategoryString(page.category));
-            const addedCats = splitCategoryString(draft.category).filter(cat => !currentCats.has(cat));
-            const catErr = await enforceAdminOnlyCategories(c.env.DB, rbac, user, addedCats.join(','));
-            if (catErr) {
-                return c.json({ error: 'forbidden', reason: 'admin_only_category', message: catErr }, 403);
-            }
-        }
-
-        // draft 가 title 변경을 요청한 경우, 승인 시점에 다른 페이지가 같은 문자열을 slug/title 로
-        // 가져갔는지 재검증한다 (idx_pages_title_unique 충돌로 인한 UNIQUE 위반 → applyExistingPageUpdate
-        // catch 가 비특정 'apply_failed' 로 떨어지는 것을 방지).
-        if (draft.has_title_change && draft.title) {
-            const titleConflict = await findConflictingPage(c.env.DB, draft.title, page.id);
-            if (titleConflict) {
-                return c.json({
-                    error: 'conflict',
-                    reason: titleConflict.matchedColumn === 'slug' ? 'title_collides_with_slug' : 'title_taken',
-                    message: titleConflict.matchedColumn === 'slug'
-                        ? `'${draft.title}' 는 이미 다른 문서의 제목입니다.`
-                        : `'${draft.title}' 는 이미 다른 문서의 대체 제목입니다.`,
-                }, 409);
-            }
-        }
-
-        // 승인 시점에 다시 한 번 라인 diff 계산 — admin-mcp commit_edit 와 동일한 마커.
-        const enabledExt = getEnabledExtensions(c.env);
-        let diffStats: { added: number; removed: number } | null = null;
-        try {
-            let prevContent = page.content || '';
-            if (isR2OnlyNamespace(slug, enabledExt) && prevContent === '' && page.last_revision_id) {
-                const lastRev = await c.env.DB.prepare('SELECT content, r2_key FROM revisions WHERE id = ?')
-                    .bind(page.last_revision_id)
-                    .first<{ content: string; r2_key: string | null }>();
-                if (lastRev) {
-                    prevContent = await getRevisionContent(c.env.MEDIA, lastRev, new URL(c.req.url).origin);
-                }
-            }
-            diffStats = computeLineDiffStats(
-                prevContent.replace(/\r\n?/g, '\n'),
-                draft.content.replace(/\r\n?/g, '\n'),
-            );
-        } catch (e) {
-            console.error('mcp-submissions approve diff stats failed (approval will proceed without marker):', e);
-            diffStats = null;
-        }
-        const summaryWithDiff = diffStats ? buildCommitSummary(finalSummary, diffStats) : finalSummary;
-
-        try {
-            // 저장+주시자 알림을 통합 파이프라인에 위임(enforceAcl 은 위에서 이미 검증).
-            // 단일 리비전이므로 notify 기본값(true)으로 주시자 알림 1회 발송된다.
-            const result = await commitPageMutation(c, {
-                kind: 'update',
-                origin: 'mcp_approve',
-                actor: user,
-                slug,
-                content: draft.content,
-                summary: summaryWithDiff,
-                category: draft.category,
-                redirectTo: draft.redirect_to,
-                title: draft.has_title_change ? draft.title : undefined,
-                page,
-                isPrivate: page.is_private === 1,
-                logType: 'page_commit_approved',
-                logMessage: `[mcp-submission] approved draft #${draft.id}: ${slug} (v${page.version + 1})`,
-                rbac,
-            });
-            // 승인 성공 — draft + 관련 알림 정리.
-            await c.env.DB.batch([
-                c.env.DB.prepare("DELETE FROM notifications WHERE type = 'mcp_submission' AND ref_id = ?").bind(draft.id),
-                c.env.DB.prepare('DELETE FROM mcp_drafts WHERE id = ?').bind(draft.id),
-            ]);
-            return c.json({
-                approved: true,
-                slug,
-                version: result.new_version,
-                revision_id: result.revision_id,
-                rows: result.rows,
-                characters: result.characters,
-                ...(diffStats ? { lines_added: diffStats.added, lines_removed: diffStats.removed } : {}),
-            });
-        } catch (e: any) {
-            if (e?.code === 'CONCURRENT_MODIFICATION') {
-                return c.json({
-                    error: 'conflict',
-                    reason: 'concurrent_modification',
-                    base_revision_id: draft.base_revision_id,
-                    base_version: draft.base_version,
-                }, 409);
-            }
-            return c.json({ error: 'apply_failed', message: e?.message || String(e) }, 500);
-        }
+    const outcome = await applyDraftMutation(c, user, rbac, draft, finalSummary);
+    if (!outcome.ok) {
+        return c.json(outcome.body, outcome.status as 400 | 403 | 409 | 500);
     }
-
-    if (draft.action === 'create') {
-        const livePage = await c.env.DB.prepare('SELECT id FROM pages WHERE slug = ? AND deleted_at IS NULL').bind(slug).first();
-        if (livePage) return c.json({ error: 'conflict', reason: 'slug_taken' }, 409);
-        const deletedConflict = await c.env.DB.prepare('SELECT id FROM pages WHERE slug = ? AND deleted_at IS NOT NULL').bind(slug).first();
-        if (deletedConflict) {
-            return c.json({
-                error: 'conflict',
-                reason: 'slug_soft_deleted',
-                message: '동일 제목의 소프트 삭제된 문서가 존재합니다. 관리자가 먼저 복원/영구삭제 처리해야 합니다.',
-            }, 409);
-        }
-
-        // draft 제출 ~ 승인 사이에 다른 문서가 같은 문자열을 title 로 가져갔거나, draft 가 title 변경을
-        // 요청했는데 그 사이 다른 문서가 같은 title 을 등록한 경우를 재검증한다.
-        // (drafting 단계의 사전 검사만으로는 race 를 막을 수 없고, idx_pages_title_unique 와 충돌해
-        // applyNewPageInsert 가 UNIQUE 위반으로 500 을 던질 수 있다.)
-        const slugTitleConflict = await findConflictingPage(c.env.DB, slug, null);
-        if (slugTitleConflict && slugTitleConflict.matchedColumn === 'title') {
-            return c.json({
-                error: 'conflict',
-                reason: 'slug_collides_with_title',
-                message: `'${slug}' 는 다른 문서의 대체 제목과 충돌해 제목으로 사용할 수 없습니다.`,
-            }, 409);
-        }
-        if (draft.has_title_change && draft.title) {
-            const titleConflict = await findConflictingPage(c.env.DB, draft.title, null);
-            if (titleConflict) {
-                return c.json({
-                    error: 'conflict',
-                    reason: titleConflict.matchedColumn === 'slug' ? 'title_collides_with_slug' : 'title_taken',
-                    message: titleConflict.matchedColumn === 'slug'
-                        ? `'${draft.title}' 는 이미 다른 문서의 제목입니다.`
-                        : `'${draft.title}' 는 이미 다른 문서의 대체 제목입니다.`,
-                }, 409);
-            }
-        }
-        // 관리자 전용 카테고리 재검증 — update 승인과 동일한 이유로 write 직전에 다시 검사한다.
-        // (아래 category_acl 머지가 admin_only 를 ACL 로 흡수해 대부분 차단하지만, 레거시
-        // admin_categories 전용 카테고리는 머지 경로가 놓치므로 웹 PUT 과 동일하게 명시적으로 검사한다.)
-        //
-        // 검사 대상은 웹 PUT(create) 와 동일한 집합 — 사용자가 지정한 draft.category + "카테고리:이름"
-        // 슬러그의 자동 카테고리. draft.category 는 비어 있어도 "카테고리:X" 생성이면 X 가 자동 적용되므로
-        // 자동 카테고리를 명시적으로 포함시킨다. prefix-rule 로 자동 추가되는 카테고리는 관리자가 설정한
-        // 의도이므로 웹과 동일하게 isAdminOnlyCategory 검사 대상에서 제외한다(아래 category_acl 머지가 담당).
-        {
-            const catsToCheck = splitCategoryString(draft.category);
-            const autoCat = getCategoryDocAutoCategory(slug);
-            if (autoCat && !catsToCheck.includes(autoCat)) catsToCheck.push(autoCat);
-            const catErr = await enforceAdminOnlyCategories(c.env.DB, rbac, user, catsToCheck.join(','));
-            if (catErr) {
-                return c.json({ error: 'forbidden', reason: 'admin_only_category', message: catErr }, 403);
-            }
-        }
-
-        // 신규 문서 prefix 룰 / 카테고리 ACL 머지 — /api/w/:slug PUT(create) 와 동일한 헬퍼를 호출해
-        // category_prefix_rules·doc_setting_prefix_rules·category_acl 템플릿을 모두 적용한다.
-        // draft 는 is_private/edit_acl 을 들고 있지 않으므로 초기값은 0/null 이고,
-        // 승인 시점(=새 페이지 author) 권한으로 비관리자 'overwrite' 다운그레이드를 결정한다.
-        //
-        // categoryAclChoices: 웹 UI 의 prompt 가 없으므로 draft 가 명시한 모든 카테고리를
-        // 'merge' 모드로 일괄 적용한다 — null 로 두면 헬퍼가 "키 누락 = 적용 안 함" 으로 처리해
-        // AI 가 작성한 'admin_only' category_acl 템플릿도 무시되며 ACL 우회가 가능해진다.
-        const isAdminCreate = rbac.can(user.role, 'admin:access');
-        const mcpCategoryAclChoices: Record<string, string> = {};
-        for (const cat of splitCategoryString(draft.category)) {
-            mcpCategoryAclChoices[cat] = 'merge';
-        }
-        const prefixed = await applyCreatePrefixRulesAndCategoryAcls(c.env.DB, slug, {
-            category: draft.category,
-            isPrivate: 0,
-            editAcl: null,
-            adminExplicitlySetEditAcl: false,
-            categoryAclChoices: mcpCategoryAclChoices,
-            isAdmin: isAdminCreate,
-        });
-        const createEditAclSerialized = prefixed.finalEditAcl;
-        const createCategory = prefixed.effectiveCategory;
-        const createIsPrivate = prefixed.finalIsPrivate;
-
-        // 승인 시점의 user (= 새 페이지 author) 가 최종 머지된 ACL 을 통과하는지 평가.
-        // admin_only 플래그가 없으면 관리자는 우회.
-        const finalAclForCheck = parseEditAcl(createEditAclSerialized);
-        if (finalAclForCheck && finalAclForCheck.flags.length > 0) {
-            const hasAdminOnly = finalAclForCheck.flags.includes('admin_only');
-            if (!isAdminCreate || hasAdminOnly) {
-                const minAge = await getEditAclMinAgeDays(c.env.DB);
-                const ev = await evaluateEditAcl(c.env.DB, finalAclForCheck, user, null, minAge, isAdminCreate);
-                if (!ev.allowed) {
-                    const isAdminOnlyFail = ev.decisive === 'admin_only';
-                    return c.json({
-                        error: 'forbidden',
-                        reason: isAdminOnlyFail ? 'admin_only' : 'edit_acl',
-                        message: isAdminOnlyFail
-                            ? '이 슬러그로 시작하는 문서는 관리자만 새로 생성할 수 있습니다.'
-                            : '이 슬러그로 시작하는 문서는 ACL 정책상 새로 생성할 수 없습니다.',
-                        edit_acl: finalAclForCheck,
-                        min_age_days: minAge,
-                    }, 403);
-                }
-            }
-        }
-        const createDiffStats = computeLineDiffStats('', draft.content.replace(/\r\n?/g, '\n'));
-        const createSummaryWithDiff = createDiffStats ? buildCommitSummary(finalSummary, createDiffStats) : finalSummary;
-
-        try {
-            // 신규 문서 생성 + 주시자 알림 통합 파이프라인 위임(ACL/카테고리는 위에서 preResolved).
-            const result = await commitPageMutation(c, {
-                kind: 'create',
-                origin: 'mcp_approve',
-                actor: user,
-                slug,
-                content: draft.content,
-                summary: createSummaryWithDiff,
-                category: createCategory,
-                redirectTo: draft.redirect_to,
-                title: draft.has_title_change ? draft.title : null,
-                editAcl: createEditAclSerialized,
-                isPrivate: createIsPrivate === 1,
-                logType: 'page_create_commit_approved',
-                logMessage: `[mcp-submission] approved draft #${draft.id} (create): ${slug} (v1)`,
-                rbac,
-                // 신규 문서 생성은 직접 PUT(create) 경로와 동일하게 주시자 알림을 보내지 않는다
-                // (본 변경의 범위는 update 승인 경로의 알림 누락 해소). create 알림은 후속 과제.
-                notify: false,
-            });
-            await c.env.DB.batch([
-                c.env.DB.prepare("DELETE FROM notifications WHERE type = 'mcp_submission' AND ref_id = ?").bind(draft.id),
-                c.env.DB.prepare('DELETE FROM mcp_drafts WHERE id = ?').bind(draft.id),
-            ]);
-            return c.json({
-                approved: true,
-                slug,
-                version: 1,
-                revision_id: result.revision_id,
-                rows: result.rows,
-                characters: result.characters,
-                ...(createDiffStats ? { lines_added: createDiffStats.added, lines_removed: createDiffStats.removed } : {}),
-                created: true,
-            });
-        } catch (e: any) {
-            // applyNewPageInsert 가 UNIQUE race 를 명시적 코드로 던지는 경우 409 매핑.
-            if (e?.code === 'SLUG_TAKEN') {
-                return c.json({ error: 'conflict', reason: 'slug_taken' }, 409);
-            }
-            if (e?.code === 'TITLE_TAKEN') {
-                return c.json({ error: 'conflict', reason: 'title_taken' }, 409);
-            }
-            return c.json({ error: 'apply_failed', message: e?.message || String(e) }, 500);
-        }
-    }
-
-    return c.json({ error: 'unknown_action', action: draft.action }, 400);
+    return c.json(outcome.body);
 });
 
 /**

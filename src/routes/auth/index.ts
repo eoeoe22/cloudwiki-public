@@ -15,6 +15,7 @@ import { dispatchDiscord } from '../../utils/webhook/discord';
 import { signupPending } from '../../utils/webhook/events/signup';
 import { createNotification } from '../../utils/notification';
 import { sha256Hex } from '../../utils/oauth';
+import { ensureMcpInstantApplyMigration } from '../../utils/mcpInstantApplyMigration';
 
 const auth = new Hono<Env>();
 
@@ -364,6 +365,7 @@ auth.get('/api/me', (c) => {
         email: user.email,
         picture: user.picture,
         picture_private: !!user.picture_private,
+        mcp_instant_apply: !!user.mcp_instant_apply,
         role: user.role,
         created_at: user.created_at,
         permissions,
@@ -467,6 +469,36 @@ auth.put('/api/me/picture-privacy', requireAuth, async (c) => {
     }
 
     return c.json({ success: true, private: !!isPrivate, picture: nextPicture });
+});
+
+/**
+ * PUT /api/me/mcp-instant-apply
+ * MCP 편집 즉시반영 허용 토글.
+ *  - enabled=true  : mcp_instant_apply=1 — MCP 도구에 apply_edit(즉시 적용) 도구가 추가로 노출된다.
+ *  - enabled=false : mcp_instant_apply=0 — commit_edit(승인 대기 제출)만 노출(기본).
+ */
+auth.put('/api/me/mcp-instant-apply', requireAuth, async (c) => {
+    const user = c.get('user')!;
+    // 엄격한 boolean 검증: 누락/문자열 등 잘못된 값이 설정을 의도치 않게 바꾸지 않도록 한다.
+    const body = await c.req.json<{ enabled?: unknown }>().catch(() => ({} as { enabled?: unknown }));
+    if (typeof body.enabled !== 'boolean') {
+        return c.json({ error: 'enabled 값은 boolean 이어야 합니다.' }, 400);
+    }
+    const enabled = body.enabled;
+    const db = c.env.DB;
+    await ensureMcpInstantApplyMigration(db);
+    await db
+        .prepare('UPDATE users SET mcp_instant_apply = ? WHERE id = ?')
+        .bind(enabled ? 1 : 0, user.id)
+        .run();
+
+    // 세션 KV 캐시 무효화 (변경된 mcp_instant_apply 반영).
+    const sessionId = getCookie(c, 'wiki_session');
+    if (sessionId) {
+        await c.env.KV.delete(`session:${sessionId}`);
+    }
+
+    return c.json({ success: true, enabled: !!enabled });
 });
 
 /**
