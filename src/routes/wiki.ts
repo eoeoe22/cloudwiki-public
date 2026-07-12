@@ -27,6 +27,7 @@ import { withFtsRecovery } from '../utils/ftsRecovery';
 import { mergeEditSummary, capUserSummary } from '../utils/editSummary';
 import { ensurePendingEditsSummaryMigration } from '../utils/pendingEditsSummaryMigration';
 import { ensureRevisionsVirtualMigration } from '../utils/revisionsVirtualMigration';
+import { ensureEditorNoteMigration } from '../utils/editorNoteMigration';
 
 const wiki = new Hono<Env>();
 
@@ -1515,6 +1516,10 @@ wiki.get('/w/:slug', async (c) => {
     const cache = caches.default;
     const cacheKey = c.req.url;
     const nocache = c.req.query('nocache') === 'true';
+    // for_edit=true 응답은 편집자 전용 editor_note 를 포함할 수 있다. for_edit URL 은 게스트도
+    // 추측 가능하므로, 이 응답을 공유/브라우저 캐시에 저장하거나 캐시에서 서빙하면 권한 검사
+    // 이전에 캐시 히트로 editor_note 가 노출될 수 있다 → for_edit 요청은 캐시를 우회한다.
+    const forEdit = c.req.query('for_edit') === 'true';
 
     // "map:<base>" 슬러그는 실제 문서가 아니라 가상 트리 뷰. 권한자에게는 비공개 자식이 보이지만
     // 비로그인 응답이 글로벌 캐시에 들어가 있을 수 있어, map: 슬러그의 cache.match 는 비로그인 요청
@@ -1553,7 +1558,8 @@ wiki.get('/w/:slug', async (c) => {
     }
 
     // 캐시 확인 (map: 분기는 위에서 자체적으로 처리했으므로 이 시점에는 일반 슬러그만 남는다)
-    let response = await cache.match(cacheKey);
+    // for_edit 요청은 캐시를 우회한다(editor_note 노출 방지).
+    let response = forEdit ? undefined : await cache.match(cacheKey);
     if (response && !nocache) {
         // 캐시된 응답은 불변(immutable)이므로, 전역 미들웨어가 헤더를 수정할 수 있도록 복제하여 반환
         return new Response(response.body, response);
@@ -1594,7 +1600,9 @@ wiki.get('/w/:slug', async (c) => {
                 created_at: mediaRow.created_at,
             };
 
-            if (!nocache) {
+            // for_edit 요청은 캐시 조회를 우회하므로(위 cache.match 스킵) 저장해도 재사용되지 않는
+            // 죽은 엔트리가 된다. "for_edit 은 캐시를 우회한다" 불변식을 지키기 위해 저장도 건너뛴다.
+            if (!nocache && !forEdit) {
                 response = c.json(imageDoc, 200, { 'Cache-Control': 'public, max-age=86400' });
                 c.executionCtx.waitUntil(cache.put(cacheKey, response.clone()));
                 return response;
@@ -1686,7 +1694,7 @@ wiki.get('/w/:slug', async (c) => {
     // 응답이 공유 캐시(Cloudflare edge)에 저장될 조건: 공개 페이지이고 !nocache.
     // 캐시 가능 응답은 사용자 권한별로 갈라지지 않아야 하므로, canSeePrivate 효과는
     // 비-캐시 응답(비공개 페이지 / nocache=true) 에서만 적용한다.
-    const willShareCache = !(page.is_private === 1 || sourceWasPrivate) && !nocache;
+    const willShareCache = !(page.is_private === 1 || sourceWasPrivate) && !nocache && !forEdit;
     const palettePerm = canSeePrivate && !willShareCache;
     try {
         // page.content 를 함께 넘겨 page_links 인덱스가 아직 비동기로 갱신 중일 때도
@@ -1698,9 +1706,20 @@ wiki.get('/w/:slug', async (c) => {
 
     const result = safeJSON({ ...page, redirected_from: redirectedFrom, used_palettes: usedPalettes });
 
+    // 편집 메모(editor_note)는 편집기 로딩(for_edit=true) 시에만 wiki:edit 권한자에게 노출한다.
+    // 일반 열람·SPA 네비게이션·검색 등에서는 응답에서 제거한다.
+    const canEdit = !!user && rbac.can(user.role, 'wiki:edit');
+    if (!(c.req.query('for_edit') === 'true' && canEdit)) {
+        delete (result as Record<string, unknown>).editor_note;
+    }
+
     // 비공개 페이지는 권한 있는 사용자에게만 노출되므로, 공유 캐시/브라우저 캐시에 저장되지 않도록 한다.
     // sourceWasPrivate 가 true 이면 리다이렉트로 page 가 public 으로 바뀌어도 캐시 키(원본 private 슬러그)에 저장하면 안 된다.
     if (page.is_private === 1 || sourceWasPrivate) {
+        response = c.json(result, 200, { 'Cache-Control': 'private, no-store' });
+    } else if (forEdit) {
+        // 편집기 로딩 응답은 editor_note 를 포함할 수 있으므로 공유(엣지)/브라우저 캐시에
+        // 저장하지 않는다. (canEdit 이 아니어서 editor_note 가 제거된 경우에도 캐시 오염 방지)
         response = c.json(result, 200, { 'Cache-Control': 'private, no-store' });
     } else if (!nocache) {
         response = c.json(result, 200, { 'Cache-Control': 'public, max-age=86400' });
@@ -1987,6 +2006,7 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
         expected_version?: number;
         turnstileToken?: string;
         title?: string | null;
+        editor_note?: string | null;
         /**
          * 신규 적용 카테고리에 대한 ACL 머지 모드.
          * 키: 카테고리명, 값: 'overwrite' | 'merge' | 'ignore'.
@@ -2057,6 +2077,9 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
 
     const isAdmin = rbac.can(user.role, 'admin:access');
     const db = c.env.DB;
+
+    // editor_note 컬럼이 없는 레거시 DB 대비 idempotent 런타임 마이그레이션.
+    await ensureEditorNoteMigration(db);
 
     // 메인 문서는 관리자만 편집 가능 (slug 기준 판단)
     const mainSlug = normalizeSlug(c.env.WIKI_NAME || 'CloudWiki').toLowerCase();
@@ -2409,6 +2432,7 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
                 category: body.category || null,
                 redirectTo: body.redirect_to || null,
                 title: finalTitle,
+                editorNote: body.editor_note !== undefined ? (body.editor_note ?? null) : undefined,
                 // willUpdateEditAcl 이 아니면 undefined → 컬럼을 손대지 않아 다른 경로의 갱신을 stale 값으로 덮어쓰지 않는다.
                 editAcl: willUpdateEditAcl ? finalEditAcl : undefined,
                 isPrivateWrite: finalIsPrivate,
@@ -2577,6 +2601,7 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
                 editAcl: finalEditAcl,
                 redirectTo: body.redirect_to || null,
                 title: requestedTitle ?? null,
+                editorNote: body.editor_note ?? null,
                 isPrivate: finalIsPrivate === 1,
                 rbac,
                 notify: false,
@@ -2597,6 +2622,93 @@ wiki.put('/w/:slug', requireAuth, requirePermission('wiki:edit'), async (c) => {
 
         return c.json(safeJSON({ slug, version: 1, revision_id: createResult.revision_id }), 201);
     }
+});
+
+/**
+ * PUT /w/:slug/editor-note
+ * 편집 메모(editor_note)만 변경하는 전용 엔드포인트.
+ *
+ * 편집 메모는 리비전으로 추적되지 않는 편집자 전용 메모다. 본문 변경 없이 편집 메모만
+ * 바꿀 때 이 엔드포인트를 사용하며, 가상 리비전(is_virtual=1)으로 기록된다.
+ * 본문 수정과 함께 편집 메모를 변경할 때는 일반 PUT /w/:slug 의 body 에 editor_note 를
+ * 포함해 해당 일반 리비전에 병합한다.
+ */
+wiki.put('/w/:slug/editor-note', requireAuth, requirePermission('wiki:edit'), async (c) => {
+    const slug = normalizeSlug(c.req.param('slug'));
+    if (!slug) {
+        return c.json({ error: '문서 제목이 비어 있습니다.' }, 400);
+    }
+    if (SLUG_FORBIDDEN_CHARS.test(slug)) {
+        return c.json({ error: '제목에 사용할 수 없는 특수문자가 포함되어 있습니다.' }, 400);
+    }
+    if (slug.startsWith('이미지:') || slug.startsWith('map:')) {
+        return c.json({ error: '이 네임스페이스는 편집 메모를 지원하지 않습니다.' }, 403);
+    }
+
+    const user = c.get('user')!;
+    const rbac = c.get('rbac') as RBAC;
+    const db = c.env.DB;
+    await ensureEditorNoteMigration(db);
+
+    const body = await c.req.json<{ editor_note?: string | null }>();
+    const note = (typeof body.editor_note === 'string' ? body.editor_note : null) ?? null;
+
+    const page = await db
+        .prepare('SELECT id, version, editor_note, is_private, edit_acl FROM pages WHERE slug = ? AND deleted_at IS NULL')
+        .bind(slug)
+        .first<{ id: number; version: number; editor_note: string | null; is_private: number; edit_acl: string | null }>();
+
+    if (!page) {
+        return c.json({ error: '문서를 찾을 수 없거나 삭제된 상태입니다.' }, 404);
+    }
+
+    // 비공개 문서 가시성 게이트
+    if (page.is_private === 1 && !rbac.can(user.role, 'wiki:private')) {
+        return c.json({ error: '문서를 찾을 수 없거나 삭제된 상태입니다.' }, 404);
+    }
+
+    // edit_acl 검사 — admin_only 가 없으면 관리자 우회.
+    {
+        const acl = parseEditAcl(page.edit_acl);
+        if (acl && acl.flags.length > 0) {
+            const isAdmin = rbac.can(user.role, 'admin:access');
+            const hasAdminOnly = acl.flags.includes('admin_only');
+            if (!isAdmin || hasAdminOnly) {
+                const minAge = await getEditAclMinAgeDays(db);
+                const ev = await evaluateEditAcl(db, acl, user, page.id, minAge, isAdmin);
+                if (!ev.allowed) {
+                    return c.json({
+                        error: hasAdminOnly && ev.decisive === 'admin_only'
+                            ? '이 문서는 관리자만 편집할 수 있습니다.'
+                            : '이 문서를 편집할 권한이 부족합니다.',
+                    }, 403);
+                }
+            }
+        }
+    }
+
+    // 변경이 없으면 no-op
+    const currentNote = page.editor_note ?? null;
+    if ((note ?? null) === currentNote) {
+        return c.json({ slug, editor_note: note, unchanged: true });
+    }
+
+    await db.prepare('UPDATE pages SET editor_note = ?, updated_at = unixepoch() WHERE id = ?')
+        .bind(note, page.id).run();
+
+    // 가상 리비전 기록 (본문 변경 없음)
+    try {
+        await insertVirtualRevision(db, page.id, '[편집메모] 편집 메모 변경', user.id);
+    } catch (e) {
+        console.error('editor-note virtual revision failed:', e);
+    }
+
+    c.executionCtx.waitUntil(Promise.allSettled([
+        invalidatePageCache(c, slug),
+        refreshRecentChangesCache(c),
+    ]));
+
+    return c.json({ slug, editor_note: note });
 });
 
 /**

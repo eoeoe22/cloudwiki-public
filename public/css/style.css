@@ -1765,6 +1765,44 @@ html[data-theme="dark"] .btn-close {
   box-shadow: var(--wiki-focus-ring);
 }
 
+/* ── Editor Note (편집 메모) ── */
+.editor-note-collapse > summary {
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+}
+.editor-note-collapse > summary::-webkit-details-marker { display: none; }
+.editor-note-collapse > summary::before {
+  content: '\25B6';
+  display: inline-block;
+  margin-right: 0.4rem;
+  font-size: 0.7em;
+  transition: transform 0.15s ease;
+}
+.editor-note-collapse[open] > summary::before {
+  transform: rotate(90deg);
+}
+.editor-note-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+.editor-note-textarea {
+  width: 100%;
+  background: var(--wiki-bg);
+  border: 1px solid var(--wiki-border);
+  border-radius: var(--wiki-radius-sm);
+  padding: 0.6rem 0.9rem;
+  color: var(--wiki-text);
+  resize: vertical;
+  font-size: 0.9rem;
+}
+.editor-note-textarea:focus {
+  outline: none;
+  border-color: var(--wiki-primary);
+  box-shadow: var(--wiki-focus-ring);
+}
+
 /* ── Profile Input Custom ── */
 .edit-name-form input {
   background: var(--wiki-bg);

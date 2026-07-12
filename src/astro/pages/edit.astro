@@ -390,6 +390,19 @@ const ssrJson = JSON.stringify({ _wikiSyntax: branding.wikiSyntax })
                     maxlength="255">
             </div>
 
+            <!-- 편집 메모 (editor note) — 편집자 전용 비공개 메모. 리비전으로 추적되지 않음 -->
+            <div class="mb-3">
+                <details id="editorNoteDetails" class="editor-note-collapse">
+                    <summary class="form-label fw-bold editor-note-summary">
+                        <i class="mdi mdi-note-edit-outline"></i> 편집 메모
+                        <small class="text-muted fw-normal ms-1">편집자 전용 · 리비전 미추적</small>
+                    </summary>
+                    <textarea id="editorNoteInput" class="form-control editor-note-textarea mt-2"
+                        placeholder="이 문서의 편집자에게만 보이는 메모를 남깁니다. 문서 열람에는 노출되지 않습니다."
+                        rows="3"></textarea>
+                </details>
+            </div>
+
             <!-- 버튼 -->
             <div class="edit-actions d-flex align-items-center flex-wrap gap-2">
                 <button class="btn btn-wiki" id="saveBtn" onclick="savePage()" disabled>

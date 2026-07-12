@@ -38,6 +38,7 @@ import {
 import { computeLineDiffStats } from '../utils/diff';
 import { ensureMcpDraftsMigration } from '../utils/mcpDraftsMigration';
 import { ensureRevisionsVirtualMigration } from '../utils/revisionsVirtualMigration';
+import { ensureEditorNoteMigration } from '../utils/editorNoteMigration';
 import { createNotification } from '../utils/notification';
 import {
     findConflictingPage,
@@ -213,7 +214,8 @@ export const USER_EDIT_TOOL_DEFS: McpToolDef[] = [
                 category: { type: 'string', description: '쉼표로 구분된 카테고리 (선택, 한글/영숫자/공백/쉼표만 허용)' },
                 redirect_to: { type: 'string', description: '리다이렉트 대상 슬러그 (선택)' },
                 create_only: { type: 'boolean', description: 'true 시 슬러그가 이미 존재하면 오류 반환 (기본 false)' },
-                display_title: { type: ['string', 'null'], description: '표시 전용 대체 제목 (선택). 슬러그와 달리 모든 특수문자 허용. null/빈 문자열이면 제거. 호출 매칭에는 사용되지 않으며 위키 링크/트랜스클루전/MCP 인자는 항상 슬러그(title 파라미터)를 사용합니다.' }
+                display_title: { type: ['string', 'null'], description: '표시 전용 대체 제목 (선택). 슬러그와 달리 모든 특수문자 허용. null/빈 문자열이면 제거. 호출 매칭에는 사용되지 않으며 위키 링크/트랜스클루전/MCP 인자는 항상 슬러그(title 파라미터)를 사용합니다.' },
+                editor_note: { type: 'string', description: '편집자 메모 (선택). 편집기에서만 표시되는 비공개 메모로, 일반 열람에는 노출되지 않습니다. 리비전으로 추적되지 않으며, 본문 변경 없이 편집 메모만 바뀌면 가상 리비전으로 처리됩니다.' }
             },
             required: ['title', 'content']
         }
@@ -497,12 +499,12 @@ export async function dispatchAdminReadTool(c: Context<Env>, user: User, toolNam
         if (!slug) return asTextResult('Error: title 이 필요합니다.', true);
         const draft = await db.prepare(`
             SELECT id, slug, action, base_revision_id, base_version, content,
-                   category, redirect_to, updated_at, submitted_at, submitted_summary
+                   category, redirect_to, editor_note, updated_at, submitted_at, submitted_summary
             FROM mcp_drafts WHERE user_id = ? AND slug = ?
         `).bind(user.id, slug).first<{
             id: number; slug: string; action: string; base_revision_id: number | null;
             base_version: number; content: string; category: string | null;
-            redirect_to: string | null; updated_at: number;
+            redirect_to: string | null; editor_note: string | null; updated_at: number;
             submitted_at: number | null; submitted_summary: string | null;
         }>();
         if (!draft) return asTextResult('Error: 해당 슬러그의 draft 를 찾을 수 없습니다.', true);
@@ -515,6 +517,7 @@ export async function dispatchAdminReadTool(c: Context<Env>, user: User, toolNam
             base_version: draft.base_version,
             category: draft.category,
             redirect_to: draft.redirect_to,
+            editor_note: draft.editor_note,
             updated_at: unixToIso(draft.updated_at),
             submitted_at: unixToIso(draft.submitted_at),
             submitted_summary: draft.submitted_summary,
@@ -659,6 +662,7 @@ export async function applyExistingPageUpdate(
         editAcl?: string | null;      // undefined → 기존 유지(MCP 기본), null/string → 덮어쓰기 (사람 편집 보류 승인의 카테고리 ACL 머지 적용용).
         isPrivate?: number;           // undefined → 기존 유지(MCP/승인 경로 기본 — 본 저장은 비공개를 바꾸지 않음). 0/1 → 컬럼 덮어쓰기 (직접 PUT 의 wiki:private 토글용).
         summaryRaw?: boolean;         // true 면 withMcpPrefix() 를 건너뛰고 opts.summary 를 그대로 저장 (사람 편집 보류 승인 경로). 기본 false → [MCP] 접두.
+        editorNote?: string | null;   // undefined → 기존 유지, null/string → editor_note 컬럼 덮어쓰기
         logType?: string;             // admin_log type (예: page_update / page_patch / page_revert) — 생략 시 로그 없음
         logMessage?: string;
         awaitLinkCategoryIndex?: boolean; // true 면 page_links/page_categories 재색인을 waitUntil 대신 await — 같은 페이지에 연속 리비전을 만드는 2-리비전 승인에서 rev1 의 재색인이 rev2 의 것과 경합/역전돼 중간 리비전 인덱스가 남는 것을 막는다(rev1 에만 사용).
@@ -709,6 +713,11 @@ export async function applyExistingPageUpdate(
     if (opts.isPrivate !== undefined) {
         setClauses.push('is_private = ?');
         bindings.push(opts.isPrivate);
+    }
+    // editorNote: undefined → 기존 유지. null/string → 덮어쓰기.
+    if (opts.editorNote !== undefined) {
+        setClauses.push('editor_note = ?');
+        bindings.push(opts.editorNote);
     }
     setClauses.push('last_revision_id = ?', 'version = ?', 'rows = ?', 'characters = ?', 'updated_at = unixepoch()');
     bindings.push(revisionId, newVersion, metrics.rows, metrics.characters);
@@ -789,6 +798,7 @@ export async function applyNewPageInsert(
         isPrivate?: number;            // 호출자가 doc_setting_prefix_rules longest-match 로 산출. 누락 시 0.
         title?: string | null;        // 호출자가 사전 충돌 검증을 마쳤다고 가정. 누락 시 NULL.
         summaryRaw?: boolean;         // true 면 withMcpPrefix() 를 건너뛰고 opts.summary 를 그대로 저장 (사람 편집 보류 승인 경로). 기본 false → [MCP] 접두.
+        editorNote?: string | null;   // 편집 메모. 누락 시 NULL.
         logType?: string;
         logMessage?: string;
         awaitLinkCategoryIndex?: boolean; // true 면 page_links/page_categories 재색인을 await — 2-리비전 승인의 rev1(신규 생성)에서 rev2 재색인과의 경합/역전을 막는다.
@@ -805,8 +815,8 @@ export async function applyNewPageInsert(
     let pageResult;
     try {
         pageResult = await withFtsRecovery(db, () => db
-            .prepare('INSERT INTO pages (slug, title, content, category, is_private, edit_acl, redirect_to, rows, characters) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
-            .bind(slug, opts.title ?? null, contentToStore, opts.category, opts.isPrivate ?? 0, opts.editAcl ?? null, opts.redirectTo, metrics.rows, metrics.characters)
+            .prepare('INSERT INTO pages (slug, title, content, category, is_private, edit_acl, redirect_to, editor_note, rows, characters) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+            .bind(slug, opts.title ?? null, contentToStore, opts.category, opts.isPrivate ?? 0, opts.editAcl ?? null, opts.redirectTo, opts.editorNote ?? null, metrics.rows, metrics.characters)
             .run());
     } catch (e: any) {
         // UNIQUE race: precheck ~ INSERT 사이에 다른 요청이 같은 slug/title 을 점유.
@@ -893,7 +903,7 @@ async function loadDraftOrSeedFromPage(
     type: 'draft' | 'seeded' | 'not_found' | 'submitted';
     draftId?: number;
     content: string;
-    page?: { id: number; version: number; last_revision_id: number | null; category: string | null; redirect_to: string | null; edit_acl: string | null };
+    page?: { id: number; version: number; last_revision_id: number | null; category: string | null; redirect_to: string | null; edit_acl: string | null; editor_note: string | null };
 }> {
     const db = c.env.DB;
     // action 무관하게 본인의 (slug) draft 가 있으면 그 위에서 편집을 누적한다.
@@ -912,11 +922,11 @@ async function loadDraftOrSeedFromPage(
     }
 
     const page = await db.prepare(
-        'SELECT id, version, content, last_revision_id, category, redirect_to, edit_acl FROM pages WHERE slug = ? AND deleted_at IS NULL'
+        'SELECT id, version, content, last_revision_id, category, redirect_to, edit_acl, editor_note FROM pages WHERE slug = ? AND deleted_at IS NULL'
     ).bind(slug).first<{
         id: number; version: number; content: string;
         last_revision_id: number | null; category: string | null; redirect_to: string | null;
-        edit_acl: string | null;
+        edit_acl: string | null; editor_note: string | null;
     }>();
     if (!page) return { type: 'not_found', content: '' };
 
@@ -930,7 +940,7 @@ async function loadDraftOrSeedFromPage(
     return {
         type: 'seeded',
         content: body.replace(/\r\n?/g, '\n'),
-        page: { id: page.id, version: page.version, last_revision_id: page.last_revision_id, category: page.category, redirect_to: page.redirect_to, edit_acl: page.edit_acl },
+        page: { id: page.id, version: page.version, last_revision_id: page.last_revision_id, category: page.category, redirect_to: page.redirect_to, edit_acl: page.edit_acl, editor_note: page.editor_note },
     };
 }
 
@@ -991,6 +1001,7 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
     const rbac = c.get('rbac') as RBAC;
     // 같은 이유 — 모든 편집 도구가 mcp_drafts 의 새 컬럼을 직간접적으로 사용하므로 진입 시 보장.
     await ensureMcpDraftsMigration(db);
+    await ensureEditorNoteMigration(db);
 
     if (toolName === 'create_or_update_page') {
         // 위임 admin 역할이 wiki:edit 없이 admin:access 만 가진 케이스에서도
@@ -1040,9 +1051,9 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
         }
 
         const existing = await db
-            .prepare('SELECT id, version, last_revision_id, category, title FROM pages WHERE slug = ? AND deleted_at IS NULL')
+            .prepare('SELECT id, version, last_revision_id, category, title, editor_note FROM pages WHERE slug = ? AND deleted_at IS NULL')
             .bind(slug)
-            .first<{ id: number; version: number; last_revision_id: number | null; category: string | null; title: string | null }>();
+            .first<{ id: number; version: number; last_revision_id: number | null; category: string | null; title: string | null; editor_note: string | null }>();
 
         // 신규 title 이 다른 페이지의 slug 또는 title 과 충돌하면 거부. 소프트 삭제 행도 포함.
         if (hasTitleChange && requestedTitle) {
@@ -1114,29 +1125,47 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
         const draftHasTitleChange = hasTitleChange ? 1 : 0;
         const draftTitleValue = hasTitleChange ? requestedTitle : null;
 
+        // editor_note: args 에 키가 명시되어 있을 때만 변경 의도로 해석. (undefined = 기존 유지)
+        const hasEditorNoteChange = Object.prototype.hasOwnProperty.call(args, 'editor_note');
+        const requestedEditorNote = hasEditorNoteChange
+            ? (typeof args.editor_note === 'string' ? args.editor_note : null)
+            : null;
+
+        // editor_note seed 값: 명시 변경이 있으면 그 값, 없으면 기존 draft 것, draft 도 없으면 페이지 것(또는 null).
+        let draftEditorNoteValue: string | null;
+        if (hasEditorNoteChange) {
+            draftEditorNoteValue = requestedEditorNote;
+        } else if (existingDraft) {
+            const prevDraftNote = await db.prepare('SELECT editor_note FROM mcp_drafts WHERE id = ?')
+                .bind(existingDraft.id).first<{ editor_note: string | null }>();
+            draftEditorNoteValue = prevDraftNote?.editor_note ?? null;
+        } else {
+            draftEditorNoteValue = existing?.editor_note ?? null;
+        }
+
         let draftId: number;
         if (existingDraft) {
             if (hasTitleChange) {
                 await db.prepare(
                     `UPDATE mcp_drafts
                      SET content = ?, category = ?, redirect_to = ?,
-                         title = ?, has_title_change = ?, updated_at = unixepoch()
+                         title = ?, has_title_change = ?, editor_note = ?, updated_at = unixepoch()
                      WHERE id = ?`
-                ).bind(content, category, redirectTo, draftTitleValue, draftHasTitleChange, existingDraft.id).run();
+                ).bind(content, category, redirectTo, draftTitleValue, draftHasTitleChange, draftEditorNoteValue, existingDraft.id).run();
             } else {
                 // display_title 미지정: 기존 draft 의 title / has_title_change 그대로 유지.
                 await db.prepare(
                     `UPDATE mcp_drafts
-                     SET content = ?, category = ?, redirect_to = ?, updated_at = unixepoch()
+                     SET content = ?, category = ?, redirect_to = ?, editor_note = ?, updated_at = unixepoch()
                      WHERE id = ?`
-                ).bind(content, category, redirectTo, existingDraft.id).run();
+                ).bind(content, category, redirectTo, draftEditorNoteValue, existingDraft.id).run();
             }
             draftId = existingDraft.id;
         } else {
             const ins = await db.prepare(
-                `INSERT INTO mcp_drafts (user_id, slug, action, base_revision_id, base_version, content, category, redirect_to, title, has_title_change)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-            ).bind(user.id, slug, action, baseRevisionId, baseVersion, content, category, redirectTo, draftTitleValue, draftHasTitleChange).run();
+                `INSERT INTO mcp_drafts (user_id, slug, action, base_revision_id, base_version, content, category, redirect_to, title, has_title_change, editor_note)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+            ).bind(user.id, slug, action, baseRevisionId, baseVersion, content, category, redirectTo, draftTitleValue, draftHasTitleChange, draftEditorNoteValue).run();
             draftId = ins.meta.last_row_id;
         }
 
@@ -1242,11 +1271,11 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
         } else {
             // type === 'seeded' — 페이지 메타로부터 draft seed
             const ins = await db.prepare(
-                `INSERT INTO mcp_drafts (user_id, slug, action, base_revision_id, base_version, content, category, redirect_to)
-                 VALUES (?, ?, 'update', ?, ?, ?, ?, ?)`
+                `INSERT INTO mcp_drafts (user_id, slug, action, base_revision_id, base_version, content, category, redirect_to, editor_note)
+                 VALUES (?, ?, 'update', ?, ?, ?, ?, ?, ?)`
             ).bind(
                 user.id, slug, loaded.page!.last_revision_id, loaded.page!.version,
-                newContent, loaded.page!.category, loaded.page!.redirect_to
+                newContent, loaded.page!.category, loaded.page!.redirect_to, loaded.page!.editor_note ?? null
             ).run();
             draftId = ins.meta.last_row_id;
             baseRevisionId = loaded.page!.last_revision_id;
@@ -1326,11 +1355,11 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
             baseVersion = meta!.base_version;
         } else {
             const ins = await db.prepare(
-                `INSERT INTO mcp_drafts (user_id, slug, action, base_revision_id, base_version, content, category, redirect_to)
-                 VALUES (?, ?, 'update', ?, ?, ?, ?, ?)`
+                `INSERT INTO mcp_drafts (user_id, slug, action, base_revision_id, base_version, content, category, redirect_to, editor_note)
+                 VALUES (?, ?, 'update', ?, ?, ?, ?, ?, ?)`
             ).bind(
                 user.id, slug, loaded.page!.last_revision_id, loaded.page!.version,
-                newContent, loaded.page!.category, loaded.page!.redirect_to
+                newContent, loaded.page!.category, loaded.page!.redirect_to, loaded.page!.editor_note ?? null
             ).run();
             draftId = ins.meta.last_row_id;
             baseRevisionId = loaded.page!.last_revision_id;
@@ -1363,13 +1392,13 @@ export async function dispatchAdminEditTool(c: Context<Env>, user: User, toolNam
         }
         const draft = await db.prepare(
             `SELECT id, user_id, slug, action, base_revision_id, base_version,
-                    content, category, redirect_to, title, has_title_change, submitted_at
+                    content, category, redirect_to, title, has_title_change, editor_note, submitted_at
              FROM mcp_drafts WHERE id = ?`
         ).bind(draftId).first<{
             id: number; user_id: number; slug: string; action: string;
             base_revision_id: number | null; base_version: number; content: string;
             category: string | null; redirect_to: string | null;
-            title: string | null; has_title_change: number;
+            title: string | null; has_title_change: number; editor_note: string | null;
             submitted_at: number | null;
         }>();
         if (!draft) return asTextResult('Error: draft 를 찾을 수 없습니다 (이미 commit/discard 됐거나 12시간 TTL 만료).', true);

@@ -82,7 +82,12 @@ CREATE TABLE IF NOT EXISTS pages (
   -- 형식: {"flags":["aged","page_editor","any_editor","admin_only"]} (AND 평가 — 모든 플래그 통과 필요).
   -- 'admin_only' 플래그: 해당 문서는 관리자(admin:access)만 편집 가능.
   -- 'admin_only' 가 없는 경우 관리자(admin:access)는 ACL 우회.
-  edit_acl          TEXT
+  edit_acl          TEXT,
+  -- 편집 메모 (editor note). 편집자 전용 비공개 메모로, 일반 문서 열람·MCP read_document 등
+  -- 열람 도구에는 노출되지 않고 편집기(또는 MCP 편집 도구) 로딩 시에만 응답에 포함된다.
+  -- 리비전으로 추적되지 않으며, 편집 메모만 변경 시 가상 리비전(is_virtual=1)으로 기록되고,
+  -- 본문 수정과 동반되면 해당 일반 리비전의 UPDATE 에 함께 기록된다.
+  editor_note       TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_pages_updated ON pages(updated_at DESC);
@@ -369,6 +374,7 @@ CREATE TABLE IF NOT EXISTS mcp_drafts (
   redirect_to       TEXT,
   title             TEXT,
   has_title_change  INTEGER NOT NULL DEFAULT 0,
+  editor_note       TEXT,
   submitted_at      INTEGER,
   submitted_summary TEXT,
   created_at        INTEGER DEFAULT (unixepoch()),

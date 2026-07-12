@@ -410,6 +410,16 @@ function buildAutoEditSummary(): string {
         parts.push(currRedirect ? `넘겨주기 '${currRedirect}' 설정` : '넘겨주기 해제');
     }
 
+    // 편집 메모 — null/빈 문자열은 동일(미설정)로 취급.
+    const origNote = (originalPageMeta.editor_note || '').trim();
+    const noteEl = document.getElementById('editorNoteInput') as HTMLTextAreaElement | null;
+    const currNote = noteEl ? noteEl.value.trim() : '';
+    if (origNote !== currNote) {
+        if (!origNote) parts.push('편집 메모 설정');
+        else if (!currNote) parts.push('편집 메모 삭제');
+        else parts.push('편집 메모 변경');
+    }
+
     if (editorAvailable) {
         const currHeadings = extractHeadingsForSummary(currentContent);
         const origHeadings = getOriginalHeadingsForSummary();

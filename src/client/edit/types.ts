@@ -82,6 +82,8 @@ export interface PageMeta {
     category?: string | null;
     redirect_to?: string | null;
     is_private?: number | boolean | null;
+    /** 편집 메모 (editor note). null/빈 문자열은 "미설정" 으로 동일 취급. */
+    editor_note?: string | null;
 }
 
 /** localStorage 에 저장되는 초안 페이로드 */

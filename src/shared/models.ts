@@ -56,6 +56,8 @@ export interface Page {
     characters: number | null;
     // 편집 ACL (JSON). NULL=비활성. 형식: {"flags":["aged"|"page_editor"|"any_editor"|"admin_only"]} (AND 평가)
     edit_acl: string | null;
+    // 편집 메모. 편집자 전용 비공개 메모. 열람 도구에는 노출되지 않고 편집기/MCP 편집 도구에서만 읽는다.
+    editor_note: string | null;
 }
 
 export interface Revision {

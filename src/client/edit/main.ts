@@ -2859,6 +2859,22 @@ document.addEventListener('DOMContentLoaded', async () => {
             window.refreshAutoSummary();
         });
     }
+
+    // 편집 메모 변경 시 편집 요약 자동 갱신 — 본문 변경 없이 편집 메모만 바뀌어도
+    // 저장 버튼이 활성화되고 자동 요약에 편집 메모 변경이 표시되도록 한다.
+    const editorNoteInputEl = document.getElementById('editorNoteInput');
+    if (editorNoteInputEl) {
+        let noteDebounce: ReturnType<typeof setTimeout> | null = null;
+        editorNoteInputEl.addEventListener('input', () => {
+            if (noteDebounce) clearTimeout(noteDebounce);
+            noteDebounce = setTimeout(() => { if (window.refreshAutoSummary) window.refreshAutoSummary(); }, 300);
+        });
+        editorNoteInputEl.addEventListener('change', () => {
+            if (noteDebounce) clearTimeout(noteDebounce);
+            if (window.refreshAutoSummary) window.refreshAutoSummary();
+        });
+    }
+
     // 기존 문서 불러오기 (블로그 모드는 별도 처리)
     if (BLOG_MODE) {
         await loadBlogContentForEdit();
@@ -2866,7 +2882,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     try {
-        const res = await fetch(`/api/w/${encodeURIComponent(slug)}?redirect=no&nocache=true`);
+        const res = await fetch(`/api/w/${encodeURIComponent(slug)}?redirect=no&nocache=true&for_edit=true`);
 
         if (res.status === 410) {
             // 로딩 오버레이 먼저 숨김
@@ -2916,6 +2932,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             const altTitleEl = document.getElementById('alternateTitleInput') as HTMLInputElement | null;
             if (altTitleEl) altTitleEl.value = page.title || '';
 
+            // 편집 메모 (editor_note) — for_edit=true 로 응답에 포함됨. 없으면 빈 문자열.
+            const editorNoteEl = document.getElementById('editorNoteInput') as HTMLTextAreaElement | null;
+            if (editorNoteEl) editorNoteEl.value = page.editor_note || '';
+
             // 섹션 모드에서는 서버가 보낸 메타데이터를 그대로 유지해 저장 시 함께 송신.
             // window.renderCategoryTags()가 input 이벤트를 디스패치해 자동 편집 요약을 갱신하기 전에
             // 베이스라인을 먼저 확정해야 카테고리 변경이 없는데도 '문서 생성'이 표시되는
@@ -2926,6 +2946,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 category: page.category || '',
                 redirect_to: page.redirect_to || '',
                 is_private: page.is_private ? 1 : 0,
+                editor_note: page.editor_note || '',
             };
 
             {
@@ -3499,6 +3520,11 @@ async function loadMcpSubmissionIntoEditor(submissionId: number): Promise<boolea
         const redirEl = document.getElementById('redirectInput') as HTMLInputElement | null;
         if (redirEl) redirEl.value = detail.redirect_to;
     }
+    // 편집 메모 — 제출안의 editor_note 를 에디터에 미리 채운다.
+    if (typeof detail.editor_note === 'string') {
+        const noteEl = document.getElementById('editorNoteInput') as HTMLTextAreaElement | null;
+        if (noteEl) noteEl.value = detail.editor_note;
+    }
     // 대체 제목 변경을 요청한 제출안이면 대체 제목 입력란도 미리 채워둔다.
     if (detail.action === 'update' && detail.has_title_change && typeof detail.title === 'string') {
         const altTitleEl = document.getElementById('alternateTitleInput') as HTMLInputElement | null;
@@ -3768,6 +3794,12 @@ function hasMeaningfulChanges() {
     const currRedirect = redirectEl ? redirectEl.value.trim() : '';
     if (origRedirect !== currRedirect) return true;
 
+    // 편집 메모 — null/빈 문자열은 동일(미설정)로 취급.
+    const origNote = (baseMeta.editor_note || '').trim();
+    const noteEl = document.getElementById('editorNoteInput') as HTMLTextAreaElement | null;
+    const currNote = noteEl ? noteEl.value.trim() : '';
+    if (origNote !== currNote) return true;
+
     return false;
 }
 
@@ -4024,6 +4056,67 @@ async function savePage() {
         window.Swal.fire('오류', '카테고리에는 특수문자를 사용할 수 없습니다.', 'warning');
         return;
     }
+
+    // 편집 메모 전용 변경 감지 — 본문/카테고리/리다이렉트/제목은 그대로이고 편집 메모만 바뀐 경우,
+    // 일반 PUT /w/:slug 대신 전용 엔드포인트로 가상 리비전 처리한다 (version/R2 미갱신).
+    {
+        const contentForCheck = content;
+        const origContentForCheck = sectionMode && sectionRange ? fullOriginalContent : originalContent;
+        const contentUnchanged = contentForCheck === origContentForCheck;
+        const origNote = (originalPageMeta?.editor_note || '').trim();
+        const noteEl = document.getElementById('editorNoteInput') as HTMLTextAreaElement | null;
+        const currNote = (noteEl ? noteEl.value : '').trim();
+        const noteChanged = origNote !== currNote;
+
+        // 카테고리/리다이렉트/제목 변경도 없는지 확인 (섹션 모드는 메타데이터 유지이므로 항상 false).
+        let metaUnchanged = true;
+        if (!sectionMode && originalPageMeta) {
+            const origCats = (originalPageMeta.category || '').split(',').map(c => c.trim()).filter(Boolean).sort();
+            const currCats = Array.isArray(window.categoryTags) ? window.categoryTags.slice().map(c => String(c).trim()).filter(Boolean).sort() : [];
+            if (origCats.join('\u0000') !== currCats.join('\u0000')) metaUnchanged = false;
+            const redirectEl = document.getElementById('redirectInput') as HTMLInputElement | null;
+            if ((originalPageMeta.redirect_to || '') !== (redirectEl ? redirectEl.value.trim() : '')) metaUnchanged = false;
+            const altTitleEl = document.getElementById('alternateTitleInput') as HTMLInputElement | null;
+            if ((originalPageMeta.title || '').trim() !== (altTitleEl ? altTitleEl.value.trim() : '')) metaUnchanged = false;
+        }
+
+        if (contentUnchanged && metaUnchanged && noteChanged && slug) {
+            const saveBtn = document.getElementById('saveBtn');
+            if (saveInProgress) return;
+            saveInProgress = true;
+            if (saveBtn) {
+                saveBtn.disabled = true;
+                saveBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 저장 중...';
+            }
+            try {
+                const noteRes = await fetch(`/api/w/${encodeURIComponent(slug)}/editor-note`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ editor_note: currNote || null }),
+                });
+                if (!noteRes.ok) {
+                    const err = await noteRes.json().catch(() => ({ error: '저장에 실패했습니다.' }));
+                    window.Swal.fire({ icon: 'error', title: '저장 실패', text: err.error || '저장에 실패했습니다.' });
+                    return;
+                }
+                // originalPageMeta 의 editor_note 베이스라인 갱신.
+                if (originalPageMeta) originalPageMeta.editor_note = currNote;
+                isSuccess = true;
+                if (typeof window.checkConcurrentEditors === 'function') window.checkConcurrentEditors();
+                window.Swal.fire({ icon: 'success', title: '편집 메모가 저장되었습니다.', timer: 1200, showConfirmButton: false });
+            } catch (e) {
+                window.Swal.fire({ icon: 'error', title: '저장 실패', text: '네트워크 오류가 발생했습니다.' });
+            } finally {
+                saveInProgress = false;
+                if (saveBtn && !blockResave) {
+                    saveBtn.disabled = false;
+                    saveBtn.innerHTML = '<i class="mdi mdi-check"></i> 저장';
+                }
+            }
+            return;
+        }
+    }
+
     // 편집 요약은 사용자 입력분(summary)과 백그라운드 자동 요약분(auto_summary)을 분리해 전송하고,
     // 병합("<사용자입력> / <자동요약>")은 서버가 수행한다. 이렇게 하면 편집 요청 보류본이 사용자
     // 입력분만 별도 보관할 수 있어, 승인 편집기가 자동요약을 사용자 입력으로 오인해 다시 합치는 중복을
@@ -4072,6 +4165,21 @@ async function savePage() {
             if (altTitleEl) {
                 const v = altTitleEl.value.trim();
                 (body as any).title = v ? v : null;
+            }
+        }
+
+        // 편집 메모 — 본문 저장과 함께 전송. 서버가 일반 리비전의 pages UPDATE 에 병합해 기록한다.
+        // 단, 로드 시점 값(originalPageMeta.editor_note)에서 실제로 바뀐 경우에만 전송한다.
+        // 변경이 없으면 서버가 editor_note 컬럼을 건드리지 않게 해(undefined → 기존 유지),
+        // 그 사이 다른 편집자가 전용 엔드포인트로 바꾼 메모를 stale 값으로 덮어써 잃는 것을 막는다.
+        {
+            const noteEl = document.getElementById('editorNoteInput') as HTMLTextAreaElement | null;
+            if (noteEl) {
+                const v = noteEl.value.trim();
+                const origNote = (originalPageMeta?.editor_note || '').trim();
+                if (v !== origNote) {
+                    (body as any).editor_note = v ? v : null;
+                }
             }
         }
 

@@ -19,9 +19,11 @@ import type { Env, User } from '../types';
 import type { RBAC } from './role';
 import { isR2OnlyNamespace } from './slug';
 import { getEnabledExtensions } from './extensions';
-import { getRevisionContent } from './r2';
+import { getRevisionContent, insertVirtualRevision } from './r2';
 import { computeLineDiffStats } from './diff';
 import { ensureMcpDraftsMigration } from './mcpDraftsMigration';
+import { ensureEditorNoteMigration } from './editorNoteMigration';
+import { invalidatePageCache, refreshRecentChangesCache } from './cacheInvalidation';
 import type { ToolResult } from './mcpDispatch';
 import {
     buildCommitSummary,
@@ -54,6 +56,7 @@ export interface ApplyDraftInput {
     redirect_to: string | null;
     title: string | null;
     has_title_change: number;
+    editor_note?: string | null;
 }
 
 // { ok, status, body } — status 는 HTTP 매핑용(성공 200). body 는 응답 페이로드.
@@ -77,8 +80,8 @@ export async function applyDraftMutation(
 
     if (draft.action === 'update') {
         const page = await c.env.DB.prepare(
-            'SELECT id, version, content, category, last_revision_id, title, is_private FROM pages WHERE slug = ? AND deleted_at IS NULL'
-        ).bind(slug).first<{ id: number; version: number; content: string; category: string | null; last_revision_id: number | null; title: string | null; is_private: number }>();
+            'SELECT id, version, content, category, last_revision_id, title, is_private, editor_note FROM pages WHERE slug = ? AND deleted_at IS NULL'
+        ).bind(slug).first<{ id: number; version: number; content: string; category: string | null; last_revision_id: number | null; title: string | null; is_private: number; editor_note: string | null }>();
         if (!page) {
             return { ok: false, status: 409, body: { error: 'conflict', reason: 'page_missing' } };
         }
@@ -152,9 +155,10 @@ export async function applyDraftMutation(
 
         // 라인 diff 통계 (CRLF 정규화 후 LCS) — 요약 마커/응답 필드용. 실패해도 저장은 진행.
         const enabledExt = getEnabledExtensions(c.env);
+        // prevContent 를 try 밖으로 끌어올려 content 변경 여부 판정에도 사용한다 (편집 메모 전용 변경 감지).
+        let prevContent = page.content || '';
         let diffStats: { added: number; removed: number } | null = null;
         try {
-            let prevContent = page.content || '';
             if (isR2OnlyNamespace(slug, enabledExt) && prevContent === '' && page.last_revision_id) {
                 const lastRev = await c.env.DB.prepare('SELECT content, r2_key FROM revisions WHERE id = ?')
                     .bind(page.last_revision_id)
@@ -171,7 +175,46 @@ export async function applyDraftMutation(
             console.error('mcpDraftApply update diff stats failed (apply will proceed without marker):', e);
             diffStats = null;
         }
+
+        // 편집 메모(editor_note) 변경 감지 — 본문 변경 없이 편집 메모만 바뀐 경우 가상 리비전으로 처리.
+        const draftEditorNote = draft.editor_note ?? null;
+        const pageEditorNote = page.editor_note ?? null;
+        const editorNoteChanged = draftEditorNote !== pageEditorNote;
+        const contentChanged = prevContent.replace(/\r\n?/g, '\n') !== draft.content.replace(/\r\n?/g, '\n');
+
+        if (!contentChanged && editorNoteChanged) {
+            // 본문 변경 없이 편집 메모만 바뀜 → 가상 리비전 (version/last_revision_id/R2 스냅샷 미갱신)
+            await c.env.DB.prepare('UPDATE pages SET editor_note = ?, updated_at = unixepoch() WHERE id = ?')
+                .bind(draftEditorNote, page.id).run();
+            try {
+                await insertVirtualRevision(c.env.DB, page.id, '[편집메모] 편집 메모 변경', user.id);
+            } catch (e) {
+                console.error('mcpDraftApply editor-note virtual revision failed:', e);
+            }
+            await c.env.DB.batch([
+                c.env.DB.prepare("DELETE FROM notifications WHERE type = 'mcp_submission' AND ref_id = ?").bind(draft.id),
+                c.env.DB.prepare('DELETE FROM mcp_drafts WHERE id = ?').bind(draft.id),
+            ]);
+            c.executionCtx.waitUntil(Promise.allSettled([
+                invalidatePageCache(c, slug),
+                refreshRecentChangesCache(c),
+            ]));
+            return {
+                ok: true, status: 200, body: {
+                    approved: true,
+                    slug,
+                    version: page.version,
+                    editor_note_only: true,
+                    editor_note: draftEditorNote,
+                }
+            };
+        }
+
         const summaryWithDiff = diffStats ? buildCommitSummary(finalSummary, diffStats) : finalSummary;
+        // 편집 메모 변경이 본문 수정에 동반된 경우, 자동요약에 편집 메모 변경을 명시.
+        const finalSummaryWithNote = editorNoteChanged && contentChanged
+            ? (summaryWithDiff ? `${summaryWithDiff} / [편집메모] 변경` : '[편집메모] 변경')
+            : summaryWithDiff;
 
         try {
             const result = await commitPageMutation(c, {
@@ -180,10 +223,11 @@ export async function applyDraftMutation(
                 actor: user,
                 slug,
                 content: draft.content,
-                summary: summaryWithDiff,
+                summary: finalSummaryWithNote,
                 category: draft.category,
                 redirectTo: draft.redirect_to,
                 title: draft.has_title_change ? draft.title : undefined,
+                editorNote: editorNoteChanged ? draftEditorNote : undefined,
                 page,
                 isPrivate: page.is_private === 1,
                 logType: 'page_commit_approved',
@@ -441,7 +485,7 @@ export async function dispatchApplyEditTool(
 ): Promise<ToolResult> {
     const db = c.env.DB;
     await ensureMcpDraftsMigration(db);
-
+    await ensureEditorNoteMigration(db);
     if (!rbac.can(user.role, 'wiki:edit')) {
         return toolError('Error: wiki:edit 권한이 필요합니다.');
     }
@@ -462,7 +506,7 @@ export async function dispatchApplyEditTool(
 
     const draft = await db.prepare(
         `SELECT id, user_id, slug, action, base_revision_id, base_version,
-                content, category, redirect_to, title, has_title_change, submitted_at
+                content, category, redirect_to, title, has_title_change, editor_note, submitted_at
          FROM mcp_drafts WHERE id = ?`
     ).bind(draftId).first<ApplyDraftInput & { user_id: number; submitted_at: number | null }>();
     if (!draft) {

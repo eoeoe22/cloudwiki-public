@@ -26,6 +26,7 @@ import { getEnabledExtensions } from '../utils/extensions';
 import { getRevisionContent } from '../utils/r2';
 import { computeLineDiffStats } from '../utils/diff';
 import { ensureMcpDraftsMigration } from '../utils/mcpDraftsMigration';
+import { ensureEditorNoteMigration } from '../utils/editorNoteMigration';
 import { validateMcpSummaryLength } from './admin-mcp';
 import { applyDraftMutation } from '../utils/mcpDraftApply';
 
@@ -35,6 +36,7 @@ const mcpSubmissionsRoutes = new Hono<Env>();
 // 진입 시 idempotent 마이그레이션을 보장한다 — isolate 당 한 번만 실행된다.
 mcpSubmissionsRoutes.use('/mcp-submissions/*', async (c, next) => {
     await ensureMcpDraftsMigration(c.env.DB);
+    await ensureEditorNoteMigration(c.env.DB);
     await next();
 });
 
@@ -50,6 +52,7 @@ interface DraftRow {
     redirect_to: string | null;
     title: string | null;
     has_title_change: number;
+    editor_note: string | null;
     submitted_at: number | null;
     submitted_summary: string | null;
     updated_at: number;
@@ -69,7 +72,7 @@ async function loadSubmittedDraftForUser(
 ): Promise<DraftRow | null> {
     const row = await env.DB.prepare(
         `SELECT id, user_id, slug, action, base_revision_id, base_version,
-                content, category, redirect_to, title, has_title_change,
+                content, category, redirect_to, title, has_title_change, editor_note,
                 submitted_at, submitted_summary, updated_at
          FROM mcp_drafts WHERE id = ? AND user_id = ? AND submitted_at IS NOT NULL`
     ).bind(draftId, user.id).first<DraftRow>();
@@ -266,6 +269,7 @@ mcpSubmissionsRoutes.get('/mcp-submissions/:id', requireAuth, async (c) => {
         base_version: draft.base_version,
         category: draft.category,
         redirect_to: draft.redirect_to,
+        editor_note: draft.editor_note,
         proposed_content: draft.content,
         current_content: currentContent,
         base_content: baseContent,
