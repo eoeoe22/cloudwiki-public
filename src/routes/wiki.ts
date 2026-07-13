@@ -3144,9 +3144,11 @@ wiki.delete('/w/:slug', requireAuth, async (c) => {
 
     const isAdmin = rbac.can(user.role, 'admin:access');
 
-    // Fetch page first to check permissions
-    const page = await db.prepare('SELECT id, edit_acl FROM pages WHERE slug = ? AND deleted_at IS NULL')
-        .bind(slug).first<{ id: number; edit_acl: string | null }>();
+    // Fetch page first to check permissions.
+    // 영구 삭제(hard)는 이미 소프트삭제된 문서도 대상이므로 deleted_at 필터 없이 조회한다.
+    // (deleted_at IS NULL 로 조회하면 소프트삭제된 문서를 영구 삭제할 때 "문서를 찾을 수 없음"으로 오거부됨)
+    const page = await db.prepare('SELECT id, edit_acl, deleted_at FROM pages WHERE slug = ?')
+        .bind(slug).first<{ id: number; edit_acl: string | null; deleted_at: number | null }>();
 
     if (!page) {
         return c.json({ error: '문서를 찾을 수 없습니다.' }, 404);
@@ -3188,6 +3190,12 @@ wiki.delete('/w/:slug', requireAuth, async (c) => {
 
         return c.json({ message: '문서가 영구 삭제되었습니다.' });
     } else {
+        // 이미 소프트삭제된 문서는 다시 소프트삭제할 수 없다(영구 삭제만 가능).
+        // 이전에는 deleted_at IS NULL 조회로 이 경우 404 를 반환했으므로 동일 시맨틱을 유지한다.
+        if (page.deleted_at) {
+            return c.json({ error: '이미 삭제된 문서입니다.' }, 404);
+        }
+
         // Soft delete requires wiki:delete permission
         if (!rbac.can(user.role, 'wiki:delete')) {
             return c.json({ error: '문서 삭제 권한이 없습니다.' }, 403);

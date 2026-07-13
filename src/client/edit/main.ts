@@ -4101,14 +4101,17 @@ async function savePage() {
                 }
                 // originalPageMeta 의 editor_note 베이스라인 갱신.
                 if (originalPageMeta) originalPageMeta.editor_note = currNote;
-                isSuccess = true;
                 if (typeof window.checkConcurrentEditors === 'function') window.checkConcurrentEditors();
                 window.Swal.fire({ icon: 'success', title: '편집 메모가 저장되었습니다.', timer: 1200, showConfirmButton: false });
             } catch (e) {
                 window.Swal.fire({ icon: 'error', title: '저장 실패', text: '네트워크 오류가 발생했습니다.' });
             } finally {
+                // 이 분기는 자체 try/finally 로 완결되며, 아래 본문 저장 경로에서
+                // 선언되는 isSuccess / blockResave 를 참조하지 않는다(선언 전 참조 시
+                // TDZ ReferenceError 가 발생해 성공 저장이 네트워크 오류로 표시되고
+                // 저장 버튼 스피너가 복구되지 않던 회귀를 방지).
                 saveInProgress = false;
-                if (saveBtn && !blockResave) {
+                if (saveBtn) {
                     saveBtn.disabled = false;
                     saveBtn.innerHTML = '<i class="mdi mdi-check"></i> 저장';
                 }
