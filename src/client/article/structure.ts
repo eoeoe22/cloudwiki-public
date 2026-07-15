@@ -7,6 +7,9 @@
 // "전체 구조 보기" 체크박스:
 //   - 체크(활성화) 시 최상위 문서 기준으로 전체 트리를 표시(기존 동작).
 //   - 해제(비활성화) 시 현재 문서를 시작점으로 하는 하위 트리만 표시.
+//   - 현재 문서가 리프(직접 하위 문서가 없는) 하위 문서이면 체크박스를 기본으로 켠 상태로 연다.
+//     단일 문서만 표시하면 의미가 없으므로 상위 트리에서의 위치를 바로 보여주기 위함이며,
+//     체크박스를 해제하면 해당 문서 단일로 표시된다.
 // 각 뷰는 해당 기준 문서(base)의 하위 목록을 직접 받아온다(전역 목록을 클라이언트에서
 // 필터링하지 않는다). `/subdocs` 응답은 `LIMIT 200` 으로 잘리므로, 하위 문서가 많은
 // 최상위 문서에서 현재 문서 뷰를 전역 목록 필터링으로 만들면 200행 밖의 가지가 누락될 수
@@ -154,8 +157,25 @@ export function createStructureModal(ctx: ArticleContext) {
       return { treeHtml, plainText, markdown };
     }
 
-    // 초기 뷰: 현재 문서가 하위 문서이면 현재 문서 기준(체크 해제 상태), 아니면 최상위 문서 기준.
-    const initialBase = isSubdoc ? slug : topSlug;
+    // 현재 문서가 하위 문서이면, 먼저 현재 문서의 하위 목록을 받아 리프 노드 여부를 판단한다.
+    // 리프(직접 하위 문서가 없음)일 때는 단일 문서만 표시해도 의미가 없으므로 "전체 구조 보기"를
+    // 기본으로 켜, 최상위 문서 기준 전체 트리 안에서의 위치를 바로 보여준다(토글을 끄면 단일 표시).
+    // 최상위 문서는 상위가 없어 두 뷰가 동일하므로 이 판단에서 제외한다.
+    let startFull = false;
+    if (isSubdoc) {
+      try {
+        const currentList = await loadSubdocs(slug);
+        startFull = currentList.length === 0;
+      } catch (err) {
+        console.error(err);
+        Swal.fire('오류', '하위 문서를 불러오는 데 실패했습니다.', 'error');
+        return;
+      }
+    }
+
+    // 초기 뷰 기준: 리프 하위 문서는 전체(최상위 문서) 기준, 그 외 하위 문서는 현재 문서 기준,
+    // 최상위 문서는 자기 자신 기준.
+    const initialBase = (isSubdoc && !startFull) ? slug : topSlug;
     let initialList: any[];
     try {
       initialList = await loadSubdocs(initialBase);
@@ -218,7 +238,7 @@ export function createStructureModal(ctx: ArticleContext) {
     // 현재 문서가 하위 문서일 때만 전체/현재 전환 체크박스를 노출한다.
     const checkboxHtml = isSubdoc ? `
       <div class="form-check text-start mb-2">
-        <input class="form-check-input" type="checkbox" id="structure-full-toggle">
+        <input class="form-check-input" type="checkbox" id="structure-full-toggle"${startFull ? ' checked' : ''}>
         <label class="form-check-label" for="structure-full-toggle">전체 구조 보기</label>
       </div>` : '';
 
