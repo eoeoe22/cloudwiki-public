@@ -298,12 +298,8 @@ export async function dispatchReadTool(
     const privateFilter = canSeePrivate ? '' : ' AND is_private = 0';
     const pPrivateFilter = canSeePrivate ? '' : ' AND p.is_private = 0';
 
-    if (toolName === 'information') {
-        const intro = buildInformationIntro(c, toolDefs);
-        const toolDetails = toolDefs.map(t => `## ${t.name}\n${t.description}`).join('\n\n');
-        const text = `${intro}\n\n## 사용 가능한 도구 목록\n\n${toolDetails}`;
-        return { content: [{ type: 'text', text }] };
-    }
+    // information 은 routes/mcp.ts 의 tools/call 인터셉트에서 visibleToolDefs 로 별도 구성하므로
+    // 여기서는 처리하지 않는다 (이중 진실 소스 방지).
 
     if (toolName === 'search_title') {
         // slug 와 대체 title 양쪽에서 부분 매칭. title 은 표시용이라 모든 호출 도구의 인자(title 파라미터) 는 slug 를 받지만,

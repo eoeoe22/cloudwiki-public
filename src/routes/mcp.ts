@@ -282,7 +282,8 @@ async function handleJsonRpc(c: Context<Env>, body: any, user: User | null) {
     const visibleToolDefs = getVisibleToolDefsWithPrefs(c.env, rbac, user);
     const visibleToolNames = new Set(visibleToolDefs.map(t => t.name));
     const enabledNames = visibleToolNames;
-    // information 도구 본문용 공용 읽기 정의도 동일하게 Off 필터를 적용한다 (별칭 전개 포함).
+    // 그 외 read 도구 디스패치용 공용 읽기 정의에도 동일하게 Off 필터를 적용한다 (별칭 전개 포함).
+    // information 본문은 tools/call 인터셉트에서 visibleToolDefs 로 별도 구성한다.
     const sharedToolDefs = filterToolsByDisabled(
         getSharedToolDefs(c.env),
         new Set(expandToolNamesWithAliases(getUserDisabledToolSet(user))),
@@ -314,12 +315,9 @@ async function handleJsonRpc(c: Context<Env>, body: any, user: User | null) {
 
     // 3. 도구 목록 반환
     if (method === 'tools/list') {
-        const intro = buildInformationIntro(c, sharedToolDefs);
-        const userName = user?.name || '';
-        const userSuffix = canEdit ? buildUserEditInformationSuffix(userName, enabledNames) : '';
-        const adminSuffix = isAdmin ? buildAdminOnlyInformationSuffix(userName, enabledNames) : '';
-        const toolNames = visibleToolDefs.map(t => t.name).join(', ');
-        const informationDescription = `${intro}${userSuffix}${adminSuffix}\n\n사용 가능한 MCP 도구: ${toolNames}. 각 도구의 세부 설명은 information 도구를 호출하여 확인할 수 있습니다.`;
+        // information 상세 가이드(intro/역할별 안내/도구 목록)는 tools/call 호출 시에만
+        // 반환한다. tools/list 의 description 에는 정적 안내만 노출한다.
+        const informationDescription = '위키 탐색 가이드. 호출 시 사용법과 사용 가능한 도구 목록을 반환합니다.';
         return {
             jsonrpc: '2.0', id,
             result: {
@@ -347,6 +345,18 @@ async function handleJsonRpc(c: Context<Env>, body: any, user: User | null) {
                     error: { code: -32601, message: `Tool not found: ${toolName}` },
                     id,
                 };
+            }
+
+            if (toolName === 'information') {
+                // information 상세 가이드(intro/역할별 안내/도구 목록)는 호출 시에만 노출한다.
+                // tools/list 의 description 에는 정적 안내만 둔다.
+                const intro = buildInformationIntro(c, visibleToolDefs);
+                const userName = user?.name || '';
+                const userSuffix = canEdit ? buildUserEditInformationSuffix(userName, enabledNames) : '';
+                const adminSuffix = isAdmin ? buildAdminOnlyInformationSuffix(userName, enabledNames) : '';
+                const toolDetails = visibleToolDefs.map(t => `## ${t.name}\n${t.description}`).join('\n\n');
+                const text = `${intro}${userSuffix}${adminSuffix}\n\n## 사용 가능한 도구 목록\n\n${toolDetails}`;
+                return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text }] } };
             }
 
             const shared = await dispatchReadTool(c, toolName, args, sharedToolDefs);
